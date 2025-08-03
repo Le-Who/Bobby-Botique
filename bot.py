@@ -3,10 +3,14 @@ import logging
 import threading
 import asyncio
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from typing import Dict
 
 # Импортируем наши модули
 from app import config, database
 from app.handlers import commands, messages, callbacks
+
+# --- GLOBAL STATE ---
+ACTIVE_USER_TASKS: Dict[int, asyncio.Task] = {}
 
 def main():
     logging.basicConfig(
@@ -17,7 +21,7 @@ def main():
         logging.warning("One or more environment variables are not set! Bot may have limited functionality.")
 
     # Запускаем веб-сервер для health check в отдельном потоке
-    flask_thread = threading.Thread(target=messages.run_flask, daemon=True)
+    flask_thread = threading.Thread(target=commands.run_flask, daemon=True)
     flask_thread.start()
     logging.info(f"Health check server started on port {config.PORT}.")
 
@@ -32,7 +36,7 @@ def main():
     # Регистрируем все обработчики
     commands.register(application)
     callbacks.register(application)
-    messages.register(application) # messages.py будет содержать и обработчик сообщений, и "мозг" агента
+    messages.register(application)
 
     logging.info("Starting Telegram bot polling...")
     application.run_polling()
