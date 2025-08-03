@@ -5,9 +5,7 @@ from telegram.ext import ContextTypes
 from . import agent
 from .. import database as db
 from .. import config
-
-# --- GLOBAL STATE (imported for task management) ---
-from ..database import ACTIVE_USER_TASKS
+from bot import ACTIVE_USER_TASKS # <-- ИЗМЕНЕННЫЙ ИМПОРТ
 
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
