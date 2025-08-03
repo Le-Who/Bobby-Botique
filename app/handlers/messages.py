@@ -1,10 +1,12 @@
+# /app/handlers/messages.py
+
 import asyncio
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes, MessageHandler, filters, Application
 
 from . import agent
-from .. import config
+from ..config import settings
 from .. import database as db
 from .. import state
 
@@ -12,19 +14,24 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
     
-    if user_id in state.ACTIVE_USER_TASKS:
+    user_lock = state.USER_LOCKS[user_id]
+    if user_lock.locked():
         await update.message.reply_text("Пожалуйста, подождите, я еще обрабатываю ваш предыдущий запрос.")
         return
 
     if update.message.text:
         chat_state = await db.get_user_chat(user_id)
-        if chat_state.token_count >= config.CHAT_TOKEN_LIMIT:
+        if chat_state.token_count >= settings.CHAT_TOKEN_LIMIT:
             await update.message.reply_text("Достигнут лимит токенов. Начните новый /newchat")
             return
             
     placeholder_message = await update.message.reply_text("⏳ Принято в обработку...")
-    task = asyncio.create_task(agent.process_long_request(placeholder_message, update, context))
-    state.ACTIVE_USER_TASKS[user_id] = task
+    
+    async def task_wrapper():
+        async with user_lock:
+            await agent.process_long_request(placeholder_message, update, context)
+            
+    asyncio.create_task(task_wrapper())
 
 def register(application: Application):
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_request))
