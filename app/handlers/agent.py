@@ -1,5 +1,3 @@
-# /app/handlers/agent.py
-
 import logging
 import json
 import io
@@ -213,7 +211,12 @@ async def process_long_request(placeholder_message: Message, update: Update, con
                 [InlineKeyboardButton("🔎 Выполнить сложный поиск", callback_data="complex:confirm")],
                 [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")]
             ]
-            await placeholder_message.edit_text(
+            
+            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+            # Удаляем временный плейсхолдер и отправляем новый, но как ответ.
+            # Это гарантирует сохранение reply_to_message.
+            await placeholder_message.delete()
+            await update.message.reply_text(
                 "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
