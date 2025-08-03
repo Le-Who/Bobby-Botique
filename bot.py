@@ -1,8 +1,7 @@
-# bot.py
-
 import os
 import logging
 import asyncio
+from telegram import Update
 from telegram.ext import Application
 from flask import Flask
 from hypercorn.config import Config as HypercornConfig
@@ -18,7 +17,6 @@ flask_app = Flask(__name__)
 def health_check():
     return "I am alive!", 200
 
-# <<< ИЗМЕНЕНО: Асинхронная main функция
 async def main():
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -27,20 +25,17 @@ async def main():
     if not all([config.TELEGRAM_BOT_TOKEN, config.GEMINI_API_KEYS, config.DATABASE_URL, config.TAVILY_API_KEYS]):
         logging.warning("One or more environment variables are not set! Bot may have limited functionality.")
 
-    # <<< ИЗМЕНЕНО: Асинхронная инициализация БД
     logging.info("Initializing database...")
     await database.init_db()
     logging.info("Database initialized.")
 
-    # Создаем приложение Telegram
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     
-    # Регистрируем все обработчики
+    # Регистрация обработчиков
     commands.register(application)
     callbacks.register(application)
     messages.register(application)
 
-    # <<< ИЗМЕНЕНО: Запускаем веб-сервер и бота параллельно
     hypercorn_config = HypercornConfig()
     hypercorn_config.bind = [f"0.0.0.0:{config.PORT}"]
     
@@ -58,7 +53,6 @@ async def main():
         if database.db_pool:
             await database.db_pool.close()
         logging.info("Database pool closed.")
-
 
 if __name__ == "__main__":
     asyncio.run(main())
