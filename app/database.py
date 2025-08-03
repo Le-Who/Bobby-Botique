@@ -157,7 +157,14 @@ def increment_tavily_key_usage(key_hash: str, cost: int):
     """
     db_query(query, (key_hash, current_month, cost, cost))
 
+# --- AUTHORIZATION ---
+def is_admin(user_id: int) -> bool:
+    """Checks if a user is the admin."""
+    return user_id == config.ADMIN_ID
+
 def is_authorized(user_id: int) -> bool:
-    if user_id == config.ADMIN_ID: return True
+    """Checks if a user is authorized to use the bot."""
+    if is_admin(user_id):
+        return True
     result = db_query("SELECT is_authorized FROM users WHERE user_id = ?", (user_id,))
     return result and result[0]['is_authorized'] == 1
