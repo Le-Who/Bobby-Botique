@@ -2,8 +2,8 @@ python-telegram-bot
 google-generativeai>=0.7.0
 Pillow
 pytz
+Flask
+tavily-python
 asyncpg
 httpx
 hypercorn
-Flask
-tavily-python
