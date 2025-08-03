@@ -8,6 +8,7 @@ from .. import config
 from .. import database as db
 from .. import services
 from ..utils.messaging import send_long_message
+from .. import state
 
 # --- ASYNC TASK PROCESSOR (REFACTORED) ---
 
@@ -248,3 +249,45 @@ async def _handle_complex_agent_search(placeholder_message: Message, update: Upd
         await _handle_qna_search(placeholder_message, search_query, chat_state)
     else:
         await _handle_research_agent(placeholder_message, user_id, search_query, chat_state)
+
+async def process_long_request(placeholder_message: Message, update: Update, context):
+    user_id = update.effective_user.id
+    try:
+        is_photo = bool(update.message.photo)
+        text = update.message.text or update.message.caption or ""
+        chat_state = db.get_user_chat(user_id)
+
+        if is_photo and (text.startswith('?') or text.startswith('??')):
+            keyboard = [
+                [InlineKeyboardButton("🖼️ Только описать фото", callback_data="complex:vision_only")],
+                [InlineKeyboardButton("🔎 Выполнить сложный поиск", callback_data="complex:confirm")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")]
+            ]
+            await placeholder_message.edit_text(
+                "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+        
+        if is_photo:
+            await _handle_photo(placeholder_message, update, chat_state)
+            return
+
+        if text.startswith('??'):
+            await _handle_research_agent(placeholder_message, user_id, text[2:].strip(), chat_state)
+        elif text.startswith('?'):
+            await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
+        elif chat_state.search_enabled:
+            await _handle_research_agent(placeholder_message, user_id, text, chat_state)
+        else:
+            await _handle_regular_chat(placeholder_message, user_id, text, chat_state)
+
+    except Exception as e:
+        logging.error(f"Error in background task dispatcher: {e}", exc_info=True)
+        try:
+            await placeholder_message.edit_text(f"Произошла критическая ошибка: {e}")
+        except Exception as inner_e:
+            logging.error(f"Could not edit placeholder message: {inner_e}")
+    finally:
+        if user_id in state.ACTIVE_USER_TASKS:
+            del state.ACTIVE_USER_TASKS[user_id]
