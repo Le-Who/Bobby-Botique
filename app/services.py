@@ -1,5 +1,3 @@
-# app/services.py
-
 import logging
 import httpx
 import google.generativeai as genai
@@ -9,7 +7,6 @@ from typing import Dict, Any, List
 from . import config
 from . import database
 
-# <<< ИЗМЕНЕНО: Создаем один клиент на все время жизни приложения
 http_client = httpx.AsyncClient(timeout=30.0)
 
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None):
@@ -27,7 +24,6 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         logging.error(f"Gemini API generic error: {e}")
         return f"Произошла непредвиденная ошибка API: {e}", None
 
-# <<< ИЗМЕНЕНО: Полностью переписано на httpx
 async def tavily_search_agent(query: str, search_type: str = "search"):
     available_key = await database.get_available_tavily_key()
     if not available_key:
@@ -36,16 +32,13 @@ async def tavily_search_agent(query: str, search_type: str = "search"):
     api_key = available_key['api_key']
     logging.info(f"Performing Tavily API call (type: {search_type}) for query: {query[:100]}")
     
-    payload = {
-        "api_key": api_key,
-        "query": query,
-    }
+    payload = {"api_key": api_key, "query": query}
     cost = 0
 
     if search_type == "qna":
         payload["search_depth"] = "basic"
         cost = config.TAVILY_QNA_SEARCH_COST
-    else: # "search"
+    else:
         payload["search_depth"] = "advanced"
         payload["max_results"] = 7
         cost = config.TAVILY_ADVANCED_SEARCH_COST
