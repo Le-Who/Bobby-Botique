@@ -22,7 +22,7 @@ class ChatState:
     system_prompt: Optional[str]
 
 def _prepare_query(query: str) -> str:
-    """Replaces '?' and '%s' with numbered placeholders like $1, $2."""
+    """Replaces '?' and '%s' with numbered placeholders like $1, $2 for asyncpg."""
     query_prepared = query.replace('?', '$').replace('%s', '$')
     count = query_prepared.count('$')
     for i in range(1, count + 1):
@@ -47,7 +47,7 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         except (asyncpg.exceptions.ConnectionDoesNotExistError, OSError) as e:
             logging.warning(f"DB connection error (attempt {attempt + 1}/{retries}): {e}. Retrying...")
             last_exception = e
-            await asyncio.sleep(1 + attempt)
+            await asyncio.sleep(1 + attempt) # Exponential backoff
         except Exception as e:
             logging.error(f"An unexpected database error occurred: {e}", exc_info=True)
             raise e
