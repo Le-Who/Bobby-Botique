@@ -1,43 +1,37 @@
 import os
 import pytz
-from typing import List, Dict, Any
-from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import List, Dict
+from pydantic import BaseModel, ValidationError
 
-def _get_keys_from_env(env_var_name: str) -> List[str]:
+def _load_and_clean_keys(env_var_name: str) -> List[str]:
     """
-    A robust, manual function to get comma-separated keys from an environment variable.
-    This function is called directly to bypass Pydantic's problematic parsing.
+    Manually loads a comma-separated string from env, cleans it, and returns a list.
+    This is the most robust way to handle env vars from hosting providers.
     """
     value = os.getenv(env_var_name)
     if not value:
-        # If the variable is not set at all, raise an error.
         raise ValueError(f"Required environment variable '{env_var_name}' is not set.")
     
     # Clean the string from quotes and whitespace, then split.
     cleaned_v = value.strip().strip('"').strip("'")
-    return [key.strip() for key in cleaned_v.split(',') if key.strip()]
+    keys = [key.strip() for key in cleaned_v.split(',') if key.strip()]
+    if not keys:
+        raise ValueError(f"Environment variable '{env_var_name}' is set but contains no valid keys.")
+    return keys
 
-class Settings(BaseSettings):
+# We use BaseModel, NOT BaseSettings. We are not auto-loading from the environment.
+class Settings(BaseModel):
     """
-    Defines and validates all application settings using Pydantic.
+    Defines the shape and types of our settings for validation.
+    Data is loaded manually and then passed here to be validated.
     """
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding='utf-8',
-    )
-
-    # --- SIMPLE FIELDS (Loaded automatically by Pydantic) ---
+    # --- CORE ---
     TELEGRAM_BOT_TOKEN: str
+    GEMINI_API_KEYS: List[str]
+    TAVILY_API_KEYS: List[str]
     DATABASE_URL: str
     ADMIN_ID: int
-    PORT: int = Field(default=10000, alias="PORT")
-
-    # --- COMPLEX FIELDS (Loaded manually via default_factory) ---
-    # `exclude=True` tells Pydantic to NOT look for these in the environment.
-    # `default_factory` calls our manual function to get the value.
-    GEMINI_API_KEYS: List[str] = Field(default_factory=lambda: _get_keys_from_env("GEMINI_API_KEYS"), exclude=True)
-    TAVILY_API_KEYS: List[str] = Field(default_factory=lambda: _get_keys_from_env("TAVILY_API_KEYS"), exclude=True)
+    PORT: int
 
     # --- CHAT ---
     CHAT_TOKEN_LIMIT: int = 384000
@@ -70,21 +64,32 @@ class Settings(BaseSettings):
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     ]
 
-    # After our manual factory provides the value, we can still validate it.
-    @field_validator('GEMINI_API_KEYS', 'TAVILY_API_KEYS')
-    @classmethod
-    def check_lists_not_empty(cls, v: List[str], info) -> List[str]:
-        if not v:
-            raise ValueError(f"List for field '{info.field_name}' cannot be empty.")
-        return v
+def load_settings() -> Settings:
+    """
+    Manually loads all settings from the environment and validates them
+    using the Pydantic model. This is the most robust method.
+    """
+    try:
+        # Manually load all values from the environment.
+        raw_settings = {
+            "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
+            "DATABASE_URL": os.getenv("DATABASE_URL"),
+            "ADMIN_ID": os.getenv("ADMIN_ID"),
+            "PORT": os.getenv("PORT", 10000), # Provide a default for PORT
+            "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
+            "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
+        }
+        # Use the Pydantic model ONLY for validation of the manually loaded data.
+        return Settings(**raw_settings)
+    except (ValidationError, ValueError) as e:
+        # Catch errors from both Pydantic and our manual functions.
+        print(f"FATAL: Could not load settings. Please check your environment variables. Error: {e}")
+        exit(1)
 
-# --- TIMEZONES (not part of BaseSettings as they are not from env) ---
+# --- TIMEZONES ---
 PACIFIC_TZ = pytz.timezone('US/Pacific')
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
 
 # --- SINGLETON INSTANCE ---
-try:
-    settings = Settings()
-except Exception as e:
-    print(f"FATAL: Could not load settings. Please check your .env file or environment variables. Error: {e}")
-    exit(1)
+# Create the one and only settings object for the app.
+settings = load_settings()
