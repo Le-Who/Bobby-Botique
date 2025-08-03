@@ -1,12 +1,16 @@
+# app/services.py
+
 import logging
-import asyncio
-from tavily import TavilyClient
+import httpx
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from typing import Dict, Any, List
 
 from . import config
 from . import database
+
+# <<< ИЗМЕНЕНО: Создаем один клиент на все время жизни приложения
+http_client = httpx.AsyncClient(timeout=30.0)
 
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None):
     try:
@@ -23,26 +27,44 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         logging.error(f"Gemini API generic error: {e}")
         return f"Произошла непредвиденная ошибка API: {e}", None
 
-async def tavily_search_agent(query: str, search_type: str = "search", urls: List[str] = None):
-    available_key = database.get_available_tavily_key()
+# <<< ИЗМЕНЕНО: Полностью переписано на httpx
+async def tavily_search_agent(query: str, search_type: str = "search"):
+    available_key = await database.get_available_tavily_key()
     if not available_key:
         return {"error": "Поиск недоступен: все API ключи сервиса поиска достигли месячного лимита."}
     
+    api_key = available_key['api_key']
     logging.info(f"Performing Tavily API call (type: {search_type}) for query: {query[:100]}")
+    
+    payload = {
+        "api_key": api_key,
+        "query": query,
+    }
+    cost = 0
+
+    if search_type == "qna":
+        payload["search_depth"] = "basic"
+        cost = config.TAVILY_QNA_SEARCH_COST
+    else: # "search"
+        payload["search_depth"] = "advanced"
+        payload["max_results"] = 7
+        cost = config.TAVILY_ADVANCED_SEARCH_COST
+
     try:
-        tavily = TavilyClient(api_key=available_key['api_key'])
+        response = await http_client.post("https://api.tavily.com/search", json=payload)
+        response.raise_for_status()
+        
+        data = response.json()
+        await database.increment_tavily_key_usage(available_key['key_hash'], cost)
         
         if search_type == "qna":
-            response = await asyncio.to_thread(tavily.qna_search, query=query)
-            database.increment_tavily_key_usage(available_key['key_hash'], config.TAVILY_QNA_SEARCH_COST)
-            return {"type": "answer", "content": response}
+            return {"type": "answer", "content": data.get("answer", "")}
         
-        response = await asyncio.to_thread(
-            tavily.search, query=query, search_depth="advanced", max_results=7
-        )
-        database.increment_tavily_key_usage(available_key['key_hash'], config.TAVILY_ADVANCED_SEARCH_COST)
-        return {"type": "search", "results": response.get('results', [])}
+        return {"type": "search", "results": data.get('results', [])}
 
+    except httpx.HTTPStatusError as e:
+        logging.error(f"Tavily API call failed with status {e.response.status_code}: {e.response.text}")
+        return {"error": f"Ошибка API поиска: {e.response.status_code}. Убедитесь, что ключ API валиден."}
     except Exception as e:
         logging.error(f"Tavily API call failed: {e}")
         return {"error": f"Произошла ошибка во время вызова API поиска: {e}"}
