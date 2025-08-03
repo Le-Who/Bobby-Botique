@@ -17,42 +17,60 @@ flask_app = Flask(__name__)
 def health_check():
     return "I am alive!", 200
 
+async def run_bot_and_server():
+    """Основная логика: запускает бота и веб-сервер параллельно."""
+    application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    
+    # Регистрация всех обработчиков
+    commands.register(application)
+    callbacks.register(application)
+    messages.register(application)
+    
+    # async with application управляет жизненным циклом: initialize() при входе, shutdown() при выходе
+    async with application:
+        # Запускаем polling в фоновом режиме
+        await application.start()
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Конфигурируем и запускаем веб-сервер
+        hypercorn_config = HypercornConfig()
+        hypercorn_config.bind = [f"0.0.0.0:{config.PORT}"]
+        
+        logging.info(f"Health check server will run on port {config.PORT}.")
+        logging.info("Bot is running...")
+        
+        # await serve(...) будет работать, пока приложение не будет остановлено.
+        # Пока он работает, бот, запущенный в фоне, продолжает обрабатывать обновления.
+        await serve(flask_app, hypercorn_config)
+        
+        # При завершении serve (например, при остановке сервиса на Render),
+        # останавливаем бота для чистого выхода.
+        await application.updater.stop()
+        await application.stop()
+
 async def main():
+    """Главная функция: настраивает логирование, БД и запускает приложение."""
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
     )
     
     if not all([config.TELEGRAM_BOT_TOKEN, config.GEMINI_API_KEYS, config.DATABASE_URL, config.TAVILY_API_KEYS]):
-        logging.warning("One or more environment variables are not set! Bot may have limited functionality.")
-
-    logging.info("Initializing database...")
-    await database.init_db()
-    logging.info("Database initialized.")
-
-    application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
-    
-    # Регистрация обработчиков
-    commands.register(application)
-    callbacks.register(application)
-    messages.register(application)
-
-    hypercorn_config = HypercornConfig()
-    hypercorn_config.bind = [f"0.0.0.0:{config.PORT}"]
-    
-    logging.info(f"Health check server will run on port {config.PORT}.")
-    logging.info("Starting Telegram bot polling...")
+        logging.warning("One or more environment variables are not set!")
 
     try:
-        await asyncio.gather(
-            serve(flask_app, hypercorn_config),
-            application.run_polling(allowed_updates=Update.ALL_TYPES)
-        )
+        logging.info("Initializing database...")
+        await database.init_db()
+        logging.info("Database initialized.")
+        await run_bot_and_server()
     except Exception as e:
-        logging.critical(f"Application failed: {e}", exc_info=True)
+        logging.critical(f"Application failed critically: {e}", exc_info=True)
     finally:
         if database.db_pool:
             await database.db_pool.close()
-        logging.info("Database pool closed.")
+            logging.info("Database pool closed.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Bot stopped by user.")
