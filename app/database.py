@@ -2,6 +2,7 @@ import logging
 import json
 import hashlib
 import asyncio
+import re
 from datetime import datetime
 import pytz
 import asyncpg
@@ -22,12 +23,18 @@ class ChatState:
     system_prompt: Optional[str]
 
 def _prepare_query(query: str) -> str:
-    """Replaces '?' and '%s' with numbered placeholders like $1, $2 for asyncpg."""
-    query_prepared = query.replace('?', '$').replace('%s', '$')
-    count = query_prepared.count('$')
-    for i in range(1, count + 1):
-        query_prepared = query_prepared.replace('$', f'${i}', 1)
-    return query_prepared
+    """
+    Correctly replaces '?' or '%s' placeholders with numbered asyncpg placeholders like $1, $2.
+    This version is safe and uses regex to avoid incorrect replacements.
+    """
+    # Find all instances of '?' or '%s'
+    placeholders = re.findall(r'(\?|%s)', query)
+    
+    # Sequentially replace each placeholder with a numbered one ($1, $2, etc.)
+    for i, _ in enumerate(placeholders, 1):
+        query = re.sub(r'(\?|%s)', f'${i}', query, 1)
+        
+    return query
 
 async def db_query(query: str, params: tuple = (), retries: int = 3):
     if not db_pool:
@@ -68,9 +75,7 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
     
-    # --- ИСПРАВЛЕННЫЙ БЛОК МИГРАЦИИ ---
     try:
-        # Пытаемся выполнить миграцию только если старая колонка существует
         check_column_query = """
         SELECT column_name 
         FROM information_schema.columns 
@@ -84,9 +89,7 @@ async def init_db():
         else:
             logging.info("Schema is up to date. Migration not needed.")
     except asyncpg.PostgresError as e:
-        # Ловим любую ошибку Postgres и считаем, что миграция не нужна или уже применена
         logging.info(f"Schema migration skipped or already applied (Error: {e})")
-    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
     
     await db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO NOTHING", (config.ADMIN_ID,))
     for key in config.GEMINI_API_KEYS:
