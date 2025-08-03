@@ -3,17 +3,17 @@ import logging
 from telegram import Message
 from telegram.error import BadRequest
 from .formatting import strip_markdown
-from .. import config
+from ..config import settings
 
 async def send_long_message(message: Message, text: str):
     parts = []
     while len(text) > 0:
-        if len(text) <= config.TELEGRAM_MESSAGE_LIMIT:
+        if len(text) <= settings.TELEGRAM_MESSAGE_LIMIT:
             parts.append(text)
             break
-        part = text[:config.TELEGRAM_MESSAGE_LIMIT]
+        part = text[:settings.TELEGRAM_MESSAGE_LIMIT]
         last_newline = part.rfind('\n')
-        slice_index = last_newline if last_newline != -1 else config.TELEGRAM_MESSAGE_LIMIT
+        slice_index = last_newline if last_newline != -1 else settings.TELEGRAM_MESSAGE_LIMIT
         parts.append(text[:slice_index])
         text = text[slice_index + 1:] if last_newline != -1 else text[slice_index:]
 
