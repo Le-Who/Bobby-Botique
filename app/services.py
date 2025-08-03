@@ -4,7 +4,7 @@ import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from typing import Dict, Any, List
 
-from . import config
+from .config import settings
 from . import database
 
 http_client = httpx.AsyncClient(timeout=30.0)
@@ -12,7 +12,7 @@ http_client = httpx.AsyncClient(timeout=30.0)
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None):
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name, safety_settings=config.SAFETY_SETTINGS, system_instruction=system_instruction)
+        model = genai.GenerativeModel(model_name, safety_settings=settings.SAFETY_SETTINGS, system_instruction=system_instruction)
         chat = model.start_chat(history=history[:-1])
         response = await chat.send_message_async(history[-1]['parts'])
         token_count = model.count_tokens(chat.history).total_tokens
@@ -37,11 +37,11 @@ async def tavily_search_agent(query: str, search_type: str = "search"):
 
     if search_type == "qna":
         payload["search_depth"] = "basic"
-        cost = config.TAVILY_QNA_SEARCH_COST
+        cost = settings.TAVILY_QNA_SEARCH_COST
     else:
         payload["search_depth"] = "advanced"
         payload["max_results"] = 7
-        cost = config.TAVILY_ADVANCED_SEARCH_COST
+        cost = settings.TAVILY_ADVANCED_SEARCH_COST
 
     try:
         response = await http_client.post("https://api.tavily.com/search", json=payload)
