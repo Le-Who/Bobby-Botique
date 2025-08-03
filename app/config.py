@@ -1,46 +1,68 @@
-import os
+# /app/config.py
+
 import pytz
+from typing import List, Dict, Any
+from pydantic import field_validator, Field
+from pydantic_settings import BaseSettings
 
-# --- CORE ---
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_API_KEYS = [key.strip() for key in os.getenv("GEMINI_API_KEYS", "").split(',') if key.strip()]
-TAVILY_API_KEYS = [key.strip() for key in os.getenv("TAVILY_API_KEYS", "").split(',') if key.strip()]
-DATABASE_URL = os.getenv("DATABASE_URL")
-PORT = int(os.environ.get('PORT', 10000))
-ADMIN_ID = 5726630815
+class Settings(BaseSettings):
+    # --- CORE (Required from .env) ---
+    TELEGRAM_BOT_TOKEN: str
+    GEMINI_API_KEYS: List[str]
+    TAVILY_API_KEYS: List[str]
+    DATABASE_URL: str
+    ADMIN_ID: int
 
-# --- CHAT ---
-CHAT_TOKEN_LIMIT = 384000
-TELEGRAM_MESSAGE_LIMIT = 4096
+    # --- CORE (With defaults) ---
+    PORT: int = Field(default=10000, env="PORT")
 
-# --- MODELS ---
-AVAILABLE_MODELS = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]
-DEFAULT_MODEL = "gemini-2.5-flash"
-QNA_MODEL = "gemini-2.5-flash-lite"
-RESEARCH_MODEL = "gemini-2.5-pro"
-URL_SELECTION_MODEL = "gemini-2.5-flash"
+    # --- CHAT ---
+    CHAT_TOKEN_LIMIT: int = 384000
+    TELEGRAM_MESSAGE_LIMIT: int = 4096
 
-# --- LIMITS ---
-TAVILY_MONTHLY_CREDIT_LIMIT = 1000
-TAVILY_LIMIT_THRESHOLD_PERCENT = 0.97
-TAVILY_QNA_SEARCH_COST = 2
-TAVILY_ADVANCED_SEARCH_COST = 2
+    # --- MODELS ---
+    AVAILABLE_MODELS: List[str] = ["gemini-1.5-flash", "gemini-1.5-pro"]
+    DEFAULT_MODEL: str = "gemini-1.5-flash"
+    QNA_MODEL: str = "gemini-1.5-flash"
+    RESEARCH_MODEL: str = "gemini-1.5-pro"
+    URL_SELECTION_MODEL: str = "gemini-1.5-flash"
 
-DAILY_LIMITS = {
-    "gemini-2.5-flash": 250,
-    "gemini-2.5-pro": 100,
-    "gemini-2.5-flash-lite": 1000,
-}
-LIMIT_THRESHOLD_PERCENT = 0.95
+    # --- LIMITS ---
+    TAVILY_MONTHLY_CREDIT_LIMIT: int = 1000
+    TAVILY_LIMIT_THRESHOLD_PERCENT: float = 0.97
+    TAVILY_QNA_SEARCH_COST: int = 2
+    TAVILY_ADVANCED_SEARCH_COST: int = 2
+    LIMIT_THRESHOLD_PERCENT: float = 0.95
+    DAILY_LIMITS: Dict[str, int] = {
+        "gemini-1.5-flash": 1000,
+        "gemini-1.5-pro": 100,
+    }
 
-# --- TIMEZONES ---
+    # --- SAFETY ---
+    SAFETY_SETTINGS: List[Dict[str, str]] = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    ]
+
+    @field_validator('GEMINI_API_KEYS', 'TAVILY_API_KEYS', mode='before')
+    @classmethod
+    def split_str(cls, v: Any) -> List[str]:
+        """Automatically splits comma-separated strings from .env into a list."""
+        if isinstance(v, str):
+            return [key.strip() for key in v.split(',') if key.strip()]
+        return v
+
+    class Config:
+        # Pydantic will read from a .env file if it exists
+        env_file = ".env"
+        env_file_encoding = 'utf-8'
+
+# --- TIMEZONES (not part of BaseSettings as they are not from env) ---
 PACIFIC_TZ = pytz.timezone('US/Pacific')
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
 
-# --- SAFETY ---
-SAFETY_SETTINGS = [
-    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-]
+# --- SINGLETON INSTANCE ---
+# The entire application will import this `settings` object
+settings = Settings()
