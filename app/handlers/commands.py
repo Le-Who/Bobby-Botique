@@ -2,7 +2,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, Application
 
-from .. import config
+from ..config import settings
 from .. import database as db
 from ..utils.formatting import format_key_for_display
 from ..utils import time as time_utils
@@ -58,7 +58,7 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await db.is_authorized(update.effective_user.id): return
-    keyboard = [[InlineKeyboardButton(m, callback_data=f"model_{m}")] for m in config.AVAILABLE_MODELS]
+    keyboard = [[InlineKeyboardButton(m, callback_data=f"model_{m}")] for m in settings.AVAILABLE_MODELS]
     await update.message.reply_text("Выберите основную модель для разговора:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -88,7 +88,7 @@ async def key_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             for usage in usage_data:
                 model_name = usage['model_name']
                 count = usage['request_count']
-                limit = config.DAILY_LIMITS.get(model_name, 'N/A')
+                limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
                 status_lines.append(f"  - `{model_name}`: {count} / {limit}")
     status_lines.append(f"\nСброс лимитов произойдет в **{time_utils.get_kyiv_reset_time()}** по Киеву.")
     await update.message.reply_text("\n".join(status_lines), parse_mode='Markdown')
@@ -105,14 +105,14 @@ async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         display_name = format_key_for_display(key_row['api_key'])
         usage = await db.db_query("SELECT credit_usage FROM tavily_key_usage WHERE key_hash = ? AND usage_month = ?", (key_row['key_hash'], current_month))
         count = usage[0]['credit_usage'] if usage else 0
-        limit = config.TAVILY_MONTHLY_CREDIT_LIMIT
+        limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
         status_lines.append(f"🔑 **Ключ `{display_name}`**: {count} / {limit}")
     status_lines.append(f"\nЛимиты сбрасываются 1-го числа каждого месяца.")
     await update.message.reply_text("\n".join(status_lines), parse_mode='Markdown')
 
 async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
-    key_data = await db.get_available_gemini_key(config.DEFAULT_MODEL)
+    key_data = await db.get_available_gemini_key(settings.DEFAULT_MODEL)
     if not key_data:
         await update.message.reply_text("Нет доступных API ключей для выполнения запроса.")
         return
@@ -137,7 +137,7 @@ async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
     try:
         user_to_del = int(context.args[0])
-        if user_to_del == config.ADMIN_ID:
+        if user_to_del == settings.ADMIN_ID:
             await update.message.reply_text("Нельзя удалить администратора.")
             return
         await db.db_query("UPDATE users SET is_authorized = 0 WHERE user_id = ?", (user_to_del,))
