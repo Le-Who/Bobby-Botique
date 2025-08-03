@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes, CommandHandler
 from .. import config
 from .. import database as db
 from ..utils.formatting import format_key_for_display
-from ..utils import time_utils
+from ..utils import time as time_utils # <-- ИЗМЕНЕННАЯ СТРОКА
 from ..services import genai
 
 # --- COMMAND FUNCTIONS ---
