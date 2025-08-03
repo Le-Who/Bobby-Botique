@@ -1,11 +1,11 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pytz
 
 from .. import config
 
-def get_pacific_date() -> str:
-    """Возвращает текущую дату по тихоокеанскому времени в формате YYYY-MM-DD."""
-    return datetime.now(config.PACIFIC_TZ).strftime('%Y-%m-%d')
+def get_pacific_date() -> date:
+    """Возвращает текущую дату по тихоокеанскому времени как объект date."""
+    return datetime.now(config.PACIFIC_TZ).date()
 
 def get_current_month_str() -> str:
     """Возвращает текущий месяц в формате YYYY-MM."""
