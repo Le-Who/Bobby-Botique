@@ -1,13 +1,13 @@
 import pytz
 from typing import List, Dict, Any
-from pydantic import Field, field_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """
     Defines and validates all application settings using Pydantic.
     Reads from environment variables and/or a .env file.
-    This version is robust to handle quoted environment variables from hosting providers like Render.
+    This version uses a model_validator for robust parsing of env vars from hosting providers.
     """
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -28,14 +28,14 @@ class Settings(BaseSettings):
     CHAT_TOKEN_LIMIT: int = 384000
     TELEGRAM_MESSAGE_LIMIT: int = 4096
 
-    # --- MODELS (Corrected Names) ---
+    # --- MODELS ---
     AVAILABLE_MODELS: List[str] = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]
     DEFAULT_MODEL: str = "gemini-2.5-flash"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
     RESEARCH_MODEL: str = "gemini-2.5-pro"
     URL_SELECTION_MODEL: str = "gemini-2.5-flash"
 
-    # --- LIMITS (Corrected Names) ---
+    # --- LIMITS ---
     TAVILY_MONTHLY_CREDIT_LIMIT: int = 1000
     TAVILY_LIMIT_THRESHOLD_PERCENT: float = 0.97
     TAVILY_QNA_SEARCH_COST: int = 2
@@ -55,19 +55,23 @@ class Settings(BaseSettings):
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     ]
 
-    @field_validator('GEMINI_API_KEYS', 'TAVILY_API_KEYS', mode='before')
+    # THIS IS THE FIX: A robust model_validator that pre-processes raw env vars.
+    @model_validator(mode='before')
     @classmethod
-    def split_and_clean_str(cls, v: Any) -> List[str]:
+    def preprocess_comma_separated_lists(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Takes a raw value from an env var, cleans it, and splits it into a list.
-        Handles cases where the string is quoted (e.g., "key1,key2").
+        This validator runs before any other validation. It finds fields that are
+        expected to be lists but are provided as comma-separated strings, and
+        correctly converts them.
         """
-        if isinstance(v, str):
-            cleaned_v = v.strip().strip('"').strip("'")
-            return [key.strip() for key in cleaned_v.split(',') if key.strip()]
-        if isinstance(v, list):
-            return v
-        return []
+        list_fields = ['GEMINI_API_KEYS', 'TAVILY_API_KEYS']
+        for field in list_fields:
+            value = values.get(field)
+            if isinstance(value, str):
+                # Clean and split the string into a list
+                cleaned_v = value.strip().strip('"').strip("'")
+                values[field] = [key.strip() for key in cleaned_v.split(',') if key.strip()]
+        return values
 
 
 # --- TIMEZONES (not part of BaseSettings as they are not from env) ---
