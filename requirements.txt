@@ -7,3 +7,4 @@ tavily-python
 asyncpg
 httpx
 hypercorn
+pydantic-settings
