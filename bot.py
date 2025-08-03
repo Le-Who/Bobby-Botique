@@ -8,7 +8,8 @@ from hypercorn.config import Config as HypercornConfig
 from hypercorn.asyncio import serve
 
 # Импортируем наши модули
-from app import config, database
+from app.config import settings
+from app import database
 from app.handlers import commands, messages, callbacks
 
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
@@ -19,32 +20,25 @@ def health_check():
 
 async def run_bot_and_server():
     """Основная логика: запускает бота и веб-сервер параллельно."""
-    application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
     
     # Регистрация всех обработчиков
     commands.register(application)
     callbacks.register(application)
     messages.register(application)
     
-    # async with application управляет жизненным циклом: initialize() при входе, shutdown() при выходе
     async with application:
-        # Запускаем polling в фоновом режиме
         await application.start()
         await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         
-        # Конфигурируем и запускаем веб-сервер
         hypercorn_config = HypercornConfig()
-        hypercorn_config.bind = [f"0.0.0.0:{config.PORT}"]
+        hypercorn_config.bind = [f"0.0.0.0:{settings.PORT}"]
         
-        logging.info(f"Health check server will run on port {config.PORT}.")
+        logging.info(f"Health check server will run on port {settings.PORT}.")
         logging.info("Bot is running...")
         
-        # await serve(...) будет работать, пока приложение не будет остановлено.
-        # Пока он работает, бот, запущенный в фоне, продолжает обрабатывать обновления.
         await serve(flask_app, hypercorn_config)
         
-        # При завершении serve (например, при остановке сервиса на Render),
-        # останавливаем бота для чистого выхода.
         await application.updater.stop()
         await application.stop()
 
@@ -54,9 +48,6 @@ async def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
     )
     
-    if not all([config.TELEGRAM_BOT_TOKEN, config.GEMINI_API_KEYS, config.DATABASE_URL, config.TAVILY_API_KEYS]):
-        logging.warning("One or more environment variables are not set!")
-
     try:
         logging.info("Initializing database...")
         await database.init_db()
