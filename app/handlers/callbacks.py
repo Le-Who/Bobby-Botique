@@ -1,5 +1,3 @@
-# /app/handlers/callbacks.py
-
 import asyncio
 from telegram import Update
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
@@ -39,16 +37,21 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     
     action = query.data.split(':')[1]
     placeholder_message = query.message
-    original_message = query.message.reply_to_message
 
-    if not original_message:
-        await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
-        return
-
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # 1. Сначала обрабатываем "Отмену", так как ей не нужно исходное сообщение.
     if action == "cancel":
         await placeholder_message.delete()
         return
 
+    # 2. Теперь, для всех остальных действий, мы знаем, что нам нужно исходное сообщение.
+    # Проверяем его наличие.
+    original_message = query.message.reply_to_message
+    if not original_message:
+        await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
+        return
+
+    # 3. Продолжаем с остальной логикой.
     chat_state = await db.get_user_chat(original_message.from_user.id)
     
     if action == "vision_only":
@@ -67,14 +70,15 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     _, action, model_override = query.data.split(':')
     placeholder_message = query.message
-    original_message = query.message.reply_to_message
 
-    if not original_message:
-        await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
-        return
-
+    # Применяем ту же логику исправления, что и выше.
     if action == "cancel":
         await placeholder_message.edit_text("Операция отменена.")
+        return
+
+    original_message = query.message.reply_to_message
+    if not original_message:
+        await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
         return
     
     if action == "confirm":
