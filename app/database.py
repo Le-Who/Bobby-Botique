@@ -47,9 +47,9 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         except (asyncpg.exceptions.ConnectionDoesNotExistError, OSError) as e:
             logging.warning(f"DB connection error (attempt {attempt + 1}/{retries}): {e}. Retrying...")
             last_exception = e
-            await asyncio.sleep(1 + attempt) # Exponential backoff
+            await asyncio.sleep(1 + attempt)
         except Exception as e:
-            logging.error(f"An unexpected database error occurred: {e}", exc_info=True)
+            logging.error(f"An unexpected database error occurred during query: {query_prepared[:100]}... - {e}", exc_info=False)
             raise e
 
     logging.error("All database retries failed.")
@@ -68,11 +68,25 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
     
+    # --- ИСПРАВЛЕННЫЙ БЛОК МИГРАЦИИ ---
     try:
-        await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
-        logging.info("Schema migration successful.")
-    except asyncpg.exceptions.DuplicateColumnError:
-        logging.info("Schema migration not needed or already applied.")
+        # Пытаемся выполнить миграцию только если старая колонка существует
+        check_column_query = """
+        SELECT column_name 
+        FROM information_schema.columns 
+        WHERE table_name='tavily_key_usage' AND column_name='request_count';
+        """
+        column_exists = await db_query(check_column_query)
+        if column_exists:
+            logging.info("Old column 'request_count' found. Attempting schema migration...")
+            await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
+            logging.info("Schema migration successful.")
+        else:
+            logging.info("Schema is up to date. Migration not needed.")
+    except asyncpg.PostgresError as e:
+        # Ловим любую ошибку Postgres и считаем, что миграция не нужна или уже применена
+        logging.info(f"Schema migration skipped or already applied (Error: {e})")
+    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
     
     await db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO NOTHING", (config.ADMIN_ID,))
     for key in config.GEMINI_API_KEYS:
