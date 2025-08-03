@@ -1,0 +1,9 @@
+services:
+  telegram-gemini-bot:
+    build: .
+    container_name: telegram-gemini-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
