@@ -2,14 +2,15 @@ import logging
 import json
 import hashlib
 import asyncio
-from datetime import datetime
+import re
+from datetime import datetime, date
 import pytz
 import asyncpg
 from asyncpg.pool import Pool
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
-from . import config
+from .config import settings, PACIFIC_TZ
 
 db_pool: Optional[Pool] = None
 
@@ -22,12 +23,10 @@ class ChatState:
     system_prompt: Optional[str]
 
 def _prepare_query(query: str) -> str:
-    """Replaces '?' and '%s' with numbered placeholders like $1, $2 for asyncpg."""
-    query_prepared = query.replace('?', '$').replace('%s', '$')
-    count = query_prepared.count('$')
-    for i in range(1, count + 1):
-        query_prepared = query_prepared.replace('$', f'${i}', 1)
-    return query_prepared
+    placeholders = re.findall(r'(\?|%s)', query)
+    for i, _ in enumerate(placeholders, 1):
+        query = re.sub(r'(\?|%s)', f'${i}', query, 1)
+    return query
 
 async def db_query(query: str, params: tuple = (), retries: int = 3):
     if not db_pool:
@@ -47,9 +46,9 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         except (asyncpg.exceptions.ConnectionDoesNotExistError, OSError) as e:
             logging.warning(f"DB connection error (attempt {attempt + 1}/{retries}): {e}. Retrying...")
             last_exception = e
-            await asyncio.sleep(1 + attempt) # Exponential backoff
+            await asyncio.sleep(1 + attempt)
         except Exception as e:
-            logging.error(f"An unexpected database error occurred: {e}", exc_info=True)
+            logging.error(f"An unexpected database error occurred during query: {query_prepared[:100]}... - {e}", exc_info=False)
             raise e
 
     logging.error("All database retries failed.")
@@ -57,9 +56,9 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
 
 async def init_db():
     global db_pool
-    if not config.DATABASE_URL:
+    if not settings.DATABASE_URL:
         raise Exception("DATABASE_URL not set")
-    db_pool = await asyncpg.create_pool(dsn=config.DATABASE_URL, min_size=1, max_size=10)
+    db_pool = await asyncpg.create_pool(dsn=settings.DATABASE_URL, min_size=1, max_size=10)
     
     await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0)""")
     await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
@@ -69,16 +68,22 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
     
     try:
-        await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
-        logging.info("Schema migration successful.")
-    except asyncpg.exceptions.DuplicateColumnError:
-        logging.info("Schema migration not needed or already applied.")
+        check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
+        column_exists = await db_query(check_column_query)
+        if column_exists:
+            logging.info("Old column 'request_count' found. Attempting schema migration...")
+            await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
+            logging.info("Schema migration successful.")
+        else:
+            logging.info("Schema is up to date. Migration not needed.")
+    except asyncpg.PostgresError as e:
+        logging.info(f"Schema migration skipped or already applied (Error: {e})")
     
-    await db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO NOTHING", (config.ADMIN_ID,))
-    for key in config.GEMINI_API_KEYS:
+    await db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
+    for key in settings.GEMINI_API_KEYS:
         key_hash = hashlib.sha256(key.encode()).hexdigest()
         await db_query("INSERT INTO api_keys (key_hash, api_key) VALUES (?, ?) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
-    for key in config.TAVILY_API_KEYS:
+    for key in settings.TAVILY_API_KEYS:
         key_hash = hashlib.sha256(key.encode()).hexdigest()
         await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES (?, ?) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
 
@@ -88,12 +93,12 @@ async def get_user_chat(user_id: int) -> ChatState:
         row = result[0]
         return ChatState(
             history=json.loads(row['history']) if row['history'] else [],
-            model=row['model'] or config.DEFAULT_MODEL,
+            model=row['model'] or settings.DEFAULT_MODEL,
             token_count=row['token_count'] or 0,
             search_enabled=bool(row['search_enabled']),
             system_prompt=row['system_prompt'] or None
         )
-    return ChatState(history=[], model=config.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None)
+    return ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None)
 
 async def update_user_chat(user_id: int, chat_state: ChatState):
     history_json = json.dumps(chat_state.history)
@@ -108,8 +113,8 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
     await db_query(query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
-    today_pacific = datetime.now(config.PACIFIC_TZ).strftime('%Y-%m-%d')
-    daily_limit = config.DAILY_LIMITS.get(model_name)
+    today_pacific: date = datetime.now(PACIFIC_TZ).date()
+    daily_limit = settings.DAILY_LIMITS.get(model_name)
     if not daily_limit:
         keys = await db_query("SELECT * FROM api_keys")
         return keys[0] if keys else None
@@ -117,12 +122,12 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     for key_row in all_keys:
         usage = await db_query("SELECT request_count FROM key_usage WHERE key_hash = ? AND model_name = ? AND usage_date = ?", (key_row['key_hash'], model_name, today_pacific))
         request_count = usage[0]['request_count'] if usage else 0
-        if request_count < daily_limit * config.LIMIT_THRESHOLD_PERCENT:
+        if request_count < daily_limit * settings.LIMIT_THRESHOLD_PERCENT:
             return key_row
     return None
 
 async def increment_gemini_key_usage(key_hash: str, model_name: str):
-    today_pacific = datetime.now(config.PACIFIC_TZ).strftime('%Y-%m-%d')
+    today_pacific: date = datetime.now(PACIFIC_TZ).date()
     query = """
     INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES (?, ?, ?, 1)
     ON CONFLICT (key_hash, model_name, usage_date)
@@ -136,7 +141,7 @@ async def get_available_tavily_key():
     for key_row in all_keys:
         usage = await db_query("SELECT credit_usage FROM tavily_key_usage WHERE key_hash = ? AND usage_month = ?", (key_row['key_hash'], current_month))
         credit_usage = usage[0]['credit_usage'] if usage else 0
-        if credit_usage < config.TAVILY_MONTHLY_CREDIT_LIMIT * config.TAVILY_LIMIT_THRESHOLD_PERCENT:
+        if credit_usage < settings.TAVILY_MONTHLY_CREDIT_LIMIT * settings.TAVILY_LIMIT_THRESHOLD_PERCENT:
             return key_row
     return None
 
@@ -150,7 +155,7 @@ async def increment_tavily_key_usage(key_hash: str, cost: int):
     await db_query(query, (key_hash, current_month, cost, cost))
 
 def is_admin(user_id: int) -> bool:
-    return user_id == config.ADMIN_ID
+    return user_id == settings.ADMIN_ID
 
 async def is_authorized(user_id: int) -> bool:
     if is_admin(user_id):
