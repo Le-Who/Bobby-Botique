@@ -3,7 +3,7 @@ import json
 import hashlib
 import asyncio
 import re
-from datetime import datetime
+from datetime import datetime, date
 import pytz
 import asyncpg
 from asyncpg.pool import Pool
@@ -23,17 +23,9 @@ class ChatState:
     system_prompt: Optional[str]
 
 def _prepare_query(query: str) -> str:
-    """
-    Correctly replaces '?' or '%s' placeholders with numbered asyncpg placeholders like $1, $2.
-    This version is safe and uses regex to avoid incorrect replacements.
-    """
-    # Find all instances of '?' or '%s'
     placeholders = re.findall(r'(\?|%s)', query)
-    
-    # Sequentially replace each placeholder with a numbered one ($1, $2, etc.)
     for i, _ in enumerate(placeholders, 1):
         query = re.sub(r'(\?|%s)', f'${i}', query, 1)
-        
     return query
 
 async def db_query(query: str, params: tuple = (), retries: int = 3):
@@ -76,11 +68,7 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
     
     try:
-        check_column_query = """
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_name='tavily_key_usage' AND column_name='request_count';
-        """
+        check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
         column_exists = await db_query(check_column_query)
         if column_exists:
             logging.info("Old column 'request_count' found. Attempting schema migration...")
@@ -125,7 +113,8 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
     await db_query(query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
-    today_pacific = datetime.now(config.PACIFIC_TZ).strftime('%Y-%m-%d')
+    # --- ИСПРАВЛЕНО ---
+    today_pacific: date = datetime.now(config.PACIFIC_TZ).date()
     daily_limit = config.DAILY_LIMITS.get(model_name)
     if not daily_limit:
         keys = await db_query("SELECT * FROM api_keys")
@@ -139,7 +128,8 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     return None
 
 async def increment_gemini_key_usage(key_hash: str, model_name: str):
-    today_pacific = datetime.now(config.PACIFIC_TZ).strftime('%Y-%m-%d')
+    # --- ИСПРАВЛЕНО ---
+    today_pacific: date = datetime.now(config.PACIFIC_TZ).date()
     query = """
     INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES (?, ?, ?, 1)
     ON CONFLICT (key_hash, model_name, usage_date)
