@@ -1,5 +1,6 @@
 import logging
 import json
+import io
 from PIL import Image
 from typing import Optional
 from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,10 +11,8 @@ from .. import services
 from ..utils.messaging import send_long_message
 from .. import state
 
-# --- ASYNC TASK PROCESSOR (REFACTORED) ---
-
 async def _resolve_gemini_request(preferred_model: str):
-    key = db.get_available_gemini_key(preferred_model)
+    key = await db.get_available_gemini_key(preferred_model)
     if key:
         return key, preferred_model, None
 
@@ -23,7 +22,7 @@ async def _resolve_gemini_request(preferred_model: str):
     for fallback_model in fallback_priority:
         if fallback_model == preferred_model:
             continue
-        key = db.get_available_gemini_key(fallback_model)
+        key = await db.get_available_gemini_key(fallback_model)
         if key:
             logging.info(f"Found available fallback key for model {fallback_model}.")
             return key, fallback_model, "confirm_fallback"
@@ -59,10 +58,9 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     final_answer, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [localization_prompt]}], model_used)
     
     await send_long_message(placeholder_message, final_answer)
-    db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+    await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None):
-    # Step 1: Search for sources
     await placeholder_message.edit_text("🔎 Ищу источники...")
     search_result = await services.tavily_search_agent(user_message, search_type='search')
     if search_result.get("error"):
@@ -74,7 +72,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         await placeholder_message.edit_text("Не удалось найти релевантные источники для исследования.")
         return
 
-    # Step 2: Select best URLs with a fast model
     await placeholder_message.edit_text(f"✅ Найдено {len(search_results)} источников. Выбираю лучшие...")
     gemini_key, model_used, _ = await _resolve_gemini_request(config.URL_SELECTION_MODEL)
     if not gemini_key:
@@ -94,14 +91,13 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     )
     
     selected_urls_str, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [selection_prompt]}], model_used)
-    db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+    await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
     selected_urls = [url.strip() for url in selected_urls_str.split(',') if url.strip().startswith('http')]
 
     if not selected_urls:
         await placeholder_message.edit_text("Не удалось выбрать подходящие источники для глубокого анализа. Попробуйте переформулировать запрос.")
         return
 
-    # Step 3: Use the rich content from the initial search of the selected URLs
     await placeholder_message.edit_text(f"✅ Выбрано {len(selected_urls)} источников. Собираю контент...")
     
     final_context_list = []
@@ -117,7 +113,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         await placeholder_message.edit_text("Не удалось собрать контент с выбранных страниц.")
         return
 
-    # Step 4: Synthesize final answer
     await placeholder_message.edit_text(f"🧠 Синтезирую ответ на основе {len(full_context)} символов...")
     model_for_synthesis = model_override or config.RESEARCH_MODEL
     gemini_key, model_used, _ = await _resolve_gemini_request(model_for_synthesis)
@@ -154,13 +149,13 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     
     if response_text:
         await send_long_message(placeholder_message, response_text)
-        db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
-        db.update_user_chat(user_id, chat_state)
+        await db.update_user_chat(user_id, chat_state)
     else:
         chat_state.history.pop()
-        db.update_user_chat(user_id, chat_state)
+        await db.update_user_chat(user_id, chat_state)
         await placeholder_message.edit_text("Получен пустой ответ от API.")
 
 async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None):
@@ -190,32 +185,32 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     
     if response_text:
         await send_long_message(placeholder_message, response_text)
-        db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
-        db.update_user_chat(user_id, chat_state)
+        await db.update_user_chat(user_id, chat_state)
     else:
         chat_state.history.pop()
-        db.update_user_chat(user_id, chat_state)
+        await db.update_user_chat(user_id, chat_state)
         await placeholder_message.edit_text("Получен пустой ответ от API.")
 
-async def _handle_photo(placeholder_message: Message, update: Update, chat_state: db.ChatState):
+async def _handle_photo(placeholder_message: Message, original_message: Message, chat_state: db.ChatState):
     gemini_key, model_used, resolution = await _resolve_gemini_request(chat_state.model)
     if resolution:
         await placeholder_message.edit_text(f"🚫 Ключи для модели {chat_state.model} для обработки фото закончились.")
         return
 
-    photo_file = await update.message.photo[-1].get_file()
+    photo_file = await original_message.photo[-1].get_file()
     photo_data = await photo_file.download_as_bytearray()
     img = Image.open(io.BytesIO(photo_data))
-    prompt = update.message.caption or "Опиши это изображение."
+    prompt = original_message.caption or "Опиши это изображение."
     response_text, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [prompt, img]}], model_used)
     
     await send_long_message(placeholder_message, response_text or "Не удалось обработать изображение.")
-    db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+    await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
-async def _handle_complex_agent_search(placeholder_message: Message, update: Update, search_prefix: str):
-    user_id = update.effective_user.id
+async def _handle_complex_agent_search(placeholder_message: Message, original_message: Message, search_prefix: str):
+    user_id = original_message.effective_user.id
     
     await placeholder_message.edit_text("🖼️ Анализирую изображение...")
     vision_model = config.RESEARCH_MODEL
@@ -224,7 +219,7 @@ async def _handle_complex_agent_search(placeholder_message: Message, update: Upd
         await placeholder_message.edit_text(f"🚫 Ключи для модели {vision_model} (анализ фото) закончились.")
         return
 
-    photo_file = await update.message.photo[-1].get_file()
+    photo_file = await original_message.photo[-1].get_file()
     photo_data = await photo_file.download_as_bytearray()
     img = Image.open(io.BytesIO(photo_data))
     
@@ -238,13 +233,13 @@ async def _handle_complex_agent_search(placeholder_message: Message, update: Upd
     )
     
     search_query, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [analysis_prompt, img]}], vision_model)
-    db.increment_gemini_key_usage(gemini_key['key_hash'], vision_model)
+    await db.increment_gemini_key_usage(gemini_key['key_hash'], vision_model)
 
     if not search_query:
         await placeholder_message.edit_text("Не удалось проанализировать изображение для поиска.")
         return
 
-    chat_state = db.get_user_chat(user_id)
+    chat_state = await db.get_user_chat(user_id)
     if search_prefix == '?':
         await _handle_qna_search(placeholder_message, search_query, chat_state)
     else:
@@ -255,7 +250,7 @@ async def process_long_request(placeholder_message: Message, update: Update, con
     try:
         is_photo = bool(update.message.photo)
         text = update.message.text or update.message.caption or ""
-        chat_state = db.get_user_chat(user_id)
+        chat_state = await db.get_user_chat(user_id)
 
         if is_photo and (text.startswith('?') or text.startswith('??')):
             keyboard = [
@@ -270,7 +265,7 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             return
         
         if is_photo:
-            await _handle_photo(placeholder_message, update, chat_state)
+            await _handle_photo(placeholder_message, update.message, chat_state)
             return
 
         if text.startswith('??'):
