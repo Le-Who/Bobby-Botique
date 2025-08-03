@@ -1,10 +1,14 @@
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CommandHandler
 
 from .. import config
 from .. import database as db
 from ..utils.formatting import format_key_for_display
+from ..utils import time_utils
 from ..services import genai
+
+# --- COMMAND FUNCTIONS ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -70,7 +74,7 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def key_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
-    today_pacific = db.get_pacific_date()
+    today_pacific = time_utils.get_pacific_date()
     all_keys = db.db_query("SELECT * FROM api_keys")
     if not all_keys:
         await update.message.reply_text("Нет ключей Gemini в базе данных.")
@@ -88,12 +92,12 @@ async def key_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 count = usage['request_count']
                 limit = config.DAILY_LIMITS.get(model_name, 'N/A')
                 status_lines.append(f"  - `{model_name}`: {count} / {limit}")
-    status_lines.append(f"\nСброс лимитов произойдет в **{db.get_kyiv_reset_time()}** по Киеву.")
+    status_lines.append(f"\nСброс лимитов произойдет в **{time_utils.get_kyiv_reset_time()}** по Киеву.")
     await update.message.reply_text("\n".join(status_lines), parse_mode='Markdown')
 
 async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
-    current_month = db.get_current_month_str()
+    current_month = time_utils.get_current_month_str()
     all_keys = db.db_query("SELECT * FROM tavily_api_keys")
     if not all_keys:
         await update.message.reply_text("Нет ключей Tavily в базе данных.")
@@ -148,3 +152,19 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     rows = db.db_query("SELECT user_id FROM users WHERE is_authorized = 1")
     user_ids = [str(row['user_id']) for row in rows]
     await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(user_ids))
+
+# --- REGISTRATION ---
+def register(application):
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("newchat", new_chat_command))
+    application.add_handler(CommandHandler("model", model_command))
+    application.add_handler(CommandHandler("setprompt", set_prompt_command))
+    application.add_handler(CommandHandler("res", research_mode_command))
+    
+    # Admin Handlers
+    application.add_handler(CommandHandler("keystatus", key_status_command))
+    application.add_handler(CommandHandler("credits", credits_command))
+    application.add_handler(CommandHandler("listmodels", list_models_command))
+    application.add_handler(CommandHandler("adduser", add_user_command))
+    application.add_handler(CommandHandler("deluser", del_user_command))
+    application.add_handler(CommandHandler("listusers", list_users_command))
