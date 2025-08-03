@@ -3,14 +3,12 @@ import logging
 import threading
 import asyncio
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-from typing import Dict
 
 # Импортируем наши модули
 from app import config, database
 from app.handlers import commands, messages, callbacks
 
-# --- GLOBAL STATE ---
-ACTIVE_USER_TASKS: Dict[int, asyncio.Task] = {}
+# ACTIVE_USER_TASKS теперь живет в app.state
 
 def main():
     logging.basicConfig(
@@ -21,6 +19,7 @@ def main():
         logging.warning("One or more environment variables are not set! Bot may have limited functionality.")
 
     # Запускаем веб-сервер для health check в отдельном потоке
+    # Flask app теперь находится в commands, так как там есть /start, который его использует
     flask_thread = threading.Thread(target=commands.run_flask, daemon=True)
     flask_thread.start()
     logging.info(f"Health check server started on port {config.PORT}.")
