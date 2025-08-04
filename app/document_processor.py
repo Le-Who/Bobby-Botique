@@ -60,52 +60,129 @@ class DocumentProcessor:
     async def _process_pdf(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
         """Обрабатывает PDF документ"""
         try:
-            # Используем PyMuPDF для лучшего извлечения текста
-            doc = fitz.open(stream=file_data, filetype="pdf")
+            # Создаем временный файл для обработки
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+                temp_file.write(file_data)
+                temp_file_path = temp_file.name
             
-            if len(doc) > self.max_pages:
-                return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
-            
-            text_content = []
-            page_info = []
-            
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
+            try:
+                # Проверяем, что файл является корректным PDF
+                if not file_data.startswith(b'%PDF'):
+                    return {"error": "Invalid PDF file format"}
                 
-                # Извлекаем текст
-                text = page.get_text()
-                if text.strip():
-                    text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                # Используем PyMuPDF для лучшего извлечения текста
+                try:
+                    doc = fitz.open(temp_file_path)
+                except Exception as fitz_error:
+                    logging.warning(f"PyMuPDF failed for {filename}, trying PyPDF2: {fitz_error}")
+                    # Fallback на PyPDF2
+                    return await self._process_pdf_with_pypdf2(file_data, filename, user_id)
                 
-                # Извлекаем изображения (если есть)
-                image_list = page.get_images()
-                if image_list:
-                    page_info.append(f"Page {page_num + 1}: {len(image_list)} images found")
+                if len(doc) > self.max_pages:
+                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
                 
-                # Проверяем лимит токенов
-                if len('\n'.join(text_content)) > 100000:  # Примерный лимит
-                    text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
-                    break
-            
-            doc.close()
-            
-            full_text = '\n\n'.join(text_content)
-            
-            # Сохраняем в базу данных
-            await self._save_document_content(user_id, filename, full_text, len(doc))
-            
-            return {
-                "success": True,
-                "filename": filename,
-                "pages": len(doc),
-                "text_length": len(full_text),
-                "content": full_text,
-                "page_info": page_info
-            }
+                text_content = []
+                page_info = []
+                
+                for page_num in range(len(doc)):
+                    page = doc.load_page(page_num)
+                    
+                    # Извлекаем текст
+                    text = page.get_text()
+                    if text.strip():
+                        text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                    
+                    # Извлекаем изображения (если есть)
+                    image_list = page.get_images()
+                    if image_list:
+                        page_info.append(f"Page {page_num + 1}: {len(image_list)} images found")
+                    
+                    # Проверяем лимит токенов
+                    if len('\n'.join(text_content)) > 100000:  # Примерный лимит
+                        text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                        break
+                
+                doc.close()
+                
+                full_text = '\n\n'.join(text_content)
+                
+                # Сохраняем в базу данных
+                await self._save_document_content(user_id, filename, full_text, len(doc))
+                
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "pages": len(doc),
+                    "text_length": len(full_text),
+                    "content": full_text,
+                    "page_info": page_info
+                }
+                
+            finally:
+                # Удаляем временный файл
+                if os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
             
         except Exception as e:
-            logging.error(f"Error processing PDF {filename}: {e}")
+            logging.error(f"Error processing PDF {filename}: {e}", exc_info=True)
+            await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
+    
+    async def _process_pdf_with_pypdf2(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+        """Обрабатывает PDF документ с использованием PyPDF2 (fallback)"""
+        try:
+            # Создаем временный файл для обработки
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+                temp_file.write(file_data)
+                temp_file_path = temp_file.name
+            
+            try:
+                # Используем PyPDF2 как fallback
+                with open(temp_file_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                    
+                    if len(pdf_reader.pages) > self.max_pages:
+                        return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
+                    
+                    text_content = []
+                    
+                    for page_num, page in enumerate(pdf_reader.pages):
+                        try:
+                            text = page.extract_text()
+                            if text.strip():
+                                text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                        except Exception as page_error:
+                            logging.warning(f"Error extracting text from page {page_num + 1}: {page_error}")
+                            text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
+                        
+                        # Проверяем лимит токенов
+                        if len('\n'.join(text_content)) > 100000:
+                            text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                            break
+                    
+                    full_text = '\n\n'.join(text_content)
+                    
+                    # Сохраняем в базу данных
+                    await self._save_document_content(user_id, filename, full_text, len(pdf_reader.pages))
+                    
+                    return {
+                        "success": True,
+                        "filename": filename,
+                        "pages": len(pdf_reader.pages),
+                        "text_length": len(full_text),
+                        "content": full_text,
+                        "method": "PyPDF2"
+                    }
+                    
+            finally:
+                # Удаляем временный файл
+                if os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
+                    
+        except Exception as e:
+            logging.error(f"Error processing PDF with PyPDF2 {filename}: {e}", exc_info=True)
+            await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
+            return {"error": f"Error processing PDF with PyPDF2: {str(e)}"}
     
     async def _process_word(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
         """Обрабатывает Word документ"""
@@ -161,7 +238,8 @@ class DocumentProcessor:
                     os.unlink(temp_file_path)
                     
         except Exception as e:
-            logging.error(f"Error processing Word document {filename}: {e}")
+            logging.error(f"Error processing Word document {filename}: {e}", exc_info=True)
+            await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
     
     async def _save_document_content(self, user_id: int, filename: str, content: str, pages: int):
