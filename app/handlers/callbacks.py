@@ -207,7 +207,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "📄 **Загрузите файл как новый документ**\n\n"
             "Отправьте файл еще раз, и он будет сохранен как новый документ.",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+            ])
         )
         return
     
@@ -261,7 +265,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 Страниц: {document['pages']}\n"
             f"📅 Загружен: {document['created_at'][:10]}\n\n"
             "Теперь вы можете задавать вопросы по этому документу.",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Назад к списку", callback_data="doc:select_document")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+            ])
         )
         return
     

@@ -73,9 +73,18 @@ class DocumentProcessor:
             duplicate = await self._check_duplicate_file(user_id, file_hash, filename)
             
             if duplicate:
+                # Правильно обрабатываем datetime
+                created_date = duplicate['created_at']
+                if hasattr(created_date, 'strftime'):
+                    # Это объект datetime
+                    date_str = created_date.strftime('%Y-%m-%d')
+                else:
+                    # Это строка
+                    date_str = str(created_date)[:10]
+                
                 return {
                     "error": "duplicate",
-                    "message": f"Файл '{filename}' уже был загружен ранее как '{duplicate['filename']}' ({duplicate['created_at'][:10]})",
+                    "message": f"Файл '{filename}' уже был загружен ранее как '{duplicate['filename']}' ({date_str})",
                     "duplicate_info": duplicate
                 }
             

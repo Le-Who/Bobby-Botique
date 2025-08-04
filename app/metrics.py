@@ -151,10 +151,28 @@ class MetricsCollector:
                 self.metrics.cache_hits = row['total_cache_hits']
                 self.metrics.cache_misses = row['total_cache_misses']
                 
+                # Правильно обрабатываем JSONB поля
                 if row['api_calls']:
-                    self.metrics.api_calls = dict(row['api_calls']) if isinstance(row['api_calls'], dict) else {}
+                    if isinstance(row['api_calls'], dict):
+                        self.metrics.api_calls = row['api_calls']
+                    elif isinstance(row['api_calls'], str):
+                        try:
+                            self.metrics.api_calls = json.loads(row['api_calls'])
+                        except:
+                            self.metrics.api_calls = {}
+                    else:
+                        self.metrics.api_calls = {}
+                
                 if row['model_usage']:
-                    self.metrics.model_usage = dict(row['model_usage']) if isinstance(row['model_usage'], dict) else {}
+                    if isinstance(row['model_usage'], dict):
+                        self.metrics.model_usage = row['model_usage']
+                    elif isinstance(row['model_usage'], str):
+                        try:
+                            self.metrics.model_usage = json.loads(row['model_usage'])
+                        except:
+                            self.metrics.model_usage = {}
+                    else:
+                        self.metrics.model_usage = {}
             
             # Загружаем дневные метрики за последние 7 дней
             daily_result = await db.db_query("""

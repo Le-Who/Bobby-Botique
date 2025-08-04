@@ -147,7 +147,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Записываем метрики
-        await metrics_collector.record_api_call("document_processing", document.file_name)
+        await metrics_collector.record_api_call("document_processing")
         
     except Exception as e:
         logging.error(f"Error processing document: {e}")

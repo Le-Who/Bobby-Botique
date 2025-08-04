@@ -200,7 +200,9 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if metrics['model_usage']:
             text += "**🤖 Использование моделей:**\n"
             for model, count in metrics['model_usage'].items():
-                text += f"• {model}: `{count}`\n"
+                # Пропускаем записи, которые содержат имена файлов (это ошибки в логике)
+                if not any(char in model for char in ['/', '\\', '.pdf', '.docx', '.doc']):
+                    text += f"• {model}: `{count}`\n"
             text += "\n"
         
         # Добавляем статус ключей Gemini
@@ -240,7 +242,9 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if metrics['daily_metrics']:
             text += "**📈 История за последние дни:**\n"
             for date_str, daily_data in list(metrics['daily_metrics'].items())[:5]:  # Последние 5 дней
-                text += f"• {date_str}: {daily_data['requests']} запросов, {daily_data['errors']} ошибок\n"
+                requests = daily_data.get('requests', 0)
+                errors = daily_data.get('errors', 0)
+                text += f"• {date_str}: {requests} запросов, {errors} ошибок\n"
             text += "\n"
         
         # Добавляем последние ошибки
