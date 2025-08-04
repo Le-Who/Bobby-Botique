@@ -118,6 +118,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await processing_msg.edit_text(f"❌ Ошибка обработки: {result['error']}")
                 return
         
+        # Получаем статистику пользователя для отображения лимитов
+        from ..document_processor import document_processor
+        user_stats = await document_processor.get_user_document_stats(user_id)
+        
         # Отправляем результат
         success_text = (
             f"✅ Документ обработан успешно!\n\n"
@@ -131,7 +135,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result.get('tables'):
             success_text += f"📊 Таблиц: {result['tables']}\n"
         
-        success_text += "\n\n💡 **Как задавать вопросы:**\n• Просто напишите ваш вопрос\n• Например: \"Какие основные пункты?\", \"Что говорится о...?\"\n• Система автоматически найдет ответ в документе"
+        success_text += f"\n📋 **Ваши документы:** {user_stats['document_count']}/5\n"
+        if user_stats['limit_reached']:
+            success_text += "⚠️ Достигнут лимит документов (5). Старые документы будут автоматически удалены.\n"
+        
+        success_text += "\n💡 **Как задавать вопросы:**\n• Просто напишите ваш вопрос\n• Например: \"Какие основные пункты?\", \"Что говорится о...?\"\n• Система автоматически найдет ответ в документе\n\n"
+        success_text += "📅 **Срок хранения:** 3 дня (автоматическая очистка)"
         
         # Создаем кнопки для управления документом
         keyboard = [

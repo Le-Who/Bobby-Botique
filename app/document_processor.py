@@ -53,6 +53,52 @@ class DocumentProcessor:
             logging.error(f"Error checking duplicate file: {e}")
             return None
     
+    async def _check_document_limit(self, user_id: int) -> bool:
+        """Проверяет, не превышен ли лимит документов для пользователя"""
+        try:
+            result = await db.db_query(
+                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
+                (user_id,)
+            )
+            doc_count = result[0]['doc_count'] if result else 0
+            return doc_count < 5  # Максимум 5 документов на пользователя
+        except Exception as e:
+            logging.error(f"Error checking document limit: {e}")
+            return True  # В случае ошибки разрешаем загрузку
+    
+    async def _cleanup_oldest_documents(self, user_id: int, keep_count: int = 4) -> int:
+        """Удаляет старые документы пользователя, оставляя указанное количество"""
+        try:
+            # Получаем ID старых документов для удаления
+            result = await db.db_query("""
+                SELECT id FROM user_documents 
+                WHERE user_id = ? 
+                ORDER BY created_at ASC
+                OFFSET ?
+            """, (user_id, keep_count))
+            
+            if not result:
+                return 0
+            
+            # Удаляем старые документы
+            old_doc_ids = [row['id'] for row in result]
+            if old_doc_ids:
+                placeholders = ','.join(['?' for _ in old_doc_ids])
+                await db.db_query(f"""
+                    DELETE FROM user_documents 
+                    WHERE id IN ({placeholders})
+                """, old_doc_ids)
+                
+                deleted_count = len(old_doc_ids)
+                logging.info(f"Cleaned up {deleted_count} oldest documents for user {user_id}")
+                return deleted_count
+            
+            return 0
+            
+        except Exception as e:
+            logging.error(f"Error cleaning up oldest documents: {e}")
+            return 0
+    
     async def process_document(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
         """Обрабатывает документ и возвращает извлеченный текст"""
         if not DOCUMENT_SUPPORT:
@@ -67,6 +113,12 @@ class DocumentProcessor:
             file_ext = Path(filename).suffix.lower()
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
+            
+            # Проверяем лимит документов
+            if not await self._check_document_limit(user_id):
+                # Если лимит превышен, удаляем самый старый документ
+                await self._cleanup_oldest_documents(user_id, 4)
+                logging.info(f"Document limit exceeded for user {user_id}, removed oldest document")
             
             # Вычисляем хэш файла и проверяем дубликаты
             file_hash = self._calculate_file_hash(file_data)
@@ -450,6 +502,103 @@ class DocumentProcessor:
             logging.error(f"Error deleting document: {e}")
             return False
 
+    async def cleanup_old_documents(self, days_old: int = 3) -> int:
+        """Очищает документы старше указанного количества дней"""
+        try:
+            result = await db.db_query("""
+                DELETE FROM user_documents 
+                WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '? days'
+            """, (days_old,))
+            
+            deleted_count = result[0]['count'] if result else 0
+            logging.info(f"Cleaned up {deleted_count} old documents (older than {days_old} days)")
+            return deleted_count
+            
+        except Exception as e:
+            logging.error(f"Error cleaning up old documents: {e}")
+            return 0
+    
+    async def get_document_stats(self) -> Dict[str, Any]:
+        """Получает статистику документов"""
+        try:
+            # Общее количество документов
+            total_result = await db.db_query("SELECT COUNT(*) as total FROM user_documents")
+            total_docs = total_result[0]['total'] if total_result else 0
+            
+            # Размер БД (приблизительно)
+            size_result = await db.db_query("""
+                SELECT 
+                    COUNT(*) as doc_count,
+                    COALESCE(SUM(file_size), 0) as total_size,
+                    COALESCE(AVG(file_size), 0) as avg_size
+                FROM user_documents
+            """)
+            
+            if size_result:
+                stats = size_result[0]
+                return {
+                    'total_documents': stats['doc_count'],
+                    'total_size_chars': stats['total_size'],
+                    'average_size_chars': stats['avg_size'],
+                    'total_size_mb': stats['total_size'] / (1024 * 1024) if stats['total_size'] else 0
+                }
+            
+            return {'total_documents': 0, 'total_size_chars': 0, 'average_size_chars': 0, 'total_size_mb': 0}
+            
+        except Exception as e:
+            logging.error(f"Error getting document stats: {e}")
+            return {'total_documents': 0, 'total_size_chars': 0, 'average_size_chars': 0, 'total_size_mb': 0}
+
+    async def get_user_document_stats(self, user_id: int) -> Dict[str, Any]:
+        """Получает статистику документов конкретного пользователя"""
+        try:
+            # Количество документов пользователя
+            count_result = await db.db_query(
+                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
+                (user_id,)
+            )
+            doc_count = count_result[0]['doc_count'] if count_result else 0
+            
+            # Размер документов пользователя
+            size_result = await db.db_query("""
+                SELECT 
+                    COALESCE(SUM(file_size), 0) as total_size,
+                    COALESCE(AVG(file_size), 0) as avg_size
+                FROM user_documents 
+                WHERE user_id = ?
+            """, (user_id,))
+            
+            if size_result:
+                stats = size_result[0]
+                return {
+                    'document_count': doc_count,
+                    'total_size_chars': stats['total_size'],
+                    'average_size_chars': stats['avg_size'],
+                    'total_size_mb': stats['total_size'] / (1024 * 1024) if stats['total_size'] else 0,
+                    'limit_reached': doc_count >= 5,
+                    'can_upload': doc_count < 5
+                }
+            
+            return {
+                'document_count': 0,
+                'total_size_chars': 0,
+                'average_size_chars': 0,
+                'total_size_mb': 0,
+                'limit_reached': False,
+                'can_upload': True
+            }
+            
+        except Exception as e:
+            logging.error(f"Error getting user document stats: {e}")
+            return {
+                'document_count': 0,
+                'total_size_chars': 0,
+                'average_size_chars': 0,
+                'total_size_mb': 0,
+                'limit_reached': False,
+                'can_upload': True
+            }
+
 # Глобальный экземпляр процессора документов
 document_processor = DocumentProcessor()
 
@@ -499,3 +648,36 @@ async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
 async def get_document_by_id(document_id: int, user_id: int) -> Optional[Dict[str, Any]]:
     """Получает документ по ID"""
     return await document_processor.get_document_by_id(document_id, user_id) 
+
+async def schedule_document_cleanup():
+    """Планировщик автоматической очистки документов"""
+    import asyncio
+    from datetime import datetime
+    
+    while True:
+        try:
+            # Ждем до следующего дня в 3:00 утра
+            now = datetime.now()
+            next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if next_run <= now:
+                next_run = next_run.replace(day=next_run.day + 1)
+            
+            wait_seconds = (next_run - now).total_seconds()
+            logging.info(f"Next document cleanup scheduled for {next_run}")
+            
+            await asyncio.sleep(wait_seconds)
+            
+            # Выполняем очистку
+            deleted_count = await document_processor.cleanup_old_documents(3)
+            if deleted_count > 0:
+                logging.info(f"Automatic cleanup: deleted {deleted_count} old documents (older than 3 days)")
+            
+        except Exception as e:
+            logging.error(f"Error in scheduled document cleanup: {e}")
+            await asyncio.sleep(3600)  # Ждем час при ошибке
+
+# Запускаем планировщик при старте приложения
+def start_cleanup_scheduler():
+    """Запускает планировщик очистки документов"""
+    import asyncio
+    asyncio.create_task(schedule_document_cleanup()) 

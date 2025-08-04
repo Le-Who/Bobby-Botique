@@ -439,6 +439,63 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики группы: {e}")
 
+async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику документов"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        from ..document_processor import document_processor
+        
+        stats = await document_processor.get_document_stats()
+        
+        text = (
+            f"📊 **Статистика документов:**\n\n"
+            f"• Всего документов: `{stats['total_documents']}`\n"
+            f"• Общий размер: `{stats['total_size_mb']:.2f} MB`\n"
+            f"• Средний размер: `{stats['average_size_chars']:.0f} символов`\n"
+            f"• Общий размер в символах: `{stats['total_size_chars']:,}`\n\n"
+            f"📋 **Политика хранения:**\n"
+            f"• Максимум документов на пользователя: `5`\n"
+            f"• Срок хранения: `3 дня`\n"
+            f"• Автоматическая очистка: `ежедневно в 3:00`\n\n"
+            f"💡 Используйте `/clearolddocs` для ручной очистки старых документов."
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения статистики документов: {e}")
+        logging.error(f"Error in document_stats_command: {e}", exc_info=True)
+
+async def clear_old_documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Очищает старые документы (старше 3 дней)"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        from ..document_processor import document_processor
+        
+        # Очищаем документы старше 3 дней
+        deleted_count = await document_processor.cleanup_old_documents(3)
+        
+        # Получаем статистику после очистки
+        stats = await document_processor.get_document_stats()
+        
+        text = (
+            f"🗑️ **Очистка документов завершена**\n\n"
+            f"Удалено документов: `{deleted_count}`\n\n"
+            f"📊 **Текущая статистика:**\n"
+            f"• Всего документов: `{stats['total_documents']}`\n"
+            f"• Общий размер: `{stats['total_size_mb']:.2f} MB`\n"
+            f"• Средний размер: `{stats['average_size_chars']:.0f} символов`\n\n"
+            f"💡 Документы старше 3 дней удаляются автоматически."
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка очистки документов: {e}")
+        logging.error(f"Error in clear_old_documents_command: {e}", exc_info=True)
+
 def register(application: Application):
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -458,6 +515,8 @@ def register(application: Application):
     application.add_handler(CommandHandler("queuestats", queue_stats_command))
     application.add_handler(CommandHandler("clearcache", clear_cache_command))
     application.add_handler(CommandHandler("clearoldmetrics", clear_old_metrics_command))
+    application.add_handler(CommandHandler("clearolddocs", clear_old_documents_command))
+    application.add_handler(CommandHandler("docstats", document_stats_command))
     
     # Команды для групповых чатов
     application.add_handler(CommandHandler("registergroup", register_group_command))
