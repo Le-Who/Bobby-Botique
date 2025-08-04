@@ -15,29 +15,71 @@ from ..group_chat import group_chat_manager
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id):
-        await update.message.reply_text("У вас нет доступа к этому боту.")
+        await update.message.reply_text("❌ У вас нет доступа к этому боту.")
         return
+    
     chat_state = await db.get_user_chat(user_id)
-    search_status = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
-    prompt_status = f"`{chat_state.system_prompt[:100]}...`" if chat_state.system_prompt else "Не задан"
+    search_status = "🟢 ВКЛЮЧЕН" if chat_state.search_enabled else "🔴 ВЫКЛЮЧЕН"
+    prompt_status = f"`{chat_state.system_prompt[:50]}...`" if chat_state.system_prompt else "Не задана"
+    
     start_text = (
-        "Привет! Я ваш личный ассистент.\n\n"
-        f"Ваша основная модель для чата: `{chat_state.model}`\n"
-        f"Системная инструкция: {prompt_status}\n"
-        f"Режим исследования: **{search_status}**\n\n"
-        "**Как работает поиск:**\n"
-        "- `? вопрос` - быстрый фактический ответ.\n"
-        "- `?? вопрос` - глубокое исследование с анализом.\n"
-        "- `??` + `картинка` - поиск по картинке.\n\n"
-        "**Команды:**\n"
-        "/res - вкл/выкл постоянный режим исследования\n"
-        "/newchat - начать новый чат\n"
-        "/setprompt `[текст]` - задать инструкцию\n"
-        "/model - выбрать основную модель для чата\n\n"
-        "**Админ-команды:**\n"
-        "/keystatus, /credits, /listmodels, /adduser, /deluser, /listusers"
+        "🤖 *Добро пожаловать в Gemini Bot\\!*\n\n"
+        "Я ваш умный ассистент с возможностями:\n"
+        "• 💬 Обычный чат с AI\n"
+        "• 🔍 Веб\\-поиск и анализ\n"
+        "• 🖼️ Поиск по изображениям\n"
+        "• 📄 Обработка документов\n\n"
+        "*📊 Ваши настройки:*\n"
+        f"• Модель: `{chat_state.model}`\n"
+        f"• Поиск: {search_status}\n"
+        f"• Инструкция: {prompt_status}\n\n"
+        "*🚀 Быстрый старт:*\n"
+        "• Просто напишите сообщение для чата\n"
+        "• `? вопрос` — быстрый ответ\n"
+        "• `?? вопрос` — глубокий анализ\n"
+        "• Отправьте фото для анализа\n\n"
+        "*⚙️ Основные команды:*\n"
+        "• `/help` — подробная справка\n"
+        "• `/res` — режим поиска вкл/выкл\n"
+        "• `/newchat` — новый чат\n"
+        "• `/model` — выбрать модель\n"
+        "• `/setprompt` — задать инструкцию\n\n"
+        "*💡 Совет:* Начните с простого вопроса\\!"
     )
-    await update.message.reply_text(start_text, parse_mode='Markdown')
+    
+    await update.message.reply_text(start_text, parse_mode='MarkdownV2')
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает подробную справку по использованию бота"""
+    if not await db.is_authorized(update.effective_user.id):
+        return
+    
+    help_text = (
+        "📚 *Подробная справка по Gemini Bot*\n\n"
+        "*💬 Обычный чат:*\n"
+        "Просто напишите сообщение для общения с AI\n\n"
+        "*🔍 Поиск и анализ:*\n"
+        "• `? вопрос` — быстрый фактический ответ\n"
+        "• `?? вопрос` — глубокое исследование с источниками\n"
+        "• `??` + фото — поиск по изображению\n\n"
+        "*📄 Работа с документами:*\n"
+        "• Отправьте PDF или DOCX файл\n"
+        "• Задавайте вопросы по содержимому\n\n"
+        "*⚙️ Настройки:*\n"
+        "• `/model` — выбор AI модели\n"
+        "• `/setprompt` — системная инструкция\n"
+        "• `/res` — режим поиска вкл/выкл\n"
+        "• `/newchat` — новый чат\n\n"
+        "*📊 Статистика:*\n"
+        "• `/credits` — остаток кредитов\n"
+        "• `/keystatus` — статус API ключей\n\n"
+        "*💡 Советы:*\n"
+        "• Используйте `?` для быстрых фактов\n"
+        "• `??` для глубокого анализа\n"
+        "• Фото + текст для анализа изображений"
+    )
+    
+    await update.message.reply_text(help_text, parse_mode='MarkdownV2')
 
 async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -320,6 +362,7 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 def register(application: Application):
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("newchat", new_chat_command))
     application.add_handler(CommandHandler("model", model_command))
     application.add_handler(CommandHandler("setprompt", set_prompt_command))
