@@ -32,9 +32,12 @@ async def _resolve_gemini_request(preferred_model: str):
     logging.error("All Gemini API keys for all models are exhausted.")
     return None, None, "all_exhausted"
 
-async def _handle_qna_search(placeholder_message: Message, user_message: str, chat_state: db.ChatState):
+async def _handle_qna_search(placeholder_message: Message, user_message: str, chat_state: db.ChatState, search_query: str = None):
+    # Если передан search_query, используем его для поиска, а user_message для локализации
+    actual_search_query = search_query if search_query else user_message
+    
     await placeholder_message.edit_text("🔎 Ищу быстрый ответ...")
-    search_result = await services.tavily_search_agent(user_message, search_type='qna')
+    search_result = await services.tavily_search_agent(actual_search_query, search_type='qna')
     if search_result.get("error"):
         await placeholder_message.edit_text(search_result["error"])
         return
@@ -55,9 +58,12 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     await send_long_message(placeholder_message, final_answer)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
-async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None):
+async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):
+    # Если передан search_query, используем его для поиска, а user_message для локализации
+    actual_search_query = search_query if search_query else user_message
+    
     await placeholder_message.edit_text("🔎 Ищу источники...")
-    search_result = await services.tavily_search_agent(user_message, search_type='search')
+    search_result = await services.tavily_search_agent(actual_search_query, search_type='search')
     if search_result.get("error"):
         await placeholder_message.edit_text(search_result["error"])
         return
@@ -197,10 +203,13 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
         return
 
     chat_state = await db.get_user_chat(user_id)
+    # Получаем оригинальное сообщение пользователя для локализации
+    original_user_message = original_message.caption or "Опиши это изображение."
+    
     if search_prefix == '?':
-        await _handle_qna_search(placeholder_message, search_query, chat_state)
+        await _handle_qna_search(placeholder_message, original_user_message, chat_state, search_query)
     else:
-        await _handle_research_agent(placeholder_message, user_id, search_query, chat_state)
+        await _handle_research_agent(placeholder_message, user_id, original_user_message, chat_state, search_query=search_query)
 
 async def process_long_request(placeholder_message: Message, update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
