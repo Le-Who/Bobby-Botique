@@ -75,8 +75,9 @@ class MetricsCollector:
         try:
             await self._ensure_metrics_tables()
             
-            today = date.today().isoformat()
-            daily_metrics = self.daily_metrics.get(today, PerformanceMetrics())
+            today = date.today()
+            today_str = today.isoformat()
+            daily_metrics = self.daily_metrics.get(today_str, PerformanceMetrics())
             
             # Обновляем или вставляем метрики за сегодня
             await db.db_query("""
@@ -90,8 +91,8 @@ class MetricsCollector:
                     search_queries = metrics.search_queries + ?,
                     cache_hits = metrics.cache_hits + ?,
                     cache_misses = metrics.cache_misses + ?,
-                    api_calls = metrics.api_calls || ?::jsonb,
-                    model_usage = metrics.model_usage || ?::jsonb,
+                    api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || ?::jsonb,
+                    model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || ?::jsonb,
                     updated_at = CURRENT_TIMESTAMP
             """, (
                 today, daily_metrics.request_count, daily_metrics.total_response_time, 
@@ -105,19 +106,18 @@ class MetricsCollector:
                 json.dumps(daily_metrics.model_usage)
             ))
             
-            # Сохраняем новые ошибки
-            if self.error_log:
-                for error in list(self.error_log):
+            # Сохраняем новые ошибки (только те, которые еще не были сохранены)
+            new_errors = [error for error in self.error_log if not error.get('saved', False)]
+            if new_errors:
+                for error in new_errors:
                     await db.db_query("""
                         INSERT INTO error_logs (error_type, error_message)
                         VALUES (?, ?)
                     """, (error['type'], error['message']))
-                
-                # Очищаем сохраненные ошибки
-                self.error_log.clear()
+                    error['saved'] = True  # Помечаем как сохраненную
             
             self._last_save_time = time.time()
-            logging.debug("Metrics saved to database")
+            logging.info(f"Metrics saved to database: {daily_metrics.request_count} requests, {daily_metrics.error_count} errors")
             
         except Exception as e:
             logging.error(f"Error saving metrics to database: {e}")
@@ -130,12 +130,12 @@ class MetricsCollector:
             # Загружаем общие метрики
             result = await db.db_query("""
                 SELECT 
-                    SUM(request_count) as total_requests,
-                    SUM(total_response_time) as total_time,
-                    SUM(error_count) as total_errors,
-                    SUM(search_queries) as total_searches,
-                    SUM(cache_hits) as total_cache_hits,
-                    SUM(cache_misses) as total_cache_misses,
+                    COALESCE(SUM(request_count), 0) as total_requests,
+                    COALESCE(SUM(total_response_time), 0.0) as total_time,
+                    COALESCE(SUM(error_count), 0) as total_errors,
+                    COALESCE(SUM(search_queries), 0) as total_searches,
+                    COALESCE(SUM(cache_hits), 0) as total_cache_hits,
+                    COALESCE(SUM(cache_misses), 0) as total_cache_misses,
                     api_calls,
                     model_usage
                 FROM metrics
@@ -144,17 +144,17 @@ class MetricsCollector:
             
             if result and result[0]:
                 row = result[0]
-                self.metrics.request_count = row['total_requests'] or 0
-                self.metrics.total_response_time = row['total_time'] or 0.0
-                self.metrics.error_count = row['total_errors'] or 0
-                self.metrics.search_queries = row['total_searches'] or 0
-                self.metrics.cache_hits = row['total_cache_hits'] or 0
-                self.metrics.cache_misses = row['total_cache_misses'] or 0
+                self.metrics.request_count = row['total_requests']
+                self.metrics.total_response_time = row['total_time']
+                self.metrics.error_count = row['total_errors']
+                self.metrics.search_queries = row['total_searches']
+                self.metrics.cache_hits = row['total_cache_hits']
+                self.metrics.cache_misses = row['total_cache_misses']
                 
                 if row['api_calls']:
-                    self.metrics.api_calls = row['api_calls']
+                    self.metrics.api_calls = dict(row['api_calls']) if isinstance(row['api_calls'], dict) else {}
                 if row['model_usage']:
-                    self.metrics.model_usage = row['model_usage']
+                    self.metrics.model_usage = dict(row['model_usage']) if isinstance(row['model_usage'], dict) else {}
             
             # Загружаем дневные метрики за последние 7 дней
             daily_result = await db.db_query("""
@@ -174,8 +174,8 @@ class MetricsCollector:
                     search_queries=row['search_queries'],
                     cache_hits=row['cache_hits'],
                     cache_misses=row['cache_misses'],
-                    api_calls=row['api_calls'] if row['api_calls'] else {},
-                    model_usage=row['model_usage'] if row['model_usage'] else {}
+                    api_calls=dict(row['api_calls']) if row['api_calls'] and isinstance(row['api_calls'], dict) else {},
+                    model_usage=dict(row['model_usage']) if row['model_usage'] and isinstance(row['model_usage'], dict) else {}
                 )
             
             # Загружаем последние ошибки
@@ -286,7 +286,7 @@ class MetricsCollector:
             # Принудительно сохраняем текущие метрики перед получением сводки
             await self._save_metrics_to_db()
             
-            return {
+            summary = {
                 'total_requests': self.metrics.request_count,
                 'average_response_time': self.get_average_response_time(),
                 'error_rate': self.get_error_rate(),
@@ -304,6 +304,9 @@ class MetricsCollector:
                     for date, metrics in self.daily_metrics.items()
                 }
             }
+            
+            logging.info(f"Metrics summary: {summary['total_requests']} requests, {summary['error_rate']:.1f}% errors")
+            return summary
     
     async def initialize(self):
         """Инициализирует систему метрик"""

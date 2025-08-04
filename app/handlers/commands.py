@@ -43,7 +43,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/res` — режим поиска вкл/выкл\n"
         "• `/newchat` — новый чат\n"
         "• `/model` — выбрать модель\n"
-        "• `/setprompt` — задать инструкцию\n\n"
+        "• `/setprompt` — задать инструкцию\n"
+        "• `/metrics` — статистика системы\n\n"
         "**💡 Совет:** Начните с простого вопроса!"
     )
     
@@ -72,8 +73,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/res` — режим поиска вкл/выкл\n"
         "• `/newchat` — новый чат\n\n"
         "**📊 Статистика:**\n"
-        "• `/credits` — остаток кредитов\n"
-        "• `/keystatus` — статус API ключей\n\n"
+        "• `/metrics` — полная сводка (метрики, ключи, кредиты)\n\n"
         "**💡 Советы:**\n"
         "• Используйте `?` для быстрых фактов\n"
         "• `??` для глубокого анализа\n"
@@ -118,45 +118,7 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
     await update.message.reply_text(f"🌐 Постоянный режим исследования **{status_text}**.", parse_mode='Markdown')
 
-async def key_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not db.is_admin(update.effective_user.id): return
-    today_pacific = time_utils.get_pacific_date()
-    all_keys = await db.db_query("SELECT * FROM api_keys")
-    if not all_keys:
-        await update.message.reply_text("Нет ключей Gemini в базе данных.")
-        return
-    status_lines = ["📊 **Статус ключей Gemini на сегодня:**\n"]
-    for key_row in all_keys:
-        display_name = format_key_for_display(key_row['api_key'])
-        status_lines.append(f"🔑 **Ключ `{display_name}`**")
-        usage_data = await db.db_query("SELECT model_name, request_count FROM key_usage WHERE key_hash = ? AND usage_date = ?", (key_row['key_hash'], today_pacific))
-        if not usage_data:
-            status_lines.append("  - _Сегодня не использовался_")
-        else:
-            for usage in usage_data:
-                model_name = usage['model_name']
-                count = usage['request_count']
-                limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
-                status_lines.append(f"  - `{model_name}`: {count} / {limit}")
-    status_lines.append(f"\nСброс лимитов произойдет в **{time_utils.get_kyiv_reset_time()}** по Киеву.")
-    await update.message.reply_text("\n".join(status_lines), parse_mode='Markdown')
-
-async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not db.is_admin(update.effective_user.id): return
-    current_month = time_utils.get_current_month_str()
-    all_keys = await db.db_query("SELECT * FROM tavily_api_keys")
-    if not all_keys:
-        await update.message.reply_text("Нет ключей Tavily в базе данных.")
-        return
-    status_lines = [f"📊 **Расход кредитов Tavily на {current_month}:**\n"]
-    for key_row in all_keys:
-        display_name = format_key_for_display(key_row['api_key'])
-        usage = await db.db_query("SELECT credit_usage FROM tavily_key_usage WHERE key_hash = ? AND usage_month = ?", (key_row['key_hash'], current_month))
-        count = usage[0]['credit_usage'] if usage else 0
-        limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
-        status_lines.append(f"🔑 **Ключ `{display_name}`**: {count} / {limit}")
-    status_lines.append(f"\nЛимиты сбрасываются 1-го числа каждого месяца.")
-    await update.message.reply_text("\n".join(status_lines), parse_mode='Markdown')
+# Команды /keystatus и /credits объединены с /metrics
 
 async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
@@ -200,45 +162,98 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(user_ids))
 
 async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает метрики производительности"""
+    """Показывает полную сводку метрик, статуса ключей и кредитов"""
     if not db.is_admin(update.effective_user.id): return
     
     try:
+        # Получаем метрики производительности
         metrics = await metrics_collector.get_metrics_summary()
         
+        # Получаем статус ключей Gemini
+        today_pacific = time_utils.get_pacific_date()
+        gemini_keys = await db.db_query("SELECT * FROM api_keys")
+        
+        # Получаем статус кредитов Tavily
+        current_month = time_utils.get_current_month_str()
+        tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
+        
+        # Формируем основной текст
         text = (
-            "📊 **Метрики производительности:**\n\n"
-            f"Всего запросов: `{metrics['total_requests']}`\n"
-            f"Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
-            f"Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
-            f"Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
-            f"Поисковых запросов: `{metrics['search_queries']}`\n\n"
-            "**Использование API:**\n"
+            "📊 **Полная сводка системы:**\n\n"
+            "**🚀 Производительность:**\n"
+            f"• Всего запросов: `{metrics['total_requests']}`\n"
+            f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
+            f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
+            f"• Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
+            f"• Поисковых запросов: `{metrics['search_queries']}`\n\n"
         )
         
-        for api, count in metrics['api_calls'].items():
-            text += f"- {api}: `{count}`\n"
+        # Добавляем использование API и моделей
+        if metrics['api_calls']:
+            text += "**🔌 Использование API:**\n"
+            for api, count in metrics['api_calls'].items():
+                text += f"• {api}: `{count}`\n"
+            text += "\n"
         
-        text += "\n**Использование моделей:**\n"
-        for model, count in metrics['model_usage'].items():
-            text += f"- {model}: `{count}`\n"
+        if metrics['model_usage']:
+            text += "**🤖 Использование моделей:**\n"
+            for model, count in metrics['model_usage'].items():
+                text += f"• {model}: `{count}`\n"
+            text += "\n"
+        
+        # Добавляем статус ключей Gemini
+        if gemini_keys:
+            text += "**🔑 Статус ключей Gemini (сегодня):**\n"
+            for key_row in gemini_keys:
+                display_name = format_key_for_display(key_row['api_key'])
+                usage_data = await db.db_query(
+                    "SELECT model_name, request_count FROM key_usage WHERE key_hash = ? AND usage_date = ?", 
+                    (key_row['key_hash'], today_pacific)
+                )
+                if not usage_data:
+                    text += f"• `{display_name}`: не использовался\n"
+                else:
+                    for usage in usage_data:
+                        model_name = usage['model_name']
+                        count = usage['request_count']
+                        limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
+                        text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
+            text += f"Сброс лимитов: **{time_utils.get_kyiv_reset_time()}** по Киеву\n\n"
+        
+        # Добавляем статус кредитов Tavily
+        if tavily_keys:
+            text += "**💳 Кредиты Tavily (текущий месяц):**\n"
+            for key_row in tavily_keys:
+                display_name = format_key_for_display(key_row['api_key'])
+                usage = await db.db_query(
+                    "SELECT credit_usage FROM tavily_key_usage WHERE key_hash = ? AND usage_month = ?", 
+                    (key_row['key_hash'], current_month)
+                )
+                count = usage[0]['credit_usage'] if usage else 0
+                limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
+                text += f"• `{display_name}`: {count} / {limit}\n"
+            text += "Сброс лимитов: 1-го числа каждого месяца\n\n"
         
         # Добавляем историю за последние дни
         if metrics['daily_metrics']:
-            text += "\n**История за последние дни:**\n"
-            for date_str, daily_data in list(metrics['daily_metrics'].items())[:7]:  # Последние 7 дней
-                text += f"- {date_str}: {daily_data['requests']} запросов, {daily_data['errors']} ошибок\n"
+            text += "**📈 История за последние дни:**\n"
+            for date_str, daily_data in list(metrics['daily_metrics'].items())[:5]:  # Последние 5 дней
+                text += f"• {date_str}: {daily_data['requests']} запросов, {daily_data['errors']} ошибок\n"
+            text += "\n"
         
         # Добавляем последние ошибки
         if metrics['recent_errors']:
-            text += "\n**Последние ошибки:**\n"
-            for error in metrics['recent_errors'][:5]:  # Последние 5 ошибок
-                text += f"- {error['type']}: {error['message'][:50]}...\n"
+            text += "**⚠️ Последние ошибки:**\n"
+            for error in metrics['recent_errors'][:3]:  # Последние 3 ошибки
+                text += f"• {error['type']}: {error['message'][:40]}...\n"
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        # Используем TelegramFormatter для надежного форматирования
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения метрик: {e}")
+        logging.error(f"Error in metrics command: {e}", exc_info=True)
 
 async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику кэша"""
@@ -369,8 +384,7 @@ def register(application: Application):
     application.add_handler(CommandHandler("model", model_command))
     application.add_handler(CommandHandler("setprompt", set_prompt_command))
     application.add_handler(CommandHandler("res", research_mode_command))
-    application.add_handler(CommandHandler("keystatus", key_status_command))
-    application.add_handler(CommandHandler("credits", credits_command))
+    # Команды /keystatus и /credits объединены с /metrics
     application.add_handler(CommandHandler("listmodels", list_models_command))
     application.add_handler(CommandHandler("adduser", add_user_command))
     application.add_handler(CommandHandler("deluser", del_user_command))
