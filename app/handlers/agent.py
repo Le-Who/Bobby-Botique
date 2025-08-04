@@ -336,16 +336,27 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
             await placeholder_message.edit_text(f"🚫 Ключи для модели {chat_state.model} для обработки фото закончились.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
+            # Fallback на новое сообщение
+            await original_message.reply_text(f"🚫 Ключи для модели {chat_state.model} для обработки фото закончились.")
         return
 
-    photo_file = await original_message.photo[-1].get_file()
-    photo_data = await photo_file.download_as_bytearray()
-    img = Image.open(io.BytesIO(photo_data))
-    prompt = original_message.caption or "Опиши это изображение."
-    response_text, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [prompt, img]}], model_used)
-    
-    await send_long_message(placeholder_message, response_text or "Не удалось обработать изображение.")
-    await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+    try:
+        photo_file = await original_message.photo[-1].get_file()
+        photo_data = await photo_file.download_as_bytearray()
+        img = Image.open(io.BytesIO(photo_data))
+        prompt = original_message.caption or "Опиши это изображение."
+        response_text, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [prompt, img]}], model_used)
+        
+        await send_long_message(placeholder_message, response_text or "Не удалось обработать изображение.")
+        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+    except Exception as e:
+        logging.error(f"Error processing photo: {e}")
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при обработке изображения.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+            # Fallback на новое сообщение
+            await original_message.reply_text("❌ Произошла ошибка при обработке изображения.")
 
 async def _handle_complex_agent_search(placeholder_message: Message, original_message: Message, search_prefix: str):
     # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
@@ -406,17 +417,20 @@ async def process_long_request(placeholder_message: Message, update: Update, con
                 [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")]
             ]
             
+            # Не удаляем placeholder сообщение, а редактируем его
             try:
-                await placeholder_message.delete()
-            except Exception as delete_error:
-                logging.error(f"Could not delete placeholder message: {delete_error}")
-            
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
-                reply_to_message_id=update.message.message_id,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+                await placeholder_message.edit_text(
+                    "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+                # Если не можем отредактировать, отправляем новое сообщение
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
             return
         
         if is_photo:

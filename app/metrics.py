@@ -127,7 +127,7 @@ class MetricsCollector:
         try:
             await self._ensure_metrics_tables()
             
-            # Загружаем общие метрики
+            # Загружаем общие метрики (без JSONB полей в основном запросе)
             result = await db.db_query("""
                 SELECT 
                     COALESCE(SUM(request_count), 0) as total_requests,
@@ -135,9 +135,7 @@ class MetricsCollector:
                     COALESCE(SUM(error_count), 0) as total_errors,
                     COALESCE(SUM(search_queries), 0) as total_searches,
                     COALESCE(SUM(cache_hits), 0) as total_cache_hits,
-                    COALESCE(SUM(cache_misses), 0) as total_cache_misses,
-                    api_calls,
-                    model_usage
+                    COALESCE(SUM(cache_misses), 0) as total_cache_misses
                 FROM metrics
                 WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
             """)
@@ -150,29 +148,48 @@ class MetricsCollector:
                 self.metrics.search_queries = row['total_searches']
                 self.metrics.cache_hits = row['total_cache_hits']
                 self.metrics.cache_misses = row['total_cache_misses']
-                
-                # Правильно обрабатываем JSONB поля
+            
+            # Отдельно загружаем и объединяем JSONB поля
+            jsonb_result = await db.db_query("""
+                SELECT api_calls, model_usage
+                FROM metrics
+                WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
+                AND (api_calls IS NOT NULL OR model_usage IS NOT NULL)
+            """)
+            
+            # Объединяем JSONB данные
+            combined_api_calls = {}
+            combined_model_usage = {}
+            
+            for row in jsonb_result:
+                # Обрабатываем api_calls
                 if row['api_calls']:
                     if isinstance(row['api_calls'], dict):
-                        self.metrics.api_calls = row['api_calls']
+                        for key, value in row['api_calls'].items():
+                            combined_api_calls[key] = combined_api_calls.get(key, 0) + value
                     elif isinstance(row['api_calls'], str):
                         try:
-                            self.metrics.api_calls = json.loads(row['api_calls'])
+                            api_calls_dict = json.loads(row['api_calls'])
+                            for key, value in api_calls_dict.items():
+                                combined_api_calls[key] = combined_api_calls.get(key, 0) + value
                         except:
-                            self.metrics.api_calls = {}
-                    else:
-                        self.metrics.api_calls = {}
+                            pass
                 
+                # Обрабатываем model_usage
                 if row['model_usage']:
                     if isinstance(row['model_usage'], dict):
-                        self.metrics.model_usage = row['model_usage']
+                        for key, value in row['model_usage'].items():
+                            combined_model_usage[key] = combined_model_usage.get(key, 0) + value
                     elif isinstance(row['model_usage'], str):
                         try:
-                            self.metrics.model_usage = json.loads(row['model_usage'])
+                            model_usage_dict = json.loads(row['model_usage'])
+                            for key, value in model_usage_dict.items():
+                                combined_model_usage[key] = combined_model_usage.get(key, 0) + value
                         except:
-                            self.metrics.model_usage = {}
-                    else:
-                        self.metrics.model_usage = {}
+                            pass
+            
+            self.metrics.api_calls = combined_api_calls
+            self.metrics.model_usage = combined_model_usage
             
             # Загружаем дневные метрики за последние 7 дней
             daily_result = await db.db_query("""
@@ -318,6 +335,9 @@ class MetricsCollector:
         async with self._lock:
             # Принудительно сохраняем текущие метрики перед получением сводки
             await self._save_metrics_to_db()
+            
+            # Перезагружаем метрики из БД для получения актуальных данных
+            await self._load_metrics_from_db()
             
             # Загружаем последние ошибки из базы данных
             try:

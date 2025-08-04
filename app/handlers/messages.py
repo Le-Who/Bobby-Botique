@@ -84,10 +84,9 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
         
         chat_state = await db.get_user_chat(user_id)
         
-        # Создаем placeholder сообщение для обработки
-        placeholder_message = await update.message.reply_text("📄 Анализирую документ...")
-        
-        await _handle_document_question(placeholder_message, user_id, user_message, chat_state)
+        # Передаем оригинальное сообщение пользователя как placeholder
+        # _handle_document_question сама создаст нужное сообщение
+        await _handle_document_question(update.message, user_id, user_message, chat_state)
         
     except Exception as e:
         logging.error(f"Error handling document question: {e}")
