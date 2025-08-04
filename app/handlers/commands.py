@@ -4,7 +4,7 @@ from telegram.ext import ContextTypes, CommandHandler, Application
 
 from ..config import settings
 from .. import database as db
-from ..utils.formatting import format_key_for_display
+from ..utils.formatting import format_key_for_display, TelegramFormatter
 from ..utils import time as time_utils
 from ..services import genai
 from ..metrics import metrics_collector
@@ -23,31 +23,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prompt_status = f"`{chat_state.system_prompt[:50]}...`" if chat_state.system_prompt else "Не задана"
     
     start_text = (
-        "🤖 *Добро пожаловать в Gemini Bot\\!*\n\n"
+        "🤖 **Добро пожаловать в Gemini Bot!**\n\n"
         "Я ваш умный ассистент с возможностями:\n"
         "• 💬 Обычный чат с AI\n"
-        "• 🔍 Веб\\-поиск и анализ\n"
+        "• 🔍 Веб-поиск и анализ\n"
         "• 🖼️ Поиск по изображениям\n"
         "• 📄 Обработка документов\n\n"
-        "*📊 Ваши настройки:*\n"
+        "**📊 Ваши настройки:**\n"
         f"• Модель: `{chat_state.model}`\n"
         f"• Поиск: {search_status}\n"
         f"• Инструкция: {prompt_status}\n\n"
-        "*🚀 Быстрый старт:*\n"
+        "**🚀 Быстрый старт:**\n"
         "• Просто напишите сообщение для чата\n"
         "• `? вопрос` — быстрый ответ\n"
         "• `?? вопрос` — глубокий анализ\n"
         "• Отправьте фото для анализа\n\n"
-        "*⚙️ Основные команды:*\n"
+        "**⚙️ Основные команды:**\n"
         "• `/help` — подробная справка\n"
         "• `/res` — режим поиска вкл/выкл\n"
         "• `/newchat` — новый чат\n"
         "• `/model` — выбрать модель\n"
         "• `/setprompt` — задать инструкцию\n\n"
-        "*💡 Совет:* Начните с простого вопроса\\!"
+        "**💡 Совет:** Начните с простого вопроса!"
     )
     
-    await update.message.reply_text(start_text, parse_mode='MarkdownV2')
+    formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает подробную справку по использованию бота"""
@@ -55,31 +56,32 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     help_text = (
-        "📚 *Подробная справка по Gemini Bot*\n\n"
-        "*💬 Обычный чат:*\n"
+        "📚 **Подробная справка по Gemini Bot**\n\n"
+        "**💬 Обычный чат:**\n"
         "Просто напишите сообщение для общения с AI\n\n"
-        "*🔍 Поиск и анализ:*\n"
+        "**🔍 Поиск и анализ:**\n"
         "• `? вопрос` — быстрый фактический ответ\n"
         "• `?? вопрос` — глубокое исследование с источниками\n"
         "• `??` + фото — поиск по изображению\n\n"
-        "*📄 Работа с документами:*\n"
+        "**📄 Работа с документами:**\n"
         "• Отправьте PDF или DOCX файл\n"
         "• Задавайте вопросы по содержимому\n\n"
-        "*⚙️ Настройки:*\n"
+        "**⚙️ Настройки:**\n"
         "• `/model` — выбор AI модели\n"
         "• `/setprompt` — системная инструкция\n"
         "• `/res` — режим поиска вкл/выкл\n"
         "• `/newchat` — новый чат\n\n"
-        "*📊 Статистика:*\n"
+        "**📊 Статистика:**\n"
         "• `/credits` — остаток кредитов\n"
         "• `/keystatus` — статус API ключей\n\n"
-        "*💡 Советы:*\n"
+        "**💡 Советы:**\n"
         "• Используйте `?` для быстрых фактов\n"
         "• `??` для глубокого анализа\n"
         "• Фото + текст для анализа изображений"
     )
     
-    await update.message.reply_text(help_text, parse_mode='MarkdownV2')
+    formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
