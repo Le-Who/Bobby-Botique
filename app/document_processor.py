@@ -68,11 +68,15 @@ class DocumentProcessor:
             try:
                 # Проверяем, что файл является корректным PDF
                 if not file_data.startswith(b'%PDF'):
+                    logging.warning(f"Invalid PDF format for {filename}")
                     return {"error": "Invalid PDF file format"}
+                
+                logging.info(f"Processing PDF {filename} with PyMuPDF")
                 
                 # Используем PyMuPDF для лучшего извлечения текста
                 try:
                     doc = fitz.open(temp_file_path)
+                    logging.info(f"Successfully opened PDF {filename} with {len(doc)} pages")
                 except Exception as fitz_error:
                     logging.warning(f"PyMuPDF failed for {filename}, trying PyPDF2: {fitz_error}")
                     # Fallback на PyPDF2
@@ -102,17 +106,24 @@ class DocumentProcessor:
                         text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
                         break
                 
-                doc.close()
+                # Сохраняем количество страниц до закрытия документа
+                try:
+                    page_count = len(doc)
+                except ValueError:
+                    # Если документ уже закрыт, используем количество обработанных страниц
+                    page_count = len(text_content)
+                finally:
+                    doc.close()
                 
                 full_text = '\n\n'.join(text_content)
                 
                 # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, len(doc))
+                await self._save_document_content(user_id, filename, full_text, page_count)
                 
                 return {
                     "success": True,
                     "filename": filename,
-                    "pages": len(doc),
+                    "pages": page_count,
                     "text_length": len(full_text),
                     "content": full_text,
                     "page_info": page_info
@@ -138,8 +149,12 @@ class DocumentProcessor:
             
             try:
                 # Используем PyPDF2 как fallback
-                with open(temp_file_path, 'rb') as file:
-                    pdf_reader = PyPDF2.PdfReader(file)
+                try:
+                    with open(temp_file_path, 'rb') as file:
+                        pdf_reader = PyPDF2.PdfReader(file)
+                except Exception as pdf_error:
+                    logging.error(f"PyPDF2 failed to open {filename}: {pdf_error}")
+                    return {"error": f"Failed to open PDF file: {str(pdf_error)}"}
                     
                     if len(pdf_reader.pages) > self.max_pages:
                         return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
