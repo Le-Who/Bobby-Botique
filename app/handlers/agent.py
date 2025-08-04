@@ -12,6 +12,7 @@ from .. import services
 from ..utils.messaging import send_long_message
 from .. import state
 from .. import prompts
+from ..metrics import metrics_collector
 
 async def _resolve_gemini_request(preferred_model: str):
     key = await db.get_available_gemini_key(preferred_model)
@@ -126,6 +127,68 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         await db.update_user_chat(user_id, chat_state)
         await placeholder_message.edit_text("Получен пустой ответ от API.")
 
+async def _handle_document_question(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState):
+    """Обрабатывает вопросы по загруженным документам"""
+    try:
+        # Получаем последний документ пользователя
+        from ..document_processor import get_user_documents, get_document_content
+        
+        documents = await get_user_documents(user_id)
+        if not documents:
+            await placeholder_message.edit_text("❌ У вас нет загруженных документов. Сначала загрузите документ.")
+            return
+        
+        # Берем самый последний документ
+        latest_document = documents[0]
+        document_content = await get_document_content(latest_document['id'], user_id)
+        
+        if not document_content:
+            await placeholder_message.edit_text("❌ Не удалось получить содержимое документа.")
+            return
+        
+        await placeholder_message.edit_text("📄 Анализирую документ...")
+        
+        # Ограничиваем размер контекста документа
+        max_context_length = 30000  # Ограничиваем до 30K символов
+        original_length = len(document_content)
+        if len(document_content) > max_context_length:
+            document_content = document_content[:max_context_length] + "\n\n[Документ обрезан для экономии токенов]"
+            logging.info(f"Document content truncated from {original_length} to {len(document_content)} characters")
+        
+        logging.info(f"Processing document question for user {user_id}, document: {latest_document['filename']}, content length: {len(document_content)}")
+        
+        # Создаем промпт для вопроса по документу
+        document_prompt = f"""Ты - помощник для анализа документов. Пользователь задал вопрос по документу.
+
+Содержимое документа:
+{document_content}
+
+Вопрос пользователя: {user_message}
+
+Ответь на вопрос пользователя, основываясь на содержимом документа. Если в документе нет информации для ответа, честно скажи об этом."""
+        
+        gemini_key, model_used, _ = await _resolve_gemini_request(settings.DEFAULT_MODEL)
+        if not gemini_key:
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.DEFAULT_MODEL} закончились.")
+            return
+        
+        response_text, _ = await services.get_gemini_response(
+            gemini_key['api_key'], 
+            [{'role': 'user', 'parts': [document_prompt]}], 
+            model_used
+        )
+        
+        if response_text:
+            await send_long_message(placeholder_message, response_text)
+            await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+            await metrics_collector.record_api_call("document_question", model_used)
+        else:
+            await placeholder_message.edit_text("❌ Не удалось получить ответ от AI.")
+            
+    except Exception as e:
+        logging.error(f"Error processing document question: {e}", exc_info=True)
+        await placeholder_message.edit_text(f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}")
+
 async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None):
     model_for_this_request = model_override or chat_state.model
     gemini_key, model_used, resolution = await _resolve_gemini_request(model_for_this_request)
@@ -238,10 +301,17 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             await _handle_photo(placeholder_message, update.message, chat_state)
             return
 
+        # Проверяем, есть ли у пользователя документы для вопросов
+        from ..document_processor import get_user_documents
+        user_documents = await get_user_documents(update.effective_user.id)
+        
         if text.startswith('??'):
             await _handle_research_agent(placeholder_message, update.effective_user.id, text[2:].strip(), chat_state)
         elif text.startswith('?'):
             await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
+        elif user_documents and not text.startswith('/'):  # Если есть документы и это не команда
+            # Обрабатываем как вопрос по документу
+            await _handle_document_question(placeholder_message, update.effective_user.id, text, chat_state)
         elif chat_state.search_enabled:
             await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
         else:

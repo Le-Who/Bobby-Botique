@@ -106,7 +106,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result.get('tables'):
             success_text += f"📊 Таблиц: {result['tables']}\n"
         
-        success_text += "\nТеперь вы можете задавать вопросы по содержимому документа."
+        success_text += "\n\n💡 **Как задавать вопросы:**\n• Просто напишите ваш вопрос\n• Например: \"Какие основные пункты?\", \"Что говорится о...?\"\n• Система автоматически найдет ответ в документе"
         
         await processing_msg.edit_text(success_text, parse_mode='Markdown')
         
