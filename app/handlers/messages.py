@@ -106,14 +106,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result.get('tables'):
             success_text += f"📊 Таблиц: {result['tables']}\n"
         
-                        success_text += "\nТеперь вы можете задавать вопросы по содержимому документа."
+        success_text += "\nТеперь вы можете задавать вопросы по содержимому документа."
 
-                from ..utils.messaging import send_formatted_message
-                await send_formatted_message(
-                    processing_msg,
-                    success_text,
-                    bold_parts=["✅ Документ обработан успешно!", "📄", "📊", "📝", "📄 Параграфов", "📊 Таблиц"]
-                )
+        from ..utils.messaging import send_formatted_message
+        await send_formatted_message(
+            processing_msg,
+            success_text,
+            bold_parts=["✅ Документ обработан успешно!", "📄", "📊", "📝", "📄 Параграфов", "📊 Таблиц"]
+        )
         
         # Записываем метрики
         await metrics_collector.record_api_call("document_processing", document.file_name)
