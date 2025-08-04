@@ -13,6 +13,10 @@ def strip_markdown(text: str) -> str:
     text = re.sub(r'[*_~`]', '', text)
     # Remove backslashes
     text = text.replace('\\', '')
+    # Remove other special characters that might cause issues
+    special_chars = ['>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, '')
     return text.strip()
 
 def format_key_for_display(api_key: str) -> str:
@@ -79,33 +83,35 @@ def create_simple_formatted_text(text: str, bold_parts: Optional[list] = None, i
     if not text:
         return ""
     
+    # First, escape all special characters in the entire text
+    special_chars = ['_', '*', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
     result = text
+    for char in special_chars:
+        result = result.replace(char, f'\\{char}')
     
-    # Apply bold formatting
+    # Now apply formatting by replacing the escaped parts
     if bold_parts:
         for part in bold_parts:
-            if part in result:
-                # Escape special characters in the part
-                escaped_part = ""
-                for char in part:
-                    if char in ['_', '*', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
-                        escaped_part += f'\\{char}'
-                    else:
-                        escaped_part += char
-                result = result.replace(part, f"*{escaped_part}*")
+            # Escape the part to match what we did above
+            escaped_part = part
+            for char in special_chars:
+                escaped_part = escaped_part.replace(char, f'\\{char}')
+            
+            # Replace the escaped part with bold formatting
+            if escaped_part in result:
+                result = result.replace(escaped_part, f"*{escaped_part}*")
     
     # Apply italic formatting
     if italic_parts:
         for part in italic_parts:
-            if part in result:
-                # Escape special characters in the part
-                escaped_part = ""
-                for char in part:
-                    if char in ['_', '*', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
-                        escaped_part += f'\\{char}'
-                    else:
-                        escaped_part += char
-                result = result.replace(part, f"_{escaped_part}_")
+            # Escape the part to match what we did above
+            escaped_part = part
+            for char in special_chars:
+                escaped_part = escaped_part.replace(char, f'\\{char}')
+            
+            # Replace the escaped part with italic formatting
+            if escaped_part in result:
+                result = result.replace(escaped_part, f"_{escaped_part}_")
     
     return result
 

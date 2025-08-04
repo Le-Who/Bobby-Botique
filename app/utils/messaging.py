@@ -113,7 +113,7 @@ async def send_formatted_message(message: Message, text: str, bold_parts: list =
         bold_parts: List of strings to make bold
         italic_parts: List of strings to make italic
     """
-    from .formatting import create_simple_formatted_text
+    from .formatting import create_simple_formatted_text, strip_markdown
     
     if not text:
         return
@@ -132,10 +132,13 @@ async def send_formatted_message(message: Message, text: str, bold_parts: list =
     try:
         await message.edit_text(formatted_text, parse_mode='MarkdownV2')
     except BadRequest:
-        # Fall back to plain text
+        # Fall back to plain text - completely strip all formatting
         logging.warning("Formatted text failed, falling back to plain text")
         plain_text = strip_markdown(text)
-        await message.edit_text(plain_text)
+        try:
+            await message.edit_text(plain_text)
+        except Exception as fallback_error:
+            logging.error(f"Failed to send fallback plain text: {fallback_error}")
     except Exception as e:
         logging.error(f"Failed to send formatted message: {e}")
 
@@ -149,7 +152,7 @@ async def send_list_message(message: Message, title: str, items: list, prefix: s
         items: List of items
         prefix: Prefix for each item
     """
-    from .formatting import format_list, create_simple_formatted_text
+    from .formatting import format_list, create_simple_formatted_text, strip_markdown
     
     if not items:
         await message.edit_text(f"{title}\n\nСписок пуст.")
@@ -167,6 +170,9 @@ async def send_list_message(message: Message, title: str, items: list, prefix: s
         # Fall back to plain text
         logging.warning("List formatting failed, falling back to plain text")
         plain_text = strip_markdown(full_text)
-        await message.edit_text(plain_text)
+        try:
+            await message.edit_text(plain_text)
+        except Exception as fallback_error:
+            logging.error(f"Failed to send fallback list message: {fallback_error}")
     except Exception as e:
         logging.error(f"Failed to send list message: {e}")
