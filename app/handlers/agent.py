@@ -4,6 +4,7 @@ import io
 from PIL import Image
 from typing import Optional
 from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
 
 from ..config import settings
 from .. import database as db
@@ -171,7 +172,9 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
 async def _handle_complex_agent_search(placeholder_message: Message, original_message: Message, search_prefix: str):
-    user_id = original_message.effective_user.id
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # Используем `from_user.id`, а не `effective_user.id`
+    user_id = original_message.from_user.id
     
     await placeholder_message.edit_text("🖼️ Анализирую изображение...")
     vision_model = settings.RESEARCH_MODEL
@@ -199,7 +202,7 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
     else:
         await _handle_research_agent(placeholder_message, user_id, search_query, chat_state)
 
-async def process_long_request(placeholder_message: Message, update: Update, context):
+async def process_long_request(placeholder_message: Message, update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         is_photo = bool(update.message.photo)
         text = update.message.text or update.message.caption or ""
@@ -212,12 +215,12 @@ async def process_long_request(placeholder_message: Message, update: Update, con
                 [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")]
             ]
             
-            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-            # Удаляем временный плейсхолдер и отправляем новый, но как ответ.
-            # Это гарантирует сохранение reply_to_message.
             await placeholder_message.delete()
-            await update.message.reply_text(
-                "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
+            
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
+                reply_to_message_id=update.message.message_id,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
