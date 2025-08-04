@@ -172,7 +172,9 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
 async def _handle_complex_agent_search(placeholder_message: Message, original_message: Message, search_prefix: str):
-    user_id = original_message.effective_user.id
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # Используем `from_user.id`, а не `effective_user.id`
+    user_id = original_message.from_user.id
     
     await placeholder_message.edit_text("🖼️ Анализирую изображение...")
     vision_model = settings.RESEARCH_MODEL
@@ -215,8 +217,6 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             
             await placeholder_message.delete()
             
-            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-            # Используем context.bot.send_message для 100% надежного создания ответа.
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text="Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
