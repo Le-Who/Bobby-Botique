@@ -1,5 +1,5 @@
 import asyncio
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
 
 from . import agent
@@ -131,7 +131,14 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         doc_list += "💡 Отправьте новый документ, чтобы начать работу с ним."
         
-        await query.edit_message_text(doc_list, parse_mode='Markdown')
+        # Создаем кнопки для управления
+        keyboard = [
+            [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
+            [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
+            [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
+        ]
+        
+        await query.edit_message_text(doc_list, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
         return
     
     elif action == "cancel":
@@ -169,6 +176,106 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Теперь ваши сообщения будут обрабатываться в обычном режиме чата.",
             parse_mode='Markdown'
         )
+        return
+    
+    elif action == "use_existing":
+        # Используем существующий документ
+        document_id = int(query.data.split(':')[2])
+        from ..document_processor import get_document_by_id
+        
+        document = await get_document_by_id(document_id, user_id)
+        if not document:
+            await query.edit_message_text("❌ Документ не найден.")
+            return
+        
+        await query.edit_message_text(
+            f"✅ **Используется существующий документ**\n\n"
+            f"📄 **{document['filename']}**\n"
+            f"📊 Страниц: {document['pages']}\n"
+            f"📅 Загружен: {document['created_at'][:10]}\n\n"
+            "Теперь вы можете задавать вопросы по этому документу.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    elif action == "force_upload":
+        await query.edit_message_text(
+            "📄 **Загрузите файл как новый документ**\n\n"
+            "Отправьте файл еще раз, и он будет сохранен как новый документ.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    elif action == "select_document":
+        # Показываем меню выбора документа
+        documents = await get_user_documents(user_id)
+        if not documents:
+            await query.edit_message_text(
+                "📋 **Ваши документы**\n\n"
+                "У вас пока нет загруженных документов.",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Создаем кнопки для каждого документа
+        keyboard = []
+        for doc in documents[:10]:  # Максимум 10 документов
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"📄 {doc['filename'][:30]}...", 
+                    callback_data=f"doc:select:{doc['id']}"
+                )
+            ])
+        
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
+        
+        await query.edit_message_text(
+            "📋 **Выберите документ для работы:**\n\n"
+            "Нажмите на документ, чтобы начать работу с ним.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    elif action == "select":
+        # Выбираем конкретный документ
+        document_id = int(query.data.split(':')[2])
+        from ..document_processor import get_document_by_id
+        
+        document = await get_document_by_id(document_id, user_id)
+        if not document:
+            await query.edit_message_text("❌ Документ не найден.")
+            return
+        
+        await query.edit_message_text(
+            f"✅ **Выбран документ**\n\n"
+            f"📄 **{document['filename']}**\n"
+            f"📊 Страниц: {document['pages']}\n"
+            f"📅 Загружен: {document['created_at'][:10]}\n\n"
+            "Теперь вы можете задавать вопросы по этому документу.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    elif action == "delete_document":
+        # Удаляем конкретный документ
+        document_id = int(query.data.split(':')[2])
+        from ..document_processor import delete_user_document, get_document_by_id
+        
+        document = await get_document_by_id(document_id, user_id)
+        if not document:
+            await query.edit_message_text("❌ Документ не найден.")
+            return
+        
+        success = await delete_user_document(document_id, user_id)
+        if success:
+            await query.edit_message_text(
+                f"🗑️ **Документ удален**\n\n"
+                f"Документ `{document['filename']}` был успешно удален.",
+                parse_mode='Markdown'
+            )
+        else:
+            await query.edit_message_text("❌ Ошибка при удалении документа.")
         return
 
 def register(application: Application):

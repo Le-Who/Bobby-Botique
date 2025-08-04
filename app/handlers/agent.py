@@ -182,7 +182,7 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
             # Создаем кнопки для управления документом
             keyboard = [
                 [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
-                [InlineKeyboardButton("📋 Список документов", callback_data="doc:list")],
+                [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
                 [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")]
             ]
             

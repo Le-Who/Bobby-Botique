@@ -90,8 +90,33 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = await process_uploaded_document(file_data, document.file_name, user_id)
         
         if result.get("error"):
-            await processing_msg.edit_text(f"❌ Ошибка обработки: {result['error']}")
-            return
+            if result.get("error") == "duplicate":
+                # Обрабатываем дубликат
+                duplicate_info = result.get("duplicate_info", {})
+                duplicate_text = (
+                    f"⚠️ **Файл уже загружен**\n\n"
+                    f"Файл `{document.file_name}` уже был загружен ранее как:\n"
+                    f"📄 **{duplicate_info.get('filename', 'Unknown')}**\n"
+                    f"📅 Загружен: {duplicate_info.get('created_at', 'Unknown')[:10]}\n\n"
+                    f"Хотите использовать существующий документ?"
+                )
+                
+                # Создаем кнопки для работы с дубликатом
+                keyboard = [
+                    [InlineKeyboardButton("✅ Использовать существующий", callback_data=f"doc:use_existing:{duplicate_info.get('id')}")],
+                    [InlineKeyboardButton("📄 Загрузить как новый", callback_data="doc:force_upload")],
+                    [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+                ]
+                
+                await processing_msg.edit_text(
+                    duplicate_text,
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                return
+            else:
+                await processing_msg.edit_text(f"❌ Ошибка обработки: {result['error']}")
+                return
         
         # Отправляем результат
         success_text = (
@@ -111,7 +136,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Создаем кнопки для управления документом
         keyboard = [
             [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
-            [InlineKeyboardButton("📋 Список документов", callback_data="doc:list")],
+            [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
             [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")]
         ]
         

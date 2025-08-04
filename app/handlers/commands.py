@@ -318,6 +318,7 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Создаем кнопки для управления
         keyboard = [
             [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
+            [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
             [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
         ]
         

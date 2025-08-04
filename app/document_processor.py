@@ -1,6 +1,8 @@
 import logging
 import io
 import asyncio
+import hashlib
+import httpx
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 import tempfile
@@ -29,6 +31,28 @@ class DocumentProcessor:
         self.max_file_size = 50 * 1024 * 1024  # 50MB
         self.max_pages = 100  # Максимальное количество страниц
     
+    def _calculate_file_hash(self, file_data: bytes) -> str:
+        """Вычисляет SHA-256 хэш файла"""
+        return hashlib.sha256(file_data).hexdigest()
+    
+    async def _check_duplicate_file(self, user_id: int, file_hash: str, filename: str) -> Optional[Dict[str, Any]]:
+        """Проверяет, есть ли уже такой файл у пользователя"""
+        try:
+            result = await db.db_query(
+                "SELECT id, filename, created_at FROM user_documents WHERE user_id = ? AND file_hash = ?",
+                (user_id, file_hash)
+            )
+            if result:
+                return {
+                    'id': result[0]['id'],
+                    'filename': result[0]['filename'],
+                    'created_at': result[0]['created_at']
+                }
+            return None
+        except Exception as e:
+            logging.error(f"Error checking duplicate file: {e}")
+            return None
+    
     async def process_document(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
         """Обрабатывает документ и возвращает извлеченный текст"""
         if not DOCUMENT_SUPPORT:
@@ -44,11 +68,22 @@ class DocumentProcessor:
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
             
+            # Вычисляем хэш файла и проверяем дубликаты
+            file_hash = self._calculate_file_hash(file_data)
+            duplicate = await self._check_duplicate_file(user_id, file_hash, filename)
+            
+            if duplicate:
+                return {
+                    "error": "duplicate",
+                    "message": f"Файл '{filename}' уже был загружен ранее как '{duplicate['filename']}' ({duplicate['created_at'][:10]})",
+                    "duplicate_info": duplicate
+                }
+            
             # Обрабатываем документ
             if file_ext == '.pdf':
-                return await self._process_pdf(file_data, filename, user_id)
+                return await self._process_pdf(file_data, filename, user_id, file_hash)
             elif file_ext in ['.docx', '.doc']:
-                return await self._process_word(file_data, filename, user_id)
+                return await self._process_word(file_data, filename, user_id, file_hash)
             else:
                 return {"error": f"Unsupported file format: {file_ext}"}
                 
@@ -57,7 +92,38 @@ class DocumentProcessor:
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
     
-    async def _process_pdf(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+    async def process_document_force(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+        """Обрабатывает документ принудительно (игнорируя дубликаты)"""
+        if not DOCUMENT_SUPPORT:
+            return {"error": "Document processing is not available"}
+        
+        try:
+            # Проверяем размер файла
+            if len(file_data) > self.max_file_size:
+                return {"error": f"File too large. Maximum size is {self.max_file_size // (1024*1024)}MB"}
+            
+            # Определяем тип файла
+            file_ext = Path(filename).suffix.lower()
+            if file_ext not in self.supported_formats:
+                return {"error": f"Unsupported file format: {file_ext}"}
+            
+            # Вычисляем хэш файла (но не проверяем дубликаты)
+            file_hash = self._calculate_file_hash(file_data)
+            
+            # Обрабатываем документ
+            if file_ext == '.pdf':
+                return await self._process_pdf(file_data, filename, user_id, file_hash)
+            elif file_ext in ['.docx', '.doc']:
+                return await self._process_word(file_data, filename, user_id, file_hash)
+            else:
+                return {"error": f"Unsupported file format: {file_ext}"}
+                
+        except Exception as e:
+            logging.error(f"Error processing document {filename}: {e}")
+            await metrics_collector.record_error("document_processing", str(e))
+            return {"error": f"Error processing document: {str(e)}"}
+    
+    async def _process_pdf(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает PDF документ"""
         try:
             # Создаем временный файл для обработки
@@ -80,7 +146,7 @@ class DocumentProcessor:
                 except Exception as fitz_error:
                     logging.warning(f"PyMuPDF failed for {filename}, trying PyPDF2: {fitz_error}")
                     # Fallback на PyPDF2
-                    return await self._process_pdf_with_pypdf2(file_data, filename, user_id)
+                    return await self._process_pdf_with_pypdf2(file_data, filename, user_id, file_hash)
                 
                 if len(doc) > self.max_pages:
                     return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
@@ -118,7 +184,7 @@ class DocumentProcessor:
                 full_text = '\n\n'.join(text_content)
                 
                 # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, page_count)
+                await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
                 
                 return {
                     "success": True,
@@ -139,7 +205,7 @@ class DocumentProcessor:
             await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
     
-    async def _process_pdf_with_pypdf2(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+    async def _process_pdf_with_pypdf2(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает PDF документ с использованием PyPDF2 (fallback)"""
         try:
             # Создаем временный файл для обработки
@@ -178,7 +244,7 @@ class DocumentProcessor:
                     full_text = '\n\n'.join(text_content)
                     
                     # Сохраняем в базу данных
-                    await self._save_document_content(user_id, filename, full_text, len(pdf_reader.pages))
+                    await self._save_document_content(user_id, filename, full_text, len(pdf_reader.pages), file_hash)
                     
                     return {
                         "success": True,
@@ -199,7 +265,7 @@ class DocumentProcessor:
             await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
             return {"error": f"Error processing PDF with PyPDF2: {str(e)}"}
     
-    async def _process_word(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+    async def _process_word(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает Word документ"""
         try:
             # Создаем временный файл
@@ -235,7 +301,7 @@ class DocumentProcessor:
                 full_text = '\n\n'.join(text_content)
                 
                 # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, 1)  # Word документы считаем как 1 страницу
+                await self._save_document_content(user_id, filename, full_text, 1, file_hash)  # Word документы считаем как 1 страницу
                 
                 return {
                     "success": True,
@@ -257,7 +323,7 @@ class DocumentProcessor:
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
     
-    async def _save_document_content(self, user_id: int, filename: str, content: str, pages: int):
+    async def _save_document_content(self, user_id: int, filename: str, content: str, pages: int, file_hash: str):
         """Сохраняет содержимое документа в базу данных"""
         try:
             # Создаем таблицу для документов, если её нет
@@ -269,14 +335,15 @@ class DocumentProcessor:
                     content TEXT,
                     pages INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    file_size INTEGER
+                    file_size INTEGER,
+                    file_hash TEXT UNIQUE
                 )
             """)
             
             # Сохраняем документ
             await db.db_query(
-                "INSERT INTO user_documents (user_id, filename, content, pages, file_size) VALUES (?, ?, ?, ?, ?)",
-                (user_id, filename, content, pages, len(content))
+                "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, filename, content, pages, len(content), file_hash)
             )
             
             logging.info(f"Saved document {filename} for user {user_id}")
@@ -284,11 +351,35 @@ class DocumentProcessor:
         except Exception as e:
             logging.error(f"Error saving document to database: {e}")
     
+    async def get_document_by_id(self, document_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+        """Получает документ по ID"""
+        try:
+            result = await db.db_query(
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = ? AND user_id = ?",
+                (document_id, user_id)
+            )
+            
+            if result:
+                row = result[0]
+                return {
+                    'id': row['id'],
+                    'filename': row['filename'],
+                    'pages': row['pages'],
+                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                    'file_size': row['file_size'],
+                    'file_hash': row['file_hash']
+                }
+            return None
+            
+        except Exception as e:
+            logging.error(f"Error getting document by ID: {e}")
+            return None
+
     async def get_user_documents(self, user_id: int) -> List[Dict[str, Any]]:
         """Получает список документов пользователя"""
         try:
             result = await db.db_query(
-                "SELECT id, filename, pages, created_at, file_size FROM user_documents WHERE user_id = ? ORDER BY created_at DESC",
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = ? ORDER BY created_at DESC",
                 (user_id,)
             )
             
@@ -298,7 +389,8 @@ class DocumentProcessor:
                     'filename': row['filename'],
                     'pages': row['pages'],
                     'created_at': row['created_at'].isoformat() if row['created_at'] else None,
-                    'file_size': row['file_size']
+                    'file_size': row['file_size'],
+                    'file_hash': row['file_hash']
                 }
                 for row in result
             ]
@@ -343,6 +435,10 @@ async def process_uploaded_document(file_data: bytes, filename: str, user_id: in
     """Обрабатывает загруженный документ"""
     return await document_processor.process_document(file_data, filename, user_id)
 
+async def process_uploaded_document_force(file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
+    """Обрабатывает загруженный документ принудительно (игнорируя дубликаты)"""
+    return await document_processor.process_document_force(file_data, filename, user_id)
+
 async def get_user_documents(user_id: int) -> List[Dict[str, Any]]:
     """Получает документы пользователя"""
     return await document_processor.get_user_documents(user_id)
@@ -353,4 +449,31 @@ async def get_document_content(document_id: int, user_id: int) -> Optional[str]:
 
 async def delete_user_document(document_id: int, user_id: int) -> bool:
     """Удаляет документ пользователя"""
-    return await document_processor.delete_document(document_id, user_id) 
+    return await document_processor.delete_document(document_id, user_id)
+
+async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
+    """Загружает файл на внешний сервис x0.at и возвращает URL"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            files = {'file': (filename, file_data)}
+            response = await client.post('https://x0.at/', files=files)
+            
+            if response.status_code == 200:
+                url = response.text.strip()
+                if url.startswith('http'):
+                    logging.info(f"File {filename} uploaded to x0.at: {url}")
+                    return url
+                else:
+                    logging.error(f"Invalid response from x0.at: {response.text}")
+                    return None
+            else:
+                logging.error(f"Failed to upload to x0.at: {response.status_code} - {response.text}")
+                return None
+                
+    except Exception as e:
+        logging.error(f"Error uploading to x0.at: {e}")
+        return None
+
+async def get_document_by_id(document_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    """Получает документ по ID"""
+    return await document_processor.get_document_by_id(document_id, user_id) 
