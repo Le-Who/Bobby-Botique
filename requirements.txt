@@ -8,3 +8,6 @@ asyncpg
 httpx
 hypercorn
 pydantic-settings
+PyPDF2
+python-docx
+PyMuPDF

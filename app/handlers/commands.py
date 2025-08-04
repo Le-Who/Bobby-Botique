@@ -7,6 +7,10 @@ from .. import database as db
 from ..utils.formatting import format_key_for_display
 from ..utils import time as time_utils
 from ..services import genai
+from ..metrics import metrics_collector
+from ..cache import search_cache
+from ..queue import task_queue
+from ..group_chat import group_chat_manager
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -151,6 +155,135 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_ids = [str(row['user_id']) for row in rows]
     await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(user_ids))
 
+async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает метрики производительности"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        metrics = await metrics_collector.get_metrics_summary()
+        
+        text = (
+            "📊 **Метрики производительности:**\n\n"
+            f"Всего запросов: `{metrics['total_requests']}`\n"
+            f"Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
+            f"Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
+            f"Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
+            f"Поисковых запросов: `{metrics['search_queries']}`\n\n"
+            "**Использование API:**\n"
+        )
+        
+        for api, count in metrics['api_calls'].items():
+            text += f"- {api}: `{count}`\n"
+        
+        text += "\n**Использование моделей:**\n"
+        for model, count in metrics['model_usage'].items():
+            text += f"- {model}: `{count}`\n"
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения метрик: {e}")
+
+async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику кэша"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        stats = await search_cache.get_stats()
+        
+        text = (
+            "🗄️ **Статистика кэша:**\n\n"
+            f"Всего записей: `{stats['total_entries']}`\n"
+            f"Максимальный размер: `{stats['max_size']}`\n"
+            f"Попадания в кэш: `{stats['cache_hit_rate']:.1f}%`\n"
+            f"Среднее количество обращений: `{stats['avg_access_count']:.1f}`\n"
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения статистики кэша: {e}")
+
+async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику очереди задач"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        stats = await task_queue.get_queue_stats()
+        
+        text = (
+            "📋 **Статистика очереди задач:**\n\n"
+            f"Всего задач: `{stats['total_tasks']}`\n"
+            f"В ожидании: `{stats['pending_tasks']}`\n"
+            f"Выполняется: `{stats['running_tasks']}`\n"
+            f"Завершено: `{stats['completed_tasks']}`\n"
+            f"Ошибок: `{stats['failed_tasks']}`\n"
+            f"Размер очереди: `{stats['queue_size']}`\n"
+            f"Активных воркеров: `{stats['active_workers']}`\n"
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения статистики очереди: {e}")
+
+async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Очищает кэш"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        await search_cache.clear()
+        await update.message.reply_text("✅ Кэш очищен.")
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка очистки кэша: {e}")
+
+async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Регистрирует групповой чат"""
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    
+    chat = update.effective_chat
+    if chat.type == 'private':
+        await update.message.reply_text("Эта команда работает только в групповых чатах.")
+        return
+    
+    try:
+        success = await group_chat_manager.register_group(chat.id, chat.title, user_id)
+        if success:
+            await update.message.reply_text(f"✅ Группа '{chat.title}' зарегистрирована!")
+        else:
+            await update.message.reply_text("❌ Группа уже зарегистрирована или произошла ошибка.")
+            
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка регистрации группы: {e}")
+
+async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику группы"""
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    
+    chat = update.effective_chat
+    if chat.type == 'private':
+        await update.message.reply_text("Эта команда работает только в групповых чатах.")
+        return
+    
+    try:
+        stats = await group_chat_manager.get_group_stats(chat.id)
+        
+        text = (
+            f"📊 **Статистика группы '{chat.title}':**\n\n"
+            f"Всего сообщений: `{stats['total_messages']}`\n"
+            f"Сообщений за 24ч: `{stats['recent_messages']}`\n"
+            f"Активных пользователей за 24ч: `{stats['active_users_24h']}`\n"
+            f"Участников: `{stats['member_count']}`\n"
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения статистики группы: {e}")
+
 def register(application: Application):
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("newchat", new_chat_command))
@@ -163,3 +296,13 @@ def register(application: Application):
     application.add_handler(CommandHandler("adduser", add_user_command))
     application.add_handler(CommandHandler("deluser", del_user_command))
     application.add_handler(CommandHandler("listusers", list_users_command))
+    
+    # Новые команды для мониторинга и управления
+    application.add_handler(CommandHandler("metrics", metrics_command))
+    application.add_handler(CommandHandler("cachestats", cache_stats_command))
+    application.add_handler(CommandHandler("queuestats", queue_stats_command))
+    application.add_handler(CommandHandler("clearcache", clear_cache_command))
+    
+    # Команды для групповых чатов
+    application.add_handler(CommandHandler("registergroup", register_group_command))
+    application.add_handler(CommandHandler("groupstats", group_stats_command))

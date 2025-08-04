@@ -6,11 +6,16 @@ from typing import Dict, Any, List
 
 from .config import settings
 from . import database
+from .metrics import metrics_collector
+from .cache import get_cached_search_result, cache_search_result
 
 http_client = httpx.AsyncClient(timeout=30.0)
 
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None):
     try:
+        # Записываем метрики API вызова
+        await metrics_collector.record_api_call("gemini", model_name)
+        
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(model_name, safety_settings=settings.SAFETY_SETTINGS, system_instruction=system_instruction)
         chat = model.start_chat(history=history[:-1])
@@ -19,18 +24,30 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         return response.text, token_count
     except google_exceptions.ResourceExhausted as e:
         logging.error(f"Gemini API Quota Error: {e}")
+        await metrics_collector.record_error("gemini_quota", str(e))
         return "🚫 Достигнут лимит запросов к API (Quota Exceeded).", None
     except Exception as e:
         logging.error(f"Gemini API generic error: {e}")
+        await metrics_collector.record_error("gemini_api", str(e))
         return f"Произошла непредвиденная ошибка API: {e}", None
 
 async def tavily_search_agent(query: str, search_type: str = "search"):
+    # Проверяем кэш перед выполнением поиска
+    cached_result = await get_cached_search_result(query, search_type)
+    if cached_result:
+        logging.info(f"Cache hit for Tavily search: {query[:50]}...")
+        return cached_result
+    
     available_key = await database.get_available_tavily_key()
     if not available_key:
         return {"error": "Поиск недоступен: все API ключи сервиса поиска достигли месячного лимита."}
     
     api_key = available_key['api_key']
     logging.info(f"Performing Tavily API call (type: {search_type}) for query: {query[:100]}")
+    
+    # Записываем метрики поискового запроса
+    await metrics_collector.record_search_query()
+    await metrics_collector.record_api_call("tavily", search_type)
     
     payload = {"api_key": api_key, "query": query}
     cost = 0
@@ -50,14 +67,22 @@ async def tavily_search_agent(query: str, search_type: str = "search"):
         data = response.json()
         await database.increment_tavily_key_usage(available_key['key_hash'], cost)
         
+        result = {}
         if search_type == "qna":
-            return {"type": "answer", "content": data.get("answer", "")}
+            result = {"type": "answer", "content": data.get("answer", "")}
+        else:
+            result = {"type": "search", "results": data.get('results', [])}
         
-        return {"type": "search", "results": data.get('results', [])}
+        # Сохраняем результат в кэш
+        await cache_search_result(query, search_type, result)
+        
+        return result
 
     except httpx.HTTPStatusError as e:
         logging.error(f"Tavily API call failed with status {e.response.status_code}: {e.response.text}")
+        await metrics_collector.record_error("tavily_http", f"Status {e.response.status_code}: {e.response.text}")
         return {"error": f"Ошибка API поиска: {e.response.status_code}. Убедитесь, что ключ API валиден."}
     except Exception as e:
         logging.error(f"Tavily API call failed: {e}")
+        await metrics_collector.record_error("tavily_api", str(e))
         return {"error": f"Произошла ошибка во время вызова API поиска: {e}"}
