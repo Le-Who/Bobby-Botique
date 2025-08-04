@@ -9,8 +9,9 @@ QNA_LOCALIZATION_PROMPT = """
 **INSTRUCTIONS:**
 1. Determine the language of the "USER'S ORIGINAL QUERY".
 2. Translate and present the "INFORMATION FOUND" in that language.
-3. Apply basic Telegram Markdown formatting if appropriate (e.g., making a key term bold).
+3. Keep the formatting simple and clean. Avoid complex Markdown formatting.
 4. Your output MUST ONLY be the final, processed text. Do not add any conversational filler like "Here is the answer..." or "According to the information...".
+5. If you need to emphasize something, use simple formatting like **bold** or *italic* sparingly.
 """
 
 URL_SELECTION_PROMPT = """
@@ -45,23 +46,24 @@ SYNTHESIS_PROMPT = """
 
 **FINAL TASK & RULES:**
 1. Synthesize the information from the raw context to fully answer the user's query.
-2. Structure your answer clearly using Telegram's MarkdownV2 syntax:
-   - For bold text, use `*bold text*`.
-   - For italic text, use `_italic text_`.
-   - For lists, each item must start with a hyphen (`- `).
-3. **You MUST cite your sources using the correct MarkdownV2 link format ONLY:** `[display text](URL)`.
-   - **CRITICAL:** You MUST NOT use any other link format, such as `[[...]]`. This is a strict requirement.
-   - The `[display text]` should be short and descriptive (e.g., the article title or `Источник 1`).
-   - The `(URL)` MUST be the full, original URL from the context.
-   - Any special characters (`.`, `!`, `-`) inside the `[display text]` part MUST be escaped with a preceding backslash (`\\`).
-4. If you find conflicting information, highlight this discrepancy.
+2. Structure your answer clearly and simply:
+   - Use simple bullet points (•) for lists
+   - Use **bold** for important terms or headings
+   - Use *italic* for emphasis when needed
+   - Keep formatting minimal and clean
+3. **For source citations, use this format:** "[Source Name](URL)" at the end of relevant paragraphs
+   - Example: "The price was listed as 5500 грн. [OLX Listing](https://www.olx.ua/...)"
+   - Use descriptive source names like "Official Documentation", "News Article", "Research Paper", etc.
+   - Keep source names short but descriptive
+4. If you find conflicting information, highlight this discrepancy clearly.
 5. If the context is insufficient, state that clearly. Do not use any prior knowledge.
+6. Keep the response well-structured but avoid overly complex formatting that might cause parsing issues.
 
-**PERFECT CITATION EXAMPLE:**
-The price was listed as 5500 грн [according to this OLX listing](https://www.olx.ua/...).
-
-**BAD CITATION EXAMPLE (DO NOT USE):**
-The price was listed as 5500 грн [[OLX]](https://www.olx.ua/...).
+**FORMATTING GUIDELINES:**
+- Use simple, clean text formatting
+- Avoid nested formatting or complex Markdown structures
+- If in doubt, prefer plain text over complex formatting
+- Make sure the text is readable and well-organized
 """
 
 IMAGE_ANALYSIS_PROMPT = """
@@ -73,4 +75,5 @@ IMAGE_ANALYSIS_PROMPT = """
 - Be specific. If it's a landmark, name it (e.g., "Eiffel Tower"). If it's an object, name it (e.g., "red 2023 Ferrari SF90 Stradale").
 - Your output MUST be ONLY the search query text.
 - DO NOT add any conversational text, explanations, or preambles like "The image shows..." or "Search query:".
+- Keep the query simple and searchable.
 """

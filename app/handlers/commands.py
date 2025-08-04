@@ -20,24 +20,31 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_state = await db.get_user_chat(user_id)
     search_status = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
     prompt_status = f"`{chat_state.system_prompt[:100]}...`" if chat_state.system_prompt else "Не задан"
+    from ..utils.messaging import send_formatted_message
+    
     start_text = (
         "Привет! Я ваш личный ассистент.\n\n"
-        f"Ваша основная модель для чата: `{chat_state.model}`\n"
+        f"Ваша основная модель для чата: {chat_state.model}\n"
         f"Системная инструкция: {prompt_status}\n"
-        f"Режим исследования: **{search_status}**\n\n"
-        "**Как работает поиск:**\n"
-        "- `? вопрос` - быстрый фактический ответ.\n"
-        "- `?? вопрос` - глубокое исследование с анализом.\n"
-        "- `??` + `картинка` - поиск по картинке.\n\n"
-        "**Команды:**\n"
+        f"Режим исследования: {search_status}\n\n"
+        "Как работает поиск:\n"
+        "• ? вопрос - быстрый фактический ответ\n"
+        "• ?? вопрос - глубокое исследование с анализом\n"
+        "• ?? + картинка - поиск по картинке\n\n"
+        "Команды:\n"
         "/res - вкл/выкл постоянный режим исследования\n"
         "/newchat - начать новый чат\n"
-        "/setprompt `[текст]` - задать инструкцию\n"
+        "/setprompt [текст] - задать инструкцию\n"
         "/model - выбрать основную модель для чата\n\n"
-        "**Админ-команды:**\n"
+        "Админ-команды:\n"
         "/keystatus, /credits, /listmodels, /adduser, /deluser, /listusers"
     )
-    await update.message.reply_text(start_text, parse_mode='Markdown')
+    
+    await send_formatted_message(
+        update.message, 
+        start_text,
+        bold_parts=["Привет! Я ваш личный ассистент", "Как работает поиск", "Команды", "Админ-команды"]
+    )
 
 async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -71,8 +78,14 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     chat_state = await db.get_user_chat(user_id)
     chat_state.search_enabled = not chat_state.search_enabled
     await db.update_user_chat(user_id, chat_state)
+    from ..utils.messaging import send_formatted_message
+    
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
-    await update.message.reply_text(f"🌐 Постоянный режим исследования **{status_text}**.", parse_mode='Markdown')
+    await send_formatted_message(
+        update.message,
+        f"🌐 Постоянный режим исследования {status_text}.",
+        bold_parts=[status_text]
+    )
 
 async def key_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
@@ -81,21 +94,29 @@ async def key_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not all_keys:
         await update.message.reply_text("Нет ключей Gemini в базе данных.")
         return
-    status_lines = ["📊 **Статус ключей Gemini на сегодня:**\n"]
+    from ..utils.messaging import send_formatted_message
+    
+    status_lines = ["📊 Статус ключей Gemini на сегодня:\n"]
     for key_row in all_keys:
         display_name = format_key_for_display(key_row['api_key'])
-        status_lines.append(f"🔑 **Ключ `{display_name}`**")
+        status_lines.append(f"🔑 Ключ {display_name}")
         usage_data = await db.db_query("SELECT model_name, request_count FROM key_usage WHERE key_hash = ? AND usage_date = ?", (key_row['key_hash'], today_pacific))
         if not usage_data:
-            status_lines.append("  - _Сегодня не использовался_")
+            status_lines.append("  • Сегодня не использовался")
         else:
             for usage in usage_data:
                 model_name = usage['model_name']
                 count = usage['request_count']
                 limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
-                status_lines.append(f"  - `{model_name}`: {count} / {limit}")
-    status_lines.append(f"\nСброс лимитов произойдет в **{time_utils.get_kyiv_reset_time()}** по Киеву.")
-    await update.message.reply_text("\n".join(status_lines), parse_mode='Markdown')
+                status_lines.append(f"  • {model_name}: {count} / {limit}")
+    status_lines.append(f"\nСброс лимитов произойдет в {time_utils.get_kyiv_reset_time()} по Киеву.")
+    
+    status_text = "\n".join(status_lines)
+    await send_formatted_message(
+        update.message,
+        status_text,
+        bold_parts=["📊 Статус ключей Gemini на сегодня", "Сброс лимитов произойдет в"]
+    )
 
 async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
@@ -104,15 +125,23 @@ async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not all_keys:
         await update.message.reply_text("Нет ключей Tavily в базе данных.")
         return
-    status_lines = [f"📊 **Расход кредитов Tavily на {current_month}:**\n"]
+    from ..utils.messaging import send_formatted_message
+    
+    status_lines = [f"📊 Расход кредитов Tavily на {current_month}:\n"]
     for key_row in all_keys:
         display_name = format_key_for_display(key_row['api_key'])
         usage = await db.db_query("SELECT credit_usage FROM tavily_key_usage WHERE key_hash = ? AND usage_month = ?", (key_row['key_hash'], current_month))
         count = usage[0]['credit_usage'] if usage else 0
         limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
-        status_lines.append(f"🔑 **Ключ `{display_name}`**: {count} / {limit}")
+        status_lines.append(f"🔑 Ключ {display_name}: {count} / {limit}")
     status_lines.append(f"\nЛимиты сбрасываются 1-го числа каждого месяца.")
-    await update.message.reply_text("\n".join(status_lines), parse_mode='Markdown')
+    
+    status_text = "\n".join(status_lines)
+    await send_formatted_message(
+        update.message,
+        status_text,
+        bold_parts=[f"📊 Расход кредитов Tavily на {current_month}", "Лимиты сбрасываются 1-го числа каждого месяца"]
+    )
 
 async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
@@ -123,8 +152,10 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Запрашиваю список моделей у Google API...")
     try:
         genai.configure(api_key=key_data['api_key'])
-        models_list = [f"- `{m.name}`" for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        await update.message.reply_text("✅ **Доступные модели:**\n" + "\n".join(models_list), parse_mode='Markdown')
+        from ..utils.messaging import send_list_message
+        
+        models_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        await send_list_message(update.message, "✅ Доступные модели:", models_list)
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
@@ -162,36 +193,42 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         metrics = await metrics_collector.get_metrics_summary()
         
+        from ..utils.messaging import send_formatted_message
+        
         text = (
-            "📊 **Метрики производительности:**\n\n"
-            f"Всего запросов: `{metrics['total_requests']}`\n"
-            f"Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
-            f"Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
-            f"Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
-            f"Поисковых запросов: `{metrics['search_queries']}`\n\n"
-            "**Использование API:**\n"
+            "📊 Метрики производительности:\n\n"
+            f"Всего запросов: {metrics['total_requests']}\n"
+            f"Среднее время ответа: {metrics['average_response_time']:.2f}s\n"
+            f"Процент ошибок: {metrics['error_rate']:.1f}%\n"
+            f"Попадания в кэш: {metrics['cache_hit_rate']:.1f}%\n"
+            f"Поисковых запросов: {metrics['search_queries']}\n\n"
+            "Использование API:\n"
         )
         
         for api, count in metrics['api_calls'].items():
-            text += f"- {api}: `{count}`\n"
+            text += f"• {api}: {count}\n"
         
-        text += "\n**Использование моделей:**\n"
+        text += "\nИспользование моделей:\n"
         for model, count in metrics['model_usage'].items():
-            text += f"- {model}: `{count}`\n"
+            text += f"• {model}: {count}\n"
         
         # Добавляем историю за последние дни
         if metrics['daily_metrics']:
-            text += "\n**История за последние дни:**\n"
+            text += "\nИстория за последние дни:\n"
             for date_str, daily_data in list(metrics['daily_metrics'].items())[:7]:  # Последние 7 дней
-                text += f"- {date_str}: {daily_data['requests']} запросов, {daily_data['errors']} ошибок\n"
+                text += f"• {date_str}: {daily_data['requests']} запросов, {daily_data['errors']} ошибок\n"
         
         # Добавляем последние ошибки
         if metrics['recent_errors']:
-            text += "\n**Последние ошибки:**\n"
+            text += "\nПоследние ошибки:\n"
             for error in metrics['recent_errors'][:5]:  # Последние 5 ошибок
-                text += f"- {error['type']}: {error['message'][:50]}...\n"
+                text += f"• {error['type']}: {error['message'][:50]}...\n"
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        await send_formatted_message(
+            update.message,
+            text,
+            bold_parts=["📊 Метрики производительности", "Использование API", "Использование моделей", "История за последние дни", "Последние ошибки"]
+        )
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения метрик: {e}")
@@ -203,15 +240,21 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         stats = await search_cache.get_stats()
         
+        from ..utils.messaging import send_formatted_message
+        
         text = (
-            "🗄️ **Статистика кэша:**\n\n"
-            f"Всего записей: `{stats['total_entries']}`\n"
-            f"Максимальный размер: `{stats['max_size']}`\n"
-            f"Попадания в кэш: `{stats['cache_hit_rate']:.1f}%`\n"
-            f"Среднее количество обращений: `{stats['avg_access_count']:.1f}`\n"
+            "🗄️ Статистика кэша:\n\n"
+            f"Всего записей: {stats['total_entries']}\n"
+            f"Максимальный размер: {stats['max_size']}\n"
+            f"Попадания в кэш: {stats['cache_hit_rate']:.1f}%\n"
+            f"Среднее количество обращений: {stats['avg_access_count']:.1f}\n"
         )
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        await send_formatted_message(
+            update.message,
+            text,
+            bold_parts=["🗄️ Статистика кэша"]
+        )
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики кэша: {e}")
@@ -223,18 +266,24 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         stats = await task_queue.get_queue_stats()
         
+        from ..utils.messaging import send_formatted_message
+        
         text = (
-            "📋 **Статистика очереди задач:**\n\n"
-            f"Всего задач: `{stats['total_tasks']}`\n"
-            f"В ожидании: `{stats['pending_tasks']}`\n"
-            f"Выполняется: `{stats['running_tasks']}`\n"
-            f"Завершено: `{stats['completed_tasks']}`\n"
-            f"Ошибок: `{stats['failed_tasks']}`\n"
-            f"Размер очереди: `{stats['queue_size']}`\n"
-            f"Активных воркеров: `{stats['active_workers']}`\n"
+            "📋 Статистика очереди задач:\n\n"
+            f"Всего задач: {stats['total_tasks']}\n"
+            f"В ожидании: {stats['pending_tasks']}\n"
+            f"Выполняется: {stats['running_tasks']}\n"
+            f"Завершено: {stats['completed_tasks']}\n"
+            f"Ошибок: {stats['failed_tasks']}\n"
+            f"Размер очереди: {stats['queue_size']}\n"
+            f"Активных воркеров: {stats['active_workers']}\n"
         )
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        await send_formatted_message(
+            update.message,
+            text,
+            bold_parts=["📋 Статистика очереди задач"]
+        )
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики очереди: {e}")
@@ -305,15 +354,21 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         stats = await group_chat_manager.get_group_stats(chat.id)
         
+        from ..utils.messaging import send_formatted_message
+        
         text = (
-            f"📊 **Статистика группы '{chat.title}':**\n\n"
-            f"Всего сообщений: `{stats['total_messages']}`\n"
-            f"Сообщений за 24ч: `{stats['recent_messages']}`\n"
-            f"Активных пользователей за 24ч: `{stats['active_users_24h']}`\n"
-            f"Участников: `{stats['member_count']}`\n"
+            f"📊 Статистика группы '{chat.title}':\n\n"
+            f"Всего сообщений: {stats['total_messages']}\n"
+            f"Сообщений за 24ч: {stats['recent_messages']}\n"
+            f"Активных пользователей за 24ч: {stats['active_users_24h']}\n"
+            f"Участников: {stats['member_count']}\n"
         )
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        await send_formatted_message(
+            update.message,
+            text,
+            bold_parts=[f"📊 Статистика группы '{chat.title}'"]
+        )
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики группы: {e}")
