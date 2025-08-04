@@ -55,7 +55,8 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         chat_state.system_prompt = " ".join(context.args)
     await db.update_user_chat(user_id, chat_state)
-    await update.message.reply_text("✅ Системная инструкция обновлена.")
+    from ..utils.messaging import send_simple_message
+    await send_simple_message(update.message, "✅ Системная инструкция обновлена.")
 
 async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -65,7 +66,8 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_state.token_count = 0
     chat_state.system_prompt = None
     await db.update_user_chat(user_id, chat_state)
-    await update.message.reply_text("Новый чат создан. История и системная инструкция сброшены.")
+    from ..utils.messaging import send_simple_message
+    await send_simple_message(update.message, "Новый чат создан. История и системная инструкция сброшены.")
 
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await db.is_authorized(update.effective_user.id): return
@@ -92,7 +94,8 @@ async def key_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     today_pacific = time_utils.get_pacific_date()
     all_keys = await db.db_query("SELECT * FROM api_keys")
     if not all_keys:
-        await update.message.reply_text("Нет ключей Gemini в базе данных.")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, "Нет ключей Gemini в базе данных.")
         return
     from ..utils.messaging import send_formatted_message
     
@@ -115,7 +118,7 @@ async def key_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await send_formatted_message(
         update.message,
         status_text,
-        bold_parts=["📊 Статус ключей Gemini на сегодня", "Сброс лимитов произойдет в"]
+        bold_parts=["📊 Статус ключей Gemini на сегодня"]
     )
 
 async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -123,7 +126,8 @@ async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_month = time_utils.get_current_month_str()
     all_keys = await db.db_query("SELECT * FROM tavily_api_keys")
     if not all_keys:
-        await update.message.reply_text("Нет ключей Tavily в базе данных.")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, "Нет ключей Tavily в базе данных.")
         return
     from ..utils.messaging import send_formatted_message
     
@@ -140,16 +144,18 @@ async def credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_formatted_message(
         update.message,
         status_text,
-        bold_parts=[f"📊 Расход кредитов Tavily на {current_month}", "Лимиты сбрасываются 1-го числа каждого месяца"]
+        bold_parts=[f"📊 Расход кредитов Tavily на {current_month}"]
     )
 
 async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
     key_data = await db.get_available_gemini_key(settings.DEFAULT_MODEL)
     if not key_data:
-        await update.message.reply_text("Нет доступных API ключей для выполнения запроса.")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, "Нет доступных API ключей для выполнения запроса.")
         return
-    await update.message.reply_text("Запрашиваю список моделей у Google API...")
+    from ..utils.messaging import send_simple_message
+    await send_simple_message(update.message, "Запрашиваю список моделей у Google API...")
     try:
         genai.configure(api_key=key_data['api_key'])
         from ..utils.messaging import send_list_message
@@ -157,34 +163,41 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         models_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         await send_list_message(update.message, "✅ Доступные модели:", models_list)
     except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Ошибка: {e}")
 
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
     try:
         user_to_add = int(context.args[0])
         await db.db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO UPDATE SET is_authorized = 1", (user_to_add,))
-        await update.message.reply_text(f"Пользователь {user_to_add} добавлен.")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Пользователь {user_to_add} добавлен.")
     except (IndexError, ValueError):
-        await update.message.reply_text("Использование: /adduser <user_id>")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, "Использование: /adduser <user_id>")
 
 async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
     try:
         user_to_del = int(context.args[0])
         if user_to_del == settings.ADMIN_ID:
-            await update.message.reply_text("Нельзя удалить администратора.")
+            from ..utils.messaging import send_simple_message
+            await send_simple_message(update.message, "Нельзя удалить администратора.")
             return
         await db.db_query("UPDATE users SET is_authorized = 0 WHERE user_id = ?", (user_to_del,))
-        await update.message.reply_text(f"Доступ для пользователя {user_to_del} отозван.")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Доступ для пользователя {user_to_del} отозван.")
     except (IndexError, ValueError):
-        await update.message.reply_text("Использование: /deluser <user_id>")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, "Использование: /deluser <user_id>")
 
 async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
     rows = await db.db_query("SELECT user_id FROM users WHERE is_authorized = 1")
     user_ids = [str(row['user_id']) for row in rows]
-    await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(user_ids))
+    from ..utils.messaging import send_simple_message
+    await send_simple_message(update.message, "Авторизованные пользователи:\n" + "\n".join(user_ids))
 
 async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает метрики производительности"""
@@ -227,11 +240,12 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_formatted_message(
             update.message,
             text,
-            bold_parts=["📊 Метрики производительности", "Использование API", "Использование моделей", "История за последние дни", "Последние ошибки"]
+            bold_parts=["📊 Метрики производительности"]
         )
         
     except Exception as e:
-        await update.message.reply_text(f"Ошибка получения метрик: {e}")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Ошибка получения метрик: {e}")
 
 async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику кэша"""
@@ -257,7 +271,8 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         
     except Exception as e:
-        await update.message.reply_text(f"Ошибка получения статистики кэша: {e}")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Ошибка получения статистики кэша: {e}")
 
 async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику очереди задач"""
@@ -286,7 +301,8 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         
     except Exception as e:
-        await update.message.reply_text(f"Ошибка получения статистики очереди: {e}")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Ошибка получения статистики очереди: {e}")
 
 async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Очищает кэш"""
@@ -294,10 +310,12 @@ async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     try:
         await search_cache.clear()
-        await update.message.reply_text("✅ Кэш очищен.")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, "✅ Кэш очищен.")
         
     except Exception as e:
-        await update.message.reply_text(f"Ошибка очистки кэша: {e}")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Ошибка очистки кэша: {e}")
 
 async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Очищает старые метрики (старше 30 дней)"""
@@ -316,10 +334,12 @@ async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAUL
             WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
         """)
         
-        await update.message.reply_text("✅ Старые метрики очищены (старше 30 дней).")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, "✅ Старые метрики очищены (старше 30 дней).")
         
     except Exception as e:
-        await update.message.reply_text(f"Ошибка очистки метрик: {e}")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Ошибка очистки метрик: {e}")
 
 async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Регистрирует групповой чат"""
@@ -328,18 +348,22 @@ async def register_group_command(update: Update, context: ContextTypes.DEFAULT_T
     
     chat = update.effective_chat
     if chat.type == 'private':
-        await update.message.reply_text("Эта команда работает только в групповых чатах.")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, "Эта команда работает только в групповых чатах.")
         return
     
     try:
         success = await group_chat_manager.register_group(chat.id, chat.title, user_id)
         if success:
-            await update.message.reply_text(f"✅ Группа '{chat.title}' зарегистрирована!")
+            from ..utils.messaging import send_simple_message
+            await send_simple_message(update.message, f"✅ Группа '{chat.title}' зарегистрирована!")
         else:
-            await update.message.reply_text("❌ Группа уже зарегистрирована или произошла ошибка.")
+            from ..utils.messaging import send_simple_message
+            await send_simple_message(update.message, "❌ Группа уже зарегистрирована или произошла ошибка.")
             
     except Exception as e:
-        await update.message.reply_text(f"Ошибка регистрации группы: {e}")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Ошибка регистрации группы: {e}")
 
 async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику группы"""
@@ -348,13 +372,14 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     chat = update.effective_chat
     if chat.type == 'private':
-        await update.message.reply_text("Эта команда работает только в групповых чатах.")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, "Эта команда работает только в групповых чатах.")
         return
     
     try:
         stats = await group_chat_manager.get_group_stats(chat.id)
         
-        from ..utils.messaging import send_formatted_message
+        from ..utils.messaging import send_simple_message
         
         text = (
             f"📊 Статистика группы '{chat.title}':\n\n"
@@ -364,14 +389,11 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Участников: {stats['member_count']}\n"
         )
         
-        await send_formatted_message(
-            update.message,
-            text,
-            bold_parts=[f"📊 Статистика группы '{chat.title}'"]
-        )
+        await send_simple_message(update.message, text)
         
     except Exception as e:
-        await update.message.reply_text(f"Ошибка получения статистики группы: {e}")
+        from ..utils.messaging import send_simple_message
+        await send_simple_message(update.message, f"Ошибка получения статистики группы: {e}")
 
 def register(application: Application):
     application.add_handler(CommandHandler("start", start_command))

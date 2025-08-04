@@ -58,7 +58,8 @@ def safe_markdown_v2(text: str) -> str:
     
     # Escape special characters outside of link patterns
     for char in special_chars:
-        result = result.replace(char, f'\\{char}')
+        # Only escape if not already escaped and not part of a link
+        result = re.sub(f'(?<!\\\\){re.escape(char)}', f'\\{char}', result)
     
     return result
 
@@ -84,16 +85,26 @@ def create_simple_formatted_text(text: str, bold_parts: Optional[list] = None, i
     if bold_parts:
         for part in bold_parts:
             if part in result:
-                # Escape the part for MarkdownV2
-                escaped_part = safe_markdown_v2(part)
+                # Escape special characters in the part
+                escaped_part = ""
+                for char in part:
+                    if char in ['_', '*', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+                        escaped_part += f'\\{char}'
+                    else:
+                        escaped_part += char
                 result = result.replace(part, f"*{escaped_part}*")
     
     # Apply italic formatting
     if italic_parts:
         for part in italic_parts:
             if part in result:
-                # Escape the part for MarkdownV2
-                escaped_part = safe_markdown_v2(part)
+                # Escape special characters in the part
+                escaped_part = ""
+                for char in part:
+                    if char in ['_', '*', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+                        escaped_part += f'\\{char}'
+                    else:
+                        escaped_part += char
                 result = result.replace(part, f"_{escaped_part}_")
     
     return result

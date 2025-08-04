@@ -5,6 +5,22 @@ from telegram.error import BadRequest
 from .formatting import strip_markdown, sanitize_for_telegram
 from ..config import settings
 
+async def send_simple_message(message: Message, text: str):
+    """
+    Sends a simple message without any formatting.
+    
+    Args:
+        message: Telegram message object
+        text: Text to send
+    """
+    if not text or not text.strip():
+        return
+    
+    try:
+        await message.edit_text(text)
+    except Exception as e:
+        logging.error(f"Failed to send simple message: {e}")
+
 async def send_long_message(message: Message, text: str, prefer_plain: bool = False):
     """
     Splits a long message and sends it in parts with reliable formatting.
@@ -102,7 +118,15 @@ async def send_formatted_message(message: Message, text: str, bold_parts: list =
     if not text:
         return
     
-    # Create formatted text
+    # If no formatting is requested, send as plain text
+    if not bold_parts and not italic_parts:
+        try:
+            await message.edit_text(text)
+        except Exception as e:
+            logging.error(f"Failed to send plain message: {e}")
+        return
+    
+    # Create formatted text only for the parts that need formatting
     formatted_text = create_simple_formatted_text(text, bold_parts, italic_parts)
     
     try:
