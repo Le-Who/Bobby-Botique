@@ -37,18 +37,35 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     # Если передан search_query, используем его для поиска, а user_message для локализации
     actual_search_query = search_query if search_query else user_message
     
-    await placeholder_message.edit_text("🔎 Ищу быстрый ответ...")
+    try:
+        await placeholder_message.edit_text("🔎 Ищу быстрый ответ...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        # Если не можем отредактировать, отправляем новое сообщение
+        placeholder_message = await placeholder_message.reply_text("🔎 Ищу быстрый ответ...")
+    
     search_result = await services.tavily_search_agent(actual_search_query, search_type='qna')
     if search_result.get("error"):
-        await placeholder_message.edit_text(search_result["error"])
+        try:
+            await placeholder_message.edit_text(search_result["error"])
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
     tavily_answer = search_result.get("content", "Не удалось найти прямой ответ.")
-    await placeholder_message.edit_text("🌍 Адаптирую ответ...")
+    try:
+        await placeholder_message.edit_text("🌍 Адаптирую ответ...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        # Если не можем отредактировать, отправляем новое сообщение
+        placeholder_message = await placeholder_message.reply_text("🌍 Адаптирую ответ...")
     
     gemini_key, model_used, _ = await _resolve_gemini_request(settings.QNA_MODEL)
     if not gemini_key:
-        await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.QNA_MODEL} закончились.")
+        try:
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.QNA_MODEL} закончились.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
     localization_prompt = prompts.QNA_LOCALIZATION_PROMPT.format(
@@ -63,21 +80,42 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     # Если передан search_query, используем его для поиска, а user_message для локализации
     actual_search_query = search_query if search_query else user_message
     
-    await placeholder_message.edit_text("🔎 Ищу источники...")
+    try:
+        await placeholder_message.edit_text("🔎 Ищу источники...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        # Если не можем отредактировать, отправляем новое сообщение
+        placeholder_message = await placeholder_message.reply_text("🔎 Ищу источники...")
+    
     search_result = await services.tavily_search_agent(actual_search_query, search_type='search')
     if search_result.get("error"):
-        await placeholder_message.edit_text(search_result["error"])
+        try:
+            await placeholder_message.edit_text(search_result["error"])
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
     
     search_results = search_result.get('results', [])
     if not search_results:
-        await placeholder_message.edit_text("Не удалось найти релевантные источники для исследования.")
+        try:
+            await placeholder_message.edit_text("Не удалось найти релевантные источники для исследования.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    await placeholder_message.edit_text(f"✅ Найдено {len(search_results)} источников. Выбираю лучшие...")
+    try:
+        await placeholder_message.edit_text(f"✅ Найдено {len(search_results)} источников. Выбираю лучшие...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        # Если не можем отредактировать, отправляем новое сообщение
+        placeholder_message = await placeholder_message.reply_text(f"✅ Найдено {len(search_results)} источников. Выбираю лучшие...")
+    
     gemini_key, model_used, _ = await _resolve_gemini_request(settings.URL_SELECTION_MODEL)
     if not gemini_key:
-        await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.URL_SELECTION_MODEL} (выбор URL) закончились.")
+        try:
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.URL_SELECTION_MODEL} (выбор URL) закончились.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
     selection_prompt = prompts.URL_SELECTION_PROMPT.format(
@@ -90,23 +128,43 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     selected_urls = [url.strip() for url in selected_urls_str.split(',') if url.strip().startswith('http')]
 
     if not selected_urls:
-        await placeholder_message.edit_text("Не удалось выбрать подходящие источники для глубокого анализа. Попробуйте переформулировать запрос.")
+        try:
+            await placeholder_message.edit_text("Не удалось выбрать подходящие источники для глубокого анализа. Попробуйте переформулировать запрос.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    await placeholder_message.edit_text(f"✅ Выбрано {len(selected_urls)} источников. Собираю контент...")
+    try:
+        await placeholder_message.edit_text(f"✅ Выбрано {len(selected_urls)} источников. Собираю контент...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        # Если не можем отредактировать, отправляем новое сообщение
+        placeholder_message = await placeholder_message.reply_text(f"✅ Выбрано {len(selected_urls)} источников. Собираю контент...")
     
     final_context_list = [f"Источник (URL: {res.get('url')}):\n{res.get('content')}" for url in selected_urls for res in search_results if res.get('url') == url]
     full_context = "\n\n---\n\n".join(final_context_list)
 
     if not full_context:
-        await placeholder_message.edit_text("Не удалось собрать контент с выбранных страниц.")
+        try:
+            await placeholder_message.edit_text("Не удалось собрать контент с выбранных страниц.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    await placeholder_message.edit_text(f"🧠 Синтезирую ответ на основе {len(full_context)} символов...")
+    try:
+        await placeholder_message.edit_text(f"🧠 Синтезирую ответ на основе {len(full_context)} символов...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        # Если не можем отредактировать, отправляем новое сообщение
+        placeholder_message = await placeholder_message.reply_text(f"🧠 Синтезирую ответ на основе {len(full_context)} символов...")
+    
     model_for_synthesis = model_override or settings.RESEARCH_MODEL
     gemini_key, model_used, _ = await _resolve_gemini_request(model_for_synthesis)
     if not gemini_key:
-        await placeholder_message.edit_text(f"🚫 Ключи для модели {model_for_synthesis} закончились.")
+        try:
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {model_for_synthesis} закончились.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
         
     augmented_prompt = prompts.SYNTHESIS_PROMPT.format(
@@ -125,7 +183,10 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     else:
         chat_state.history.pop()
         await db.update_user_chat(user_id, chat_state)
-        await placeholder_message.edit_text("Получен пустой ответ от API.")
+        try:
+            await placeholder_message.edit_text("Получен пустой ответ от API.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
 
 async def _handle_document_question(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState):
     """Обрабатывает вопросы по загруженным документам"""
@@ -222,7 +283,10 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     gemini_key, model_used, resolution = await _resolve_gemini_request(model_for_this_request)
 
     if resolution == "all_exhausted":
-        await placeholder_message.edit_text("🚫 Все лимиты для всех моделей Gemini на сегодня исчерпаны. Попробуйте позже.")
+        try:
+            await placeholder_message.edit_text("🚫 Все лимиты для всех моделей Gemini на сегодня исчерпаны. Попробуйте позже.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
     
     if resolution == "confirm_fallback":
@@ -230,16 +294,25 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
             [InlineKeyboardButton(f"Да, использовать {model_used}", callback_data=f"fallback:confirm:{model_used}")],
             [InlineKeyboardButton("Нет, отмена", callback_data="fallback:cancel")]
         ]
-        await placeholder_message.edit_text(
-            f"Все лимиты для модели `{model_for_this_request}` на сегодня исчерпаны.\n"
-            f"Однако, я могу выполнить ваш запрос, используя `{model_used}`. Качество ответа может быть другим.\n"
-            "Продолжить?",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        try:
+            await placeholder_message.edit_text(
+                f"Все лимиты для модели `{model_for_this_request}` на сегодня исчерпаны.\n"
+                f"Однако, я могу выполнить ваш запрос, используя `{model_used}`. Качество ответа может быть другим.\n"
+                "Продолжить?",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
     chat_state.history.append({'role': 'user', 'parts': [user_message]})
-    await placeholder_message.edit_text(f"🧠 Модель {model_used} думает...")
+    try:
+        await placeholder_message.edit_text(f"🧠 Модель {model_used} думает...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        # Если не можем отредактировать, отправляем новое сообщение
+        placeholder_message = await placeholder_message.reply_text(f"🧠 Модель {model_used} думает...")
+    
     response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
     
     if response_text:
@@ -251,12 +324,18 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     else:
         chat_state.history.pop()
         await db.update_user_chat(user_id, chat_state)
-        await placeholder_message.edit_text("Получен пустой ответ от API.")
+        try:
+            await placeholder_message.edit_text("Получен пустой ответ от API.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
 
 async def _handle_photo(placeholder_message: Message, original_message: Message, chat_state: db.ChatState):
     gemini_key, model_used, resolution = await _resolve_gemini_request(chat_state.model)
     if resolution:
-        await placeholder_message.edit_text(f"🚫 Ключи для модели {chat_state.model} для обработки фото закончились.")
+        try:
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {chat_state.model} для обработки фото закончились.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
     photo_file = await original_message.photo[-1].get_file()
@@ -273,11 +352,20 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
     # Используем `from_user.id`, а не `effective_user.id`
     user_id = original_message.from_user.id
     
-    await placeholder_message.edit_text("🖼️ Анализирую изображение...")
+    try:
+        await placeholder_message.edit_text("🖼️ Анализирую изображение...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        # Если не можем отредактировать, отправляем новое сообщение
+        placeholder_message = await placeholder_message.reply_text("🖼️ Анализирую изображение...")
+    
     vision_model = settings.RESEARCH_MODEL
     gemini_key, _, resolution = await _resolve_gemini_request(vision_model)
     if resolution:
-        await placeholder_message.edit_text(f"🚫 Ключи для модели {vision_model} (анализ фото) закончились.")
+        try:
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {vision_model} (анализ фото) закончились.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
     photo_file = await original_message.photo[-1].get_file()
@@ -290,7 +378,10 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
     await db.increment_gemini_key_usage(gemini_key['key_hash'], vision_model)
 
     if not search_query:
-        await placeholder_message.edit_text("Не удалось проанализировать изображение для поиска.")
+        try:
+            await placeholder_message.edit_text("Не удалось проанализировать изображение для поиска.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
     chat_state = await db.get_user_chat(user_id)
@@ -315,7 +406,10 @@ async def process_long_request(placeholder_message: Message, update: Update, con
                 [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")]
             ]
             
-            await placeholder_message.delete()
+            try:
+                await placeholder_message.delete()
+            except Exception as delete_error:
+                logging.error(f"Could not delete placeholder message: {delete_error}")
             
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
