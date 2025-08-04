@@ -27,7 +27,13 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
         await placeholder_message.delete()
         return
 
-    original_message = query.message.reply_to_message
+    # Получаем оригинальное сообщение из контекста или из reply_to_message
+    original_message = None
+    if hasattr(context, 'user_data') and 'original_message' in context.user_data:
+        original_message = context.user_data['original_message']
+    else:
+        original_message = query.message.reply_to_message
+    
     if not original_message:
         await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
         return
@@ -71,7 +77,13 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await placeholder_message.edit_text("Операция отменена.")
         return
 
-    original_message = query.message.reply_to_message
+    # Получаем оригинальное сообщение из контекста или из reply_to_message
+    original_message = None
+    if hasattr(context, 'user_data') and 'original_message' in context.user_data:
+        original_message = context.user_data['original_message']
+    else:
+        original_message = query.message.reply_to_message
+    
     if not original_message:
         await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
         return

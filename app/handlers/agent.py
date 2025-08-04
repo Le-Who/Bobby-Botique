@@ -87,7 +87,16 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         # Если не можем отредактировать, отправляем новое сообщение
         placeholder_message = await placeholder_message.reply_text("🔎 Ищу источники...")
     
-    search_result = await services.tavily_search_agent(actual_search_query, search_type='search')
+    try:
+        search_result = await services.tavily_search_agent(actual_search_query, search_type='search')
+    except Exception as search_error:
+        logging.error(f"Error in Tavily search: {search_error}")
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при поиске. Попробуйте позже.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
     if search_result.get("error"):
         try:
             await placeholder_message.edit_text(search_result["error"])
@@ -123,8 +132,17 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         search_results_json=json.dumps(search_results, indent=2, ensure_ascii=False)
     )
     
-    selected_urls_str, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [selection_prompt]}], model_used)
-    await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+    try:
+        selected_urls_str, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [selection_prompt]}], model_used)
+        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+    except Exception as gemini_error:
+        logging.error(f"Error in Gemini URL selection: {gemini_error}")
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при выборе источников. Попробуйте позже.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
     selected_urls = [url.strip() for url in selected_urls_str.split(',') if url.strip().startswith('http')]
 
     if not selected_urls:
@@ -172,7 +190,17 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     )
     chat_state.history.append({'role': 'user', 'parts': [augmented_prompt]})
     
-    response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
+    try:
+        response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
+    except Exception as gemini_error:
+        logging.error(f"Error in Gemini synthesis: {gemini_error}")
+        chat_state.history.pop()  # Убираем добавленный промпт
+        await db.update_user_chat(user_id, chat_state)
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при синтезе ответа. Попробуйте позже.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
     
     if response_text:
         await send_long_message(placeholder_message, response_text)
@@ -416,6 +444,11 @@ async def process_long_request(placeholder_message: Message, update: Update, con
                 [InlineKeyboardButton("🔎 Выполнить сложный поиск", callback_data="complex:confirm")],
                 [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")]
             ]
+            
+            # Сохраняем оригинальное сообщение в контексте
+            if not hasattr(context, 'user_data'):
+                context.user_data = {}
+            context.user_data['original_message'] = update.message
             
             # Не удаляем placeholder сообщение, а редактируем его
             try:

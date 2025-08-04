@@ -26,33 +26,38 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Проверяем, находится ли пользователь в режиме работы с документами
-    from ..state import is_in_document_mode, get_selected_document_id, clear_document_state
+    from ..state import is_in_document_mode, get_selected_document_id
     
     if is_in_document_mode(user_id):
-        # Пользователь в режиме работы с документами
-        selected_doc_id = get_selected_document_id(user_id)
-        if selected_doc_id and update.message.text:
-            # Обрабатываем вопрос по выбранному документу
-            await handle_document_question(update, context, selected_doc_id)
+        document_id = get_selected_document_id(user_id)
+        if document_id:
+            await handle_document_question(update, context, document_id)
         else:
-            # Пользователь в режиме документов, но документ не выбран или это не текст
-            if update.message.text:
-                await update.message.reply_text(
-                    "📋 Вы находитесь в режиме работы с документами.\n\n"
-                    "💡 **Доступные действия:**\n"
-                    "• Загрузите новый документ\n"
-                    "• Выберите документ из списка\n"
-                    "• Используйте кнопки под сообщениями\n\n"
-                    "🔄 **Для выхода из режима документов:**\n"
-                    "• Нажмите кнопку '❌ Отменить работу с документами'\n"
-                    "• Или отправьте команду /documents"
-                )
+            await update.message.reply_text(
+                "📋 Вы находитесь в режиме работы с документами.\n\n"
+                "💡 **Доступные действия:**\n"
+                "• Загрузите новый документ\n"
+                "• Выберите документ из списка\n"
+                "• Используйте кнопки под сообщениями\n\n"
+                "🔄 **Для выхода из режима документов:**\n"
+                "• Нажмите кнопку '❌ Отменить работу с документами'\n"
+                "• Или отправьте команду /documents"
+            )
         return
+    
+    # Проверяем, есть ли изображение
+    is_photo = bool(update.message.photo)
+    
+    # Создаем placeholder сообщение для всех типов запросов
+    if is_photo:
+        placeholder_message = await update.message.reply_text("🖼️ Обрабатываю изображение...")
+    else:
+        placeholder_message = await update.message.reply_text("🤔 Думаю...")
     
     # Обычная обработка сообщений
     async def task_wrapper():
         async with state.USER_LOCKS[user_id]:
-            await agent.process_long_request(update.message, update, context)
+            await agent.process_long_request(placeholder_message, update, context)
     
     asyncio.create_task(task_wrapper())
 
