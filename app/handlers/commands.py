@@ -179,6 +179,18 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for model, count in metrics['model_usage'].items():
             text += f"- {model}: `{count}`\n"
         
+        # Добавляем историю за последние дни
+        if metrics['daily_metrics']:
+            text += "\n**История за последние дни:**\n"
+            for date_str, daily_data in list(metrics['daily_metrics'].items())[:7]:  # Последние 7 дней
+                text += f"- {date_str}: {daily_data['requests']} запросов, {daily_data['errors']} ошибок\n"
+        
+        # Добавляем последние ошибки
+        if metrics['recent_errors']:
+            text += "\n**Последние ошибки:**\n"
+            for error in metrics['recent_errors'][:5]:  # Последние 5 ошибок
+                text += f"- {error['type']}: {error['message'][:50]}...\n"
+        
         await update.message.reply_text(text, parse_mode='Markdown')
         
     except Exception as e:
@@ -237,6 +249,28 @@ async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка очистки кэша: {e}")
+
+async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Очищает старые метрики (старше 30 дней)"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        # Удаляем метрики старше 30 дней
+        result = await db.db_query("""
+            DELETE FROM metrics 
+            WHERE metric_date < CURRENT_DATE - INTERVAL '30 days'
+        """)
+        
+        # Удаляем старые ошибки (старше 7 дней)
+        await db.db_query("""
+            DELETE FROM error_logs 
+            WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
+        """)
+        
+        await update.message.reply_text("✅ Старые метрики очищены (старше 30 дней).")
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка очистки метрик: {e}")
 
 async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Регистрирует групповой чат"""
@@ -302,6 +336,7 @@ def register(application: Application):
     application.add_handler(CommandHandler("cachestats", cache_stats_command))
     application.add_handler(CommandHandler("queuestats", queue_stats_command))
     application.add_handler(CommandHandler("clearcache", clear_cache_command))
+    application.add_handler(CommandHandler("clearoldmetrics", clear_old_metrics_command))
     
     # Команды для групповых чатов
     application.add_handler(CommandHandler("registergroup", register_group_command))

@@ -66,6 +66,7 @@ class TaskQueue:
             'qna_search': agent._handle_qna_search,
             'complex_search': agent._handle_complex_agent_search,
             'document_processing': self._handle_document_processing,
+            'cleanup_metrics': self._handle_cleanup_metrics,
         }
     
     async def start(self):
@@ -83,6 +84,9 @@ class TaskQueue:
         
         # Запускаем задачу очистки старых задач
         asyncio.create_task(self._cleanup_old_tasks())
+        
+        # Запускаем автоматическую очистку метрик (каждые 24 часа)
+        asyncio.create_task(self._schedule_metrics_cleanup())
     
     async def stop(self):
         """Останавливает очередь задач"""
@@ -217,6 +221,26 @@ class TaskQueue:
         await asyncio.sleep(5)  # Имитируем длительную обработку
         return {"status": "processed", "pages": 10}
     
+    async def _handle_cleanup_metrics(self, **kwargs) -> Dict[str, Any]:
+        """Обработчик для очистки старых метрик"""
+        try:
+            # Удаляем метрики старше 30 дней
+            await db.db_query("""
+                DELETE FROM metrics 
+                WHERE metric_date < CURRENT_DATE - INTERVAL '30 days'
+            """)
+            
+            # Удаляем старые ошибки (старше 7 дней)
+            await db.db_query("""
+                DELETE FROM error_logs 
+                WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
+            """)
+            
+            return {"status": "completed", "message": "Old metrics cleaned up"}
+        except Exception as e:
+            logging.error(f"Error cleaning up metrics: {e}")
+            return {"status": "failed", "error": str(e)}
+    
     async def _cleanup_old_tasks(self):
         """Очищает старые задачи"""
         while self.running:
@@ -239,6 +263,25 @@ class TaskQueue:
                         
             except Exception as e:
                 logging.error(f"Error in cleanup task: {e}")
+    
+    async def _schedule_metrics_cleanup(self):
+        """Планирует автоматическую очистку метрик"""
+        while self.running:
+            try:
+                await asyncio.sleep(86400)  # Ждем 24 часа
+                
+                # Добавляем задачу очистки метрик
+                await self.add_task(
+                    user_id=0,  # Системная задача
+                    task_type='cleanup_metrics',
+                    data={},
+                    priority=TaskPriority.LOW
+                )
+                
+                logging.info("Scheduled metrics cleanup task")
+                
+            except Exception as e:
+                logging.error(f"Error in metrics cleanup scheduler: {e}")
     
     async def get_queue_stats(self) -> Dict[str, Any]:
         """Возвращает статистику очереди"""

@@ -70,12 +70,17 @@ async def main():
         await start_task_queue()
         logging.info("Task queue started.")
         
+        logging.info("Initializing metrics system...")
+        await metrics_collector.initialize()
+        logging.info("Metrics system initialized.")
+        
         await run_bot_and_server()
     except Exception as e:
         logging.critical(f"Application failed critically: {e}", exc_info=True)
     finally:
         logging.info("Shutting down services...")
         await stop_task_queue()
+        await metrics_collector.cleanup()
         if database.db_pool:
             await database.db_pool.close()
             logging.info("Database pool closed.")

@@ -23,7 +23,7 @@ class PerformanceMetrics:
     cache_misses: int = 0
 
 class MetricsCollector:
-    """Сборщик метрик производительности"""
+    """Сборщик метрик производительности с поддержкой базы данных"""
     
     def __init__(self):
         self.metrics = PerformanceMetrics()
@@ -31,6 +31,172 @@ class MetricsCollector:
         self.error_log = deque(maxlen=100)  # Храним последние 100 ошибок
         self.daily_metrics: Dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
         self._lock = asyncio.Lock()
+        self._last_save_time = time.time()
+        self._save_interval = 300  # Сохраняем каждые 5 минут
+    
+    async def _ensure_metrics_tables(self):
+        """Создает таблицы для метрик, если они не существуют"""
+        try:
+            # Таблица для общих метрик
+            await db.db_query("""
+                CREATE TABLE IF NOT EXISTS metrics (
+                    id SERIAL PRIMARY KEY,
+                    metric_date DATE NOT NULL,
+                    request_count INTEGER DEFAULT 0,
+                    total_response_time REAL DEFAULT 0.0,
+                    error_count INTEGER DEFAULT 0,
+                    search_queries INTEGER DEFAULT 0,
+                    cache_hits INTEGER DEFAULT 0,
+                    cache_misses INTEGER DEFAULT 0,
+                    api_calls JSONB DEFAULT '{}',
+                    model_usage JSONB DEFAULT '{}',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(metric_date)
+                )
+            """)
+            
+            # Таблица для ошибок
+            await db.db_query("""
+                CREATE TABLE IF NOT EXISTS error_logs (
+                    id SERIAL PRIMARY KEY,
+                    error_type TEXT NOT NULL,
+                    error_message TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            logging.info("Metrics tables ensured")
+        except Exception as e:
+            logging.error(f"Error creating metrics tables: {e}")
+    
+    async def _save_metrics_to_db(self):
+        """Сохраняет текущие метрики в базу данных"""
+        try:
+            await self._ensure_metrics_tables()
+            
+            today = date.today().isoformat()
+            daily_metrics = self.daily_metrics.get(today, PerformanceMetrics())
+            
+            # Обновляем или вставляем метрики за сегодня
+            await db.db_query("""
+                INSERT INTO metrics (metric_date, request_count, total_response_time, error_count, 
+                                   search_queries, cache_hits, cache_misses, api_calls, model_usage, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT (metric_date) DO UPDATE SET
+                    request_count = metrics.request_count + ?,
+                    total_response_time = metrics.total_response_time + ?,
+                    error_count = metrics.error_count + ?,
+                    search_queries = metrics.search_queries + ?,
+                    cache_hits = metrics.cache_hits + ?,
+                    cache_misses = metrics.cache_misses + ?,
+                    api_calls = metrics.api_calls || ?::jsonb,
+                    model_usage = metrics.model_usage || ?::jsonb,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (
+                today, daily_metrics.request_count, daily_metrics.total_response_time, 
+                daily_metrics.error_count, daily_metrics.search_queries, daily_metrics.cache_hits, 
+                daily_metrics.cache_misses, json.dumps(daily_metrics.api_calls), 
+                json.dumps(daily_metrics.model_usage),
+                # Значения для UPDATE
+                daily_metrics.request_count, daily_metrics.total_response_time, 
+                daily_metrics.error_count, daily_metrics.search_queries, daily_metrics.cache_hits, 
+                daily_metrics.cache_misses, json.dumps(daily_metrics.api_calls), 
+                json.dumps(daily_metrics.model_usage)
+            ))
+            
+            # Сохраняем новые ошибки
+            if self.error_log:
+                for error in list(self.error_log):
+                    await db.db_query("""
+                        INSERT INTO error_logs (error_type, error_message)
+                        VALUES (?, ?)
+                    """, (error['type'], error['message']))
+                
+                # Очищаем сохраненные ошибки
+                self.error_log.clear()
+            
+            self._last_save_time = time.time()
+            logging.debug("Metrics saved to database")
+            
+        except Exception as e:
+            logging.error(f"Error saving metrics to database: {e}")
+    
+    async def _load_metrics_from_db(self):
+        """Загружает метрики из базы данных"""
+        try:
+            await self._ensure_metrics_tables()
+            
+            # Загружаем общие метрики
+            result = await db.db_query("""
+                SELECT 
+                    SUM(request_count) as total_requests,
+                    SUM(total_response_time) as total_time,
+                    SUM(error_count) as total_errors,
+                    SUM(search_queries) as total_searches,
+                    SUM(cache_hits) as total_cache_hits,
+                    SUM(cache_misses) as total_cache_misses,
+                    api_calls,
+                    model_usage
+                FROM metrics
+                WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
+            """)
+            
+            if result and result[0]:
+                row = result[0]
+                self.metrics.request_count = row['total_requests'] or 0
+                self.metrics.total_response_time = row['total_time'] or 0.0
+                self.metrics.error_count = row['total_errors'] or 0
+                self.metrics.search_queries = row['total_searches'] or 0
+                self.metrics.cache_hits = row['total_cache_hits'] or 0
+                self.metrics.cache_misses = row['total_cache_misses'] or 0
+                
+                if row['api_calls']:
+                    self.metrics.api_calls = row['api_calls']
+                if row['model_usage']:
+                    self.metrics.model_usage = row['model_usage']
+            
+            # Загружаем дневные метрики за последние 7 дней
+            daily_result = await db.db_query("""
+                SELECT metric_date, request_count, total_response_time, error_count,
+                       search_queries, cache_hits, cache_misses, api_calls, model_usage
+                FROM metrics
+                WHERE metric_date >= CURRENT_DATE - INTERVAL '7 days'
+                ORDER BY metric_date DESC
+            """)
+            
+            for row in daily_result:
+                date_str = row['metric_date'].isoformat()
+                self.daily_metrics[date_str] = PerformanceMetrics(
+                    request_count=row['request_count'],
+                    total_response_time=row['total_response_time'],
+                    error_count=row['error_count'],
+                    search_queries=row['search_queries'],
+                    cache_hits=row['cache_hits'],
+                    cache_misses=row['cache_misses'],
+                    api_calls=row['api_calls'] if row['api_calls'] else {},
+                    model_usage=row['model_usage'] if row['model_usage'] else {}
+                )
+            
+            # Загружаем последние ошибки
+            error_result = await db.db_query("""
+                SELECT error_type, error_message, created_at
+                FROM error_logs
+                ORDER BY created_at DESC
+                LIMIT 100
+            """)
+            
+            for row in error_result:
+                self.error_log.append({
+                    'timestamp': row['created_at'].isoformat(),
+                    'type': row['error_type'],
+                    'message': row['error_message']
+                })
+            
+            logging.info("Metrics loaded from database")
+            
+        except Exception as e:
+            logging.error(f"Error loading metrics from database: {e}")
     
     async def record_request(self, request_type: str, response_time: float, success: bool = True):
         """Записывает метрики запроса"""
@@ -48,6 +214,10 @@ class MetricsCollector:
             self.daily_metrics[today].total_response_time += response_time
             if not success:
                 self.daily_metrics[today].error_count += 1
+            
+            # Периодически сохраняем в БД
+            if time.time() - self._last_save_time > self._save_interval:
+                await self._save_metrics_to_db()
     
     async def record_api_call(self, api_name: str, model: str = None):
         """Записывает вызов API"""
@@ -113,6 +283,9 @@ class MetricsCollector:
     async def get_metrics_summary(self) -> Dict[str, Any]:
         """Возвращает сводку метрик"""
         async with self._lock:
+            # Принудительно сохраняем текущие метрики перед получением сводки
+            await self._save_metrics_to_db()
+            
             return {
                 'total_requests': self.metrics.request_count,
                 'average_response_time': self.get_average_response_time(),
@@ -131,6 +304,14 @@ class MetricsCollector:
                     for date, metrics in self.daily_metrics.items()
                 }
             }
+    
+    async def initialize(self):
+        """Инициализирует систему метрик"""
+        await self._load_metrics_from_db()
+    
+    async def cleanup(self):
+        """Очищает ресурсы и сохраняет метрики"""
+        await self._save_metrics_to_db()
 
 # Глобальный экземпляр сборщика метрик
 metrics_collector = MetricsCollector()
