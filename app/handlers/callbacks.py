@@ -99,16 +99,23 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = query.data.split(':')[1]
     user_id = query.from_user.id
     
+    # Импортируем функции здесь, чтобы избежать проблем с областью видимости
+    from ..document_processor import get_user_documents, delete_user_document, get_document_by_id
+
     if action == "upload_new":
+        keyboard = [
+            [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+        ]
+        
         await query.edit_message_text(
             "📄 **Загрузите новый документ**\n\n"
             "Отправьте PDF или DOCX файл, и я обработаю его для вас.",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
     
     elif action == "list":
-        from ..document_processor import get_user_documents
         
         documents = await get_user_documents(user_id)
         if not documents:
@@ -151,7 +158,6 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     elif action == "clear_all":
-        from ..document_processor import delete_user_document
         
         # Получаем все документы пользователя
         documents = await get_user_documents(user_id)
@@ -181,7 +187,6 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "use_existing":
         # Используем существующий документ
         document_id = int(query.data.split(':')[2])
-        from ..document_processor import get_document_by_id
         
         document = await get_document_by_id(document_id, user_id)
         if not document:
@@ -224,6 +229,10 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton(
                     f"📄 {doc['filename'][:30]}...", 
                     callback_data=f"doc:select:{doc['id']}"
+                ),
+                InlineKeyboardButton(
+                    "🗑️", 
+                    callback_data=f"doc:delete_document:{doc['id']}"
                 )
             ])
         
@@ -240,7 +249,6 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "select":
         # Выбираем конкретный документ
         document_id = int(query.data.split(':')[2])
-        from ..document_processor import get_document_by_id
         
         document = await get_document_by_id(document_id, user_id)
         if not document:
@@ -260,7 +268,6 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "delete_document":
         # Удаляем конкретный документ
         document_id = int(query.data.split(':')[2])
-        from ..document_processor import delete_user_document, get_document_by_id
         
         document = await get_document_by_id(document_id, user_id)
         if not document:

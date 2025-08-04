@@ -340,6 +340,19 @@ class DocumentProcessor:
                 )
             """)
             
+            # Проверяем, существует ли колонка file_hash, если нет - добавляем
+            try:
+                await db.db_query("SELECT file_hash FROM user_documents LIMIT 1")
+            except Exception:
+                # Колонка не существует, добавляем её
+                logging.info("Adding file_hash column to user_documents table")
+                await db.db_query("ALTER TABLE user_documents ADD COLUMN file_hash TEXT")
+                # Удаляем UNIQUE constraint, так как он может конфликтовать с существующими данными
+                try:
+                    await db.db_query("ALTER TABLE user_documents DROP CONSTRAINT IF EXISTS user_documents_file_hash_key")
+                except:
+                    pass
+            
             # Сохраняем документ
             await db.db_query(
                 "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES (?, ?, ?, ?, ?, ?)",

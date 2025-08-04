@@ -255,11 +255,26 @@ class MetricsCollector:
     async def record_error(self, error_type: str, error_message: str):
         """Записывает ошибку"""
         async with self._lock:
+            # Добавляем в локальный лог
             self.error_log.append({
                 'timestamp': datetime.now().isoformat(),
                 'type': error_type,
-                'message': error_message
+                'message': error_message,
+                'saved': False  # Флаг для отслеживания сохранения
             })
+            
+            # Сохраняем в базу данных
+            try:
+                await self._ensure_metrics_tables()
+                await db.db_query(
+                    "INSERT INTO error_logs (error_type, error_message) VALUES (?, ?)",
+                    (error_type, error_message)
+                )
+                # Отмечаем как сохраненную
+                if self.error_log:
+                    self.error_log[-1]['saved'] = True
+            except Exception as e:
+                logging.error(f"Failed to save error to database: {e}")
     
     def get_average_response_time(self) -> float:
         """Возвращает среднее время ответа"""
@@ -286,6 +301,26 @@ class MetricsCollector:
             # Принудительно сохраняем текущие метрики перед получением сводки
             await self._save_metrics_to_db()
             
+            # Загружаем последние ошибки из базы данных
+            try:
+                recent_errors_result = await db.db_query("""
+                    SELECT error_type, error_message, created_at
+                    FROM error_logs
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                """)
+                recent_errors = [
+                    {
+                        'type': row['error_type'],
+                        'message': row['error_message'],
+                        'timestamp': row['created_at'].isoformat() if row['created_at'] else None
+                    }
+                    for row in recent_errors_result
+                ]
+            except Exception as e:
+                logging.error(f"Error loading recent errors: {e}")
+                recent_errors = list(self.error_log)[-10:]  # Fallback на локальный лог
+            
             summary = {
                 'total_requests': self.metrics.request_count,
                 'average_response_time': self.get_average_response_time(),
@@ -294,7 +329,7 @@ class MetricsCollector:
                 'api_calls': dict(self.metrics.api_calls),
                 'model_usage': dict(self.metrics.model_usage),
                 'search_queries': self.metrics.search_queries,
-                'recent_errors': list(self.error_log)[-10:],  # Последние 10 ошибок
+                'recent_errors': recent_errors,
                 'daily_metrics': {
                     date: {
                         'requests': metrics.request_count,
