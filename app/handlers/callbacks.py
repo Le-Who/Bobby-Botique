@@ -179,6 +179,10 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if success:
                 deleted_count += 1
         
+        # Очищаем состояние работы с документами
+        from ..state import clear_document_state
+        clear_document_state(user_id)
+        
         await query.edit_message_text(
             f"🗑️ **Документы удалены**\n\n"
             f"Удалено документов: `{deleted_count}`\n\n"
@@ -306,6 +310,13 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         success = await delete_user_document(document_id, user_id)
         if success:
+            # Проверяем, был ли это выбранный документ
+            from ..state import get_selected_document_id, clear_document_state
+            selected_doc_id = get_selected_document_id(user_id)
+            if selected_doc_id == document_id:
+                # Если удалили выбранный документ, очищаем состояние
+                clear_document_state(user_id)
+            
             await query.edit_message_text(
                 f"🗑️ **Документ удален**\n\n"
                 f"Документ `{document['filename']}` был успешно удален.",

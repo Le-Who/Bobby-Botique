@@ -31,21 +31,22 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_in_document_mode(user_id):
         # Пользователь в режиме работы с документами
         selected_doc_id = get_selected_document_id(user_id)
-        if selected_doc_id:
+        if selected_doc_id and update.message.text:
             # Обрабатываем вопрос по выбранному документу
             await handle_document_question(update, context, selected_doc_id)
         else:
-            # Пользователь в режиме документов, но документ не выбран
-            await update.message.reply_text(
-                "📋 Вы находитесь в режиме работы с документами.\n\n"
-                "💡 **Доступные действия:**\n"
-                "• Загрузите новый документ\n"
-                "• Выберите документ из списка\n"
-                "• Используйте кнопки под сообщениями\n\n"
-                "🔄 **Для выхода из режима документов:**\n"
-                "• Нажмите кнопку '❌ Отменить работу с документами'\n"
-                "• Или отправьте команду /documents"
-            )
+            # Пользователь в режиме документов, но документ не выбран или это не текст
+            if update.message.text:
+                await update.message.reply_text(
+                    "📋 Вы находитесь в режиме работы с документами.\n\n"
+                    "💡 **Доступные действия:**\n"
+                    "• Загрузите новый документ\n"
+                    "• Выберите документ из списка\n"
+                    "• Используйте кнопки под сообщениями\n\n"
+                    "🔄 **Для выхода из режима документов:**\n"
+                    "• Нажмите кнопку '❌ Отменить работу с документами'\n"
+                    "• Или отправьте команду /documents"
+                )
         return
     
     # Обычная обработка сообщений
@@ -60,16 +61,13 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
     user_id = update.effective_user.id
     user_message = update.message.text
     
-    # Отправляем сообщение о начале обработки
-    processing_msg = await update.message.reply_text("📄 Анализирую документ...")
-    
     try:
         from ..document_processor import get_document_content, get_document_by_id
         
         # Получаем информацию о документе
         document = await get_document_by_id(document_id, user_id)
         if not document:
-            await processing_msg.edit_text("❌ Документ не найден.")
+            await update.message.reply_text("❌ Документ не найден.")
             from ..state import clear_document_state
             clear_document_state(user_id)
             return
@@ -77,7 +75,7 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
         # Получаем содержимое документа
         document_content = await get_document_content(document_id, user_id)
         if not document_content:
-            await processing_msg.edit_text("❌ Не удалось получить содержимое документа.")
+            await update.message.reply_text("❌ Не удалось получить содержимое документа.")
             return
         
         # Обрабатываем вопрос через AI
@@ -85,11 +83,15 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
         from .. import database as db
         
         chat_state = await db.get_user_chat(user_id)
-        await _handle_document_question(processing_msg, user_id, user_message, chat_state)
+        
+        # Создаем placeholder сообщение для обработки
+        placeholder_message = await update.message.reply_text("📄 Анализирую документ...")
+        
+        await _handle_document_question(placeholder_message, user_id, user_message, chat_state)
         
     except Exception as e:
         logging.error(f"Error handling document question: {e}")
-        await processing_msg.edit_text(f"❌ Произошла ошибка при обработке вопроса: {str(e)}")
+        await update.message.reply_text(f"❌ Произошла ошибка при обработке вопроса: {str(e)}")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает загруженные документы"""

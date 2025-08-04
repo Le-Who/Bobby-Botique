@@ -135,7 +135,10 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
         
         documents = await get_user_documents(user_id)
         if not documents:
-            await placeholder_message.edit_text("❌ У вас нет загруженных документов. Сначала загрузите документ.")
+            try:
+                await placeholder_message.edit_text("❌ У вас нет загруженных документов. Сначала загрузите документ.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
             return
         
         # Берем самый последний документ
@@ -143,10 +146,18 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
         document_content = await get_document_content(latest_document['id'], user_id)
         
         if not document_content:
-            await placeholder_message.edit_text("❌ Не удалось получить содержимое документа.")
+            try:
+                await placeholder_message.edit_text("❌ Не удалось получить содержимое документа.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
             return
         
-        await placeholder_message.edit_text("📄 Анализирую документ...")
+        try:
+            await placeholder_message.edit_text("📄 Анализирую документ...")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+            # Если не можем отредактировать, отправляем новое сообщение
+            placeholder_message = await placeholder_message.reply_text("📄 Анализирую документ...")
         
         # Ограничиваем размер контекста документа
         max_context_length = 30000  # Ограничиваем до 30K символов
@@ -169,7 +180,10 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
         
         gemini_key, model_used, _ = await _resolve_gemini_request(settings.DEFAULT_MODEL)
         if not gemini_key:
-            await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.DEFAULT_MODEL} закончились.")
+            try:
+                await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.DEFAULT_MODEL} закончились.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
             return
         
         response_text, _ = await services.get_gemini_response(
@@ -191,11 +205,17 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
             await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
             await metrics_collector.record_api_call("document_question", model_used)
         else:
-            await placeholder_message.edit_text("❌ Не удалось получить ответ от AI.")
+            try:
+                await placeholder_message.edit_text("❌ Не удалось получить ответ от AI.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
             
     except Exception as e:
         logging.error(f"Error processing document question: {e}", exc_info=True)
-        await placeholder_message.edit_text(f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}")
+        try:
+            await placeholder_message.edit_text(f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
 
 async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None):
     model_for_this_request = model_override or chat_state.model
@@ -317,9 +337,6 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             await _handle_research_agent(placeholder_message, update.effective_user.id, text[2:].strip(), chat_state)
         elif text.startswith('?'):
             await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
-        elif user_documents and not text.startswith('/'):  # Если есть документы и это не команда
-            # Обрабатываем как вопрос по документу
-            await _handle_document_question(placeholder_message, update.effective_user.id, text, chat_state)
         elif chat_state.search_enabled:
             await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
         else:
