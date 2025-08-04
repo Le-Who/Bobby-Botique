@@ -107,17 +107,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             success_text += f"📊 Таблиц: {result['tables']}\n"
         
         success_text += "\nТеперь вы можете задавать вопросы по содержимому документа."
-
-        from ..utils.messaging import send_simple_message
-        await send_simple_message(processing_msg, success_text)
+        
+        await processing_msg.edit_text(success_text, parse_mode='Markdown')
         
         # Записываем метрики
         await metrics_collector.record_api_call("document_processing", document.file_name)
         
     except Exception as e:
         logging.error(f"Error processing document: {e}")
-        from ..utils.messaging import send_simple_message
-        await send_simple_message(processing_msg, f"❌ Произошла ошибка при обработке документа: {str(e)}")
+        await processing_msg.edit_text(f"❌ Произошла ошибка при обработке документа: {str(e)}")
         await metrics_collector.record_error("document_processing", str(e))
 
 def register(application: Application):

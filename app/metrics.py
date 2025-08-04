@@ -75,9 +75,8 @@ class MetricsCollector:
         try:
             await self._ensure_metrics_tables()
             
-            today = date.today()
-            today_str = today.isoformat()
-            daily_metrics = self.daily_metrics.get(today_str, PerformanceMetrics())
+            today = date.today().isoformat()
+            daily_metrics = self.daily_metrics.get(today, PerformanceMetrics())
             
             # Обновляем или вставляем метрики за сегодня
             await db.db_query("""
@@ -210,11 +209,11 @@ class MetricsCollector:
                 self.metrics.error_count += 1
             
             # Записываем в дневные метрики
-            today_str = date.today().isoformat()
-            self.daily_metrics[today_str].request_count += 1
-            self.daily_metrics[today_str].total_response_time += response_time
+            today = date.today().isoformat()
+            self.daily_metrics[today].request_count += 1
+            self.daily_metrics[today].total_response_time += response_time
             if not success:
-                self.daily_metrics[today_str].error_count += 1
+                self.daily_metrics[today].error_count += 1
             
             # Периодически сохраняем в БД
             if time.time() - self._last_save_time > self._save_interval:
@@ -227,31 +226,31 @@ class MetricsCollector:
             if model:
                 self.metrics.model_usage[model] = self.metrics.model_usage.get(model, 0) + 1
             
-            today_str = date.today().isoformat()
-            self.daily_metrics[today_str].api_calls[api_name] = self.daily_metrics[today_str].api_calls.get(api_name, 0) + 1
+            today = date.today().isoformat()
+            self.daily_metrics[today].api_calls[api_name] = self.daily_metrics[today].api_calls.get(api_name, 0) + 1
             if model:
-                self.daily_metrics[today_str].model_usage[model] = self.daily_metrics[today_str].model_usage.get(model, 0) + 1
+                self.daily_metrics[today].model_usage[model] = self.daily_metrics[today].model_usage.get(model, 0) + 1
     
     async def record_search_query(self):
         """Записывает поисковый запрос"""
         async with self._lock:
             self.metrics.search_queries += 1
-            today_str = date.today().isoformat()
-            self.daily_metrics[today_str].search_queries += 1
+            today = date.today().isoformat()
+            self.daily_metrics[today].search_queries += 1
     
     async def record_cache_hit(self):
         """Записывает попадание в кэш"""
         async with self._lock:
             self.metrics.cache_hits += 1
-            today_str = date.today().isoformat()
-            self.daily_metrics[today_str].cache_hits += 1
+            today = date.today().isoformat()
+            self.daily_metrics[today].cache_hits += 1
     
     async def record_cache_miss(self):
         """Записывает промах кэша"""
         async with self._lock:
             self.metrics.cache_misses += 1
-            today_str = date.today().isoformat()
-            self.daily_metrics[today_str].cache_misses += 1
+            today = date.today().isoformat()
+            self.daily_metrics[today].cache_misses += 1
     
     async def record_error(self, error_type: str, error_message: str):
         """Записывает ошибку"""

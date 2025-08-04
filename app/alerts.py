@@ -186,12 +186,10 @@ async def send_alerts_to_admin(context):
         alerts = await run_alert_checks()
         if alerts:
             for alert in alerts:
-                from .utils.messaging import send_formatted_message
-                
-                # Отправляем сообщение без parse_mode, так как send_formatted_message обработает форматирование
                 await context.bot.send_message(
                     chat_id=settings.ADMIN_ID,
-                    text=alert
+                    text=alert,
+                    parse_mode='Markdown'
                 )
                 await asyncio.sleep(1)  # Небольшая пауза между сообщениями
     except Exception as e:
