@@ -149,10 +149,13 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     elif action == "cancel":
+        from ..state import clear_document_state
+        clear_document_state(user_id)
+        
         await query.edit_message_text(
             "✅ **Режим работы с документами отключен**\n\n"
             "Теперь ваши сообщения будут обрабатываться в обычном режиме чата.\n"
-            "Чтобы снова работать с документами, загрузите новый файл.",
+            "Чтобы снова работать с документами, загрузите новый файл или используйте команду /documents.",
             parse_mode='Markdown'
         )
         return
@@ -193,13 +196,24 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Документ не найден.")
             return
         
+        # Устанавливаем состояние работы с документами
+        from ..state import set_document_mode
+        set_document_mode(user_id, True, document_id)
+        
         await query.edit_message_text(
             f"✅ **Используется существующий документ**\n\n"
             f"📄 **{document['filename']}**\n"
             f"📊 Страниц: {document['pages']}\n"
             f"📅 Загружен: {document['created_at'][:10]}\n\n"
-            "Теперь вы можете задавать вопросы по этому документу.",
-            parse_mode='Markdown'
+            "Теперь вы можете задавать вопросы по этому документу.\n\n"
+            "💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n"
+            "🔄 **Для выхода из режима документов:**\n"
+            "• Нажмите кнопку '❌ Отмена' ниже\n"
+            "• Или отправьте команду /documents",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+            ])
         )
         return
     
@@ -259,12 +273,20 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Документ не найден.")
             return
         
+        # Устанавливаем состояние работы с документами
+        from ..state import set_document_mode
+        set_document_mode(user_id, True, document_id)
+        
         await query.edit_message_text(
             f"✅ **Выбран документ**\n\n"
             f"📄 **{document['filename']}**\n"
             f"📊 Страниц: {document['pages']}\n"
             f"📅 Загружен: {document['created_at'][:10]}\n\n"
-            "Теперь вы можете задавать вопросы по этому документу.",
+            "Теперь вы можете задавать вопросы по этому документу.\n\n"
+            "💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n"
+            "🔄 **Для выхода из режима документов:**\n"
+            "• Нажмите кнопку '❌ Отмена' ниже\n"
+            "• Или отправьте команду /documents",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Назад к списку", callback_data="doc:select_document")],

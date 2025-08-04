@@ -14,51 +14,82 @@ from ..document_processor import process_uploaded_document
 from ..metrics import metrics_collector
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает входящие сообщения"""
     user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
     
-    # Проверяем авторизацию
-    if not await db.is_authorized(user_id): 
+    if not await db.is_authorized(user_id):
         return
     
-    # Для групповых чатов проверяем, зарегистрирована ли группа
-    if update.effective_chat.type != 'private':
-        group_info = await group_chat_manager.get_group_info(chat_id)
-        if not group_info:
-            # Если группа не зарегистрирована, игнорируем сообщение
-            return
-        
-        # Проверяем, является ли пользователь участником группы
-        if not await group_chat_manager.is_member(chat_id, user_id):
-            return
-    
-    user_lock = state.USER_LOCKS[user_id]
-    if user_lock.locked():
-        await update.message.reply_text("Пожалуйста, подождите, я еще обрабатываю ваш предыдущий запрос.")
-        return
-
     # Обрабатываем документы
     if update.message.document:
         await handle_document(update, context)
         return
     
-    if update.message.text:
-        chat_state = await db.get_user_chat(user_id)
-        if chat_state.token_count >= settings.CHAT_TOKEN_LIMIT:
-            await update.message.reply_text("Достигнут лимит токенов. Начните новый /newchat")
-            return
+    # Проверяем, находится ли пользователь в режиме работы с документами
+    from ..state import is_in_document_mode, get_selected_document_id, clear_document_state
     
-    # Логируем сообщение в группе
-    if update.effective_chat.type != 'private':
-        await log_group_message(chat_id, user_id, update.message.text or update.message.caption or "")
-            
-    placeholder_message = await update.message.reply_text("⏳ Принято в обработку...")
+    if is_in_document_mode(user_id):
+        # Пользователь в режиме работы с документами
+        selected_doc_id = get_selected_document_id(user_id)
+        if selected_doc_id:
+            # Обрабатываем вопрос по выбранному документу
+            await handle_document_question(update, context, selected_doc_id)
+        else:
+            # Пользователь в режиме документов, но документ не выбран
+            await update.message.reply_text(
+                "📋 Вы находитесь в режиме работы с документами.\n\n"
+                "💡 **Доступные действия:**\n"
+                "• Загрузите новый документ\n"
+                "• Выберите документ из списка\n"
+                "• Используйте кнопки под сообщениями\n\n"
+                "🔄 **Для выхода из режима документов:**\n"
+                "• Нажмите кнопку '❌ Отменить работу с документами'\n"
+                "• Или отправьте команду /documents"
+            )
+        return
     
+    # Обычная обработка сообщений
     async def task_wrapper():
-        async with user_lock:
-            await agent.process_long_request(placeholder_message, update, context)
-            
+        async with state.USER_LOCKS[user_id]:
+            await agent.process_long_request(update.message, update, context)
+    
     asyncio.create_task(task_wrapper())
+
+async def handle_document_question(update: Update, context: ContextTypes.DEFAULT_TYPE, document_id: int):
+    """Обрабатывает вопрос по конкретному документу"""
+    user_id = update.effective_user.id
+    user_message = update.message.text
+    
+    # Отправляем сообщение о начале обработки
+    processing_msg = await update.message.reply_text("📄 Анализирую документ...")
+    
+    try:
+        from ..document_processor import get_document_content, get_document_by_id
+        
+        # Получаем информацию о документе
+        document = await get_document_by_id(document_id, user_id)
+        if not document:
+            await processing_msg.edit_text("❌ Документ не найден.")
+            from ..state import clear_document_state
+            clear_document_state(user_id)
+            return
+        
+        # Получаем содержимое документа
+        document_content = await get_document_content(document_id, user_id)
+        if not document_content:
+            await processing_msg.edit_text("❌ Не удалось получить содержимое документа.")
+            return
+        
+        # Обрабатываем вопрос через AI
+        from ..handlers.agent import _handle_document_question
+        from .. import database as db
+        
+        chat_state = await db.get_user_chat(user_id)
+        await _handle_document_question(processing_msg, user_id, user_message, chat_state)
+        
+    except Exception as e:
+        logging.error(f"Error handling document question: {e}")
+        await processing_msg.edit_text(f"❌ Произошла ошибка при обработке вопроса: {str(e)}")
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает загруженные документы"""
@@ -93,11 +124,21 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if result.get("error") == "duplicate":
                 # Обрабатываем дубликат
                 duplicate_info = result.get("duplicate_info", {})
+                
+                # Правильно обрабатываем datetime
+                created_date = duplicate_info.get('created_at', 'Unknown')
+                if hasattr(created_date, 'strftime'):
+                    # Это объект datetime
+                    date_str = created_date.strftime('%Y-%m-%d')
+                else:
+                    # Это строка
+                    date_str = str(created_date)[:10] if created_date != 'Unknown' else 'Unknown'
+                
                 duplicate_text = (
                     f"⚠️ **Файл уже загружен**\n\n"
                     f"Файл `{document.file_name}` уже был загружен ранее как:\n"
                     f"📄 **{duplicate_info.get('filename', 'Unknown')}**\n"
-                    f"📅 Загружен: {duplicate_info.get('created_at', 'Unknown')[:10]}\n\n"
+                    f"📅 Загружен: {date_str}\n\n"
                     f"Хотите использовать существующий документ?"
                 )
                 
@@ -154,6 +195,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        
+        # Устанавливаем состояние работы с документами
+        from ..state import set_document_mode
+        set_document_mode(user_id, True)
         
         # Записываем метрики
         await metrics_collector.record_api_call("document_processing")

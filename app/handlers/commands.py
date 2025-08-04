@@ -286,11 +286,13 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await db.is_authorized(update.effective_user.id):
         return
     
+    # Очищаем состояние работы с документами при входе в команду
+    from ..state import clear_document_state
+    clear_document_state(update.effective_user.id)
+    
     try:
         from ..document_processor import get_user_documents
-        
         documents = await get_user_documents(update.effective_user.id)
-        
         if not documents:
             text = (
                 "📋 **Ваши документы**\n\n"
@@ -298,41 +300,40 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "💡 **Как загрузить документ:**\n"
                 "• Отправьте PDF или DOCX файл\n"
                 "• Максимальный размер: 50MB\n"
-                "• После загрузки вы сможете задавать вопросы по содержимому"
+                "• После загрузки вы сможете задавать вопросы по содержимому\n\n"
+                "📋 **Политика хранения:**\n"
+                "• Максимум документов: 5\n"
+                "• Срок хранения: 3 дня"
             )
         else:
             text = "📋 **Ваши документы:**\n\n"
-            
-            for i, doc in enumerate(documents[:10], 1):  # Показываем только первые 10
+            for i, doc in enumerate(documents[:10], 1):
                 text += f"{i}. **{doc['filename']}**\n"
                 text += f"   📄 Страниц: {doc['pages']}\n"
                 text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
                 text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
-            
             if len(documents) > 10:
                 text += f"... и еще {len(documents) - 10} документов\n\n"
-            
             text += (
                 "💡 **Действия:**\n"
                 "• Отправьте новый документ для загрузки\n"
                 "• Задайте вопрос по последнему документу\n"
-                "• Используйте кнопки под сообщениями для управления"
+                "• Используйте кнопки под сообщениями для управления\n\n"
+                "📋 **Политика хранения:**\n"
+                "• Максимум документов: 5\n"
+                "• Срок хранения: 3 дня"
             )
-        
-        # Создаем кнопки для управления
         keyboard = [
             [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
             [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
             [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
         ]
-        
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await update.message.reply_text(
-            formatted_text, 
+            formatted_text,
             parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка получения документов: {e}")
         logging.error(f"Error in documents command: {e}", exc_info=True)
