@@ -336,9 +336,6 @@ class MetricsCollector:
             # Принудительно сохраняем текущие метрики перед получением сводки
             await self._save_metrics_to_db()
             
-            # Перезагружаем метрики из БД для получения актуальных данных
-            await self._load_metrics_from_db()
-            
             # Загружаем последние ошибки из базы данных
             try:
                 recent_errors_result = await db.db_query("""

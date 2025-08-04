@@ -100,6 +100,11 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает загруженные документы"""
     user_id = update.effective_user.id
+    
+    # Проверяем, что это действительно документ, а не изображение
+    if not update.message.document:
+        return  # Если это не документ, просто выходим
+    
     document = update.message.document
     
     # Проверяем размер файла (максимум 50MB)

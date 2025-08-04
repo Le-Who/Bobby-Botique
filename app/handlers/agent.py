@@ -116,8 +116,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         await placeholder_message.edit_text(f"✅ Найдено {len(search_results)} источников. Выбираю лучшие...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
-        # Если не можем отредактировать, отправляем новое сообщение
-        placeholder_message = await placeholder_message.reply_text(f"✅ Найдено {len(search_results)} источников. Выбираю лучшие...")
     
     gemini_key, model_used, _ = await _resolve_gemini_request(settings.URL_SELECTION_MODEL)
     if not gemini_key:
@@ -156,8 +154,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         await placeholder_message.edit_text(f"✅ Выбрано {len(selected_urls)} источников. Собираю контент...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
-        # Если не можем отредактировать, отправляем новое сообщение
-        placeholder_message = await placeholder_message.reply_text(f"✅ Выбрано {len(selected_urls)} источников. Собираю контент...")
     
     final_context_list = [f"Источник (URL: {res.get('url')}):\n{res.get('content')}" for url in selected_urls for res in search_results if res.get('url') == url]
     full_context = "\n\n---\n\n".join(final_context_list)
@@ -173,8 +169,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         await placeholder_message.edit_text(f"🧠 Синтезирую ответ на основе {len(full_context)} символов...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
-        # Если не можем отредактировать, отправляем новое сообщение
-        placeholder_message = await placeholder_message.reply_text(f"🧠 Синтезирую ответ на основе {len(full_context)} символов...")
     
     model_for_synthesis = model_override or settings.RESEARCH_MODEL
     gemini_key, model_used, _ = await _resolve_gemini_request(model_for_synthesis)
@@ -228,6 +222,8 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
                 await placeholder_message.edit_text("❌ У вас нет загруженных документов. Сначала загрузите документ.")
             except Exception as edit_error:
                 logging.error(f"Could not edit placeholder message: {edit_error}")
+                # Fallback на новое сообщение
+                await placeholder_message.reply_text("❌ У вас нет загруженных документов. Сначала загрузите документ.")
             return
         
         # Берем самый последний документ
@@ -239,6 +235,8 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
                 await placeholder_message.edit_text("❌ Не удалось получить содержимое документа.")
             except Exception as edit_error:
                 logging.error(f"Could not edit placeholder message: {edit_error}")
+                # Fallback на новое сообщение
+                await placeholder_message.reply_text("❌ Не удалось получить содержимое документа.")
             return
         
         try:
@@ -273,6 +271,8 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
                 await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.DEFAULT_MODEL} закончились.")
             except Exception as edit_error:
                 logging.error(f"Could not edit placeholder message: {edit_error}")
+                # Fallback на новое сообщение
+                await placeholder_message.reply_text(f"🚫 Ключи для модели {settings.DEFAULT_MODEL} закончились.")
             return
         
         response_text, _ = await services.get_gemini_response(
@@ -298,6 +298,8 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
                 await placeholder_message.edit_text("❌ Не удалось получить ответ от AI.")
             except Exception as edit_error:
                 logging.error(f"Could not edit placeholder message: {edit_error}")
+                # Fallback на новое сообщение
+                await placeholder_message.reply_text("❌ Не удалось получить ответ от AI.")
             
     except Exception as e:
         logging.error(f"Error processing document question: {e}", exc_info=True)
@@ -305,6 +307,8 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
             await placeholder_message.edit_text(f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
+            # Fallback на новое сообщение
+            await placeholder_message.reply_text(f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}")
 
 async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None):
     model_for_this_request = model_override or chat_state.model
