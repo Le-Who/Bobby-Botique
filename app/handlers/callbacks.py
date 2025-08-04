@@ -36,19 +36,29 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     user_lock = state.USER_LOCKS[user_id]
 
     if user_lock.locked():
-        # Не нужно вызывать await query.answer() здесь, т.к. он уже был вызван выше
         return
 
-    async def task_wrapper():
-        async with user_lock:
-            if action == "vision_only":
-                chat_state = await db.get_user_chat(user_id)
-                await agent._handle_photo(placeholder_message, original_message, chat_state)
-            elif action == "confirm":
-                search_prefix = '??' if (original_message.caption and original_message.caption.startswith('??')) else '?'
-                await agent._handle_complex_agent_search(placeholder_message, original_message, search_prefix)
-    
-    asyncio.create_task(task_wrapper())
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # 1. Определяем, какую задачу будем запускать.
+    task_to_run = None
+    if action == "vision_only":
+        # 2. СРАЗУ даем обратную связь пользователю.
+        await placeholder_message.edit_text("🖼️ Описываю изображение...")
+        chat_state = await db.get_user_chat(user_id)
+        task_to_run = agent._handle_photo(placeholder_message, original_message, chat_state)
+    elif action == "confirm":
+        # У этой функции своя обратная связь ("Анализирую..."), поэтому здесь ничего не меняем.
+        search_prefix = '??' if (original_message.caption and original_message.caption.startswith('??')) else '?'
+        task_to_run = agent._handle_complex_agent_search(placeholder_message, original_message, search_prefix)
+
+    # 3. Если задача определена, запускаем ее в фоне под блокировкой.
+    if task_to_run:
+        async def task_wrapper():
+            async with user_lock:
+                await task_to_run
+        
+        asyncio.create_task(task_wrapper())
+
 
 async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
