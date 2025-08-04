@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, MessageHandler, filters, Application
 
 from . import agent
@@ -108,7 +108,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         success_text += "\n\n💡 **Как задавать вопросы:**\n• Просто напишите ваш вопрос\n• Например: \"Какие основные пункты?\", \"Что говорится о...?\"\n• Система автоматически найдет ответ в документе"
         
-        await processing_msg.edit_text(success_text, parse_mode='Markdown')
+        # Создаем кнопки для управления документом
+        keyboard = [
+            [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
+            [InlineKeyboardButton("📋 Список документов", callback_data="doc:list")],
+            [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")]
+        ]
+        
+        await processing_msg.edit_text(
+            success_text, 
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         
         # Записываем метрики
         await metrics_collector.record_api_call("document_processing", document.file_name)

@@ -5,7 +5,7 @@ from telegram.error import BadRequest
 from .formatting import strip_markdown, escape_markdown_v2, TelegramFormatter
 from ..config import settings
 
-async def send_long_message(message: Message, text: str, preserve_formatting: bool = True):
+async def send_long_message(message: Message, text: str, preserve_formatting: bool = True, reply_markup=None):
     """
     Splits a long message and sends it in parts using the new TelegramFormatter.
     
@@ -39,9 +39,9 @@ async def send_long_message(message: Message, text: str, preserve_formatting: bo
         try:
             if is_first_part:
                 if parse_mode:
-                    await message.edit_text(formatted_text, parse_mode=parse_mode)
+                    await message.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
                 else:
-                    await message.edit_text(formatted_text)
+                    await message.edit_text(formatted_text, reply_markup=reply_markup)
             else:
                 if parse_mode:
                     await message.reply_text(formatted_text, parse_mode=parse_mode)
@@ -54,7 +54,7 @@ async def send_long_message(message: Message, text: str, preserve_formatting: bo
             try:
                 plain_text = TelegramFormatter._strip_all_formatting(part)
                 if is_first_part:
-                    await message.edit_text(plain_text)
+                    await message.edit_text(plain_text, reply_markup=reply_markup)
                 else:
                     await message.reply_text(plain_text)
             except Exception as fallback_error:
@@ -62,7 +62,7 @@ async def send_long_message(message: Message, text: str, preserve_formatting: bo
                 # Последняя попытка - отправить как есть
                 try:
                     if is_first_part:
-                        await message.edit_text(part)
+                        await message.edit_text(part, reply_markup=reply_markup)
                     else:
                         await message.reply_text(part)
                 except Exception as final_error:
@@ -73,7 +73,7 @@ async def send_long_message(message: Message, text: str, preserve_formatting: bo
             # Пытаемся отправить как есть
             try:
                 if is_first_part:
-                    await message.edit_text(part)
+                    await message.edit_text(part, reply_markup=reply_markup)
                 else:
                     await message.reply_text(part)
             except Exception as final_error:

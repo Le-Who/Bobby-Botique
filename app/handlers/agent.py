@@ -179,7 +179,15 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
         )
         
         if response_text:
-            await send_long_message(placeholder_message, response_text)
+            # Создаем кнопки для управления документом
+            keyboard = [
+                [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
+                [InlineKeyboardButton("📋 Список документов", callback_data="doc:list")],
+                [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")]
+            ]
+            
+            # Отправляем ответ с кнопками
+            await send_long_message(placeholder_message, response_text, reply_markup=InlineKeyboardMarkup(keyboard))
             await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
             await metrics_collector.record_api_call("document_question", model_used)
         else:
