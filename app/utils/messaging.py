@@ -19,7 +19,11 @@ async def send_simple_message(message: Message, text: str):
     try:
         await message.edit_text(text)
     except Exception as e:
-        logging.error(f"Failed to send simple message: {e}")
+        # If editing fails, try to send a new message
+        try:
+            await message.reply_text(text)
+        except Exception as reply_error:
+            logging.error(f"Failed to send simple message (both edit and reply failed): {e}, {reply_error}")
 
 async def send_long_message(message: Message, text: str, prefer_plain: bool = False):
     """
@@ -93,7 +97,14 @@ async def send_long_message(message: Message, text: str, prefer_plain: bool = Fa
                     else:
                         await message.reply_text(plain_text)
                 except Exception as fallback_error:
-                    logging.error(f"Failed to send fallback message: {fallback_error}")
+                    # If editing fails, try to send a new message
+                    try:
+                        if i == 0:
+                            await message.reply_text(plain_text)
+                        else:
+                            await message.reply_text(plain_text)
+                    except Exception as reply_error:
+                        logging.error(f"Failed to send fallback message (both edit and reply failed): {fallback_error}, {reply_error}")
             else:
                 logging.error(f"Failed to send message: {e}")
         except Exception as e:
@@ -113,34 +124,23 @@ async def send_formatted_message(message: Message, text: str, bold_parts: list =
         bold_parts: List of strings to make bold
         italic_parts: List of strings to make italic
     """
-    from .formatting import create_simple_formatted_text, strip_markdown
+    from .formatting import strip_markdown
     
     if not text:
         return
     
-    # If no formatting is requested, send as plain text
-    if not bold_parts and not italic_parts:
-        try:
-            await message.edit_text(text)
-        except Exception as e:
-            logging.error(f"Failed to send plain message: {e}")
-        return
-    
-    # Create formatted text only for the parts that need formatting
-    formatted_text = create_simple_formatted_text(text, bold_parts, italic_parts)
+    # For now, let's just send plain text to avoid formatting issues
+    # We can add formatting back later when we fix the parsing issues
+    plain_text = strip_markdown(text)
     
     try:
-        await message.edit_text(formatted_text, parse_mode='MarkdownV2')
-    except BadRequest:
-        # Fall back to plain text - completely strip all formatting
-        logging.warning("Formatted text failed, falling back to plain text")
-        plain_text = strip_markdown(text)
-        try:
-            await message.edit_text(plain_text)
-        except Exception as fallback_error:
-            logging.error(f"Failed to send fallback plain text: {fallback_error}")
+        await message.edit_text(plain_text)
     except Exception as e:
-        logging.error(f"Failed to send formatted message: {e}")
+        # If editing fails, try to send a new message
+        try:
+            await message.reply_text(plain_text)
+        except Exception as reply_error:
+            logging.error(f"Failed to send message (both edit and reply failed): {e}, {reply_error}")
 
 async def send_list_message(message: Message, title: str, items: list, prefix: str = "•"):
     """
@@ -152,27 +152,30 @@ async def send_list_message(message: Message, title: str, items: list, prefix: s
         items: List of items
         prefix: Prefix for each item
     """
-    from .formatting import format_list, create_simple_formatted_text, strip_markdown
+    from .formatting import format_list, strip_markdown
     
     if not items:
-        await message.edit_text(f"{title}\n\nСписок пуст.")
+        try:
+            await message.edit_text(f"{title}\n\nСписок пуст.")
+        except Exception as e:
+            try:
+                await message.reply_text(f"{title}\n\nСписок пуст.")
+            except Exception as reply_error:
+                logging.error(f"Failed to send empty list message (both edit and reply failed): {e}, {reply_error}")
         return
     
     # Format the list
     formatted_list = format_list(items, prefix)
     full_text = f"{title}\n\n{formatted_list}"
     
+    # Send as plain text to avoid formatting issues
+    plain_text = strip_markdown(full_text)
+    
     try:
-        # Try with simple formatting
-        formatted_text = create_simple_formatted_text(full_text, bold_parts=[title])
-        await message.edit_text(formatted_text, parse_mode='MarkdownV2')
-    except BadRequest:
-        # Fall back to plain text
-        logging.warning("List formatting failed, falling back to plain text")
-        plain_text = strip_markdown(full_text)
-        try:
-            await message.edit_text(plain_text)
-        except Exception as fallback_error:
-            logging.error(f"Failed to send fallback list message: {fallback_error}")
+        await message.edit_text(plain_text)
     except Exception as e:
-        logging.error(f"Failed to send list message: {e}")
+        # If editing fails, try to send a new message
+        try:
+            await message.reply_text(plain_text)
+        except Exception as reply_error:
+            logging.error(f"Failed to send list message (both edit and reply failed): {e}, {reply_error}")

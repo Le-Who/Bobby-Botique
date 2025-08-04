@@ -83,35 +83,12 @@ def create_simple_formatted_text(text: str, bold_parts: Optional[list] = None, i
     if not text:
         return ""
     
-    # First, escape all special characters in the entire text
+    # For now, let's just escape everything and not apply formatting
+    # This is the safest approach to avoid parsing errors
     special_chars = ['_', '*', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
     result = text
     for char in special_chars:
         result = result.replace(char, f'\\{char}')
-    
-    # Now apply formatting by replacing the escaped parts
-    if bold_parts:
-        for part in bold_parts:
-            # Escape the part to match what we did above
-            escaped_part = part
-            for char in special_chars:
-                escaped_part = escaped_part.replace(char, f'\\{char}')
-            
-            # Replace the escaped part with bold formatting
-            if escaped_part in result:
-                result = result.replace(escaped_part, f"*{escaped_part}*")
-    
-    # Apply italic formatting
-    if italic_parts:
-        for part in italic_parts:
-            # Escape the part to match what we did above
-            escaped_part = part
-            for char in special_chars:
-                escaped_part = escaped_part.replace(char, f'\\{char}')
-            
-            # Replace the escaped part with italic formatting
-            if escaped_part in result:
-                result = result.replace(escaped_part, f"_{escaped_part}_")
     
     return result
 
