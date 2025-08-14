@@ -6,7 +6,7 @@ from ..config import settings
 from .. import database as db
 from ..utils.formatting import format_key_for_display, TelegramFormatter
 from ..utils import time as time_utils
-from ..services import genai
+import google.generativeai as genai  # Исправленный импорт
 from ..metrics import metrics_collector
 from ..cache import search_cache
 from ..queue import task_queue
