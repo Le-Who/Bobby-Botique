@@ -31,8 +31,46 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                     chat.send_message_async(history[-1]['parts']),
                     timeout=60.0  # 60 секунд таймаут
                 )
+                
+                # Проверяем finish_reason ответа
+                if hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    logging.debug(f"Gemini API response candidate: finish_reason={getattr(candidate, 'finish_reason', 'unknown')}, parts_count={len(getattr(candidate, 'content', {}).get('parts', [])) if hasattr(candidate, 'content') else 0}")
+                    
+                    if hasattr(candidate, 'finish_reason'):
+                        if candidate.finish_reason == 1:  # SAFETY
+                            logging.warning(f"Gemini API response blocked due to safety concerns. Prompt length: {len(str(history[-1]['parts']))}, model: {model_name}")
+                            await metrics_collector.record_error("gemini_safety", "Response blocked by safety filters")
+                            return "🚫 Ответ заблокирован системой безопасности Gemini. Попробуйте переформулировать запрос.", None
+                        elif candidate.finish_reason == 2:  # RECITATION
+                            logging.warning(f"Gemini API response blocked due to recitation concerns. Prompt length: {len(str(history[-1]['parts']))}, model: {model_name}")
+                            await metrics_collector.record_error("gemini_recitation", "Response blocked by recitation filters")
+                            return "🚫 Ответ заблокирован из-за проблем с повторением. Попробуйте переформулировать запрос.", None
+                        elif candidate.finish_reason == 3:  # OTHER
+                            logging.warning(f"Gemini API response blocked for other reasons. Prompt length: {len(str(history[-1]['parts']))}, model: {model_name}")
+                            await metrics_collector.record_error("gemini_other", f"Response blocked, finish_reason: {candidate.finish_reason}")
+                            return "🚫 Ответ заблокирован по техническим причинам. Попробуйте позже.", None
+                        else:
+                            logging.info(f"Gemini API response finish_reason: {candidate.finish_reason} (normal completion)")
+                else:
+                    logging.warning("Gemini API response has no candidates")
+                    await metrics_collector.record_error("gemini_no_candidates", "Response has no candidates")
+                    return "🚫 Получен некорректный ответ от API. Попробуйте позже.", None
+                
+                # Проверяем, что ответ содержит валидные части
+                try:
+                    response_text = response.text
+                    if not response_text:
+                        logging.warning("Gemini API returned empty response")
+                        await metrics_collector.record_error("gemini_empty", "Empty response from API")
+                        return "🚫 Получен пустой ответ от API. Попробуйте переформулировать запрос.", None
+                except Exception as text_error:
+                    logging.error(f"Error accessing response.text: {text_error}. Response object: {type(response)}, has candidates: {hasattr(response, 'candidates')}, candidates count: {len(getattr(response, 'candidates', []))}")
+                    await metrics_collector.record_error("gemini_text_access", str(text_error))
+                    return "🚫 Ошибка при обработке ответа API. Попробуйте позже.", None
+                
                 token_count = model.count_tokens(chat.history).total_tokens
-                return response.text, token_count
+                return response_text, token_count
             except asyncio.TimeoutError:
                 logging.error(f"Gemini API timeout on attempt {attempt + 1}")
                 if attempt < max_retries - 1:
