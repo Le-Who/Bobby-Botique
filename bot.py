@@ -91,6 +91,12 @@ async def main():
         await start_alert_monitor()
         logging.info("Alert monitor started.")
         
+        # Инициализируем rate limiter после запуска всех сервисов
+        logging.info("Initializing rate limiter...")
+        from app.rate_limiter import rate_limiter
+        rate_limiter.start_cleanup()
+        logging.info("Rate limiter initialized.")
+        
         await run_bot_and_server()
     except Exception as e:
         logging.critical(f"Application failed critically: {e}", exc_info=True)

@@ -25,16 +25,26 @@ class RateLimiter:
         
         self._lock = asyncio.Lock()
         self._cleanup_task: Optional[asyncio.Task] = None
+        self._initialized = False
         
-        # Запускаем периодическую очистку
-        self._start_cleanup_task()
+        # НЕ запускаем cleanup task здесь - event loop еще не готов
+        # Задача будет запущена позже через start_cleanup()
     
-    def _start_cleanup_task(self):
-        """Запускает задачу периодической очистки"""
-        if self._cleanup_task and not self._cleanup_task.done():
+    def start_cleanup(self):
+        """Запускает задачу очистки (вызывается когда event loop готов)"""
+        if self._initialized:
             return
             
-        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+        try:
+            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+            self._initialized = True
+            logging.info("Rate limiter cleanup task started")
+        except Exception as e:
+            logging.error(f"Failed to start rate limiter cleanup task: {e}")
+    
+    def _start_cleanup_task(self):
+        """Устаревший метод - оставлен для совместимости"""
+        pass
     
     async def _cleanup_loop(self):
         """Периодически очищает старые записи"""

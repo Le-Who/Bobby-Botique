@@ -1,4 +1,4 @@
-# 🚨 Быстрое исправление циклического импорта
+# 🚨 Быстрое исправление циклического импорта и event loop
 
 ## ✅ **Что уже исправлено:**
 
@@ -6,17 +6,19 @@
 2. **Обновлен `app/redis_queue.py`** - импортирует из `types.py`
 3. **Обновлен `app/queue.py`** - удалены дублирующиеся классы
 4. **Добавлен `redis>=5.0.0`** в `requirements.txt`
+5. **Исправлен `app/rate_limiter.py`** - отложена инициализация cleanup task
+6. **Обновлен `bot.py`** - добавлена инициализация rate limiter
 
-## 🔧 **Что нужно сделать:**
+## 🔧 **Что было исправлено:**
 
-### **1. Установить Redis пакет:**
-```bash
-pip install redis>=5.0.0
-```
+### **Проблема 1: Циклический импорт**
+- ✅ Создан `app/types.py` с общими типами
+- ✅ `queue.py` и `redis_queue.py` теперь импортируют из `types.py`
 
-### **2. Перезапустить бота:**
-- На render.com: Manual Deploy → Deploy latest commit
-- Или локально: `python bot.py`
+### **Проблема 2: RuntimeError: no running event loop**
+- ✅ RateLimiter больше не создает асинхронные задачи при импорте
+- ✅ Cleanup task запускается только после инициализации event loop
+- ✅ Добавлен вызов `rate_limiter.start_cleanup()` в `bot.py`
 
 ## 📋 **Структура исправления:**
 
@@ -25,25 +27,38 @@ app/
 ├── types.py           ← НОВЫЙ: общие типы
 ├── queue.py           ← ОБНОВЛЕН: импортирует из types.py
 ├── redis_queue.py     ← ОБНОВЛЕН: импортирует из types.py
+├── rate_limiter.py    ← ОБНОВЛЕН: отложенная инициализация
 └── ... остальные файлы
+
+bot.py                 ← ОБНОВЛЕН: инициализация rate limiter
 ```
 
 ## 🎯 **Результат:**
 
 ✅ **Циклический импорт устранен**
+✅ **Event loop ошибка исправлена**
 ✅ **Все типы централизованы в `types.py`**
 ✅ **Redis интеграция работает**
 ✅ **Система миграций готова**
+✅ **Rate limiter корректно инициализируется**
 
 ## 🚀 **После исправления:**
 
 Бот должен запуститься без ошибок и показать:
 ```
-INFO - Redis Queue initialized for [Service Type]
 INFO - Database migrations completed: X applied, status: completed
 INFO - Rate limiter initialized
+INFO - Redis Queue initialized for [Service Type]
+INFO - Bot is running...
 ```
 
 ## 🔍 **Проверка:**
 
 Используйте `/admin` → **🗄️ Кэш** → **🔴 Redis статус** для проверки работы Redis.
+
+## 🚨 **Важно для Docker:**
+
+Все исправления учитывают особенности запуска в Docker контейнере на render.com:
+- Event loop инициализируется только при запуске приложения
+- Модули не создают асинхронные задачи при импорте
+- Все сервисы запускаются в правильном порядке
