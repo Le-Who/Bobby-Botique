@@ -29,9 +29,23 @@ def _prepare_query(query: str) -> str:
     return query
 
 async def db_query(query: str, params: tuple = (), retries: int = 3):
+    """Выполняет запрос к БД с унифицированной обработкой параметров.
+
+    Поддерживает передачу параметров в виде кортежа/списка, а также одиночного значения
+    (например, строки). Одиночное значение автоматически оборачивается в кортеж,
+    чтобы избежать ошибки вида: "the server expects 1 argument, N were passed".
+    """
     if not db_pool:
         raise Exception("Database pool is not initialized")
-    
+
+    # Нормализуем параметры: одиночное значение -> (value,), список -> tuple(list), None -> ()
+    if params is None:
+        normalized_params = ()
+    elif isinstance(params, (list, tuple)):
+        normalized_params = tuple(params)
+    else:
+        normalized_params = (params,)
+
     query_prepared = _prepare_query(query)
     last_exception = None
 
@@ -39,16 +53,19 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         try:
             async with db_pool.acquire() as conn:
                 if query.strip().upper().startswith("SELECT"):
-                    return await conn.fetch(query_prepared, *params)
+                    return await conn.fetch(query_prepared, *normalized_params)
                 else:
-                    await conn.execute(query_prepared, *params)
+                    await conn.execute(query_prepared, *normalized_params)
                     return None
         except (asyncpg.exceptions.ConnectionDoesNotExistError, OSError) as e:
             logging.warning(f"DB connection error (attempt {attempt + 1}/{retries}): {e}. Retrying...")
             last_exception = e
             await asyncio.sleep(1 + attempt)
         except Exception as e:
-            logging.error(f"An unexpected database error occurred during query: {query_prepared[:100]}... - {e}", exc_info=False)
+            logging.error(
+                f"An unexpected database error occurred during query: {query_prepared[:100]}... - {e}",
+                exc_info=False,
+            )
             raise e
 
     logging.error("All database retries failed.")

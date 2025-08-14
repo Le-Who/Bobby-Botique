@@ -253,58 +253,87 @@ async def reset_to_defaults(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.answer("❌ Ошибка при сбросе настроек", show_alert=True)
 
 # Вспомогательные функции для работы с настройками
-async def get_current_setting(setting_name: str) -> Any:
-    """Получает текущее значение настройки из базы данных или конфигурации"""
+def _cast_setting_value(setting_name: str, raw_value: Any) -> Any:
+    """Кастует строковое значение из БД к типу значения в settings."""
+    default_value = getattr(settings, setting_name, None)
+    if default_value is None:
+        return raw_value
+    # Если уже нужного типа
+    if isinstance(raw_value, type(default_value)):
+        return raw_value
+    # Каст из строки по типу значения по умолчанию
     try:
-        # Сначала пробуем получить из базы данных
+        if isinstance(default_value, bool):
+            if isinstance(raw_value, str):
+                return raw_value.strip().lower() == 'true'
+            return bool(raw_value)
+        if isinstance(default_value, int):
+            return int(raw_value)
+        if isinstance(default_value, float):
+            return float(raw_value)
+        # Для остальных типов возвращаем как есть (строка)
+        return raw_value
+    except Exception:
+        return default_value
+
+async def get_current_setting(setting_name: str) -> Any:
+    """Получает текущее значение настройки из базы данных или конфигурации с приведением типов."""
+    try:
         result = await db_query(
             "SELECT value FROM bot_settings WHERE setting_name = $1",
             (setting_name,)
         )
-        
         if result and result[0]:
-            return result[0]['value']
-        
-        # Если в базе нет, возвращаем из конфигурации
+            return _cast_setting_value(setting_name, result[0]['value'])
         return getattr(settings, setting_name, None)
-        
     except Exception as e:
         logging.warning(f"Could not get setting {setting_name} from database: {e}")
-        # Возвращаем значение из конфигурации как fallback
         return getattr(settings, setting_name, None)
 
 async def get_all_current_settings() -> Dict[str, Dict[str, Any]]:
-    """Получает все текущие настройки, сгруппированные по категориям"""
+    """Получает все текущие настройки, сгруппированные по категориям. Если БД пуста или недоступна, показывает значения из конфигурации."""
+    settings_dict: Dict[str, Dict[str, Any]] = {}
+
+    def _categorize(name: str) -> str:
+        if name.startswith('SAFETY_'):
+            return 'Безопасность'
+        if name.startswith('DEBUG_') or name.startswith('LOG_'):
+            return 'Отладка'
+        if name.startswith('ENABLE_') or name.startswith('CACHE_'):
+            return 'Производительность'
+        if name.startswith('MAX_') or name.startswith('REQUEST_'):
+            return 'Производительность'
+        return 'Прочее'
+
+    # Сначала пробуем загрузить из БД
     try:
         result = await db_query("SELECT setting_name, value FROM bot_settings")
-        
-        settings_dict = {}
-        for row in result:
-            setting_name = row['setting_name']
-            value = row['value']
-            
-            # Группируем по категориям
-            if setting_name.startswith('SAFETY_'):
-                category = 'Безопасность'
-            elif setting_name.startswith('DEBUG_') or setting_name.startswith('LOG_'):
-                category = 'Отладка'
-            elif setting_name.startswith('ENABLE_') or setting_name.startswith('CACHE_'):
-                category = 'Производительность'
-            elif setting_name.startswith('MAX_') or setting_name.startswith('REQUEST_'):
-                category = 'Производительность'
-            else:
-                category = 'Прочее'
-            
-            if category not in settings_dict:
-                settings_dict[category] = {}
-            
-            settings_dict[category][setting_name] = value
-        
-        return settings_dict
-        
+        if result:
+            for row in result:
+                setting_name = row['setting_name']
+                value = _cast_setting_value(setting_name, row['value'])
+                category = _categorize(setting_name)
+                if category not in settings_dict:
+                    settings_dict[category] = {}
+                settings_dict[category][setting_name] = value
     except Exception as e:
-        logging.error(f"Error getting all settings: {e}")
-        return {}
+        logging.error(f"Error getting all settings from DB: {e}")
+
+    # Если БД не дала значений, или чтобы дополнить отсутствующие — заполняем из settings
+    known_setting_names = [
+        'SAFETY_MODE', 'ENABLE_SAFETY_FALLBACK',
+        'DEBUG_MODE', 'LOG_LEVEL', 'LOG_SAFETY_DECISIONS',
+        'ENABLE_CACHE', 'CACHE_TTL_HOURS', 'MAX_RETRIES', 'REQUEST_TIMEOUT_SECONDS',
+        'ENABLE_PROMPT_SIMPLIFICATION', 'ENABLE_SYSTEM_INSTRUCTION_FALLBACK',
+    ]
+    for name in known_setting_names:
+        category = _categorize(name)
+        if category not in settings_dict:
+            settings_dict[category] = {}
+        if name not in settings_dict[category]:
+            settings_dict[category][name] = getattr(settings, name, None)
+
+    return settings_dict
 
 async def update_setting(setting_name: str, value: Any) -> bool:
     """Обновляет настройку в базе данных"""
