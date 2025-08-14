@@ -11,3 +11,4 @@ pydantic-settings
 PyPDF2
 python-docx
 PyMuPDF
+redis>=5.0.0

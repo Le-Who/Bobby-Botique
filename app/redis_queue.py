@@ -17,7 +17,7 @@ except ImportError:
     logging.warning("Redis not available. Persistent queue will be disabled.")
 
 from .config import settings
-from .queue import Task, TaskStatus, TaskPriority
+from .types import Task, TaskStatus, TaskPriority
 
 
 class RedisQueue:

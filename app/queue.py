@@ -4,44 +4,15 @@ import json
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Callable, Coroutine, List
-from dataclasses import dataclass, asdict
-from enum import Enum
 import uuid
 
 from .config import settings
 from . import database as db
 from .metrics import metrics_collector
 from .redis_queue import redis_queue, init_redis_queue
+from .types import Task, TaskStatus, TaskPriority
 
-class TaskStatus(Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
-class TaskPriority(Enum):
-    LOW = 1
-    NORMAL = 2
-    HIGH = 3
-    URGENT = 4
-
-@dataclass
-class Task:
-    """Задача в очереди"""
-    id: str
-    user_id: int
-    task_type: str
-    data: Dict[str, Any]
-    priority: TaskPriority
-    status: TaskStatus
-    created_at: datetime
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-    retry_count: int = 0
-    max_retries: int = 3
 
 class TaskQueue:
     """Очередь задач для длительных операций"""
