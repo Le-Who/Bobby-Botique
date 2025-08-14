@@ -13,7 +13,6 @@ from .metrics import metrics_collector
 from .cache import get_cached_search_result, get_cached_search_result_with_metadata, cache_search_result
 
 # Улучшенные настройки HTTP клиента
-HTTP_TIMEOUT = httpx.Timeout(30.0, connect=10.0, read=25.0, write=10.0)
 HTTP_LIMITS = httpx.Limits(max_keepalive_connections=5, max_connections=10)
 
 # Константы для finish_reason
@@ -27,9 +26,11 @@ SEARCH_TYPE_QNA = "qna"
 
 @asynccontextmanager
 async def get_http_client():
-    """Контекстный менеджер для HTTP клиента с правильным управлением ресурсами"""
+    """Контекстный менеджер для HTTP клиента с динамическим таймаутом из настроек"""
+    total_timeout = max(5, await settings_get_int("REQUEST_TIMEOUT_SECONDS"))
+    timeout = httpx.Timeout(total=total_timeout)
     async with httpx.AsyncClient(
-        timeout=HTTP_TIMEOUT,
+        timeout=timeout,
         limits=HTTP_LIMITS,
         headers={"User-Agent": "Gemaibot/2.0"}
     ) as client:
@@ -117,9 +118,10 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             
             # Добавляем таймаут для API вызова
             try:
+                request_timeout = max(5, await settings_get_int("REQUEST_TIMEOUT_SECONDS"))
                 response = await asyncio.wait_for(
                     chat.send_message_async(history[-1]['parts']),
-                    timeout=60.0  # 60 секунд таймаут
+                    timeout=float(request_timeout)
                 )
                 
                 # Проверяем finish_reason ответа
@@ -239,7 +241,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                     retry_delay *= 2
                     continue
                 else:
-                    await metrics_collector.record_error("gemini_timeout", "60s timeout reached")
+                    await metrics_collector.record_error("gemini_timeout", "Timeout reached")
                     return "🚫 Превышен таймаут ожидания ответа от API. Попробуйте позже.", None
             
         except google_exceptions.ResourceExhausted as e:

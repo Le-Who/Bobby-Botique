@@ -291,6 +291,17 @@ async def _apply_migration_1():
         logging.error(f"Error applying migration 1: {e}")
         raise
 
+async def run_migrations():
+    """Запускает миграции базы данных"""
+    try:
+        from .db_migrations import migration_manager
+        result = await migration_manager.migrate_up()
+        logging.info(f"Database migrations completed: {result}")
+        return result
+    except Exception as e:
+        logging.error(f"Migration error: {e}")
+        return {"applied": 0, "status": "failed", "error": str(e)}
+
 async def close_db():
     """Закрывает пул соединений с базой данных"""
     global db_pool

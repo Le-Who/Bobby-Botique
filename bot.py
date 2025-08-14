@@ -15,7 +15,7 @@ from app.handlers.messages import register as register_message_handlers
 from app.handlers.callbacks import register as register_callback_handlers
 from app.handlers.admin import admin_command
 from app.handlers.admin_callbacks import handle_admin_callback
-from app.database import init_db, close_db
+from app.database import init_db, close_db, run_migrations
 from app.metrics import start_metrics_server
 from app.alerts import start_alert_monitor
 from app.queue import start_queue_processor
@@ -67,6 +67,10 @@ async def main():
         logging.info("Initializing database...")
         await init_db()
         logging.info("Database initialized.")
+        
+        logging.info("Running database migrations...")
+        migration_result = await run_migrations()
+        logging.info(f"Database migrations completed: {migration_result['applied']} applied, status: {migration_result['status']}")
         
         logging.info("Initializing group chats...")
         await start_group_chat_monitor()

@@ -8,6 +8,9 @@ from .admin import (
     show_performance_menu, show_features_menu, show_current_settings,
     reset_to_defaults, update_setting, get_current_setting
 )
+from ..cache import search_cache
+from ..queue import task_queue
+from ..rate_limiter import rate_limiter, get_user_rate_stats, reset_user_rate_limits
 from ..config import settings
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -45,6 +48,27 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             
         elif callback_data == "admin_reset":
             await reset_to_defaults(update, context)
+            
+        elif callback_data == "admin_cache":
+            await show_cache_menu(update, context)
+            
+        elif callback_data == "admin_cache_clear":
+            await clear_cache_action(update, context)
+            
+        elif callback_data == "admin_cache_stats":
+            await show_cache_stats(update, context)
+            
+        elif callback_data == "admin_queue":
+            await show_queue_menu(update, context)
+            
+        elif callback_data == "admin_queue_stats":
+            await show_queue_stats(update, context)
+            
+        elif callback_data == "admin_ratelimit":
+            await show_ratelimit_menu(update, context)
+            
+        elif callback_data == "admin_ratelimit_stats":
+            await show_ratelimit_stats(update, context)
             
         # Обработка настроек безопасности
         elif callback_data.startswith("admin_safety_mode_"):
@@ -414,3 +438,172 @@ async def handle_system_fallback_toggle(update: Update, context: ContextTypes.DE
         await show_features_menu(update, context)
     else:
         await update.callback_query.answer("❌ Ошибка при изменении настройки", show_alert=True)
+
+
+async def show_cache_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню управления кэшем"""
+    cache_stats = await search_cache.get_stats()
+    
+    keyboard = [
+        [InlineKeyboardButton("📊 Статистика кэша", callback_data="admin_cache_stats")],
+        [InlineKeyboardButton("🗑️ Очистить кэш", callback_data="admin_cache_clear")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    text = f"""
+🗄️ **УПРАВЛЕНИЕ КЭШЕМ**
+
+📊 **Текущая статистика:**
+• Записей в кэше: {cache_stats['total_entries']}
+• Истекших записей: {cache_stats['expired_entries']}
+• Макс. размер: {cache_stats['max_size']}
+• Средняя частота доступа: {cache_stats['avg_access_count']:.1f}
+
+Выберите действие:
+    """
+    
+    await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+
+async def clear_cache_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Очищает кэш"""
+    try:
+        await search_cache.clear()
+        await update.callback_query.answer("✅ Кэш успешно очищен")
+        await show_cache_menu(update, context)
+    except Exception as e:
+        logging.error(f"Error clearing cache: {e}")
+        await update.callback_query.answer("❌ Ошибка при очистке кэша", show_alert=True)
+
+
+async def show_cache_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает детальную статистику кэша"""
+    try:
+        cache_stats = await search_cache.get_stats()
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="admin_cache_stats")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_cache")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        text = f"""
+📊 **ДЕТАЛЬНАЯ СТАТИСТИКА КЭША**
+
+🗄️ **Основные показатели:**
+• Общее количество записей: `{cache_stats['total_entries']}`
+• Истекшие записи: `{cache_stats['expired_entries']}`
+• Максимальный размер: `{cache_stats['max_size']}`
+• Средняя частота доступа: `{cache_stats['avg_access_count']:.2f}`
+
+📈 **Эффективность:**
+• Hit rate: `{cache_stats.get('cache_hit_rate', 'N/A')}`
+• Активные записи: `{cache_stats['total_entries'] - cache_stats['expired_entries']}`
+        """
+        
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+    except Exception as e:
+        logging.error(f"Error getting cache stats: {e}")
+        await update.callback_query.answer("❌ Ошибка при получении статистики", show_alert=True)
+
+
+async def show_queue_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню управления очередью задач"""
+    keyboard = [
+        [InlineKeyboardButton("📊 Статистика очереди", callback_data="admin_queue_stats")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    text = """
+⚙️ **УПРАВЛЕНИЕ ОЧЕРЕДЬЮ ЗАДАЧ**
+
+Здесь вы можете просматривать статистику и управлять фоновыми задачами бота.
+
+Выберите действие:
+    """
+    
+    await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+
+async def show_queue_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику очереди задач"""
+    try:
+        queue_stats = await task_queue.get_queue_stats()
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="admin_queue_stats")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_queue")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        text = f"""
+📊 **СТАТИСТИКА ОЧЕРЕДИ ЗАДАЧ**
+
+⚙️ **Активность:**
+• Всего задач: `{queue_stats['total_tasks']}`
+• В ожидании: `{queue_stats['pending_tasks']}`
+• Выполняется: `{queue_stats['running_tasks']}`
+• Завершено: `{queue_stats['completed_tasks']}`
+• Ошибки: `{queue_stats['failed_tasks']}`
+
+🔧 **Система:**
+• Размер очереди: `{queue_stats['queue_size']}`
+• Активных воркеров: `{queue_stats['active_workers']}`
+        """
+        
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+    except Exception as e:
+        logging.error(f"Error getting queue stats: {e}")
+        await update.callback_query.answer("❌ Ошибка при получении статистики", show_alert=True)
+
+
+async def show_ratelimit_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню управления ограничениями частоты запросов"""
+    keyboard = [
+        [InlineKeyboardButton("📊 Статистика ограничений", callback_data="admin_ratelimit_stats")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_main")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    text = """
+🚦 **УПРАВЛЕНИЕ ОГРАНИЧЕНИЯМИ ЗАПРОСОВ**
+
+Здесь вы можете просматривать статистику ограничений частоты запросов пользователей.
+
+Выберите действие:
+    """
+    
+    await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+
+async def show_ratelimit_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику ограничений частоты запросов"""
+    try:
+        global_stats = await rate_limiter.get_global_stats()
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="admin_ratelimit_stats")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_ratelimit")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        text = f"""
+📊 **СТАТИСТИКА ОГРАНИЧЕНИЙ ЗАПРОСОВ**
+
+🚦 **Глобальная активность:**
+• Активных пользователей: `{global_stats['active_users']}`
+• Заблокированных пользователей: `{global_stats['blocked_users']}`
+• Запросов за последнюю минуту: `{global_stats['total_requests_last_minute']}`
+• Лимит запросов в минуту: `{global_stats['requests_per_minute_limit']}`
+
+⚙️ **Настройки:**
+• Лимит на пользователя: `{global_stats['requests_per_minute_limit']} запросов/мин`
+• Время блокировки: `60 секунд`
+        """
+        
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+    except Exception as e:
+        logging.error(f"Error getting rate limit stats: {e}")
+        await update.callback_query.answer("❌ Ошибка при получении статистики", show_alert=True)

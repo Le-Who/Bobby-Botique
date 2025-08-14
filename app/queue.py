@@ -11,6 +11,7 @@ import uuid
 from .config import settings
 from . import database as db
 from .metrics import metrics_collector
+from .redis_queue import redis_queue, init_redis_queue
 
 class TaskStatus(Enum):
     PENDING = "pending"
@@ -53,6 +54,7 @@ class TaskQueue:
         self.running = False
         self._lock = asyncio.Lock()
         self._task_handlers: Dict[str, Callable] = {}
+        self.use_redis = False  # Флаг использования Redis
         
         # Инициализируем обработчики задач
         self._init_task_handlers()
@@ -76,6 +78,14 @@ class TaskQueue:
         
         self.running = True
         logging.info(f"Starting task queue with {self.max_workers} workers")
+        
+        # Пробуем инициализировать Redis если включен в настройках
+        if getattr(settings, 'ENABLE_PERSISTENT_QUEUE', False):
+            if await init_redis_queue():
+                self.use_redis = True
+                logging.info("Using Redis for persistent task queue")
+            else:
+                logging.warning("Redis initialization failed, falling back to in-memory queue")
         
         # Запускаем воркеры
         for i in range(self.max_workers):
@@ -124,8 +134,12 @@ class TaskQueue:
         async with self._lock:
             self.tasks[task_id] = task
         
-        # Добавляем в очередь (приоритет - это отрицательное число, чтобы высокий приоритет был первым)
-        await self.queue.put((-priority.value, task_id))
+        # Используем Redis или локальную очередь
+        if self.use_redis and redis_queue:
+            await redis_queue.enqueue(task)
+        else:
+            # Добавляем в очередь (приоритет - это отрицательное число, чтобы высокий приоритет был первым)
+            await self.queue.put((-priority.value, task_id))
         
         logging.info(f"Added task {task_id} of type {task_type} for user {user_id}")
         return task_id

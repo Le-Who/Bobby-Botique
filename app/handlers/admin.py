@@ -37,6 +37,9 @@ async def show_admin_main_menu(update: Update, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton("🐛 Отладка", callback_data=ADMIN_MENU_DEBUG)],
         [InlineKeyboardButton("⚡ Производительность", callback_data=ADMIN_MENU_PERFORMANCE)],
         [InlineKeyboardButton("🔧 Функции", callback_data=ADMIN_MENU_FEATURES)],
+        [InlineKeyboardButton("🗄️ Кэш", callback_data="admin_cache")],
+        [InlineKeyboardButton("⚙️ Очередь", callback_data="admin_queue")],
+        [InlineKeyboardButton("🚦 Ограничения", callback_data="admin_ratelimit")],
         [InlineKeyboardButton("👁️ Просмотр настроек", callback_data=ADMIN_MENU_VIEW)],
         [InlineKeyboardButton("🔄 Сброс к умолчаниям", callback_data=ADMIN_MENU_RESET)]
     ]
@@ -50,8 +53,11 @@ async def show_admin_main_menu(update: Update, context: ContextTypes.DEFAULT_TYP
 
 🛡️ **Безопасность** - режимы безопасности, fallback
 🐛 **Отладка** - логирование, debug режим
-⚡ **Производительность** - кэш, таймауты, retry
+⚡ **Производительность** - таймауты, retry
 🔧 **Функции** - включение/отключение возможностей
+🗄️ **Кэш** - управление кэшем поиска
+⚙️ **Очередь** - мониторинг фоновых задач
+🚦 **Ограничения** - мониторинг частоты запросов
 👁️ **Просмотр** - текущие настройки
 🔄 **Сброс** - восстановление умолчаний
 

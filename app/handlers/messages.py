@@ -12,12 +12,19 @@ from .. import state
 from ..group_chat import group_chat_manager, log_group_message
 from ..document_processor import process_uploaded_document
 from ..metrics import metrics_collector
+from ..rate_limiter import check_rate_limit
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает входящие сообщения"""
     user_id = update.effective_user.id
     
     if not await db.is_authorized(user_id):
+        return
+    
+    # Проверяем ограничения частоты запросов
+    is_allowed, rate_limit_message = await check_rate_limit(user_id)
+    if not is_allowed:
+        await update.message.reply_text(rate_limit_message)
         return
     
     # Обрабатываем документы
