@@ -2,6 +2,7 @@
 
 import asyncio
 import weakref
+from collections import defaultdict
 from threading import Lock
 from typing import Dict, Set, Optional
 
