@@ -5,8 +5,7 @@ from typing import Dict, Any
 
 from ..config import settings, get_safety_settings, get_safety_mode_description
 from ..database import db_query
-from ..settings_service import get_setting as settings_get, set_setting as settings_set,
-    get_all_settings as settings_get_all, reset_to_defaults as settings_reset
+from ..settings_service import get_setting as settings_get, set_setting as settings_set, get_all_settings as settings_get_all, reset_to_defaults as settings_reset
 from ..utils.messaging import send_long_message
 from ..utils.formatting import TelegramFormatter
 
