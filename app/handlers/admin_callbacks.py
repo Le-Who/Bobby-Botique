@@ -129,7 +129,9 @@ async def handle_safety_mode_change(update: Update, context: ContextTypes.DEFAUL
 async def handle_safety_fallback_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает safety fallback"""
     current = await get_current_setting("ENABLE_SAFETY_FALLBACK")
-    new_value = not current
+    # Преобразуем строку в булево значение
+    current_bool = str(current).lower() == 'true' if current else False
+    new_value = not current_bool
     
     success = await update_setting("ENABLE_SAFETY_FALLBACK", new_value)
     
@@ -155,7 +157,9 @@ async def show_safety_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_debug_mode_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает debug режим"""
     current = await get_current_setting("DEBUG_MODE")
-    new_value = not current
+    # Преобразуем строку в булево значение
+    current_bool = str(current).lower() == 'true' if current else False
+    new_value = not current_bool
     
     success = await update_setting("DEBUG_MODE", new_value)
     
@@ -213,7 +217,9 @@ async def handle_log_level_change(update: Update, context: ContextTypes.DEFAULT_
 async def handle_log_safety_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает логирование решений по безопасности"""
     current = await get_current_setting("LOG_SAFETY_DECISIONS")
-    new_value = not current
+    # Преобразуем строку в булево значение
+    current_bool = str(current).lower() == 'true' if current else False
+    new_value = not current_bool
     
     success = await update_setting("LOG_SAFETY_DECISIONS", new_value)
     
@@ -228,7 +234,9 @@ async def handle_log_safety_toggle(update: Update, context: ContextTypes.DEFAULT
 async def handle_cache_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает кэширование"""
     current = await get_current_setting("ENABLE_CACHE")
-    new_value = not current
+    # Преобразуем строку в булево значение
+    current_bool = str(current).lower() == 'true' if current else False
+    new_value = not current_bool
     
     success = await update_setting("ENABLE_CACHE", new_value)
     
@@ -378,7 +386,9 @@ async def handle_timeout_change(update: Update, context: ContextTypes.DEFAULT_TY
 async def handle_prompt_simplification_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает упрощение промптов"""
     current = await get_current_setting("ENABLE_PROMPT_SIMPLIFICATION")
-    new_value = not current
+    # Преобразуем строку в булево значение
+    current_bool = str(current).lower() == 'true' if current else False
+    new_value = not current_bool
     
     success = await update_setting("ENABLE_PROMPT_SIMPLIFICATION", new_value)
     
@@ -392,7 +402,9 @@ async def handle_prompt_simplification_toggle(update: Update, context: ContextTy
 async def handle_system_fallback_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает system instruction fallback"""
     current = await get_current_setting("ENABLE_SYSTEM_INSTRUCTION_FALLBACK")
-    new_value = not current
+    # Преобразуем строку в булево значение
+    current_bool = str(current).lower() == 'true' if current else False
+    new_value = not current_bool
     
     success = await update_setting("ENABLE_SYSTEM_INSTRUCTION_FALLBACK", new_value)
     

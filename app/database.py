@@ -153,6 +153,27 @@ async def init_db():
             key_hash = hashlib.sha256(key.encode()).hexdigest()
             await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
         
+        # Инициализируем базовые настройки бота
+        default_settings = [
+            ('SAFETY_MODE', 'standard'),
+            ('ENABLE_SAFETY_FALLBACK', 'true'),
+            ('DEBUG_MODE', 'false'),
+            ('LOG_LEVEL', 'INFO'),
+            ('LOG_SAFETY_DECISIONS', 'false'),
+            ('ENABLE_CACHE', 'true'),
+            ('CACHE_TTL_HOURS', '72'),
+            ('MAX_RETRIES', '3'),
+            ('REQUEST_TIMEOUT_SECONDS', '60'),
+            ('ENABLE_PROMPT_SIMPLIFICATION', 'true'),
+            ('ENABLE_SYSTEM_INSTRUCTION_FALLBACK', 'true')
+        ]
+        
+        for setting_name, default_value in default_settings:
+            await db_query(
+                "INSERT INTO bot_settings (setting_name, value) VALUES ($1, $2) ON CONFLICT (setting_name) DO NOTHING",
+                (setting_name, default_value)
+            )
+        
         logging.info("Database initialized successfully")
         
     except Exception as e:

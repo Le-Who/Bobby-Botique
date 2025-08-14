@@ -259,7 +259,7 @@ async def get_current_setting(setting_name: str) -> Any:
         # Сначала пробуем получить из базы данных
         result = await db_query(
             "SELECT value FROM bot_settings WHERE setting_name = $1",
-            setting_name
+            (setting_name,)
         )
         
         if result and result[0]:
@@ -316,7 +316,7 @@ async def update_setting(setting_name: str, value: Any) -> bool:
             ON CONFLICT (setting_name) 
             DO UPDATE SET value = $2, updated_at = NOW()
             """,
-            setting_name, str(value)
+            (setting_name, str(value))
         )
         
         # Логируем изменение

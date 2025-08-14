@@ -221,7 +221,7 @@ async def get_setting_from_db_async(setting_name: str, default_value: Any = None
     try:
         from .database import db_query
         
-        result = await db_query("SELECT value FROM bot_settings WHERE setting_name = $1", setting_name)
+        result = await db_query("SELECT value FROM bot_settings WHERE setting_name = $1", (setting_name,))
         
         if result and result[0]:
             value = result[0]['value']
