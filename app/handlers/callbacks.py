@@ -14,30 +14,68 @@ async def refresh_cache_callback(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
     
-    # Извлекаем ключ кэша из callback_data
-    cache_key = query.data.split(':', 1)[1]
+    # Извлекаем button_id из callback_data
+    button_id = query.data.split(':', 1)[1]
     
     try:
+        # Получаем данные кэша по button_id
+        from ..cache import _get_button_mapping
+        mapping_data = _get_button_mapping(button_id)
+        
+        if not mapping_data:
+            await query.edit_message_text("❌ Не удалось найти данные для обновления. Попробуйте задать вопрос заново.")
+            return
+        
+        original_query, search_type, cache_key = mapping_data
+        
         # Редактируем сообщение, показывая, что идет обновление
         await query.edit_message_text("🔄 Обновляю ответ...")
         
-        # Получаем оригинальный запрос из кэша (нужно будет добавить функцию для этого)
-        # Пока что просто показываем сообщение об обновлении
-        await query.edit_message_text(
-            "🔄 Ответ обновляется...\n\n"
-            "💡 **Что происходит:**\n"
-            "• Удаляем старый ответ из кэша\n"
-            "• Выполняем новый поиск\n"
-            "• Генерируем свежий ответ\n\n"
-            "⏳ Это займет несколько секунд..."
-        )
+        # Удаляем старый результат из кэша
+        from ..cache import search_cache
+        await search_cache._remove_by_key(cache_key)
         
-        # TODO: Реализовать полное обновление ответа
-        # Для этого нужно:
-        # 1. Сохранять оригинальный запрос в кэше
-        # 2. Выполнять новый поиск
-        # 3. Генерировать новый ответ
-        # 4. Заменять старое сообщение
+        # Выполняем новый поиск
+        search_result = await services.tavily_search_agent(original_query, search_type=search_type)
+        
+        if search_result.get("error"):
+            await query.edit_message_text(f"❌ Ошибка при обновлении: {search_result['error']}")
+            return
+        
+        # Генерируем новый ответ в зависимости от типа поиска
+        if search_type == 'qna':
+            # Для QNA используем Gemini для локализации
+            from .. import prompts
+            from ..config import settings
+            
+            tavily_answer = search_result['data'].get("content", "Не удалось найти прямой ответ.")
+            localization_prompt = prompts.QNA_LOCALIZATION_PROMPT.format(
+                user_message=original_query, tavily_answer=tavily_answer
+            )
+            
+            gemini_key, model_used, _ = await agent._resolve_gemini_request(settings.QNA_MODEL)
+            if not gemini_key:
+                await query.edit_message_text("🚫 Ключи для модели закончились.")
+                return
+            
+            final_answer, _ = await services.get_gemini_response(
+                gemini_key['api_key'], 
+                [{'role': 'user', 'parts': [localization_prompt]}], 
+                model_used
+            )
+            
+            # Отправляем новый ответ
+            await query.edit_message_text(final_answer)
+            await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+            
+        else:
+            # Для research поиска показываем краткую информацию
+            search_results = search_result['data'].get('results', [])
+            await query.edit_message_text(
+                f"✅ Ответ обновлен!\n\n"
+                f"🔍 Найдено {len(search_results)} новых источников\n"
+                f"💡 Задайте вопрос заново для получения обновленного ответа"
+            )
         
     except Exception as e:
         logging.error(f"Error refreshing cache: {e}")

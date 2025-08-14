@@ -24,17 +24,22 @@ async def send_long_message(message: Message, text: str, preserve_formatting: bo
     if from_cache:
         cache_indicator = "\n\n💾 *Ответ получен из кэша*\n"
         if cache_key:
+            # Создаем уникальный ID для кнопки актуализации
+            # Вместо использования cache_key создаем короткий хеш
+            import hashlib
+            button_id = hashlib.md5(cache_key.encode()).hexdigest()[:16]
+            
             # Создаем кнопку для актуализации ответа
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             if reply_markup:
                 # Добавляем кнопку к существующей разметке
                 if hasattr(reply_markup, 'inline_keyboard'):
-                    new_keyboard = reply_markup.inline_keyboard + [[InlineKeyboardButton("🔄 Актуализировать ответ", callback_data=f"refresh:{cache_key}")]]
+                    new_keyboard = reply_markup.inline_keyboard + [[InlineKeyboardButton("🔄 Актуализировать ответ", callback_data=f"refresh:{button_id}")]]
                     reply_markup = InlineKeyboardMarkup(new_keyboard)
                 else:
-                    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Актуализировать ответ", callback_data=f"refresh:{cache_key}")]])
+                    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Актуализировать ответ", callback_data=f"refresh:{button_id}")]])
             else:
-                reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Актуализировать ответ", callback_data=f"refresh:{cache_key}")]])
+                reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Актуализировать ответ", callback_data=f"refresh:{button_id}")]])
         text = cache_indicator + text
     
     parts = []

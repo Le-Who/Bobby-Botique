@@ -239,7 +239,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         chat_state.history.pop()
         await db.update_user_chat(user_id, chat_state)
         try:
-            await placeholder_message.edit_text("Получен пустой ответ от API.")
+            await placeholder_message.edit_text("❌ Получен пустой ответ от API. Попробуйте переформулировать вопрос.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
 

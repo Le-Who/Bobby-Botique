@@ -3,6 +3,7 @@ import httpx
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from typing import Dict, Any, List
+import asyncio
 
 from .config import settings
 from . import database
@@ -12,24 +13,64 @@ from .cache import get_cached_search_result, get_cached_search_result_with_metad
 http_client = httpx.AsyncClient(timeout=30.0)
 
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None):
-    try:
-        # Записываем метрики API вызова
-        await metrics_collector.record_api_call("gemini", model_name)
-        
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name, safety_settings=settings.SAFETY_SETTINGS, system_instruction=system_instruction)
-        chat = model.start_chat(history=history[:-1])
-        response = await chat.send_message_async(history[-1]['parts'])
-        token_count = model.count_tokens(chat.history).total_tokens
-        return response.text, token_count
-    except google_exceptions.ResourceExhausted as e:
-        logging.error(f"Gemini API Quota Error: {e}")
-        await metrics_collector.record_error("gemini_quota", str(e))
-        return "🚫 Достигнут лимит запросов к API (Quota Exceeded).", None
-    except Exception as e:
-        logging.error(f"Gemini API generic error: {e}")
-        await metrics_collector.record_error("gemini_api", str(e))
-        return f"Произошла непредвиденная ошибка API: {e}", None
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            # Записываем метрики API вызова
+            await metrics_collector.record_api_call("gemini", model_name)
+            
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(model_name, safety_settings=settings.SAFETY_SETTINGS, system_instruction=system_instruction)
+            chat = model.start_chat(history=history[:-1])
+            
+            # Добавляем таймаут для API вызова
+            try:
+                response = await asyncio.wait_for(
+                    chat.send_message_async(history[-1]['parts']),
+                    timeout=60.0  # 60 секунд таймаут
+                )
+                token_count = model.count_tokens(chat.history).total_tokens
+                return response.text, token_count
+            except asyncio.TimeoutError:
+                logging.error(f"Gemini API timeout on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    logging.info(f"Retrying due to timeout...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                    continue
+                else:
+                    await metrics_collector.record_error("gemini_timeout", "60s timeout reached")
+                    return "🚫 Превышен таймаут ожидания ответа от API. Попробуйте позже.", None
+            
+        except google_exceptions.ResourceExhausted as e:
+            logging.error(f"Gemini API Quota Error: {e}")
+            await metrics_collector.record_error("gemini_quota", str(e))
+            return "🚫 Достигнут лимит запросов к API (Quota Exceeded).", None
+            
+        except Exception as e:
+            error_msg = str(e)
+            logging.error(f"Gemini API error (attempt {attempt + 1}/{max_retries}): {error_msg}")
+            
+            # Если это ошибка 500, пробуем повторить
+            if "500" in error_msg and "internal error" in error_msg.lower():
+                if attempt < max_retries - 1:
+                    logging.info(f"Retrying in {retry_delay} seconds due to 500 error...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Экспоненциальная задержка
+                    continue
+                else:
+                    logging.error("Max retries reached for 500 error")
+                    await metrics_collector.record_error("gemini_500_retry_exhausted", error_msg)
+                    return "🚫 Сервер Gemini временно недоступен (ошибка 500). Попробуйте позже.", None
+            
+            # Для других ошибок не повторяем
+            await metrics_collector.record_error("gemini_api", error_msg)
+            return f"Произошла ошибка API: {error_msg}", None
+    
+    # Этот код не должен выполниться, но на всякий случай
+    return "🚫 Произошла непредвиденная ошибка API после всех попыток.", None
 
 async def tavily_search_agent(query: str, search_type: str = "search"):
     # Проверяем кэш перед выполнением поиска

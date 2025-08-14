@@ -136,6 +136,14 @@ class SearchCache:
             for key in expired_keys:
                 del self.cache[key]
             
+            # Очищаем соответствующие button_id_mapping
+            if expired_keys:
+                button_ids_to_remove = [bid for bid, (_, _, ck) in button_id_mapping.items() if ck in expired_keys]
+                for bid in button_ids_to_remove:
+                    del button_id_mapping[bid]
+                if button_ids_to_remove:
+                    logging.debug(f"Cleaned up {len(button_ids_to_remove)} button mappings for expired cache entries")
+            
             if expired_keys:
                 logging.info(f"Cleaned up {len(expired_keys)} expired cache entries")
     
@@ -163,10 +171,54 @@ class SearchCache:
         """Очищает весь кэш"""
         async with self._lock:
             self.cache.clear()
-            logging.info("Cache cleared")
+            # Очищаем все button_id_mapping
+            button_id_mapping.clear()
+            logging.info("Cache and button mappings cleared")
+    
+    async def _remove_by_key(self, cache_key: str):
+        """Удаляет запись из кэша по ключу"""
+        async with self._lock:
+            if cache_key in self.cache:
+                del self.cache[cache_key]
+                logging.info(f"Removed cache entry with key: {cache_key[:16]}...")
+                
+                # Очищаем соответствующие button_id_mapping
+                button_ids_to_remove = [bid for bid, (_, _, ck) in button_id_mapping.items() if ck == cache_key]
+                for bid in button_ids_to_remove:
+                    del button_id_mapping[bid]
+                if button_ids_to_remove:
+                    logging.debug(f"Cleaned up {len(button_ids_to_remove)} button mappings for removed cache entry")
+                
+                return True
+            return False
 
 # Глобальный экземпляр кэша
 search_cache = SearchCache()
+
+# Словарь для хранения соответствия между button_id и данными кэша
+# button_id -> (query, search_type, cache_key)
+button_id_mapping = {}
+
+def _generate_button_id(cache_key: str) -> str:
+    """Генерирует уникальный ID для кнопки актуализации"""
+    import hashlib
+    return hashlib.md5(cache_key.encode()).hexdigest()[:16]
+
+def _store_button_mapping(button_id: str, query: str, search_type: str, cache_key: str):
+    """Сохраняет соответствие между button_id и данными кэша"""
+    # Очищаем старые записи, если их слишком много
+    if len(button_id_mapping) > 1000:
+        # Удаляем 20% самых старых записей
+        keys_to_remove = list(button_id_mapping.keys())[:200]
+        for key in keys_to_remove:
+            del button_id_mapping[key]
+        logging.info(f"Cleaned up {len(keys_to_remove)} old button mappings")
+    
+    button_id_mapping[button_id] = (query, search_type, cache_key)
+
+def _get_button_mapping(button_id: str):
+    """Получает данные кэша по button_id"""
+    return button_id_mapping.get(button_id)
 
 async def get_cached_search_result(query: str, search_type: str) -> Optional[Dict[str, Any]]:
     """Получает результат поиска из кэша"""
@@ -203,6 +255,13 @@ async def cache_search_result(query: str, search_type: str, result: Dict[str, An
         await search_cache.set(query, search_type, result)
         logging.info(f"Cached search result for query: {query[:50]}... (type: {search_type})")
         logging.debug(f"Cached result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
+        
+        # Генерируем button_id и сохраняем соответствие
+        cache_key = search_cache._generate_cache_key(query, search_type)
+        button_id = _generate_button_id(cache_key)
+        _store_button_mapping(button_id, query, search_type, cache_key)
+        logging.debug(f"Stored button mapping: {button_id} -> {query[:30]}... ({search_type})")
+        
     except Exception as e:
         logging.error(f"Error caching result: {e}")
 
