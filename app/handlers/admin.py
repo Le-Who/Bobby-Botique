@@ -5,6 +5,8 @@ from typing import Dict, Any
 
 from ..config import settings, get_safety_settings, get_safety_mode_description
 from ..database import db_query
+from ..settings_service import get_setting as settings_get, set_setting as settings_set,
+    get_all_settings as settings_get_all, reset_to_defaults as settings_reset
 from ..utils.messaging import send_long_message
 from ..utils.formatting import TelegramFormatter
 
@@ -279,94 +281,23 @@ def _cast_setting_value(setting_name: str, raw_value: Any) -> Any:
         return default_value
 
 async def get_current_setting(setting_name: str) -> Any:
-    """Получает текущее значение настройки из базы данных или конфигурации с приведением типов."""
-    try:
-        result = await db_query(
-            "SELECT value FROM bot_settings WHERE setting_name = $1",
-            (setting_name,)
-        )
-        if result and result[0]:
-            return _cast_setting_value(setting_name, result[0]['value'])
-        return getattr(settings, setting_name, None)
-    except Exception as e:
-        logging.warning(f"Could not get setting {setting_name} from database: {e}")
-        return getattr(settings, setting_name, None)
+    """Получает текущее значение настройки через единый слой."""
+    return await settings_get(setting_name)
 
 async def get_all_current_settings() -> Dict[str, Dict[str, Any]]:
-    """Получает все текущие настройки, сгруппированные по категориям. Если БД пуста или недоступна, показывает значения из конфигурации."""
-    settings_dict: Dict[str, Dict[str, Any]] = {}
-
-    def _categorize(name: str) -> str:
-        if name.startswith('SAFETY_'):
-            return 'Безопасность'
-        if name.startswith('DEBUG_') or name.startswith('LOG_'):
-            return 'Отладка'
-        if name.startswith('ENABLE_') or name.startswith('CACHE_'):
-            return 'Производительность'
-        if name.startswith('MAX_') or name.startswith('REQUEST_'):
-            return 'Производительность'
-        return 'Прочее'
-
-    # Сначала пробуем загрузить из БД
-    try:
-        result = await db_query("SELECT setting_name, value FROM bot_settings")
-        if result:
-            for row in result:
-                setting_name = row['setting_name']
-                value = _cast_setting_value(setting_name, row['value'])
-                category = _categorize(setting_name)
-                if category not in settings_dict:
-                    settings_dict[category] = {}
-                settings_dict[category][setting_name] = value
-    except Exception as e:
-        logging.error(f"Error getting all settings from DB: {e}")
-
-    # Если БД не дала значений, или чтобы дополнить отсутствующие — заполняем из settings
-    known_setting_names = [
-        'SAFETY_MODE', 'ENABLE_SAFETY_FALLBACK',
-        'DEBUG_MODE', 'LOG_LEVEL', 'LOG_SAFETY_DECISIONS',
-        'ENABLE_CACHE', 'CACHE_TTL_HOURS', 'MAX_RETRIES', 'REQUEST_TIMEOUT_SECONDS',
-        'ENABLE_PROMPT_SIMPLIFICATION', 'ENABLE_SYSTEM_INSTRUCTION_FALLBACK',
-    ]
-    for name in known_setting_names:
-        category = _categorize(name)
-        if category not in settings_dict:
-            settings_dict[category] = {}
-        if name not in settings_dict[category]:
-            settings_dict[category][name] = getattr(settings, name, None)
-
-    return settings_dict
+    """Получает все текущие настройки через единый слой."""
+    return await settings_get_all()
 
 async def update_setting(setting_name: str, value: Any) -> bool:
-    """Обновляет настройку в базе данных"""
-    try:
-        await db_query(
-            """
-            INSERT INTO bot_settings (setting_name, value, updated_at) 
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (setting_name) 
-            DO UPDATE SET value = $2, updated_at = NOW()
-            """,
-            (setting_name, str(value))
-        )
-        
-        # Логируем изменение
+    """Обновляет настройку через единый слой."""
+    ok = await settings_set(setting_name, value)
+    if ok:
         logging.info(f"Admin setting updated: {setting_name} = {value}")
-        return True
-        
-    except Exception as e:
-        logging.error(f"Error updating setting {setting_name}: {e}")
-        return False
+    return ok
 
 async def reset_settings_to_defaults() -> bool:
-    """Сбрасывает все настройки к умолчаниям"""
-    try:
-        # Удаляем все пользовательские настройки
-        await db_query("DELETE FROM bot_settings")
-        
+    """Сбрасывает все настройки через единый слой."""
+    ok = await settings_reset()
+    if ok:
         logging.info("All settings reset to defaults")
-        return True
-        
-    except Exception as e:
-        logging.error(f"Error resetting settings: {e}")
-        return False
+    return ok
