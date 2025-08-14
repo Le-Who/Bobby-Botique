@@ -101,7 +101,7 @@ class GroupChatManager:
                 
                 # Загружаем участников группы
                 members = await db.db_query(
-                    "SELECT user_id FROM group_members WHERE chat_id = ?",
+                    "SELECT user_id FROM group_members WHERE chat_id = $1",
                     (group.chat_id,)
                 )
                 
@@ -127,13 +127,13 @@ class GroupChatManager:
                 
                 # Создаем группу в базе данных
                 await db.db_query(
-                    "INSERT INTO group_chats (chat_id, title, admin_user_id) VALUES (?, ?, ?)",
+                    "INSERT INTO group_chats (chat_id, title, admin_user_id) VALUES ($1, $2, $3)",
                     (chat_id, title, admin_user_id)
                 )
                 
                 # Добавляем администратора как участника
                 await db.db_query(
-                    "INSERT INTO group_members (chat_id, user_id, is_admin) VALUES (?, ?, TRUE)",
+                    "INSERT INTO group_members (chat_id, user_id, is_admin) VALUES ($1, $2, TRUE)",
                     (chat_id, admin_user_id)
                 )
                 
@@ -173,7 +173,7 @@ class GroupChatManager:
             async with self._lock:
                 # Добавляем в базу данных
                 await db.db_query(
-                    "INSERT INTO group_members (chat_id, user_id) VALUES (?, ?) ON CONFLICT (chat_id, user_id) DO NOTHING",
+                    "INSERT INTO group_members (chat_id, user_id) VALUES ($1, $2) ON CONFLICT (chat_id, user_id) DO NOTHING",
                     (chat_id, user_id)
                 )
                 
@@ -183,7 +183,7 @@ class GroupChatManager:
                 
                 # Обновляем количество участников в базе
                 await db.db_query(
-                    "UPDATE group_chats SET member_count = member_count + 1 WHERE chat_id = ?",
+                    "UPDATE group_chats SET member_count = member_count + 1 WHERE chat_id = $1",
                     (chat_id,)
                 )
                 
@@ -202,7 +202,7 @@ class GroupChatManager:
             async with self._lock:
                 # Удаляем из базы данных
                 await db.db_query(
-                    "DELETE FROM group_members WHERE chat_id = ? AND user_id = ?",
+                    "DELETE FROM group_members WHERE chat_id = $1 AND user_id = $2",
                     (chat_id, user_id)
                 )
                 
@@ -212,7 +212,7 @@ class GroupChatManager:
                 
                 # Обновляем количество участников в базе
                 await db.db_query(
-                    "UPDATE group_chats SET member_count = member_count - 1 WHERE chat_id = ?",
+                    "UPDATE group_chats SET member_count = member_count - 1 WHERE chat_id = $1",
                     (chat_id,)
                 )
                 
@@ -230,7 +230,7 @@ class GroupChatManager:
         """Проверяет, является ли пользователь администратором группы"""
         try:
             result = await db.db_query(
-                "SELECT is_admin FROM group_members WHERE chat_id = ? AND user_id = ?",
+                "SELECT is_admin FROM group_members WHERE chat_id = $1 AND user_id = $2",
                 (chat_id, user_id)
             )
             
@@ -256,7 +256,7 @@ class GroupChatManager:
                 self.active_groups[chat_id].last_activity = datetime.now()
                 
                 await db.db_query(
-                    "UPDATE group_chats SET last_activity = CURRENT_TIMESTAMP WHERE chat_id = ?",
+                    "UPDATE group_chats SET last_activity = CURRENT_TIMESTAMP WHERE chat_id = $1",
                     (chat_id,)
                 )
                 
@@ -268,7 +268,7 @@ class GroupChatManager:
         """Логирует сообщение в группе"""
         try:
             await db.db_query(
-                "INSERT INTO group_messages (chat_id, user_id, message_text, message_type, is_bot_response) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO group_messages (chat_id, user_id, message_text, message_type, is_bot_response) VALUES ($1, $2, $3, $4, $5)",
                 (chat_id, user_id, message_text, message_type, is_bot_response)
             )
             
@@ -282,19 +282,19 @@ class GroupChatManager:
         try:
             # Общее количество сообщений
             total_messages = await db.db_query(
-                "SELECT COUNT(*) as count FROM group_messages WHERE chat_id = ?",
+                "SELECT COUNT(*) as count FROM group_messages WHERE chat_id = $1",
                 (chat_id,)
             )
             
             # Сообщения за последние 24 часа
             recent_messages = await db.db_query(
-                "SELECT COUNT(*) as count FROM group_messages WHERE chat_id = ? AND created_at > NOW() - INTERVAL '24 hours'",
+                "SELECT COUNT(*) as count FROM group_messages WHERE chat_id = $1 AND created_at > CURRENT_TIMESTAMP - INTERVAL '24 hours'",
                 (chat_id,)
             )
             
             # Активные пользователи за последние 24 часа
             active_users = await db.db_query(
-                "SELECT COUNT(DISTINCT user_id) as count FROM group_messages WHERE chat_id = ? AND created_at > NOW() - INTERVAL '24 hours'",
+                "SELECT COUNT(DISTINCT user_id) as count FROM group_messages WHERE chat_id = $1 AND created_at > CURRENT_TIMESTAMP - INTERVAL '24 hours'",
                 (chat_id,)
             )
             
