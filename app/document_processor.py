@@ -48,9 +48,9 @@ class DocumentProcessor:
                     'filename': result[0]['filename'],
                     'created_at': result[0]['created_at']
                 }
-                logging.info(f"Duplicate file found for user {user_id}: {filename} matches {duplicate_info['filename']}")
+                logging.info(f"Duplicate file found for user {user_id}: {filename} matches {duplicate_info['filename']} (hash: {file_hash[:8]}...)")
                 return duplicate_info
-            logging.info(f"No duplicate file found for user {user_id}: {filename}")
+            logging.info(f"No duplicate file found for user {user_id}: {filename} (hash: {file_hash[:8]}...)")
             return None
         except Exception as e:
             logging.error(f"Error checking duplicate file for user {user_id}: {e}")
@@ -109,13 +109,15 @@ class DocumentProcessor:
             if old_doc_ids:
                 # Создаем правильные placeholder'ы для PostgreSQL
                 placeholders = ','.join([f'${i+1}' for i in range(len(old_doc_ids))])
+                logging.debug(f"Deleting documents with IDs: {old_doc_ids} for user {user_id}")
+                
                 await db.db_query(f"""
                     DELETE FROM user_documents 
                     WHERE id IN ({placeholders})
                 """, old_doc_ids)
                 
                 deleted_count = len(old_doc_ids)
-                logging.info(f"Successfully cleaned up {deleted_count} oldest documents for user {user_id}")
+                logging.info(f"Successfully cleaned up {deleted_count} oldest documents for user {user_id} (IDs: {old_doc_ids})")
                 return deleted_count
             
             return 0
@@ -219,14 +221,15 @@ class DocumentProcessor:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
                 temp_file.write(file_data)
                 temp_file_path = temp_file.name
+                logging.debug(f"Created temporary file for {filename}: {temp_file_path}")
             
             try:
                 # Проверяем, что файл является корректным PDF
                 if not file_data.startswith(b'%PDF'):
-                    logging.warning(f"Invalid PDF format for {filename}: file does not start with %PDF")
+                    logging.warning(f"Invalid PDF format for {filename}: file does not start with %PDF (first 10 bytes: {file_data[:10]}, file size: {len(file_data)} bytes)")
                     return {"error": "Invalid PDF file format - file does not start with %PDF"}
                 
-                logging.info(f"Processing PDF {filename} with PyMuPDF")
+                logging.info(f"Processing PDF {filename} with PyMuPDF (file size: {len(file_data)} bytes)")
                 
                 # Используем PyMuPDF для лучшего извлечения текста
                 try:
@@ -234,9 +237,9 @@ class DocumentProcessor:
                     # Безопасно получаем количество страниц
                     try:
                         page_count_initial = len(doc)
-                        logging.info(f"Successfully opened PDF {filename} with {page_count_initial} pages")
+                        logging.info(f"Successfully opened PDF {filename} with PyMuPDF: {page_count_initial} pages")
                     except Exception as e:
-                        logging.warning(f"Could not get initial page count: {e}")
+                        logging.warning(f"Could not get initial page count for {filename}: {e}")
                         page_count_initial = 0
                 except Exception as fitz_error:
                     logging.warning(f"PyMuPDF failed for {filename}, trying PyPDF2: {fitz_error}")
@@ -246,9 +249,10 @@ class DocumentProcessor:
                 if page_count_initial > self.max_pages:
                     try:
                         doc.close()
-                    except:
-                        pass
-                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
+                        logging.info(f"Closed document {filename} due to page limit: {page_count_initial} > {self.max_pages}")
+                    except Exception as close_error:
+                        logging.warning(f"Could not close document {filename} after page limit check: {close_error}")
+                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed, got {page_count_initial} pages"}
                 
                 text_content = []
                 page_info = []
@@ -280,28 +284,31 @@ class DocumentProcessor:
                 # Сохраняем количество страниц до закрытия документа
                 try:
                     page_count = len(doc)
+                    logging.debug(f"Got page count for {filename}: {page_count}")
                 except Exception as e:
-                    logging.warning(f"Could not get page count from document: {e}")
+                    logging.warning(f"Could not get page count from document {filename}: {e}")
                     page_count = len(text_content)  # Используем количество обработанных страниц
+                    logging.info(f"Using processed page count for {filename}: {page_count}")
                 
                 # Закрываем документ
                 try:
                     doc.close()
+                    logging.debug(f"Successfully closed document {filename}")
                 except Exception as e:
-                    logging.warning(f"Could not close document properly: {e}")
+                    logging.warning(f"Could not close document {filename} properly: {e}")
                 
                 full_text = '\n\n'.join(text_content)
                 
                 # Сохраняем в базу данных
                 try:
                     await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
-                    logging.info(f"Successfully saved document {filename} for user {user_id}")
+                    logging.info(f"Successfully saved document {filename} for user {user_id} to database")
                 except Exception as save_error:
                     logging.error(f"Error saving document {filename} to database for user {user_id}: {save_error}")
                     # Возвращаем ошибку, но не теряем обработанный контент
-                    return {"error": f"Document processed but failed to save: {str(save_error)}"}
+                    return {"error": f"Document processed but failed to save to database: {str(save_error)}"}
                 
-                logging.info(f"Successfully processed PDF {filename} for user {user_id}: {page_count} pages, {len(full_text)} characters")
+                logging.info(f"Successfully processed PDF {filename} for user {user_id}: {page_count} pages, {len(full_text)} characters, {len(page_info)} pages with images")
                 
                 return {
                     "success": True,
@@ -314,8 +321,14 @@ class DocumentProcessor:
                 
             finally:
                 # Удаляем временный файл
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                        logging.debug(f"Successfully removed temporary file for {filename}: {temp_file_path}")
+                    else:
+                        logging.warning(f"Temporary file not found for {filename}: {temp_file_path}")
+                except Exception as cleanup_error:
+                    logging.warning(f"Could not remove temporary file for {filename}: {cleanup_error}")
             
         except Exception as e:
             logging.error(f"Error processing PDF {filename}: {e}", exc_info=True)
@@ -329,18 +342,21 @@ class DocumentProcessor:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
                 temp_file.write(file_data)
                 temp_file_path = temp_file.name
+                logging.debug(f"Created temporary file for {filename} (PyPDF2): {temp_file_path}")
             
             try:
                 # Используем PyPDF2 как fallback
                 try:
                     with open(temp_file_path, 'rb') as file:
                         pdf_reader = PyPDF2.PdfReader(file)
+                        logging.info(f"Successfully opened PDF {filename} with PyPDF2: {len(pdf_reader.pages)} pages")
                 except Exception as pdf_error:
                     logging.error(f"PyPDF2 failed to open {filename}: {pdf_error}")
-                    return {"error": f"Failed to open PDF file: {str(pdf_error)}"}
+                    return {"error": f"Failed to open PDF file with PyPDF2: {str(pdf_error)}"}
                 
                 if len(pdf_reader.pages) > self.max_pages:
-                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
+                    logging.warning(f"PDF {filename} too large: {len(pdf_reader.pages)} pages, maximum {self.max_pages} allowed")
+                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed, got {len(pdf_reader.pages)} pages"}
                 
                 text_content = []
                 
@@ -350,12 +366,13 @@ class DocumentProcessor:
                         if text.strip():
                             text_content.append(f"--- Page {page_num + 1} ---\n{text}")
                     except Exception as page_error:
-                        logging.warning(f"Error extracting text from page {page_num + 1}: {page_error}")
+                        logging.warning(f"Error extracting text from page {page_num + 1} for {filename}: {page_error}")
                         text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
                     
                     # Проверяем лимит токенов
                     if len('\n'.join(text_content)) > 100000:
                         text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                        logging.info(f"Document content truncated at page {page_num + 1} for {filename}")
                         break
                 
                 full_text = '\n\n'.join(text_content)
@@ -363,18 +380,20 @@ class DocumentProcessor:
                 # Безопасно получаем количество страниц
                 try:
                     page_count = len(pdf_reader.pages)
+                    logging.debug(f"Got page count for {filename} using PyPDF2: {page_count}")
                 except Exception as e:
-                    logging.warning(f"Could not get page count from PDF reader: {e}")
+                    logging.warning(f"Could not get page count from PDF reader for {filename}: {e}")
                     page_count = len(text_content)  # Используем количество обработанных страниц
+                    logging.info(f"Using processed page count for {filename}: {page_count}")
                 
                 # Сохраняем в базу данных
                 try:
                     await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
-                    logging.info(f"Successfully saved document {filename} for user {user_id} using PyPDF2")
+                    logging.info(f"Successfully saved document {filename} for user {user_id} to database using PyPDF2")
                 except Exception as save_error:
                     logging.error(f"Error saving document {filename} to database for user {user_id}: {save_error}")
                     # Возвращаем ошибку, но не теряем обработанный контент
-                    return {"error": f"Document processed but failed to save: {str(save_error)}"}
+                    return {"error": f"Document processed but failed to save to database: {str(save_error)}"}
                 
                 logging.info(f"Successfully processed PDF {filename} for user {user_id} using PyPDF2: {page_count} pages, {len(full_text)} characters")
                 
@@ -389,9 +408,15 @@ class DocumentProcessor:
                     
             finally:
                 # Удаляем временный файл
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-                    
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                        logging.debug(f"Successfully removed temporary file for {filename} (PyPDF2): {temp_file_path}")
+                    else:
+                        logging.warning(f"Temporary file not found for {filename} (PyPDF2): {temp_file_path}")
+                except Exception as cleanup_error:
+                    logging.warning(f"Could not remove temporary file for {filename} (PyPDF2): {cleanup_error}")
+            
         except Exception as e:
             logging.error(f"Error processing PDF with PyPDF2 {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
@@ -404,42 +429,56 @@ class DocumentProcessor:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
                 temp_file.write(file_data)
                 temp_file_path = temp_file.name
+                logging.debug(f"Created temporary file for {filename} (Word): {temp_file_path}")
             
             try:
                 doc = docx.Document(temp_file_path)
+                logging.info(f"Successfully opened Word document {filename}")
                 
                 text_content = []
                 paragraph_count = 0
                 
                 # Извлекаем текст из параграфов
                 for para in doc.paragraphs:
-                    if para.text.strip():
-                        text_content.append(para.text)
-                        paragraph_count += 1
+                    try:
+                        if para.text.strip():
+                            text_content.append(para.text)
+                            paragraph_count += 1
+                    except Exception as para_error:
+                        logging.warning(f"Error processing paragraph for {filename}: {para_error}")
+                        continue
                 
                 # Извлекаем текст из таблиц
                 table_count = 0
                 for table in doc.tables:
-                    table_count += 1
-                    text_content.append(f"\n--- Table {table_count} ---")
-                    for row in table.rows:
-                        row_text = []
-                        for cell in row.cells:
-                            if cell.text.strip():
-                                row_text.append(cell.text.strip())
-                        if row_text:
-                            text_content.append(" | ".join(row_text))
+                    try:
+                        table_count += 1
+                        text_content.append(f"\n--- Table {table_count} ---")
+                        for row in table.rows:
+                            row_text = []
+                            for cell in row.cells:
+                                try:
+                                    if cell.text.strip():
+                                        row_text.append(cell.text.strip())
+                                except Exception as cell_error:
+                                    logging.warning(f"Error processing cell in table {table_count} for {filename}: {cell_error}")
+                                    continue
+                            if row_text:
+                                text_content.append(" | ".join(row_text))
+                    except Exception as table_error:
+                        logging.warning(f"Error processing table {table_count + 1} for {filename}: {table_error}")
+                        continue
                 
                 full_text = '\n\n'.join(text_content)
                 
                 # Сохраняем в базу данных
                 try:
                     await self._save_document_content(user_id, filename, full_text, 1, file_hash)  # Word документы считаем как 1 страницу
-                    logging.info(f"Successfully saved document {filename} for user {user_id}")
+                    logging.info(f"Successfully saved document {filename} for user {user_id} to database")
                 except Exception as save_error:
                     logging.error(f"Error saving document {filename} to database for user {user_id}: {save_error}")
                     # Возвращаем ошибку, но не теряем обработанный контент
-                    return {"error": f"Document processed but failed to save: {str(save_error)}"}
+                    return {"error": f"Document processed but failed to save to database: {str(save_error)}"}
                 
                 logging.info(f"Successfully processed Word document {filename} for user {user_id}: {paragraph_count} paragraphs, {table_count} tables, {len(full_text)} characters")
                 
@@ -455,9 +494,15 @@ class DocumentProcessor:
                 
             finally:
                 # Удаляем временный файл
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-                    
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                        logging.debug(f"Successfully removed temporary file for {filename} (Word): {temp_file_path}")
+                    else:
+                        logging.warning(f"Temporary file not found for {filename} (Word): {temp_file_path}")
+                except Exception as cleanup_error:
+                    logging.warning(f"Could not remove temporary file for {filename} (Word): {cleanup_error}")
+            
         except Exception as e:
             logging.error(f"Error processing Word document {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("word_processing", str(e))
@@ -472,10 +517,10 @@ class DocumentProcessor:
                 (user_id, filename, content, pages, len(content), file_hash)
             )
             
-            logging.info(f"Saved document {filename} for user {user_id}")
+            logging.info(f"Successfully saved document {filename} for user {user_id} to database: {pages} pages, {len(content)} characters, hash: {file_hash[:8]}...")
             
         except Exception as e:
-            logging.error(f"Error saving document to database: {e}")
+            logging.error(f"Error saving document {filename} to database for user {user_id}: {e}")
             raise  # Пробрасываем ошибку для обработки в вызывающем коде
     
     async def get_document_by_id(self, document_id: int, user_id: int) -> Optional[Dict[str, Any]]:
