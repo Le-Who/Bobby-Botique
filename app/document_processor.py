@@ -270,9 +270,10 @@ class DocumentProcessor:
                         # Проверяем лимит токенов
                         if len('\n'.join(text_content)) > 100000:  # Примерный лимит
                             text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                            logging.info(f"Document content truncated at page {page_num + 1} for user {user_id}")
                             break
                     except Exception as page_error:
-                        logging.warning(f"Error processing page {page_num + 1}: {page_error}")
+                        logging.warning(f"Error processing page {page_num + 1} for user {user_id}: {page_error}")
                         text_content.append(f"--- Page {page_num + 1} ---\n[Error processing this page]")
                         continue
                 
@@ -294,10 +295,13 @@ class DocumentProcessor:
                 # Сохраняем в базу данных
                 try:
                     await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
+                    logging.info(f"Successfully saved document {filename} for user {user_id}")
                 except Exception as save_error:
-                    logging.error(f"Error saving document to database: {save_error}")
+                    logging.error(f"Error saving document {filename} to database for user {user_id}: {save_error}")
                     # Возвращаем ошибку, но не теряем обработанный контент
                     return {"error": f"Document processed but failed to save: {str(save_error)}"}
+                
+                logging.info(f"Successfully processed PDF {filename} for user {user_id}: {page_count} pages, {len(full_text)} characters")
                 
                 return {
                     "success": True,
@@ -366,10 +370,13 @@ class DocumentProcessor:
                 # Сохраняем в базу данных
                 try:
                     await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
+                    logging.info(f"Successfully saved document {filename} for user {user_id} using PyPDF2")
                 except Exception as save_error:
-                    logging.error(f"Error saving document to database: {save_error}")
+                    logging.error(f"Error saving document {filename} to database for user {user_id}: {save_error}")
                     # Возвращаем ошибку, но не теряем обработанный контент
                     return {"error": f"Document processed but failed to save: {str(save_error)}"}
+                
+                logging.info(f"Successfully processed PDF {filename} for user {user_id} using PyPDF2: {page_count} pages, {len(full_text)} characters")
                 
                 return {
                     "success": True,
@@ -428,10 +435,13 @@ class DocumentProcessor:
                 # Сохраняем в базу данных
                 try:
                     await self._save_document_content(user_id, filename, full_text, 1, file_hash)  # Word документы считаем как 1 страницу
+                    logging.info(f"Successfully saved document {filename} for user {user_id}")
                 except Exception as save_error:
-                    logging.error(f"Error saving document to database: {save_error}")
+                    logging.error(f"Error saving document {filename} to database for user {user_id}: {save_error}")
                     # Возвращаем ошибку, но не теряем обработанный контент
                     return {"error": f"Document processed but failed to save: {str(save_error)}"}
+                
+                logging.info(f"Successfully processed Word document {filename} for user {user_id}: {paragraph_count} paragraphs, {table_count} tables, {len(full_text)} characters")
                 
                 return {
                     "success": True,
