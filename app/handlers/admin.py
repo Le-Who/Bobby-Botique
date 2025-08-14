@@ -215,7 +215,7 @@ async def show_current_settings(update: Update, context: ContextTypes.DEFAULT_TY
             text += f"  {key}: `{value}`\n"
         text += "\n"
     
-    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=ADMIN_MENU_MAIN)]
+    keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=ADMIN_MENU_MAIN)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
@@ -243,7 +243,7 @@ async def reset_to_defaults(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ⚠️ **Перезапустите бота для применения изменений!**
 """
         
-        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=ADMIN_MENU_MAIN)]
+        keyboard = [[InlineKeyboardButton("🔙 Назад", callback_data=ADMIN_MENU_MAIN)]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')

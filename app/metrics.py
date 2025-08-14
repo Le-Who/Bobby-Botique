@@ -389,6 +389,15 @@ class MetricsCollector:
 # Глобальный экземпляр сборщика метрик
 metrics_collector = MetricsCollector()
 
+async def start_metrics_server():
+    """Запускает сервер метрик"""
+    try:
+        await metrics_collector.initialize()
+        logging.info("Metrics server started successfully")
+    except Exception as e:
+        logging.error(f"Failed to start metrics server: {e}")
+        # Не прерываем запуск бота из-за ошибки метрик
+
 class MetricsMiddleware:
     """Middleware для автоматического сбора метрик"""
     

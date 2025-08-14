@@ -325,3 +325,12 @@ async def get_task_status(task_id: str) -> Optional[Task]:
 async def cancel_user_task(task_id: str, user_id: int) -> bool:
     """Отменяет задачу пользователя"""
     return await task_queue.cancel_task(task_id, user_id) 
+
+async def start_queue_processor():
+    """Запускает процессор очереди задач"""
+    try:
+        await task_queue.start()
+        logging.info("Task queue processor started successfully")
+    except Exception as e:
+        logging.error(f"Failed to start task queue processor: {e}")
+        # Не прерываем запуск бота из-за ошибки очереди задач 

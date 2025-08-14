@@ -339,4 +339,13 @@ async def get_group_info(chat_id: int) -> Optional[GroupChat]:
 async def log_group_message(chat_id: int, user_id: int, message_text: str, 
                            message_type: str = 'text', is_bot_response: bool = False):
     """Логирует сообщение в группе"""
-    await group_chat_manager.log_group_message(chat_id, user_id, message_text, message_type, is_bot_response) 
+    await group_chat_manager.log_group_message(chat_id, user_id, message_text, message_type, is_bot_response)
+
+async def start_group_chat_monitor():
+    """Запускает мониторинг групповых чатов"""
+    try:
+        await group_chat_manager.initialize()
+        logging.info("Group chat monitor started successfully")
+    except Exception as e:
+        logging.error(f"Failed to start group chat monitor: {e}")
+        # Не прерываем запуск бота из-за ошибки групповых чатов 

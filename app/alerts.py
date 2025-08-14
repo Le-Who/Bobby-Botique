@@ -170,6 +170,38 @@ class AlertManager:
 # Глобальный экземпляр менеджера алертов
 alert_manager = AlertManager()
 
+async def start_alert_monitor():
+    """Запускает мониторинг алертов"""
+    try:
+        # Запускаем фоновую задачу для проверки алертов
+        async def alert_monitor_loop():
+            while True:
+                try:
+                    # Проверяем алерты каждые 30 минут
+                    await asyncio.sleep(1800)  # 30 минут
+                    
+                    # Запускаем проверку алертов
+                    alerts = await run_alert_checks()
+                    if alerts:
+                        logging.info(f"Generated {len(alerts)} alerts")
+                        # Здесь можно добавить отправку алертов администратору
+                        # await send_alerts_to_admin(context)
+                    
+                    # Очищаем старые алерты
+                    await alert_manager.clear_old_alerts()
+                    
+                except Exception as e:
+                    logging.error(f"Error in alert monitor loop: {e}")
+                    await asyncio.sleep(300)  # Ждем 5 минут при ошибке
+        
+        # Запускаем мониторинг в фоне
+        asyncio.create_task(alert_monitor_loop())
+        logging.info("Alert monitor started successfully")
+        
+    except Exception as e:
+        logging.error(f"Failed to start alert monitor: {e}")
+        # Не прерываем запуск бота из-за ошибки алертов
+
 async def run_alert_checks() -> List[str]:
     """Запускает все проверки алертов и возвращает список алертов для отправки"""
     all_alerts = []
