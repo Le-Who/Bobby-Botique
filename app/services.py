@@ -73,7 +73,10 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
     for attempt in range(max_retries):
         try:
             # Записываем метрики API вызова
-            await metrics_collector.record_api_call("gemini", model_name)
+            try:
+                await metrics_collector.record_api_call("gemini", model_name)
+            except Exception as metric_error:
+                logging.warning(f"Failed to record API call metric: {metric_error}")
             
             genai.configure(api_key=api_key)
             
@@ -259,7 +262,10 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             
             # Для других ошибок не повторяем
             logging.error(f"Non-retryable error: {error_msg}")
-            await metrics_collector.record_error("gemini_api", error_msg)
+            try:
+                await metrics_collector.record_error("gemini_api", error_msg)
+            except Exception as metric_error:
+                logging.warning(f"Failed to record error metric: {metric_error}")
             
             # Улучшенные сообщения об ошибках
             if "rate limit" in error_msg.lower() or "quota" in error_msg.lower():

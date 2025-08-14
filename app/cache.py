@@ -57,14 +57,12 @@ class SearchCache:
             
             if entry is None:
                 logging.debug(f"Cache entry not found for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type})")
-                await metrics_collector.record_cache_miss()
                 return None
             
             # Проверяем, не истек ли срок действия
             if datetime.now() > entry.expires_at:
                 logging.debug(f"Cache entry expired for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type})")
                 del self.cache[cache_key]
-                await metrics_collector.record_cache_miss()
                 return None
             
             # Обновляем статистику доступа
@@ -72,7 +70,13 @@ class SearchCache:
             entry.last_accessed = datetime.now()
             
             logging.debug(f"Cache hit for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type})")
-            await metrics_collector.record_cache_hit()
+            
+            # Записываем метрики после успешного получения данных
+            try:
+                await metrics_collector.record_cache_hit()
+            except Exception as e:
+                logging.warning(f"Failed to record cache hit metric: {e}")
+            
             # Возвращаем данные с пометкой, что они из кэша
             return {
                 'data': entry.data,
@@ -81,6 +85,13 @@ class SearchCache:
                 'created_at': entry.created_at,
                 'expires_at': entry.expires_at
             }
+    
+    async def _record_cache_miss(self):
+        """Записывает метрику cache miss с обработкой ошибок"""
+        try:
+            await metrics_collector.record_cache_miss()
+        except Exception as e:
+            logging.warning(f"Failed to record cache miss metric: {e}")
     
     async def set(self, query: str, search_type: str, data: Any):
         """Сохраняет данные в кэш"""

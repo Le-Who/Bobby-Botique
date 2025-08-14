@@ -56,7 +56,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Обычная обработка сообщений
     async def task_wrapper():
-        async with state.USER_LOCKS[user_id]:
+        async with state.get_user_lock(user_id):
             await agent.process_long_request(placeholder_message, update, context)
     
     asyncio.create_task(task_wrapper())

@@ -73,7 +73,6 @@ async def main():
         logging.info("Group chats initialized.")
         
         logging.info("Starting cache cleanup task...")
-        # await start_cache_cleanup_task() # This line was removed from the new_code, so it's removed here.
         logging.info("Cache cleanup task started.")
         
         logging.info("Starting task queue...")
@@ -93,11 +92,6 @@ async def main():
         logging.critical(f"Application failed critically: {e}", exc_info=True)
     finally:
         logging.info("Shutting down services...")
-        # await stop_task_queue() # This line was removed from the new_code, so it's removed here.
-        # await metrics_collector.cleanup() # This line was removed from the new_code, so it's removed here.
-        # if database.db_pool: # This line was removed from the new_code, so it's removed here.
-        #     # await database.db_pool.close() # This line was removed from the new_code, so it's removed here.
-        #     logging.info("Database pool closed.") # This line was removed from the new_code, so it's removed here.
         await close_db()
         logging.info("Shutdown complete.")
 

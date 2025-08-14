@@ -113,7 +113,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
         return
 
     user_id = original_message.from_user.id
-    user_lock = state.USER_LOCKS[user_id]
+    user_lock = state.get_user_lock(user_id)
 
     if user_lock.locked():
         return
@@ -163,7 +163,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     user_id = original_message.from_user.id
-    user_lock = state.USER_LOCKS[user_id]
+    user_lock = state.get_user_lock(user_id)
 
     if user_lock.locked():
         return

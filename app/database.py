@@ -123,18 +123,26 @@ async def init_db():
         await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
         await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
         
-        # Миграция схемы
-        try:
-            check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
-            column_exists = await db_query(check_column_query)
-            if column_exists:
-                logging.info("Old column 'request_count' found. Attempting schema migration...")
-                await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
-                logging.info("Schema migration successful.")
-            else:
-                logging.info("Schema is up to date. Migration not needed.")
-        except asyncpg.PostgresError as e:
-            logging.info(f"Schema migration skipped or already applied (Error: {e})")
+        # Создаем таблицу версий схемы
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                id SERIAL PRIMARY KEY,
+                version INTEGER NOT NULL DEFAULT 1,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Проверяем текущую версию схемы
+        version_result = await db_query("SELECT version FROM schema_version ORDER BY id DESC LIMIT 1")
+        current_version = version_result[0]['version'] if version_result else 0
+        
+        # Применяем миграции если необходимо
+        if current_version < 1:
+            await _apply_migration_1()
+            await db_query("INSERT INTO schema_version (version) VALUES (1)")
+            logging.info("Schema migration to version 1 completed.")
+        
+        logging.info(f"Database schema is at version {current_version + (1 if current_version < 1 else 0)}")
         
         # Инициализируем базовые данные
         await db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
@@ -226,6 +234,24 @@ async def is_authorized(user_id: int) -> bool:
         return True
     result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,))
     return result and result[0]['is_authorized'] == 1
+
+async def _apply_migration_1():
+    """Применяет миграцию версии 1: переименование колонки request_count в credit_usage"""
+    try:
+        # Проверяем, существует ли старая колонка
+        check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
+        column_exists = await db_query(check_column_query)
+        
+        if column_exists:
+            logging.info("Applying migration 1: renaming 'request_count' to 'credit_usage'...")
+            await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
+            logging.info("Migration 1 completed successfully.")
+        else:
+            logging.info("Migration 1 not needed: column 'request_count' not found.")
+            
+    except Exception as e:
+        logging.error(f"Error applying migration 1: {e}")
+        raise
 
 async def close_db():
     """Закрывает пул соединений с базой данных"""

@@ -207,9 +207,9 @@ def get_current_safety_mode() -> str:
     # TODO: Добавить асинхронное чтение из базы данных
     return settings.SAFETY_MODE
 
-def get_setting_from_db(setting_name: str, default_value: Any = None) -> Any:
+async def get_setting_from_db_async(setting_name: str, default_value: Any = None) -> Any:
     """
-    Получает значение настройки из базы данных
+    Асинхронно получает значение настройки из базы данных
     
     Args:
         setting_name: Название настройки
@@ -219,19 +219,9 @@ def get_setting_from_db(setting_name: str, default_value: Any = None) -> Any:
         Any: Значение настройки или default_value
     """
     try:
-        import asyncio
         from .database import db_query
         
-        # Создаем новый event loop для синхронного вызова
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        result = loop.run_until_complete(
-            db_query("SELECT value FROM bot_settings WHERE setting_name = $1", setting_name)
-        )
+        result = await db_query("SELECT value FROM bot_settings WHERE setting_name = $1", setting_name)
         
         if result and result[0]:
             value = result[0]['value']
@@ -250,6 +240,47 @@ def get_setting_from_db(setting_name: str, default_value: Any = None) -> Any:
     
     # Возвращаем значение по умолчанию
     return default_value
+
+def get_setting_from_db(setting_name: str, default_value: Any = None) -> Any:
+    """
+    Синхронная обертка для получения настройки из базы данных
+    ВНИМАНИЕ: Используйте только в синхронном контексте!
+    
+    Args:
+        setting_name: Название настройки
+        default_value: Значение по умолчанию, если настройка не найдена
+    
+    Returns:
+        Any: Значение настройки или default_value
+    """
+    try:
+        import asyncio
+        
+        # Пытаемся получить текущий event loop
+        try:
+            loop = asyncio.get_running_loop()
+            # Если мы в асинхронном контексте, логируем предупреждение
+            logging.warning(f"get_setting_from_db called in async context. Use get_setting_from_db_async instead.")
+            return default_value
+        except RuntimeError:
+            # Мы не в асинхронном контексте, можно создать новый loop
+            pass
+        
+        # Создаем новый event loop для синхронного вызова
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(
+                get_setting_from_db_async(setting_name, default_value)
+            )
+            return result
+        finally:
+            loop.close()
+        
+    except Exception as e:
+        logging.warning(f"Could not get setting {setting_name} from database: {e}")
+        return default_value
 
 def get_safety_mode_description() -> str:
     """Возвращает описание доступных режимов безопасности"""

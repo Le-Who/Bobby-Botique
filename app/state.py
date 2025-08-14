@@ -1,11 +1,36 @@
 # /app/state.py
 
 import asyncio
-from collections import defaultdict
+import weakref
+from threading import Lock
 from typing import Dict, Set, Optional
 
-# Блокировки для пользователей
-USER_LOCKS: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+class UserLockManager:
+    """Безопасный менеджер блокировок для пользователей"""
+    def __init__(self):
+        self._locks = weakref.WeakValueDictionary()
+        self._global_lock = Lock()
+    
+    def get_lock(self, user_id: int) -> asyncio.Lock:
+        """Получает блокировку для пользователя, создавая новую при необходимости"""
+        with self._global_lock:
+            if user_id not in self._locks:
+                self._locks[user_id] = asyncio.Lock()
+            return self._locks[user_id]
+    
+    def cleanup(self):
+        """Очищает неиспользуемые блокировки"""
+        with self._global_lock:
+            # WeakValueDictionary автоматически очищает неиспользуемые объекты
+            pass
+
+# Глобальный экземпляр менеджера блокировок
+lock_manager = UserLockManager()
+
+# Функция для получения блокировки пользователя
+def get_user_lock(user_id: int) -> asyncio.Lock:
+    """Получает блокировку для пользователя"""
+    return lock_manager.get_lock(user_id)
 
 # Состояния пользователей для работы с документами
 class UserDocumentState:
