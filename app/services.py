@@ -55,6 +55,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             
             # Если это ошибка 500, пробуем повторить
             if "500" in error_msg and "internal error" in error_msg.lower():
+                logging.warning(f"Detected 500 internal error on attempt {attempt + 1}: {error_msg}")
                 if attempt < max_retries - 1:
                     logging.info(f"Retrying in {retry_delay} seconds due to 500 error...")
                     await asyncio.sleep(retry_delay)
@@ -66,6 +67,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                     return "🚫 Сервер Gemini временно недоступен (ошибка 500). Попробуйте позже.", None
             
             # Для других ошибок не повторяем
+            logging.error(f"Non-retryable error: {error_msg}")
             await metrics_collector.record_error("gemini_api", error_msg)
             return f"Произошла ошибка API: {error_msg}", None
     

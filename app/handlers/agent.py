@@ -86,7 +86,26 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     localization_prompt = prompts.QNA_LOCALIZATION_PROMPT.format(
         user_message=user_message, tavily_answer=tavily_answer
     )
+    logging.info(f"Calling Gemini API for QNA localization with prompt length: {len(localization_prompt)}")
     final_answer, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [localization_prompt]}], model_used)
+    
+    logging.info(f"Gemini API response for QNA: {final_answer[:100] if final_answer else 'None'}...")
+    
+    # Проверяем, не является ли ответ сообщением об ошибке
+    if final_answer and final_answer.startswith('🚫'):
+        logging.warning(f"Gemini API returned error for QNA: {final_answer}")
+        try:
+            await placeholder_message.edit_text(final_answer)
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
+    if not final_answer:
+        try:
+            await placeholder_message.edit_text("❌ Не удалось получить ответ от AI. Попробуйте позже.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
     
     # Отправляем ответ с индикацией кэша, если он был получен из кэша
     await send_long_message(placeholder_message, final_answer, from_cache=from_cache, cache_key=cache_key)
@@ -162,6 +181,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         search_results_json=json.dumps(search_results, indent=2, ensure_ascii=False)
     )
     
+    logging.info(f"Calling Gemini API for URL selection with prompt length: {len(selection_prompt)}")
     try:
         selected_urls_str, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [selection_prompt]}], model_used)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
@@ -169,6 +189,24 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         logging.error(f"Error in Gemini URL selection: {gemini_error}")
         try:
             await placeholder_message.edit_text("❌ Произошла ошибка при выборе источников. Попробуйте позже.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
+    logging.info(f"Gemini API response for URL selection: {selected_urls_str[:100] if selected_urls_str else 'None'}...")
+    
+    # Проверяем, не является ли ответ сообщением об ошибке
+    if selected_urls_str and selected_urls_str.startswith('🚫'):
+        logging.warning(f"Gemini API returned error for URL selection: {selected_urls_str}")
+        try:
+            await placeholder_message.edit_text(selected_urls_str)
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
+    if not selected_urls_str:
+        try:
+            await placeholder_message.edit_text("❌ Не удалось получить ответ от AI при выборе источников. Попробуйте позже.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
@@ -216,6 +254,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     )
     chat_state.history.append({'role': 'user', 'parts': [augmented_prompt]})
     
+    logging.info(f"Calling Gemini API for synthesis with prompt length: {len(augmented_prompt)}")
     try:
         response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
     except Exception as gemini_error:
@@ -224,6 +263,19 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         await db.update_user_chat(user_id, chat_state)
         try:
             await placeholder_message.edit_text("❌ Произошла ошибка при синтезе ответа. Попробуйте позже.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
+    logging.info(f"Gemini API response for synthesis: {response_text[:100] if response_text else 'None'}...")
+    
+    # Проверяем, не является ли ответ сообщением об ошибке
+    if response_text and response_text.startswith('🚫'):
+        logging.warning(f"Gemini API returned error for synthesis: {response_text}")
+        chat_state.history.pop()  # Убираем добавленный промпт
+        await db.update_user_chat(user_id, chat_state)
+        try:
+            await placeholder_message.edit_text(response_text)
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
@@ -314,6 +366,14 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
             model_used
         )
         
+        # Проверяем, не является ли ответ сообщением об ошибке
+        if response_text and response_text.startswith('🚫'):
+            try:
+                await placeholder_message.edit_text(response_text)
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+            return
+        
         if response_text:
             # Создаем кнопки для управления документом
             keyboard = [
@@ -380,6 +440,16 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     
     response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
     
+    # Проверяем, не является ли ответ сообщением об ошибке
+    if response_text and response_text.startswith('🚫'):
+        chat_state.history.pop()  # Убираем добавленный промпт
+        await db.update_user_chat(user_id, chat_state)
+        try:
+            await placeholder_message.edit_text(response_text)
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
     if response_text:
         await send_long_message(placeholder_message, response_text)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
@@ -390,7 +460,7 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         chat_state.history.pop()
         await db.update_user_chat(user_id, chat_state)
         try:
-            await placeholder_message.edit_text("Получен пустой ответ от API.")
+            await placeholder_message.edit_text("❌ Получен пустой ответ от API. Попробуйте переформулировать вопрос.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
 
@@ -412,8 +482,22 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
         prompt = original_message.caption or "Опиши это изображение."
         response_text, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [prompt, img]}], model_used)
         
-        await send_long_message(placeholder_message, response_text or "Не удалось обработать изображение.")
-        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        # Проверяем, не является ли ответ сообщением об ошибке
+        if response_text and response_text.startswith('🚫'):
+            try:
+                await placeholder_message.edit_text(response_text)
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+            return
+        
+        if response_text:
+            await send_long_message(placeholder_message, response_text)
+            await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        else:
+            try:
+                await placeholder_message.edit_text("❌ Не удалось обработать изображение.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
     except Exception as e:
         logging.error(f"Error processing photo: {e}")
         try:
@@ -453,9 +537,17 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
     search_query, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [analysis_prompt, img]}], vision_model)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], vision_model)
 
+    # Проверяем, не является ли ответ сообщением об ошибке
+    if search_query and search_query.startswith('🚫'):
+        try:
+            await placeholder_message.edit_text(search_query)
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+
     if not search_query:
         try:
-            await placeholder_message.edit_text("Не удалось проанализировать изображение для поиска.")
+            await placeholder_message.edit_text("❌ Не удалось проанализировать изображение для поиска.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
