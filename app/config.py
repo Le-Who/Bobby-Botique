@@ -96,6 +96,7 @@ class Settings(BaseModel):
     # --- DEBUG & LOGGING ---
     DEBUG_MODE: bool = False
     LOG_LEVEL: str = "INFO"  # DEBUG, INFO, WARNING, ERROR
+    LOG_JSON: bool = False  # структурированные JSON-логи
     LOG_SAFETY_DECISIONS: bool = True  # Логировать решения по безопасности
     
     # --- PERFORMANCE ---
@@ -103,11 +104,15 @@ class Settings(BaseModel):
     CACHE_TTL_HOURS: int = 72  # 3 дня
     MAX_RETRIES: int = 3
     REQUEST_TIMEOUT_SECONDS: int = 60
+    ENABLE_PERSISTENT_QUEUE: bool = False  # Персистентная очередь
     
     # --- FEATURES ---
     ENABLE_SAFETY_FALLBACK: bool = True  # Автоматическое переключение настроек
     ENABLE_PROMPT_SIMPLIFICATION: bool = True  # Упрощение проблемных промптов
     ENABLE_SYSTEM_INSTRUCTION_FALLBACK: bool = True  # Отключение system_instruction при проблемах
+
+    # --- RATE LIMITING ---
+    USER_RATE_LIMIT_PER_MINUTE: int = 20
 
 def load_settings() -> Settings:
     """
@@ -128,6 +133,7 @@ def load_settings() -> Settings:
             "SAFETY_MODE": os.getenv("SAFETY_MODE", "auto"),
             "DEBUG_MODE": os.getenv("DEBUG_MODE", "false").lower() == "true",
             "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
+            "LOG_JSON": os.getenv("LOG_JSON", "false").lower() == "true",
             "LOG_SAFETY_DECISIONS": os.getenv("LOG_SAFETY_DECISIONS", "true").lower() == "true",
             
             # Настройки производительности
@@ -135,11 +141,13 @@ def load_settings() -> Settings:
             "CACHE_TTL_HOURS": int(os.getenv("CACHE_TTL_HOURS", "72")),
             "MAX_RETRIES": int(os.getenv("MAX_RETRIES", "3")),
             "REQUEST_TIMEOUT_SECONDS": int(os.getenv("REQUEST_TIMEOUT_SECONDS", "60")),
+            "ENABLE_PERSISTENT_QUEUE": os.getenv("ENABLE_PERSISTENT_QUEUE", "false").lower() == "true",
             
             # Настройки функций
             "ENABLE_SAFETY_FALLBACK": os.getenv("ENABLE_SAFETY_FALLBACK", "true").lower() == "true",
             "ENABLE_PROMPT_SIMPLIFICATION": os.getenv("ENABLE_PROMPT_SIMPLIFICATION", "true").lower() == "true",
             "ENABLE_SYSTEM_INSTRUCTION_FALLBACK": os.getenv("ENABLE_SYSTEM_INSTRUCTION_FALLBACK", "true").lower() == "true",
+            "USER_RATE_LIMIT_PER_MINUTE": int(os.getenv("USER_RATE_LIMIT_PER_MINUTE", "20")),
         }
         
         # Use the Pydantic model ONLY for validation of the manually loaded data.
@@ -157,23 +165,44 @@ def load_settings() -> Settings:
 def _setup_logging(settings: Settings):
     """Настраивает логирование на основе конфигурации"""
     import logging
+    import sys
     
     # Устанавливаем уровень логирования
     log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
-    logging.basicConfig(
-        level=log_level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    if settings.LOG_JSON:
+        try:
+            from .logging_utils import JsonFormatter, RequestContextFilter
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setFormatter(JsonFormatter())
+            root = logging.getLogger()
+            root.setLevel(log_level)
+            # очищаем дефолтные хендлеры basicConfig, если есть
+            for h in list(root.handlers):
+                root.removeHandler(h)
+            root.addHandler(handler)
+            root.addFilter(RequestContextFilter())
+        except Exception:
+            logging.basicConfig(
+                level=log_level,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+    else:
+        logging.basicConfig(
+            level=log_level,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
     
     # Логируем загруженную конфигурацию
     logging.info(f"=== CONFIGURATION LOADED ===")
     logging.info(f"Safety Mode: {settings.SAFETY_MODE}")
     logging.info(f"Debug Mode: {settings.DEBUG_MODE}")
     logging.info(f"Log Level: {settings.LOG_LEVEL}")
+    logging.info(f"Log JSON: {settings.LOG_JSON}")
     logging.info(f"Cache Enabled: {settings.ENABLE_CACHE}")
     logging.info(f"Cache TTL: {settings.CACHE_TTL_HOURS} hours")
     logging.info(f"Max Retries: {settings.MAX_RETRIES}")
     logging.info(f"Request Timeout: {settings.REQUEST_TIMEOUT_SECONDS} seconds")
+    logging.info(f"Persistent Queue: {settings.ENABLE_PERSISTENT_QUEUE}")
     logging.info(f"Safety Fallback: {settings.ENABLE_SAFETY_FALLBACK}")
     logging.info(f"Prompt Simplification: {settings.ENABLE_PROMPT_SIMPLIFICATION}")
     logging.info(f"System Instruction Fallback: {settings.ENABLE_SYSTEM_INSTRUCTION_FALLBACK}")

@@ -7,6 +7,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from .config import settings, get_safety_settings
+from .settings_service import get_int as settings_get_int, get_bool as settings_get_bool
 from . import database
 from .metrics import metrics_collector
 from .cache import get_cached_search_result, get_cached_search_result_with_metadata, cache_search_result
@@ -67,7 +68,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
     logging.info(f"System instruction: {system_instruction}")
     logging.info(f"Available safety settings: Standard={settings.SAFETY_SETTINGS}, Relaxed={settings.SAFETY_SETTINGS_RELAXED}, Disabled={settings.SAFETY_SETTINGS_DISABLED}")
     
-    max_retries = 3
+    max_retries = max(1, await settings_get_int("MAX_RETRIES"))
     retry_delay = 2
     
     for attempt in range(max_retries):
@@ -81,7 +82,8 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             genai.configure(api_key=api_key)
             
             # Выбираем настройки безопасности в зависимости от попытки и конфигурации
-            if not settings.ENABLE_SAFETY_FALLBACK:
+            enable_safety_fallback = await settings_get_bool("ENABLE_SAFETY_FALLBACK")
+            if not enable_safety_fallback:
                 # Если fallback отключен, используем только указанный режим
                 current_safety_settings = get_safety_settings()
                 logging.info(f"Using fixed safety settings: {current_safety_settings}")
@@ -98,7 +100,8 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                     logging.info(f"Using disabled safety settings on attempt {attempt + 1}")
             
             # Проверяем, нужно ли использовать system_instruction
-            if not settings.ENABLE_SYSTEM_INSTRUCTION_FALLBACK:
+            enable_system_instruction_fallback = await settings_get_bool("ENABLE_SYSTEM_INSTRUCTION_FALLBACK")
+            if not enable_system_instruction_fallback:
                 current_system_instruction = system_instruction
                 logging.info(f"System instruction fallback disabled, always using: {bool(current_system_instruction)}")
             else:
@@ -152,7 +155,8 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                                 continue
                             
                             # Если это последняя попытка, попробуем упростить промпт
-                            if attempt < max_retries - 1 and settings.ENABLE_PROMPT_SIMPLIFICATION:
+                            enable_prompt_simplification = await settings_get_bool("ENABLE_PROMPT_SIMPLIFICATION")
+                            if attempt < max_retries - 1 and enable_prompt_simplification:
                                 logging.warning(f"Retrying with simplified prompt on attempt {attempt + 1}")
                                 # Упрощаем промпт, убирая потенциально проблемные части
                                 simplified_parts = []
