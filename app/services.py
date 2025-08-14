@@ -59,6 +59,14 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         logging.error("Invalid history format: must be non-empty list")
         return "🚫 Некорректный формат истории.", None
     
+    # Детальное логирование для отладки
+    logging.info(f"=== GEMINI API REQUEST DEBUG ===")
+    logging.info(f"Model: {model_name}")
+    logging.info(f"History length: {len(history)}")
+    logging.info(f"Last message parts: {history[-1].get('parts', [])}")
+    logging.info(f"System instruction: {system_instruction}")
+    logging.info(f"Available safety settings: Standard={settings.SAFETY_SETTINGS}, Relaxed={settings.SAFETY_SETTINGS_RELAXED}, Disabled={settings.SAFETY_SETTINGS_DISABLED}")
+    
     max_retries = 3
     retry_delay = 2
     
@@ -68,7 +76,26 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             await metrics_collector.record_api_call("gemini", model_name)
             
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name, safety_settings=settings.SAFETY_SETTINGS, system_instruction=system_instruction)
+            
+            # На первом попытке используем system_instruction, на повторных - без него
+            current_system_instruction = system_instruction if attempt == 0 else None
+            if current_system_instruction:
+                logging.info(f"Using system_instruction on attempt {attempt + 1}")
+            else:
+                logging.info(f"No system_instruction on attempt {attempt + 1}")
+            
+            # Выбираем настройки безопасности в зависимости от попытки
+            if attempt == 0:
+                current_safety_settings = settings.SAFETY_SETTINGS
+                logging.info(f"Using standard safety settings on attempt {attempt + 1}")
+            elif attempt == 1:
+                current_safety_settings = settings.SAFETY_SETTINGS_RELAXED
+                logging.info(f"Using relaxed safety settings on attempt {attempt + 1}")
+            else:
+                current_safety_settings = settings.SAFETY_SETTINGS_DISABLED
+                logging.info(f"Using disabled safety settings on attempt {attempt + 1}")
+            
+            model = genai.GenerativeModel(model_name, safety_settings=current_safety_settings, system_instruction=current_system_instruction)
             chat = model.start_chat(history=history[:-1])
             
             # Добавляем таймаут для API вызова
@@ -88,12 +115,45 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                     if content and hasattr(content, 'parts'):
                         parts_count = len(content.parts)
                     
-                    logging.debug(f"Gemini API response candidate: finish_reason={finish_reason}, parts_count={parts_count}")
-                    logging.debug(f"Response object type: {type(response)}, candidate type: {type(candidate)}, content type: {type(content)}")
+                    logging.info(f"=== GEMINI API RESPONSE DEBUG ===")
+                    logging.info(f"Finish reason: {finish_reason}")
+                    logging.info(f"Parts count: {parts_count}")
+                    logging.info(f"Response object type: {type(response)}")
+                    logging.info(f"Candidate type: {type(candidate)}")
+                    logging.info(f"Content type: {type(content)}")
                     
                     if finish_reason is not None:
                         if finish_reason == FINISH_REASON_SAFETY:  # SAFETY
-                            logging.warning(f"Gemini API response blocked due to safety concerns. Prompt length: {len(str(history[-1]['parts']))}, model: {model_name}")
+                            logging.error(f"🚨 SAFETY BLOCK: Gemini API response blocked due to safety concerns")
+                            logging.error(f"Prompt length: {len(str(history[-1]['parts']))}")
+                            logging.error(f"Model: {model_name}")
+                            logging.error(f"Current safety settings: {current_safety_settings}")
+                            logging.error(f"System instruction used: {current_system_instruction}")
+                            logging.error(f"Last message parts: {history[-1].get('parts', [])}")
+                            logging.error(f"Attempt: {attempt + 1}/{max_retries}")
+                            
+                            # Попробуем отправить без system_instruction
+                            if system_instruction and attempt < max_retries - 1:
+                                logging.warning(f"Retrying without system_instruction on attempt {attempt + 1}")
+                                continue
+                            
+                            # Если это последняя попытка, попробуем упростить промпт
+                            if attempt < max_retries - 1:
+                                logging.warning(f"Retrying with simplified prompt on attempt {attempt + 1}")
+                                # Упрощаем промпт, убирая потенциально проблемные части
+                                simplified_parts = []
+                                for part in history[-1]['parts']:
+                                    if isinstance(part, str):
+                                        # Убираем специальные символы и форматирование
+                                        simplified_part = part.replace('*', '').replace('_', '').replace('`', '')
+                                        simplified_parts.append(simplified_part)
+                                    else:
+                                        simplified_parts.append(part)
+                                
+                                history[-1]['parts'] = simplified_parts
+                                logging.info(f"Simplified prompt: {simplified_parts}")
+                                continue
+                            
                             await metrics_collector.record_error("gemini_safety", "Response blocked by safety filters")
                             return "🚫 Ответ заблокирован системой безопасности Gemini. Попробуйте переформулировать запрос.", None
                         elif finish_reason == FINISH_REASON_RECITATION:  # RECITATION
