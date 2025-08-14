@@ -233,9 +233,12 @@ def get_safety_settings(mode: str = None) -> List[Dict[str, str]]:
 
 def get_current_safety_mode() -> str:
     """Получает текущий режим безопасности из базы данных или конфигурации"""
-    # Пока возвращаем значение по умолчанию
-    # TODO: Добавить асинхронное чтение из базы данных
-    return settings.SAFETY_MODE
+    try:
+        # Пытаемся получить из базы данных синхронно
+        return get_setting_from_db("SAFETY_MODE", settings.SAFETY_MODE)
+    except Exception:
+        # Если не удалось, возвращаем значение по умолчанию
+        return settings.SAFETY_MODE
 
 async def get_setting_from_db_async(setting_name: str, default_value: Any = None) -> Any:
     """

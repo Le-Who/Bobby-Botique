@@ -84,19 +84,27 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             
             # Выбираем настройки безопасности в зависимости от попытки и конфигурации
             enable_safety_fallback = await settings_get_bool("ENABLE_SAFETY_FALLBACK")
+            
+            # Получаем текущий режим безопасности из базы данных
+            current_safety_mode = await settings_get("SAFETY_MODE")
+            if not current_safety_mode:
+                current_safety_mode = "auto"  # Значение по умолчанию
+            
             if not enable_safety_fallback:
                 # Если fallback отключен, используем только указанный режим
-                current_safety_settings = get_safety_settings()
-                logging.info(f"Using fixed safety settings: {current_safety_settings}")
+                current_safety_settings = get_safety_settings(current_safety_mode)
+                logging.info(f"Using fixed safety settings for mode '{current_safety_mode}': {current_safety_settings}")
             else:
                 # Автоматическое переключение настроек безопасности
                 if attempt == 0:
-                    current_safety_settings = get_safety_settings()
-                    logging.info(f"Using standard safety settings on attempt {attempt + 1}")
+                    current_safety_settings = get_safety_settings(current_safety_mode)
+                    logging.info(f"Using safety settings for mode '{current_safety_mode}' on attempt {attempt + 1}")
                 elif attempt == 1:
+                    # На второй попытке используем расслабленные настройки
                     current_safety_settings = get_safety_settings("relaxed")
                     logging.info(f"Using relaxed safety settings on attempt {attempt + 1}")
                 else:
+                    # На третьей попытке отключаем безопасность
                     current_safety_settings = get_safety_settings("disabled")
                     logging.info(f"Using disabled safety settings on attempt {attempt + 1}")
             

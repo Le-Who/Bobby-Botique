@@ -101,8 +101,12 @@ class RedisQueue:
                     max_connections=3,
                 )
             
-            # Проверяем соединение
-            await self.redis_client.ping()
+            # Проверяем соединение с таймаутом
+            try:
+                await asyncio.wait_for(self.redis_client.ping(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logging.error(f"Redis ping timeout for {self.service_type}")
+                return False
             
             # Проверяем доступность команд для внешних сервисов
             await self._test_redis_capabilities()
@@ -540,6 +544,9 @@ async def get_redis_service_info() -> Dict[str, Any]:
         return {"status": "not_available"}
     
     try:
+        # Проверяем соединение с таймаутом
+        await asyncio.wait_for(redis_queue.redis_client.ping(), timeout=3.0)
+        
         info = await redis_queue.redis_client.info()
         return {
             "service_type": redis_queue.service_type,
@@ -550,6 +557,12 @@ async def get_redis_service_info() -> Dict[str, Any]:
             "keyspace_hits": info.get("keyspace_hits", 0),
             "keyspace_misses": info.get("keyspace_misses", 0),
             "uptime_in_seconds": info.get("uptime_in_seconds", 0)
+        }
+    except asyncio.TimeoutError:
+        return {
+            "service_type": redis_queue.service_type,
+            "status": "timeout",
+            "error": "Connection timeout - Redis server not responding"
         }
     except Exception as e:
         return {
