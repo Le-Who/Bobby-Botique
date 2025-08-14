@@ -1,7 +1,6 @@
 # /app/state.py
 
 import asyncio
-import weakref
 from collections import defaultdict
 from threading import Lock
 from typing import Dict, Set, Optional
@@ -9,7 +8,8 @@ from typing import Dict, Set, Optional
 class UserLockManager:
     """Безопасный менеджер блокировок для пользователей"""
     def __init__(self):
-        self._locks = weakref.WeakValueDictionary()
+        # Используем обычный словарь, чтобы избежать неожиданного GC объектов Lock
+        self._locks: Dict[int, asyncio.Lock] = {}
         self._global_lock = Lock()
     
     def get_lock(self, user_id: int) -> asyncio.Lock:

@@ -6,6 +6,7 @@ from typing import Dict, Any
 from ..config import settings, get_safety_settings, get_safety_mode_description
 from ..database import db_query
 from ..utils.messaging import send_long_message
+from ..utils.formatting import TelegramFormatter
 
 # Константы для админ-меню
 ADMIN_MENU_MAIN = "admin_main"
@@ -198,10 +199,11 @@ async def show_features_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 **Safety fallback** - автоматическое переключение настроек безопасности
 **Упрощение промптов** - удаление проблемных символов при ошибках
-**System instruction fallback** - отключение system_instruction при проблемах
+**System instruction fallback** - отключение `system_instruction` при проблемах
 """
-    
-    await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await update.callback_query.edit_message_text(formatted_text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 async def show_current_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает текущие настройки"""

@@ -103,6 +103,8 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_state.history = []
     chat_state.token_count = 0
     chat_state.system_prompt = None
+    # Сбрасываем режим постоянного исследования, чтобы выйти из режима префикса
+    chat_state.search_enabled = False
     await db.update_user_chat(user_id, chat_state)
     await update.message.reply_text("Новый чат создан. История и системная инструкция сброшены.")
 
