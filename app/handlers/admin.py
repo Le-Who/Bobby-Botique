@@ -269,7 +269,7 @@ async def get_current_setting(setting_name: str) -> Any:
         return getattr(settings, setting_name, None)
         
     except Exception as e:
-        logging.error(f"Error getting setting {setting_name}: {e}")
+        logging.warning(f"Could not get setting {setting_name} from database: {e}")
         # Возвращаем значение из конфигурации как fallback
         return getattr(settings, setting_name, None)
 

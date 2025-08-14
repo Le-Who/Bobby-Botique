@@ -10,12 +10,12 @@ from hypercorn.asyncio import serve
 
 # Импортируем наши модули
 from app.config import settings
-from app.handlers.commands import register_commands
-from app.handlers.messages import register_message_handlers
-from app.handlers.callbacks import register_callback_handlers
+from app.handlers.commands import register as register_commands
+from app.handlers.messages import register as register_message_handlers
+from app.handlers.callbacks import register as register_callback_handlers
 from app.handlers.admin import admin_command
 from app.handlers.admin_callbacks import handle_admin_callback
-from app.database import init_db
+from app.database import init_db, close_db
 from app.metrics import start_metrics_server
 from app.alerts import start_alert_monitor
 from app.queue import start_queue_processor
@@ -98,6 +98,7 @@ async def main():
         # if database.db_pool: # This line was removed from the new_code, so it's removed here.
         #     # await database.db_pool.close() # This line was removed from the new_code, so it's removed here.
         #     logging.info("Database pool closed.") # This line was removed from the new_code, so it's removed here.
+        await close_db()
         logging.info("Shutdown complete.")
 
 if __name__ == "__main__":

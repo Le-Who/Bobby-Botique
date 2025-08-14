@@ -56,7 +56,17 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
 
 async def init_db():
     """Инициализирует базу данных, создавая необходимые таблицы"""
+    global db_pool
+    
     try:
+        # Инициализируем пул соединений
+        if not db_pool:
+            db_pool = await asyncpg.create_pool(
+                dsn=settings.DATABASE_URL,
+                min_size=1,
+                max_size=10
+            )
+        
         # Создаем таблицу для API ключей Gemini
         await db_query("""
             CREATE TABLE IF NOT EXISTS gemini_api_keys (
@@ -106,37 +116,40 @@ async def init_db():
             )
         """)
         
+        # Создаем остальные таблицы
+        await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0)""")
+        await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
+        await db_query("""CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
+        await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
+        await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
+        
+        # Миграция схемы
+        try:
+            check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
+            column_exists = await db_query(check_column_query)
+            if column_exists:
+                logging.info("Old column 'request_count' found. Attempting schema migration...")
+                await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
+                logging.info("Schema migration successful.")
+            else:
+                logging.info("Schema is up to date. Migration not needed.")
+        except asyncpg.PostgresError as e:
+            logging.info(f"Schema migration skipped or already applied (Error: {e})")
+        
+        # Инициализируем базовые данные
+        await db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
+        for key in settings.GEMINI_API_KEYS:
+            key_hash = hashlib.sha256(key.encode()).hexdigest()
+            await db_query("INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+        for key in settings.TAVILY_API_KEYS:
+            key_hash = hashlib.sha256(key.encode()).hexdigest()
+            await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+        
         logging.info("Database initialized successfully")
         
     except Exception as e:
         logging.error(f"Failed to initialize database: {e}")
         raise
-    
-    await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0)""")
-    await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
-    await db_query("""CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
-    await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
-    await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
-    
-    try:
-        check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
-        column_exists = await db_query(check_column_query)
-        if column_exists:
-            logging.info("Old column 'request_count' found. Attempting schema migration...")
-            await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
-            logging.info("Schema migration successful.")
-        else:
-            logging.info("Schema is up to date. Migration not needed.")
-    except asyncpg.PostgresError as e:
-        logging.info(f"Schema migration skipped or already applied (Error: {e})")
-    
-    await db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
-    for key in settings.GEMINI_API_KEYS:
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        await db_query("INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
-    for key in settings.TAVILY_API_KEYS:
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
 
 async def get_user_chat(user_id: int) -> ChatState:
     result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,))
@@ -213,3 +226,11 @@ async def is_authorized(user_id: int) -> bool:
         return True
     result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,))
     return result and result[0]['is_authorized'] == 1
+
+async def close_db():
+    """Закрывает пул соединений с базой данных"""
+    global db_pool
+    if db_pool:
+        await db_pool.close()
+        db_pool = None
+        logging.info("Database pool closed")

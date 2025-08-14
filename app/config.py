@@ -203,29 +203,8 @@ def get_safety_settings(mode: str = None) -> List[Dict[str, str]]:
 
 def get_current_safety_mode() -> str:
     """Получает текущий режим безопасности из базы данных или конфигурации"""
-    try:
-        # Пытаемся получить из базы данных
-        import asyncio
-        from .database import db_query
-        
-        # Создаем новый event loop для синхронного вызова
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        result = loop.run_until_complete(
-            db_query("SELECT value FROM bot_settings WHERE setting_name = 'SAFETY_MODE'")
-        )
-        
-        if result and result[0]:
-            return result[0]['value']
-        
-    except Exception as e:
-        logging.warning(f"Could not get safety mode from database: {e}")
-    
-    # Возвращаем значение по умолчанию
+    # Пока возвращаем значение по умолчанию
+    # TODO: Добавить асинхронное чтение из базы данных
     return settings.SAFETY_MODE
 
 def get_setting_from_db(setting_name: str, default_value: Any = None) -> Any:
