@@ -43,14 +43,17 @@ class DocumentProcessor:
                 (user_id, file_hash)
             )
             if result:
-                return {
+                duplicate_info = {
                     'id': result[0]['id'],
                     'filename': result[0]['filename'],
                     'created_at': result[0]['created_at']
                 }
+                logging.info(f"Duplicate file found for user {user_id}: {filename} matches {duplicate_info['filename']}")
+                return duplicate_info
+            logging.info(f"No duplicate file found for user {user_id}: {filename}")
             return None
         except Exception as e:
-            logging.error(f"Error checking duplicate file: {e}")
+            logging.error(f"Error checking duplicate file for user {user_id}: {e}")
             return None
     
     async def _check_document_limit(self, user_id: int) -> bool:
@@ -62,9 +65,11 @@ class DocumentProcessor:
             )
             doc_count = result[0]['doc_count'] if result else 0
             # Возвращаем True, если лимит НЕ превышен (можно загружать документы)
-            return doc_count < 5  # Максимум 5 документов на пользователя
+            limit_reached = doc_count >= 5
+            logging.info(f"Document limit check for user {user_id}: {doc_count}/5 documents, limit reached: {limit_reached}")
+            return not limit_reached
         except Exception as e:
-            logging.error(f"Error checking document limit: {e}")
+            logging.error(f"Error checking document limit for user {user_id}: {e}")
             return True  # В случае ошибки разрешаем загрузку
     
     async def _cleanup_oldest_documents(self, user_id: int, keep_count: int = 4) -> int:
@@ -77,11 +82,15 @@ class DocumentProcessor:
             )
             total_count = count_result[0]['total_count'] if count_result else 0
             
+            logging.info(f"Cleanup check for user {user_id}: {total_count} documents, keeping {keep_count}")
+            
             if total_count <= keep_count:
+                logging.info(f"No cleanup needed for user {user_id}: {total_count} <= {keep_count}")
                 return 0  # Нечего удалять
             
             # Вычисляем, сколько документов нужно удалить
             docs_to_delete = total_count - keep_count
+            logging.info(f"Will delete {docs_to_delete} oldest documents for user {user_id}")
             
             # Получаем ID самых старых документов для удаления
             result = await db.db_query("""
@@ -92,6 +101,7 @@ class DocumentProcessor:
             """, (user_id, docs_to_delete))
             
             if not result:
+                logging.warning(f"No documents to delete found for user {user_id}")
                 return 0
             
             # Удаляем старые документы
@@ -105,13 +115,13 @@ class DocumentProcessor:
                 """, old_doc_ids)
                 
                 deleted_count = len(old_doc_ids)
-                logging.info(f"Cleaned up {deleted_count} oldest documents for user {user_id}")
+                logging.info(f"Successfully cleaned up {deleted_count} oldest documents for user {user_id}")
                 return deleted_count
             
             return 0
             
         except Exception as e:
-            logging.error(f"Error cleaning up oldest documents: {e}")
+            logging.error(f"Error cleaning up oldest documents for user {user_id}: {e}")
             return 0
     
     async def process_document(self, file_data: bytes, filename: str, user_id: int) -> Dict[str, Any]:
@@ -130,7 +140,10 @@ class DocumentProcessor:
                 return {"error": f"Unsupported file format: {file_ext}"}
             
             # Проверяем лимит документов
-            if not await self._check_document_limit(user_id):
+            if await self._check_document_limit(user_id):
+                # Если лимит НЕ превышен, продолжаем
+                pass
+            else:
                 # Если лимит превышен, удаляем самый старый документ
                 await self._cleanup_oldest_documents(user_id, 4)
                 logging.info(f"Document limit exceeded for user {user_id}, removed oldest document")
@@ -210,54 +223,81 @@ class DocumentProcessor:
             try:
                 # Проверяем, что файл является корректным PDF
                 if not file_data.startswith(b'%PDF'):
-                    logging.warning(f"Invalid PDF format for {filename}")
-                    return {"error": "Invalid PDF file format"}
+                    logging.warning(f"Invalid PDF format for {filename}: file does not start with %PDF")
+                    return {"error": "Invalid PDF file format - file does not start with %PDF"}
                 
                 logging.info(f"Processing PDF {filename} with PyMuPDF")
                 
                 # Используем PyMuPDF для лучшего извлечения текста
                 try:
                     doc = fitz.open(temp_file_path)
-                    logging.info(f"Successfully opened PDF {filename} with {len(doc)} pages")
+                    # Безопасно получаем количество страниц
+                    try:
+                        page_count_initial = len(doc)
+                        logging.info(f"Successfully opened PDF {filename} with {page_count_initial} pages")
+                    except Exception as e:
+                        logging.warning(f"Could not get initial page count: {e}")
+                        page_count_initial = 0
                 except Exception as fitz_error:
                     logging.warning(f"PyMuPDF failed for {filename}, trying PyPDF2: {fitz_error}")
                     # Fallback на PyPDF2
                     return await self._process_pdf_with_pypdf2(file_data, filename, user_id, file_hash)
                 
-                if len(doc) > self.max_pages:
+                if page_count_initial > self.max_pages:
+                    try:
+                        doc.close()
+                    except:
+                        pass
                     return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
                 
                 text_content = []
                 page_info = []
                 
-                for page_num in range(len(doc)):
-                    page = doc.load_page(page_num)
-                    
-                    # Извлекаем текст
-                    text = page.get_text()
-                    if text.strip():
-                        text_content.append(f"--- Page {page_num + 1} ---\n{text}")
-                    
-                    # Извлекаем изображения (если есть)
-                    image_list = page.get_images()
-                    if image_list:
-                        page_info.append(f"Page {page_num + 1}: {len(image_list)} images found")
-                    
-                    # Проверяем лимит токенов
-                    if len('\n'.join(text_content)) > 100000:  # Примерный лимит
-                        text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
-                        break
+                for page_num in range(page_count_initial):
+                    try:
+                        page = doc.load_page(page_num)
+                        
+                        # Извлекаем текст
+                        text = page.get_text()
+                        if text.strip():
+                            text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                        
+                        # Извлекаем изображения (если есть)
+                        image_list = page.get_images()
+                        if image_list:
+                            page_info.append(f"Page {page_num + 1}: {len(image_list)} images found")
+                        
+                        # Проверяем лимит токенов
+                        if len('\n'.join(text_content)) > 100000:  # Примерный лимит
+                            text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                            break
+                    except Exception as page_error:
+                        logging.warning(f"Error processing page {page_num + 1}: {page_error}")
+                        text_content.append(f"--- Page {page_num + 1} ---\n[Error processing this page]")
+                        continue
                 
                 # Сохраняем количество страниц до закрытия документа
-                page_count = len(doc)
+                try:
+                    page_count = len(doc)
+                except Exception as e:
+                    logging.warning(f"Could not get page count from document: {e}")
+                    page_count = len(text_content)  # Используем количество обработанных страниц
                 
                 # Закрываем документ
-                doc.close()
+                try:
+                    doc.close()
+                except Exception as e:
+                    logging.warning(f"Could not close document properly: {e}")
                 
                 full_text = '\n\n'.join(text_content)
                 
                 # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
+                try:
+                    await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
+                except Exception as save_error:
+                    logging.error(f"Error saving document to database: {save_error}")
+                    # Возвращаем ошибку, но не теряем обработанный контент
+                    return {"error": f"Document processed but failed to save: {str(save_error)}"}
                 
                 return {
                     "success": True,
@@ -316,13 +356,25 @@ class DocumentProcessor:
                 
                 full_text = '\n\n'.join(text_content)
                 
+                # Безопасно получаем количество страниц
+                try:
+                    page_count = len(pdf_reader.pages)
+                except Exception as e:
+                    logging.warning(f"Could not get page count from PDF reader: {e}")
+                    page_count = len(text_content)  # Используем количество обработанных страниц
+                
                 # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, len(pdf_reader.pages), file_hash)
+                try:
+                    await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
+                except Exception as save_error:
+                    logging.error(f"Error saving document to database: {save_error}")
+                    # Возвращаем ошибку, но не теряем обработанный контент
+                    return {"error": f"Document processed but failed to save: {str(save_error)}"}
                 
                 return {
                     "success": True,
                     "filename": filename,
-                    "pages": len(pdf_reader.pages),
+                    "pages": page_count,
                     "text_length": len(full_text),
                     "content": full_text,
                     "method": "PyPDF2"
@@ -374,7 +426,12 @@ class DocumentProcessor:
                 full_text = '\n\n'.join(text_content)
                 
                 # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, 1, file_hash)  # Word документы считаем как 1 страницу
+                try:
+                    await self._save_document_content(user_id, filename, full_text, 1, file_hash)  # Word документы считаем как 1 страницу
+                except Exception as save_error:
+                    logging.error(f"Error saving document to database: {save_error}")
+                    # Возвращаем ошибку, но не теряем обработанный контент
+                    return {"error": f"Document processed but failed to save: {str(save_error)}"}
                 
                 return {
                     "success": True,
@@ -409,6 +466,7 @@ class DocumentProcessor:
             
         except Exception as e:
             logging.error(f"Error saving document to database: {e}")
+            raise  # Пробрасываем ошибку для обработки в вызывающем коде
     
     async def get_document_by_id(self, document_id: int, user_id: int) -> Optional[Dict[str, Any]]:
         """Получает документ по ID"""
@@ -490,29 +548,30 @@ class DocumentProcessor:
     async def cleanup_old_documents(self, days_old: int = 3) -> int:
         """Очищает документы старше указанного количества дней"""
         try:
-            # Сначала считаем количество документов для удаления
-            count_result = await db.db_query("""
-                SELECT COUNT(*) as count_to_delete FROM user_documents 
-                WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * $1
-            """, (days_old,))
+            logging.info(f"Starting cleanup of documents older than {days_old} days")
             
-            count_to_delete = count_result[0]['count_to_delete'] if count_result else 0
-            
-            if count_to_delete > 0:
-                # Теперь удаляем документы
-                await db.db_query("""
+            # Используем один SQL запрос для удаления и получения количества удаленных строк
+            # В PostgreSQL DELETE возвращает количество удаленных строк
+            result = await db.db_query("""
+                WITH deleted AS (
                     DELETE FROM user_documents 
                     WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * $1
-                """, (days_old,))
-                
-                logging.info(f"Cleaned up {count_to_delete} old documents (older than {days_old} days)")
-                return count_to_delete
+                    RETURNING id
+                )
+                SELECT COUNT(*) as deleted_count FROM deleted
+            """, (days_old,))
+            
+            deleted_count = result[0]['deleted_count'] if result else 0
+            
+            if deleted_count > 0:
+                logging.info(f"Successfully cleaned up {deleted_count} old documents (older than {days_old} days)")
             else:
                 logging.info(f"No documents to clean up (older than {days_old} days)")
-                return 0
+            
+            return deleted_count
             
         except Exception as e:
-            logging.error(f"Error cleaning up old documents: {e}")
+            logging.error(f"Error cleaning up old documents (older than {days_old} days): {e}")
             return 0
     
     async def get_document_stats(self) -> Dict[str, Any]:
