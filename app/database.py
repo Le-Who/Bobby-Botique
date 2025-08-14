@@ -55,29 +55,68 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
     raise last_exception
 
 async def init_db():
-    global db_pool
-    if not settings.DATABASE_URL:
-        raise Exception("DATABASE_URL not set")
-    db_pool = await asyncpg.create_pool(dsn=settings.DATABASE_URL, min_size=1, max_size=10)
+    """Инициализирует базу данных, создавая необходимые таблицы"""
+    try:
+        # Создаем таблицу для API ключей Gemini
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS gemini_api_keys (
+                id SERIAL PRIMARY KEY,
+                api_key TEXT NOT NULL,
+                key_hash TEXT UNIQUE NOT NULL,
+                daily_usage INTEGER DEFAULT 0,
+                last_reset_date DATE DEFAULT CURRENT_DATE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Создаем таблицу для API ключей Tavily
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS tavily_api_keys (
+                id SERIAL PRIMARY KEY,
+                api_key TEXT NOT NULL,
+                key_hash TEXT UNIQUE NOT NULL,
+                monthly_usage INTEGER DEFAULT 0,
+                last_reset_date DATE DEFAULT CURRENT_DATE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Создаем таблицу для документов пользователей
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS user_documents (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                filename TEXT NOT NULL,
+                file_hash TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                pages INTEGER,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, file_hash)
+            )
+        """)
+        
+        # Создаем таблицу для настроек бота
+        await db_query("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                id SERIAL PRIMARY KEY,
+                setting_name TEXT UNIQUE NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        logging.info("Database initialized successfully")
+        
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {e}")
+        raise
     
     await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0)""")
     await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
     await db_query("""CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
     await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
-    await db_query("""CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
-    
-    # Создаем таблицу для документов пользователей
-    await db_query("""CREATE TABLE IF NOT EXISTS user_documents (
-        id SERIAL PRIMARY KEY,
-        user_id BIGINT NOT NULL,
-        filename TEXT NOT NULL,
-        content TEXT,
-        pages INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        file_size INTEGER,
-        file_hash TEXT UNIQUE
-    )""")
     
     try:
         check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"

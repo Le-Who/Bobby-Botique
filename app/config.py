@@ -1,6 +1,6 @@
 import os
 import pytz
-from typing import List, Dict
+from typing import List, Dict, Any
 from pydantic import BaseModel, ValidationError
 
 def _load_and_clean_keys(env_var_name: str) -> List[str]:
@@ -189,7 +189,7 @@ def get_safety_settings(mode: str = None) -> List[Dict[str, str]]:
         List[Dict[str, str]]: Настройки безопасности
     """
     if mode is None:
-        mode = settings.SAFETY_MODE
+        mode = get_current_safety_mode()
     
     safety_mapping = {
         "standard": settings.SAFETY_SETTINGS,
@@ -200,6 +200,77 @@ def get_safety_settings(mode: str = None) -> List[Dict[str, str]]:
     }
     
     return safety_mapping.get(mode, settings.SAFETY_SETTINGS)
+
+def get_current_safety_mode() -> str:
+    """Получает текущий режим безопасности из базы данных или конфигурации"""
+    try:
+        # Пытаемся получить из базы данных
+        import asyncio
+        from .database import db_query
+        
+        # Создаем новый event loop для синхронного вызова
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        result = loop.run_until_complete(
+            db_query("SELECT value FROM bot_settings WHERE setting_name = 'SAFETY_MODE'")
+        )
+        
+        if result and result[0]:
+            return result[0]['value']
+        
+    except Exception as e:
+        logging.warning(f"Could not get safety mode from database: {e}")
+    
+    # Возвращаем значение по умолчанию
+    return settings.SAFETY_MODE
+
+def get_setting_from_db(setting_name: str, default_value: Any = None) -> Any:
+    """
+    Получает значение настройки из базы данных
+    
+    Args:
+        setting_name: Название настройки
+        default_value: Значение по умолчанию, если настройка не найдена
+    
+    Returns:
+        Any: Значение настройки или default_value
+    """
+    try:
+        import asyncio
+        from .database import db_query
+        
+        # Создаем новый event loop для синхронного вызова
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        result = loop.run_until_complete(
+            db_query("SELECT value FROM bot_settings WHERE setting_name = $1", setting_name)
+        )
+        
+        if result and result[0]:
+            value = result[0]['value']
+            # Преобразуем строку в соответствующий тип
+            if isinstance(default_value, bool):
+                return value.lower() == 'true'
+            elif isinstance(default_value, int):
+                return int(value)
+            elif isinstance(default_value, float):
+                return float(value)
+            else:
+                return value
+        
+    except Exception as e:
+        logging.warning(f"Could not get setting {setting_name} from database: {e}")
+    
+    # Возвращаем значение по умолчанию
+    return default_value
 
 def get_safety_mode_description() -> str:
     """Возвращает описание доступных режимов безопасности"""
