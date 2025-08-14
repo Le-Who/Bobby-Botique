@@ -1,6 +1,7 @@
 python-telegram-bot
 google-generativeai>=0.7.0
 Pillow
+redis>=5.0.0
 pytz
 Flask
 tavily-python
