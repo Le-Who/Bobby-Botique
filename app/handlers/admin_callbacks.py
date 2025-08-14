@@ -11,6 +11,7 @@ from .admin import (
 from ..cache import search_cache
 from ..queue import task_queue
 from ..rate_limiter import rate_limiter, get_user_rate_stats, reset_user_rate_limits
+from ..redis_queue import get_redis_service_info
 from ..config import settings
 
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -57,6 +58,9 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             
         elif callback_data == "admin_cache_stats":
             await show_cache_stats(update, context)
+            
+        elif callback_data == "admin_redis_info":
+            await show_redis_info(update, context)
             
         elif callback_data == "admin_queue":
             await show_queue_menu(update, context)
@@ -447,6 +451,7 @@ async def show_cache_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("📊 Статистика кэша", callback_data="admin_cache_stats")],
         [InlineKeyboardButton("🗑️ Очистить кэш", callback_data="admin_cache_clear")],
+        [InlineKeyboardButton("🔴 Redis статус", callback_data="admin_redis_info")],
         [InlineKeyboardButton("🔙 Назад", callback_data="admin_main")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -506,6 +511,70 @@ async def show_cache_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Error getting cache stats: {e}")
         await update.callback_query.answer("❌ Ошибка при получении статистики", show_alert=True)
+
+
+async def show_redis_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает информацию о Redis сервисе"""
+    try:
+        redis_info = await get_redis_service_info()
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="admin_redis_info")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_cache")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if redis_info.get("status") == "not_available":
+            text = """
+🔴 **REDIS СЕРВИС НЕДОСТУПЕН**
+
+❌ Redis не инициализирован или недоступен.
+
+**Возможные причины:**
+• Redis не установлен локально
+• Внешний Redis сервис недоступен
+• Ошибка подключения
+
+**Рекомендации:**
+• Проверьте настройки REDIS_URL
+• Убедитесь, что Redis сервис запущен
+• Для внешних сервисов проверьте доступность
+            """
+        elif redis_info.get("status") == "error":
+            text = f"""
+🔴 **ОШИБКА REDIS СЕРВИСА**
+
+❌ Произошла ошибка при получении информации.
+
+**Ошибка:** `{redis_info.get('error', 'Неизвестная ошибка')}`
+
+**Тип сервиса:** {redis_info.get('service_type', 'Неизвестно')}
+            """
+        else:
+            # Успешное подключение
+            text = f"""
+🔴 **REDIS СЕРВИС - {redis_info.get('service_type', 'Неизвестно').upper()}**
+
+✅ **Статус:** Активен и доступен
+
+📊 **Информация о сервисе:**
+• **Версия Redis:** `{redis_info.get('redis_version', 'N/A')}`
+• **Используемая память:** `{redis_info.get('used_memory_human', 'N/A')}`
+• **Подключенные клиенты:** `{redis_info.get('connected_clients', 'N/A')}`
+• **Обработано команд:** `{redis_info.get('total_commands_processed', 'N/A')}`
+
+📈 **Производительность:**
+• **Hit rate:** `{redis_info.get('keyspace_hits', 0)}`
+• **Miss rate:** `{redis_info.get('keyspace_misses', 0)}`
+• **Uptime:** `{redis_info.get('uptime_in_seconds', 0)} сек`
+
+🌐 **URL:** `{redis_info.get('service_type', 'N/A')}`
+            """
+        
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+    except Exception as e:
+        logging.error(f"Error getting Redis info: {e}")
+        await update.callback_query.answer("❌ Ошибка при получении информации Redis", show_alert=True)
 
 
 async def show_queue_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
