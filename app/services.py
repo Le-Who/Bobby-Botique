@@ -7,7 +7,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from .config import settings, get_safety_settings
-from .settings_service import get_int as settings_get_int, get_bool as settings_get_bool
+from .settings_service import get_int as settings_get_int, get_bool as settings_get_bool, get_setting as settings_get
 from . import database
 from .metrics import metrics_collector
 from .cache import get_cached_search_result, get_cached_search_result_with_metadata, cache_search_result
