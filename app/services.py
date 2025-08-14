@@ -35,23 +35,31 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                 # Проверяем finish_reason ответа
                 if hasattr(response, 'candidates') and response.candidates:
                     candidate = response.candidates[0]
-                    logging.debug(f"Gemini API response candidate: finish_reason={getattr(candidate, 'finish_reason', 'unknown')}, parts_count={len(getattr(candidate, 'content', {}).get('parts', [])) if hasattr(candidate, 'content') else 0}")
+                    # Правильный доступ к атрибутам candidate
+                    finish_reason = getattr(candidate, 'finish_reason', None)
+                    content = getattr(candidate, 'content', None)
+                    parts_count = 0
+                    if content and hasattr(content, 'parts'):
+                        parts_count = len(content.parts)
                     
-                    if hasattr(candidate, 'finish_reason'):
-                        if candidate.finish_reason == 1:  # SAFETY
+                    logging.debug(f"Gemini API response candidate: finish_reason={finish_reason}, parts_count={parts_count}")
+                    logging.debug(f"Response object type: {type(response)}, candidate type: {type(candidate)}, content type: {type(content)}")
+                    
+                    if finish_reason is not None:
+                        if finish_reason == 1:  # SAFETY
                             logging.warning(f"Gemini API response blocked due to safety concerns. Prompt length: {len(str(history[-1]['parts']))}, model: {model_name}")
                             await metrics_collector.record_error("gemini_safety", "Response blocked by safety filters")
                             return "🚫 Ответ заблокирован системой безопасности Gemini. Попробуйте переформулировать запрос.", None
-                        elif candidate.finish_reason == 2:  # RECITATION
+                        elif finish_reason == 2:  # RECITATION
                             logging.warning(f"Gemini API response blocked due to recitation concerns. Prompt length: {len(str(history[-1]['parts']))}, model: {model_name}")
                             await metrics_collector.record_error("gemini_recitation", "Response blocked by recitation filters")
                             return "🚫 Ответ заблокирован из-за проблем с повторением. Попробуйте переформулировать запрос.", None
-                        elif candidate.finish_reason == 3:  # OTHER
+                        elif finish_reason == 3:  # OTHER
                             logging.warning(f"Gemini API response blocked for other reasons. Prompt length: {len(str(history[-1]['parts']))}, model: {model_name}")
-                            await metrics_collector.record_error("gemini_other", f"Response blocked, finish_reason: {candidate.finish_reason}")
+                            await metrics_collector.record_error("gemini_other", f"Response blocked, finish_reason: {finish_reason}")
                             return "🚫 Ответ заблокирован по техническим причинам. Попробуйте позже.", None
                         else:
-                            logging.info(f"Gemini API response finish_reason: {candidate.finish_reason} (normal completion)")
+                            logging.info(f"Gemini API response finish_reason: {finish_reason} (normal completion)")
                 else:
                     logging.warning("Gemini API response has no candidates")
                     await metrics_collector.record_error("gemini_no_candidates", "Response has no candidates")
@@ -65,9 +73,36 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                         await metrics_collector.record_error("gemini_empty", "Empty response from API")
                         return "🚫 Получен пустой ответ от API. Попробуйте переформулировать запрос.", None
                 except Exception as text_error:
-                    logging.error(f"Error accessing response.text: {text_error}. Response object: {type(response)}, has candidates: {hasattr(response, 'candidates')}, candidates count: {len(getattr(response, 'candidates', []))}")
-                    await metrics_collector.record_error("gemini_text_access", str(text_error))
-                    return "🚫 Ошибка при обработке ответа API. Попробуйте позже.", None
+                    logging.warning(f"response.text not available: {text_error}, trying alternative method")
+                    # Пробуем альтернативный способ получения текста
+                    try:
+                        if hasattr(response, 'candidates') and response.candidates:
+                            candidate = response.candidates[0]
+                            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                                # Собираем текст из частей
+                                response_text = ""
+                                for part in candidate.content.parts:
+                                    if hasattr(part, 'text'):
+                                        response_text += part.text
+                                
+                                if response_text:
+                                    logging.info("Successfully extracted text using alternative method")
+                                else:
+                                    logging.error("Alternative method returned empty text")
+                                    await metrics_collector.record_error("gemini_alternative_empty", "Alternative text extraction returned empty")
+                                    return "🚫 Не удалось получить текст ответа. Попробуйте позже.", None
+                            else:
+                                logging.error("No content.parts available in candidate")
+                                await metrics_collector.record_error("gemini_no_content_parts", "No content.parts in candidate")
+                                return "🚫 Некорректная структура ответа API. Попробуйте позже.", None
+                        else:
+                            logging.error("No candidates available in response")
+                            await metrics_collector.record_error("gemini_no_candidates_text", "No candidates for text extraction")
+                            return "🚫 Некорректная структура ответа API. Попробуйте позже.", None
+                    except Exception as alt_error:
+                        logging.error(f"Alternative text extraction also failed: {alt_error}")
+                        await metrics_collector.record_error("gemini_text_access", f"Both methods failed: {text_error}, {alt_error}")
+                        return "🚫 Ошибка при обработке ответа API. Попробуйте позже.", None
                 
                 token_count = model.count_tokens(chat.history).total_tokens
                 return response_text, token_count
