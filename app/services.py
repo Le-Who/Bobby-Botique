@@ -6,7 +6,7 @@ from typing import Dict, Any, List
 import asyncio
 from contextlib import asynccontextmanager
 
-from .config import settings
+from .config import settings, get_safety_settings
 from . import database
 from .metrics import metrics_collector
 from .cache import get_cached_search_result, get_cached_search_result_with_metadata, cache_search_result
@@ -77,23 +77,34 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             
             genai.configure(api_key=api_key)
             
-            # На первом попытке используем system_instruction, на повторных - без него
-            current_system_instruction = system_instruction if attempt == 0 else None
-            if current_system_instruction:
-                logging.info(f"Using system_instruction on attempt {attempt + 1}")
+            # Выбираем настройки безопасности в зависимости от попытки и конфигурации
+            if not settings.ENABLE_SAFETY_FALLBACK:
+                # Если fallback отключен, используем только указанный режим
+                current_safety_settings = get_safety_settings()
+                logging.info(f"Using fixed safety settings: {current_safety_settings}")
             else:
-                logging.info(f"No system_instruction on attempt {attempt + 1}")
+                # Автоматическое переключение настроек безопасности
+                if attempt == 0:
+                    current_safety_settings = get_safety_settings()
+                    logging.info(f"Using standard safety settings on attempt {attempt + 1}")
+                elif attempt == 1:
+                    current_safety_settings = get_safety_settings("relaxed")
+                    logging.info(f"Using relaxed safety settings on attempt {attempt + 1}")
+                else:
+                    current_safety_settings = get_safety_settings("disabled")
+                    logging.info(f"Using disabled safety settings on attempt {attempt + 1}")
             
-            # Выбираем настройки безопасности в зависимости от попытки
-            if attempt == 0:
-                current_safety_settings = settings.SAFETY_SETTINGS
-                logging.info(f"Using standard safety settings on attempt {attempt + 1}")
-            elif attempt == 1:
-                current_safety_settings = settings.SAFETY_SETTINGS_RELAXED
-                logging.info(f"Using relaxed safety settings on attempt {attempt + 1}")
+            # Проверяем, нужно ли использовать system_instruction
+            if not settings.ENABLE_SYSTEM_INSTRUCTION_FALLBACK:
+                current_system_instruction = system_instruction
+                logging.info(f"System instruction fallback disabled, always using: {bool(current_system_instruction)}")
             else:
-                current_safety_settings = settings.SAFETY_SETTINGS_DISABLED
-                logging.info(f"Using disabled safety settings on attempt {attempt + 1}")
+                # На первом попытке используем system_instruction, на повторных - без него
+                current_system_instruction = system_instruction if attempt == 0 else None
+                if current_system_instruction:
+                    logging.info(f"Using system_instruction on attempt {attempt + 1}")
+                else:
+                    logging.info(f"No system_instruction on attempt {attempt + 1}")
             
             model = genai.GenerativeModel(model_name, safety_settings=current_safety_settings, system_instruction=current_system_instruction)
             chat = model.start_chat(history=history[:-1])
@@ -138,7 +149,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                                 continue
                             
                             # Если это последняя попытка, попробуем упростить промпт
-                            if attempt < max_retries - 1:
+                            if attempt < max_retries - 1 and settings.ENABLE_PROMPT_SIMPLIFICATION:
                                 logging.warning(f"Retrying with simplified prompt on attempt {attempt + 1}")
                                 # Упрощаем промпт, убирая потенциально проблемные части
                                 simplified_parts = []
