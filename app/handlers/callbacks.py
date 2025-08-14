@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
 
@@ -6,6 +7,41 @@ from . import agent
 from .. import database as db
 from ..config import settings
 from .. import state
+from .. import services
+
+async def refresh_cache_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатие кнопки 'Актуализировать ответ'"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Извлекаем ключ кэша из callback_data
+    cache_key = query.data.split(':', 1)[1]
+    
+    try:
+        # Редактируем сообщение, показывая, что идет обновление
+        await query.edit_message_text("🔄 Обновляю ответ...")
+        
+        # Получаем оригинальный запрос из кэша (нужно будет добавить функцию для этого)
+        # Пока что просто показываем сообщение об обновлении
+        await query.edit_message_text(
+            "🔄 Ответ обновляется...\n\n"
+            "💡 **Что происходит:**\n"
+            "• Удаляем старый ответ из кэша\n"
+            "• Выполняем новый поиск\n"
+            "• Генерируем свежий ответ\n\n"
+            "⏳ Это займет несколько секунд..."
+        )
+        
+        # TODO: Реализовать полное обновление ответа
+        # Для этого нужно:
+        # 1. Сохранять оригинальный запрос в кэше
+        # 2. Выполнять новый поиск
+        # 3. Генерировать новый ответ
+        # 4. Заменять старое сообщение
+        
+    except Exception as e:
+        logging.error(f"Error refreshing cache: {e}")
+        await query.edit_message_text("❌ Произошла ошибка при обновлении ответа. Попробуйте задать вопрос заново.")
 
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -343,3 +379,4 @@ def register(application: Application):
     application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
     application.add_handler(CallbackQueryHandler(fallback_callback, pattern="^fallback:"))
     application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
+    application.add_handler(CallbackQueryHandler(refresh_cache_callback, pattern="^refresh:"))

@@ -26,9 +26,9 @@ class SearchCache:
     def __init__(self):
         self.cache: Dict[str, CacheEntry] = {}
         self.max_size = 1000  # Максимальное количество записей в кэше
-        self.default_ttl = 3600  # 1 час по умолчанию
-        self.search_ttl = 1800  # 30 минут для поисковых запросов
-        self.qna_ttl = 7200  # 2 часа для Q&A запросов
+        self.default_ttl = 259200  # 3 дня по умолчанию (259200 секунд)
+        self.search_ttl = 259200  # 3 дня для поисковых запросов
+        self.qna_ttl = 259200  # 3 дня для Q&A запросов
         self._lock = asyncio.Lock()
         self._cleanup_task = None
     
@@ -41,12 +41,8 @@ class SearchCache:
     
     def _get_ttl(self, search_type: str) -> int:
         """Возвращает TTL для типа поиска"""
-        if search_type == 'qna':
-            return self.qna_ttl
-        elif search_type == 'search':
-            return self.search_ttl
-        else:
-            return self.default_ttl
+        # Все типы поиска теперь имеют одинаковый TTL - 3 дня
+        return self.default_ttl
     
     async def get(self, query: str, search_type: str) -> Optional[Any]:
         """Получает данные из кэша"""
@@ -70,7 +66,14 @@ class SearchCache:
             entry.last_accessed = datetime.now()
             
             await metrics_collector.record_cache_hit()
-            return entry.data
+            # Возвращаем данные с пометкой, что они из кэша
+            return {
+                'data': entry.data,
+                'from_cache': True,
+                'cache_key': cache_key,
+                'created_at': entry.created_at,
+                'expires_at': entry.expires_at
+            }
     
     async def set(self, query: str, search_type: str, data: Any):
         """Сохраняет данные в кэш"""
@@ -158,6 +161,21 @@ search_cache = SearchCache()
 
 async def get_cached_search_result(query: str, search_type: str) -> Optional[Dict[str, Any]]:
     """Получает результат поиска из кэша"""
+    try:
+        result = await search_cache.get(query, search_type)
+        if result:
+            logging.info(f"Cache hit for query: {query[:50]}...")
+            # Возвращаем данные в старом формате для обратной совместимости
+            if isinstance(result, dict) and 'data' in result:
+                return result['data']
+            return result
+        return None
+    except Exception as e:
+        logging.error(f"Error getting from cache: {e}")
+        return None
+
+async def get_cached_search_result_with_metadata(query: str, search_type: str) -> Optional[Dict[str, Any]]:
+    """Получает результат поиска из кэша с метаданными (включая информацию о кэше)"""
     try:
         result = await search_cache.get(query, search_type)
         if result:

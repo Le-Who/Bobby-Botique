@@ -52,7 +52,16 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    tavily_answer = search_result.get("content", "Не удалось найти прямой ответ.")
+    # Проверяем, получен ли результат из кэша
+    from_cache = search_result.get('from_cache', False)
+    cache_key = search_result.get('cache_key')
+    
+    # Извлекаем данные из результата
+    if from_cache and 'data' in search_result:
+        tavily_answer = search_result['data'].get("content", "Не удалось найти прямой ответ.")
+    else:
+        tavily_answer = search_result.get("content", "Не удалось найти прямой ответ.")
+    
     try:
         await placeholder_message.edit_text("🌍 Адаптирую ответ...")
     except Exception as edit_error:
@@ -73,7 +82,8 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     )
     final_answer, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [localization_prompt]}], model_used)
     
-    await send_long_message(placeholder_message, final_answer)
+    # Отправляем ответ с индикацией кэша, если он был получен из кэша
+    await send_long_message(placeholder_message, final_answer, from_cache=from_cache, cache_key=cache_key)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):
@@ -104,7 +114,16 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
     
-    search_results = search_result.get('results', [])
+    # Проверяем, получен ли результат из кэша
+    from_cache = search_result.get('from_cache', False)
+    cache_key = search_result.get('cache_key')
+    
+    # Извлекаем данные из результата
+    if from_cache and 'data' in search_result:
+        search_results = search_result['data'].get('results', [])
+    else:
+        search_results = search_result.get('results', [])
+    
     if not search_results:
         try:
             await placeholder_message.edit_text("Не удалось найти релевантные источники для исследования.")
@@ -197,7 +216,8 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         return
     
     if response_text:
-        await send_long_message(placeholder_message, response_text)
+        # Отправляем ответ с индикацией кэша, если он был получен из кэша
+        await send_long_message(placeholder_message, response_text, from_cache=from_cache, cache_key=cache_key)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count

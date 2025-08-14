@@ -39,7 +39,7 @@ class DocumentProcessor:
         """Проверяет, есть ли уже такой файл у пользователя"""
         try:
             result = await db.db_query(
-                "SELECT id, filename, created_at FROM user_documents WHERE user_id = ? AND file_hash = ?",
+                "SELECT id, filename, created_at FROM user_documents WHERE user_id = $1 AND file_hash = $2",
                 (user_id, file_hash)
             )
             if result:
@@ -57,10 +57,11 @@ class DocumentProcessor:
         """Проверяет, не превышен ли лимит документов для пользователя"""
         try:
             result = await db.db_query(
-                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
+                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
                 (user_id,)
             )
             doc_count = result[0]['doc_count'] if result else 0
+            # Возвращаем True, если лимит НЕ превышен (можно загружать документы)
             return doc_count < 5  # Максимум 5 документов на пользователя
         except Exception as e:
             logging.error(f"Error checking document limit: {e}")
@@ -69,13 +70,26 @@ class DocumentProcessor:
     async def _cleanup_oldest_documents(self, user_id: int, keep_count: int = 4) -> int:
         """Удаляет старые документы пользователя, оставляя указанное количество"""
         try:
-            # Получаем ID старых документов для удаления
+            # Сначала получаем общее количество документов пользователя
+            count_result = await db.db_query(
+                "SELECT COUNT(*) as total_count FROM user_documents WHERE user_id = $1",
+                (user_id,)
+            )
+            total_count = count_result[0]['total_count'] if count_result else 0
+            
+            if total_count <= keep_count:
+                return 0  # Нечего удалять
+            
+            # Вычисляем, сколько документов нужно удалить
+            docs_to_delete = total_count - keep_count
+            
+            # Получаем ID самых старых документов для удаления
             result = await db.db_query("""
                 SELECT id FROM user_documents 
-                WHERE user_id = ? 
+                WHERE user_id = $1 
                 ORDER BY created_at ASC
-                OFFSET ?
-            """, (user_id, keep_count))
+                LIMIT $2
+            """, (user_id, docs_to_delete))
             
             if not result:
                 return 0
@@ -83,7 +97,8 @@ class DocumentProcessor:
             # Удаляем старые документы
             old_doc_ids = [row['id'] for row in result]
             if old_doc_ids:
-                placeholders = ','.join(['?' for _ in old_doc_ids])
+                # Создаем правильные placeholder'ы для PostgreSQL
+                placeholders = ','.join([f'${i+1}' for i in range(len(old_doc_ids))])
                 await db.db_query(f"""
                     DELETE FROM user_documents 
                     WHERE id IN ({placeholders})
@@ -234,13 +249,10 @@ class DocumentProcessor:
                         break
                 
                 # Сохраняем количество страниц до закрытия документа
-                try:
-                    page_count = len(doc)
-                except ValueError:
-                    # Если документ уже закрыт, используем количество обработанных страниц
-                    page_count = len(text_content)
-                finally:
-                    doc.close()
+                page_count = len(doc)
+                
+                # Закрываем документ
+                doc.close()
                 
                 full_text = '\n\n'.join(text_content)
                 
@@ -282,39 +294,39 @@ class DocumentProcessor:
                 except Exception as pdf_error:
                     logging.error(f"PyPDF2 failed to open {filename}: {pdf_error}")
                     return {"error": f"Failed to open PDF file: {str(pdf_error)}"}
+                
+                if len(pdf_reader.pages) > self.max_pages:
+                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
+                
+                text_content = []
+                
+                for page_num, page in enumerate(pdf_reader.pages):
+                    try:
+                        text = page.extract_text()
+                        if text.strip():
+                            text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                    except Exception as page_error:
+                        logging.warning(f"Error extracting text from page {page_num + 1}: {page_error}")
+                        text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
                     
-                    if len(pdf_reader.pages) > self.max_pages:
-                        return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
-                    
-                    text_content = []
-                    
-                    for page_num, page in enumerate(pdf_reader.pages):
-                        try:
-                            text = page.extract_text()
-                            if text.strip():
-                                text_content.append(f"--- Page {page_num + 1} ---\n{text}")
-                        except Exception as page_error:
-                            logging.warning(f"Error extracting text from page {page_num + 1}: {page_error}")
-                            text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
-                        
-                        # Проверяем лимит токенов
-                        if len('\n'.join(text_content)) > 100000:
-                            text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
-                            break
-                    
-                    full_text = '\n\n'.join(text_content)
-                    
-                    # Сохраняем в базу данных
-                    await self._save_document_content(user_id, filename, full_text, len(pdf_reader.pages), file_hash)
-                    
-                    return {
-                        "success": True,
-                        "filename": filename,
-                        "pages": len(pdf_reader.pages),
-                        "text_length": len(full_text),
-                        "content": full_text,
-                        "method": "PyPDF2"
-                    }
+                    # Проверяем лимит токенов
+                    if len('\n'.join(text_content)) > 100000:
+                        text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                        break
+                
+                full_text = '\n\n'.join(text_content)
+                
+                # Сохраняем в базу данных
+                await self._save_document_content(user_id, filename, full_text, len(pdf_reader.pages), file_hash)
+                
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "pages": len(pdf_reader.pages),
+                    "text_length": len(full_text),
+                    "content": full_text,
+                    "method": "PyPDF2"
+                }
                     
             finally:
                 # Удаляем временный файл
@@ -387,36 +399,9 @@ class DocumentProcessor:
     async def _save_document_content(self, user_id: int, filename: str, content: str, pages: int, file_hash: str):
         """Сохраняет содержимое документа в базу данных"""
         try:
-            # Создаем таблицу для документов, если её нет
-            await db.db_query("""
-                CREATE TABLE IF NOT EXISTS user_documents (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    filename TEXT NOT NULL,
-                    content TEXT,
-                    pages INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    file_size INTEGER,
-                    file_hash TEXT UNIQUE
-                )
-            """)
-            
-            # Проверяем, существует ли колонка file_hash, если нет - добавляем
-            try:
-                await db.db_query("SELECT file_hash FROM user_documents LIMIT 1")
-            except Exception:
-                # Колонка не существует, добавляем её
-                logging.info("Adding file_hash column to user_documents table")
-                await db.db_query("ALTER TABLE user_documents ADD COLUMN file_hash TEXT")
-                # Удаляем UNIQUE constraint, так как он может конфликтовать с существующими данными
-                try:
-                    await db.db_query("ALTER TABLE user_documents DROP CONSTRAINT IF EXISTS user_documents_file_hash_key")
-                except:
-                    pass
-            
-            # Сохраняем документ
+            # Таблица уже создана в init_db, поэтому просто сохраняем документ
             await db.db_query(
-                "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES ($1, $2, $3, $4, $5, $6)",
                 (user_id, filename, content, pages, len(content), file_hash)
             )
             
@@ -429,7 +414,7 @@ class DocumentProcessor:
         """Получает документ по ID"""
         try:
             result = await db.db_query(
-                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = ? AND user_id = ?",
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = $1 AND user_id = $2",
                 (document_id, user_id)
             )
             
@@ -453,7 +438,7 @@ class DocumentProcessor:
         """Получает список документов пользователя"""
         try:
             result = await db.db_query(
-                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = ? ORDER BY created_at DESC",
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = $1 ORDER BY created_at DESC",
                 (user_id,)
             )
             
@@ -477,7 +462,7 @@ class DocumentProcessor:
         """Получает содержимое документа"""
         try:
             result = await db.db_query(
-                "SELECT content FROM user_documents WHERE id = ? AND user_id = ?",
+                "SELECT content FROM user_documents WHERE id = $1 AND user_id = $2",
                 (document_id, user_id)
             )
             
@@ -493,7 +478,7 @@ class DocumentProcessor:
         """Удаляет документ"""
         try:
             await db.db_query(
-                "DELETE FROM user_documents WHERE id = ? AND user_id = ?",
+                "DELETE FROM user_documents WHERE id = $1 AND user_id = $2",
                 (document_id, user_id)
             )
             return True
@@ -505,14 +490,26 @@ class DocumentProcessor:
     async def cleanup_old_documents(self, days_old: int = 3) -> int:
         """Очищает документы старше указанного количества дней"""
         try:
-            result = await db.db_query("""
-                DELETE FROM user_documents 
-                WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '? days'
+            # Сначала считаем количество документов для удаления
+            count_result = await db.db_query("""
+                SELECT COUNT(*) as count_to_delete FROM user_documents 
+                WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * $1
             """, (days_old,))
             
-            deleted_count = result[0]['count'] if result else 0
-            logging.info(f"Cleaned up {deleted_count} old documents (older than {days_old} days)")
-            return deleted_count
+            count_to_delete = count_result[0]['count_to_delete'] if count_result else 0
+            
+            if count_to_delete > 0:
+                # Теперь удаляем документы
+                await db.db_query("""
+                    DELETE FROM user_documents 
+                    WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day' * $1
+                """, (days_old,))
+                
+                logging.info(f"Cleaned up {count_to_delete} old documents (older than {days_old} days)")
+                return count_to_delete
+            else:
+                logging.info(f"No documents to clean up (older than {days_old} days)")
+                return 0
             
         except Exception as e:
             logging.error(f"Error cleaning up old documents: {e}")
@@ -554,7 +551,7 @@ class DocumentProcessor:
         try:
             # Количество документов пользователя
             count_result = await db.db_query(
-                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
+                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
                 (user_id,)
             )
             doc_count = count_result[0]['doc_count'] if count_result else 0
@@ -565,7 +562,7 @@ class DocumentProcessor:
                     COALESCE(SUM(file_size), 0) as total_size,
                     COALESCE(AVG(file_size), 0) as avg_size
                 FROM user_documents 
-                WHERE user_id = ?
+                WHERE user_id = $1
             """, (user_id,))
             
             if size_result:

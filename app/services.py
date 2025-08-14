@@ -7,7 +7,7 @@ from typing import Dict, Any, List
 from .config import settings
 from . import database
 from .metrics import metrics_collector
-from .cache import get_cached_search_result, cache_search_result
+from .cache import get_cached_search_result, get_cached_search_result_with_metadata, cache_search_result
 
 http_client = httpx.AsyncClient(timeout=30.0)
 
@@ -33,7 +33,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
 
 async def tavily_search_agent(query: str, search_type: str = "search"):
     # Проверяем кэш перед выполнением поиска
-    cached_result = await get_cached_search_result(query, search_type)
+    cached_result = await get_cached_search_result_with_metadata(query, search_type)
     if cached_result:
         logging.info(f"Cache hit for Tavily search: {query[:50]}...")
         return cached_result
@@ -76,7 +76,12 @@ async def tavily_search_agent(query: str, search_type: str = "search"):
         # Сохраняем результат в кэш
         await cache_search_result(query, search_type, result)
         
-        return result
+        # Возвращаем результат с пометкой, что он не из кэша
+        return {
+            'data': result,
+            'from_cache': False,
+            'cache_key': None
+        }
 
     except httpx.HTTPStatusError as e:
         logging.error(f"Tavily API call failed with status {e.response.status_code}: {e.response.text}")
