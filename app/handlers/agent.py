@@ -52,15 +52,21 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
+    # Логируем результат поиска для отладки
+    logging.info(f"QNA search result for query '{actual_search_query[:50]}...': {search_result.keys() if isinstance(search_result, dict) else 'not a dict'}")
+
     # Проверяем, получен ли результат из кэша
     from_cache = search_result.get('from_cache', False)
     cache_key = search_result.get('cache_key')
     
-    # Извлекаем данные из результата
-    if from_cache and 'data' in search_result:
+    # Извлекаем данные из результата - теперь структура одинаковая для кэша и свежего поиска
+    if 'data' in search_result:
         tavily_answer = search_result['data'].get("content", "Не удалось найти прямой ответ.")
+        logging.info(f"Extracted answer from 'data' field: {len(tavily_answer)} characters")
     else:
+        # Fallback для старого формата
         tavily_answer = search_result.get("content", "Не удалось найти прямой ответ.")
+        logging.info(f"Extracted answer from fallback field: {len(tavily_answer)} characters")
     
     try:
         await placeholder_message.edit_text("🌍 Адаптирую ответ...")
@@ -114,17 +120,24 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
     
+    # Логируем результат поиска для отладки
+    logging.info(f"Research search result for query '{actual_search_query[:50]}...': {search_result.keys() if isinstance(search_result, dict) else 'not a dict'}")
+
     # Проверяем, получен ли результат из кэша
     from_cache = search_result.get('from_cache', False)
     cache_key = search_result.get('cache_key')
     
-    # Извлекаем данные из результата
-    if from_cache and 'data' in search_result:
+    # Извлекаем данные из результата - теперь структура одинаковая для кэша и свежего поиска
+    if 'data' in search_result:
         search_results = search_result['data'].get('results', [])
+        logging.info(f"Extracted {len(search_results)} results from 'data' field")
     else:
+        # Fallback для старого формата
         search_results = search_result.get('results', [])
+        logging.info(f"Extracted {len(search_results)} results from fallback field")
     
     if not search_results:
+        logging.warning(f"No search results found for query: {actual_search_query[:50]}...")
         try:
             await placeholder_message.edit_text("Не удалось найти релевантные источники для исследования.")
         except Exception as edit_error:

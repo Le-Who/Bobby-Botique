@@ -37,12 +37,16 @@ class SearchCache:
         # Нормализуем запрос (убираем лишние пробелы, приводим к нижнему регистру)
         normalized_query = " ".join(query.lower().split())
         key_data = f"{search_type}:{normalized_query}"
-        return hashlib.sha256(key_data.encode()).hexdigest()
+        cache_key = hashlib.sha256(key_data.encode()).hexdigest()
+        logging.debug(f"Generated cache key: {cache_key[:16]}... for query: '{query[:30]}...' (type: {search_type})")
+        return cache_key
     
     def _get_ttl(self, search_type: str) -> int:
         """Возвращает TTL для типа поиска"""
         # Все типы поиска теперь имеют одинаковый TTL - 3 дня
-        return self.default_ttl
+        ttl = self.default_ttl
+        logging.debug(f"TTL for search type '{search_type}': {ttl}s ({ttl/86400:.1f} days)")
+        return ttl
     
     async def get(self, query: str, search_type: str) -> Optional[Any]:
         """Получает данные из кэша"""
@@ -52,11 +56,13 @@ class SearchCache:
             entry = self.cache.get(cache_key)
             
             if entry is None:
+                logging.debug(f"Cache entry not found for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type})")
                 await metrics_collector.record_cache_miss()
                 return None
             
             # Проверяем, не истек ли срок действия
             if datetime.now() > entry.expires_at:
+                logging.debug(f"Cache entry expired for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type})")
                 del self.cache[cache_key]
                 await metrics_collector.record_cache_miss()
                 return None
@@ -65,6 +71,7 @@ class SearchCache:
             entry.access_count += 1
             entry.last_accessed = datetime.now()
             
+            logging.debug(f"Cache hit for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type})")
             await metrics_collector.record_cache_hit()
             # Возвращаем данные с пометкой, что они из кэша
             return {
@@ -83,6 +90,7 @@ class SearchCache:
         async with self._lock:
             # Проверяем размер кэша
             if len(self.cache) >= self.max_size:
+                logging.debug(f"Cache size limit reached ({len(self.cache)}), evicting oldest entries")
                 await self._evict_oldest()
             
             now = datetime.now()
@@ -95,6 +103,7 @@ class SearchCache:
             )
             
             self.cache[cache_key] = entry
+            logging.debug(f"Cache entry saved for key: {cache_key[:16]}... (query: {query[:30]}..., type: {search_type}, ttl: {ttl}s)")
     
     async def _evict_oldest(self):
         """Удаляет самые старые записи из кэша"""
@@ -179,7 +188,10 @@ async def get_cached_search_result_with_metadata(query: str, search_type: str) -
     try:
         result = await search_cache.get(query, search_type)
         if result:
-            logging.info(f"Cache hit for query: {query[:50]}...")
+            logging.info(f"Cache hit for query: {query[:50]}... (type: {search_type})")
+            logging.debug(f"Cache result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
+        else:
+            logging.info(f"Cache miss for query: {query[:50]}... (type: {search_type})")
         return result
     except Exception as e:
         logging.error(f"Error getting from cache: {e}")
@@ -189,7 +201,8 @@ async def cache_search_result(query: str, search_type: str, result: Dict[str, An
     """Сохраняет результат поиска в кэш"""
     try:
         await search_cache.set(query, search_type, result)
-        logging.info(f"Cached search result for query: {query[:50]}...")
+        logging.info(f"Cached search result for query: {query[:50]}... (type: {search_type})")
+        logging.debug(f"Cached result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
     except Exception as e:
         logging.error(f"Error caching result: {e}")
 

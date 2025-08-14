@@ -35,11 +35,15 @@ async def tavily_search_agent(query: str, search_type: str = "search"):
     # Проверяем кэш перед выполнением поиска
     cached_result = await get_cached_search_result_with_metadata(query, search_type)
     if cached_result:
-        logging.info(f"Cache hit for Tavily search: {query[:50]}...")
+        logging.info(f"Cache hit for Tavily search: {query[:50]}... (type: {search_type})")
         return cached_result
+    
+    # Если кэш пуст, выполняем поиск
+    logging.info(f"Cache miss for Tavily search: {query[:50]}... (type: {search_type}), performing fresh search")
     
     available_key = await database.get_available_tavily_key()
     if not available_key:
+        logging.error(f"No available Tavily API key for search: {query[:50]}...")
         return {"error": "Поиск недоступен: все API ключи сервиса поиска достигли месячного лимита."}
     
     api_key = available_key['api_key']
@@ -55,26 +59,32 @@ async def tavily_search_agent(query: str, search_type: str = "search"):
     if search_type == "qna":
         payload["search_depth"] = "basic"
         cost = settings.TAVILY_QNA_SEARCH_COST
+        logging.debug(f"QNA search payload: {payload}")
     else:
         payload["search_depth"] = "advanced"
         payload["max_results"] = 7
         cost = settings.TAVILY_ADVANCED_SEARCH_COST
+        logging.debug(f"Advanced search payload: {payload}")
 
     try:
         response = await http_client.post("https://api.tavily.com/search", json=payload)
         response.raise_for_status()
         
         data = response.json()
+        logging.info(f"Tavily API response received for query: {query[:50]}... (status: {response.status_code})")
         await database.increment_tavily_key_usage(available_key['key_hash'], cost)
         
         result = {}
         if search_type == "qna":
             result = {"type": "answer", "content": data.get("answer", "")}
+            logging.info(f"QNA result extracted: content length {len(data.get('answer', ''))}")
         else:
             result = {"type": "search", "results": data.get('results', [])}
+            logging.info(f"Search result extracted: {len(data.get('results', []))} results")
         
         # Сохраняем результат в кэш
         await cache_search_result(query, search_type, result)
+        logging.info(f"Result cached for query: {query[:50]}... (type: {search_type})")
         
         # Возвращаем результат с пометкой, что он не из кэша
         return {
