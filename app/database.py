@@ -66,7 +66,7 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
-    await db_query("""CREATE TABLE IF NOT EXISTS user_documents (user_id BIGINT, file_hash TEXT, file_name TEXT, PRIMARY KEY (user_id, file_hash))""")
+    await db_query("""CREATE TABLE IF NOT EXISTS user_documents (id SERIAL PRIMARY KEY, user_id BIGINT, file_hash TEXT, file_name TEXT, UNIQUE (user_id, file_hash))""")
     
     try:
         check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"

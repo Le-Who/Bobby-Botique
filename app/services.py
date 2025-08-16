@@ -44,14 +44,14 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         if system_instruction:
             config.system_instruction = system_instruction
 
-        response = await client.models.generate_content_async(
+        response = client.models.generate_content(
             model=model_name,
             contents=contents,
             config=config
         )
         
         # Подсчет токенов
-        token_count_response = await client.models.count_tokens_async(
+        token_count_response = client.models.count_tokens(
             model=model_name,
             contents=contents
         )
