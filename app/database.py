@@ -69,6 +69,7 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
     await db_query("""
         CREATE TABLE IF NOT EXISTS user_documents (
+            id SERIAL PRIMARY KEY,
             user_id BIGINT,
             filename TEXT,
             content TEXT,
@@ -84,11 +85,6 @@ async def init_db():
         # --- Document Table Migration ---
         doc_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='user_documents'")
         doc_column_names = {c['column_name'] for c in doc_columns}
-
-        # 1. Check for 'id' column (primary key)
-        if 'id' not in doc_column_names:
-            await db_query("ALTER TABLE user_documents ADD COLUMN id SERIAL PRIMARY KEY;")
-            logging.info("Migration: Added 'id' column to 'user_documents'.")
 
         # 2. Check for 'filename' (and rename from 'file_name' if necessary)
         if 'filename' not in doc_column_names and 'file_name' in doc_column_names:
