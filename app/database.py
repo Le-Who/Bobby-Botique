@@ -88,11 +88,8 @@ async def init_db():
 
         # 1. Check for 'id' column (primary key)
         if 'id' not in doc_column_names:
-            try:
-                await db_query("ALTER TABLE user_documents ADD COLUMN id SERIAL PRIMARY KEY;")
-                logging.info("Migration: Added 'id' column to 'user_documents'.")
-            except asyncpg.PostgresError as e:
-                logging.error(f"Migration failed to add 'id' column: {e}")
+            await db_query("ALTER TABLE user_documents ADD COLUMN id SERIAL PRIMARY KEY;")
+            logging.info("Migration: Added 'id' column to 'user_documents'.")
 
         # 2. Check for 'filename' (and rename from 'file_name' if necessary)
         if 'filename' not in doc_column_names and 'file_name' in doc_column_names:

@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Dict, Any, Optional
 
-from upstash_redis import Redis
+from redis import Redis
 
 from .metrics import metrics_collector
 
@@ -99,5 +99,5 @@ def search_cache(query: str, search_type: str) -> None:
     """Placeholder for search_cache function."""
     pass
 
-def start_cache_cleanup_task():
+async def start_cache_cleanup_task():
     pass
