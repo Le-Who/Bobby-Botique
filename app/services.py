@@ -33,7 +33,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                 if hasattr(part, 'save'): # Проверяем, является ли объект PIL Image
                     processed_parts.append(part)
                 else:
-                    processed_parts.append(types.Part.from_text(str(part)))
+                    processed_parts.append(types.Part.from_text(text=str(part)))
             
             contents.append(types.Content(role=role, parts=processed_parts))
 
