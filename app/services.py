@@ -4,6 +4,7 @@ from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 from typing import Dict, Any, List
+from PIL import Image
 
 from .config import settings
 from . import database
@@ -30,7 +31,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             # Преобразуем PIL Image в Part, если необходимо
             processed_parts = []
             for part in parts:
-                if hasattr(part, 'save'): # Проверяем, является ли объект PIL Image
+                if isinstance(part, Image.Image): # Проверяем, является ли объект PIL Image
                     processed_parts.append(part)
                 else:
                     processed_parts.append(types.Part.from_text(text=str(part)))

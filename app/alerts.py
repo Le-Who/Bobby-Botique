@@ -22,7 +22,7 @@ class AlertManager:
     
     def __init__(self):
         self.sent_alerts: Set[str] = set()  # Уже отправленные алерты
-        self.alert_cooldown = 3600  # 1 час между одинаковыми алертами
+        self.alert_cooldown = settings.ALERT_COOLDOWN_SECONDS
         self.last_alert_time: Dict[str, datetime] = {}
         self._lock = asyncio.Lock()
     
@@ -47,7 +47,7 @@ class AlertManager:
                 request_count = usage[0]['request_count'] if usage else 0
                 usage_percent = (request_count / daily_limit) * 100
                 
-                if usage_percent >= settings.LIMIT_THRESHOLD_PERCENT * 100:
+                if usage_percent >= settings.LIMIT_THRESHOLD_PERCENT:
                     alert_key = self._generate_alert_key("gemini_limit", f"{key_hash[:8]}_{model_name}")
                     
                     if await self._should_send_alert(alert_key):
@@ -78,7 +78,7 @@ class AlertManager:
             credit_usage = usage[0]['credit_usage'] if usage else 0
             usage_percent = (credit_usage / settings.TAVILY_MONTHLY_CREDIT_LIMIT) * 100
             
-            if usage_percent >= settings.TAVILY_LIMIT_THRESHOLD_PERCENT * 100:
+            if usage_percent >= settings.TAVILY_LIMIT_THRESHOLD_PERCENT:
                 alert_key = self._generate_alert_key("tavily_limit", key_hash[:8])
                 
                 if await self._should_send_alert(alert_key):

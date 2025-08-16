@@ -61,7 +61,7 @@ class DocumentProcessor:
                 (user_id,)
             )
             doc_count = result[0]['doc_count'] if result else 0
-            return doc_count < 5  # Максимум 5 документов на пользователя
+            return doc_count < settings.MAX_DOCUMENTS_PER_USER
         except Exception as e:
             logging.error(f"Error checking document limit: {e}")
             return True  # В случае ошибки разрешаем загрузку
@@ -389,18 +389,7 @@ class DocumentProcessor:
         try:
             # The table is created in database.py
             
-            # Проверяем, существует ли колонка file_hash, если нет - добавляем
-            try:
-                await db.db_query("SELECT file_hash FROM user_documents LIMIT 1")
-            except Exception:
-                # Колонка не существует, добавляем её
-                logging.info("Adding file_hash column to user_documents table")
-                await db.db_query("ALTER TABLE user_documents ADD COLUMN file_hash TEXT")
-                # Удаляем UNIQUE constraint, так как он может конфликтовать с существующими данными
-                try:
-                    await db.db_query("ALTER TABLE user_documents DROP CONSTRAINT IF EXISTS user_documents_file_hash_key")
-                except:
-                    pass
+            # NOTE: Schema migrations are now centralized in database.py
             
             # Сохраняем документ
             await db.db_query(
@@ -494,8 +483,8 @@ class DocumentProcessor:
         """Очищает документы старше указанного количества дней"""
         try:
             result = await db.db_query("""
-                DELETE FROM user_documents 
-                WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '? days'
+                DELETE FROM user_documents
+                WHERE created_at < (CURRENT_TIMESTAMP - (? * INTERVAL '1 day'))
             """, (days_old,))
             
             deleted_count = result[0]['count'] if result else 0

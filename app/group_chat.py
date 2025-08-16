@@ -160,64 +160,66 @@ class GroupChatManager:
             logging.error(f"Error registering group: {e}")
             return False
     
-    async def add_member(self, chat_id: int, user_id: int) -> bool:
-        """Добавляет участника в группу"""
+    async def add_member_to_group(self, chat_id: int, user_id: int) -> bool:
+        """Добавляет участника в группу (атомарно)"""
         try:
             if chat_id not in self.active_groups:
                 return False
-            
+
             # Проверяем, что пользователь авторизован
             if not await db.is_authorized(user_id):
                 return False
-            
+
             async with self._lock:
                 # Добавляем в базу данных
                 await db.db_query(
-                    "INSERT INTO group_members (chat_id, user_id) VALUES (?, ?) ON CONFLICT (chat_id, user_id) DO NOTHING",
+                    "INSERT INTO group_members (chat_id, user_id) VALUES ($1, $2) ON CONFLICT (chat_id, user_id) DO NOTHING",
                     (chat_id, user_id)
                 )
-                
-                # Обновляем в памяти
-                self.user_groups[user_id].add(chat_id)
-                self.active_groups[chat_id].member_count += 1
-                
-                # Обновляем количество участников в базе
+
+                # Атомарно обновляем количество участников
                 await db.db_query(
-                    "UPDATE group_chats SET member_count = member_count + 1 WHERE chat_id = ?",
+                    "UPDATE group_chats SET member_count = member_count + 1 WHERE chat_id = $1",
                     (chat_id,)
                 )
+
+                # Обновляем в памяти
+                self.user_groups[user_id].add(chat_id)
+                if chat_id in self.active_groups:
+                    self.active_groups[chat_id].member_count += 1
                 
                 return True
-                
+
         except Exception as e:
             logging.error(f"Error adding member to group: {e}")
             return False
     
-    async def remove_member(self, chat_id: int, user_id: int) -> bool:
-        """Удаляет участника из группы"""
+    async def remove_member_from_group(self, chat_id: int, user_id: int) -> bool:
+        """Удаляет участника из группы (атомарно)"""
         try:
             if chat_id not in self.active_groups:
                 return False
-            
+
             async with self._lock:
                 # Удаляем из базы данных
                 await db.db_query(
-                    "DELETE FROM group_members WHERE chat_id = ? AND user_id = ?",
+                    "DELETE FROM group_members WHERE chat_id = $1 AND user_id = $2",
                     (chat_id, user_id)
                 )
-                
-                # Обновляем в памяти
-                self.user_groups[user_id].discard(chat_id)
-                self.active_groups[chat_id].member_count = max(0, self.active_groups[chat_id].member_count - 1)
-                
-                # Обновляем количество участников в базе
+
+                # Атомарно обновляем количество участников
                 await db.db_query(
-                    "UPDATE group_chats SET member_count = member_count - 1 WHERE chat_id = ?",
+                    "UPDATE group_chats SET member_count = member_count - 1 WHERE chat_id = $1 AND member_count > 0",
                     (chat_id,)
                 )
-                
+
+                # Обновляем в памяти
+                self.user_groups[user_id].discard(chat_id)
+                if chat_id in self.active_groups:
+                    self.active_groups[chat_id].member_count = max(0, self.active_groups[chat_id].member_count - 1)
+
                 return True
-                
+
         except Exception as e:
             logging.error(f"Error removing member from group: {e}")
             return False

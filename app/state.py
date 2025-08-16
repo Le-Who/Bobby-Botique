@@ -4,41 +4,43 @@ import asyncio
 from collections import defaultdict
 from typing import Dict, Set, Optional
 
-# Блокировки для пользователей
-USER_LOCKS: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
-
-# Состояния пользователей для работы с документами
-class UserDocumentState:
-    """Состояние пользователя для работы с документами"""
+# Комплексное состояние пользователя
+class UserState:
+    """Содержит состояние и блокировки для одного пользователя"""
     def __init__(self):
-        self.document_mode = False  # Режим работы с документами
-        self.selected_document_id: Optional[int] = None  # ID выбранного документа
-        self.last_document_message_id: Optional[int] = None  # ID последнего сообщения с кнопками документов
+        self.lock = asyncio.Lock()
+        self.document_mode = False
+        self.selected_document_id: Optional[int] = None
+        self.last_document_message_id: Optional[int] = None
 
 # Хранилище состояний пользователей
-USER_DOCUMENT_STATES: Dict[int, UserDocumentState] = defaultdict(UserDocumentState)
+USER_STATES: Dict[int, UserState] = defaultdict(UserState)
 
-def get_user_document_state(user_id: int) -> UserDocumentState:
-    """Получает состояние пользователя для работы с документами"""
-    return USER_DOCUMENT_STATES[user_id]
+def get_user_state(user_id: int) -> UserState:
+    """Получает комплексное состояние пользователя"""
+    return USER_STATES[user_id]
+
+def get_user_lock(user_id: int) -> asyncio.Lock:
+    """Получает блокировку для пользователя"""
+    return get_user_state(user_id).lock
 
 def set_document_mode(user_id: int, enabled: bool, document_id: Optional[int] = None):
     """Устанавливает режим работы с документами для пользователя"""
-    state = get_user_document_state(user_id)
+    state = get_user_state(user_id)
     state.document_mode = enabled
     state.selected_document_id = document_id if enabled else None
 
 def clear_document_state(user_id: int):
     """Очищает состояние работы с документами для пользователя"""
-    state = get_user_document_state(user_id)
+    state = get_user_state(user_id)
     state.document_mode = False
     state.selected_document_id = None
     state.last_document_message_id = None
 
 def is_in_document_mode(user_id: int) -> bool:
     """Проверяет, находится ли пользователь в режиме работы с документами"""
-    return get_user_document_state(user_id).document_mode
+    return get_user_state(user_id).document_mode
 
 def get_selected_document_id(user_id: int) -> Optional[int]:
     """Получает ID выбранного документа пользователя"""
-    return get_user_document_state(user_id).selected_document_id
+    return get_user_state(user_id).selected_document_id

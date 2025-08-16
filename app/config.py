@@ -55,6 +55,8 @@ class Settings(BaseModel):
         "gemini-2.5-pro": 100,
         "gemini-2.5-flash-lite": 1000,
     }
+    ALERT_COOLDOWN_SECONDS: int = 3600
+    MAX_DOCUMENTS_PER_USER: int = 5
 
     # --- SAFETY ---
     SAFETY_SETTINGS: List[Dict[str, str]] = [
