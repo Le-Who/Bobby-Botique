@@ -37,6 +37,8 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     # Если передан search_query, используем его для поиска, а user_message для локализации
     actual_search_query = search_query if search_query else user_message
     
+    await metrics_collector.record_search_query()
+    
     try:
         await placeholder_message.edit_text("🔎 Ищу быстрый ответ...")
     except Exception as edit_error:
@@ -52,7 +54,7 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    tavily_answer = search_result.get("content", "Не удалось найти прямой ответ.")
+    tavily_answer = search_result.get("answer", "Не удалось найти прямой ответ.")
     try:
         await placeholder_message.edit_text("🌍 Адаптирую ответ...")
     except Exception as edit_error:
@@ -79,6 +81,8 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):
     # Если передан search_query, используем его для поиска, а user_message для локализации
     actual_search_query = search_query if search_query else user_message
+    
+    await metrics_collector.record_search_query()
     
     try:
         await placeholder_message.edit_text("🔎 Ищу источники...")

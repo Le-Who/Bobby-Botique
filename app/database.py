@@ -24,9 +24,10 @@ class ChatState:
     is_deep_dive: bool = False
 
 def _prepare_query(query: str) -> str:
-    placeholders = re.findall(r'(\?|%s)', query)
+    # Заменяем только %s, чтобы избежать конфликтов с текстовыми '?'
+    placeholders = re.findall(r'(%s)', query)
     for i, _ in enumerate(placeholders, 1):
-        query = re.sub(r'(\?|%s)', f'${i}', query, 1)
+        query = re.sub(r'(%s)', f'${i}', query, 1)
     return query
 
 async def db_query(query: str, params: tuple = (), retries: int = 3):
@@ -67,15 +68,19 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
-    await db_query("""CREATE TABLE IF NOT EXISTS user_documents (id SERIAL PRIMARY KEY, user_id BIGINT, file_hash TEXT, file_name TEXT, UNIQUE (user_id, file_hash))""")
-    
-    try:
-        await db_query("ALTER TABLE user_documents ADD COLUMN id SERIAL PRIMARY KEY;")
-        logging.info("Migration: Successfully added 'id' column to 'user_documents' table.")
-    except asyncpg.exceptions.DuplicateColumnError:
-        logging.info("Migration: Column 'id' already exists in 'user_documents'. Skipping.")
-    except Exception as e:
-        logging.error(f"An unexpected error occurred during user_documents migration: {e}")
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS user_documents (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            filename TEXT,
+            content TEXT,
+            pages INTEGER,
+            file_size BIGINT,
+            file_hash TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (user_id, file_hash)
+        )
+    """)
 
     try:
         # Migration for tavily_key_usage table
