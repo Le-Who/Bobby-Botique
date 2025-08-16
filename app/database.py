@@ -21,6 +21,7 @@ class ChatState:
     token_count: int
     search_enabled: bool
     system_prompt: Optional[str]
+    is_deep_dive: bool = False
 
 def _prepare_query(query: str) -> str:
     placeholders = re.findall(r'(\?|%s)', query)
@@ -60,7 +61,7 @@ async def init_db():
         raise Exception("DATABASE_URL not set")
     db_pool = await asyncpg.create_pool(dsn=settings.DATABASE_URL, min_size=1, max_size=10)
     
-    await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0)""")
+    await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)""")
     await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
     await db_query("""CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
     await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
@@ -69,14 +70,22 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS user_documents (id SERIAL PRIMARY KEY, user_id BIGINT, file_hash TEXT, file_name TEXT, UNIQUE (user_id, file_hash))""")
     
     try:
+        # Migration for tavily_key_usage table
         check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
         column_exists = await db_query(check_column_query)
         if column_exists:
             logging.info("Old column 'request_count' found. Attempting schema migration...")
             await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
             logging.info("Schema migration successful.")
-        else:
-            logging.info("Schema is up to date. Migration not needed.")
+        
+        # Migration for users table to add is_deep_dive
+        check_deep_dive_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='is_deep_dive';"
+        deep_dive_exists = await db_query(check_deep_dive_column_query)
+        if not deep_dive_exists:
+            logging.info("Column 'is_deep_dive' not found in users table. Attempting schema migration...")
+            await db_query("ALTER TABLE users ADD COLUMN is_deep_dive BOOLEAN DEFAULT FALSE;")
+            logging.info("Schema migration for 'is_deep_dive' successful.")
+            
     except asyncpg.PostgresError as e:
         logging.info(f"Schema migration skipped or already applied (Error: {e})")
     
@@ -89,29 +98,38 @@ async def init_db():
         await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES (?, ?) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
 
 async def get_user_chat(user_id: int) -> ChatState:
-    result = await db_query("SELECT * FROM chats WHERE user_id = ?", (user_id,))
-    if result:
-        row = result[0]
-        return ChatState(
-            history=json.loads(row['history']) if row['history'] else [],
-            model=row['model'] or settings.DEFAULT_MODEL,
-            token_count=row['token_count'] or 0,
-            search_enabled=bool(row['search_enabled']),
-            system_prompt=row['system_prompt'] or None
-        )
-    return ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None)
+    chat_result = await db_query("SELECT * FROM chats WHERE user_id = ?", (user_id,))
+    user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = ?", (user_id,))
+
+    chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False)
+
+    if chat_result:
+        row = chat_result[0]
+        chat_state.history = json.loads(row['history']) if row['history'] else []
+        chat_state.model = row['model'] or settings.DEFAULT_MODEL
+        chat_state.token_count = row['token_count'] or 0
+        chat_state.search_enabled = bool(row['search_enabled'])
+        chat_state.system_prompt = row['system_prompt'] or None
+
+    if user_result:
+        chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
+        
+    return chat_state
 
 async def update_user_chat(user_id: int, chat_state: ChatState):
     history_json = json.dumps(chat_state.history)
-    query = """
-    INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt) 
+    chat_query = """
+    INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
     VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT (user_id) 
-    DO UPDATE SET 
-        history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count, 
+    ON CONFLICT (user_id)
+    DO UPDATE SET
+        history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
         search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt;
     """
-    await db_query(query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
+    await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
+
+    user_query = "UPDATE users SET is_deep_dive = ? WHERE user_id = ?"
+    await db_query(user_query, (chat_state.is_deep_dive, user_id))
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     today_pacific: date = datetime.now(PACIFIC_TZ).date()

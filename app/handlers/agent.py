@@ -197,10 +197,11 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         return
     
     if response_text:
-        await send_long_message(placeholder_message, response_text)
+        await send_long_message(placeholder_message, response_text, is_deep_dive=True)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
+        chat_state.is_deep_dive = True
         await db.update_user_chat(user_id, chat_state)
     else:
         chat_state.history.pop()
@@ -348,7 +349,12 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
     
     if response_text:
-        await send_long_message(placeholder_message, response_text)
+        reply_markup = None
+        if chat_state.is_deep_dive:
+            keyboard = [[InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count

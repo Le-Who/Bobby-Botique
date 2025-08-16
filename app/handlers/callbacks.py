@@ -338,8 +338,33 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Ошибка при удалении документа.")
         return
 
+async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+   """Handles callbacks from deep dive mode buttons."""
+   query = update.callback_query
+   await query.answer()
+
+   action = query.data.split(':')[1]
+   user_id = query.from_user.id
+
+   if action == "new_topic":
+       chat_state = await db.get_user_chat(user_id)
+       chat_state.history = []
+       chat_state.is_deep_dive = False
+       await db.update_user_chat(user_id, chat_state)
+       await query.edit_message_reply_markup(reply_markup=None)
+       # Optionally, send a confirmation message
+       # await query.message.reply_text("✨ Новая тема начата!")
+
+   elif action == "deeper_dive":
+       await query.edit_message_reply_markup(reply_markup=None)
+       await query.message.reply_text(
+           "Супер! Мы готовы *копнуть глубже*! 😉 \nЧто еще вы хотели бы узнать по этой теме?",
+           parse_mode='Markdown'
+       )
+
 def register(application: Application):
-    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model_"))
-    application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
-    application.add_handler(CallbackQueryHandler(fallback_callback, pattern="^fallback:"))
-    application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
+   application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model_"))
+   application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
+   application.add_handler(CallbackQueryHandler(fallback_callback, pattern="^fallback:"))
+   application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
+   application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
