@@ -7,7 +7,6 @@ from google import genai
 from .. import database as db
 from ..utils.formatting import format_key_for_display, TelegramFormatter
 from ..utils import time as time_utils
-from ..services import genai
 from ..metrics import metrics_collector
 from ..cache import search_cache
 from ..queue import task_queue

@@ -2,7 +2,7 @@ import logging
 import httpx
 from google import genai
 from google.genai import types
-from google.genai.errors import ResourceExhaustedError, GoogleAPICallError
+from google.genai.errors import APIError
 from typing import Dict, Any, List
 
 from .config import settings
@@ -58,14 +58,14 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         
         return response.text, token_count_response.total_tokens
         
-    except ResourceExhaustedError as e:
-        logging.error(f"Gemini API Quota Error: {e}")
-        await metrics_collector.record_error("gemini_quota", str(e))
-        return "🚫 Достигнут лимит запросов к API (Quota Exceeded).", None
-    except GoogleAPICallError as e:
-        logging.error(f"Gemini API Call Error: {e}")
-        await metrics_collector.record_error("gemini_api_call", str(e))
-        return f"Произошла ошибка вызова API: {e}", None
+    except APIError as e:
+        logging.error(f"Gemini API Error: {e}")
+        if "quota" in str(e).lower():
+            await metrics_collector.record_error("gemini_quota", str(e))
+            return "🚫 Достигнут лимит запросов к API (Quota Exceeded).", None
+        else:
+            await metrics_collector.record_error("gemini_api_call", str(e))
+            return f"Произошла ошибка вызова API: {e}", None
     except Exception as e:
         logging.error(f"Gemini API generic error: {e}")
         await metrics_collector.record_error("gemini_api", str(e))
