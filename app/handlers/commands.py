@@ -3,6 +3,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, Application
 
 from ..config import settings
+from google import genai
 from .. import database as db
 from ..utils.formatting import format_key_for_display, TelegramFormatter
 from ..utils import time as time_utils
@@ -130,8 +131,8 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     await update.message.reply_text("Запрашиваю список моделей у Google API...")
     try:
-        genai.configure(api_key=key_data['api_key'])
-        models_list = [f"- `{m.name}`" for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        client = genai.Client(api_key=key_data['api_key'])
+        models_list = [f"- `{m.name}`" for m in client.models.list() if 'generateContent' in m.supported_generation_methods]
         await update.message.reply_text("✅ **Доступные модели:**\n" + "\n".join(models_list), parse_mode='Markdown')
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")

@@ -1,7 +1,8 @@
 import logging
 import httpx
-import google.generativeai as genai
-from google.api_core import exceptions as google_exceptions
+from google import genai
+from google.genai import types
+from google.genai.errors import ResourceExhaustedError, GoogleAPICallError
 from typing import Dict, Any, List
 
 from .config import settings
@@ -13,19 +14,58 @@ http_client = httpx.AsyncClient(timeout=30.0)
 
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None):
     try:
-        # Записываем метрики API вызова
         await metrics_collector.record_api_call("gemini", model_name)
         
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(model_name, safety_settings=settings.SAFETY_SETTINGS, system_instruction=system_instruction)
-        chat = model.start_chat(history=history[:-1])
-        response = await chat.send_message_async(history[-1]['parts'])
-        token_count = model.count_tokens(chat.history).total_tokens
-        return response.text, token_count
-    except google_exceptions.ResourceExhausted as e:
+        client = genai.Client(api_key=api_key)
+        
+        # Преобразуем историю в формат types.Content
+        contents = []
+        for item in history:
+            role = item.get("role", "user")
+            parts = item.get("parts", [])
+            # Убедимся, что parts - это список
+            if not isinstance(parts, list):
+                parts = [parts]
+            
+            # Преобразуем PIL Image в Part, если необходимо
+            processed_parts = []
+            for part in parts:
+                if hasattr(part, 'save'): # Проверяем, является ли объект PIL Image
+                    processed_parts.append(part)
+                else:
+                    processed_parts.append(types.Part.from_text(str(part)))
+            
+            contents.append(types.Content(role=role, parts=processed_parts))
+
+        config = types.GenerateContentConfig(
+            safety_settings=settings.SAFETY_SETTINGS
+        )
+        
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        response = await client.models.generate_content_async(
+            model=model_name,
+            contents=contents,
+            config=config
+        )
+        
+        # Подсчет токенов
+        token_count_response = await client.models.count_tokens_async(
+            model=model_name,
+            contents=contents
+        )
+        
+        return response.text, token_count_response.total_tokens
+        
+    except ResourceExhaustedError as e:
         logging.error(f"Gemini API Quota Error: {e}")
         await metrics_collector.record_error("gemini_quota", str(e))
         return "🚫 Достигнут лимит запросов к API (Quota Exceeded).", None
+    except GoogleAPICallError as e:
+        logging.error(f"Gemini API Call Error: {e}")
+        await metrics_collector.record_error("gemini_api_call", str(e))
+        return f"Произошла ошибка вызова API: {e}", None
     except Exception as e:
         logging.error(f"Gemini API generic error: {e}")
         await metrics_collector.record_error("gemini_api", str(e))
