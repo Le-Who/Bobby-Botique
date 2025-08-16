@@ -351,9 +351,8 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
        chat_state.history = []
        chat_state.is_deep_dive = False
        await db.update_user_chat(user_id, chat_state)
+       await query.message.reply_text("Начинаем с чистого листа ✍️\nО чём вы хотите узнать на этот раз?")
        await query.edit_message_reply_markup(reply_markup=None)
-       # Optionally, send a confirmation message
-       # await query.message.reply_text("✨ Новая тема начата!")
 
    elif action == "deeper_dive":
        await query.edit_message_reply_markup(reply_markup=None)

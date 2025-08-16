@@ -387,19 +387,7 @@ class DocumentProcessor:
     async def _save_document_content(self, user_id: int, filename: str, content: str, pages: int, file_hash: str):
         """Сохраняет содержимое документа в базу данных"""
         try:
-            # Создаем таблицу для документов, если её нет
-            await db.db_query("""
-                CREATE TABLE IF NOT EXISTS user_documents (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    filename TEXT NOT NULL,
-                    content TEXT,
-                    pages INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    file_size INTEGER,
-                    file_hash TEXT UNIQUE
-                )
-            """)
+            # The table is created in database.py
             
             # Проверяем, существует ли колонка file_hash, если нет - добавляем
             try:
