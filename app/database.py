@@ -70,6 +70,14 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS user_documents (id SERIAL PRIMARY KEY, user_id BIGINT, file_hash TEXT, file_name TEXT, UNIQUE (user_id, file_hash))""")
     
     try:
+        await db_query("ALTER TABLE user_documents ADD COLUMN id SERIAL PRIMARY KEY;")
+        logging.info("Migration: Successfully added 'id' column to 'user_documents' table.")
+    except asyncpg.exceptions.DuplicateColumnError:
+        logging.info("Migration: Column 'id' already exists in 'user_documents'. Skipping.")
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during user_documents migration: {e}")
+
+    try:
         # Migration for tavily_key_usage table
         check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
         column_exists = await db_query(check_column_query)
