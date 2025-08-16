@@ -130,12 +130,6 @@ async def init_db():
 
     except asyncpg.PostgresError as e:
         logging.warning(f"A schema migration may have been skipped or failed: {e}")
-
-    try:
-        doc_columns_final = await db_query("SELECT column_name, data_type FROM information_schema.columns WHERE table_name='user_documents'")
-        logging.info(f"SCHEMA CHECK: Final user_documents columns: {doc_columns_final}")
-    except Exception as e:
-        logging.error(f"SCHEMA CHECK: Failed to retrieve final schema for user_documents: {e}")
     
     await db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
     for key in settings.GEMINI_API_KEYS:

@@ -39,14 +39,14 @@ class DocumentProcessor:
         """Проверяет, есть ли уже такой файл у пользователя"""
         try:
             result = await db.db_query(
-                "SELECT id, filename, created_at FROM user_documents WHERE user_id = ? AND file_hash = ?",
+                "SELECT document_id, filename, created_at FROM user_documents WHERE user_id = ? AND file_hash = ?",
                 (user_id, file_hash)
             )
             if result:
                 return {
-                    'id': result[0]['id'],
-                    'filename': result[0]['filename'],
-                    'created_at': result[0]['created_at']
+                    'document_id': result['document_id'],
+                    'filename': result['filename'],
+                    'created_at': result['created_at']
                 }
             return None
         except Exception as e:
@@ -60,7 +60,7 @@ class DocumentProcessor:
                 "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
                 (user_id,)
             )
-            doc_count = result[0]['doc_count'] if result else 0
+            doc_count = result['doc_count'] if result else 0
             return doc_count < settings.MAX_DOCUMENTS_PER_USER
         except Exception as e:
             logging.error(f"Error checking document limit: {e}")
@@ -71,8 +71,8 @@ class DocumentProcessor:
         try:
             # Получаем ID старых документов для удаления
             result = await db.db_query("""
-                SELECT id FROM user_documents 
-                WHERE user_id = ? 
+                SELECT document_id FROM user_documents
+                WHERE user_id = ?
                 ORDER BY created_at ASC
                 OFFSET ?
             """, (user_id, keep_count))
@@ -81,12 +81,12 @@ class DocumentProcessor:
                 return 0
             
             # Удаляем старые документы
-            old_doc_ids = [row['id'] for row in result]
+            old_doc_ids = [row['document_id'] for row in result]
             if old_doc_ids:
                 placeholders = ','.join(['?' for _ in old_doc_ids])
                 await db.db_query(f"""
-                    DELETE FROM user_documents 
-                    WHERE id IN ({placeholders})
+                    DELETE FROM user_documents
+                    WHERE document_id IN ({placeholders})
                 """, old_doc_ids)
                 
                 deleted_count = len(old_doc_ids)
@@ -406,14 +406,14 @@ class DocumentProcessor:
         """Получает документ по ID"""
         try:
             result = await db.db_query(
-                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = ? AND user_id = ?",
+                "SELECT document_id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE document_id = ? AND user_id = ?",
                 (document_id, user_id)
             )
             
             if result:
-                row = result[0]
+                row = result
                 return {
-                    'id': row['id'],
+                    'document_id': row['document_id'],
                     'filename': row['filename'],
                     'pages': row['pages'],
                     'created_at': row['created_at'].isoformat() if row['created_at'] else None,
@@ -430,13 +430,13 @@ class DocumentProcessor:
         """Получает список документов пользователя"""
         try:
             result = await db.db_query(
-                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = ? ORDER BY created_at DESC",
+                "SELECT document_id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = ? ORDER BY created_at DESC",
                 (user_id,)
             )
             
             return [
                 {
-                    'id': row['id'],
+                    'document_id': row['document_id'],
                     'filename': row['filename'],
                     'pages': row['pages'],
                     'created_at': row['created_at'].isoformat() if row['created_at'] else None,
@@ -454,12 +454,12 @@ class DocumentProcessor:
         """Получает содержимое документа"""
         try:
             result = await db.db_query(
-                "SELECT content FROM user_documents WHERE id = ? AND user_id = ?",
+                "SELECT content FROM user_documents WHERE document_id = ? AND user_id = ?",
                 (document_id, user_id)
             )
             
             if result:
-                return result[0]['content']
+                return result['content']
             return None
             
         except Exception as e:
@@ -470,7 +470,7 @@ class DocumentProcessor:
         """Удаляет документ"""
         try:
             await db.db_query(
-                "DELETE FROM user_documents WHERE id = ? AND user_id = ?",
+                "DELETE FROM user_documents WHERE document_id = ? AND user_id = ?",
                 (document_id, user_id)
             )
             return True
@@ -487,7 +487,7 @@ class DocumentProcessor:
                 WHERE created_at < (CURRENT_TIMESTAMP - (? * INTERVAL '1 day'))
             """, (days_old,))
             
-            deleted_count = result[0]['count'] if result else 0
+            deleted_count = result['count'] if result else 0
             logging.info(f"Cleaned up {deleted_count} old documents (older than {days_old} days)")
             return deleted_count
             
@@ -500,7 +500,7 @@ class DocumentProcessor:
         try:
             # Общее количество документов
             total_result = await db.db_query("SELECT COUNT(*) as total FROM user_documents")
-            total_docs = total_result[0]['total'] if total_result else 0
+            total_docs = total_result['total'] if total_result else 0
             
             # Размер БД (приблизительно)
             size_result = await db.db_query("""
@@ -512,7 +512,7 @@ class DocumentProcessor:
             """)
             
             if size_result:
-                stats = size_result[0]
+                stats = size_result
                 return {
                     'total_documents': stats['doc_count'],
                     'total_size_chars': stats['total_size'],
@@ -534,7 +534,7 @@ class DocumentProcessor:
                 "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
                 (user_id,)
             )
-            doc_count = count_result[0]['doc_count'] if count_result else 0
+            doc_count = count_result['doc_count'] if count_result else 0
             
             # Размер документов пользователя
             size_result = await db.db_query("""
@@ -546,7 +546,7 @@ class DocumentProcessor:
             """, (user_id,))
             
             if size_result:
-                stats = size_result[0]
+                stats = size_result
                 return {
                     'document_count': doc_count,
                     'total_size_chars': stats['total_size'],
