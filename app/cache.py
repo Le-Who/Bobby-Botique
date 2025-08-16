@@ -15,7 +15,7 @@ if not redis_url:
     redis_client = None
 else:
     try:
-        redis_client = Redis(redis_url)
+        redis_client = Redis.from_url(redis_url)
     except Exception as e:
         logging.error(f"Failed to connect to Redis: {e}")
         redis_client = None
@@ -97,4 +97,7 @@ async def clear_cache():
 
 def search_cache(query: str, search_type: str) -> None:
     """Placeholder for search_cache function."""
+    pass
+
+def start_cache_cleanup_task():
     pass
