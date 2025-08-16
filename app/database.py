@@ -69,7 +69,6 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
     await db_query("""
         CREATE TABLE IF NOT EXISTS user_documents (
-            id SERIAL PRIMARY KEY,
             user_id BIGINT,
             filename TEXT,
             content TEXT,
