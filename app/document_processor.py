@@ -39,12 +39,12 @@ class DocumentProcessor:
         """Проверяет, есть ли уже такой файл у пользователя"""
         try:
             result = await db.db_query(
-                "SELECT document_id, filename, created_at FROM user_documents WHERE user_id = ? AND file_hash = ?",
+                "SELECT id, filename, created_at FROM user_documents WHERE user_id = ? AND file_hash = ?",
                 (user_id, file_hash)
             )
             if result:
                 return {
-                    'document_id': result['document_id'],
+                    'id': result['id'],
                     'filename': result['filename'],
                     'created_at': result['created_at']
                 }
@@ -71,7 +71,7 @@ class DocumentProcessor:
         try:
             # Получаем ID старых документов для удаления
             result = await db.db_query("""
-                SELECT document_id FROM user_documents
+                SELECT id FROM user_documents
                 WHERE user_id = ?
                 ORDER BY created_at ASC
                 OFFSET ?
@@ -81,12 +81,12 @@ class DocumentProcessor:
                 return 0
             
             # Удаляем старые документы
-            old_doc_ids = [row['document_id'] for row in result]
+            old_doc_ids = [row['id'] for row in result]
             if old_doc_ids:
                 placeholders = ','.join(['?' for _ in old_doc_ids])
                 await db.db_query(f"""
                     DELETE FROM user_documents
-                    WHERE document_id IN ({placeholders})
+                    WHERE id IN ({placeholders})
                 """, old_doc_ids)
                 
                 deleted_count = len(old_doc_ids)
@@ -406,14 +406,14 @@ class DocumentProcessor:
         """Получает документ по ID"""
         try:
             result = await db.db_query(
-                "SELECT document_id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE document_id = ? AND user_id = ?",
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = ? AND user_id = ?",
                 (document_id, user_id)
             )
             
             if result:
                 row = result
                 return {
-                    'document_id': row['document_id'],
+                    'id': row['id'],
                     'filename': row['filename'],
                     'pages': row['pages'],
                     'created_at': row['created_at'].isoformat() if row['created_at'] else None,
@@ -430,13 +430,13 @@ class DocumentProcessor:
         """Получает список документов пользователя"""
         try:
             result = await db.db_query(
-                "SELECT document_id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = ? ORDER BY created_at DESC",
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = ? ORDER BY created_at DESC",
                 (user_id,)
             )
             
             return [
                 {
-                    'document_id': row['document_id'],
+                    'id': row['id'],
                     'filename': row['filename'],
                     'pages': row['pages'],
                     'created_at': row['created_at'].isoformat() if row['created_at'] else None,
@@ -454,7 +454,7 @@ class DocumentProcessor:
         """Получает содержимое документа"""
         try:
             result = await db.db_query(
-                "SELECT content FROM user_documents WHERE document_id = ? AND user_id = ?",
+                "SELECT content FROM user_documents WHERE id = ? AND user_id = ?",
                 (document_id, user_id)
             )
             
@@ -470,7 +470,7 @@ class DocumentProcessor:
         """Удаляет документ"""
         try:
             await db.db_query(
-                "DELETE FROM user_documents WHERE document_id = ? AND user_id = ?",
+                "DELETE FROM user_documents WHERE id = ? AND user_id = ?",
                 (document_id, user_id)
             )
             return True
