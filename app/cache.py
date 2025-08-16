@@ -1,189 +1,96 @@
 import hashlib
 import json
 import logging
-import asyncio
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
-import time
+import os
+from typing import Dict, Any, Optional
 
-from .config import settings
-from . import database as db
+from upstash_redis import Redis
+
 from .metrics import metrics_collector
 
-@dataclass
-class CacheEntry:
-    """Запись в кэше"""
-    data: Any
-    created_at: datetime
-    expires_at: datetime
-    access_count: int = 0
-    last_accessed: datetime = None
+# Initialize Redis client from environment variable
+redis_url = os.getenv("REDIS_URL")
+if not redis_url:
+    logging.warning("REDIS_URL environment variable not set. Caching will be disabled.")
+    redis_client = None
+else:
+    try:
+        redis_client = Redis.from_url(redis_url)
+    except Exception as e:
+        logging.error(f"Failed to connect to Redis: {e}")
+        redis_client = None
 
-class SearchCache:
-    """Кэш для результатов поиска"""
-    
-    def __init__(self):
-        self.cache: Dict[str, CacheEntry] = {}
-        self.max_size = 1000  # Максимальное количество записей в кэше
-        self.default_ttl = 3600  # 1 час по умолчанию
-        self.search_ttl = 1800  # 30 минут для поисковых запросов
-        self.qna_ttl = 7200  # 2 часа для Q&A запросов
-        self._lock = asyncio.Lock()
-        self._cleanup_task = None
-    
-    def _generate_cache_key(self, query: str, search_type: str) -> str:
-        """Генерирует ключ кэша для запроса"""
-        # Нормализуем запрос (убираем лишние пробелы, приводим к нижнему регистру)
-        normalized_query = " ".join(query.lower().split())
-        key_data = f"{search_type}:{normalized_query}"
-        return hashlib.sha256(key_data.encode()).hexdigest()
-    
-    def _get_ttl(self, search_type: str) -> int:
-        """Возвращает TTL для типа поиска"""
-        if search_type == 'qna':
-            return self.qna_ttl
-        elif search_type == 'search':
-            return self.search_ttl
-        else:
-            return self.default_ttl
-    
-    async def get(self, query: str, search_type: str) -> Optional[Any]:
-        """Получает данные из кэша"""
-        cache_key = self._generate_cache_key(query, search_type)
-        
-        async with self._lock:
-            entry = self.cache.get(cache_key)
-            
-            if entry is None:
-                await metrics_collector.record_cache_miss()
-                return None
-            
-            # Проверяем, не истек ли срок действия
-            if datetime.now() > entry.expires_at:
-                del self.cache[cache_key]
-                await metrics_collector.record_cache_miss()
-                return None
-            
-            # Обновляем статистику доступа
-            entry.access_count += 1
-            entry.last_accessed = datetime.now()
-            
-            await metrics_collector.record_cache_hit()
-            return entry.data
-    
-    async def set(self, query: str, search_type: str, data: Any):
-        """Сохраняет данные в кэш"""
-        cache_key = self._generate_cache_key(query, search_type)
-        ttl = self._get_ttl(search_type)
-        
-        async with self._lock:
-            # Проверяем размер кэша
-            if len(self.cache) >= self.max_size:
-                await self._evict_oldest()
-            
-            now = datetime.now()
-            entry = CacheEntry(
-                data=data,
-                created_at=now,
-                expires_at=now + timedelta(seconds=ttl),
-                access_count=1,
-                last_accessed=now
-            )
-            
-            self.cache[cache_key] = entry
-    
-    async def _evict_oldest(self):
-        """Удаляет самые старые записи из кэша"""
-        if not self.cache:
-            return
-        
-        # Находим записи для удаления (20% от размера кэша)
-        entries_to_remove = max(1, len(self.cache) // 5)
-        
-        # Сортируем по времени последнего доступа и количеству обращений
-        sorted_entries = sorted(
-            self.cache.items(),
-            key=lambda x: (x[1].last_accessed or x[1].created_at, -x[1].access_count)
-        )
-        
-        # Удаляем самые старые записи
-        for i in range(entries_to_remove):
-            if i < len(sorted_entries):
-                del self.cache[sorted_entries[i][0]]
-    
-    async def cleanup_expired(self):
-        """Удаляет истекшие записи из кэша"""
-        async with self._lock:
-            now = datetime.now()
-            expired_keys = [
-                key for key, entry in self.cache.items()
-                if now > entry.expires_at
-            ]
-            
-            for key in expired_keys:
-                del self.cache[key]
-            
-            if expired_keys:
-                logging.info(f"Cleaned up {len(expired_keys)} expired cache entries")
-    
-    async def get_stats(self) -> Dict[str, Any]:
-        """Возвращает статистику кэша"""
-        async with self._lock:
-            now = datetime.now()
-            total_entries = len(self.cache)
-            expired_entries = sum(1 for entry in self.cache.values() if now > entry.expires_at)
-            
-            if total_entries > 0:
-                avg_access_count = sum(entry.access_count for entry in self.cache.values()) / total_entries
-            else:
-                avg_access_count = 0
-            
-            return {
-                'total_entries': total_entries,
-                'expired_entries': expired_entries,
-                'max_size': self.max_size,
-                'avg_access_count': avg_access_count,
-                'cache_hit_rate': metrics_collector.get_cache_hit_rate()
-            }
-    
-    async def clear(self):
-        """Очищает весь кэш"""
-        async with self._lock:
-            self.cache.clear()
-            logging.info("Cache cleared")
+def _generate_cache_key(query: str, search_type: str) -> str:
+    """Generates a cache key for the request."""
+    normalized_query = " ".join(query.lower().split())
+    key_data = f"{search_type}:{normalized_query}"
+    return hashlib.sha256(key_data.encode()).hexdigest()
 
-# Глобальный экземпляр кэша
-search_cache = SearchCache()
+def _get_ttl(search_type: str) -> int:
+    """Returns the TTL for the search type."""
+    if search_type == 'qna':
+        return 7200  # 2 hours
+    elif search_type == 'search':
+        return 1800  # 30 minutes
+    else:
+        return 3600  # 1 hour
 
 async def get_cached_search_result(query: str, search_type: str) -> Optional[Dict[str, Any]]:
-    """Получает результат поиска из кэша"""
+    """Gets the search result from the cache."""
+    if not redis_client:
+        return None
+    
+    cache_key = _generate_cache_key(query, search_type)
     try:
-        result = await search_cache.get(query, search_type)
-        if result:
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            await metrics_collector.record_cache_hit()
             logging.info(f"Cache hit for query: {query[:50]}...")
-        return result
+            return json.loads(cached_data)
+        else:
+            await metrics_collector.record_cache_miss()
+            return None
     except Exception as e:
-        logging.error(f"Error getting from cache: {e}")
+        logging.error(f"Error getting from Redis cache: {e}")
         return None
 
 async def cache_search_result(query: str, search_type: str, result: Dict[str, Any]):
-    """Сохраняет результат поиска в кэш"""
+    """Saves the search result to the cache."""
+    if not redis_client:
+        return
+
+    cache_key = _generate_cache_key(query, search_type)
+    ttl = _get_ttl(search_type)
     try:
-        await search_cache.set(query, search_type, result)
+        redis_client.setex(cache_key, ttl, json.dumps(result))
         logging.info(f"Cached search result for query: {query[:50]}...")
     except Exception as e:
-        logging.error(f"Error caching result: {e}")
+        logging.error(f"Error caching result to Redis: {e}")
 
-async def start_cache_cleanup_task():
-    """Запускает задачу очистки кэша"""
-    async def cleanup_loop():
-        while True:
-            try:
-                await search_cache.cleanup_expired()
-                await asyncio.sleep(300)  # Проверяем каждые 5 минут
-            except Exception as e:
-                logging.error(f"Error in cache cleanup: {e}")
-                await asyncio.sleep(60)
+async def get_cache_stats() -> Dict[str, Any]:
+    """Returns cache statistics."""
+    if not redis_client:
+        return {"error": "Redis client not configured"}
     
-    asyncio.create_task(cleanup_loop()) 
+    try:
+        info = redis_client.info()
+        return {
+            'total_keys': info.get('db0', {}).get('keys', 0),
+            'used_memory': info.get('used_memory_human', 'N/A'),
+            'uptime_in_days': info.get('uptime_in_days', 'N/A'),
+            'cache_hit_rate': await metrics_collector.get_cache_hit_rate()
+        }
+    except Exception as e:
+        logging.error(f"Error getting Redis stats: {e}")
+        return {"error": str(e)}
+
+async def clear_cache():
+    """Clears the entire cache."""
+    if not redis_client:
+        return
+        
+    try:
+        redis_client.flushdb()
+        logging.info("Cache cleared")
+    except Exception as e:
+        logging.error(f"Error clearing Redis cache: {e}")

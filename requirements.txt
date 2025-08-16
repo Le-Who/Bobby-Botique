@@ -11,3 +11,6 @@ pydantic-settings
 PyPDF2
 python-docx
 PyMuPDF
+
+redis
+upstash-redis
