@@ -24,10 +24,9 @@ class ChatState:
     is_deep_dive: bool = False
 
 def _prepare_query(query: str) -> str:
-    # Заменяем только %s, чтобы избежать конфликтов с текстовыми '?'
-    placeholders = re.findall(r'(%s)', query)
+    placeholders = re.findall(r'(\?|%s)', query)
     for i, _ in enumerate(placeholders, 1):
-        query = re.sub(r'(%s)', f'${i}', query, 1)
+        query = re.sub(r'(\?|%s)', f'${i}', query, 1)
     return query
 
 async def db_query(query: str, params: tuple = (), retries: int = 3):
