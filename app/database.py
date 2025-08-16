@@ -82,24 +82,54 @@ async def init_db():
     """)
 
     try:
-        # Migration for tavily_key_usage table
-        check_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='tavily_key_usage' AND column_name='request_count';"
-        column_exists = await db_query(check_column_query)
-        if column_exists:
-            logging.info("Old column 'request_count' found. Attempting schema migration...")
+        # --- Document Table Migration ---
+        doc_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='user_documents'")
+        doc_column_names = {c['column_name'] for c in doc_columns}
+
+        # 1. Check for 'id' column (primary key)
+        if 'id' not in doc_column_names:
+            try:
+                await db_query("ALTER TABLE user_documents ADD COLUMN id SERIAL PRIMARY KEY;")
+                logging.info("Migration: Added 'id' column to 'user_documents'.")
+            except asyncpg.PostgresError as e:
+                logging.error(f"Migration failed to add 'id' column: {e}")
+
+        # 2. Check for 'filename' (and rename from 'file_name' if necessary)
+        if 'filename' not in doc_column_names and 'file_name' in doc_column_names:
+            await db_query("ALTER TABLE user_documents RENAME COLUMN file_name TO filename;")
+            logging.info("Migration: Renamed 'file_name' to 'filename' in 'user_documents'.")
+        elif 'filename' not in doc_column_names:
+             await db_query("ALTER TABLE user_documents ADD COLUMN filename TEXT;")
+             logging.info("Migration: Added 'filename' column to 'user_documents'.")
+
+        # 3. Add other missing columns
+        required_columns = {
+            "content": "TEXT",
+            "pages": "INTEGER",
+            "file_size": "BIGINT",
+            "created_at": "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
+        }
+        for col, col_type in required_columns.items():
+            if col not in doc_column_names:
+                await db_query(f"ALTER TABLE user_documents ADD COLUMN {col} {col_type};")
+                logging.info(f"Migration: Added '{col}' column to 'user_documents'.")
+
+        # --- Tavily Key Usage Migration ---
+        tavily_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='tavily_key_usage'")
+        if 'request_count' in {c['column_name'] for c in tavily_columns}:
+            logging.info("Old column 'request_count' found in 'tavily_key_usage'. Attempting schema migration...")
             await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
-            logging.info("Schema migration successful.")
-        
-        # Migration for users table to add is_deep_dive
-        check_deep_dive_column_query = "SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='is_deep_dive';"
-        deep_dive_exists = await db_query(check_deep_dive_column_query)
-        if not deep_dive_exists:
-            logging.info("Column 'is_deep_dive' not found in users table. Attempting schema migration...")
+            logging.info("Schema migration for 'tavily_key_usage' successful.")
+
+        # --- Users Table Migration (is_deep_dive) ---
+        users_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
+        if 'is_deep_dive' not in {c['column_name'] for c in users_columns}:
+            logging.info("Column 'is_deep_dive' not found in 'users' table. Attempting schema migration...")
             await db_query("ALTER TABLE users ADD COLUMN is_deep_dive BOOLEAN DEFAULT FALSE;")
             logging.info("Schema migration for 'is_deep_dive' successful.")
-            
+
     except asyncpg.PostgresError as e:
-        logging.info(f"Schema migration skipped or already applied (Error: {e})")
+        logging.warning(f"A schema migration may have been skipped or failed: {e}")
     
     await db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
     for key in settings.GEMINI_API_KEYS:
