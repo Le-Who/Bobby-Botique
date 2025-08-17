@@ -54,12 +54,17 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    tavily_answer = search_result.get("content", "Не удалось найти прямой ответ.")
+    tavily_answer = search_result.get("content")
+    if not tavily_answer:
+        # Обрабатываем случай, когда ответ не найден
+        final_answer = "К сожалению, я не смог найти прямой ответ на ваш вопрос. Попробуйте переформулировать его."
+        await send_long_message(placeholder_message, final_answer)
+        return
+
     try:
         await placeholder_message.edit_text("🌍 Адаптирую ответ...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
-        # Если не можем отредактировать, отправляем новое сообщение
         placeholder_message = await placeholder_message.reply_text("🌍 Адаптирую ответ...")
     
     gemini_key, model_used, _ = await _resolve_gemini_request(settings.QNA_MODEL)
@@ -70,10 +75,16 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    localization_prompt = prompts.QNA_LOCALIZATION_PROMPT.format(
-        user_message=user_message, tavily_answer=tavily_answer
-    )
-    final_answer, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [localization_prompt]}], model_used)
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # Создаем новый промпт, который включает и контекст, и оригинальный вопрос
+    final_prompt = f"Используя следующую информацию, ответь на вопрос.\n\nИнформация: {tavily_answer}\n\nВопрос: {user_message}"
+    
+    logging.info(f"GEMINI QNA PROMPT: {final_prompt}")
+    
+    # Добавляем историю чата для контекста
+    history = chat_state.history + [{'role': 'user', 'parts': [final_prompt]}]
+    
+    final_answer, _ = await services.get_gemini_response(gemini_key['api_key'], history, model_used)
     
     await send_long_message(placeholder_message, final_answer)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
