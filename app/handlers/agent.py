@@ -54,7 +54,7 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    tavily_answer = search_result.get("answer", "Не удалось найти прямой ответ.")
+    tavily_answer = search_result.get("content", "Не удалось найти прямой ответ.")
     try:
         await placeholder_message.edit_text("🌍 Адаптирую ответ...")
     except Exception as edit_error:
