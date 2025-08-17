@@ -33,60 +33,117 @@ async def _resolve_gemini_request(preferred_model: str):
     logging.error("All Gemini API keys for all models are exhausted.")
     return None, None, "all_exhausted"
 
+# async def _handle_qna_search(placeholder_message: Message, user_message: str, chat_state: db.ChatState, search_query: str = None):
+#     # Если передан search_query, используем его для поиска, а user_message для локализации
+#     actual_search_query = search_query if search_query else user_message
+    
+#     await metrics_collector.record_search_query()
+    
+#     try:
+#         await placeholder_message.edit_text("🔎 Ищу быстрый ответ...")
+#     except Exception as edit_error:
+#         logging.error(f"Could not edit placeholder message: {edit_error}")
+#         # Если не можем отредактировать, отправляем новое сообщение
+#         placeholder_message = await placeholder_message.reply_text("🔎 Ищу быстрый ответ...")
+    
+#     search_result = await services.tavily_search_agent(actual_search_query, search_type='qna')
+#     if search_result.get("error"):
+#         try:
+#             await placeholder_message.edit_text(search_result["error"])
+#         except Exception as edit_error:
+#             logging.error(f"Could not edit placeholder message: {edit_error}")
+#         return
+
+#     tavily_answer = search_result.get("content")
+#     if not tavily_answer:
+#         # Обрабатываем случай, когда ответ не найден
+#         final_answer = "К сожалению, я не смог найти прямой ответ на ваш вопрос. Попробуйте переформулировать его."
+#         await send_long_message(placeholder_message, final_answer)
+#         return
+
+#     try:
+#         await placeholder_message.edit_text("🌍 Адаптирую ответ...")
+#     except Exception as edit_error:
+#         logging.error(f"Could not edit placeholder message: {edit_error}")
+#         placeholder_message = await placeholder_message.reply_text("🌍 Адаптирую ответ...")
+    
+#     gemini_key, model_used, _ = await _resolve_gemini_request(settings.QNA_MODEL)
+#     if not gemini_key:
+#         try:
+#             await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.QNA_MODEL} закончились.")
+#         except Exception as edit_error:
+#             logging.error(f"Could not edit placeholder message: {edit_error}")
+#         return
+
+#     # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+#     # Создаем новый промпт, который включает и контекст, и оригинальный вопрос
+#     final_prompt = f"Используя следующую информацию, ответь на вопрос.\n\nИнформация: {tavily_answer}\n\nВопрос: {user_message}"
+    
+#     logging.info(f"GEMINI QNA PROMPT: {final_prompt}")
+    
+#     # Добавляем историю чата для контекста
+#     history = chat_state.history + [{'role': 'user', 'parts': [final_prompt]}]
+    
+#     gemini_response, _ = await services.get_gemini_response(gemini_key['api_key'], history, model_used)
+    
+#     await send_long_message(placeholder_message, gemini_response.text)
+#     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+
 async def _handle_qna_search(placeholder_message: Message, user_message: str, chat_state: db.ChatState, search_query: str = None):
-    # Если передан search_query, используем его для поиска, а user_message для локализации
+    """
+    Handles a quick search query by using Tavily API for web search and Gemini API for generating a concise answer.
+    """
     actual_search_query = search_query if search_query else user_message
-    
     await metrics_collector.record_search_query()
-    
+
     try:
-        await placeholder_message.edit_text("🔎 Ищу быстрый ответ...")
+        await placeholder_message.edit_text("🔎 Performing quick search...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
-        # Если не можем отредактировать, отправляем новое сообщение
-        placeholder_message = await placeholder_message.reply_text("🔎 Ищу быстрый ответ...")
-    
-    search_result = await services.tavily_search_agent(actual_search_query, search_type='qna')
-    if search_result.get("error"):
-        try:
-            await placeholder_message.edit_text(search_result["error"])
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+        placeholder_message = await placeholder_message.reply_text("🔎 Performing quick search...")
+
+    try:
+        search_result = await services.tavily_search_agent(actual_search_query, search_type='qna')
+    except Exception as e:
+        logging.error(f"Tavily API error: {e}")
+        await send_long_message(placeholder_message, "Sorry, there was an error with the search service.")
         return
 
-    tavily_answer = search_result.get("content")
-    if not tavily_answer:
-        # Обрабатываем случай, когда ответ не найден
-        final_answer = "К сожалению, я не смог найти прямой ответ на ваш вопрос. Попробуйте переформулировать его."
+    if search_result.get("error"):
+        await send_long_message(placeholder_message, search_result["error"])
+        return
+
+    tavily_content = search_result.get("content")
+    if not tavily_content:
+        final_answer = "Sorry, I couldn't find a direct answer to your question. Please try rephrasing it."
         await send_long_message(placeholder_message, final_answer)
         return
 
     try:
-        await placeholder_message.edit_text("🌍 Адаптирую ответ...")
+        await placeholder_message.edit_text("🌍 Preparing the answer...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
-        placeholder_message = await placeholder_message.reply_text("🌍 Адаптирую ответ...")
-    
+        placeholder_message = await placeholder_message.reply_text("🌍 Preparing the answer...")
+
     gemini_key, model_used, _ = await _resolve_gemini_request(settings.QNA_MODEL)
     if not gemini_key:
-        try:
-            await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.QNA_MODEL} закончились.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+        await send_long_message(placeholder_message, f"🚫 The keys for the {settings.QNA_MODEL} model have run out.")
         return
 
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Создаем новый промпт, который включает и контекст, и оригинальный вопрос
-    final_prompt = f"Используя следующую информацию, ответь на вопрос.\n\nИнформация: {tavily_answer}\n\nВопрос: {user_message}"
-    
+    final_prompt = f"Based on the following information: {tavily_content}. Please provide a concise answer to the user's question: {user_message}"
     logging.info(f"GEMINI QNA PROMPT: {final_prompt}")
-    
-    # Добавляем историю чата для контекста
+
     history = chat_state.history + [{'role': 'user', 'parts': [final_prompt]}]
-    
-    gemini_response, _ = await services.get_gemini_response(gemini_key['api_key'], history, model_used)
-    
-    await send_long_message(placeholder_message, gemini_response.text)
+
+    try:
+        gemini_response, _ = await services.get_gemini_response(gemini_key['api_key'], history, model_used)
+        final_text = gemini_response.text
+    except Exception as e:
+        logging.error(f"Gemini API error: {e}")
+        await send_long_message(placeholder_message, "Sorry, there was an error generating the answer.")
+        return
+
+    await send_long_message(placeholder_message, final_text)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):
