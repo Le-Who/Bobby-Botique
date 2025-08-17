@@ -84,9 +84,9 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     # Добавляем историю чата для контекста
     history = chat_state.history + [{'role': 'user', 'parts': [final_prompt]}]
     
-    final_answer, _ = await services.get_gemini_response(gemini_key['api_key'], history, model_used)
+    gemini_response, _ = await services.get_gemini_response(gemini_key['api_key'], history, model_used)
     
-    await send_long_message(placeholder_message, final_answer)
+    await send_long_message(placeholder_message, gemini_response.text)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):

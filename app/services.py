@@ -51,13 +51,15 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             config=config
         )
         
+        logging.info(f"GEMINI RAW RESPONSE: {response}")
+
         # Подсчет токенов
         token_count_response = client.models.count_tokens(
             model=model_name,
             contents=contents
         )
         
-        return response.text, token_count_response.total_tokens
+        return response, token_count_response.total_tokens
         
     except APIError as e:
         logging.error(f"Gemini API Error: {e}")
