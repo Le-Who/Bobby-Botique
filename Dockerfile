@@ -7,9 +7,6 @@ WORKDIR /app
 # Копируем файл с зависимостями
 COPY requirements.txt .
 
-# Устанавливаем системные зависимости для сборки
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential && apt-get clean
-
 # Устанавливаем зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
