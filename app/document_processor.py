@@ -399,10 +399,10 @@ class DocumentProcessor:
             # NOTE: Schema migrations are now centralized in database.py
             
                          # Сохраняем документ
-             await database.db_query(
-                 "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES (?, ?, ?, ?, ?, ?)",
-                 (user_id, filename, content, pages, len(content), file_hash)
-             )
+            await database.db_query(
+                "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                (user_id, filename, content, pages, len(content), file_hash)
+            )
             
             logging.info(f"Saved document {filename} for user {user_id}")
             
