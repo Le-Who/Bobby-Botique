@@ -21,22 +21,21 @@ class HealthMonitor:
         self.max_consecutive_failures = 5
         
     async def check_telegram_api(self) -> Dict[str, Any]:
-        """Checks Telegram API connectivity using a real API call."""
+        """Checks Telegram API connectivity using a simple ping approach."""
         try:
             start_time = datetime.now()
             
-            # Делаем реальный запрос к Telegram API для проверки работоспособности
-            # Используем метод getMe, который не требует токена и всегда доступен
+            # Простая проверка доступности Telegram API через HEAD запрос
+            # Это более надежно, чем GET /bot/getMe без токена
             import httpx
             async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=10.0)) as client:
-                response = await client.get("https://api.telegram.org/bot/getMe")
+                response = await client.head("https://api.telegram.org")
                 
             end_time = datetime.now()
             response_time = (end_time - start_time).total_seconds()
             
-            # Telegram API возвращает 200 даже для невалидных запросов
-            # Главное - что сервер отвечает
-            if response.status_code == 200:
+            # Любой ответ от сервера означает, что API доступен
+            if response.status_code < 500:  # 2xx, 3xx, 4xx - сервер работает
                 self.telegram_status = "healthy"
                 self.consecutive_failures = 0
                 logging.debug(f"Telegram API health check passed (response time: {response_time:.2f}s)")
@@ -97,7 +96,7 @@ class HealthMonitor:
             }
     
     async def check_external_services(self) -> Dict[str, Any]:
-        """Checks external service dependencies."""
+        """Checks external service dependencies using HEAD requests for better reliability."""
         services = {
             "tavily_api": "https://api.tavily.com",
             "gemini_api": "https://generativelanguage.googleapis.com"
@@ -107,10 +106,13 @@ class HealthMonitor:
         
         for service_name, url in services.items():
             try:
-                # Увеличиваем таймаут для внешних сервисов
-                is_connected = await NetworkErrorHandler.check_connectivity(url, timeout=5.0)
+                # Используем HEAD запрос для более надежной проверки
+                import httpx
+                async with httpx.AsyncClient(timeout=httpx.Timeout(connect=3.0, read=5.0)) as client:
+                    response = await client.head(url)
                 
-                if is_connected:
+                # Любой ответ означает, что сервис доступен
+                if response.status_code < 500:
                     results[service_name] = {
                         "status": "healthy",
                         "url": url,
@@ -120,16 +122,15 @@ class HealthMonitor:
                     results[service_name] = {
                         "status": "warning",
                         "url": url,
-                        "message": "Service is unreachable but this may be normal"
+                        "message": "Service responded with error status but is reachable"
                     }
                     
             except Exception as e:
                 # Внешние сервисы не критичны для работы бота
                 results[service_name] = {
                     "status": "warning",
-                    "error": str(e),
                     "url": url,
-                    "message": "Service check failed but this is not critical"
+                    "message": "Service check failed but this is not critical for bot operation"
                 }
         
         return results
@@ -158,6 +159,10 @@ class HealthMonitor:
         
         # Логируем детальную информацию о статусе
         logging.debug(f"Health check results - Telegram: {telegram_health['status']}, Database: {database_health['status']}, Overall: {overall_status}")
+        
+        # Сбрасываем счетчик неудач, если все критичные сервисы работают
+        if all(status == "healthy" for status in critical_services):
+            self.consecutive_failures = 0
         
         if self.consecutive_failures >= self.max_consecutive_failures:
             overall_status = "critical"
@@ -189,15 +194,11 @@ class HealthMonitor:
         if self.consecutive_failures >= self.max_consecutive_failures:
             recommendations.append("Multiple consecutive failures detected. Consider restarting the bot.")
         
-        # Внешние сервисы - только информационные сообщения
-        external_warnings = [s for s in external_services.values() if s.get("status") == "warning"]
-        if external_warnings:
-            for service_name, service_health in external_services.items():
-                if service_health["status"] == "warning":
-                    recommendations.append(f"{service_name}: {service_health.get('message', 'Service check failed')} - This is not critical for bot operation.")
+        # Внешние сервисы - только информационные сообщения, не добавляем в рекомендации
+        # так как они не критичны для работы бота
         
         if not recommendations:
-            recommendations.append("All systems operational.")
+            recommendations.append("All critical systems operational.")
         
         return recommendations
 

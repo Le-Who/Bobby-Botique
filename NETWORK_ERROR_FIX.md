@@ -92,12 +92,25 @@ if any(status == "error" for status in critical_services):
 # ❌ БЫЛО: Простая проверка доступности URL
 is_connected = await NetworkErrorHandler.check_connectivity("https://api.telegram.org", timeout=5.0)
 
-# ✅ СТАЛО: Реальная проверка API через HTTP запрос
+# ✅ СТАЛО: Надежная проверка через HEAD запрос
 async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=10.0)) as client:
-    response = await client.get("https://api.telegram.org/bot/getMe")
+    response = await client.head("https://api.telegram.org")
     
-if response.status_code == 200:
+if response.status_code < 500:  # 2xx, 3xx, 4xx - сервер работает
     self.telegram_status = "healthy"
+```
+
+#### **4. Улучшение проверки внешних сервисов:**
+```python
+# ❌ БЫЛО: Простая проверка через check_connectivity
+is_connected = await NetworkErrorHandler.check_connectivity(url, timeout=5.0)
+
+# ✅ СТАЛО: HEAD запросы для более надежной проверки
+async with httpx.AsyncClient(timeout=httpx.Timeout(connect=3.0, read=5.0)) as client:
+    response = await client.head(url)
+    
+if response.status_code < 500:
+    status = "healthy"
 ```
 
 ## 🔍 Ключевые улучшения
