@@ -2,7 +2,7 @@ import os
 import logging
 import asyncio
 from telegram import Update
-from telegram.ext import Application
+from telegram.ext import Application, CallbackQueryHandler
 from flask import Flask
 from hypercorn.config import Config as HypercornConfig
 from hypercorn.asyncio import serve
@@ -11,6 +11,7 @@ from hypercorn.asyncio import serve
 from app.config import settings
 from app import database
 from app.handlers import commands, messages, callbacks
+from app.handlers.callbacks import new_topic_callback
 from app.metrics import metrics_collector
 from app.alerts import alert_manager
 from app.cache import start_cache_cleanup_task
@@ -31,6 +32,7 @@ async def run_bot_and_server():
     commands.register(application)
     callbacks.register(application)
     messages.register(application)
+    application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
     
     async with application:
         await application.start()

@@ -361,9 +361,50 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
            parse_mode='Markdown'
        )
 
+async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the 'new_topic' button press, clearing the chat context."""
+    query = update.callback_query
+    await query.answer("Начинаем новую тему...")
+    
+    user_id = query.from_user.id
+    
+    # Clear chat history, similar to /newchat command
+    chat_state = await db.get_user_chat(user_id)
+    chat_state.history = []
+    chat_state.token_count = 0
+    await db.update_user_chat(user_id, chat_state)
+    
+    # Send a new welcome message, similar to /start
+    start_text = (
+        "🤖 **Добро пожаловать в Gemini Bot!**\n\n"
+        "Я ваш умный ассистент с возможностями:\n"
+        "• 💬 Обычный чат с AI\n"
+        "• 🔍 Веб-поиск и анализ\n"
+        "• 🖼️ Поиск по изображениям\n"
+        "• 📄 Обработка документов\n\n"
+        "**🚀 Начинаем новую тему!**\n"
+        "• Просто напишите сообщение для чата\n"
+        "• `? вопрос` — быстрый ответ\n"
+        "• `?? вопрос` — глубокий анализ\n"
+        "• Отправьте фото для анализа\n\n"
+        "**⚙️ Основные команды:**\n"
+        "• `/help` — подробная справка\n"
+        "• `/newchat` — новый чат\n"
+        "• `/model` — выбрать модель\n"
+    )
+    
+    from ..utils.formatting import TelegramFormatter
+    formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
+    
+    # Remove the old inline keyboard
+    await query.edit_message_reply_markup(reply_markup=None)
+    
+    await query.message.reply_text(formatted_text, parse_mode=parse_mode)
+
 def register(application: Application):
    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model_"))
    application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
    application.add_handler(CallbackQueryHandler(fallback_callback, pattern="^fallback:"))
    application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
    application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
+   application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))

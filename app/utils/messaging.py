@@ -51,8 +51,9 @@ async def send_long_message(message: Message, text: str, preserve_formatting: bo
             else:
                 keyboard = [[InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")]]
                 current_reply_markup = InlineKeyboardMarkup(keyboard)
-        elif is_last_part:
-            current_reply_markup = reply_markup
+        else:
+            keyboard = [[InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]]
+            current_reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Используем новую систему форматирования
         formatted_text, parse_mode = TelegramFormatter.format_text(part, preserve_formatting)
