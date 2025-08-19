@@ -10,8 +10,10 @@ from .config import settings
 from . import database
 from .metrics import metrics_collector
 from .cache import get_cached_search_result, cache_search_result
+from .utils.network import NetworkErrorHandler
 
-http_client = httpx.AsyncClient(timeout=30.0)
+# Используем улучшенную конфигурацию HTTP клиента
+http_client = NetworkErrorHandler.create_robust_http_client()
 
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None):
     try:
@@ -72,6 +74,13 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         await metrics_collector.record_error("gemini_api", str(e))
         return f"Произошла непредвиденная ошибка API: {e}", None
 
+@NetworkErrorHandler.retry_with_backoff
+async def _tavily_api_call(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Internal function for making Tavily API calls with retry logic."""
+    response = await http_client.post("https://api.tavily.com/search", json=payload)
+    response.raise_for_status()
+    return response.json()
+
 async def tavily_search_agent(query: str, search_type: str = "search"):
     # Проверяем кэш перед выполнением поиска
     cached_result = await get_cached_search_result(query, search_type)
@@ -102,10 +111,7 @@ async def tavily_search_agent(query: str, search_type: str = "search"):
         cost = settings.TAVILY_ADVANCED_SEARCH_COST
 
     try:
-        response = await http_client.post("https://api.tavily.com/search", json=payload)
-        response.raise_for_status()
-        
-        data = response.json()
+        data = await _tavily_api_call(payload)
         await database.increment_tavily_key_usage(available_key['key_hash'], cost)
         
         result = {}

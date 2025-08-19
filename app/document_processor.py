@@ -1,14 +1,25 @@
 import logging
 import io
+import os
+import re
 import asyncio
 import hashlib
-import httpx
-from typing import Dict, Any, List, Optional, Tuple
-from pathlib import Path
 import tempfile
-import os
+from pathlib import Path
+from typing import Dict, List, Optional, Any, Tuple
+from datetime import datetime
+import httpx
+from PIL import Image
+import PyPDF2
+from docx import Document
+import fitz  # PyMuPDF
 
-# Импорты для работы с документами
+from .config import settings
+from . import database
+from .utils.network import NetworkErrorHandler
+from .metrics import metrics_collector
+
+# Проверяем поддержку документов
 try:
     import PyPDF2
     import docx
@@ -18,10 +29,6 @@ try:
 except ImportError:
     DOCUMENT_SUPPORT = False
     logging.warning("Document processing libraries not installed. Document support disabled.")
-
-from .config import settings
-from . import database as db
-from .metrics import metrics_collector
 
 class DocumentProcessor:
     """Процессор для обработки документов"""
@@ -38,7 +45,7 @@ class DocumentProcessor:
     async def _check_duplicate_file(self, user_id: int, file_hash: str, filename: str) -> Optional[Dict[str, Any]]:
         """Проверяет, есть ли уже такой файл у пользователя"""
         try:
-            result = await db.db_query(
+            result = await database.db_query(
                 "SELECT id, filename, created_at FROM user_documents WHERE user_id = ? AND file_hash = ?",
                 (user_id, file_hash)
             )
@@ -56,7 +63,7 @@ class DocumentProcessor:
     async def _check_document_limit(self, user_id: int) -> bool:
         """Проверяет, не превышен ли лимит документов для пользователя"""
         try:
-            result = await db.db_query(
+            result = await database.db_query(
                 "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
                 (user_id,)
             )
@@ -70,7 +77,7 @@ class DocumentProcessor:
         """Удаляет старые документы пользователя, оставляя указанное количество"""
         try:
             # Получаем ID старых документов для удаления
-            result = await db.db_query("""
+            result = await database.db_query("""
                 SELECT id FROM user_documents
                 WHERE user_id = ?
                 ORDER BY created_at ASC
@@ -84,7 +91,7 @@ class DocumentProcessor:
             old_doc_ids = [row['id'] for row in result]
             if old_doc_ids:
                 placeholders = ','.join(['?' for _ in old_doc_ids])
-                await db.db_query(f"""
+                await database.db_query(f"""
                     DELETE FROM user_documents
                     WHERE id IN ({placeholders})
                 """, old_doc_ids)
@@ -391,11 +398,11 @@ class DocumentProcessor:
             
             # NOTE: Schema migrations are now centralized in database.py
             
-            # Сохраняем документ
-            await db.db_query(
-                "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES (?, ?, ?, ?, ?, ?)",
-                (user_id, filename, content, pages, len(content), file_hash)
-            )
+                         # Сохраняем документ
+             await database.db_query(
+                 "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                 (user_id, filename, content, pages, len(content), file_hash)
+             )
             
             logging.info(f"Saved document {filename} for user {user_id}")
             
@@ -602,7 +609,15 @@ async def delete_user_document(document_id: int, user_id: int) -> bool:
 async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
     """Загружает файл на внешний сервис x0.at и возвращает URL"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # Улучшенная конфигурация HTTP клиента с таймаутами
+        timeout_config = httpx.Timeout(
+            connect=10.0,  # 10 секунд на подключение
+            read=60.0,     # 60 секунд на чтение (для загрузки файлов)
+            write=60.0,    # 60 секунд на запись (для загрузки файлов)
+            pool=30.0      # 30 секунд на получение соединения из пула
+        )
+        
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
             files = {'file': (filename, file_data)}
             response = await client.post('https://x0.at/', files=files)
             
@@ -618,6 +633,12 @@ async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
                 logging.error(f"Failed to upload to x0.at: {response.status_code} - {response.text}")
                 return None
                 
+    except httpx.TimeoutException as e:
+        logging.error(f"Timeout error uploading to x0.at: {e}")
+        return None
+    except httpx.ConnectError as e:
+        logging.error(f"Connection error uploading to x0.at: {e}")
+        return None
     except Exception as e:
         logging.error(f"Error uploading to x0.at: {e}")
         return None

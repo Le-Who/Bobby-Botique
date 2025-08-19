@@ -4,6 +4,7 @@ import asyncio
 import signal
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler
+from telegram.error import NetworkError, TimedOut, RetryAfter
 from flask import Flask
 from hypercorn.config import Config as HypercornConfig
 from hypercorn.asyncio import serve
@@ -47,43 +48,132 @@ async def health_check_database():
             # Попытка переподключения
             await database.reconnect_database()
 
+async def health_check_network():
+    """Периодическая проверка сетевого подключения к Telegram API"""
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.sleep(60)  # Каждую минуту
+            if shutdown_event.is_set():
+                break
+            
+            # Простая проверка доступности Telegram API
+            import httpx
+            timeout_config = httpx.Timeout(connect=5.0, read=10.0)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
+                response = await client.get("https://api.telegram.org")
+                if response.status_code == 200:
+                    logging.debug("Network health check passed")
+                else:
+                    logging.warning(f"Telegram API responded with status {response.status_code}")
+                    
+        except httpx.TimeoutException:
+            logging.warning("Network health check timeout - possible connectivity issues")
+        except httpx.ConnectError:
+            logging.warning("Network health check connection error - possible connectivity issues")
+        except Exception as e:
+            logging.error(f"Network health check failed: {e}")
+
+async def run_bot_with_retry():
+    """Запускает бота с автоматическими повторами при сетевых ошибках"""
+    max_retries = 5
+    base_delay = 1  # секунды
+    
+    for attempt in range(max_retries):
+        try:
+            application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+            
+            # Настройка таймаутов и повторных попыток для HTTP клиента
+            application.bot.request.timeout = 30.0  # 30 секунд таймаут
+            application.bot.request.connect_timeout = 10.0  # 10 секунд на подключение
+            application.bot.request.read_timeout = 30.0  # 30 секунд на чтение
+            
+            # Регистрация всех обработчиков
+            commands.register(application)
+            callbacks.register(application)
+            messages.register(application)
+            application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
+            
+            async with application:
+                await application.start()
+                
+                # Настройка polling с улучшенными параметрами
+                await application.updater.start_polling(
+                    allowed_updates=Update.ALL_TYPES,
+                    drop_pending_updates=True,  # Игнорируем старые обновления
+                    timeout=30,  # Таймаут для long polling
+                    read_timeout=30,  # Таймаут для чтения
+                    write_timeout=30,  # Таймаут для записи
+                    connect_timeout=10,  # Таймаут для подключения
+                    pool_timeout=30,  # Таймаут для получения соединения из пула
+                )
+                
+                logging.info("Bot started successfully with network error handling")
+                
+                # Ждем завершения
+                while not shutdown_event.is_set():
+                    await asyncio.sleep(1)
+                
+                await application.updater.stop()
+                await application.stop()
+                break  # Успешное завершение
+                
+        except (NetworkError, TimedOut, RetryAfter) as e:
+            delay = base_delay * (2 ** attempt)  # Экспоненциальная задержка
+            logging.warning(f"Network error on attempt {attempt + 1}/{max_retries}: {e}")
+            logging.info(f"Retrying in {delay} seconds...")
+            
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
+            else:
+                logging.error(f"Max retries ({max_retries}) reached. Bot failed to start.")
+                raise
+        except Exception as e:
+            logging.error(f"Unexpected error during bot startup: {e}")
+            raise
+
 async def run_bot_and_server():
     """Основная логика: запускает бота и веб-сервер параллельно."""
-    application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
     
-    # Регистрация всех обработчиков
-    commands.register(application)
-    callbacks.register(application)
-    messages.register(application)
-    application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
+    hypercorn_config = HypercornConfig()
+    hypercorn_config.bind = [f"0.0.0.0:{settings.PORT}"]
     
-    async with application:
-        await application.start()
-        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        
-        hypercorn_config = HypercornConfig()
-        hypercorn_config.bind = [f"0.0.0.0:{settings.PORT}"]
-        
-        logging.info(f"Health check server will run on port {settings.PORT}.")
-        logging.info("Bot is running...")
-        
-        # Запускаем мониторинг БД в фоне
-        db_monitor_task = asyncio.create_task(health_check_database())
+    logging.info(f"Health check server will run on port {settings.PORT}.")
+    logging.info("Bot is running...")
+    
+    # Запускаем мониторинг БД в фоне
+    db_monitor_task = asyncio.create_task(health_check_database())
+    
+    # Запускаем мониторинг сети в фоне
+    network_monitor_task = asyncio.create_task(health_check_network())
+    
+    # Запускаем бота с обработкой ошибок
+    bot_task = asyncio.create_task(run_bot_with_retry())
+    
+    try:
+        # Запускаем веб-сервер
+        await serve(flask_app, hypercorn_config)
+    except Exception as e:
+        logging.error(f"Web server error: {e}")
+    finally:
+        # Отменяем все задачи
+        db_monitor_task.cancel()
+        network_monitor_task.cancel()
+        bot_task.cancel()
         
         try:
-            await serve(flask_app, hypercorn_config)
-        except Exception as e:
-            logging.error(f"Web server error: {e}")
-        finally:
-            # Отменяем мониторинг БД
-            db_monitor_task.cancel()
-            try:
-                await db_monitor_task
-            except asyncio.CancelledError:
-                pass
-            
-            await application.updater.stop()
-            await application.stop()
+            await db_monitor_task
+        except asyncio.CancelledError:
+            pass
+        
+        try:
+            await network_monitor_task
+        except asyncio.CancelledError:
+            pass
+        
+        try:
+            await bot_task
+        except asyncio.CancelledError:
+            pass
 
 async def main():
     """Главная функция: настраивает логирование, БД и запускает приложение."""

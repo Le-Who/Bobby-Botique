@@ -1,11 +1,11 @@
-python-telegram-bot
+python-telegram-bot>=20.7,<21.0
 google-genai
 Pillow
 pytz
 Flask
 tavily-python
 asyncpg
-httpx
+httpx>=0.25.0,<1.0.0
 hypercorn
 pydantic-settings
 PyPDF2
