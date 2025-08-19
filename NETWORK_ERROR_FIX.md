@@ -39,6 +39,10 @@
 - ❌ **Было:** `property 'read_timeout' of 'HTTPXRequest' object has no setter`
 - ✅ **Стало:** Правильная настройка таймаутов через создание кастомного `HTTPXRequest` объекта
 
+### **Исправлена ошибка атрибута request**
+- ❌ **Было:** `Attribute 'request' of class 'ExtBot' can't be set!`
+- ✅ **Стало:** Использование `Application.builder().request(custom_request)` для правильной настройки
+
 ### **Улучшен мониторинг здоровья системы**
 - ❌ **Было:** Внешние сервисы (Tavily, Gemini) блокировали работу бота при недоступности
 - ✅ **Стало:** Внешние сервисы не критичны для работы бота, только предупреждения
@@ -58,7 +62,7 @@ custom_timeout = Timeout(
     pool=30.0      # 30 секунд на получение соединения из пула
 )
 
-# Создаем новый Request объект с кастомными таймаутами
+# Создаем кастомный Request объект
 custom_request = HTTPXRequest(
     connection_pool_size=8,
     connect_timeout=custom_timeout,
@@ -67,8 +71,8 @@ custom_request = HTTPXRequest(
     pool_timeout=custom_timeout
 )
 
-# Применяем кастомный Request к боту
-application.bot.request = custom_request
+# Пересоздаем Application с кастомным Request через builder
+application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
 ```
 
 #### **2. Улучшенный мониторинг здоровья:**
@@ -197,5 +201,6 @@ MAX_DELAY = 60.0
 - ✅ Снижена вероятность сбоев из-за временных проблем сети
 - ✅ Улучшена диагностика проблем
 - ✅ **Исправлена ошибка HTTPXRequest timeout**
+- ✅ **Исправлена ошибка атрибута request**
 - ✅ **Улучшен мониторинг здоровья системы**
 - ✅ **Внешние сервисы не блокируют работу бота**

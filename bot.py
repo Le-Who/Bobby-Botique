@@ -80,8 +80,8 @@ async def run_bot_with_retry():
         try:
             application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
             
-            # Настройка таймаутов через Request объект
-            # Создаем кастомный Request с нужными таймаутами
+            # Настройка таймаутов через Application.builder()
+            # Создаем Application с кастомными настройками Request
             from telegram.request import HTTPXRequest
             from httpx import Timeout
             
@@ -92,7 +92,7 @@ async def run_bot_with_retry():
                 pool=30.0      # 30 секунд на получение соединения из пула
             )
             
-            # Создаем новый Request объект с кастомными таймаутами
+            # Создаем кастомный Request объект
             custom_request = HTTPXRequest(
                 connection_pool_size=8,
                 connect_timeout=custom_timeout,
@@ -101,8 +101,8 @@ async def run_bot_with_retry():
                 pool_timeout=custom_timeout
             )
             
-            # Применяем кастомный Request к боту
-            application.bot.request = custom_request
+            # Пересоздаем Application с кастомным Request
+            application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
             
             # Регистрация всех обработчиков
             commands.register(application)
