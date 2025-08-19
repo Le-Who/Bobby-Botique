@@ -105,12 +105,12 @@ class AlertManager:
                 alert_key = self._generate_alert_key("no_keys", model_name)
                 
                 if await self._should_send_alert(alert_key):
-                                            alert_msg = (
-                            f"🚨 *ALERT: No Available Keys*\n"
-                            f"Model: `{model_name}`\n"
-                            f"Status: All keys exhausted\n"
-                            f"Time: {datetime.now().strftime('%H:%M:%S')}"
-                        )
+                    alert_msg = (
+                        f"🚨 *ALERT: No Available Keys*\n"
+                        f"Model: `{model_name}`\n"
+                        f"Status: All keys exhausted\n"
+                        f"Time: {datetime.now().strftime('%H:%M:%S')}"
+                    )
                     alerts.append(alert_msg)
                     await self._mark_alert_sent(alert_key)
         
