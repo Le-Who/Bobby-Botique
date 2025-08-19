@@ -18,8 +18,16 @@ QNA_LOCALIZATION_PROMPT = """
    - NEVER use HTML tags like `<b>`, `<i>`, `<code>`, `<a>`, etc.
    - NEVER use double asterisks `**text**` - use single `*text*` instead
    - NEVER use double underscores `__text__` - use single `_text_` instead
+   - NEVER use LaTeX math syntax like `$...$` or `$$...$$` - use plain text for math
    - If you need to use special characters (., !, -, [, ], (, ), *, _, `, ~, >, #, +, =, |, {, }), escape them with backslash: `\.`, `\!`, `\-`, etc.
-5. Your output MUST ONLY be the final, processed text. Do not add any conversational filler like "Here is the answer..." or "According to the information...".
+5. **MATHEMATICAL EXPRESSIONS FORMATTING:**
+   - NEVER use LaTeX: `$1 \times 1 = 1$` or `$$\sqrt{2}$$`
+   - ALWAYS use plain text: `1 × 1 = 1` or `√2` or `корень из 2`
+   - For fractions: use `/` (e.g., `1/2` instead of `$\frac{1}{2}$`)
+   - For square roots: use `√` or `корень из` (e.g., `√2` or `корень из 2`)
+   - For powers: use `^` (e.g., `2^2 = 4` instead of `$2^2 = 4$`)
+   - For multiplication: use `×` or `*` (e.g., `2 × 3 = 6` or `2 * 3 = 6`)
+6. Your output MUST ONLY be the final, processed text. Do not add any conversational filler like "Here is the answer..." or "According to the information...".
 """
 
 URL_SELECTION_PROMPT = """
@@ -64,13 +72,21 @@ SYNTHESIS_PROMPT = """
    - **NEVER use double asterisks** `**text**` - always use single `*text*`
    - **NEVER use double underscores** `__text__` - always use single `_text_`
    - **NEVER use square bracket links** like `[[text]]` - only use `[text](URL)`
-4. **You MUST cite your sources using the correct MarkdownV2 link format ONLY:** `[display text](URL)`.
+   - **NEVER use LaTeX math syntax** like `$...$` or `$$...$$` - use plain text for math
+4. **MATHEMATICAL EXPRESSIONS FORMATTING:**
+   - **NEVER use LaTeX:** `$1 \times 1 = 1$` or `$$\sqrt{2}$$`
+   - **ALWAYS use plain text:** `1 × 1 = 1` or `√2` or `корень из 2`
+   - For fractions: use `/` (e.g., `1/2` instead of `$\frac{1}{2}$`)
+   - For square roots: use `√` or `корень из` (e.g., `√2` or `корень из 2`)
+   - For powers: use `^` (e.g., `2^2 = 4` instead of `$2^2 = 4$`)
+   - For multiplication: use `×` or `*` (e.g., `2 × 3 = 6` or `2 * 3 = 6`)
+5. **You MUST cite your sources using the correct MarkdownV2 link format ONLY:** `[display text](URL)`.
    - **CRITICAL:** You MUST NOT use any other link format, such as `[[...]]` or `<a href="...">...</a>`. This is a strict requirement.
    - The `[display text]` should be short and descriptive (e.g., the article title or `Источник 1`).
    - The `(URL)` MUST be the full, original URL from the context.
    - Any special characters (`.`, `!`, `-`, `[`, `]`, `(`, `)`, `*`, `_`, `` ` ``, `~`, `>`, `#`, `+`, `=`, `|`, `{`, `}`, `\.`, `\!`) inside the `[display text]` part MUST be escaped with a preceding backslash (`\\`).
-5. If you find conflicting information, highlight this discrepancy.
-6. If the context is insufficient, state that clearly. Do not use any prior knowledge.
+6. If you find conflicting information, highlight this discrepancy.
+7. If the context is insufficient, state that clearly. Do not use any prior knowledge.
 
 **PERFECT CITATION EXAMPLE:**
 The price was listed as 5500 грн [according to this OLX listing](https://www.olx.ua/...).
@@ -85,6 +101,9 @@ The price was listed as 5500 грн [according to this OLX listing](https://www.
 - _Secondary emphasis_ should be italic
 - `` `code snippet` `` should be in code format
 - [Link text](https://example.com) should be a proper link
+- Math: `2 × 3 = 6` (NOT `$2 \times 3 = 6$`)
+- Square root: `√2` (NOT `$\sqrt{2}$`)
+- Fraction: `1/2` (NOT `$\frac{1}{2}$`)
 """
 
 IMAGE_ANALYSIS_PROMPT = """

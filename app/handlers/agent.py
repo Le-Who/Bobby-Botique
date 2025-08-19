@@ -268,6 +268,27 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
 
 Вопрос пользователя: {user_message}
 
+**ИНСТРУКЦИИ ПО ФОРМАТИРОВАНИЮ:**
+1. Используй Telegram MarkdownV2 синтаксис:
+   - Для жирного текста: `*жирный текст*` (НЕ `**жирный текст**`)
+   - Для курсива: `_курсив_` (НЕ `__курсив__`)
+   - Для кода: `` `код` ``
+   - Для списков: каждый элемент начинается с `- `
+
+2. **КРИТИЧЕСКИЕ ПРАВИЛА ФОРМАТИРОВАНИЯ:**
+   - НИКОГДА не используй HTML теги: `<b>`, `<i>`, `<code>`, `<a>`, etc.
+   - НИКОГДА не используй двойные звездочки `**текст**` - используй одинарные `*текст*`
+   - НИКОГДА не используй двойные подчеркивания `__текст__` - используй одинарные `_текст_`
+   - НИКОГДА не используй LaTeX математические выражения: `$...$` или `$$...$$`
+
+3. **ФОРМАТИРОВАНИЕ МАТЕМАТИЧЕСКИХ ВЫРАЖЕНИЙ:**
+   - НИКОГДА не используй LaTeX: `$1 \times 1 = 1$` или `$$\sqrt{2}$$`
+   - ВСЕГДА используй обычный текст: `1 × 1 = 1` или `√2` или `корень из 2`
+   - Для дробей: используй `/` (например, `1/2` вместо `$\frac{1}{2}$`)
+   - Для корней: используй `√` или `корень из` (например, `√2` или `корень из 2`)
+   - Для степеней: используй `^` (например, `2^2 = 4` вместо `$2^2 = 4$`)
+   - Для умножения: используй `×` или `*` (например, `2 × 3 = 6` или `2 * 3 = 6`)
+
 Ответь на вопрос пользователя, основываясь на содержимом документа. Если в документе нет информации для ответа, честно скажи об этом."""
         
         gemini_key, model_used, _ = await _resolve_gemini_request(settings.DEFAULT_MODEL)
@@ -350,7 +371,9 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         # Если не можем отредактировать, отправляем новое сообщение
         placeholder_message = await placeholder_message.reply_text(f"🧠 Модель {model_used} думает...")
     
-    response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
+    # Используем системную инструкцию пользователя или инструкцию по умолчанию
+    system_instruction = chat_state.system_prompt or settings.DEFAULT_SYSTEM_PROMPT
+    response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=system_instruction)
     
     if response_text:
         reply_markup = None
@@ -387,7 +410,18 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
         photo_data = await photo_file.download_as_bytearray()
         img = Image.open(io.BytesIO(photo_data))
         prompt = original_message.caption or "Опиши это изображение."
-        response_text, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [prompt, img]}], model_used)
+        
+        # Добавляем инструкции по форматированию к промпту для изображений
+        formatted_prompt = f"""{prompt}
+
+**ВАЖНО:** Используй правильное форматирование для Telegram:
+- Для жирного текста: `*жирный текст*` (НЕ `**жирный текст**`)
+- Для курсива: `_курсив_` (НЕ `__курсив__`)
+- Для кода: `` `код` ``
+- НИКОГДА не используй HTML теги или LaTeX математические выражения (`$...$`)
+- Для математики используй обычный текст: `2 × 3 = 6`, `√2`, `1/2`"""
+        
+        response_text, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [formatted_prompt, img]}], model_used)
         
         await send_long_message(placeholder_message, response_text or "Не удалось обработать изображение.")
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
