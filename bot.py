@@ -78,8 +78,6 @@ async def run_bot_with_retry():
     
     for attempt in range(max_retries):
         try:
-            application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
-            
             # Настройка таймаутов через Application.builder()
             # Создаем Application с кастомными настройками Request
             from telegram.request import HTTPXRequest
@@ -101,7 +99,7 @@ async def run_bot_with_retry():
                 pool_timeout=custom_timeout
             )
             
-            # Пересоздаем Application с кастомным Request
+            # Создаем Application с кастомным Request
             application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
             
             # Регистрация всех обработчиков

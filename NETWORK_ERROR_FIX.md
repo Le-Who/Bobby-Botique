@@ -91,10 +91,23 @@ if any(status == "error" for status in critical_services):
 
 ### Таймауты и повторные попытки
 ```python
-# Настройка таймаутов для Telegram API
-application.bot.request.timeout = 30.0
-application.bot.request.connect_timeout = 10.0
-application.bot.request.read_timeout = 30.0
+# Настройка таймаутов для Telegram API через Application.builder()
+custom_timeout = Timeout(
+    connect=10.0,  # 10 секунд на подключение
+    read=30.0,     # 30 секунд на чтение
+    write=30.0,    # 30 секунд на запись
+    pool=30.0      # 30 секунд на получение соединения из пула
+)
+
+custom_request = HTTPXRequest(
+    connection_pool_size=8,
+    connect_timeout=custom_timeout,
+    read_timeout=custom_timeout,
+    write_timeout=custom_timeout,
+    pool_timeout=custom_timeout
+)
+
+application = Application.builder().token(TOKEN).request(custom_request).build()
 
 # Автоматические повторы с экспоненциальной задержкой
 max_retries = 5
