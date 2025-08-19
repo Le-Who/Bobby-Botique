@@ -412,7 +412,7 @@ class DocumentProcessor:
     async def get_document_by_id(self, document_id: int, user_id: int) -> Optional[Dict[str, Any]]:
         """Получает документ по ID"""
         try:
-            result = await db.db_query(
+            result = await database.db_query(
                 "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = ? AND user_id = ?",
                 (document_id, user_id)
             )
@@ -436,7 +436,7 @@ class DocumentProcessor:
     async def get_user_documents(self, user_id: int) -> List[Dict[str, Any]]:
         """Получает список документов пользователя"""
         try:
-            result = await db.db_query(
+            result = await database.db_query(
                 "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = ? ORDER BY created_at DESC",
                 (user_id,)
             )
@@ -460,7 +460,7 @@ class DocumentProcessor:
     async def get_document_content(self, document_id: int, user_id: int) -> Optional[str]:
         """Получает содержимое документа"""
         try:
-            result = await db.db_query(
+            result = await database.db_query(
                 "SELECT content FROM user_documents WHERE id = ? AND user_id = ?",
                 (document_id, user_id)
             )
@@ -476,7 +476,7 @@ class DocumentProcessor:
     async def delete_document(self, document_id: int, user_id: int) -> bool:
         """Удаляет документ"""
         try:
-            await db.db_query(
+            await database.db_query(
                 "DELETE FROM user_documents WHERE id = ? AND user_id = ?",
                 (document_id, user_id)
             )
@@ -489,7 +489,7 @@ class DocumentProcessor:
     async def cleanup_old_documents(self, days_old: int = 3) -> int:
         """Очищает документы старше указанного количества дней"""
         try:
-            result = await db.db_query("""
+            result = await database.db_query("""
                 DELETE FROM user_documents
                 WHERE created_at < (CURRENT_TIMESTAMP - (? * INTERVAL '1 day'))
             """, (days_old,))
@@ -506,11 +506,11 @@ class DocumentProcessor:
         """Получает статистику документов"""
         try:
             # Общее количество документов
-            total_result = await db.db_query("SELECT COUNT(*) as total FROM user_documents")
+            total_result = await database.db_query("SELECT COUNT(*) as total FROM user_documents")
             total_docs = total_result['total'] if total_result else 0
             
             # Размер БД (приблизительно)
-            size_result = await db.db_query("""
+            size_result = await database.db_query("""
                 SELECT 
                     COUNT(*) as doc_count,
                     COALESCE(SUM(file_size), 0) as total_size,
@@ -537,14 +537,14 @@ class DocumentProcessor:
         """Получает статистику документов конкретного пользователя"""
         try:
             # Количество документов пользователя
-            count_result = await db.db_query(
+            count_result = await database.db_query(
                 "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
                 (user_id,)
             )
             doc_count = count_result['doc_count'] if count_result else 0
             
             # Размер документов пользователя
-            size_result = await db.db_query("""
+            size_result = await database.db_query("""
                 SELECT 
                     COALESCE(SUM(file_size), 0) as total_size,
                     COALESCE(AVG(file_size), 0) as avg_size
@@ -606,41 +606,43 @@ async def delete_user_document(document_id: int, user_id: int) -> bool:
     """Удаляет документ пользователя"""
     return await document_processor.delete_document(document_id, user_id)
 
-async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
-    """Загружает файл на внешний сервис x0.at и возвращает URL"""
-    try:
-        # Улучшенная конфигурация HTTP клиента с таймаутами
-        timeout_config = httpx.Timeout(
-            connect=10.0,  # 10 секунд на подключение
-            read=60.0,     # 60 секунд на чтение (для загрузки файлов)
-            write=60.0,    # 60 секунд на запись (для загрузки файлов)
-            pool=30.0      # 30 секунд на получение соединения из пула
-        )
+async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
+    """Internal function for uploading file to x0.at with retry logic."""
+    timeout_config = httpx.Timeout(
+        connect=10.0,  # 10 секунд на подключение
+        read=60.0,     # 60 секунд на чтение (для загрузки файлов)
+        write=60.0,    # 60 секунд на запись (для загрузки файлов)
+        pool=30.0      # 30 секунд на получение соединения из пула
+    )
+    
+    async with httpx.AsyncClient(timeout=timeout_config) as client:
+        files = {'file': (filename, file_data)}
+        response = await client.post('https://x0.at/', files=files)
         
-        async with httpx.AsyncClient(timeout=timeout_config) as client:
-            files = {'file': (filename, file_data)}
-            response = await client.post('https://x0.at/', files=files)
-            
-            if response.status_code == 200:
-                url = response.text.strip()
-                if url.startswith('http'):
-                    logging.info(f"File {filename} uploaded to x0.at: {url}")
-                    return url
-                else:
-                    logging.error(f"Invalid response from x0.at: {response.text}")
-                    return None
+        if response.status_code == 200:
+            url = response.text.strip()
+            if url.startswith('http'):
+                logging.info(f"File {filename} uploaded to x0.at: {url}")
+                return url
             else:
-                logging.error(f"Failed to upload to x0.at: {response.status_code} - {response.text}")
+                logging.error(f"Invalid response from x0.at: {response.text}")
                 return None
-                
-    except httpx.TimeoutException as e:
-        logging.error(f"Timeout error uploading to x0.at: {e}")
-        return None
-    except httpx.ConnectError as e:
-        logging.error(f"Connection error uploading to x0.at: {e}")
-        return None
+        else:
+            logging.error(f"Failed to upload to x0.at: {response.status_code} - {response.text}")
+            return None
+
+async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
+    """Загружает файл на внешний сервис x0.at и возвращает URL с автоматическими повторами"""
+    try:
+        return await NetworkErrorHandler.retry_with_backoff(
+            _upload_file_to_x0_at, 
+            max_retries=3, 
+            base_delay=2.0,
+            file_data=file_data, 
+            filename=filename
+        )
     except Exception as e:
-        logging.error(f"Error uploading to x0.at: {e}")
+        logging.error(f"Error uploading to x0.at after retries: {e}")
         return None
 
 async def get_document_by_id(document_id: int, user_id: int) -> Optional[Dict[str, Any]]:

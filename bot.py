@@ -50,28 +50,26 @@ async def health_check_database():
 
 async def health_check_network():
     """Периодическая проверка сетевого подключения к Telegram API"""
+    from app.utils.health_monitor import health_monitor
+    
     while not shutdown_event.is_set():
         try:
             await asyncio.sleep(60)  # Каждую минуту
             if shutdown_event.is_set():
                 break
             
-            # Простая проверка доступности Telegram API
-            import httpx
-            timeout_config = httpx.Timeout(connect=5.0, read=10.0)
-            async with httpx.AsyncClient(timeout=timeout_config) as client:
-                response = await client.get("https://api.telegram.org")
-                if response.status_code == 200:
-                    logging.debug("Network health check passed")
-                else:
-                    logging.warning(f"Telegram API responded with status {response.status_code}")
+            # Используем улучшенный мониторинг здоровья
+            health_report = await health_monitor.get_system_health_report(database.db_query)
+            
+            if health_report["overall_status"] == "critical":
+                logging.critical(f"CRITICAL SYSTEM STATUS: {health_report['recommendations']}")
+            elif health_report["overall_status"] == "degraded":
+                logging.warning(f"System status degraded: {health_report['recommendations']}")
+            else:
+                logging.debug("System health check passed")
                     
-        except httpx.TimeoutException:
-            logging.warning("Network health check timeout - possible connectivity issues")
-        except httpx.ConnectError:
-            logging.warning("Network health check connection error - possible connectivity issues")
         except Exception as e:
-            logging.error(f"Network health check failed: {e}")
+            logging.error(f"Health check failed: {e}")
 
 async def run_bot_with_retry():
     """Запускает бота с автоматическими повторами при сетевых ошибках"""
