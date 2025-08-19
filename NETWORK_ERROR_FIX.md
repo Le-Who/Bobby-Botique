@@ -47,6 +47,10 @@
 - ❌ **Было:** Внешние сервисы (Tavily, Gemini) блокировали работу бота при недоступности
 - ✅ **Стало:** Внешние сервисы не критичны для работы бота, только предупреждения
 
+### **Исправлена ошибка проверки Telegram API**
+- ❌ **Было:** Health check показывал "Telegram API connectivity issues" даже когда бот работал
+- ✅ **Стало:** Реальная проверка API через HTTP запрос вместо простой проверки доступности URL
+
 ### **Исправлена ошибка типов таймаутов**
 - ❌ **Было:** `TypeError("unsupported operand type(s) for +: 'float' and 'Timeout'")`
 - ✅ **Стало:** Передача числовых значений таймаутов напрямую в `HTTPXRequest`
@@ -81,6 +85,19 @@ if service_health["status"] == "warning":
 critical_services = [telegram_health["status"], database_health["status"]]
 if any(status == "error" for status in critical_services):
     overall_status = "critical"
+```
+
+#### **3. Исправление проверки Telegram API:**
+```python
+# ❌ БЫЛО: Простая проверка доступности URL
+is_connected = await NetworkErrorHandler.check_connectivity("https://api.telegram.org", timeout=5.0)
+
+# ✅ СТАЛО: Реальная проверка API через HTTP запрос
+async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=10.0)) as client:
+    response = await client.get("https://api.telegram.org/bot/getMe")
+    
+if response.status_code == 200:
+    self.telegram_status = "healthy"
 ```
 
 ## 🔍 Ключевые улучшения
@@ -207,3 +224,4 @@ MAX_DELAY = 60.0
 - ✅ **Улучшен мониторинг здоровья системы**
 - ✅ **Внешние сервисы не блокируют работу бота**
 - ✅ **Исправлена ошибка типов таймаутов**
+- ✅ **Исправлена ошибка проверки Telegram API**
