@@ -287,4 +287,258 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         text = (
             "🗄️ **Статистика кэша:**\n\n"
-            f"Всего записей: `
+            f"Всего записей: `{stats['total_entries']}`\n"
+            f"Максимальный размер: `{stats['max_size']}`\n"
+            f"Попадания в кэш: `{stats['cache_hit_rate']:.1f}%`\n"
+            f"Среднее количество обращений: `{stats['avg_access_count']:.1f}`\n"
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения статистики кэша: {e}")
+
+async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список документов пользователя и управляет ими"""
+    if not await db.is_authorized(update.effective_user.id):
+        return
+    
+    # Очищаем состояние работы с документами при входе в команду
+    from ..state import clear_document_state
+    clear_document_state(update.effective_user.id)
+    
+    try:
+        from ..document_processor import get_user_documents
+        documents = await get_user_documents(update.effective_user.id)
+        if not documents:
+            text = (
+                "📋 **Ваши документы**\n\n"
+                "У вас пока нет загруженных документов.\n\n"
+                "💡 **Как загрузить документ:**\n"
+                "• Отправьте PDF или DOCX файл\n"
+                "• Максимальный размер: 50MB\n"
+                "• После загрузки вы сможете задавать вопросы по содержимому\n\n"
+                "📋 **Политика хранения:**\n"
+                "• Максимум документов: 5\n"
+                "• Срок хранения: 3 дня"
+            )
+        else:
+            text = "📋 **Ваши документы:**\n\n"
+            for i, doc in enumerate(documents[:10], 1):
+                text += f"{i}. **{doc['filename']}**\n"
+                text += f"   📄 Страниц: {doc['pages']}\n"
+                text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
+                text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
+            if len(documents) > 10:
+                text += f"... и еще {len(documents) - 10} документов\n\n"
+            text += (
+                "💡 **Действия:**\n"
+                "• Отправьте новый документ для загрузки\n"
+                "• Задайте вопрос по последнему документу\n"
+                "• Используйте кнопки под сообщениями для управления\n\n"
+                "📋 **Политика хранения:**\n"
+                "• Максимум документов: 5\n"
+                "• Срок хранения: 3 дня"
+            )
+        keyboard = [
+            [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
+            [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
+            [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
+        ]
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка получения документов: {e}")
+        logging.error(f"Error in documents command: {e}", exc_info=True)
+
+async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику очереди задач"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        stats = await task_queue.get_queue_stats()
+        
+        text = (
+            "📋 **Статистика очереди задач:**\n\n"
+            f"Всего задач: `{stats['total_tasks']}`\n"
+            f"В ожидании: `{stats['pending_tasks']}`\n"
+            f"Выполняется: `{stats['running_tasks']}`\n"
+            f"Завершено: `{stats['completed_tasks']}`\n"
+            f"Ошибок: `{stats['failed_tasks']}`\n"
+            f"Размер очереди: `{stats['queue_size']}`\n"
+            f"Активных воркеров: `{stats['active_workers']}`\n"
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения статистики очереди: {e}")
+
+async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Очищает кэш"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        await search_cache.clear()
+        await update.message.reply_text("✅ Кэш очищен.")
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка очистки кэша: {e}")
+
+async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Очищает старые метрики (старше 30 дней)"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        # Удаляем метрики старше 30 дней
+        result = await db.db_query("""
+            DELETE FROM metrics 
+            WHERE metric_date < CURRENT_DATE - INTERVAL '30 days'
+        """)
+        
+        # Удаляем старые ошибки (старше 7 дней)
+        await db.db_query("""
+            DELETE FROM error_logs 
+            WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
+        """)
+        
+        await update.message.reply_text("✅ Старые метрики очищены (старше 30 дней).")
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка очистки метрик: {e}")
+
+async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Регистрирует групповой чат"""
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    
+    chat = update.effective_chat
+    if chat.type == 'private':
+        await update.message.reply_text("Эта команда работает только в групповых чатах.")
+        return
+    
+    try:
+        success = await group_chat_manager.register_group(chat.id, chat.title, user_id)
+        if success:
+            await update.message.reply_text(f"✅ Группа '{chat.title}' зарегистрирована!")
+        else:
+            await update.message.reply_text("❌ Группа уже зарегистрирована или произошла ошибка.")
+            
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка регистрации группы: {e}")
+
+async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику группы"""
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    
+    chat = update.effective_chat
+    if chat.type == 'private':
+        await update.message.reply_text("Эта команда работает только в групповых чатах.")
+        return
+    
+    try:
+        stats = await group_chat_manager.get_group_stats(chat.id)
+        
+        text = (
+            f"📊 **Статистика группы '{chat.title}':**\n\n"
+            f"Всего сообщений: `{stats['total_messages']}`\n"
+            f"Сообщений за 24ч: `{stats['recent_messages']}`\n"
+            f"Активных пользователей за 24ч: `{stats['active_users_24h']}`\n"
+            f"Участников: `{stats['member_count']}`\n"
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения статистики группы: {e}")
+
+async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику документов"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        from ..document_processor import document_processor
+        
+        stats = await document_processor.get_document_stats()
+        
+        text = (
+            f"📊 **Статистика документов:**\n\n"
+            f"• Всего документов: `{stats['total_documents']}`\n"
+            f"• Общий размер: `{stats['total_size_mb']:.2f} MB`\n"
+            f"• Средний размер: `{stats['average_size_chars']:.0f} символов`\n"
+            f"• Общий размер в символах: `{stats['total_size_chars']:,}`\n\n"
+            f"📋 **Политика хранения:**\n"
+            f"• Максимум документов на пользователя: `5`\n"
+            f"• Срок хранения: `3 дня`\n"
+            f"• Автоматическая очистка: `ежедневно в 3:00`\n\n"
+            f"💡 Используйте `/clearolddocs` для ручной очистки старых документов."
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения статистики документов: {e}")
+        logging.error(f"Error in document_stats_command: {e}", exc_info=True)
+
+async def clear_old_documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Очищает старые документы (старше 3 дней)"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        from ..document_processor import document_processor
+        
+        # Очищаем документы старше 3 дней
+        deleted_count = await document_processor.cleanup_old_documents(3)
+        
+        # Получаем статистику после очистки
+        stats = await document_processor.get_document_stats()
+        
+        text = (
+            f"🗑️ **Очистка документов завершена**\n\n"
+            f"Удалено документов: `{deleted_count}`\n\n"
+            f"📊 **Текущая статистика:**\n"
+            f"• Всего документов: `{stats['total_documents']}`\n"
+            f"• Общий размер: `{stats['total_size_mb']:.2f} MB`\n"
+            f"• Средний размер: `{stats['average_size_chars']:.0f} символов`\n\n"
+            f"💡 Документы старше 3 дней удаляются автоматически."
+        )
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка очистки документов: {e}")
+        logging.error(f"Error in clear_old_documents_command: {e}", exc_info=True)
+
+def register(application: Application):
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("newchat", new_chat_command))
+    application.add_handler(CommandHandler("model", model_command))
+    application.add_handler(CommandHandler("setprompt", set_prompt_command))
+    application.add_handler(CommandHandler("res", research_mode_command))
+    # Команды /keystatus и /credits объединены с /metrics
+    application.add_handler(CommandHandler("listmodels", list_models_command))
+    application.add_handler(CommandHandler("adduser", add_user_command))
+    application.add_handler(CommandHandler("deluser", del_user_command))
+    application.add_handler(CommandHandler("listusers", list_users_command))
+    
+    # Новые команды для мониторинга и управления
+    application.add_handler(CommandHandler("metrics", metrics_command))
+    application.add_handler(CommandHandler("cachestats", cache_stats_command))
+    application.add_handler(CommandHandler("queuestats", queue_stats_command))
+    application.add_handler(CommandHandler("clearcache", clear_cache_command))
+    application.add_handler(CommandHandler("clearoldmetrics", clear_old_metrics_command))
+    application.add_handler(CommandHandler("clearolddocs", clear_old_documents_command))
+    application.add_handler(CommandHandler("docstats", document_stats_command))
+    
+    # Команды для групповых чатов
+    application.add_handler(CommandHandler("registergroup", register_group_command))
+    application.add_handler(CommandHandler("groupstats", group_stats_command))
+    
+    # Команды для работы с документами
+    application.add_handler(CommandHandler("documents", documents_command))
