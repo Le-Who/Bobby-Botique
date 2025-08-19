@@ -349,9 +349,11 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
    if action == "new_topic":
        chat_state = await db.get_user_chat(user_id)
        chat_state.history = []
+       chat_state.token_count = 0
+       chat_state.system_prompt = None
        chat_state.is_deep_dive = False
        await db.update_user_chat(user_id, chat_state)
-       await query.message.reply_text("Начинаем с чистого листа ✍️\nО чём вы хотите узнать на этот раз?")
+       await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
        await query.edit_message_reply_markup(reply_markup=None)
 
    elif action == "deeper_dive":
@@ -368,14 +370,18 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     user_id = query.from_user.id
     
-    # Clear chat history, similar to /newchat command
+    # Clear chat history and system prompt, similar to /newchat command
     chat_state = await db.get_user_chat(user_id)
     chat_state.history = []
     chat_state.token_count = 0
+    chat_state.system_prompt = None
     await db.update_user_chat(user_id, chat_state)
     
     # Remove the old inline keyboard
     await query.edit_message_reply_markup(reply_markup=None)
+    
+    # Send confirmation message
+    await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
 
 def register(application: Application):
    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model_"))
