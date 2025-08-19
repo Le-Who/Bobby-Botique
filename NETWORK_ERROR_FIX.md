@@ -33,6 +33,56 @@
 - `python-telegram-bot>=20.7,<21.0`
 - `httpx>=0.25.0,<1.0.0`
 
+## 🚨 **НЕДАВНИЕ ИСПРАВЛЕНИЯ (Август 2025)**
+
+### **Исправлена ошибка HTTPXRequest timeout**
+- ❌ **Было:** `property 'read_timeout' of 'HTTPXRequest' object has no setter`
+- ✅ **Стало:** Правильная настройка таймаутов через создание кастомного `HTTPXRequest` объекта
+
+### **Улучшен мониторинг здоровья системы**
+- ❌ **Было:** Внешние сервисы (Tavily, Gemini) блокировали работу бота при недоступности
+- ✅ **Стало:** Внешние сервисы не критичны для работы бота, только предупреждения
+
+### **Детали исправлений:**
+
+#### **1. Исправление HTTPXRequest в bot.py:**
+```python
+# Создаем кастомный Request с нужными таймаутами
+from telegram.request import HTTPXRequest
+from httpx import Timeout
+
+custom_timeout = Timeout(
+    connect=10.0,  # 10 секунд на подключение
+    read=30.0,     # 30 секунд на чтение
+    write=30.0,    # 30 секунд на запись
+    pool=30.0      # 30 секунд на получение соединения из пула
+)
+
+# Создаем новый Request объект с кастомными таймаутами
+custom_request = HTTPXRequest(
+    connection_pool_size=8,
+    connect_timeout=custom_timeout,
+    read_timeout=custom_timeout,
+    write_timeout=custom_timeout,
+    pool_timeout=custom_timeout
+)
+
+# Применяем кастомный Request к боту
+application.bot.request = custom_request
+```
+
+#### **2. Улучшенный мониторинг здоровья:**
+```python
+# Внешние сервисы не критичны для работы бота
+if service_health["status"] == "warning":
+    recommendations.append(f"{service_name}: {service_health.get('message')} - This is not critical for bot operation.")
+
+# Только Telegram API и база данных критичны
+critical_services = [telegram_health["status"], database_health["status"]]
+if any(status == "error" for status in critical_services):
+    overall_status = "critical"
+```
+
 ## 🔍 Ключевые улучшения
 
 ### Таймауты и повторные попытки
@@ -146,3 +196,6 @@ MAX_DELAY = 60.0
 - ✅ Добавлен комплексный мониторинг состояния системы
 - ✅ Снижена вероятность сбоев из-за временных проблем сети
 - ✅ Улучшена диагностика проблем
+- ✅ **Исправлена ошибка HTTPXRequest timeout**
+- ✅ **Улучшен мониторинг здоровья системы**
+- ✅ **Внешние сервисы не блокируют работу бота**

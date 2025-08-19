@@ -103,16 +103,29 @@ class HealthMonitor:
         
         for service_name, url in services.items():
             try:
-                is_connected = await NetworkErrorHandler.check_connectivity(url, timeout=3.0)
-                results[service_name] = {
-                    "status": "healthy" if is_connected else "unreachable",
-                    "url": url
-                }
+                # Увеличиваем таймаут для внешних сервисов
+                is_connected = await NetworkErrorHandler.check_connectivity(url, timeout=5.0)
+                
+                if is_connected:
+                    results[service_name] = {
+                        "status": "healthy",
+                        "url": url,
+                        "message": "Service is reachable"
+                    }
+                else:
+                    results[service_name] = {
+                        "status": "warning",
+                        "url": url,
+                        "message": "Service is unreachable but this may be normal"
+                    }
+                    
             except Exception as e:
+                # Внешние сервисы не критичны для работы бота
                 results[service_name] = {
-                    "status": "error",
+                    "status": "warning",
                     "error": str(e),
-                    "url": url
+                    "url": url,
+                    "message": "Service check failed but this is not critical"
                 }
         
         return results
@@ -124,8 +137,20 @@ class HealthMonitor:
         external_services = await self.check_external_services()
         
         # Determine overall system status
+        # Только Telegram API и база данных критичны для работы бота
         critical_services = [telegram_health["status"], database_health["status"]]
-        overall_status = "healthy" if all(status == "healthy" for status in critical_services) else "degraded"
+        
+        if any(status == "error" for status in critical_services):
+            overall_status = "critical"
+        elif any(status == "unhealthy" for status in critical_services):
+            overall_status = "degraded"
+        else:
+            overall_status = "healthy"
+        
+        # Внешние сервисы могут быть недоступны, но это не критично
+        external_warnings = [s for s in external_services.values() if s.get("status") == "warning"]
+        if external_warnings:
+            logging.info(f"External services have warnings: {[s.get('message', 'Unknown') for s in external_warnings]}")
         
         if self.consecutive_failures >= self.max_consecutive_failures:
             overall_status = "critical"
@@ -154,7 +179,9 @@ class HealthMonitor:
             recommendations.append("Multiple consecutive failures detected. Consider restarting the bot.")
         
         for service_name, service_health in external_services.items():
-            if service_health["status"] != "healthy":
+            if service_health["status"] == "warning":
+                recommendations.append(f"{service_name}: {service_health.get('message', 'Service check failed')} - This is not critical for bot operation.")
+            elif service_health["status"] != "healthy":
                 recommendations.append(f"{service_name} service is unreachable. Check API keys and service status.")
         
         if not recommendations:
