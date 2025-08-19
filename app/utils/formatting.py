@@ -171,15 +171,15 @@ class TelegramFormatter:
     @classmethod
     def _markdown_to_html(cls, text: str) -> str:
         """Конвертирует Markdown в HTML."""
+        # Код
+        text = re.sub(r'`(.*?)`', r'<code>\1</code>', text)
+        
         # Жирный текст
         text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
         text = re.sub(r'\*(.*?)\*', r'<b>\1</b>', text)
         
         # Курсив
         text = re.sub(r'_(.*?)_', r'<i>\1</i>', text)
-        
-        # Код
-        text = re.sub(r'`(.*?)`', r'<code>\1</code>', text)
         
         # Ссылки
         text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', text)
