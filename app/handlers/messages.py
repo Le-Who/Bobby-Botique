@@ -17,11 +17,15 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает входящие сообщения"""
     user_id = update.effective_user.id
     
+    logging.info(f"Received message from user {user_id}: {update.message.text[:100] if update.message.text else 'No text'}")
+    
     if not await db.is_authorized(user_id):
+        logging.warning(f"Unauthorized user {user_id} attempted to use bot")
         return
     
     # Обрабатываем документы
     if update.message.document:
+        logging.info(f"Processing document from user {user_id}: {update.message.document.file_name}")
         await handle_document(update, context)
         return
     
@@ -30,6 +34,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if is_in_document_mode(user_id):
         document_id = get_selected_document_id(user_id)
+        logging.info(f"User {user_id} is in document mode, document_id: {document_id}")
         if document_id:
             await handle_document_question(update, context, document_id)
         else:
@@ -48,16 +53,26 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Проверяем, есть ли изображение
     is_photo = bool(update.message.photo)
     
-    # Создаем placeholder сообщение для всех типов запросов
     if is_photo:
+        logging.info(f"Processing photo from user {user_id}")
         placeholder_message = await update.message.reply_text("🖼️ Обрабатываю изображение...")
     else:
+        logging.info(f"Processing text message from user {user_id}")
         placeholder_message = await update.message.reply_text("🤔 Думаю...")
     
     # Обычная обработка сообщений
     async def task_wrapper():
-        async with state.get_user_lock(user_id):
-            await agent.process_long_request(placeholder_message, update, context)
+        try:
+            async with state.get_user_lock(user_id):
+                logging.info(f"Starting task processing for user {user_id}")
+                await agent.process_long_request(placeholder_message, update, context)
+                logging.info(f"Completed task processing for user {user_id}")
+        except Exception as e:
+            logging.error(f"Error in task processing for user {user_id}: {e}", exc_info=True)
+            try:
+                await placeholder_message.edit_text("❌ Произошла ошибка при обработке запроса. Попробуйте позже.")
+            except Exception as edit_error:
+                logging.error(f"Failed to edit error message for user {user_id}: {edit_error}")
     
     asyncio.create_task(task_wrapper())
 

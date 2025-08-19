@@ -29,8 +29,25 @@ def _prepare_query(query: str) -> str:
         query = re.sub(r'(\?|%s)', f'${i}', query, 1)
     return query
 
+async def reconnect_database():
+    """Переподключается к базе данных при потере соединения"""
+    global db_pool
+    try:
+        logging.info("Attempting to reconnect to database...")
+        if db_pool:
+            await db_pool.close()
+            logging.info("Closed existing database pool")
+        
+        db_pool = await asyncpg.create_pool(dsn=settings.DATABASE_URL, min_size=1, max_size=10)
+        logging.info("Database reconnected successfully")
+        return True
+    except Exception as e:
+        logging.critical(f"Failed to reconnect to database: {e}")
+        return False
+
 async def db_query(query: str, params: tuple = (), retries: int = 3):
     if not db_pool:
+        logging.critical("Database pool is not initialized - this should not happen!")
         raise Exception("Database pool is not initialized")
     
     query_prepared = _prepare_query(query)
@@ -47,6 +64,24 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         except (asyncpg.exceptions.ConnectionDoesNotExistError, OSError) as e:
             logging.warning(f"DB connection error (attempt {attempt + 1}/{retries}): {e}. Retrying...")
             last_exception = e
+            if attempt == retries - 1:
+                logging.critical(f"All database retries failed. Last error: {e}")
+                # Попытка переподключения перед финальной ошибкой
+                if await reconnect_database():
+                    # Если переподключение успешно, попробуем еще раз
+                    try:
+                        async with db_pool.acquire() as conn:
+                            if query.strip().upper().startswith("SELECT"):
+                                return await conn.fetch(query_prepared, *params)
+                            else:
+                                await conn.execute(query_prepared, *params)
+                                return None
+                    except Exception as final_e:
+                        logging.critical(f"Query failed even after reconnection: {final_e}")
+                        raise final_e
+                else:
+                    logging.critical("Failed to reconnect to database, raising original error")
+                    raise last_exception
             await asyncio.sleep(1 + attempt)
         except Exception as e:
             logging.error(f"An unexpected database error occurred during query: {query_prepared[:100]}... - {e}", exc_info=False)
