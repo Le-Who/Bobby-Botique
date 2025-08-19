@@ -27,22 +27,22 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt_status = f"`{chat_state.system_prompt[:50]}...`" if chat_state.system_prompt else "Не задана"
         
         start_text = (
-            "🤖 **Добро пожаловать в Gemini Bot!**\n\n"
+            "🤖 *Добро пожаловать в Gemini Bot!*\n\n"
             "Я ваш умный ассистент с возможностями:\n"
             "• 💬 Обычный чат с AI\n"
             "• 🔍 Веб-поиск и анализ\n"
             "• 🖼️ Поиск по изображениям\n"
             "• 📄 Обработка документов\n\n"
-            "**📊 Ваши настройки:**\n"
+            "*📊 Ваши настройки:*\n"
             f"• Модель: `{chat_state.model}`\n"
             f"• Поиск: {search_status}\n"
             f"• Инструкция: {prompt_status}\n\n"
-            "**🚀 Быстрый старт:**\n"
+            "*🚀 Быстрый старт:*\n"
             "• Просто напишите сообщение для чата\n"
             "• `? вопрос` — быстрый ответ\n"
             "• `?? вопрос` — глубокий анализ\n"
             "• Отправьте фото для анализа\n\n"
-            "**⚙️ Основные команды:**\n"
+            "*⚙️ Основные команды:*\n"
             "• `/help` — подробная справка\n"
             "• `/res` — режим поиска вкл/выкл\n"
             "• `/newchat` — новый чат\n"
@@ -50,7 +50,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/setprompt` — задать инструкцию\n"
             "• `/documents` — управление документами\n"
             "• `/metrics` — статистика системы\n\n"
-            "**💡 Совет:** Начните с простого вопроса!"
+            "*💡 Совет:* Начните с простого вопроса!"
         )
         
         formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
@@ -71,25 +71,25 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         help_text = (
-            "📚 **Подробная справка по Gemini Bot**\n\n"
-            "**💬 Обычный чат:**\n"
+            "📚 *Подробная справка по Gemini Bot*\n\n"
+            "*💬 Обычный чат:*\n"
             "Просто напишите сообщение для общения с AI\n\n"
-            "**🔍 Поиск и анализ:**\n"
+            "*🔍 Поиск и анализ:*\n"
             "• `? вопрос` — быстрый фактический ответ\n"
             "• `?? вопрос` — глубокое исследование с источниками\n"
             "• `??` + фото — поиск по изображению\n\n"
-            "**📄 Работа с документами:**\n"
+            "*📄 Работа с документами:*\n"
             "• Отправьте PDF или DOCX файл\n"
             "• Задавайте вопросы по содержимому\n"
             "• `/documents` — управление документами\n\n"
-            "**⚙️ Настройки:**\n"
+            "*⚙️ Настройки:*\n"
             "• `/model` — выбор AI модели\n"
             "• `/setprompt` — системная инструкция\n"
             "• `/res` — режим поиска вкл/выкл\n"
             "• `/newchat` — новый чат\n\n"
-            "**📊 Статистика:**\n"
+            "*📊 Статистика:*\n"
             "• `/metrics` — полная сводка (метрики, ключи, кредиты)\n\n"
-            "**💡 Советы:**\n"
+            "*💡 Советы:*\n"
             "• Используйте `?` для быстрых фактов\n"
             "• `??` для глубокого анализа\n"
             "• Фото + текст для анализа изображений"
@@ -135,7 +135,7 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     chat_state.search_enabled = not chat_state.search_enabled
     await db.update_user_chat(user_id, chat_state)
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
-    await update.message.reply_text(f"🌐 Постоянный режим исследования **{status_text}**.", parse_mode='Markdown')
+    await update.message.reply_text(f"🌐 Постоянный режим исследования *{status_text}*.", parse_mode='MarkdownV2')
 
 # Команды /keystatus и /credits объединены с /metrics
 
@@ -149,7 +149,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         client = genai.Client(api_key=key_data['api_key'])
         models_list = [f"- `{m.name}`" for m in client.models.list() if 'generateContent' in m.supported_generation_methods]
-        await update.message.reply_text("✅ **Доступные модели:**\n" + "\n".join(models_list), parse_mode='Markdown')
+        await update.message.reply_text("✅ *Доступные модели:*\n" + "\n".join(models_list), parse_mode='MarkdownV2')
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
@@ -198,8 +198,8 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Формируем основной текст
         text = (
-            "📊 **Полная сводка системы:**\n\n"
-            "**🚀 Производительность:**\n"
+            "📊 *Полная сводка системы:*\n\n"
+            "*🚀 Производительность:*\n"
             f"• Всего запросов: `{metrics['total_requests']}`\n"
             f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
             f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
@@ -209,13 +209,13 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Добавляем использование API и моделей
         if metrics['api_calls']:
-            text += "**🔌 Использование API:**\n"
+            text += "*🔌 Использование API:*\n"
             for api, count in metrics['api_calls'].items():
                 text += f"• {api}: `{count}`\n"
             text += "\n"
         
         if metrics['model_usage']:
-            text += "**🤖 Использование моделей:**\n"
+            text += "*🤖 Использование моделей:*\n"
             for model, count in metrics['model_usage'].items():
                 # Пропускаем записи, которые содержат имена файлов (это ошибки в логике)
                 if not any(char in model for char in ['/', '\\', '.pdf', '.docx', '.doc']):
@@ -224,7 +224,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Добавляем статус ключей Gemini
         if gemini_keys:
-            text += "**🔑 Статус ключей Gemini (сегодня):**\n"
+            text += "*🔑 Статус ключей Gemini (сегодня):*\n"
             for key_row in gemini_keys:
                 display_name = format_key_for_display(key_row['api_key'])
                 usage_data = await db.db_query(
@@ -239,11 +239,11 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         count = usage['request_count']
                         limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
                         text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
-            text += f"Сброс лимитов: **{time_utils.get_kyiv_reset_time()}** по Киеву\n\n"
+            text += f"Сброс лимитов: *{time_utils.get_kyiv_reset_time()}* по Киеву\n\n"
         
         # Добавляем статус кредитов Tavily
         if tavily_keys:
-            text += "**💳 Кредиты Tavily (текущий месяц):**\n"
+            text += "*💳 Кредиты Tavily (текущий месяц):*\n"
             for key_row in tavily_keys:
                 display_name = format_key_for_display(key_row['api_key'])
                 usage = await db.db_query(
@@ -257,7 +257,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Добавляем историю за последние дни
         if metrics['daily_metrics']:
-            text += "**📈 История за последние дни:**\n"
+            text += "*📈 История за последние дни:*\n"
             for date_str, daily_data in list(metrics['daily_metrics'].items())[:5]:  # Последние 5 дней
                 requests = daily_data.get('requests', 0)
                 errors = daily_data.get('errors', 0)
@@ -266,7 +266,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Добавляем последние ошибки
         if metrics['recent_errors']:
-            text += "**⚠️ Последние ошибки:**\n"
+            text += "*⚠️ Последние ошибки:*\n"
             for error in metrics['recent_errors'][:3]:  # Последние 3 ошибки
                 text += f"• {error['type']}: {error['message'][:40]}...\n"
         
@@ -286,14 +286,15 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         stats = await search_cache.get_stats()
         
         text = (
-            "🗄️ **Статистика кэша:**\n\n"
+            "🗄️ *Статистика кэша:*\n\n"
             f"Всего записей: `{stats['total_entries']}`\n"
             f"Максимальный размер: `{stats['max_size']}`\n"
             f"Попадания в кэш: `{stats['cache_hit_rate']:.1f}%`\n"
             f"Среднее количество обращений: `{stats['avg_access_count']:.1f}`\n"
         )
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики кэша: {e}")
@@ -312,31 +313,31 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         documents = await get_user_documents(update.effective_user.id)
         if not documents:
             text = (
-                "📋 **Ваши документы**\n\n"
+                "📋 *Ваши документы*\n\n"
                 "У вас пока нет загруженных документов.\n\n"
-                "💡 **Как загрузить документ:**\n"
+                "💡 *Как загрузить документ:*\n"
                 "• Отправьте PDF или DOCX файл\n"
                 "• Максимальный размер: 50MB\n"
                 "• После загрузки вы сможете задавать вопросы по содержимому\n\n"
-                "📋 **Политика хранения:**\n"
+                "📋 *Политика хранения:*\n"
                 "• Максимум документов: 5\n"
                 "• Срок хранения: 3 дня"
             )
         else:
-            text = "📋 **Ваши документы:**\n\n"
+            text = "📋 *Ваши документы:*\n\n"
             for i, doc in enumerate(documents[:10], 1):
-                text += f"{i}. **{doc['filename']}**\n"
+                text += f"{i}. *{doc['filename']}*\n"
                 text += f"   📄 Страниц: {doc['pages']}\n"
                 text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
                 text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
             if len(documents) > 10:
                 text += f"... и еще {len(documents) - 10} документов\n\n"
             text += (
-                "💡 **Действия:**\n"
+                "💡 *Действия:*\n"
                 "• Отправьте новый документ для загрузки\n"
                 "• Задайте вопрос по последнему документу\n"
                 "• Используйте кнопки под сообщениями для управления\n\n"
-                "📋 **Политика хранения:**\n"
+                "📋 *Политика хранения:*\n"
                 "• Максимум документов: 5\n"
                 "• Срок хранения: 3 дня"
             )
@@ -363,7 +364,7 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         stats = await task_queue.get_queue_stats()
         
         text = (
-            "📋 **Статистика очереди задач:**\n\n"
+            "📋 *Статистика очереди задач:*\n\n"
             f"Всего задач: `{stats['total_tasks']}`\n"
             f"В ожидании: `{stats['pending_tasks']}`\n"
             f"Выполняется: `{stats['running_tasks']}`\n"
@@ -373,7 +374,8 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Активных воркеров: `{stats['active_workers']}`\n"
         )
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики очереди: {e}")
@@ -445,14 +447,15 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         stats = await group_chat_manager.get_group_stats(chat.id)
         
         text = (
-            f"📊 **Статистика группы '{chat.title}':**\n\n"
+            f"📊 *Статистика группы '{chat.title}':*\n\n"
             f"Всего сообщений: `{stats['total_messages']}`\n"
             f"Сообщений за 24ч: `{stats['recent_messages']}`\n"
             f"Активных пользователей за 24ч: `{stats['active_users_24h']}`\n"
             f"Участников: `{stats['member_count']}`\n"
         )
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики группы: {e}")
@@ -467,19 +470,20 @@ async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_T
         stats = await document_processor.get_document_stats()
         
         text = (
-            f"📊 **Статистика документов:**\n\n"
+            f"📊 *Статистика документов:*\n\n"
             f"• Всего документов: `{stats['total_documents']}`\n"
             f"• Общий размер: `{stats['total_size_mb']:.2f} MB`\n"
             f"• Средний размер: `{stats['average_size_chars']:.0f} символов`\n"
             f"• Общий размер в символах: `{stats['total_size_chars']:,}`\n\n"
-            f"📋 **Политика хранения:**\n"
+            f"📋 *Политика хранения:*\n"
             f"• Максимум документов на пользователя: `5`\n"
             f"• Срок хранения: `3 дня`\n"
             f"• Автоматическая очистка: `ежедневно в 3:00`\n\n"
             f"💡 Используйте `/clearolddocs` для ручной очистки старых документов."
         )
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики документов: {e}")
@@ -499,16 +503,17 @@ async def clear_old_documents_command(update: Update, context: ContextTypes.DEFA
         stats = await document_processor.get_document_stats()
         
         text = (
-            f"🗑️ **Очистка документов завершена**\n\n"
+            f"🗑️ *Очистка документов завершена*\n\n"
             f"Удалено документов: `{deleted_count}`\n\n"
-            f"📊 **Текущая статистика:**\n"
+            f"📊 *Текущая статистика:*\n"
             f"• Всего документов: `{stats['total_documents']}`\n"
             f"• Общий размер: `{stats['total_size_mb']:.2f} MB`\n"
             f"• Средний размер: `{stats['average_size_chars']:.0f} символов`\n\n"
             f"💡 Документы старше 3 дней удаляются автоматически."
         )
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
     except Exception as e:
         await update.message.reply_text(f"Ошибка очистки документов: {e}")

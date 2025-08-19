@@ -6,6 +6,7 @@ from . import agent
 from .. import database as db
 from ..config import settings
 from .. import state
+from ..utils.formatting import TelegramFormatter
 
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -119,10 +120,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
         ]
         
+        text = "📄 *Загрузите новый документ*\n\nОтправьте PDF или DOCX файл, и я обработаю его для вас."
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
-            "📄 **Загрузите новый документ**\n\n"
-            "Отправьте PDF или DOCX файл, и я обработаю его для вас.",
-            parse_mode='Markdown',
+            formatted_text,
+            parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
@@ -131,17 +133,18 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         documents = await get_user_documents(user_id)
         if not documents:
+            text = "📋 *Ваши документы*\n\nУ вас пока нет загруженных документов."
+            formatted_text, parse_mode = TelegramFormatter.format_text(text)
             await query.edit_message_text(
-                "📋 **Ваши документы**\n\n"
-                "У вас пока нет загруженных документов.",
-                parse_mode='Markdown'
+                formatted_text,
+                parse_mode=parse_mode
             )
             return
         
         # Формируем список документов
-        doc_list = "📋 **Ваши документы:**\n\n"
+        doc_list = "📋 *Ваши документы:*\n\n"
         for i, doc in enumerate(documents[:10], 1):  # Показываем только первые 10
-            doc_list += f"{i}. **{doc['filename']}**\n"
+            doc_list += f"{i}. *{doc['filename']}*\n"
             doc_list += f"   📄 Страниц: {doc['pages']}\n"
             doc_list += f"   📅 Загружен: {doc['created_at'][:10]}\n\n"
         
@@ -157,18 +160,19 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
         ]
         
-        await query.edit_message_text(doc_list, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        formatted_text, parse_mode = TelegramFormatter.format_text(doc_list)
+        await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
         return
     
     elif action == "cancel":
         from ..state import clear_document_state
         clear_document_state(user_id)
         
+        text = "✅ *Режим работы с документами отключен*\n\nТеперь ваши сообщения будут обрабатываться в обычном режиме чата.\nЧтобы снова работать с документами, загрузите новый файл или используйте команду /documents."
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
-            "✅ **Режим работы с документами отключен**\n\n"
-            "Теперь ваши сообщения будут обрабатываться в обычном режиме чата.\n"
-            "Чтобы снова работать с документами, загрузите новый файл или используйте команду /documents.",
-            parse_mode='Markdown'
+            formatted_text,
+            parse_mode=parse_mode
         )
         return
     
@@ -177,10 +181,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Получаем все документы пользователя
         documents = await get_user_documents(user_id)
         if not documents:
+            text = "📋 *Ваши документы*\n\nУ вас нет документов для удаления."
+            formatted_text, parse_mode = TelegramFormatter.format_text(text)
             await query.edit_message_text(
-                "📋 **Ваши документы**\n\n"
-                "У вас нет документов для удаления.",
-                parse_mode='Markdown'
+                formatted_text,
+                parse_mode=parse_mode
             )
             return
         
@@ -195,11 +200,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..state import clear_document_state
         clear_document_state(user_id)
         
+        text = f"🗑️ *Документы удалены*\n\nУдалено документов: `{deleted_count}`\n\nТеперь ваши сообщения будут обрабатываться в обычном режиме чата."
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
-            f"🗑️ **Документы удалены**\n\n"
-            f"Удалено документов: `{deleted_count}`\n\n"
-            "Теперь ваши сообщения будут обрабатываться в обычном режиме чата.",
-            parse_mode='Markdown'
+            formatted_text,
+            parse_mode=parse_mode
         )
         return
     
@@ -216,17 +221,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..state import set_document_mode
         set_document_mode(user_id, True, document_id)
         
+        text = f"✅ *Используется существующий документ*\n\n📄 *{document['filename']}*\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 *Просто напишите ваш вопрос* - система автоматически найдет ответ в документе.\n\n🔄 *Для выхода из режима документов:*\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
-            f"✅ **Используется существующий документ**\n\n"
-            f"📄 **{document['filename']}**\n"
-            f"📊 Страниц: {document['pages']}\n"
-            f"📅 Загружен: {document['created_at'][:10]}\n\n"
-            "Теперь вы можете задавать вопросы по этому документу.\n\n"
-            "💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n"
-            "🔄 **Для выхода из режима документов:**\n"
-            "• Нажмите кнопку '❌ Отмена' ниже\n"
-            "• Или отправьте команду /documents",
-            parse_mode='Markdown',
+            formatted_text,
+            parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
             ])
@@ -234,10 +233,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     elif action == "force_upload":
+        text = "📄 *Загрузите файл как новый документ*\n\nОтправьте файл еще раз, и он будет сохранен как новый документ."
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
-            "📄 **Загрузите файл как новый документ**\n\n"
-            "Отправьте файл еще раз, и он будет сохранен как новый документ.",
-            parse_mode='Markdown',
+            formatted_text,
+            parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")],
                 [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
@@ -249,10 +249,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Показываем меню выбора документа
         documents = await get_user_documents(user_id)
         if not documents:
+            text = "📋 *Ваши документы*\n\nУ вас пока нет загруженных документов."
+            formatted_text, parse_mode = TelegramFormatter.format_text(text)
             await query.edit_message_text(
-                "📋 **Ваши документы**\n\n"
-                "У вас пока нет загруженных документов.",
-                parse_mode='Markdown'
+                formatted_text,
+                parse_mode=parse_mode
             )
             return
         
@@ -272,10 +273,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
         
+        text = "📋 *Выберите документ для работы:*\n\nНажмите на документ, чтобы начать работу с ним."
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
-            "📋 **Выберите документ для работы:**\n\n"
-            "Нажмите на документ, чтобы начать работу с ним.",
-            parse_mode='Markdown',
+            formatted_text,
+            parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return
@@ -293,17 +295,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..state import set_document_mode
         set_document_mode(user_id, True, document_id)
         
+        text = f"✅ *Выбран документ*\n\n📄 *{document['filename']}*\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 *Просто напишите ваш вопрос* - система автоматически найдет ответ в документе.\n\n🔄 *Для выхода из режима документов:*\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
-            f"✅ **Выбран документ**\n\n"
-            f"📄 **{document['filename']}**\n"
-            f"📊 Страниц: {document['pages']}\n"
-            f"📅 Загружен: {document['created_at'][:10]}\n\n"
-            "Теперь вы можете задавать вопросы по этому документу.\n\n"
-            "💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n"
-            "🔄 **Для выхода из режима документов:**\n"
-            "• Нажмите кнопку '❌ Отмена' ниже\n"
-            "• Или отправьте команду /documents",
-            parse_mode='Markdown',
+            formatted_text,
+            parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Назад к списку", callback_data="doc:select_document")],
                 [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
@@ -329,10 +325,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Если удалили выбранный документ, очищаем состояние
                 clear_document_state(user_id)
             
+            text = f"🗑️ *Документ удален*\n\nДокумент `{document['filename']}` был успешно удален."
+            formatted_text, parse_mode = TelegramFormatter.format_text(text)
             await query.edit_message_text(
-                f"🗑️ **Документ удален**\n\n"
-                f"Документ `{document['filename']}` был успешно удален.",
-                parse_mode='Markdown'
+                formatted_text,
+                parse_mode=parse_mode
             )
         else:
             await query.edit_message_text("❌ Ошибка при удалении документа.")
@@ -358,9 +355,11 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
    elif action == "deeper_dive":
        await query.edit_message_reply_markup(reply_markup=None)
+       text = "Супер! Мы готовы *копнуть глубже*! 😉 \nЧто еще вы хотели бы узнать по этой теме?"
+       formatted_text, parse_mode = TelegramFormatter.format_text(text)
        await query.message.reply_text(
-           "Супер! Мы готовы *копнуть глубже*! 😉 \nЧто еще вы хотели бы узнать по этой теме?",
-           parse_mode='Markdown'
+           formatted_text,
+           parse_mode=parse_mode
        )
 
 async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -12,6 +12,7 @@ from .. import state
 from ..group_chat import group_chat_manager, log_group_message
 from ..document_processor import process_uploaded_document
 from ..metrics import metrics_collector
+from ..utils.formatting import TelegramFormatter
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает входящие сообщения"""
@@ -40,11 +41,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(
                 "📋 Вы находитесь в режиме работы с документами.\n\n"
-                "💡 **Доступные действия:**\n"
+                "💡 *Доступные действия:*\n"
                 "• Загрузите новый документ\n"
                 "• Выберите документ из списка\n"
                 "• Используйте кнопки под сообщениями\n\n"
-                "🔄 **Для выхода из режима документов:**\n"
+                "🔄 *Для выхода из режима документов:*\n"
                 "• Нажмите кнопку '❌ Отменить работу с документами'\n"
                 "• Или отправьте команду /documents"
             )
@@ -161,9 +162,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     date_str = str(created_date)[:10] if created_date != 'Unknown' else 'Unknown'
                 
                 duplicate_text = (
-                    f"⚠️ **Файл уже загружен**\n\n"
+                    f"⚠️ *Файл уже загружен*\n\n"
                     f"Файл `{document.file_name}` уже был загружен ранее как:\n"
-                    f"📄 **{duplicate_info.get('filename', 'Unknown')}**\n"
+                    f"📄 *{duplicate_info.get('filename', 'Unknown')}*\n"
                     f"📅 Загружен: {date_str}\n\n"
                     f"Хотите использовать существующий документ?"
                 )
@@ -175,9 +176,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
                 ]
                 
+                formatted_text, parse_mode = TelegramFormatter.format_text(duplicate_text)
                 await processing_msg.edit_text(
-                    duplicate_text,
-                    parse_mode='Markdown',
+                    formatted_text,
+                    parse_mode=parse_mode,
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
                 return
@@ -192,7 +194,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Отправляем результат
         success_text = (
             f"✅ Документ обработан успешно!\n\n"
-            f"📄 **{document.file_name}**\n"
+            f"📄 *{document.file_name}*\n"
             f"📊 Страниц: {result.get('pages', 'N/A')}\n"
             f"📝 Символов: {result.get('text_length', 0):,}\n"
         )
@@ -202,12 +204,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if result.get('tables'):
             success_text += f"📊 Таблиц: {result['tables']}\n"
         
-        success_text += f"\n📋 **Ваши документы:** {user_stats['document_count']}/5\n"
+        success_text += f"\n📋 *Ваши документы:* {user_stats['document_count']}/5\n"
         if user_stats['limit_reached']:
             success_text += "⚠️ Достигнут лимит документов (5). Старые документы будут автоматически удалены.\n"
         
-        success_text += "\n💡 **Как задавать вопросы:**\n• Просто напишите ваш вопрос\n• Например: \"Какие основные пункты?\", \"Что говорится о...?\"\n• Система автоматически найдет ответ в документе\n\n"
-        success_text += "📅 **Срок хранения:** 3 дня (автоматическая очистка)"
+        success_text += "\n💡 *Как задавать вопросы:*\n• Просто напишите ваш вопрос\n• Например: \"Какие основные пункты?\", \"Что говорится о...?\"\n• Система автоматически найдет ответ в документе\n\n"
+        success_text += "📅 *Срок хранения:* 3 дня (автоматическая очистка)"
         
         # Создаем кнопки для управления документом
         keyboard = [
@@ -216,9 +218,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")]
         ]
         
+        formatted_text, parse_mode = TelegramFormatter.format_text(success_text)
         await processing_msg.edit_text(
-            success_text, 
-            parse_mode='Markdown',
+            formatted_text, 
+            parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         

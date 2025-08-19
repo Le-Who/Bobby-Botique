@@ -9,8 +9,17 @@ QNA_LOCALIZATION_PROMPT = """
 **INSTRUCTIONS:**
 1. Determine the language of the "USER'S ORIGINAL QUERY".
 2. Translate and present the "INFORMATION FOUND" in that language.
-3. Apply basic Telegram Markdown formatting if appropriate (e.g., making a key term bold).
-4. Your output MUST ONLY be the final, processed text. Do not add any conversational filler like "Here is the answer..." or "According to the information...".
+3. Apply Telegram MarkdownV2 formatting if appropriate:
+   - Use `*bold text*` for emphasis on key terms
+   - Use `_italic text_` for secondary emphasis
+   - Use `` `code` `` for technical terms or code snippets
+   - Use `[link text](URL)` for any links
+4. **CRITICAL FORMATTING RULES:**
+   - NEVER use HTML tags like `<b>`, `<i>`, `<code>`, `<a>`, etc.
+   - NEVER use double asterisks `**text**` - use single `*text*` instead
+   - NEVER use double underscores `__text__` - use single `_text_` instead
+   - If you need to use special characters (., !, -, [, ], (, ), *, _, `, ~, >, #, +, =, |, {, }), escape them with backslash: `\.`, `\!`, `\-`, etc.
+5. Your output MUST ONLY be the final, processed text. Do not add any conversational filler like "Here is the answer..." or "According to the information...".
 """
 
 URL_SELECTION_PROMPT = """
@@ -46,22 +55,36 @@ SYNTHESIS_PROMPT = """
 **FINAL TASK & RULES:**
 1. Synthesize the information from the raw context to fully answer the user's query.
 2. Structure your answer clearly using Telegram's MarkdownV2 syntax:
-   - For bold text, use `*bold text*`.
-   - For italic text, use `_italic text_`.
-   - For lists, each item must start with a hyphen (`- `).
-3. **You MUST cite your sources using the correct MarkdownV2 link format ONLY:** `[display text](URL)`.
-   - **CRITICAL:** You MUST NOT use any other link format, such as `[[...]]`. This is a strict requirement.
+   - For bold text, use `*bold text*` (NOT `**bold text**`)
+   - For italic text, use `_italic text_` (NOT `__italic text__`)
+   - For inline code, use `` `code` `` (NOT `<code>code</code>`)
+   - For lists, each item must start with a hyphen (`- `)
+3. **CRITICAL FORMATTING REQUIREMENTS:**
+   - **NEVER use HTML tags** like `<b>`, `<i>`, `<code>`, `<a>`, `<strong>`, `<em>`, etc.
+   - **NEVER use double asterisks** `**text**` - always use single `*text*`
+   - **NEVER use double underscores** `__text__` - always use single `_text_`
+   - **NEVER use square bracket links** like `[[text]]` - only use `[text](URL)`
+4. **You MUST cite your sources using the correct MarkdownV2 link format ONLY:** `[display text](URL)`.
+   - **CRITICAL:** You MUST NOT use any other link format, such as `[[...]]` or `<a href="...">...</a>`. This is a strict requirement.
    - The `[display text]` should be short and descriptive (e.g., the article title or `Источник 1`).
    - The `(URL)` MUST be the full, original URL from the context.
-   - Any special characters (`.`, `!`, `-`) inside the `[display text]` part MUST be escaped with a preceding backslash (`\\`).
-4. If you find conflicting information, highlight this discrepancy.
-5. If the context is insufficient, state that clearly. Do not use any prior knowledge.
+   - Any special characters (`.`, `!`, `-`, `[`, `]`, `(`, `)`, `*`, `_`, `` ` ``, `~`, `>`, `#`, `+`, `=`, `|`, `{`, `}`, `\.`, `\!`) inside the `[display text]` part MUST be escaped with a preceding backslash (`\\`).
+5. If you find conflicting information, highlight this discrepancy.
+6. If the context is insufficient, state that clearly. Do not use any prior knowledge.
 
 **PERFECT CITATION EXAMPLE:**
 The price was listed as 5500 грн [according to this OLX listing](https://www.olx.ua/...).
 
-**BAD CITATION EXAMPLE (DO NOT USE):**
-The price was listed as 5500 грн [[OLX]](https://www.olx.ua/...).
+**BAD CITATION EXAMPLES (DO NOT USE):**
+- The price was listed as 5500 грн [[OLX]](https://www.olx.ua/...).
+- The price was listed as 5500 грн <a href="https://www.olx.ua/...">OLX</a>.
+- The price was listed as 5500 грн **OLX** (https://www.olx.ua/...).
+
+**CORRECT FORMATTING EXAMPLES:**
+- *Important term* should be bold
+- _Secondary emphasis_ should be italic
+- `` `code snippet` `` should be in code format
+- [Link text](https://example.com) should be a proper link
 """
 
 IMAGE_ANALYSIS_PROMPT = """

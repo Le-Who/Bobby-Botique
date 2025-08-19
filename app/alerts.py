@@ -8,6 +8,7 @@ from collections import defaultdict
 from .config import settings
 from . import database as db
 from .utils import time as time_utils
+from .utils.formatting import TelegramFormatter
 
 @dataclass
 class AlertThreshold:
@@ -52,7 +53,7 @@ class AlertManager:
                     
                     if await self._should_send_alert(alert_key):
                         alert_msg = (
-                            f"🚨 **ALERT: Gemini API Limit**\n"
+                            f"🚨 *ALERT: Gemini API Limit*\n"
                             f"Model: `{model_name}`\n"
                             f"Usage: {request_count}/{daily_limit} ({usage_percent:.1f}%)\n"
                             f"Key: `{key_row['api_key'][:10]}...`\n"
@@ -83,7 +84,7 @@ class AlertManager:
                 
                 if await self._should_send_alert(alert_key):
                     alert_msg = (
-                        f"🚨 **ALERT: Tavily API Limit**\n"
+                        f"🚨 *ALERT: Tavily API Limit*\n"
                         f"Usage: {credit_usage}/{settings.TAVILY_MONTHLY_CREDIT_LIMIT} ({usage_percent:.1f}%)\n"
                         f"Key: `{key_row['api_key'][:10]}...`\n"
                         f"Month: {current_month}\n"
@@ -104,12 +105,12 @@ class AlertManager:
                 alert_key = self._generate_alert_key("no_keys", model_name)
                 
                 if await self._should_send_alert(alert_key):
-                    alert_msg = (
-                        f"🚨 **ALERT: No Available Keys**\n"
-                        f"Model: `{model_name}`\n"
-                        f"Status: All keys exhausted\n"
-                        f"Time: {datetime.now().strftime('%H:%M:%S')}"
-                    )
+                                            alert_msg = (
+                            f"🚨 *ALERT: No Available Keys*\n"
+                            f"Model: `{model_name}`\n"
+                            f"Status: All keys exhausted\n"
+                            f"Time: {datetime.now().strftime('%H:%M:%S')}"
+                        )
                     alerts.append(alert_msg)
                     await self._mark_alert_sent(alert_key)
         
@@ -120,7 +121,7 @@ class AlertManager:
             
             if await self._should_send_alert(alert_key):
                 alert_msg = (
-                    f"🚨 **ALERT: No Available Tavily Keys**\n"
+                    f"🚨 *ALERT: No Available Tavily Keys*\n"
                     f"Status: All keys exhausted\n"
                     f"Time: {datetime.now().strftime('%H:%M:%S')}"
                 )
@@ -186,10 +187,11 @@ async def send_alerts_to_admin(context):
         alerts = await run_alert_checks()
         if alerts:
             for alert in alerts:
+                formatted_text, parse_mode = TelegramFormatter.format_text(alert)
                 await context.bot.send_message(
                     chat_id=settings.ADMIN_ID,
-                    text=alert,
-                    parse_mode='Markdown'
+                    text=formatted_text,
+                    parse_mode=parse_mode
                 )
                 await asyncio.sleep(1)  # Небольшая пауза между сообщениями
     except Exception as e:
