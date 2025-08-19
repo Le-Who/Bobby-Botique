@@ -47,31 +47,27 @@
 - ❌ **Было:** Внешние сервисы (Tavily, Gemini) блокировали работу бота при недоступности
 - ✅ **Стало:** Внешние сервисы не критичны для работы бота, только предупреждения
 
+### **Исправлена ошибка типов таймаутов**
+- ❌ **Было:** `TypeError("unsupported operand type(s) for +: 'float' and 'Timeout'")`
+- ✅ **Стало:** Передача числовых значений таймаутов напрямую в `HTTPXRequest`
+
 ### **Детали исправлений:**
 
 #### **1. Исправление HTTPXRequest в bot.py:**
 ```python
 # Создаем кастомный Request с нужными таймаутами
 from telegram.request import HTTPXRequest
-from httpx import Timeout
 
-custom_timeout = Timeout(
-    connect=10.0,  # 10 секунд на подключение
-    read=30.0,     # 30 секунд на чтение
-    write=30.0,    # 30 секунд на запись
-    pool=30.0      # 30 секунд на получение соединения из пула
-)
-
-# Создаем кастомный Request объект
+# Создаем кастомный Request объект с числовыми значениями таймаутов
 custom_request = HTTPXRequest(
     connection_pool_size=8,
-    connect_timeout=custom_timeout,
-    read_timeout=custom_timeout,
-    write_timeout=custom_timeout,
-    pool_timeout=custom_timeout
+    connect_timeout=10.0,  # 10 секунд на подключение
+    read_timeout=30.0,     # 30 секунд на чтение
+    write_timeout=30.0,    # 30 секунд на запись
+    pool_timeout=30.0      # 30 секунд на получение соединения из пула
 )
 
-# Пересоздаем Application с кастомным Request через builder
+# Создаем Application с кастомным Request через builder
 application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
 ```
 
@@ -92,19 +88,12 @@ if any(status == "error" for status in critical_services):
 ### Таймауты и повторные попытки
 ```python
 # Настройка таймаутов для Telegram API через Application.builder()
-custom_timeout = Timeout(
-    connect=10.0,  # 10 секунд на подключение
-    read=30.0,     # 30 секунд на чтение
-    write=30.0,    # 30 секунд на запись
-    pool=30.0      # 30 секунд на получение соединения из пула
-)
-
 custom_request = HTTPXRequest(
     connection_pool_size=8,
-    connect_timeout=custom_timeout,
-    read_timeout=custom_timeout,
-    write_timeout=custom_timeout,
-    pool_timeout=custom_timeout
+    connect_timeout=10.0,  # 10 секунд на подключение
+    read_timeout=30.0,     # 30 секунд на чтение
+    write_timeout=30.0,    # 30 секунд на запись
+    pool_timeout=30.0      # 30 секунд на получение соединения из пула
 )
 
 application = Application.builder().token(TOKEN).request(custom_request).build()
@@ -217,3 +206,4 @@ MAX_DELAY = 60.0
 - ✅ **Исправлена ошибка атрибута request**
 - ✅ **Улучшен мониторинг здоровья системы**
 - ✅ **Внешние сервисы не блокируют работу бота**
+- ✅ **Исправлена ошибка типов таймаутов**
