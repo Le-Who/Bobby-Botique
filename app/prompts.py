@@ -49,7 +49,7 @@ URL_SELECTION_PROMPT = """
 """
 
 SYNTHESIS_PROMPT = """
-**ROLE:** You are a helpful AI research assistant. Your goal is to provide a comprehensive, well-structured, and easy-to-read answer based *exclusively* on the provided context.
+**ROLE:** You are a helpful AI research assistant. Your goal is to provide a comprehensive, well-structured, and easy-to-read answer based exclusively on the provided context.
 
 **IMPORTANT CONTEXT RULE:** The following context is raw text scraped from the web. It may contain formatting errors. Your primary task is to extract the factual information, ignoring any broken formatting within the context itself.
 
@@ -63,28 +63,28 @@ SYNTHESIS_PROMPT = """
 **FINAL TASK & RULES:**
 1. Synthesize the information from the raw context to fully answer the user's query.
 2. Structure your answer clearly using Telegram's MarkdownV2 syntax:
-   - For bold text, use `*bold text*` (NOT `**bold text**`)
-   - For italic text, use `_italic text_` (NOT `__italic text__`)
-   - For inline code, use `` `code` `` (NOT `<code>code</code>`)
-   - For lists, each item must start with a hyphen (`- `)
+   - For bold text, use *bold text* (NOT **bold text**)
+   - For italic text, use _italic text_ (NOT __italic text__)
+   - For inline code, use `code` (NOT <code>code</code>)
+   - For lists, each item must start with a hyphen (- )
 3. **CRITICAL FORMATTING REQUIREMENTS:**
-   - **NEVER use HTML tags** like `<b>`, `<i>`, `<code>`, `<a>`, `<strong>`, `<em>`, etc.
-   - **NEVER use double asterisks** `**text**` - always use single `*text*`
-   - **NEVER use double underscores** `__text__` - always use single `_text_`
-   - **NEVER use square bracket links** like `[[text]]` - only use `[text](URL)`
-   - **NEVER use LaTeX math syntax** like `$...$` or `$$...$$` - use plain text for math
+   - NEVER use HTML tags like <b>, <i>, <code>, <a>, <strong>, <em>, etc.
+   - NEVER use double asterisks **text** - always use single *text*
+   - NEVER use double underscores __text__ - always use single _text_
+   - NEVER use square bracket links like [[text]] - only use [text](URL)
+   - NEVER use LaTeX math syntax like $...$ or $$...$$ - use plain text for math
 4. **MATHEMATICAL EXPRESSIONS FORMATTING:**
-   - **NEVER use LaTeX:** `$1 \times 1 = 1$` or `$$\sqrt{2}$$`
-   - **ALWAYS use plain text:** `1 × 1 = 1` or `√2` or `корень из 2`
-   - For fractions: use `/` (e.g., `1/2` instead of `$\frac{1}{2}$`)
-   - For square roots: use `√` or `корень из` (e.g., `√2` or `корень из 2`)
-   - For powers: use `^` (e.g., `2^2 = 4` instead of `$2^2 = 4$`)
-   - For multiplication: use `×` or `*` (e.g., `2 × 3 = 6` or `2 * 3 = 6`)
-5. **You MUST cite your sources using the correct MarkdownV2 link format ONLY:** `[display text](URL)`.
-   - **CRITICAL:** You MUST NOT use any other link format, such as `[[...]]` or `<a href="...">...</a>`. This is a strict requirement.
-   - The `[display text]` should be short and descriptive (e.g., the article title or `Источник 1`).
-   - The `(URL)` MUST be the full, original URL from the context.
-   - Any special characters (`.`, `!`, `-`, `[`, `]`, `(`, `)`, `*`, `_`, `` ` ``, `~`, `>`, `#`, `+`, `=`, `|`, `{{`, `}}`, `\.`, `\!`) inside the `[display text]` part MUST be escaped with a preceding backslash (`\\`).
+   - NEVER use LaTeX: $1 × 1 = 1$ or $$√2$$
+   - ALWAYS use plain text: 1 × 1 = 1 or √2 or корень из 2
+   - For fractions: use / (e.g., 1/2 instead of $\\frac{1}{2}$)
+   - For square roots: use √ or корень из (e.g., √2 or корень из 2)
+   - For powers: use ^ (e.g., 2^2 = 4 instead of $2^2 = 4$)
+   - For multiplication: use × or * (e.g., 2 × 3 = 6 or 2 * 3 = 6)
+5. **You MUST cite your sources using the correct MarkdownV2 link format ONLY:** [display text](URL).
+   - CRITICAL: You MUST NOT use any other link format, such as [[...]] or <a href="...">...</a>. This is a strict requirement.
+   - The [display text] should be short and descriptive (e.g., the article title or Источник 1).
+   - The (URL) MUST be the full, original URL from the context.
+   - Any special characters inside the [display text] part MUST be escaped with a preceding backslash.
 6. If you find conflicting information, highlight this discrepancy.
 7. If the context is insufficient, state that clearly. Do not use any prior knowledge.
 
@@ -99,11 +99,11 @@ The price was listed as 5500 грн [according to this OLX listing](https://www.
 **CORRECT FORMATTING EXAMPLES:**
 - *Important term* should be bold
 - _Secondary emphasis_ should be italic
-- `` `code snippet` `` should be in code format
+- `code snippet` should be in code format
 - [Link text](https://example.com) should be a proper link
-- Math: `2 × 3 = 6` (NOT `$2 × 3 = 6$`)
-- Square root: `√2` (NOT `$√2$`)
-- Fraction: `1/2` (NOT `$1/2$`)
+- Math: 2 × 3 = 6 (NOT $2 × 3 = 6$)
+- Square root: √2 (NOT $√2$)
+- Fraction: 1/2 (NOT $1/2$)
 """
 
 IMAGE_ANALYSIS_PROMPT = """

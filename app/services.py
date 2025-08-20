@@ -41,10 +41,18 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                     part.save(img_byte_arr, format='JPEG')
                     img_byte_arr = img_byte_arr.getvalue()
                     
-                    image_part = types.Part.from_data(
-                        data=img_byte_arr,
-                        mime_type="image/jpeg"
-                    )
+                    try:
+                        # Пробуем использовать from_data
+                        image_part = types.Part.from_data(
+                            data=img_byte_arr,
+                            mime_type="image/jpeg"
+                        )
+                    except Exception as e:
+                        logging.warning(f"Failed to create image part with from_data: {e}")
+                        # Fallback: пропускаем изображение и логируем ошибку
+                        logging.warning(f"Skipping image part due to creation error")
+                        continue
+                    
                     processed_parts.append(image_part)
                 else:
                     processed_parts.append(types.Part.from_text(text=str(part)))
