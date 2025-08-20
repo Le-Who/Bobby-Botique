@@ -55,9 +55,17 @@ async def reconnect_database():
         return False
 
 async def db_query(query: str, params: tuple = (), retries: int = 3):
+    global db_pool
+    
+    # Если пул не инициализирован, пытаемся инициализировать
     if not db_pool:
-        logging.critical("Database pool is not initialized - this should not happen!")
-        raise Exception("Database pool is not initialized")
+        logging.warning("Database pool not initialized, attempting to initialize...")
+        try:
+            await init_db()
+            logging.info("Database pool initialized successfully during query")
+        except Exception as init_error:
+            logging.critical(f"Failed to initialize database during query: {init_error}")
+            raise Exception(f"Database initialization failed: {init_error}")
     
     # Проверяем, не закрыт ли пул
     if hasattr(db_pool, 'is_closed') and db_pool.is_closed():
@@ -110,6 +118,12 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
 
 async def init_db():
     global db_pool
+    
+    # Проверяем, не инициализирован ли уже пул
+    if db_pool is not None and not (hasattr(db_pool, 'is_closed') and db_pool.is_closed()):
+        logging.info("Database pool already initialized and available")
+        return
+    
     if not settings.DATABASE_URL:
         raise Exception("DATABASE_URL not set")
     
@@ -140,76 +154,53 @@ async def init_db():
         globals()['_last_error'] = str(e)
         raise e
     
-    await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)""")
-    await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
-    await db_query("""CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
-    await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
-    await db_query("""CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
-    await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
-    await db_query("DROP TABLE IF EXISTS user_documents;")
-    await db_query("""
-        CREATE TABLE IF NOT EXISTS user_documents (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            filename TEXT,
-            content TEXT,
-            pages INTEGER,
-            file_size BIGINT,
-            file_hash TEXT,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE (user_id, file_hash)
-        )
-    """)
-
+    # Создаем таблицы напрямую, без вызова db_query для избежания циклических вызовов
     try:
-        # --- Document Table Migration ---
-        doc_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='user_documents'")
-        doc_column_names = {c['column_name'] for c in doc_columns}
-
-        # 2. Check for 'filename' (and rename from 'file_name' if necessary)
-        if 'filename' not in doc_column_names and 'file_name' in doc_column_names:
-            await db_query("ALTER TABLE user_documents RENAME COLUMN file_name TO filename;")
-            logging.info("Migration: Renamed 'file_name' to 'filename' in 'user_documents'.")
-        elif 'filename' not in doc_column_names:
-             await db_query("ALTER TABLE user_documents ADD COLUMN filename TEXT;")
-             logging.info("Migration: Added 'filename' column to 'user_documents'.")
-
-        # 3. Add other missing columns
-        required_columns = {
-            "content": "TEXT",
-            "pages": "INTEGER",
-            "file_size": "BIGINT",
-            "created_at": "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
-        }
-        for col, col_type in required_columns.items():
-            if col not in doc_column_names:
-                await db_query(f"ALTER TABLE user_documents ADD COLUMN {col} {col_type};")
-                logging.info(f"Migration: Added '{col}' column to 'user_documents'.")
-
-        # --- Tavily Key Usage Migration ---
-        tavily_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='tavily_key_usage'")
-        if 'request_count' in {c['column_name'] for c in tavily_columns}:
-            logging.info("Old column 'request_count' found in 'tavily_key_usage'. Attempting schema migration...")
-            await db_query("ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;")
-            logging.info("Schema migration for 'tavily_key_usage' successful.")
-
-        # --- Users Table Migration (is_deep_dive) ---
-        users_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
-        if 'is_deep_dive' not in {c['column_name'] for c in users_columns}:
-            logging.info("Column 'is_deep_dive' not found in 'users' table. Attempting schema migration...")
-            await db_query("ALTER TABLE users ADD COLUMN is_deep_dive BOOLEAN DEFAULT FALSE;")
-            logging.info("Schema migration for 'is_deep_dive' successful.")
-
-    except asyncpg.PostgresError as e:
-        logging.warning(f"A schema migration may have been skipped or failed: {e}")
-    
-    await db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
-    for key in settings.GEMINI_API_KEYS:
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        await db_query("INSERT INTO api_keys (key_hash, api_key) VALUES (?, ?) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
-    for key in settings.TAVILY_API_KEYS:
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES (?, ?) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+        async with db_pool.acquire() as conn:
+            # Создаем таблицы
+            await conn.execute("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)""")
+            await conn.execute("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
+            await conn.execute("""CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
+            await conn.execute("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
+            await conn.execute("""CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
+            await conn.execute("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
+            
+            # Удаляем старую таблицу документов
+            await conn.execute("DROP TABLE IF EXISTS user_documents")
+            
+            # Создаем новую таблицу документов
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS user_documents (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT,
+                    filename TEXT,
+                    content TEXT,
+                    pages INTEGER,
+                    file_size BIGINT,
+                    file_hash TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (user_id, file_hash)
+                )
+            """)
+            
+            # Вставляем начальные данные
+            await conn.execute("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO NOTHING", settings.ADMIN_ID)
+            for key in settings.GEMINI_API_KEYS:
+                key_hash = hashlib.sha256(key.encode()).hexdigest()
+                await conn.execute("INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", key_hash, key)
+            for key in settings.TAVILY_API_KEYS:
+                key_hash = hashlib.sha256(key.encode()).hexdigest()
+                await conn.execute("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", key_hash, key)
+            
+        logging.info("Database tables and initial data created successfully")
+        
+    except Exception as e:
+        logging.critical(f"Failed to create database tables: {e}")
+        # Закрываем пул при ошибке
+        if db_pool:
+            await db_pool.close()
+            db_pool = None
+        raise e
 
 async def get_user_chat(user_id: int) -> ChatState:
     chat_result = await db_query("SELECT * FROM chats WHERE user_id = ?", (user_id,))
@@ -290,6 +281,19 @@ async def increment_tavily_key_usage(key_hash: str, cost: int):
 def get_last_error() -> Optional[str]:
     """Возвращает последнюю ошибку БД для диагностики"""
     return _last_error
+
+def is_database_available() -> bool:
+    """Проверяет, доступна ли база данных"""
+    return db_pool is not None and not (hasattr(db_pool, 'is_closed') and db_pool.is_closed())
+
+def get_database_status() -> str:
+    """Возвращает статус базы данных для диагностики"""
+    if not db_pool:
+        return "not_initialized"
+    elif hasattr(db_pool, 'is_closed') and db_pool.is_closed():
+        return "closed"
+    else:
+        return "connected"
 
 def is_admin(user_id: int) -> bool:
     return user_id == settings.ADMIN_ID

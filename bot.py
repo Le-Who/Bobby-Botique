@@ -48,6 +48,7 @@ def status_check():
         status = {
             "bot": "running",
             "database": db_status,
+            "database_available": database.is_database_available(),
             "database_error": "blocked_network" if database.get_last_error() and "blocked network" in str(database.get_last_error()).lower() else None,
             "timestamp": str(datetime.datetime.now()),
             "uptime": "active"
@@ -83,13 +84,16 @@ async def basic_monitoring():
                 break
             
             # Простая проверка базы данных
-            try:
-                await database.db_query("SELECT 1")
-                logging.info("Database connection: OK")
-            except Exception as e:
-                logging.error(f"Database connection issue: {e}")
-                # Попытка переподключения
-                await database.reconnect_database()
+            if database.is_database_available():
+                try:
+                    await database.db_query("SELECT 1")
+                    logging.info("Database connection: OK")
+                except Exception as e:
+                    logging.error(f"Database connection issue: {e}")
+                    # Попытка переподключения
+                    await database.reconnect_database()
+            else:
+                logging.info("Database not available - running in limited mode")
             
             # Логируем статус бота
             logging.info("Bot monitoring: All systems operational")
