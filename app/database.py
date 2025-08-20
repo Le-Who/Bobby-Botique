@@ -57,6 +57,15 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         logging.critical("Database pool is not initialized - this should not happen!")
         raise Exception("Database pool is not initialized")
     
+    # Проверяем, не закрыт ли пул
+    if hasattr(db_pool, 'is_closed') and db_pool.is_closed():
+        logging.warning("Database pool is closed, attempting to reconnect...")
+        try:
+            await reconnect_database()
+        except Exception as reconnect_error:
+            logging.error(f"Failed to reconnect to database: {reconnect_error}")
+            raise Exception("Database pool is closed and reconnection failed")
+    
     query_prepared = _prepare_query(query)
     last_exception = None
 

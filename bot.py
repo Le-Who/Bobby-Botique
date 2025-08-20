@@ -251,6 +251,9 @@ async def run_bot_and_server():
         # Graceful shutdown всех задач
         logging.info("Starting graceful shutdown...")
         
+        # Сначала останавливаем мониторинг (может использовать БД)
+        shutdown_event.set()
+        
         # Отменяем все задачи
         for task in [monitoring_task, bot_task, server_task]:
             if not task.done():
@@ -320,17 +323,27 @@ async def main():
         await _notify_admin_of_crash(e)
     finally:
         logging.info("Shutting down services...")
+        
+        # Сначала останавливаем все задачи, которые могут использовать БД
         try:
             await stop_task_queue()
         except Exception as e:
             logging.warning(f"Error stopping task queue: {e}")
         
+        # Останавливаем мониторинг
+        try:
+            shutdown_event.set()
+        except Exception as e:
+            logging.warning(f"Error setting shutdown event: {e}")
+        
+        # Останавливаем метрики (может использовать БД)
         try:
             await metrics_collector.cleanup()
         except Exception as e:
             logging.warning(f"Error cleaning up metrics: {e}")
         
-        if database.db_pool:
+        # В последнюю очередь закрываем пул БД
+        if database.db_pool and not database.db_pool.is_closed():
             try:
                 await database.db_pool.close()
                 logging.info("Database pool closed.")

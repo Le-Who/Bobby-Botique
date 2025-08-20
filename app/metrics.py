@@ -37,6 +37,11 @@ class MetricsCollector:
     async def _ensure_metrics_tables(self):
         """Создает таблицы для метрик, если они не существуют"""
         try:
+            # Проверяем состояние пула БД перед выполнением запросов
+            if not db.db_pool or (hasattr(db.db_pool, 'is_closed') and db.db_pool.is_closed()):
+                logging.warning("Database pool is closed, skipping metrics table creation")
+                return
+            
             # Таблица для общих метрик
             await db.db_query("""
                 CREATE TABLE IF NOT EXISTS metrics (
@@ -73,6 +78,11 @@ class MetricsCollector:
     async def _save_metrics_to_db(self):
         """Сохраняет текущие метрики в базу данных"""
         try:
+            # Проверяем состояние пула БД перед сохранением
+            if not db.db_pool or (hasattr(db.db_pool, 'is_closed') and db.db_pool.is_closed()):
+                logging.warning("Database pool is closed, skipping metrics save")
+                return
+            
             await self._ensure_metrics_tables()
             
             today = date.today()
@@ -125,6 +135,11 @@ class MetricsCollector:
     async def _load_metrics_from_db(self):
         """Загружает метрики из базы данных"""
         try:
+            # Проверяем состояние пула БД перед загрузкой
+            if not db.db_pool or (hasattr(db.db_pool, 'is_closed') and db.db_pool.is_closed()):
+                logging.warning("Database pool is closed, skipping metrics load")
+                return
+            
             await self._ensure_metrics_tables()
             
             # Загружаем общие метрики (без JSONB полей в основном запросе)
@@ -384,7 +399,15 @@ class MetricsCollector:
     
     async def cleanup(self):
         """Очищает ресурсы и сохраняет метрики"""
-        await self._save_metrics_to_db()
+        try:
+            # Проверяем состояние пула БД перед cleanup
+            if not db.db_pool or (hasattr(db.db_pool, 'is_closed') and db.db_pool.is_closed()):
+                logging.warning("Database pool is closed, skipping metrics cleanup")
+                return
+            
+            await self._save_metrics_to_db()
+        except Exception as e:
+            logging.warning(f"Error during metrics cleanup: {e}")
 
 # Глобальный экземпляр сборщика метрик
 metrics_collector = MetricsCollector()
