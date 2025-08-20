@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import signal
+import datetime
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler
 from telegram.error import NetworkError, TimedOut, RetryAfter
@@ -22,9 +23,28 @@ from app.group_chat import initialize_group_chats
 
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
 flask_app = Flask(__name__)
+
 @flask_app.route('/')
 def health_check():
+    """Health check endpoint для Render Free Tier"""
+    logging.info("Health check request received from Render")
     return "I am alive!", 200
+
+@flask_app.route('/status')
+def status_check():
+    """Расширенная проверка статуса для диагностики"""
+    try:
+        # Проверяем базовые компоненты
+        status = {
+            "bot": "running",
+            "database": "connected" if database.db_pool else "disconnected",
+            "timestamp": str(datetime.datetime.now()),
+            "uptime": "active"
+        }
+        return status, 200
+    except Exception as e:
+        logging.error(f"Status check error: {e}")
+        return {"error": str(e)}, 500
 
 # Глобальная переменная для управления завершением
 shutdown_event = asyncio.Event()
@@ -69,7 +89,11 @@ async def run_bot_with_retry():
     base_delay = 1  # секунды
     application = None
     
+    # Для Render Free Tier важно логировать все попытки
+    logging.info(f"Starting bot with retry mechanism (max attempts: {max_retries})")
+    
     for attempt in range(max_retries):
+        logging.info(f"Bot startup attempt {attempt + 1}/{max_retries}")
         try:
             # Настройка таймаутов через Application.builder()
             # Создаем Application с кастомными настройками Request
@@ -108,6 +132,7 @@ async def run_bot_with_retry():
             )
             
             logging.info("Bot started successfully")
+            logging.info("Bot is now polling for updates...")
             
             # Ждем завершения
             while not shutdown_event.is_set():
@@ -115,8 +140,11 @@ async def run_bot_with_retry():
             
             # Graceful shutdown
             logging.info("Shutting down bot gracefully...")
+            logging.info("Stopping updater...")
             await application.updater.stop()
+            logging.info("Stopping application...")
             await application.stop()
+            logging.info("Bot shutdown complete")
             break  # Успешное завершение
                 
         except (NetworkError, TimedOut, RetryAfter) as e:
