@@ -27,6 +27,7 @@ flask_app = Flask(__name__)
 @flask_app.route('/')
 def health_check():
     """Health check endpoint для Render Free Tier"""
+    print("Health check request received from Render", flush=True)
     logging.info("Health check request received from Render")
     return "I am alive!", 200
 
@@ -34,6 +35,7 @@ def health_check():
 def status_check():
     """Расширенная проверка статуса для диагностики"""
     try:
+        print("Status check request received", flush=True)
         # Проверяем базовые компоненты
         status = {
             "bot": "running",
@@ -41,9 +43,12 @@ def status_check():
             "timestamp": str(datetime.datetime.now()),
             "uptime": "active"
         }
+        print(f"Status: {status}", flush=True)
         return status, 200
     except Exception as e:
-        logging.error(f"Status check error: {e}")
+        error_msg = f"Status check error: {e}"
+        print(error_msg, flush=True)
+        logging.error(error_msg)
         return {"error": str(e)}, 500
 
 # Глобальная переменная для управления завершением
@@ -90,10 +95,15 @@ async def run_bot_with_retry():
     application = None
     
     # Для Render Free Tier важно логировать все попытки
+    print(f"Starting bot with retry mechanism (max attempts: {max_retries})", flush=True)
     logging.info(f"Starting bot with retry mechanism (max attempts: {max_retries})")
-    logging.info(f"Python-telegram-bot version: {Application.__version__ if hasattr(Application, '__version__') else 'Unknown'}")
+    
+    version_info = Application.__version__ if hasattr(Application, '__version__') else 'Unknown'
+    print(f"Python-telegram-bot version: {version_info}", flush=True)
+    logging.info(f"Python-telegram-bot version: {version_info}")
     
     for attempt in range(max_retries):
+        print(f"Bot startup attempt {attempt + 1}/{max_retries}", flush=True)
         logging.info(f"Bot startup attempt {attempt + 1}/{max_retries}")
         try:
             # Настройка таймаутов через Application.builder()
@@ -256,19 +266,32 @@ async def run_bot_and_server():
 
 async def main():
     """Главная функция: настраивает логирование, БД и запускает приложение."""
+    # Настройка логирования для Render (принудительно в stdout)
     logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
+        level=logging.INFO,
+        handlers=[
+            logging.StreamHandler(),  # Принудительно в stdout
+            logging.FileHandler('/tmp/bot.log')  # Backup в файл
+        ]
     )
+    
+    # Принудительно выводим в stdout для Render
+    print("=== BOT STARTUP INITIATED ===", flush=True)
+    logging.info("=== BOT STARTUP INITIATED ===")
     
     # Регистрируем обработчики сигналов
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     
     try:
+        print("Starting bot initialization...", flush=True)
         logging.info("Starting bot initialization...")
         
+        print("Initializing database...", flush=True)
         logging.info("Initializing database...")
         await database.init_db()
+        print("Database initialized successfully.", flush=True)
         logging.info("Database initialized successfully.")
         
         logging.info("Initializing group chats...")
@@ -327,14 +350,19 @@ async def _notify_admin_of_crash(error: Exception):
         logging.error(f"Failed to notify admin of crash: {e}")
 
 if __name__ == "__main__":
+    print("=== BOT MAIN ENTRY POINT ===", flush=True)
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
+        print("Bot stopped by user.", flush=True)
         logging.info("Bot stopped by user.")
     except asyncio.CancelledError:
+        print("Bot was cancelled - this is normal during shutdown", flush=True)
         logging.info("Bot was cancelled - this is normal during shutdown")
     except Exception as e:
-        logging.critical(f"Unexpected error in main: {e}", exc_info=True)
+        error_msg = f"Unexpected error in main: {e}"
+        print(error_msg, flush=True)
+        logging.critical(error_msg, exc_info=True)
         # Для Render важно логировать все критические ошибки
         import sys
         sys.exit(1)

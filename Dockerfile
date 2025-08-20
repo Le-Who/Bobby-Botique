@@ -12,21 +12,24 @@ WORKDIR /app
 # Создаем non-root пользователя для безопасности
 RUN useradd --create-home --shell /bin/bash app \
     && chown -R app:app /app
-USER app
 
 # Копируем файл с зависимостями
-COPY --chown=app:app requirements.txt .
+COPY requirements.txt .
 
-# Устанавливаем зависимости с оптимизацией для Render
-RUN pip install --no-cache-dir --user -r requirements.txt
+# Устанавливаем зависимости
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Копируем исходный код
-COPY --chown=app:app . .
+COPY . .
 
-# Настраиваем переменные окружения для оптимизации
+# Настраиваем переменные окружения для логирования
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PATH="/home/app/.local/bin:${PATH}"
+ENV PYTHONPATH=/app
+
+# Передаем права пользователю app
+RUN chown -R app:app /app
+USER app
 
 # Expose порт для Render health check
 EXPOSE 10000
