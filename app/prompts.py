@@ -71,7 +71,7 @@ SYNTHESIS_PROMPT = """
    - NEVER use HTML tags like <b>, <i>, <code>, <a>, <strong>, <em>, etc.
    - NEVER use double asterisks **text** - always use single *text*
    - NEVER use double underscores __text__ - always use single _text_
-   - NEVER use square bracket links like [[text]] - only use [text](URL)
+   - NEVER use double square brackets [[text]] - only use single [text](URL)
    - NEVER use LaTeX math syntax like $...$ or $$...$$ - use plain text for math
 4. **MATHEMATICAL EXPRESSIONS FORMATTING:**
    - NEVER use LaTeX: $1 × 1 = 1$ or $$√2$$
@@ -85,6 +85,7 @@ SYNTHESIS_PROMPT = """
    - The [display text] should be short and descriptive (e.g., the article title or Источник 1).
    - The (URL) MUST be the full, original URL from the context.
    - Any special characters inside the [display text] part MUST be escaped with a preceding backslash.
+   - **IMPORTANT:** NEVER use double brackets [[...]] - only use single brackets [...] followed by (URL).
 6. If you find conflicting information, highlight this discrepancy.
 7. If the context is insufficient, state that clearly. Do not use any prior knowledge.
 
@@ -92,9 +93,10 @@ SYNTHESIS_PROMPT = """
 The price was listed as 5500 грн [according to this OLX listing](https://www.olx.ua/...).
 
 **BAD CITATION EXAMPLES (DO NOT USE):**
-- The price was listed as 5500 грн [[OLX]](https://www.olx.ua/...).
-- The price was listed as 5500 грн <a href="https://www.olx.ua/...">OLX</a>.
-- The price was listed as 5500 грн **OLX** (https://www.olx.ua/...).
+- The price was listed as 5500 грн [[OLX]](https://www.olx.ua/...). ❌ WRONG: Double brackets
+- The price was listed as 5500 грн <a href="https://www.olx.ua/...">OLX</a>. ❌ WRONG: HTML tags
+- The price was listed as 5500 грн **OLX** (https://www.olx.ua/...). ❌ WRONG: No brackets
+- The price was listed as 5500 грн [Источник: OLX](https://www.olx.ua/...). ✅ CORRECT: Single brackets
 
 **CORRECT FORMATTING EXAMPLES:**
 - *Important term* should be bold

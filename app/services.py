@@ -42,24 +42,19 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                     img_byte_arr = img_byte_arr.getvalue()
                     
                     try:
-                        # Пробуем использовать from_data
-                        image_part = types.Part.from_data(
-                            data=img_byte_arr,
-                            mime_type="image/jpeg"
+                        # Создаем Part для изображения используя правильный метод
+                        # Согласно документации google-genai, используем inline_data
+                        image_part = types.Part(
+                            inline_data=types.Blob(
+                                mime_type="image/jpeg",
+                                data=img_byte_arr
+                            )
                         )
                     except Exception as e:
-                        logging.warning(f"Failed to create image part with from_data: {e}")
-                        # Fallback: используем альтернативный метод
-                        try:
-                            # Попробуем создать Part напрямую
-                            image_part = types.Part()
-                            image_part.data = img_byte_arr
-                            image_part.mime_type = "image/jpeg"
-                        except Exception as e2:
-                            logging.warning(f"Alternative image part creation also failed: {e2}")
-                            # Последний fallback: пропускаем изображение
-                            logging.warning(f"Skipping image part due to creation error")
-                            continue
+                        logging.warning(f"Failed to create image part: {e}")
+                        # Fallback: пропускаем изображение
+                        logging.warning(f"Skipping image part due to creation error")
+                        continue
                     
                     processed_parts.append(image_part)
                 else:
