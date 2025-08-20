@@ -34,7 +34,12 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             processed_parts = []
             for part in parts:
                 if isinstance(part, Image.Image): # Проверяем, является ли объект PIL Image
-                    processed_parts.append(part)
+                    # Правильно создаем Part для изображения
+                    image_part = types.Part.from_data(
+                        data=part,
+                        mime_type="image/jpeg"  # или другой подходящий MIME тип
+                    )
+                    processed_parts.append(image_part)
                 else:
                     processed_parts.append(types.Part.from_text(text=str(part)))
             
@@ -74,12 +79,15 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         await metrics_collector.record_error("gemini_api", str(e))
         return f"Произошла непредвиденная ошибка API: {e}", None
 
-@NetworkErrorHandler.retry_with_backoff
 async def _tavily_api_call(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Internal function for making Tavily API calls with retry logic."""
-    response = await http_client.post("https://api.tavily.com/search", json=payload)
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = await http_client.post("https://api.tavily.com/search", json=payload)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logging.error(f"Tavily API call error: {e}")
+        raise
 
 async def tavily_search_agent(query: str, search_type: str = "search"):
     # Проверяем кэш перед выполнением поиска
