@@ -91,6 +91,7 @@ async def run_bot_with_retry():
     
     # Для Render Free Tier важно логировать все попытки
     logging.info(f"Starting bot with retry mechanism (max attempts: {max_retries})")
+    logging.info(f"Python-telegram-bot version: {Application.__version__ if hasattr(Application, '__version__') else 'Unknown'}")
     
     for attempt in range(max_retries):
         logging.info(f"Bot startup attempt {attempt + 1}/{max_retries}")
@@ -118,7 +119,20 @@ async def run_bot_with_retry():
             application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
             
             # Запускаем бота без async with для лучшего контроля
-            await application.start()
+            # В новой версии python-telegram-bot ОБЯЗАТЕЛЬНО нужно вызывать initialize()
+            try:
+                await application.initialize()
+                logging.info("Application initialized successfully")
+            except Exception as init_error:
+                logging.error(f"Failed to initialize application: {init_error}")
+                raise
+            
+            try:
+                await application.start()
+                logging.info("Application started successfully")
+            except Exception as start_error:
+                logging.error(f"Failed to start application: {start_error}")
+                raise
             
             # Настройка polling с улучшенными параметрами
             await application.updater.start_polling(
@@ -155,10 +169,18 @@ async def run_bot_with_retry():
             # Очищаем ресурсы перед повторной попыткой
             if application:
                 try:
-                    await application.updater.stop()
-                    await application.stop()
+                    # Проверяем, был ли updater запущен
+                    if hasattr(application, 'updater') and application.updater:
+                        await application.updater.stop()
                 except Exception as cleanup_error:
-                    logging.warning(f"Cleanup error: {cleanup_error}")
+                    logging.warning(f"Cleanup error (updater): {cleanup_error}")
+                
+                try:
+                    # Проверяем, была ли application инициализирована
+                    if hasattr(application, '_initialized') and application._initialized:
+                        await application.stop()
+                except Exception as cleanup_error:
+                    logging.warning(f"Cleanup error (application): {cleanup_error}")
             
             if attempt < max_retries - 1:
                 await asyncio.sleep(delay)
@@ -171,10 +193,18 @@ async def run_bot_with_retry():
             # Очищаем ресурсы при ошибке
             if application:
                 try:
-                    await application.updater.stop()
-                    await application.stop()
+                    # Проверяем, был ли updater запущен
+                    if hasattr(application, 'updater') and application.updater:
+                        await application.updater.stop()
                 except Exception as cleanup_error:
-                    logging.warning(f"Cleanup error: {cleanup_error}")
+                    logging.warning(f"Cleanup error (updater): {cleanup_error}")
+                
+                try:
+                    # Проверяем, была ли application инициализирована
+                    if hasattr(application, '_initialized') and application._initialized:
+                        await application.stop()
+                except Exception as cleanup_error:
+                    logging.warning(f"Cleanup error (application): {cleanup_error}")
             
             raise
 
