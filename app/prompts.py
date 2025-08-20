@@ -80,12 +80,19 @@ SYNTHESIS_PROMPT = """
    - For square roots: use √ or корень из (e.g., √2 or корень из 2)
    - For powers: use ^ (e.g., 2^2 = 4 instead of $2^2 = 4$)
    - For multiplication: use × or * (e.g., 2 × 3 = 6 or 2 * 3 = 6)
+   - **CRITICAL:** ALWAYS add spaces around mathematical operators: a + b, not a+b
+   - **CRITICAL:** ALWAYS add spaces around equals sign: a = b, not a=b
+   - **CRITICAL:** ALWAYS add spaces around division: a / b, not a/b
+   - **EXAMPLE:** "a_следующее = (a_предыдущее + 2 / a_предыдущее) / 2" (with proper spacing)
 5. **You MUST cite your sources using the correct MarkdownV2 link format ONLY:** [display text](URL).
    - CRITICAL: You MUST NOT use any other link format, such as [[...]] or <a href="...">...</a>. This is a strict requirement.
    - The [display text] should be short and descriptive (e.g., the article title or Источник 1).
    - The (URL) MUST be the full, original URL from the context.
    - Any special characters inside the [display text] part MUST be escaped with a preceding backslash.
    - **IMPORTANT:** NEVER use double brackets [[...]] - only use single brackets [...] followed by (URL).
+   - **CRITICAL FORMATTING RULE:** EVERY source citation MUST be a clickable link. NEVER write "источник 1, источник 2 (URL)" - this is WRONG.
+   - **CORRECT FORMAT:** [Источник 1](URL1), [Источник 2](URL2)
+   - **WRONG FORMAT:** источник 1, источник 2 (URL) - this creates unclickable text
 6. If you find conflicting information, highlight this discrepancy.
 7. If the context is insufficient, state that clearly. Do not use any prior knowledge.
 
@@ -98,6 +105,13 @@ The price was listed as 5500 грн [according to this OLX listing](https://www.
 - The price was listed as 5500 грн **OLX** (https://www.olx.ua/...). ❌ WRONG: No brackets
 - The price was listed as 5500 грн [Источник: OLX](https://www.olx.ua/...). ✅ CORRECT: Single brackets
 
+**CRITICAL SOURCE FORMATTING RULES:**
+- ❌ NEVER write: "источник 1, источник 2 (URL)" - this creates unclickable text
+- ❌ NEVER write: "источник." - this has no link at all
+- ✅ ALWAYS write: [Источник 1](URL1), [Источник 2](URL2)
+- ✅ ALWAYS write: [Подробнее здесь](URL)
+- ✅ ALWAYS write: [Согласно статье](URL)
+
 **CORRECT FORMATTING EXAMPLES:**
 - *Important term* should be bold
 - _Secondary emphasis_ should be italic
@@ -106,6 +120,9 @@ The price was listed as 5500 грн [according to this OLX listing](https://www.
 - Math: 2 × 3 = 6 (NOT $2 × 3 = 6$)
 - Square root: √2 (NOT $√2$)
 - Fraction: 1/2 (NOT $1/2$)
+- **Source citations:** [Источник 1](https://example1.com), [Источник 2](https://example2.com)
+- **Mathematical formulas:** a_следующее = (a_предыдущее + 2 / a_предыдущее) / 2
+- **Variables:** Always use underscores for subscripts: a_следующий, a_предыдущий
 """
 
 IMAGE_ANALYSIS_PROMPT = """
