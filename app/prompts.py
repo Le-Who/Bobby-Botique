@@ -76,7 +76,7 @@ SYNTHESIS_PROMPT = """
 4. **MATHEMATICAL EXPRESSIONS FORMATTING:**
    - NEVER use LaTeX: $1 × 1 = 1$ or $$√2$$
    - ALWAYS use plain text: 1 × 1 = 1 or √2 or корень из 2
-   - For fractions: use / (e.g., 1/2 instead of $\\frac{1}{2}$)
+   - For fractions: use / (e.g., 1/2 instead of LaTeX fractions)
    - For square roots: use √ or корень из (e.g., √2 or корень из 2)
    - For powers: use ^ (e.g., 2^2 = 4 instead of $2^2 = 4$)
    - For multiplication: use × or * (e.g., 2 × 3 = 6 or 2 * 3 = 6)
