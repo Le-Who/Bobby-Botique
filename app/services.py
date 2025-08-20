@@ -35,9 +35,15 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             for part in parts:
                 if isinstance(part, Image.Image): # Проверяем, является ли объект PIL Image
                     # Правильно создаем Part для изображения
+                    # Конвертируем PIL Image в bytes для Gemini API
+                    import io
+                    img_byte_arr = io.BytesIO()
+                    part.save(img_byte_arr, format='JPEG')
+                    img_byte_arr = img_byte_arr.getvalue()
+                    
                     image_part = types.Part.from_data(
-                        data=part,
-                        mime_type="image/jpeg"  # или другой подходящий MIME тип
+                        data=img_byte_arr,
+                        mime_type="image/jpeg"
                     )
                     processed_parts.append(image_part)
                 else:

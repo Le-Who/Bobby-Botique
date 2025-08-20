@@ -19,7 +19,7 @@ QNA_LOCALIZATION_PROMPT = """
    - NEVER use double asterisks `**text**` - use single `*text*` instead
    - NEVER use double underscores `__text__` - use single `_text_` instead
    - NEVER use LaTeX math syntax like `$...$` or `$$...$$` - use plain text for math
-   - If you need to use special characters (., !, -, [, ], (, ), *, _, `, ~, >, #, +, =, |, {, }), escape them with backslash: `\.`, `\!`, `\-`, etc.
+   - If you need to use special characters (., !, -, [, ], (, ), *, _, `, ~, >, #, +, =, |, {{, }}), escape them with backslash: `\.`, `\!`, `\-`, etc.
 5. **MATHEMATICAL EXPRESSIONS FORMATTING:**
    - NEVER use LaTeX: `$1 \times 1 = 1$` or `$$\sqrt{2}$$`
    - ALWAYS use plain text: `1 × 1 = 1` or `√2` or `корень из 2`
@@ -84,7 +84,7 @@ SYNTHESIS_PROMPT = """
    - **CRITICAL:** You MUST NOT use any other link format, such as `[[...]]` or `<a href="...">...</a>`. This is a strict requirement.
    - The `[display text]` should be short and descriptive (e.g., the article title or `Источник 1`).
    - The `(URL)` MUST be the full, original URL from the context.
-   - Any special characters (`.`, `!`, `-`, `[`, `]`, `(`, `)`, `*`, `_`, `` ` ``, `~`, `>`, `#`, `+`, `=`, `|`, `{`, `}`, `\.`, `\!`) inside the `[display text]` part MUST be escaped with a preceding backslash (`\\`).
+   - Any special characters (`.`, `!`, `-`, `[`, `]`, `(`, `)`, `*`, `_`, `` ` ``, `~`, `>`, `#`, `+`, `=`, `|`, `{{`, `}}`, `\.`, `\!`) inside the `[display text]` part MUST be escaped with a preceding backslash (`\\`).
 6. If you find conflicting information, highlight this discrepancy.
 7. If the context is insufficient, state that clearly. Do not use any prior knowledge.
 
@@ -101,9 +101,9 @@ The price was listed as 5500 грн [according to this OLX listing](https://www.
 - _Secondary emphasis_ should be italic
 - `` `code snippet` `` should be in code format
 - [Link text](https://example.com) should be a proper link
-- Math: `2 × 3 = 6` (NOT `$2 \times 3 = 6$`)
-- Square root: `√2` (NOT `$\sqrt{2}$`)
-- Fraction: `1/2` (NOT `$\frac{1}{2}$`)
+- Math: `2 × 3 = 6` (NOT `$2 × 3 = 6$`)
+- Square root: `√2` (NOT `$√2$`)
+- Fraction: `1/2` (NOT `$1/2$`)
 """
 
 IMAGE_ANALYSIS_PROMPT = """
