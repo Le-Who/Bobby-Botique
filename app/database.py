@@ -44,7 +44,8 @@ async def reconnect_database():
             min_size=1, 
             max_size=3,  # Conservative limit for Neon.tech free tier
             command_timeout=30,  # 30 seconds timeout for serverless
-            server_settings={'application_name': 'gemaibotv2'}
+            server_settings={'application_name': 'gemaibotv2'},
+            ssl='require'  # Принудительно используем SSL
         )
         logging.info("Database reconnected successfully")
         return True
@@ -110,14 +111,33 @@ async def init_db():
     global db_pool
     if not settings.DATABASE_URL:
         raise Exception("DATABASE_URL not set")
-    # Neon.tech free tier supports max 5 connections
-    db_pool = await asyncpg.create_pool(
-        dsn=settings.DATABASE_URL, 
-        min_size=1, 
-        max_size=3,  # Conservative limit for Neon.tech free tier
-        command_timeout=30,  # 30 seconds timeout for serverless
-        server_settings={'application_name': 'gemaibotv2'}
-    )
+    
+    try:
+        # Neon.tech free tier supports max 5 connections
+        db_pool = await asyncpg.create_pool(
+            dsn=settings.DATABASE_URL, 
+            min_size=1, 
+            max_size=3,  # Conservative limit for Neon.tech free tier
+            command_timeout=30,  # 30 seconds timeout for serverless
+            server_settings={'application_name': 'gemaibotv2'},
+            ssl='require'  # Принудительно используем SSL
+        )
+        logging.info("Database connection pool created successfully")
+    except asyncpg.exceptions.InternalServerError as e:
+        if "blocked network" in str(e).lower():
+            logging.critical("CRITICAL: Neon.tech is blocking connections from Render's IP address")
+            logging.critical("SOLUTION: You need to whitelist Render's IP addresses in Neon.tech console")
+            logging.critical("Or use Neon.tech's connection pooling with 'pooler' mode")
+            # Сохраняем ошибку для диагностики
+            database._last_error = str(e)
+            raise Exception("Database blocked by Neon.tech - check network configuration")
+        else:
+            database._last_error = str(e)
+            raise e
+    except Exception as e:
+        logging.critical(f"Failed to create database pool: {e}")
+        database._last_error = str(e)
+        raise e
     
     await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)""")
     await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")

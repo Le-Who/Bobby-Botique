@@ -37,9 +37,18 @@ def status_check():
     try:
         print("Status check request received", flush=True)
         # Проверяем базовые компоненты
+        # Проверяем состояние БД
+        db_status = "disconnected"
+        if database.db_pool:
+            if hasattr(database.db_pool, 'is_closed') and database.db_pool.is_closed():
+                db_status = "closed"
+            else:
+                db_status = "connected"
+        
         status = {
             "bot": "running",
-            "database": "connected" if database.db_pool else "disconnected",
+            "database": db_status,
+            "database_error": "blocked_network" if "blocked network" in str(getattr(database, '_last_error', '')) else None,
             "timestamp": str(datetime.datetime.now()),
             "uptime": "active"
         }
@@ -293,9 +302,19 @@ async def main():
         
         print("Initializing database...", flush=True)
         logging.info("Initializing database...")
-        await database.init_db()
-        print("Database initialized successfully.", flush=True)
-        logging.info("Database initialized successfully.")
+        try:
+            await database.init_db()
+            print("Database initialized successfully.", flush=True)
+            logging.info("Database initialized successfully.")
+        except Exception as db_error:
+            if "blocked network" in str(db_error).lower() or "neon.tech" in str(db_error).lower():
+                print("CRITICAL: Database connection blocked by Neon.tech", flush=True)
+                logging.critical("CRITICAL: Database connection blocked by Neon.tech")
+                print("Bot will start in limited mode without database", flush=True)
+                logging.warning("Bot will start in limited mode without database")
+                # Продолжаем без БД в ограниченном режиме
+            else:
+                raise db_error
         
         logging.info("Initializing group chats...")
         await initialize_group_chats()
