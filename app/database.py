@@ -64,8 +64,12 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
             await init_db()
             logging.info("Database pool initialized successfully during query")
         except Exception as init_error:
-            logging.critical(f"Failed to initialize database during query: {init_error}")
-            raise Exception(f"Database initialization failed: {init_error}")
+            if "blocked network" in str(init_error).lower() or "neon.tech" in str(init_error).lower():
+                logging.warning("Database blocked by Neon.tech - bot will work in limited mode")
+                raise Exception("Database blocked by Neon.tech - working in limited mode")
+            else:
+                logging.critical(f"Failed to initialize database during query: {init_error}")
+                raise Exception(f"Database initialization failed: {init_error}")
     
     # Проверяем, не закрыт ли пул
     if hasattr(db_pool, 'is_closed') and db_pool.is_closed():
@@ -203,52 +207,88 @@ async def init_db():
         raise e
 
 async def get_user_chat(user_id: int) -> ChatState:
-    chat_result = await db_query("SELECT * FROM chats WHERE user_id = ?", (user_id,))
-    user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = ?", (user_id,))
+    try:
+        chat_result = await db_query("SELECT * FROM chats WHERE user_id = ?", (user_id,))
+        user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = ?", (user_id,))
 
-    chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False)
+        chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False)
 
-    if chat_result:
-        row = chat_result[0]
-        chat_state.history = json.loads(row['history']) if row['history'] else []
-        chat_state.model = row['model'] or settings.DEFAULT_MODEL
-        chat_state.token_count = row['token_count'] or 0
-        chat_state.search_enabled = bool(row['search_enabled'])
-        chat_state.system_prompt = row['system_prompt'] or None
+        if chat_result:
+            row = chat_result[0]
+            chat_state.history = json.loads(row['history']) if row['history'] else []
+            chat_state.model = row['model'] or settings.DEFAULT_MODEL
+            chat_state.token_count = row['token_count'] or 0
+            chat_state.search_enabled = bool(row['search_enabled'])
+            chat_state.system_prompt = row['system_prompt'] or None
 
-    if user_result:
-        chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
+        if user_result:
+            chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
+            
+        return chat_state
         
-    return chat_state
+    except Exception as e:
+        if "blocked network" in str(e).lower() or "neon.tech" in str(e).lower():
+            logging.warning(f"Database blocked, returning default chat state for user {user_id}")
+            # Возвращаем состояние по умолчанию при блокировке БД
+            return ChatState(
+                history=[], 
+                model=settings.DEFAULT_MODEL, 
+                token_count=0, 
+                search_enabled=False, 
+                system_prompt=None, 
+                is_deep_dive=False
+            )
+        else:
+            raise e
 
 async def update_user_chat(user_id: int, chat_state: ChatState):
-    history_json = json.dumps(chat_state.history)
-    chat_query = """
-    INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT (user_id)
-    DO UPDATE SET
-        history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
-        search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt;
-    """
-    await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
+    try:
+        history_json = json.dumps(chat_state.history)
+        chat_query = """
+        INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT (user_id)
+        DO UPDATE SET
+            history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
+            search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt;
+        """
+        await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
 
-    user_query = "UPDATE users SET is_deep_dive = ? WHERE user_id = ?"
-    await db_query(user_query, (chat_state.is_deep_dive, user_id))
+        user_query = "UPDATE users SET is_deep_dive = ? WHERE user_id = ?"
+        await db_query(user_query, (chat_state.is_deep_dive, user_id))
+        
+    except Exception as e:
+        if "blocked network" in str(e).lower() or "neon.tech" in str(e).lower():
+            logging.warning(f"Database blocked, skipping chat update for user {user_id}")
+            # При блокировке БД просто пропускаем обновление
+            return
+        else:
+            raise e
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
-    today_pacific: date = datetime.now(PACIFIC_TZ).date()
-    daily_limit = settings.DAILY_LIMITS.get(model_name)
-    if not daily_limit:
-        keys = await db_query("SELECT * FROM api_keys")
-        return keys[0] if keys else None
-    all_keys = await db_query("SELECT * FROM api_keys")
-    for key_row in all_keys:
-        usage = await db_query("SELECT request_count FROM key_usage WHERE key_hash = ? AND model_name = ? AND usage_date = ?", (key_row['key_hash'], model_name, today_pacific))
-        request_count = usage[0]['request_count'] if usage else 0
-        if request_count < daily_limit * settings.LIMIT_THRESHOLD_PERCENT:
-            return key_row
-    return None
+    try:
+        today_pacific: date = datetime.now(PACIFIC_TZ).date()
+        daily_limit = settings.DAILY_LIMITS.get(model_name)
+        if not daily_limit:
+            keys = await db_query("SELECT * FROM api_keys")
+            return keys[0] if keys else None
+        all_keys = await db_query("SELECT * FROM api_keys")
+        for key_row in all_keys:
+            usage = await db_query("SELECT request_count FROM key_usage WHERE key_hash = ? AND model_name = ? AND usage_date = ?", (key_row['key_hash'], model_name, today_pacific))
+            request_count = usage[0]['request_count'] if usage else 0
+            if request_count < daily_limit * settings.LIMIT_THRESHOLD_PERCENT:
+                return key_row
+        return None
+        
+    except Exception as e:
+        if "blocked network" in str(e).lower() or "neon.tech" in str(e).lower():
+            logging.warning(f"Database blocked, returning first Gemini key from settings for model {model_name}")
+            # При блокировке БД возвращаем первый ключ из настроек
+            if settings.GEMINI_API_KEYS:
+                return {"key_hash": "fallback", "api_key": settings.GEMINI_API_KEYS[0]}
+            return None
+        else:
+            raise e
 
 async def increment_gemini_key_usage(key_hash: str, model_name: str):
     today_pacific: date = datetime.now(PACIFIC_TZ).date()
