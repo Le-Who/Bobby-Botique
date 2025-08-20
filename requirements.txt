@@ -1,16 +1,24 @@
+# Core bot dependencies
 python-telegram-bot>=20.7,<21.0
-google-genai
-Pillow
-pytz
-Flask
-tavily-python
-asyncpg
+google-genai>=0.3.0
 httpx>=0.25.0,<1.0.0
-hypercorn
-pydantic-settings
-PyPDF2
-python-docx
-PyMuPDF
 
-redis
-upstash-redis
+# Database and caching (optimized for free tiers)
+asyncpg>=0.28.0,<1.0.0
+redis>=4.5.0,<6.0.0
+
+# Web server for health checks
+Flask>=2.3.0,<4.0.0
+hypercorn>=0.14.0,<1.0.0
+
+# Configuration and utilities
+pydantic-settings>=2.0.0,<3.0.0
+pytz>=2023.3
+
+# Document processing (lightweight alternatives)
+PyPDF2>=3.0.0,<4.0.0
+python-docx>=0.8.11,<2.0.0
+Pillow>=9.5.0,<11.0.0
+
+# External APIs
+tavily-python>=0.3.0

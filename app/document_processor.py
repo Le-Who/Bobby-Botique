@@ -12,7 +12,7 @@ import httpx
 from PIL import Image
 import PyPDF2
 from docx import Document
-import fitz  # PyMuPDF
+# PyMuPDF removed for free tier optimization
 
 from .config import settings
 from . import database
@@ -24,7 +24,7 @@ try:
     import PyPDF2
     import docx
     from PIL import Image
-    import fitz  # PyMuPDF для более качественного извлечения PDF
+    # PyMuPDF removed for free tier optimization
     DOCUMENT_SUPPORT = True
 except ImportError:
     DOCUMENT_SUPPORT = False
@@ -35,8 +35,9 @@ class DocumentProcessor:
     
     def __init__(self):
         self.supported_formats = ['.pdf', '.docx', '.doc']
-        self.max_file_size = 50 * 1024 * 1024  # 50MB
-        self.max_pages = 100  # Максимальное количество страниц
+        # Optimized for free tier resource constraints
+        self.max_file_size = 10 * 1024 * 1024  # 10MB for free tier
+        self.max_pages = 50  # Reduced page limit for performance
     
     def _calculate_file_hash(self, file_data: bytes) -> str:
         """Вычисляет SHA-256 хэш файла"""

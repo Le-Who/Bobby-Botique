@@ -38,7 +38,14 @@ async def reconnect_database():
             await db_pool.close()
             logging.info("Closed existing database pool")
         
-        db_pool = await asyncpg.create_pool(dsn=settings.DATABASE_URL, min_size=1, max_size=10)
+        # Neon.tech free tier supports max 5 connections
+        db_pool = await asyncpg.create_pool(
+            dsn=settings.DATABASE_URL, 
+            min_size=1, 
+            max_size=3,  # Conservative limit for Neon.tech free tier
+            command_timeout=30,  # 30 seconds timeout for serverless
+            server_settings={'application_name': 'gemaibotv2'}
+        )
         logging.info("Database reconnected successfully")
         return True
     except Exception as e:
@@ -94,7 +101,14 @@ async def init_db():
     global db_pool
     if not settings.DATABASE_URL:
         raise Exception("DATABASE_URL not set")
-    db_pool = await asyncpg.create_pool(dsn=settings.DATABASE_URL, min_size=1, max_size=10)
+    # Neon.tech free tier supports max 5 connections
+    db_pool = await asyncpg.create_pool(
+        dsn=settings.DATABASE_URL, 
+        min_size=1, 
+        max_size=3,  # Conservative limit for Neon.tech free tier
+        command_timeout=30,  # 30 seconds timeout for serverless
+        server_settings={'application_name': 'gemaibotv2'}
+    )
     
     await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)""")
     await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")

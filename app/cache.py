@@ -8,14 +8,28 @@ from redis import Redis
 
 from .metrics import metrics_collector
 
-# Initialize Redis client from environment variable
+# Initialize Redis client from environment variable with Upstash.com optimizations
 redis_url = os.getenv("REDIS_URL")
 if not redis_url:
     logging.warning("REDIS_URL environment variable not set. Caching will be disabled.")
     redis_client = None
 else:
     try:
-        redis_client = Redis.from_url(redis_url)
+        # Configure Redis client for Upstash.com free tier
+        redis_client = Redis.from_url(
+            redis_url,
+            socket_timeout=5,  # 5 seconds socket timeout
+            socket_connect_timeout=5,  # 5 seconds connect timeout
+            socket_keepalive=True,  # Keep connections alive
+            socket_keepalive_options={},
+            health_check_interval=30,  # Health check every 30 seconds
+            max_connections=2,  # Limit connections for free tier
+            retry_on_timeout=True,
+            ssl_cert_reqs=None  # Upstash handles SSL
+        )
+        # Test connection
+        redis_client.ping()
+        logging.info("Redis client initialized successfully for Upstash.com")
     except Exception as e:
         logging.error(f"Failed to connect to Redis: {e}")
         redis_client = None
