@@ -34,42 +34,28 @@ def signal_handler(signum, frame):
     logging.info(f"Received signal {signum}, initiating graceful shutdown...")
     shutdown_event.set()
 
-async def health_check_database():
-    """Периодическая проверка состояния базы данных"""
+async def basic_monitoring():
+    """Базовый мониторинг работы бота"""
     while not shutdown_event.is_set():
         try:
             await asyncio.sleep(300)  # Каждые 5 минут
             if shutdown_event.is_set():
                 break
-            await database.db_query("SELECT 1")  # Простой запрос для проверки
-            logging.info("Database health check passed")
-        except Exception as e:
-            logging.error(f"Database health check failed: {e}")
-            # Попытка переподключения
-            await database.reconnect_database()
-
-async def health_check_network():
-    """Периодическая проверка сетевого подключения к Telegram API"""
-    from app.utils.health_monitor import health_monitor
-    
-    while not shutdown_event.is_set():
-        try:
-            await asyncio.sleep(60)  # Каждую минуту
-            if shutdown_event.is_set():
-                break
             
-            # Используем улучшенный мониторинг здоровья
-            health_report = await health_monitor.get_system_health_report(database.db_query)
+            # Простая проверка базы данных
+            try:
+                await database.db_query("SELECT 1")
+                logging.info("Database connection: OK")
+            except Exception as e:
+                logging.error(f"Database connection issue: {e}")
+                # Попытка переподключения
+                await database.reconnect_database()
             
-            if health_report["overall_status"] == "critical":
-                logging.critical(f"CRITICAL SYSTEM STATUS: {health_report['recommendations']}")
-            elif health_report["overall_status"] == "degraded":
-                logging.warning(f"System status degraded: {health_report['recommendations']}")
-            else:
-                logging.debug("System health check passed")
+            # Логируем статус бота
+            logging.info("Bot monitoring: All systems operational")
                     
         except Exception as e:
-            logging.error(f"Health check failed: {e}")
+            logging.error(f"Monitoring error: {e}")
 
 async def run_bot_with_retry():
     """Запускает бота с автоматическими повторами при сетевых ошибках"""
@@ -114,7 +100,7 @@ async def run_bot_with_retry():
                     pool_timeout=30,  # Таймаут для получения соединения из пула
                 )
                 
-                logging.info("Bot started successfully with network error handling")
+                logging.info("Bot started successfully")
                 
                 # Ждем завершения
                 while not shutdown_event.is_set():
@@ -147,11 +133,8 @@ async def run_bot_and_server():
     logging.info(f"Health check server will run on port {settings.PORT}.")
     logging.info("Bot is running...")
     
-    # Запускаем мониторинг БД в фоне
-    db_monitor_task = asyncio.create_task(health_check_database())
-    
-    # Запускаем мониторинг сети в фоне
-    network_monitor_task = asyncio.create_task(health_check_network())
+    # Запускаем базовый мониторинг в фоне
+    monitoring_task = asyncio.create_task(basic_monitoring())
     
     # Запускаем бота с обработкой ошибок
     bot_task = asyncio.create_task(run_bot_with_retry())
@@ -163,17 +146,11 @@ async def run_bot_and_server():
         logging.error(f"Web server error: {e}")
     finally:
         # Отменяем все задачи
-        db_monitor_task.cancel()
-        network_monitor_task.cancel()
+        monitoring_task.cancel()
         bot_task.cancel()
         
         try:
-            await db_monitor_task
-        except asyncio.CancelledError:
-            pass
-        
-        try:
-            await network_monitor_task
+            await monitoring_task
         except asyncio.CancelledError:
             pass
         

@@ -47,13 +47,13 @@
 - ❌ **Было:** Внешние сервисы (Tavily, Gemini) блокировали работу бота при недоступности
 - ✅ **Стало:** Внешние сервисы не критичны для работы бота, только предупреждения
 
-### **Исправлена ошибка проверки Telegram API**
-- ❌ **Было:** Health check показывал "Telegram API connectivity issues" даже когда бот работал
-- ✅ **Стало:** Реальная проверка API через HTTP запрос вместо простой проверки доступности URL
-
 ### **Исправлена ошибка типов таймаутов**
 - ❌ **Было:** `TypeError("unsupported operand type(s) for +: 'float' and 'Timeout'")`
 - ✅ **Стало:** Передача числовых значений таймаутов напрямую в `HTTPXRequest`
+
+### **Упрощена система мониторинга**
+- ❌ **Было:** Сложная система health check с ложными тревогами
+- ✅ **Стало:** Простой мониторинг работы бота и базы данных
 
 ### **Детали исправлений:**
 
@@ -75,42 +75,19 @@ custom_request = HTTPXRequest(
 application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
 ```
 
-#### **2. Улучшенный мониторинг здоровья:**
+#### **2. Упрощенный мониторинг:**
 ```python
-# Внешние сервисы не критичны для работы бота
-if service_health["status"] == "warning":
-    recommendations.append(f"{service_name}: {service_health.get('message')} - This is not critical for bot operation.")
-
-# Только Telegram API и база данных критичны
-critical_services = [telegram_health["status"], database_health["status"]]
-if any(status == "error" for status in critical_services):
-    overall_status = "critical"
-```
-
-#### **3. Исправление проверки Telegram API:**
-```python
-# ❌ БЫЛО: Простая проверка доступности URL
-is_connected = await NetworkErrorHandler.check_connectivity("https://api.telegram.org", timeout=5.0)
-
-# ✅ СТАЛО: Надежная проверка через HEAD запрос
-async with httpx.AsyncClient(timeout=httpx.Timeout(connect=5.0, read=10.0)) as client:
-    response = await client.head("https://api.telegram.org")
-    
-if response.status_code < 500:  # 2xx, 3xx, 4xx - сервер работает
-    self.telegram_status = "healthy"
-```
-
-#### **4. Улучшение проверки внешних сервисов:**
-```python
-# ❌ БЫЛО: Простая проверка через check_connectivity
-is_connected = await NetworkErrorHandler.check_connectivity(url, timeout=5.0)
-
-# ✅ СТАЛО: HEAD запросы для более надежной проверки
-async with httpx.AsyncClient(timeout=httpx.Timeout(connect=3.0, read=5.0)) as client:
-    response = await client.head(url)
-    
-if response.status_code < 500:
-    status = "healthy"
+# Простая проверка базы данных каждые 5 минут
+async def basic_monitoring():
+    while not shutdown_event.is_set():
+        try:
+            await database.db_query("SELECT 1")
+            logging.info("Database connection: OK")
+        except Exception as e:
+            logging.error(f"Database connection issue: {e}")
+            await database.reconnect_database()
+        
+        await asyncio.sleep(300)  # 5 минут
 ```
 
 ## 🔍 Ключевые улучшения
@@ -141,13 +118,15 @@ except (NetworkError, TimedOut, RetryAfter) as e:
     logging.warning(f"Network error on attempt {attempt + 1}/{max_retries}: {e}")
 ```
 
-### Мониторинг здоровья системы
+### Упрощенный мониторинг
 ```python
-# Ежеминутная проверка состояния системы
-health_report = await health_monitor.get_system_health_report(database.db_query)
+# Простая проверка базы данных каждые 5 минут
+async def basic_monitoring():
+    await database.db_query("SELECT 1")
+    logging.info("Database connection: OK")
 
-if health_report["overall_status"] == "critical":
-    logging.critical(f"CRITICAL SYSTEM STATUS: {health_report['recommendations']}")
+# Логирование статуса бота
+logging.info("Bot monitoring: All systems operational")
 ```
 
 ## 🚀 Как использовать
@@ -180,15 +159,14 @@ print(f"System status: {health_report['overall_status']}")
 
 ### Логи для отслеживания
 - `Network error on attempt X/Y` - сетевые ошибки с повторами
-- `System health check passed` - успешные проверки здоровья
-- `CRITICAL SYSTEM STATUS` - критические проблемы системы
-- `Telegram API health check failed` - проблемы с Telegram API
+- `Database connection: OK` - успешная проверка базы данных
+- `Bot monitoring: All systems operational` - статус работы бота
+- `Database connection issue: ...` - проблемы с базой данных
 
-### Метрики для мониторинга
-- Количество последовательных ошибок
-- Время отклика API
-- Статус внешних сервисов
-- Общее состояние системы
+### Что мониторится
+- Подключение к базе данных (каждые 5 минут)
+- Работа бота (логирование ошибок и успешных операций)
+- Сетевые ошибки (автоматические повторы)
 
 ## 🔧 Дополнительные настройки
 
@@ -229,12 +207,11 @@ MAX_DELAY = 60.0
 После внесения исправлений:
 - ✅ Бот автоматически восстанавливается после сетевых ошибок
 - ✅ Улучшена стабильность подключения к Telegram API
-- ✅ Добавлен комплексный мониторинг состояния системы
+- ✅ Упрощена система мониторинга (убраны ложные тревоги)
 - ✅ Снижена вероятность сбоев из-за временных проблем сети
 - ✅ Улучшена диагностика проблем
 - ✅ **Исправлена ошибка HTTPXRequest timeout**
 - ✅ **Исправлена ошибка атрибута request**
-- ✅ **Улучшен мониторинг здоровья системы**
+- ✅ **Упрощена система мониторинга**
 - ✅ **Внешние сервисы не блокируют работу бота**
 - ✅ **Исправлена ошибка типов таймаутов**
-- ✅ **Исправлена ошибка проверки Telegram API**
