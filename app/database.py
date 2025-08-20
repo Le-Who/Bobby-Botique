@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from .config import settings, PACIFIC_TZ
 
 db_pool: Optional[Pool] = None
+_last_error: Optional[str] = None  # Для хранения последней ошибки БД
 
 @dataclass
 class ChatState:
@@ -129,14 +130,14 @@ async def init_db():
             logging.critical("SOLUTION: You need to whitelist Render's IP addresses in Neon.tech console")
             logging.critical("Or use Neon.tech's connection pooling with 'pooler' mode")
             # Сохраняем ошибку для диагностики
-            database._last_error = str(e)
+            globals()['_last_error'] = str(e)
             raise Exception("Database blocked by Neon.tech - check network configuration")
         else:
-            database._last_error = str(e)
+            globals()['_last_error'] = str(e)
             raise e
     except Exception as e:
         logging.critical(f"Failed to create database pool: {e}")
-        database._last_error = str(e)
+        globals()['_last_error'] = str(e)
         raise e
     
     await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)""")
@@ -285,6 +286,10 @@ async def increment_tavily_key_usage(key_hash: str, cost: int):
     DO UPDATE SET credit_usage = tavily_key_usage.credit_usage + ?;
     """
     await db_query(query, (key_hash, current_month, cost, cost))
+
+def get_last_error() -> Optional[str]:
+    """Возвращает последнюю ошибку БД для диагностики"""
+    return _last_error
 
 def is_admin(user_id: int) -> bool:
     return user_id == settings.ADMIN_ID

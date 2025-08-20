@@ -48,7 +48,7 @@ def status_check():
         status = {
             "bot": "running",
             "database": db_status,
-            "database_error": "blocked_network" if "blocked network" in str(getattr(database, '_last_error', '')) else None,
+            "database_error": "blocked_network" if database.get_last_error() and "blocked network" in str(database.get_last_error()).lower() else None,
             "timestamp": str(datetime.datetime.now()),
             "uptime": "active"
         }
