@@ -33,6 +33,12 @@ def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения"""
     logging.info(f"Received signal {signum}, initiating graceful shutdown...")
     shutdown_event.set()
+    
+    # Для Render важно правильно обработать SIGTERM
+    if signum == signal.SIGTERM:
+        logging.info("SIGTERM received - Render is shutting down the service")
+    elif signum == signal.SIGINT:
+        logging.info("SIGINT received - User interrupted the service")
 
 async def basic_monitoring():
     """Базовый мониторинг работы бота"""
@@ -61,6 +67,7 @@ async def run_bot_with_retry():
     """Запускает бота с автоматическими повторами при сетевых ошибках"""
     max_retries = 5
     base_delay = 1  # секунды
+    application = None
     
     for attempt in range(max_retries):
         try:
@@ -86,34 +93,44 @@ async def run_bot_with_retry():
             messages.register(application)
             application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
             
-            async with application:
-                await application.start()
-                
-                # Настройка polling с улучшенными параметрами
-                await application.updater.start_polling(
-                    allowed_updates=Update.ALL_TYPES,
-                    drop_pending_updates=True,  # Игнорируем старые обновления
-                    timeout=30,  # Таймаут для long polling
-                    read_timeout=30,  # Таймаут для чтения
-                    write_timeout=30,  # Таймаут для записи
-                    connect_timeout=10,  # Таймаут для подключения
-                    pool_timeout=30,  # Таймаут для получения соединения из пула
-                )
-                
-                logging.info("Bot started successfully")
-                
-                # Ждем завершения
-                while not shutdown_event.is_set():
-                    await asyncio.sleep(1)
-                
-                await application.updater.stop()
-                await application.stop()
-                break  # Успешное завершение
+            # Запускаем бота без async with для лучшего контроля
+            await application.start()
+            
+            # Настройка polling с улучшенными параметрами
+            await application.updater.start_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,  # Игнорируем старые обновления
+                timeout=30,  # Таймаут для long polling
+                read_timeout=30,  # Таймаут для чтения
+                write_timeout=30,  # Таймаут для записи
+                connect_timeout=10,  # Таймаут для подключения
+                pool_timeout=30,  # Таймаут для получения соединения из пула
+            )
+            
+            logging.info("Bot started successfully")
+            
+            # Ждем завершения
+            while not shutdown_event.is_set():
+                await asyncio.sleep(1)
+            
+            # Graceful shutdown
+            logging.info("Shutting down bot gracefully...")
+            await application.updater.stop()
+            await application.stop()
+            break  # Успешное завершение
                 
         except (NetworkError, TimedOut, RetryAfter) as e:
             delay = base_delay * (2 ** attempt)  # Экспоненциальная задержка
             logging.warning(f"Network error on attempt {attempt + 1}/{max_retries}: {e}")
             logging.info(f"Retrying in {delay} seconds...")
+            
+            # Очищаем ресурсы перед повторной попыткой
+            if application:
+                try:
+                    await application.updater.stop()
+                    await application.stop()
+                except Exception as cleanup_error:
+                    logging.warning(f"Cleanup error: {cleanup_error}")
             
             if attempt < max_retries - 1:
                 await asyncio.sleep(delay)
@@ -122,6 +139,15 @@ async def run_bot_with_retry():
                 raise
         except Exception as e:
             logging.error(f"Unexpected error during bot startup: {e}")
+            
+            # Очищаем ресурсы при ошибке
+            if application:
+                try:
+                    await application.updater.stop()
+                    await application.stop()
+                except Exception as cleanup_error:
+                    logging.warning(f"Cleanup error: {cleanup_error}")
+            
             raise
 
 async def run_bot_and_server():
@@ -139,25 +165,36 @@ async def run_bot_and_server():
     # Запускаем бота с обработкой ошибок
     bot_task = asyncio.create_task(run_bot_with_retry())
     
+    # Создаем задачу для веб-сервера
+    server_task = asyncio.create_task(serve(flask_app, hypercorn_config))
+    
     try:
-        # Запускаем веб-сервер
-        await serve(flask_app, hypercorn_config)
+        # Ждем завершения любой из задач
+        done, pending = await asyncio.wait(
+            [monitoring_task, bot_task, server_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        
+        logging.info("One of the main tasks completed, initiating shutdown...")
+        
     except Exception as e:
-        logging.error(f"Web server error: {e}")
+        logging.error(f"Error in main loop: {e}")
     finally:
+        # Graceful shutdown всех задач
+        logging.info("Starting graceful shutdown...")
+        
         # Отменяем все задачи
-        monitoring_task.cancel()
-        bot_task.cancel()
+        for task in [monitoring_task, bot_task, server_task]:
+            if not task.done():
+                task.cancel()
         
-        try:
-            await monitoring_task
-        except asyncio.CancelledError:
-            pass
+        # Ждем завершения всех задач
+        await asyncio.gather(
+            monitoring_task, bot_task, server_task,
+            return_exceptions=True
+        )
         
-        try:
-            await bot_task
-        except asyncio.CancelledError:
-            pass
+        logging.info("All tasks shutdown complete")
 
 async def main():
     """Главная функция: настраивает логирование, БД и запускает приложение."""
@@ -194,17 +231,31 @@ async def main():
         
         logging.info("Starting main application loop...")
         await run_bot_and_server()
+    except asyncio.CancelledError:
+        logging.info("Main application loop was cancelled - this is normal during shutdown")
     except Exception as e:
         logging.critical(f"Application failed critically: {e}", exc_info=True)
         # Добавить отправку уведомления администратору
         await _notify_admin_of_crash(e)
     finally:
         logging.info("Shutting down services...")
-        await stop_task_queue()
-        await metrics_collector.cleanup()
+        try:
+            await stop_task_queue()
+        except Exception as e:
+            logging.warning(f"Error stopping task queue: {e}")
+        
+        try:
+            await metrics_collector.cleanup()
+        except Exception as e:
+            logging.warning(f"Error cleaning up metrics: {e}")
+        
         if database.db_pool:
-            await database.db_pool.close()
-            logging.info("Database pool closed.")
+            try:
+                await database.db_pool.close()
+                logging.info("Database pool closed.")
+            except Exception as e:
+                logging.warning(f"Error closing database pool: {e}")
+        
         logging.info("Shutdown complete.")
 
 async def _notify_admin_of_crash(error: Exception):
@@ -222,3 +273,10 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logging.info("Bot stopped by user.")
+    except asyncio.CancelledError:
+        logging.info("Bot was cancelled - this is normal during shutdown")
+    except Exception as e:
+        logging.critical(f"Unexpected error in main: {e}", exc_info=True)
+        # Для Render важно логировать все критические ошибки
+        import sys
+        sys.exit(1)
