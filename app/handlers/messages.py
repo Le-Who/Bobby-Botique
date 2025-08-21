@@ -13,10 +13,21 @@ from ..group_chat import group_chat_manager, log_group_message
 from ..document_processor import process_uploaded_document
 from ..metrics import metrics_collector
 from ..utils.formatting import TelegramFormatter
+from ..utils.api_logger import api_logger
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает входящие сообщения"""
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    # Детальное логирование Telegram API запроса
+    message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
+    start_time = api_logger.log_telegram_request(
+        method="handle_message",
+        chat_id=chat_id,
+        user_id=user_id,
+        message_type=message_type
+    )
     
     logging.info(f"Received message from user {user_id}: {update.message.text[:100] if update.message.text else 'No text'}")
     
@@ -68,8 +79,29 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logging.info(f"Starting task processing for user {user_id}")
                 await agent.process_long_request(placeholder_message, update, context)
                 logging.info(f"Completed task processing for user {user_id}")
+                
+                # Логируем успешный ответ Telegram API
+                api_logger.log_telegram_response(
+                    start_time=start_time,
+                    method="handle_message",
+                    success=True,
+                    chat_id=chat_id,
+                    user_id=user_id
+                )
+                
         except Exception as e:
             logging.error(f"Error in task processing for user {user_id}: {e}", exc_info=True)
+            
+            # Логируем ошибку Telegram API
+            api_logger.log_telegram_response(
+                start_time=start_time,
+                method="handle_message",
+                success=False,
+                error_message=str(e),
+                chat_id=chat_id,
+                user_id=user_id
+            )
+            
             try:
                 await placeholder_message.edit_text("❌ Произошла ошибка при обработке запроса. Попробуйте позже.")
             except Exception as edit_error:

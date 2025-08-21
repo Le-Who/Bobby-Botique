@@ -17,6 +17,7 @@ from app.handlers import commands, messages, callbacks
 from app.handlers.callbacks import new_topic_callback
 from app.metrics import metrics_collector
 from app.alerts import alert_manager
+from app.utils.logging_config import setup_detailed_logging, log_api_summary
 
 from app.queue import start_task_queue, stop_task_queue
 from app.group_chat import initialize_group_chats
@@ -259,15 +260,15 @@ async def run_bot_and_server():
 
 async def main():
     """Главная функция: настраивает логирование, БД и запускает приложение."""
-    # Настройка логирования для Render (принудительно в stdout)
-    logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
-        level=logging.INFO,
-        handlers=[
-            logging.StreamHandler(),  # Принудительно в stdout
-            logging.FileHandler('/tmp/bot.log')  # Backup в файл
-        ]
+    # Настройка детального логирования для Render
+    setup_detailed_logging(
+        log_level="INFO",
+        log_to_file=True,
+        log_file_path="/tmp/bot_detailed.log"
     )
+    
+    # Выводим сводку по API логированию
+    log_api_summary()
     
     # Принудительно выводим в stdout для Render
     print("=== BOT STARTUP INITIATED ===", flush=True)

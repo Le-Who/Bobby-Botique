@@ -13,6 +13,7 @@ from ..utils.messaging import send_long_message
 from .. import state
 from .. import prompts
 from ..metrics import metrics_collector
+from ..utils.api_logger import api_logger
 
 async def _resolve_gemini_request(preferred_model: str):
     key = await db.get_available_gemini_key(preferred_model)
@@ -46,7 +47,16 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
         # Если не можем отредактировать, отправляем новое сообщение
         placeholder_message = await placeholder_message.reply_text("🔎 Ищу быстрый ответ...")
     
-    search_result = await services.tavily_search_agent(actual_search_query, search_type='qna')
+    # Получаем user_id и chat_id для логирования
+    user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
+    chat_id = placeholder_message.chat.id if placeholder_message.chat else None
+    
+    search_result = await services.tavily_search_agent(
+        actual_search_query, 
+        search_type='qna',
+        user_id=user_id,
+        chat_id=chat_id
+    )
     if search_result.get("error"):
         try:
             await placeholder_message.edit_text(search_result["error"])
@@ -73,7 +83,17 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     localization_prompt = prompts.QNA_LOCALIZATION_PROMPT.format(
         user_message=user_message, tavily_answer=tavily_answer
     )
-    final_answer, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [localization_prompt]}], model_used)
+    # Получаем user_id и chat_id для логирования
+    user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
+    chat_id = placeholder_message.chat.id if placeholder_message.chat else None
+    
+    final_answer, _ = await services.get_gemini_response(
+        gemini_key['api_key'], 
+        [{'role': 'user', 'parts': [localization_prompt]}], 
+        model_used,
+        user_id=user_id,
+        chat_id=chat_id
+    )
     
     await send_long_message(placeholder_message, final_answer)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
@@ -91,8 +111,17 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         # Если не можем отредактировать, отправляем новое сообщение
         placeholder_message = await placeholder_message.reply_text("🔎 Ищу источники...")
     
+    # Получаем user_id и chat_id для логирования
+    user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
+    chat_id = placeholder_message.chat.id if placeholder_message.chat else None
+    
     try:
-        search_result = await services.tavily_search_agent(actual_search_query, search_type='search')
+        search_result = await services.tavily_search_agent(
+            actual_search_query, 
+            search_type='search',
+            user_id=user_id,
+            chat_id=chat_id
+        )
     except Exception as search_error:
         logging.error(f"Error in Tavily search: {search_error}")
         try:
@@ -135,7 +164,13 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     )
     
     try:
-        selected_urls_str, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [selection_prompt]}], model_used)
+        selected_urls_str, _ = await services.get_gemini_response(
+            gemini_key['api_key'], 
+            [{'role': 'user', 'parts': [selection_prompt]}], 
+            model_used,
+            user_id=user_id,
+            chat_id=chat_id
+        )
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
     except Exception as gemini_error:
         logging.error(f"Error in Gemini URL selection: {gemini_error}")
