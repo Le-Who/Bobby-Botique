@@ -17,7 +17,7 @@ from app.handlers import commands, messages, callbacks
 from app.handlers.callbacks import new_topic_callback
 from app.metrics import metrics_collector
 from app.alerts import alert_manager
-from app.cache import start_cache_cleanup_task
+
 from app.queue import start_task_queue, stop_task_queue
 from app.group_chat import initialize_group_chats
 
@@ -291,9 +291,7 @@ async def main():
         await initialize_group_chats()
         logging.info("Group chats initialized.")
         
-        logging.info("Starting cache cleanup task...")
-        await start_cache_cleanup_task()
-        logging.info("Cache cleanup task started.")
+
         
         logging.info("Starting task queue...")
         await start_task_queue()
