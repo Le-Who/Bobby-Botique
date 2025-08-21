@@ -8,7 +8,7 @@ from .. import database as db
 from ..utils.formatting import format_key_for_display, TelegramFormatter
 from ..utils import time as time_utils
 from ..metrics import metrics_collector
-from ..cache import search_cache
+from ..cache import get_cache_stats
 from ..queue import task_queue
 from ..group_chat import group_chat_manager
 
@@ -283,14 +283,14 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not db.is_admin(update.effective_user.id): return
     
     try:
-        stats = await search_cache.get_stats()
+        stats = await get_cache_stats()
         
         text = (
             "🗄️ *Статистика кэша:*\n\n"
-            f"Всего записей: `{stats['total_entries']}`\n"
-            f"Максимальный размер: `{stats['max_size']}`\n"
-            f"Попадания в кэш: `{stats['cache_hit_rate']:.1f}%`\n"
-            f"Среднее количество обращений: `{stats['avg_access_count']:.1f}`\n"
+            f"Всего ключей: `{stats.get('total_keys', 'N/A')}`\n"
+            f"Используемая память: `{stats.get('used_memory', 'N/A')}`\n"
+            f"Время работы: `{stats.get('uptime_in_days', 'N/A')} дней`\n"
+            f"Попадания в кэш: `{stats.get('cache_hit_rate', 'N/A')}`\n"
         )
         
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
@@ -385,7 +385,8 @@ async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not db.is_admin(update.effective_user.id): return
     
     try:
-        await search_cache.clear()
+        from ..cache import clear_cache
+        await clear_cache()
         await update.message.reply_text("✅ Кэш очищен.")
         
     except Exception as e:

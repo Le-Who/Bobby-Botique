@@ -88,6 +88,25 @@ async def basic_monitoring():
         except Exception as e:
             logging.error(f"Monitoring error: {e}")
 
+async def _cleanup_application(application):
+    """Очищает ресурсы application при ошибках"""
+    if not application:
+        return
+    
+    try:
+        # Проверяем, был ли updater запущен
+        if hasattr(application, 'updater') and application.updater:
+            await application.updater.stop()
+    except Exception as cleanup_error:
+        logging.warning(f"Cleanup error (updater): {cleanup_error}")
+    
+    try:
+        # Проверяем, была ли application инициализирована
+        if hasattr(application, '_initialized') and application._initialized:
+            await application.stop()
+    except Exception as cleanup_error:
+        logging.warning(f"Cleanup error (application): {cleanup_error}")
+
 async def run_bot_with_retry():
     """Запускает бота с автоматическими повторами при сетевых ошибках"""
     max_retries = 5
@@ -177,20 +196,7 @@ async def run_bot_with_retry():
             logging.info(f"Retrying in {delay} seconds...")
             
             # Очищаем ресурсы перед повторной попыткой
-            if application:
-                try:
-                    # Проверяем, был ли updater запущен
-                    if hasattr(application, 'updater') and application.updater:
-                        await application.updater.stop()
-                except Exception as cleanup_error:
-                    logging.warning(f"Cleanup error (updater): {cleanup_error}")
-                
-                try:
-                    # Проверяем, была ли application инициализирована
-                    if hasattr(application, '_initialized') and application._initialized:
-                        await application.stop()
-                except Exception as cleanup_error:
-                    logging.warning(f"Cleanup error (application): {cleanup_error}")
+            await _cleanup_application(application)
             
             if attempt < max_retries - 1:
                 await asyncio.sleep(delay)
@@ -201,20 +207,7 @@ async def run_bot_with_retry():
             logging.error(f"Unexpected error during bot startup: {e}")
             
             # Очищаем ресурсы при ошибке
-            if application:
-                try:
-                    # Проверяем, был ли updater запущен
-                    if hasattr(application, 'updater') and application.updater:
-                        await application.updater.stop()
-                except Exception as cleanup_error:
-                    logging.warning(f"Cleanup error (updater): {cleanup_error}")
-                
-                try:
-                    # Проверяем, была ли application инициализирована
-                    if hasattr(application, '_initialized') and application._initialized:
-                        await application.stop()
-                except Exception as cleanup_error:
-                    logging.warning(f"Cleanup error (application): {cleanup_error}")
+            await _cleanup_application(application)
             
             raise
 

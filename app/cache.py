@@ -109,9 +109,3 @@ async def clear_cache():
     except Exception as e:
         logging.error(f"Error clearing Redis cache: {e}")
 
-def search_cache(query: str, search_type: str) -> None:
-    """Placeholder for search_cache function."""
-    pass
-
-async def start_cache_cleanup_task():
-    pass
