@@ -386,7 +386,7 @@ class MetricsCollector:
         """Очищает ресурсы и сохраняет метрики"""
         try:
             # Проверяем, что база данных доступна перед сохранением
-            if db.db_pool and not db.db_pool.is_closed():
+            if db.db_pool and not db.db_pool._closed:
                 await self._save_metrics_to_db()
             else:
                 logging.warning("Database pool unavailable during metrics cleanup, skipping save")

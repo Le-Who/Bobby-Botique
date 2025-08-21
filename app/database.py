@@ -31,13 +31,24 @@ def _prepare_query(query: str) -> str:
 
 async def _create_db_pool():
     """Создает пул соединений с базой данных с настройками для Neon.tech"""
-    return await asyncpg.create_pool(
-        dsn=settings.DATABASE_URL, 
-        min_size=1, 
-        max_size=3,  # Conservative limit for Neon.tech free tier
-        command_timeout=30,  # 30 seconds timeout for serverless
-        server_settings={'application_name': 'gemaibotv2'}
-    )
+    try:
+        return await asyncpg.create_pool(
+            dsn=settings.DATABASE_URL, 
+            min_size=1, 
+            max_size=3,  # Conservative limit for Neon.tech free tier
+            command_timeout=30,  # 30 seconds timeout for serverless
+            server_settings={'application_name': 'gemaibotv2'}
+        )
+    except Exception as e:
+        if "compute time quota" in str(e).lower() or "quota" in str(e).lower():
+            logging.critical("Neon.tech quota exceeded. Please upgrade your plan or wait for quota reset.")
+            raise Exception(f"Database quota exceeded: {e}")
+        elif "connection" in str(e).lower() or "timeout" in str(e).lower():
+            logging.warning(f"Database connection issue: {e}. This might be temporary.")
+            raise Exception(f"Database connection failed: {e}")
+        else:
+            logging.error(f"Unexpected database error: {e}")
+            raise Exception(f"Database initialization failed: {e}")
 
 async def reconnect_database():
     """Переподключается к базе данных при потере соединения"""
@@ -61,7 +72,7 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         raise Exception("Database pool is not initialized")
     
     # Проверяем состояние пула перед выполнением запроса
-    if db_pool.is_closed():
+    if db_pool._closed:
         logging.warning("Database pool is closed, attempting to reconnect...")
         if not await reconnect_database():
             raise Exception("Failed to reconnect to database")
@@ -265,7 +276,7 @@ async def check_database_health():
         logging.warning("Database pool not initialized")
         return False
     
-    if db_pool.is_closed():
+    if db_pool._closed:
         logging.warning("Database pool is closed")
         return False
     
@@ -281,7 +292,11 @@ async def ensure_database_connection():
     """Обеспечивает активное соединение с базой данных"""
     if not await check_database_health():
         logging.info("Database connection unhealthy, attempting reconnection...")
-        return await reconnect_database()
+        try:
+            return await reconnect_database()
+        except Exception as e:
+            logging.warning(f"Database reconnection failed: {e}")
+            return False
     return True
 
 def is_admin(user_id: int) -> bool:

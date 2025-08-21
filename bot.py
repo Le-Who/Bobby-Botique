@@ -98,8 +98,11 @@ async def basic_monitoring():
             
             # Простая проверка базы данных
             try:
-                await database.ensure_database_connection()
-                logging.info("Database connection: OK")
+                if database.db_pool and not database.db_pool._closed:
+                    await database.ensure_database_connection()
+                    logging.info("Database connection: OK")
+                else:
+                    logging.warning("Database unavailable - skipping connection check")
             except Exception as e:
                 logging.error(f"Database connection issue: {e}")
                 # Попытка переподключения уже выполнена в ensure_database_connection
@@ -107,14 +110,20 @@ async def basic_monitoring():
             # Каждые 12 проверок (1 час) выполняем расширенную диагностику
             if check_counter % 12 == 0:
                 try:
-                    # Проверяем состояние очереди задач
-                    from app.queue import task_queue
-                    stats = await task_queue.get_queue_stats()
-                    logging.info(f"Task queue stats: {stats}")
+                    # Проверяем состояние очереди задач только если база данных доступна
+                    if database.db_pool and not database.db_pool._closed:
+                        from app.queue import task_queue
+                        stats = await task_queue.get_queue_stats()
+                        logging.info(f"Task queue stats: {stats}")
+                    else:
+                        logging.warning("Task queue stats unavailable - database not accessible")
                     
-                    # Проверяем метрики
-                    metrics_summary = await metrics_collector.get_metrics_summary()
-                    logging.info(f"Metrics summary: {metrics_summary['total_requests']} requests, {metrics_summary['error_rate']:.1f}% errors")
+                    # Проверяем метрики только если база данных доступна
+                    if database.db_pool and not database.db_pool._closed:
+                        metrics_summary = await metrics_collector.get_metrics_summary()
+                        logging.info(f"Metrics summary: {metrics_summary['total_requests']} requests, {metrics_summary['error_rate']:.1f}% errors")
+                    else:
+                        logging.warning("Metrics unavailable - database not accessible")
                     
                 except Exception as e:
                     logging.warning(f"Extended monitoring failed: {e}")
@@ -377,7 +386,7 @@ async def run_bot_and_server():
             logging.warning(f"Error cleaning up metrics: {e}")
         
         # Закрываем пул базы данных только если он еще открыт
-        if database.db_pool and not database.db_pool.is_closed():
+        if database.db_pool and not database.db_pool._closed:
             try:
                 await database.db_pool.close()
                 logging.info("Database pool closed.")
@@ -402,8 +411,9 @@ async def startup_health_check():
         await database.ensure_database_connection()
         logging.info("✓ Database connection verified")
     except Exception as e:
-        logging.error(f"✗ Database connection failed: {e}")
-        raise Exception(f"Database health check failed: {e}")
+        logging.warning(f"⚠ Database connection failed: {e}")
+        logging.warning("Bot will run in limited mode without database functionality")
+        # Не прерываем запуск, если база данных недоступна
     
     # Проверяем Telegram API
     try:
@@ -422,15 +432,18 @@ async def startup_health_check():
         logging.error(f"✗ Telegram API check failed: {e}")
         raise Exception(f"Telegram API health check failed: {e}")
     
-    # Проверяем метрики
+    # Проверяем метрики только если база данных доступна
     try:
-        await metrics_collector.initialize()
-        logging.info("✓ Metrics system verified")
+        if database.db_pool and not database.db_pool._closed:
+            await metrics_collector.initialize()
+            logging.info("✓ Metrics system verified")
+        else:
+            logging.warning("⚠ Metrics system skipped - database unavailable")
     except Exception as e:
-        logging.error(f"✗ Metrics system check failed: {e}")
-        raise Exception(f"Metrics system health check failed: {e}")
+        logging.warning(f"⚠ Metrics system check failed: {e}")
+        logging.warning("Bot will run without metrics collection")
     
-    logging.info("✓ All systems healthy - bot ready to start")
+    logging.info("✓ Core systems healthy - bot ready to start")
 
 async def main():
     """Главная функция: настраивает логирование, БД и запускает приложение."""
@@ -458,25 +471,56 @@ async def main():
         
         print("Initializing database...", flush=True)
         logging.info("Initializing database...")
-        await database.init_db()
-        print("Database initialized successfully.", flush=True)
-        logging.info("Database initialized successfully.")
         
-        logging.info("Initializing group chats...")
-        await initialize_group_chats()
-        logging.info("Group chats initialized.")
+        database_available = False
+        try:
+            await database.init_db()
+            print("Database initialized successfully.", flush=True)
+            logging.info("Database initialized successfully.")
+            database_available = True
+        except Exception as e:
+            logging.error(f"Database initialization failed: {e}")
+            if "quota exceeded" in str(e).lower():
+                logging.critical("CRITICAL: Database quota exceeded. Bot will start in limited mode.")
+                print("WARNING: Database quota exceeded. Bot will start in limited mode.", flush=True)
+            else:
+                logging.warning(f"Database unavailable: {e}. Bot will start in limited mode.")
+                print(f"WARNING: Database unavailable: {e}. Bot will start in limited mode.", flush=True)
         
-        logging.info("Starting task queue...")
-        await start_task_queue()
-        logging.info("Task queue started.")
-        
-        logging.info("Initializing metrics system...")
-        await metrics_collector.initialize()
-        logging.info("Metrics system initialized.")
+        if database_available:
+            logging.info("Initializing group chats...")
+            try:
+                await initialize_group_chats()
+                logging.info("Group chats initialized.")
+            except Exception as e:
+                logging.warning(f"Group chats initialization failed: {e}")
+            
+            logging.info("Starting task queue...")
+            try:
+                await start_task_queue()
+                logging.info("Task queue started.")
+            except Exception as e:
+                logging.warning(f"Task queue start failed: {e}")
+            
+            logging.info("Initializing metrics system...")
+            try:
+                await metrics_collector.initialize()
+                logging.info("Metrics system initialized.")
+            except Exception as e:
+                logging.warning(f"Metrics system initialization failed: {e}")
+        else:
+            logging.warning("Skipping database-dependent initializations due to database unavailability")
         
         # Выполняем финальную проверку здоровья всех систем
         logging.info("Performing final startup health check...")
-        await startup_health_check()
+        try:
+            await startup_health_check()
+        except Exception as e:
+            logging.warning(f"Startup health check failed: {e}")
+            if not database_available:
+                logging.warning("Bot will start in limited mode without full health verification")
+            else:
+                raise e
         
         logging.info("Starting main application loop...")
         await run_bot_and_server()
@@ -489,17 +533,19 @@ async def main():
     finally:
         logging.info("Shutting down services...")
         try:
-            await stop_task_queue()
+            if database_available:
+                await stop_task_queue()
         except Exception as e:
             logging.warning(f"Error stopping task queue: {e}")
         
         try:
-            await metrics_collector.cleanup()
+            if database_available:
+                await metrics_collector.cleanup()
         except Exception as e:
             logging.warning(f"Error cleaning up metrics: {e}")
         
         # Закрываем пул базы данных только если он еще открыт
-        if database.db_pool and not database.db_pool.is_closed():
+        if database.db_pool and not database.db_pool._closed:
             try:
                 await database.db_pool.close()
                 logging.info("Database pool closed.")
