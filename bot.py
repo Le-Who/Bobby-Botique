@@ -37,19 +37,9 @@ def status_check():
     try:
         print("Status check request received", flush=True)
         # Проверяем базовые компоненты
-        # Проверяем состояние БД
-        db_status = "disconnected"
-        if database.db_pool:
-            if hasattr(database.db_pool, 'is_closed') and database.db_pool.is_closed():
-                db_status = "closed"
-            else:
-                db_status = "connected"
-        
         status = {
             "bot": "running",
-            "database": db_status,
-            "database_available": database.is_database_available(),
-            "database_error": "blocked_network" if database.get_last_error() and "blocked network" in str(database.get_last_error()).lower() else None,
+            "database": "connected" if database.db_pool else "disconnected",
             "timestamp": str(datetime.datetime.now()),
             "uptime": "active"
         }
@@ -84,16 +74,13 @@ async def basic_monitoring():
                 break
             
             # Простая проверка базы данных
-            if database.is_database_available():
-                try:
-                    await database.db_query("SELECT 1")
-                    logging.info("Database connection: OK")
-                except Exception as e:
-                    logging.error(f"Database connection issue: {e}")
-                    # Попытка переподключения
-                    await database.reconnect_database()
-            else:
-                logging.info("Database not available - running in limited mode")
+            try:
+                await database.db_query("SELECT 1")
+                logging.info("Database connection: OK")
+            except Exception as e:
+                logging.error(f"Database connection issue: {e}")
+                # Попытка переподключения
+                await database.reconnect_database()
             
             # Логируем статус бота
             logging.info("Bot monitoring: All systems operational")
@@ -264,9 +251,6 @@ async def run_bot_and_server():
         # Graceful shutdown всех задач
         logging.info("Starting graceful shutdown...")
         
-        # Сначала останавливаем мониторинг (может использовать БД)
-        shutdown_event.set()
-        
         # Отменяем все задачи
         for task in [monitoring_task, bot_task, server_task]:
             if not task.done():
@@ -306,19 +290,9 @@ async def main():
         
         print("Initializing database...", flush=True)
         logging.info("Initializing database...")
-        try:
-            await database.init_db()
-            print("Database initialized successfully.", flush=True)
-            logging.info("Database initialized successfully.")
-        except Exception as db_error:
-            if "blocked network" in str(db_error).lower() or "neon.tech" in str(db_error).lower():
-                print("CRITICAL: Database connection blocked by Neon.tech", flush=True)
-                logging.critical("CRITICAL: Database connection blocked by Neon.tech")
-                print("Bot will start in limited mode without database", flush=True)
-                logging.warning("Bot will start in limited mode without database")
-                # Продолжаем без БД в ограниченном режиме
-            else:
-                raise db_error
+        await database.init_db()
+        print("Database initialized successfully.", flush=True)
+        logging.info("Database initialized successfully.")
         
         logging.info("Initializing group chats...")
         await initialize_group_chats()
@@ -346,27 +320,17 @@ async def main():
         await _notify_admin_of_crash(e)
     finally:
         logging.info("Shutting down services...")
-        
-        # Сначала останавливаем все задачи, которые могут использовать БД
         try:
             await stop_task_queue()
         except Exception as e:
             logging.warning(f"Error stopping task queue: {e}")
         
-        # Останавливаем мониторинг
-        try:
-            shutdown_event.set()
-        except Exception as e:
-            logging.warning(f"Error setting shutdown event: {e}")
-        
-        # Останавливаем метрики (может использовать БД)
         try:
             await metrics_collector.cleanup()
         except Exception as e:
             logging.warning(f"Error cleaning up metrics: {e}")
         
-        # В последнюю очередь закрываем пул БД
-        if database.db_pool and not database.db_pool.is_closed():
+        if database.db_pool:
             try:
                 await database.db_pool.close()
                 logging.info("Database pool closed.")
