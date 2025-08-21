@@ -60,6 +60,12 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         logging.critical("Database pool is not initialized - this should not happen!")
         raise Exception("Database pool is not initialized")
     
+    # Проверяем состояние пула перед выполнением запроса
+    if db_pool.is_closed():
+        logging.warning("Database pool is closed, attempting to reconnect...")
+        if not await reconnect_database():
+            raise Exception("Failed to reconnect to database")
+    
     query_prepared = _prepare_query(query)
     last_exception = None
 
@@ -252,6 +258,31 @@ async def increment_tavily_key_usage(key_hash: str, cost: int):
     DO UPDATE SET credit_usage = tavily_key_usage.credit_usage + ?;
     """
     await db_query(query, (key_hash, current_month, cost, cost))
+
+async def check_database_health():
+    """Проверяет здоровье соединения с базой данных"""
+    if not db_pool:
+        logging.warning("Database pool not initialized")
+        return False
+    
+    if db_pool.is_closed():
+        logging.warning("Database pool is closed")
+        return False
+    
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("SELECT 1")
+        return True
+    except Exception as e:
+        logging.warning(f"Database health check failed: {e}")
+        return False
+
+async def ensure_database_connection():
+    """Обеспечивает активное соединение с базой данных"""
+    if not await check_database_health():
+        logging.info("Database connection unhealthy, attempting reconnection...")
+        return await reconnect_database()
+    return True
 
 def is_admin(user_id: int) -> bool:
     return user_id == settings.ADMIN_ID

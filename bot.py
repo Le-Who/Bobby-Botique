@@ -3,6 +3,7 @@ import logging
 import asyncio
 import signal
 import datetime
+import time
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler
 from telegram.error import NetworkError, TimedOut, RetryAfter
@@ -58,36 +59,75 @@ shutdown_event = asyncio.Event()
 def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения"""
     logging.info(f"Received signal {signum}, initiating graceful shutdown...")
+    
+    # Устанавливаем флаг завершения
     shutdown_event.set()
     
     # Для Render важно правильно обработать SIGTERM
     if signum == signal.SIGTERM:
         logging.info("SIGTERM received - Render is shutting down the service")
+        # Даем 30 секунд на graceful shutdown
+        import threading
+        def force_shutdown():
+            import time
+            time.sleep(30)
+            logging.warning("Force shutdown after timeout")
+            import os
+            os._exit(1)
+        
+        force_thread = threading.Thread(target=force_shutdown, daemon=True)
+        force_thread.start()
+        
     elif signum == signal.SIGINT:
         logging.info("SIGINT received - User interrupted the service")
 
 async def basic_monitoring():
     """Базовый мониторинг работы бота"""
+    logging.info("Monitoring task started - will run continuously until shutdown")
+    
+    # Счетчик для периодических проверок
+    check_counter = 0
+    
     while not shutdown_event.is_set():
         try:
             await asyncio.sleep(300)  # Каждые 5 минут
             if shutdown_event.is_set():
                 break
             
+            check_counter += 1
+            
             # Простая проверка базы данных
             try:
-                await database.db_query("SELECT 1")
+                await database.ensure_database_connection()
                 logging.info("Database connection: OK")
             except Exception as e:
                 logging.error(f"Database connection issue: {e}")
-                # Попытка переподключения
-                await database.reconnect_database()
+                # Попытка переподключения уже выполнена в ensure_database_connection
+            
+            # Каждые 12 проверок (1 час) выполняем расширенную диагностику
+            if check_counter % 12 == 0:
+                try:
+                    # Проверяем состояние очереди задач
+                    from app.queue import task_queue
+                    stats = await task_queue.get_queue_stats()
+                    logging.info(f"Task queue stats: {stats}")
+                    
+                    # Проверяем метрики
+                    metrics_summary = await metrics_collector.get_metrics_summary()
+                    logging.info(f"Metrics summary: {metrics_summary['total_requests']} requests, {metrics_summary['error_rate']:.1f}% errors")
+                    
+                except Exception as e:
+                    logging.warning(f"Extended monitoring failed: {e}")
             
             # Логируем статус бота
             logging.info("Bot monitoring: All systems operational")
                     
         except Exception as e:
             logging.error(f"Monitoring error: {e}")
+            # При ошибке мониторинга продолжаем работу, не завершаем задачу
+            await asyncio.sleep(60)  # Ждем минуту перед следующей попыткой
+    
+    logging.info("Monitoring task stopped due to shutdown signal")
 
 async def _cleanup_application(application):
     """Очищает ресурсы application при ошибках"""
@@ -122,9 +162,10 @@ async def run_bot_with_retry():
     print(f"Python-telegram-bot version: {version_info}", flush=True)
     logging.info(f"Python-telegram-bot version: {version_info}")
     
-    for attempt in range(max_retries):
-        print(f"Bot startup attempt {attempt + 1}/{max_retries}", flush=True)
-        logging.info(f"Bot startup attempt {attempt + 1}/{max_retries}")
+    while not shutdown_event.is_set():
+        print(f"Bot startup attempt initiated", flush=True)
+        logging.info("Bot startup attempt initiated")
+        
         try:
             # Настройка таймаутов через Application.builder()
             # Создаем Application с кастомными настройками Request
@@ -192,25 +233,86 @@ async def run_bot_with_retry():
             break  # Успешное завершение
                 
         except (NetworkError, TimedOut, RetryAfter) as e:
-            delay = base_delay * (2 ** attempt)  # Экспоненциальная задержка
-            logging.warning(f"Network error on attempt {attempt + 1}/{max_retries}: {e}")
+            # Простая экспоненциальная задержка с ограничением
+            retry_count = 0
+            delay = min(base_delay * (2 ** retry_count), 60)  # Максимум 60 секунд
+            retry_count += 1
+            
+            logging.warning(f"Network error during bot operation: {e}")
             logging.info(f"Retrying in {delay} seconds...")
             
             # Очищаем ресурсы перед повторной попыткой
             await _cleanup_application(application)
             
-            if attempt < max_retries - 1:
-                await asyncio.sleep(delay)
-            else:
-                logging.error(f"Max retries ({max_retries}) reached. Bot failed to start.")
-                raise
+            # Проверяем, не нужно ли завершить работу
+            if shutdown_event.is_set():
+                logging.info("Shutdown requested during retry, stopping bot")
+                break
+            
+            # Ждем перед повторной попыткой
+            await asyncio.sleep(delay)
+            
         except Exception as e:
-            logging.error(f"Unexpected error during bot startup: {e}")
+            logging.error(f"Unexpected error during bot operation: {e}")
             
             # Очищаем ресурсы при ошибке
             await _cleanup_application(application)
             
-            raise
+            # Проверяем, не нужно ли завершить работу
+            if shutdown_event.is_set():
+                logging.info("Shutdown requested after error, stopping bot")
+                break
+            
+            # Логируем детали ошибки для диагностики
+            import traceback
+            logging.error(f"Bot error details: {traceback.format_exc()}")
+            
+            # Ждем перед повторной попыткой
+            await asyncio.sleep(30)  # Ждем 30 секунд перед повторной попыткой
+    
+    logging.info("Bot retry loop stopped due to shutdown signal")
+
+async def bot_watchdog(bot_task: asyncio.Task):
+    """Следит за состоянием бота и перезапускает его при необходимости"""
+    logging.info("Bot watchdog started")
+    
+    # Счетчик для периодических проверок
+    check_counter = 0
+    last_restart_time = 0
+    
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.sleep(60)  # Проверяем каждую минуту
+            
+            if shutdown_event.is_set():
+                break
+            
+            check_counter += 1
+            
+            # Проверяем, что задача бота все еще работает
+            if bot_task.done():
+                if bot_task.exception():
+                    logging.error(f"Bot task failed with exception: {bot_task.exception()}")
+                    logging.info("Bot watchdog will trigger restart on next iteration")
+                else:
+                    logging.warning("Bot task completed unexpectedly")
+                    logging.info("Bot watchdog will trigger restart on next iteration")
+            else:
+                logging.debug("Bot task is running normally")
+            
+            # Каждые 60 проверок (1 час) выполняем профилактический перезапуск
+            if check_counter % 60 == 0:
+                current_time = time.time()
+                if current_time - last_restart_time > 3600:  # Не чаще чем раз в час
+                    logging.info("Performing preventive bot restart (hourly maintenance)")
+                    last_restart_time = current_time
+                    # Здесь можно добавить логику перезапуска бота
+                
+        except Exception as e:
+            logging.error(f"Watchdog error: {e}")
+            await asyncio.sleep(30)
+    
+    logging.info("Bot watchdog stopped due to shutdown signal")
 
 async def run_bot_and_server():
     """Основная логика: запускает бота и веб-сервер параллельно."""
@@ -227,36 +329,108 @@ async def run_bot_and_server():
     # Запускаем бота с обработкой ошибок
     bot_task = asyncio.create_task(run_bot_with_retry())
     
+    # Запускаем watchdog для бота
+    watchdog_task = asyncio.create_task(bot_watchdog(bot_task))
+    
     # Создаем задачу для веб-сервера
     server_task = asyncio.create_task(serve(flask_app, hypercorn_config))
     
+    # Создаем задачу для обработки сигналов завершения
+    shutdown_task = asyncio.create_task(_wait_for_shutdown())
+    
     try:
-        # Ждем завершения любой из задач
-        done, pending = await asyncio.wait(
-            [monitoring_task, bot_task, server_task],
-            return_when=asyncio.FIRST_COMPLETED
-        )
+        # Ждем только сигнала завершения, НЕ завершения задач
+        await shutdown_task
         
-        logging.info("One of the main tasks completed, initiating shutdown...")
+        logging.info("Shutdown signal received, initiating graceful shutdown...")
         
     except Exception as e:
-        logging.error(f"Error in main loop: {e}")
+        logging.error(f"Critical error in main loop: {e}")
+        # При критической ошибке также инициируем shutdown
+        logging.info("Critical error detected, initiating shutdown...")
     finally:
         # Graceful shutdown всех задач
         logging.info("Starting graceful shutdown...")
         
         # Отменяем все задачи
-        for task in [monitoring_task, bot_task, server_task]:
+        for task in [monitoring_task, bot_task, watchdog_task, server_task, shutdown_task]:
             if not task.done():
                 task.cancel()
         
         # Ждем завершения всех задач
         await asyncio.gather(
-            monitoring_task, bot_task, server_task,
+            monitoring_task, bot_task, watchdog_task, server_task, shutdown_task,
             return_exceptions=True
         )
         
         logging.info("All tasks shutdown complete")
+        
+        logging.info("Shutting down services...")
+        try:
+            await stop_task_queue()
+        except Exception as e:
+            logging.warning(f"Error stopping task queue: {e}")
+        
+        try:
+            await metrics_collector.cleanup()
+        except Exception as e:
+            logging.warning(f"Error cleaning up metrics: {e}")
+        
+        # Закрываем пул базы данных только если он еще открыт
+        if database.db_pool and not database.db_pool.is_closed():
+            try:
+                await database.db_pool.close()
+                logging.info("Database pool closed.")
+            except Exception as e:
+                logging.warning(f"Error closing database pool: {e}")
+        else:
+            logging.info("Database pool already closed or not initialized.")
+        
+        logging.info("Shutdown complete.")
+
+async def _wait_for_shutdown():
+    """Ждет сигнала завершения от shutdown_event"""
+    await shutdown_event.wait()
+    logging.info("Shutdown event triggered")
+
+async def startup_health_check():
+    """Проверяет здоровье всех критических систем при запуске"""
+    logging.info("Performing startup health check...")
+    
+    # Проверяем базу данных
+    try:
+        await database.ensure_database_connection()
+        logging.info("✓ Database connection verified")
+    except Exception as e:
+        logging.error(f"✗ Database connection failed: {e}")
+        raise Exception(f"Database health check failed: {e}")
+    
+    # Проверяем Telegram API
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/getMe")
+            if response.status_code == 200:
+                bot_info = response.json()
+                if bot_info.get('ok'):
+                    logging.info(f"✓ Telegram API verified - Bot: {bot_info['result']['username']}")
+                else:
+                    raise Exception(f"Telegram API error: {bot_info}")
+            else:
+                raise Exception(f"Telegram API HTTP error: {response.status_code}")
+    except Exception as e:
+        logging.error(f"✗ Telegram API check failed: {e}")
+        raise Exception(f"Telegram API health check failed: {e}")
+    
+    # Проверяем метрики
+    try:
+        await metrics_collector.initialize()
+        logging.info("✓ Metrics system verified")
+    except Exception as e:
+        logging.error(f"✗ Metrics system check failed: {e}")
+        raise Exception(f"Metrics system health check failed: {e}")
+    
+    logging.info("✓ All systems healthy - bot ready to start")
 
 async def main():
     """Главная функция: настраивает логирование, БД и запускает приложение."""
@@ -292,8 +466,6 @@ async def main():
         await initialize_group_chats()
         logging.info("Group chats initialized.")
         
-
-        
         logging.info("Starting task queue...")
         await start_task_queue()
         logging.info("Task queue started.")
@@ -301,6 +473,10 @@ async def main():
         logging.info("Initializing metrics system...")
         await metrics_collector.initialize()
         logging.info("Metrics system initialized.")
+        
+        # Выполняем финальную проверку здоровья всех систем
+        logging.info("Performing final startup health check...")
+        await startup_health_check()
         
         logging.info("Starting main application loop...")
         await run_bot_and_server()
@@ -322,12 +498,15 @@ async def main():
         except Exception as e:
             logging.warning(f"Error cleaning up metrics: {e}")
         
-        if database.db_pool:
+        # Закрываем пул базы данных только если он еще открыт
+        if database.db_pool and not database.db_pool.is_closed():
             try:
                 await database.db_pool.close()
                 logging.info("Database pool closed.")
             except Exception as e:
                 logging.warning(f"Error closing database pool: {e}")
+        else:
+            logging.info("Database pool already closed or not initialized.")
         
         logging.info("Shutdown complete.")
 

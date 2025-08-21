@@ -384,7 +384,15 @@ class MetricsCollector:
     
     async def cleanup(self):
         """Очищает ресурсы и сохраняет метрики"""
-        await self._save_metrics_to_db()
+        try:
+            # Проверяем, что база данных доступна перед сохранением
+            if db.db_pool and not db.db_pool.is_closed():
+                await self._save_metrics_to_db()
+            else:
+                logging.warning("Database pool unavailable during metrics cleanup, skipping save")
+        except Exception as e:
+            logging.error(f"Error during metrics cleanup: {e}")
+            # Не позволяем ошибкам метрик прерывать shutdown
 
 # Глобальный экземпляр сборщика метрик
 metrics_collector = MetricsCollector()
