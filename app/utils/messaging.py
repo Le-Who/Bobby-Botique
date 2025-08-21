@@ -1,8 +1,21 @@
 import asyncio
 import logging
+import re
 from telegram import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.error import BadRequest
 from .formatting import strip_markdown, escape_markdown_v2, TelegramFormatter
+
+def _strip_formatting(text: str) -> str:
+    """Удаляет все форматирование из текста."""
+    # Удаляем Markdown
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    text = re.sub(r'[*_~`]', '', text)
+    text = text.replace('\\', '')
+    
+    # Удаляем HTML теги
+    text = re.sub(r'<[^>]*>', '', text)
+    
+    return text.strip()
 from ..config import settings
 
 async def send_long_message(message: Message, text: str, preserve_formatting: bool = True, reply_markup=None, is_deep_dive: bool = False):
@@ -91,7 +104,7 @@ async def send_long_message(message: Message, text: str, preserve_formatting: bo
                 # Если форматирование не удалось, пробуем без форматирования
                 logging.warning(f"Formatting failed for part {len(parts)}: {e}. Falling back to plain text.")
                 try:
-                    plain_text = TelegramFormatter._strip_all_formatting(part)
+                    plain_text = _strip_formatting(part)
                     if is_first_part:
                         await current_message.edit_text(plain_text, reply_markup=current_reply_markup)
                     else:
@@ -103,7 +116,7 @@ async def send_long_message(message: Message, text: str, preserve_formatting: bo
                         if is_first_part:
                             current_message = await message.reply_text(part, reply_markup=current_reply_markup)
                         else:
-                            current_message = await current_message.reply_text(part, reply_markup=current_reply_markup)
+                            current_message = await current_message.reply_text(plain_text, reply_markup=current_reply_markup)
                     except Exception as final_error:
                         logging.error(f"Final attempt to send message failed: {final_error}")
 
@@ -136,7 +149,7 @@ async def send_formatted_message(message: Message, text: str, parse_mode: str = 
         logging.warning(f"Failed to send formatted message with {parse_mode}: {e}")
         # Fallback to plain text
         try:
-            plain_text = TelegramFormatter._strip_all_formatting(text)
+            plain_text = _strip_formatting(text)
             await message.reply_text(plain_text)
         except Exception as fallback_error:
             logging.error(f"Failed to send fallback message: {fallback_error}")
@@ -156,7 +169,7 @@ async def edit_formatted_message(message: Message, text: str, parse_mode: str = 
         logging.warning(f"Failed to edit formatted message with {parse_mode}: {e}")
         # Fallback to plain text
         try:
-            plain_text = TelegramFormatter._strip_all_formatting(text)
+            plain_text = _strip_formatting(text)
             await message.edit_text(plain_text)
         except Exception as fallback_error:
             logging.error(f"Failed to edit fallback message: {fallback_error}")
