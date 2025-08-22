@@ -99,14 +99,152 @@
 ## 🏗️ Архитектура
 
 ### Технологический стек
-
-- **Python 3.11+**: Основной язык разработки
+- **Python 3.11+**: Основной язык
 - **python-telegram-bot**: Telegram Bot API
 - **Google Gemini API**: AI модели
 - **Tavily API**: Веб-поиск
-- **PostgreSQL (Neon)**: База данных
+- **PostgreSQL (Supabase)**: База данных
 - **asyncpg**: Асинхронная работа с БД
 - **Flask + Hypercorn**: Веб-сервер для health checks
+- **Redis**: Кэширование и очереди
+
+### Компоненты системы
+- **Handlers**: Обработчики команд и сообщений
+- **Services**: Бизнес-логика и API интеграции
+- **Database**: Управление данными и миграции
+- **Cache**: Система кэширования
+- **Queue**: Асинхронная обработка задач
+- **Metrics**: Сбор и анализ метрик
+
+### База данных
+- **PostgreSQL**: Основная БД
+- **Connection Pooling**: Оптимизировано для Supabase free tier
+- **Миграции**: Автоматическое обновление схемы
+- **Индексы**: Оптимизация запросов
+
+## 🚀 Миграция на Supabase
+
+### Обновления для Supabase.com
+Проект был успешно мигрирован с Neon.tech на Supabase.com с оптимизациями для бесплатного тарифа:
+
+#### **Оптимизации соединений:**
+- **Pool Size**: Уменьшен до 2 соединений (лимит Supabase free tier)
+- **Keepalive**: TCP keepalive для стабильности соединений
+- **Timeouts**: Увеличены до 60 секунд для Supabase
+- **Session Settings**: Автоматическая оптимизация сессий
+
+#### **Улучшения производительности:**
+- **Statement Timeout**: 60 секунд для длительных запросов
+- **Idle Timeout**: 30 секунд для неактивных транзакций
+- **Lock Timeout**: 30 секунд для блокировок
+- **Connection Retry**: Улучшенная логика переподключения
+
+#### **Обработка ошибок:**
+- **Rate Limiting**: Специфичная для Supabase
+- **Query Timeouts**: Детальная диагностика
+- **Connection Issues**: Автоматическое восстановление
+
+### Конфигурация для Supabase
+```bash
+# Обновите DATABASE_URL в переменных окружения
+DATABASE_URL=postgresql://[user]:[password]@[host]:[port]/[database]
+
+# Supabase автоматически применяет оптимизации при подключении
+```
+
+### Переменные окружения для Supabase
+```bash
+# Основные настройки
+TELEGRAM_BOT_TOKEN=your_bot_token
+DATABASE_URL=postgresql://postgres:[password]@[project].supabase.co:5432/postgres
+GEMINI_API_KEYS=key1,key2,key3
+TAVILY_API_KEYS=key1,key2
+ADMIN_ID=your_telegram_id
+PORT=10000
+
+# Дополнительные настройки (опционально)
+LOG_JSON=true
+REDIS_URL=your_redis_url
+ENABLE_PERSISTENT_QUEUE=false
+```
+
+### Получение DATABASE_URL из Supabase
+1. Войдите в [Supabase Dashboard](https://app.supabase.com)
+2. Выберите ваш проект
+3. Перейдите в Settings → Database
+4. Скопируйте Connection string (URI)
+5. Замените `[YOUR-PASSWORD]` на ваш пароль базы данных
+
+### Мониторинг и диагностика
+- **Health Checks**: Автоматическая проверка соединений
+- **Performance Metrics**: Отслеживание времени выполнения запросов
+- **Error Logging**: Детальная диагностика проблем
+- **Connection Pool Status**: Мониторинг состояния пула
+
+### Supabase Monitoring Commands
+```bash
+# Проверка состояния базы данных
+/metrics
+
+# Статистика кэша
+/cachestats
+
+# Статистика очереди
+/queuestats
+
+# Очистка кэша
+/clearcache
+
+# Очистка старых метрик
+/clearoldmetrics
+```
+
+### Supabase Free Tier Limits
+- **Database Size**: 500 MB
+- **Active Connections**: 2
+- **API Requests**: 50,000/month
+- **Storage**: 1 GB
+- **Bandwidth**: 2 GB/month
+
+### Оптимизации для Free Tier
+- Автоматическое управление соединениями
+- Оптимизация запросов для ограниченных ресурсов
+- Мониторинг использования лимитов
+- Автоматическое восстановление соединений
+
+### Troubleshooting Supabase Issues
+
+#### **Common Connection Problems:**
+- **Connection Limit Exceeded**: Убедитесь, что max_size=2 в настройках пула
+- **Query Timeout**: Проверьте statement_timeout (60s) и idle_timeout (30s)
+- **Rate Limiting**: Мониторьте использование API через /metrics
+
+#### **Performance Optimization:**
+- **Connection Pooling**: Автоматически оптимизировано для 2 соединений
+- **Query Optimization**: Используйте индексы для часто выполняемых запросов
+- **Session Management**: Автоматическая очистка неактивных сессий
+
+#### **Monitoring Commands:**
+```bash
+# Проверка состояния соединений
+/metrics
+
+# Диагностика базы данных
+/status
+
+# Очистка ресурсов
+/clearcache
+/clearoldmetrics
+```
+
+### Migration Checklist
+- [x] Обновлен DATABASE_URL для Supabase
+- [x] Оптимизирован размер пула соединений (max_size=2)
+- [x] Добавлены Supabase-specific таймауты
+- [x] Реализован TCP keepalive
+- [x] Добавлена обработка Supabase ошибок
+- [x] Обновлена документация
+- [x] Добавлены команды мониторинга
 
 ### Модульная структура
 
@@ -151,7 +289,7 @@ pip install -r requirements.txt
 ```bash
 # Создайте .env файл
 TELEGRAM_BOT_TOKEN=your_bot_token
-DATABASE_URL=your_neon_database_url
+DATABASE_URL=your_supabase_database_url
 GEMINI_API_KEYS=key1,key2,key3
 TAVILY_API_KEYS=key1,key2
 ADMIN_ID=your_telegram_id

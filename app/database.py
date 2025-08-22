@@ -9,6 +9,7 @@ import asyncpg
 from asyncpg.pool import Pool
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+import time
 
 from .config import settings, PACIFIC_TZ
 
@@ -30,19 +31,24 @@ def _prepare_query(query: str) -> str:
     return query
 
 async def _create_db_pool():
-    """Создает пул соединений с базой данных с настройками для Neon.tech"""
+    """Создает пул соединений с базой данных с настройками для Supabase.com"""
     try:
         return await asyncpg.create_pool(
             dsn=settings.DATABASE_URL, 
             min_size=1, 
-            max_size=3,  # Conservative limit for Neon.tech free tier
-            command_timeout=30,  # 30 seconds timeout for serverless
-            server_settings={'application_name': 'gemaibotv2'}
+            max_size=2,  # Conservative limit for Supabase.com free tier
+            command_timeout=60,  # 60 seconds timeout for Supabase
+            server_settings={
+                'application_name': 'gemaibotv2',
+                'tcp_keepalives_idle': '60',
+                'tcp_keepalives_interval': '10',
+                'tcp_keepalives_count': '6'
+            }
         )
     except Exception as e:
-        if "compute time quota" in str(e).lower() or "quota" in str(e).lower():
-            logging.critical("Neon.tech quota exceeded. Please upgrade your plan or wait for quota reset.")
-            raise Exception(f"Database quota exceeded: {e}")
+        if "rate limit" in str(e).lower() or "quota" in str(e).lower():
+            logging.critical("Supabase.com rate limit exceeded. Please upgrade your plan or wait for quota reset.")
+            raise Exception(f"Database rate limit exceeded: {e}")
         elif "connection" in str(e).lower() or "timeout" in str(e).lower():
             logging.warning(f"Database connection issue: {e}. This might be temporary.")
             raise Exception(f"Database connection failed: {e}")
@@ -83,6 +89,13 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
     for attempt in range(retries):
         try:
             async with db_pool.acquire() as conn:
+                # Apply Supabase-specific session settings for each connection
+                try:
+                    await conn.execute("SET statement_timeout = '60s'")
+                    await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
+                except Exception as opt_e:
+                    logging.debug(f"Failed to set session optimizations: {opt_e}")
+                
                 if query.strip().upper().startswith("SELECT"):
                     return await conn.fetch(query_prepared, *params)
                 else:
@@ -110,6 +123,14 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
                     logging.critical("Failed to reconnect to database, raising original error")
                     raise last_exception
             await asyncio.sleep(1 + attempt)
+        except asyncpg.exceptions.QueryCanceledError as e:
+            # Handle Supabase query timeout specifically
+            if "statement timeout" in str(e).lower():
+                logging.warning(f"Query timeout on Supabase (attempt {attempt + 1}/{retries}): {e}")
+                if attempt == retries - 1:
+                    raise Exception(f"Query timeout after {retries} attempts: {e}")
+            else:
+                raise e
         except Exception as e:
             logging.error(f"An unexpected database error occurred during query: {query_prepared[:100]}... - {e}", exc_info=False)
             raise e
@@ -122,6 +143,9 @@ async def init_db():
     if not settings.DATABASE_URL:
         raise Exception("DATABASE_URL not set")
     db_pool = await _create_db_pool()
+    
+    # Apply Supabase-specific optimizations
+    await optimize_database_connections()
     
     await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)""")
     await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
@@ -271,7 +295,7 @@ async def increment_tavily_key_usage(key_hash: str, cost: int):
     await db_query(query, (key_hash, current_month, cost, cost))
 
 async def check_database_health():
-    """Проверяет здоровье соединения с базой данных"""
+    """Проверяет здоровье соединения с базой данных с оптимизациями для Supabase"""
     if not db_pool:
         logging.warning("Database pool not initialized")
         return False
@@ -282,14 +306,15 @@ async def check_database_health():
     
     try:
         async with db_pool.acquire() as conn:
+            # Use a simple health check query optimized for Supabase
             await conn.execute("SELECT 1")
-        return True
+            return True
     except Exception as e:
         logging.warning(f"Database health check failed: {e}")
         return False
 
 async def ensure_database_connection():
-    """Обеспечивает активное соединение с базой данных"""
+    """Обеспечивает активное соединение с базой данных с оптимизациями для Supabase"""
     if not await check_database_health():
         logging.info("Database connection unhealthy, attempting reconnection...")
         try:
@@ -298,6 +323,99 @@ async def ensure_database_connection():
             logging.warning(f"Database reconnection failed: {e}")
             return False
     return True
+
+async def optimize_database_connections():
+    """Оптимизирует соединения с базой данных для Supabase free tier"""
+    if not db_pool:
+        return False
+    
+    try:
+        async with db_pool.acquire() as conn:
+            # Set session-level optimizations for Supabase
+            await conn.execute("SET statement_timeout = '60s'")
+            await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
+            await conn.execute("SET lock_timeout = '30s'")
+        logging.info("Database session optimizations applied for Supabase")
+        return True
+    except Exception as e:
+        logging.warning(f"Failed to apply database optimizations: {e}")
+        return False
+
+async def get_supabase_metrics() -> Dict[str, Any]:
+    """Возвращает метрики производительности базы данных, оптимизированные для Supabase"""
+    if not db_pool:
+        return {"status": "disconnected", "pool_size": 0, "active_connections": 0}
+    
+    try:
+        # Get pool statistics
+        pool_stats = {
+            "status": "connected" if not db_pool._closed else "closed",
+            "pool_size": db_pool.get_size(),
+            "free_size": db_pool.get_free_size(),
+            "active_connections": db_pool.get_size() - db_pool.get_free_size()
+        }
+        
+        # Test connection performance
+        start_time = time.time()
+        async with db_pool.acquire() as conn:
+            await conn.execute("SELECT 1")
+            response_time = time.time() - start_time
+            
+            pool_stats.update({
+                "response_time_ms": round(response_time * 1000, 2),
+                "connection_health": "healthy" if response_time < 0.1 else "slow"
+            })
+        
+        return pool_stats
+        
+    except Exception as e:
+        logging.warning(f"Failed to get Supabase metrics: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "pool_size": 0,
+            "active_connections": 0
+        }
+
+async def check_supabase_limits():
+    """Проверяет текущие лимиты Supabase free tier"""
+    try:
+        async with db_pool.acquire() as conn:
+            # Check current database size (free tier has 500MB limit)
+            size_result = await conn.fetch("""
+                SELECT pg_size_pretty(pg_database_size(current_database())) as db_size,
+                       pg_database_size(current_database()) as db_size_bytes
+            """)
+            
+            db_size = size_result[0]['db_size']
+            db_size_bytes = size_result[0]['db_size_bytes']
+            
+            # Check active connections (free tier has 2 connection limit)
+            conn_result = await conn.fetch("""
+                SELECT count(*) as active_connections 
+                FROM pg_stat_activity 
+                WHERE state = 'active' AND datname = current_database()
+            """)
+            
+            active_connections = conn_result[0]['active_connections']
+            
+            return {
+                "database_size": db_size,
+                "database_size_bytes": db_size_bytes,
+                "active_connections": active_connections,
+                "free_tier_limits": {
+                    "max_database_size_mb": 500,
+                    "max_connections": 2
+                },
+                "usage_percentage": {
+                    "database": round((db_size_bytes / (500 * 1024 * 1024)) * 100, 1),
+                    "connections": round((active_connections / 2) * 100, 1)
+                }
+            }
+            
+    except Exception as e:
+        logging.warning(f"Failed to check Supabase limits: {e}")
+        return {"error": str(e)}
 
 def is_admin(user_id: int) -> bool:
     return user_id == settings.ADMIN_ID
