@@ -128,10 +128,11 @@
 Проект был успешно мигрирован с Neon.tech на Supabase.com с оптимизациями для бесплатного тарифа:
 
 #### **Оптимизации соединений:**
-- **Pool Size**: Уменьшен до 2 соединений (лимит Supabase free tier)
+- **Pool Size**: Оптимизирован до 10 соединений (лимит Supabase free tier: 200 concurrent connections)
 - **Keepalive**: TCP keepalive для стабильности соединений
 - **Timeouts**: Увеличены до 60 секунд для Supabase
 - **Session Settings**: Автоматическая оптимизация сессий
+- **Connection Mode**: Рекомендуется Transaction pooler для лучшей производительности
 
 #### **Улучшения производительности:**
 - **Statement Timeout**: 60 секунд для длительных запросов
@@ -156,7 +157,7 @@ DATABASE_URL=postgresql://[user]:[password]@[host]:[port]/[database]
 ```bash
 # Основные настройки
 TELEGRAM_BOT_TOKEN=your_bot_token
-DATABASE_URL=postgresql://postgres:[password]@[project].supabase.co:5432/postgres
+DATABASE_URL=postgresql://postgres:[password]@[project].supabase.co:6543/postgres?pgbouncer=true&pool_mode=transaction
 GEMINI_API_KEYS=key1,key2,key3
 TAVILY_API_KEYS=key1,key2
 ADMIN_ID=your_telegram_id
@@ -174,6 +175,30 @@ ENABLE_PERSISTENT_QUEUE=false
 3. Перейдите в Settings → Database
 4. Скопируйте Connection string (URI)
 5. Замените `[YOUR-PASSWORD]` на ваш пароль базы данных
+
+### Типы подключения к Supabase
+
+#### **Transaction Pooler (Рекомендуется для нашего проекта)**
+```bash
+# Используйте этот формат для лучшей производительности
+DATABASE_URL=postgresql://postgres:[password]@[project].supabase.co:6543/postgres?pgbouncer=true&pool_mode=transaction
+```
+
+**Преимущества:**
+- ✅ **Оптимально для stateless приложений** (как наш Telegram бот)
+- ✅ **Краткие транзакции** - каждый запрос независим
+- ✅ **Лучшая производительность** с asyncpg
+- ✅ **Меньше накладных расходов** на управление сессиями
+
+#### **Session Pooler (Альтернатива)**
+```bash
+# Используйте только при необходимости IPv4 подключения
+DATABASE_URL=postgresql://postgres:[password]@[project].supabase.co:5432/postgres?pgbouncer=true&pool_mode=session
+```
+
+**Когда использовать:**
+- ⚠️ Только при подключении через IPv4 сеть
+- ⚠️ Менее эффективно для кратких транзакций
 
 ### Мониторинг и диагностика
 - **Health Checks**: Автоматическая проверка соединений
@@ -201,7 +226,9 @@ ENABLE_PERSISTENT_QUEUE=false
 
 ### Supabase Free Tier Limits
 - **Database Size**: 500 MB
-- **Active Connections**: 2
+- **Concurrent Connections**: 200
+- **Messages Per Month**: 2 Million
+- **Max Message Size**: 250 KB
 - **API Requests**: 50,000/month
 - **Storage**: 1 GB
 - **Bandwidth**: 2 GB/month
@@ -211,18 +238,22 @@ ENABLE_PERSISTENT_QUEUE=false
 - Оптимизация запросов для ограниченных ресурсов
 - Мониторинг использования лимитов
 - Автоматическое восстановление соединений
+- Отслеживание количества сообщений в месяц
+- Контроль размера сообщений (максимум 250 KB)
 
 ### Troubleshooting Supabase Issues
 
 #### **Common Connection Problems:**
-- **Connection Limit Exceeded**: Убедитесь, что max_size=2 в настройках пула
+- **Connection Limit Exceeded**: Убедитесь, что max_size=10 в настройках пула (лимит 200 concurrent connections)
 - **Query Timeout**: Проверьте statement_timeout (60s) и idle_timeout (30s)
 - **Rate Limiting**: Мониторьте использование API через /metrics
+- **Message Size Limit**: Максимальный размер сообщения 250 KB
 
 #### **Performance Optimization:**
-- **Connection Pooling**: Автоматически оптимизировано для 2 соединений
+- **Connection Pooling**: Автоматически оптимизировано для 10 соединений (лимит 200 concurrent)
 - **Query Optimization**: Используйте индексы для часто выполняемых запросов
 - **Session Management**: Автоматическая очистка неактивных сессий
+- **Transaction Mode**: Используйте Transaction pooler для лучшей производительности
 
 #### **Monitoring Commands:**
 ```bash
@@ -239,11 +270,12 @@ ENABLE_PERSISTENT_QUEUE=false
 
 ### Migration Checklist
 - [x] Обновлен DATABASE_URL для Supabase
-- [x] Оптимизирован размер пула соединений (max_size=2)
+- [x] Оптимизирован размер пула соединений (max_size=10, лимит 200 concurrent connections)
 - [x] Добавлены Supabase-specific таймауты
 - [x] Реализован TCP keepalive
 - [x] Добавлена обработка Supabase ошибок
-- [x] Обновлена документация
+- [x] Рекомендован Transaction pooler режим
+- [x] Обновлена документация с реальными лимитами
 - [x] Добавлены команды мониторинга
 
 ### Модульная структура

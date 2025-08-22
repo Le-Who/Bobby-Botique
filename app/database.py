@@ -35,8 +35,8 @@ async def _create_db_pool():
     try:
         return await asyncpg.create_pool(
             dsn=settings.DATABASE_URL, 
-            min_size=1, 
-            max_size=2,  # Conservative limit for Supabase.com free tier
+            min_size=2, 
+            max_size=10,  # Optimized for Supabase.com free tier (200 concurrent connections)
             command_timeout=60,  # 60 seconds timeout for Supabase
             server_settings={
                 'application_name': 'gemaibotv2',
@@ -390,7 +390,7 @@ async def check_supabase_limits():
             db_size = size_result[0]['db_size']
             db_size_bytes = size_result[0]['db_size_bytes']
             
-            # Check active connections (free tier has 2 connection limit)
+            # Check active connections (free tier has 200 concurrent connection limit)
             conn_result = await conn.fetch("""
                 SELECT count(*) as active_connections 
                 FROM pg_stat_activity 
@@ -405,11 +405,13 @@ async def check_supabase_limits():
                 "active_connections": active_connections,
                 "free_tier_limits": {
                     "max_database_size_mb": 500,
-                    "max_connections": 2
+                    "max_concurrent_connections": 200,
+                    "max_messages_per_month": 2000000,
+                    "max_message_size_kb": 250
                 },
                 "usage_percentage": {
                     "database": round((db_size_bytes / (500 * 1024 * 1024)) * 100, 1),
-                    "connections": round((active_connections / 2) * 100, 1)
+                    "connections": round((active_connections / 200) * 100, 1)
                 }
             }
             
