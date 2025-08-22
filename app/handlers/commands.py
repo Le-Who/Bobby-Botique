@@ -120,9 +120,6 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_state.history = []
     chat_state.token_count = 0
     chat_state.system_prompt = None
-    chat_state.is_deep_dive = False  # Сбрасываем флаг deep dive
-    chat_state.deep_dive_thread_id = None  # Сбрасываем ID потока
-    chat_state.search_enabled = False  # Сбрасываем режим поиска
     await db.update_user_chat(user_id, chat_state)
     await update.message.reply_text("Новый чат создан. История и системная инструкция сброшены.")
 
@@ -135,28 +132,13 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
     chat_state = await db.get_user_chat(user_id)
-    
-    # Логируем текущее состояние
-    logging.info(f"Research mode command for user {user_id}: current is_deep_dive={chat_state.is_deep_dive}, search_enabled={chat_state.search_enabled}")
-    
-    # Переключаем режим deep dive (включает в себя режим поиска)
-    chat_state.is_deep_dive = not chat_state.is_deep_dive
-    chat_state.search_enabled = chat_state.is_deep_dive  # Синхронизируем с deep dive
-    
-    # Если выключаем deep dive, сбрасываем thread_id
-    if not chat_state.is_deep_dive:
-        chat_state.deep_dive_thread_id = None
-    
-    # Логируем новое состояние
-    logging.info(f"Research mode command for user {user_id}: new is_deep_dive={chat_state.is_deep_dive}, search_enabled={chat_state.search_enabled}")
-    
+    chat_state.search_enabled = not chat_state.search_enabled
     await db.update_user_chat(user_id, chat_state)
-    
-    status_text = "ВКЛЮЧЕН" if chat_state.is_deep_dive else "ВЫКЛЮЧЕН"
+    status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
     
     # Используем TelegramFormatter для правильного экранирования
     from app.utils.formatting import TelegramFormatter
-    formatted_text, parse_mode = TelegramFormatter.format_text(f"🌐 Режим глубокого исследования *{status_text}*.")
+    formatted_text, parse_mode = TelegramFormatter.format_text(f"🌐 Постоянный режим исследования *{status_text}*.")
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 # Команды /keystatus и /credits объединены с /metrics
