@@ -68,6 +68,31 @@ def acquire_lock():
     
     try:
         lock_file = "/tmp/gemaibot.lock"
+        
+        # Проверяем, существует ли файл блокировки и не является ли он "мертвым"
+        if os.path.exists(lock_file):
+            try:
+                with open(lock_file, 'r') as f:
+                    pid_str = f.read().strip()
+                    if pid_str.isdigit():
+                        pid = int(pid_str)
+                        # Проверяем, существует ли процесс с этим PID
+                        try:
+                            os.kill(pid, 0)  # Проверяем существование процесса
+                            logging.warning(f"Process {pid} is still running, cannot acquire lock")
+                            return False
+                        except OSError:
+                            # Процесс не существует, удаляем "мертвую" блокировку
+                            logging.info(f"Removing stale lock file for dead process {pid}")
+                            os.unlink(lock_file)
+            except Exception as e:
+                logging.warning(f"Error reading lock file: {e}, removing corrupted lock")
+                try:
+                    os.unlink(lock_file)
+                except:
+                    pass
+        
+        # Создаем новый файл блокировки
         lock_fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
         
         # Пытаемся приобрести эксклюзивную блокировку
@@ -83,8 +108,16 @@ def acquire_lock():
         
     except (OSError, IOError) as e:
         if lock_fd:
-            os.close(lock_fd)
-        logging.error(f"Failed to acquire lock: {e}")
+            try:
+                os.close(lock_fd)
+            except:
+                pass
+            lock_fd = None
+        
+        if "Resource temporarily unavailable" in str(e):
+            logging.warning("Lock is held by another process")
+        else:
+            logging.error(f"Failed to acquire lock: {e}")
         return False
 
 def release_lock():
@@ -93,16 +126,26 @@ def release_lock():
     
     try:
         if lock_fd:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            os.close(lock_fd)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            except (OSError, IOError) as e:
+                logging.warning(f"Error releasing file lock: {e}")
+            finally:
+                lock_fd = None
         
         if lock_file and os.path.exists(lock_file):
-            os.unlink(lock_file)
+            try:
+                os.unlink(lock_file)
+                logging.info("Lock file removed successfully")
+            except (OSError, IOError) as e:
+                logging.warning(f"Error removing lock file: {e}")
             
-        logging.info("Lock released successfully")
-        
     except Exception as e:
         logging.error(f"Error releasing lock: {e}")
+    finally:
+        lock_file = None
+        lock_fd = None
 
 def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения"""
@@ -645,9 +688,13 @@ if __name__ == "__main__":
     print("=== BOT MAIN ENTRY POINT ===", flush=True)
     
     # Проверяем блокировку перед запуском
+    print("Checking for existing bot instances...", flush=True)
     if not acquire_lock():
-        print("ERROR: Another bot instance is already running. Exiting.", flush=True)
+        print("ERROR: Another bot instance is already running or lock cannot be acquired. Exiting.", flush=True)
+        print("If this is a fresh deployment, the lock may be stale. Try clearing it manually.", flush=True)
         sys.exit(1)
+    
+    print("Lock acquired successfully. Starting bot...", flush=True)
     
     try:
         asyncio.run(main())
@@ -666,5 +713,6 @@ if __name__ == "__main__":
         sys.exit(1)
     finally:
         # Всегда освобождаем блокировку при завершении
+        print("Shutting down bot and releasing lock...", flush=True)
         release_lock()
         print("Bot shutdown complete. Lock released.", flush=True)

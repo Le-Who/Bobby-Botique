@@ -24,8 +24,9 @@ COPY . .
 
 # Создаем скрипт для очистки блокировок при запуске
 RUN echo '#!/bin/bash\n\
-echo "Clearing any existing bot locks..."\n\
-python /app/clear_lock.py clear\n\
+echo "=== BOT STARTUP SCRIPT ==="\n\
+echo "Checking for existing bot locks..."\n\
+python /app/clear_lock.py\n\
 echo "Starting bot..."\n\
 exec python /app/bot.py' > /app/start.sh && \
 chmod +x /app/start.sh

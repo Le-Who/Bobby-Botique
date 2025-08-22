@@ -24,8 +24,8 @@ else:
             socket_keepalive_options={},
             health_check_interval=30,  # Health check every 30 seconds
             max_connections=2,  # Limit connections for free tier
-            retry_on_timeout=True,
-            ssl_cert_reqs=None  # Upstash handles SSL
+            retry_on_timeout=True
+            # Removed ssl_cert_reqs as it's not supported in newer Redis versions
         )
         # Test connection
         redis_client.ping()
