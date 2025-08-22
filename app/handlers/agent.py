@@ -515,6 +515,68 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
     else:
         await _handle_research_agent(placeholder_message, user_id, original_user_message, chat_state, search_query=search_query)
 
+async def _handle_deep_dive_continuation(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState):
+    """Обрабатывает продолжение deep dive разговора с сохранением контекста"""
+    try:
+        await placeholder_message.edit_text("🧠 Продолжаю исследование с учетом предыдущего контекста...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        # Если не можем отредактировать, отправляем новое сообщение
+        placeholder_message = await placeholder_message.reply_text("🧠 Продолжаю исследование с учетом предыдущего контекста...")
+    
+    # Получаем user_id и chat_id для логирования
+    user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
+    chat_id = placeholder_message.chat.id if placeholder_message.chat else None
+    
+    # Добавляем новый вопрос пользователя в историю
+    chat_state.history.append({'role': 'user', 'parts': [user_message]})
+    
+    # Используем ту же модель, что и для предыдущего deep dive
+    model_for_continuation = settings.RESEARCH_MODEL
+    gemini_key, model_used, _ = await _resolve_gemini_request(model_for_continuation)
+    if not gemini_key:
+        try:
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {model_for_continuation} закончились.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
+    try:
+        # Отправляем запрос с сохраненной историей и контекстом
+        response_text, new_token_count = await services.get_gemini_response(
+            gemini_key['api_key'], 
+            chat_state.history, 
+            model_used, 
+            system_instruction=chat_state.system_prompt
+        )
+    except Exception as gemini_error:
+        logging.error(f"Error in Gemini deep dive continuation: {gemini_error}")
+        chat_state.history.pop()  # Убираем добавленный вопрос
+        await db.update_user_chat(user_id, chat_state)
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при продолжении исследования. Попробуйте позже.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
+    if response_text:
+        # Отправляем ответ с кнопками deep dive
+        await send_long_message(placeholder_message, response_text, is_deep_dive=True)
+        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        
+        # Добавляем ответ модели в историю
+        chat_state.history.append({'role': 'model', 'parts': [response_text]})
+        chat_state.token_count = new_token_count
+        chat_state.is_deep_dive = True  # Поддерживаем флаг deep dive
+        await db.update_user_chat(user_id, chat_state)
+    else:
+        chat_state.history.pop()  # Убираем вопрос, если ответ пустой
+        await db.update_user_chat(user_id, chat_state)
+        try:
+            await placeholder_message.edit_text("Получен пустой ответ от API при продолжении исследования.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+
 async def process_long_request(placeholder_message: Message, update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         is_photo = bool(update.message.photo)
@@ -557,7 +619,16 @@ async def process_long_request(placeholder_message: Message, update: Update, con
         from ..document_processor import get_user_documents
         user_documents = await get_user_documents(update.effective_user.id)
         
+        # Проверяем, является ли это продолжением deep dive
+        if chat_state.is_deep_dive and not text.startswith('?') and not text.startswith('??'):
+            # Это продолжение deep dive - используем существующий контекст
+            await _handle_deep_dive_continuation(placeholder_message, update.effective_user.id, text, chat_state)
+            return
+        
         if text.startswith('??'):
+            # Новый deep dive запрос - сбрасываем флаг и начинаем заново
+            chat_state.is_deep_dive = False
+            await db.update_user_chat(update.effective_user.id, chat_state)
             await _handle_research_agent(placeholder_message, update.effective_user.id, text[2:].strip(), chat_state)
         elif text.startswith('?'):
             await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)

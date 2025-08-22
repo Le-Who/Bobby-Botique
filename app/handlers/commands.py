@@ -120,6 +120,7 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_state.history = []
     chat_state.token_count = 0
     chat_state.system_prompt = None
+    chat_state.is_deep_dive = False  # Сбрасываем флаг deep dive
     await db.update_user_chat(user_id, chat_state)
     await update.message.reply_text("Новый чат создан. История и системная инструкция сброшены.")
 

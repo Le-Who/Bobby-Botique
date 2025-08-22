@@ -348,14 +348,19 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
        chat_state.history = []
        chat_state.token_count = 0
        chat_state.system_prompt = None
-       chat_state.is_deep_dive = False
+       chat_state.is_deep_dive = False  # Сбрасываем флаг deep dive
        await db.update_user_chat(user_id, chat_state)
        await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
        await query.edit_message_reply_markup(reply_markup=None)
 
    elif action == "deeper_dive":
+       # Сохраняем контекст deep dive - НЕ сбрасываем историю!
+       chat_state = await db.get_user_chat(user_id)
+       chat_state.is_deep_dive = True  # Убеждаемся, что флаг установлен
+       await db.update_user_chat(user_id, chat_state)
+       
        await query.edit_message_reply_markup(reply_markup=None)
-       text = "Супер! Мы готовы *копнуть глубже*! 😉 \nЧто еще вы хотели бы узнать по этой теме?"
+       text = "Супер! Мы готовы *копнуть глубже*! 😉 \n\n💡 *Теперь вы можете:*\n• Задать уточняющий вопрос по предыдущему ответу\n• Попросить объяснить что-то подробнее\n• Задать связанный вопрос по теме\n\n📝 *Просто напишите ваш следующий вопрос* - я продолжу исследование с учетом предыдущего контекста!"
        formatted_text, parse_mode = TelegramFormatter.format_text(text)
        await query.message.reply_text(
            formatted_text,
@@ -374,6 +379,7 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_state.history = []
     chat_state.token_count = 0
     chat_state.system_prompt = None
+    chat_state.is_deep_dive = False  # Сбрасываем флаг deep dive
     await db.update_user_chat(user_id, chat_state)
     
     # Remove the old inline keyboard
