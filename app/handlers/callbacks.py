@@ -7,6 +7,23 @@ from .. import database as db
 from ..config import settings
 from .. import state
 from ..utils.formatting import TelegramFormatter
+import logging
+
+async def safe_callback_handler(callback_func):
+    """Декоратор для безопасной обработки callback функций"""
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            return await callback_func(update, context)
+        except Exception as e:
+            logging.error(f"Critical error in callback {callback_func.__name__}: {e}", exc_info=True)
+            try:
+                if hasattr(update, 'callback_query') and update.callback_query:
+                    await update.callback_query.message.reply_text(
+                        "❌ Произошла критическая ошибка. Попробуйте позже или начните новый чат."
+                    )
+            except:
+                pass  # Если даже это не удается, просто логируем ошибку
+    return wrapper
 
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -334,59 +351,116 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text("❌ Ошибка при удалении документа.")
         return
+    
+    else:
+        # Неизвестное действие
+        await query.edit_message_text("❌ Неизвестное действие.")
+        return
 
 async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    """Handles callbacks from deep dive mode buttons."""
-   query = update.callback_query
-   await query.answer()
+   try:
+       query = update.callback_query
+       await query.answer()
 
-   action = query.data.split(':')[1]
-   user_id = query.from_user.id
-
-   if action == "new_topic":
-       chat_state = await db.get_user_chat(user_id)
-       chat_state.history = []
-       chat_state.token_count = 0
-       chat_state.system_prompt = None
-       chat_state.is_deep_dive = False  # Сбрасываем флаг deep dive
-       await db.update_user_chat(user_id, chat_state)
-       await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
-       await query.edit_message_reply_markup(reply_markup=None)
-
-   elif action == "deeper_dive":
-       # Сохраняем контекст deep dive - НЕ сбрасываем историю!
-       chat_state = await db.get_user_chat(user_id)
-       chat_state.is_deep_dive = True  # Убеждаемся, что флаг установлен
-       await db.update_user_chat(user_id, chat_state)
+       action = query.data.split(':')[1]
+       user_id = query.from_user.id
        
-       await query.edit_message_reply_markup(reply_markup=None)
-       text = "Супер! Мы готовы *копнуть глубже*! 😉 \n\n💡 *Теперь вы можете:*\n• Задать уточняющий вопрос по предыдущему ответу\n• Попросить объяснить что-то подробнее\n• Задать связанный вопрос по теме\n\n📝 *Просто напишите ваш следующий вопрос* - я продолжу исследование с учетом предыдущего контекста!"
-       formatted_text, parse_mode = TelegramFormatter.format_text(text)
-       await query.message.reply_text(
-           formatted_text,
-           parse_mode=parse_mode
-       )
+       logging.info(f"Deep dive callback received: action={action}, user_id={user_id}")
+
+       if action == "new_topic":
+           try:
+               chat_state = await db.get_user_chat(user_id)
+               chat_state.history = []
+               chat_state.token_count = 0
+               chat_state.system_prompt = None
+               chat_state.is_deep_dive = False  # Сбрасываем флаг deep dive
+               chat_state.deep_dive_thread_id = None  # Сбрасываем ID потока
+               await db.update_user_chat(user_id, chat_state)
+               await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
+               await query.edit_message_reply_markup(reply_markup=None)
+               logging.info(f"New topic created for user {user_id}")
+           except Exception as e:
+               logging.error(f"Error creating new topic for user {user_id}: {e}")
+               await query.message.reply_text("❌ Ошибка при создании нового чата. Попробуйте позже.")
+               return
+
+       elif action == "deeper_dive":
+           try:
+               # Проверяем, что у нас есть валидное состояние deep dive
+               chat_state = await db.get_user_chat(user_id)
+               
+               # Валидация состояния - предотвращаем коррупцию
+               if not chat_state.is_deep_dive or not chat_state.deep_dive_thread_id:
+                   # Если состояние некорректное, сбрасываем и начинаем заново
+                   logging.warning(f"Invalid deep dive state for user {user_id}, resetting")
+                   chat_state.is_deep_dive = False
+                   chat_state.deep_dive_thread_id = None
+                   await db.update_user_chat(user_id, chat_state)
+                   await query.edit_message_reply_markup(reply_markup=None)
+                   await query.message.reply_text("⚠️ Состояние deep dive было сброшено. Начните новый запрос с '??'")
+                   return
+               
+               # Сохраняем контекст deep dive - НЕ сбрасываем историю!
+               chat_state.is_deep_dive = True  # Убеждаемся, что флаг установлен
+               await db.update_user_chat(user_id, chat_state)
+               
+               await query.edit_message_reply_markup(reply_markup=None)
+               text = "Супер! Мы готовы *копнуть глубже*! 😉 \n\n💡 *Теперь вы можете:*\n• Задать уточняющий вопрос по предыдущему ответу\n• Попросить объяснить что-то подробнее\n• Задать связанный вопрос по теме\n\n📝 *Просто напишите ваш следующий вопрос* - я продолжу исследование с учетом предыдущего контекста!"
+               formatted_text, parse_mode = TelegramFormatter.format_text(text)
+               await query.message.reply_text(
+                   formatted_text,
+                   parse_mode=parse_mode
+               )
+               logging.info(f"Deep dive continuation enabled for user {user_id}")
+           except Exception as e:
+               logging.error(f"Error enabling deep dive continuation for user {user_id}: {e}")
+               await query.message.reply_text("❌ Ошибка при включении режима deep dive. Попробуйте позже.")
+               return
+       
+       else:
+           logging.warning(f"Unknown deep dive action: {action}")
+           await query.message.reply_text("❌ Неизвестное действие.")
+           
+   except Exception as e:
+       logging.error(f"Critical error in deep_dive_callback: {e}", exc_info=True)
+       try:
+           if 'query' in locals():
+               await query.message.reply_text("❌ Произошла критическая ошибка. Попробуйте позже или начните новый чат.")
+       except:
+           pass  # Если даже это не удается, просто логируем ошибку
 
 async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles the 'new_topic' button press, clearing the chat context."""
-    query = update.callback_query
-    await query.answer("Начинаем новую тему...")
-    
-    user_id = query.from_user.id
-    
-    # Clear chat history and system prompt, similar to /newchat command
-    chat_state = await db.get_user_chat(user_id)
-    chat_state.history = []
-    chat_state.token_count = 0
-    chat_state.system_prompt = None
-    chat_state.is_deep_dive = False  # Сбрасываем флаг deep dive
-    await db.update_user_chat(user_id, chat_state)
-    
-    # Remove the old inline keyboard
-    await query.edit_message_reply_markup(reply_markup=None)
-    
-    # Send confirmation message
-    await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
+    try:
+        query = update.callback_query
+        await query.answer("Начинаем новую тему...")
+        
+        user_id = query.from_user.id
+        
+        # Clear chat history and system prompt, similar to /newchat command
+        chat_state = await db.get_user_chat(user_id)
+        chat_state.history = []
+        chat_state.token_count = 0
+        chat_state.system_prompt = None
+        chat_state.is_deep_dive = False  # Сбрасываем флаг deep dive
+        chat_state.deep_dive_thread_id = None  # Сбрасываем ID потока
+        await db.update_user_chat(user_id, chat_state)
+        
+        # Remove the old inline keyboard
+        await query.edit_message_reply_markup(reply_markup=None)
+        
+        # Send confirmation message
+        await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
+        logging.info(f"New topic created for user {user_id}")
+        
+    except Exception as e:
+        logging.error(f"Error in new_topic_callback for user {user_id if 'user_id' in locals() else 'unknown'}: {e}", exc_info=True)
+        try:
+            if 'query' in locals():
+                await query.message.reply_text("❌ Ошибка при создании нового чата. Попробуйте позже.")
+        except:
+            pass  # Если даже это не удается, просто логируем ошибку
 
 def register(application: Application):
    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model_"))

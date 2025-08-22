@@ -198,6 +198,20 @@ async def run_bot_with_retry():
             messages.register(application)
             application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
             
+            # Добавляем глобальный обработчик ошибок
+            async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+                logging.error(f"Unhandled error in bot: {context.error}", exc_info=True)
+                try:
+                    if update and update.effective_chat:
+                        await context.bot.send_message(
+                            chat_id=update.effective_chat.id,
+                            text="❌ Произошла непредвиденная ошибка. Попробуйте позже или начните новый чат."
+                        )
+                except:
+                    pass  # Если даже это не удается, просто логируем ошибку
+            
+            application.add_error_handler(error_handler)
+            
             # Запускаем бота без async with для лучшего контроля
             # В новой версии python-telegram-bot ОБЯЗАТЕЛЬНО нужно вызывать initialize()
             try:

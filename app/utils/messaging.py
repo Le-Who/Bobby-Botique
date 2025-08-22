@@ -16,32 +16,74 @@ def _strip_formatting(text: str) -> str:
     text = re.sub(r'<[^>]*>', '', text)
     
     return text.strip()
+
+def _split_text(text: str, max_length: int = 4000) -> list:
+    """
+    Разбивает длинный текст на части, не превышающие максимальную длину.
+    
+    Args:
+        text: Text to split
+        max_length: Maximum length of each part
+        
+    Returns:
+        List of text parts
+    """
+    if not text or len(text) <= max_length:
+        return [text] if text else []
+    
+    parts = []
+    while len(text) > 0:
+        if len(text) <= max_length:
+            parts.append(text)
+            break
+        
+        # Ищем последний перенос строки в пределах лимита
+        part = text[:max_length]
+        last_newline = part.rfind('\n')
+        
+        # Если нашли перенос строки, используем его как границу
+        if last_newline != -1:
+            slice_index = last_newline
+        else:
+            # Иначе просто обрезаем по лимиту
+            slice_index = max_length
+        
+        parts.append(text[:slice_index])
+        text = text[slice_index + 1:] if last_newline != -1 else text[slice_index:]
+    
+    return parts
 from ..config import settings
 
-async def send_long_message(message: Message, text: str, preserve_formatting: bool = True, reply_markup=None, is_deep_dive: bool = False):
+async def send_long_message(message: Message, text: str, is_deep_dive: bool = False, reply_markup=None, preserve_formatting: bool = False):
     """
-    Splits a long message and sends it in parts using the new TelegramFormatter.
+    Отправляет длинное сообщение, разбивая его на части, если необходимо.
     
     Args:
         message: Telegram message object
         text: Text to send
-        preserve_formatting: Whether to preserve formatting (default: True)
-        reply_markup: The reply markup to use for the message.
-        is_deep_dive: Flag to indicate if the message is part of a deep dive session.
+        is_deep_dive: Whether this is a deep dive response
+        reply_markup: Inline keyboard markup
+        preserve_formatting: Whether to preserve original formatting
     """
-    if not text or not text.strip():
-        return
+    # Валидация состояния deep dive
+    if is_deep_dive:
+        try:
+            from ..database import get_user_chat
+            user_id = message.from_user.id if message.from_user else None
+            if user_id:
+                chat_state = await get_user_chat(user_id)
+                if not chat_state.is_deep_dive:
+                    logging.warning(f"Deep dive flag set but user {user_id} not in deep dive mode")
+                    is_deep_dive = False  # Сбрасываем флаг для безопасности
+                elif not chat_state.deep_dive_thread_id:
+                    logging.warning(f"Deep dive flag set but no thread_id for user {user_id}")
+                    is_deep_dive = False  # Сбрасываем флаг для безопасности
+        except Exception as e:
+            logging.error(f"Error validating deep dive state: {e}")
+            is_deep_dive = False  # Сбрасываем флаг для безопасности
     
-    parts = []
-    while len(text) > 0:
-        if len(text) <= settings.TELEGRAM_MESSAGE_LIMIT:
-            parts.append(text)
-            break
-        part = text[:settings.TELEGRAM_MESSAGE_LIMIT]
-        last_newline = part.rfind('\n')
-        slice_index = last_newline if last_newline != -1 else settings.TELEGRAM_MESSAGE_LIMIT
-        parts.append(text[:slice_index])
-        text = text[slice_index + 1:] if last_newline != -1 else text[slice_index:]
+    # Разбиваем текст на части, если он слишком длинный
+    parts = _split_text(text, max_length=4000)
 
     is_first_part = True
     current_message = message  # Текущее сообщение для редактирования

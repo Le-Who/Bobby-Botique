@@ -22,6 +22,7 @@ class ChatState:
     search_enabled: bool
     system_prompt: Optional[str]
     is_deep_dive: bool = False
+    deep_dive_thread_id: Optional[int] = None  # Track the message ID of the deep dive response
 
 def _prepare_query(query: str) -> str:
     placeholders = re.findall(r'(\?|%s)', query)
@@ -198,7 +199,7 @@ async def get_user_chat(user_id: int) -> ChatState:
     chat_result = await db_query("SELECT * FROM chats WHERE user_id = ?", (user_id,))
     user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = ?", (user_id,))
 
-    chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False)
+    chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False, deep_dive_thread_id=None)
 
     if chat_result:
         row = chat_result[0]
@@ -207,6 +208,7 @@ async def get_user_chat(user_id: int) -> ChatState:
         chat_state.token_count = row['token_count'] or 0
         chat_state.search_enabled = bool(row['search_enabled'])
         chat_state.system_prompt = row['system_prompt'] or None
+        # Note: deep_dive_thread_id is not stored in database, it's managed in memory only
 
     if user_result:
         chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
@@ -227,6 +229,17 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
 
     user_query = "UPDATE users SET is_deep_dive = ? WHERE user_id = ?"
     await db_query(user_query, (chat_state.is_deep_dive, user_id))
+
+async def reset_deep_dive_state(user_id: int):
+    """Сбрасывает состояние deep dive для пользователя"""
+    try:
+        user_query = "UPDATE users SET is_deep_dive = ? WHERE user_id = ?"
+        await db_query(user_query, (False, user_id))
+        logging.info(f"Deep dive state reset for user {user_id}")
+        return True
+    except Exception as e:
+        logging.error(f"Error resetting deep dive state for user {user_id}: {e}")
+        return False
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     today_pacific: date = datetime.now(PACIFIC_TZ).date()

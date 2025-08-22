@@ -98,155 +98,74 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     await send_long_message(placeholder_message, final_answer)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
-async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):
-    # Если передан search_query, используем его для поиска, а user_message для локализации
-    actual_search_query = search_query if search_query else user_message
-    
-    await metrics_collector.record_search_query()
-    
+async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, search_query: str = None):
+    """Обрабатывает запросы к исследовательскому агенту"""
     try:
-        await placeholder_message.edit_text("🔎 Ищу источники...")
+        await placeholder_message.edit_text("🔍 Исследую тему...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
         # Если не можем отредактировать, отправляем новое сообщение
-        placeholder_message = await placeholder_message.reply_text("🔎 Ищу источники...")
+        placeholder_message = await placeholder_message.reply_text("🔍 Исследую тему...")
     
     # Получаем user_id и chat_id для логирования
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
     
-    try:
-        search_result = await services.tavily_search_agent(
-            actual_search_query, 
-            search_type='search',
-            user_id=user_id,
-            chat_id=chat_id
-        )
-    except Exception as search_error:
-        logging.error(f"Error in Tavily search: {search_error}")
-        try:
-            await placeholder_message.edit_text("❌ Произошла ошибка при поиске. Попробуйте позже.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
+    # Добавляем новый вопрос пользователя в историю
+    chat_state.history.append({'role': 'user', 'parts': [user_message]})
     
-    if search_result.get("error"):
-        try:
-            await placeholder_message.edit_text(search_result["error"])
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-    
-    search_results = search_result.get('results', [])
-    if not search_results:
-        try:
-            await placeholder_message.edit_text("Не удалось найти релевантные источники для исследования.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-
-    try:
-        await placeholder_message.edit_text(f"✅ Найдено {len(search_results)} источников. Выбираю лучшие...")
-    except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
-    
-    gemini_key, model_used, _ = await _resolve_gemini_request(settings.URL_SELECTION_MODEL)
+    # Используем модель для исследований
+    model_for_research = settings.RESEARCH_MODEL
+    gemini_key, model_used, _ = await _resolve_gemini_request(model_for_research)
     if not gemini_key:
         try:
-            await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.URL_SELECTION_MODEL} (выбор URL) закончились.")
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {model_for_research} закончились.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
-
-    selection_prompt = prompts.URL_SELECTION_PROMPT.format(
-        user_message=user_message,
-        search_results_json=json.dumps(search_results, indent=2, ensure_ascii=False)
-    )
     
     try:
-        selected_urls_str, _ = await services.get_gemini_response(
+        # Отправляем запрос с сохраненной историей и контекстом
+        response_text, new_token_count = await services.get_gemini_response(
             gemini_key['api_key'], 
-            [{'role': 'user', 'parts': [selection_prompt]}], 
-            model_used,
-            user_id=user_id,
-            chat_id=chat_id
+            chat_state.history, 
+            model_used, 
+            system_instruction=chat_state.system_prompt
         )
-        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
     except Exception as gemini_error:
-        logging.error(f"Error in Gemini URL selection: {gemini_error}")
-        try:
-            await placeholder_message.edit_text("❌ Произошла ошибка при выборе источников. Попробуйте позже.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-    
-    selected_urls = [url.strip() for url in selected_urls_str.split(',') if url.strip().startswith('http')]
-
-    if not selected_urls:
-        try:
-            await placeholder_message.edit_text("Не удалось выбрать подходящие источники для глубокого анализа. Попробуйте переформулировать запрос.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-
-    try:
-        await placeholder_message.edit_text(f"✅ Выбрано {len(selected_urls)} источников. Собираю контент...")
-    except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
-    
-    final_context_list = [f"Источник (URL: {res.get('url')}):\n{res.get('content')}" for url in selected_urls for res in search_results if res.get('url') == url]
-    full_context = "\n\n---\n\n".join(final_context_list)
-
-    if not full_context:
-        try:
-            await placeholder_message.edit_text("Не удалось собрать контент с выбранных страниц.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-
-    try:
-        await placeholder_message.edit_text(f"🧠 Синтезирую ответ на основе {len(full_context)} символов...")
-    except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
-    
-    model_for_synthesis = model_override or settings.RESEARCH_MODEL
-    gemini_key, model_used, _ = await _resolve_gemini_request(model_for_synthesis)
-    if not gemini_key:
-        try:
-            await placeholder_message.edit_text(f"🚫 Ключи для модели {model_for_synthesis} закончились.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-        
-    augmented_prompt = prompts.SYNTHESIS_PROMPT.format(
-        full_context=full_context, user_message=user_message
-    )
-    chat_state.history.append({'role': 'user', 'parts': [augmented_prompt]})
-    
-    try:
-        response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
-    except Exception as gemini_error:
-        logging.error(f"Error in Gemini synthesis: {gemini_error}")
-        chat_state.history.pop()  # Убираем добавленный промпт
+        logging.error(f"Error in Gemini research agent: {gemini_error}")
+        chat_state.history.pop()  # Убираем добавленный вопрос
         await db.update_user_chat(user_id, chat_state)
         try:
-            await placeholder_message.edit_text("❌ Произошла ошибка при синтезе ответа. Попробуйте позже.")
+            await placeholder_message.edit_text("❌ Произошла ошибка при исследовании. Попробуйте позже.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
     
     if response_text:
+        # Отправляем ответ с кнопками deep dive
         await send_long_message(placeholder_message, response_text, is_deep_dive=True)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        
+        # Добавляем ответ модели в историю
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
-        chat_state.is_deep_dive = True
+        chat_state.is_deep_dive = True  # Устанавливаем флаг deep dive
+        
+        # Устанавливаем ID потока deep dive для отслеживания контекста
+        if placeholder_message.message_id:
+            chat_state.deep_dive_thread_id = placeholder_message.message_id
+        else:
+            # Fallback: используем текущее время как идентификатор потока
+            import time
+            chat_state.deep_dive_thread_id = int(time.time())
+        
         await db.update_user_chat(user_id, chat_state)
     else:
-        chat_state.history.pop()
+        chat_state.history.pop()  # Убираем вопрос, если ответ пустой
         await db.update_user_chat(user_id, chat_state)
         try:
-            await placeholder_message.edit_text("Получен пустой ответ от API.")
+            await placeholder_message.edit_text("Получен пустой ответ от API при исследовании.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
 
@@ -415,6 +334,14 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         if chat_state.is_deep_dive:
             keyboard = [[InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Устанавливаем ID потока deep dive для отслеживания контекста
+            if placeholder_message.message_id:
+                chat_state.deep_dive_thread_id = placeholder_message.message_id
+            else:
+                # Fallback: используем текущее время как идентификатор потока
+                import time
+                chat_state.deep_dive_thread_id = int(time.time())
 
         await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
@@ -517,6 +444,16 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
 
 async def _handle_deep_dive_continuation(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState):
     """Обрабатывает продолжение deep dive разговора с сохранением контекста"""
+    
+    # Валидация состояния deep dive
+    if not chat_state.is_deep_dive or not chat_state.deep_dive_thread_id:
+        logging.warning(f"Invalid deep dive state for user {user_id} in continuation")
+        try:
+            await placeholder_message.edit_text("⚠️ Состояние deep dive было потеряно. Начните новый запрос с '??'")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
     try:
         await placeholder_message.edit_text("🧠 Продолжаю исследование с учетом предыдущего контекста...")
     except Exception as edit_error:
@@ -568,6 +505,12 @@ async def _handle_deep_dive_continuation(placeholder_message: Message, user_id: 
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
         chat_state.is_deep_dive = True  # Поддерживаем флаг deep dive
+        
+        # Обновляем ID потока deep dive для текущего ответа
+        if placeholder_message.message_id:
+            chat_state.deep_dive_thread_id = placeholder_message.message_id
+        # Если message_id недоступен, сохраняем существующий
+        
         await db.update_user_chat(user_id, chat_state)
     else:
         chat_state.history.pop()  # Убираем вопрос, если ответ пустой
@@ -621,6 +564,24 @@ async def process_long_request(placeholder_message: Message, update: Update, con
         
         # Проверяем, является ли это продолжением deep dive
         if chat_state.is_deep_dive and not text.startswith('?') and not text.startswith('??'):
+            # Валидация состояния deep dive перед продолжением
+            if not chat_state.deep_dive_thread_id:
+                logging.warning(f"Deep dive state corrupted for user {update.effective_user.id}, resetting")
+                chat_state.is_deep_dive = False
+                chat_state.deep_dive_thread_id = None
+                await db.update_user_chat(update.effective_user.id, chat_state)
+                await placeholder_message.edit_text("⚠️ Состояние deep dive было повреждено. Начните новый запрос с '??'")
+                return
+            
+            # Проверка на бесконечные циклы - если сообщение слишком короткое, это может быть ошибка
+            if len(text.strip()) < 3:
+                logging.warning(f"Very short message in deep dive from user {update.effective_user.id}: '{text}'")
+                await placeholder_message.edit_text("⚠️ Сообщение слишком короткое для продолжения deep dive. Напишите более подробный вопрос.")
+                return
+            
+            # Логируем продолжение deep dive для отладки
+            logging.info(f"Continuing deep dive for user {update.effective_user.id} with thread_id {chat_state.deep_dive_thread_id}")
+            
             # Это продолжение deep dive - используем существующий контекст
             await _handle_deep_dive_continuation(placeholder_message, update.effective_user.id, text, chat_state)
             return
@@ -628,6 +589,7 @@ async def process_long_request(placeholder_message: Message, update: Update, con
         if text.startswith('??'):
             # Новый deep dive запрос - сбрасываем флаг и начинаем заново
             chat_state.is_deep_dive = False
+            chat_state.deep_dive_thread_id = None  # Сбрасываем ID потока
             await db.update_user_chat(update.effective_user.id, chat_state)
             await _handle_research_agent(placeholder_message, update.effective_user.id, text[2:].strip(), chat_state)
         elif text.startswith('?'):
