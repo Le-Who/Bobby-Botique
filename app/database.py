@@ -208,7 +208,7 @@ async def init_db():
     except asyncpg.PostgresError as e:
         logging.warning(f"A schema migration may have been skipped or failed: {e}")
     
-            await db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
+    await db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
     for key in settings.GEMINI_API_KEYS:
         key_hash = hashlib.sha256(key.encode()).hexdigest()
         await db_query("INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
@@ -217,8 +217,8 @@ async def init_db():
         await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
 
 async def get_user_chat(user_id: int) -> ChatState:
-            chat_result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,))
-        user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = $1", (user_id,))
+    chat_result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,))
+    user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = $1", (user_id,))
 
     chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False)
 
@@ -239,7 +239,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
     history_json = json.dumps(chat_state.history)
     chat_query = """
     INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
-            VALUES ($1, $2, $3, $4, $5, $6)
+    VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (user_id)
     DO UPDATE SET
         history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
@@ -247,7 +247,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
     """
     await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
 
-            user_query = "UPDATE users SET is_deep_dive = $1 WHERE user_id = $2"
+    user_query = "UPDATE users SET is_deep_dive = $1 WHERE user_id = $2"
     await db_query(user_query, (chat_state.is_deep_dive, user_id))
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
@@ -286,9 +286,9 @@ async def get_available_tavily_key():
 async def increment_tavily_key_usage(key_hash: str, cost: int):
     current_month = datetime.now(pytz.utc).strftime('%Y-%m')
     query = """
-            INSERT INTO tavily_key_usage (key_hash, usage_month, credit_usage) VALUES ($1, $2, $3)
+    INSERT INTO tavily_key_usage (key_hash, usage_month, credit_usage) VALUES ($1, $2, $3)
     ON CONFLICT (key_hash, usage_month)
-            DO UPDATE SET credit_usage = tavily_key_usage.credit_usage + $1;
+    DO UPDATE SET credit_usage = tavily_key_usage.credit_usage + $4;
     """
     await db_query(query, (key_hash, current_month, cost, cost))
 
@@ -423,5 +423,5 @@ def is_admin(user_id: int) -> bool:
 async def is_authorized(user_id: int) -> bool:
     if is_admin(user_id):
         return True
-            result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,))
+    result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,))
     return result and result[0]['is_authorized'] == 1
