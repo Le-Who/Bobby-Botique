@@ -5,7 +5,7 @@ import signal
 import datetime
 import time
 from telegram import Update
-from telegram.ext import Application, CallbackQueryHandler
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 from telegram.error import NetworkError, TimedOut, RetryAfter
 from flask import Flask
 from hypercorn.config import Config as HypercornConfig
