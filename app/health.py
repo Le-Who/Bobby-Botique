@@ -84,18 +84,38 @@ class HealthChecker:
                 async with database.db_pool.acquire() as conn:
                     await conn.execute("SELECT 1")
                 
-                # Get pool stats
-                if hasattr(database.db_pool, '_size'):
-                    details['pool_size'] = database.db_pool._size
-                    details['free_connections'] = database.db_pool._free_size
-                    details['utilization'] = (
-                        (database.db_pool._size - database.db_pool._free_size) / 
-                        database.db_pool._maxsize * 100
-                    ) if database.db_pool._maxsize > 0 else 0
+                                # Get pool stats with safe attribute access
+                pool_stats = {}
+                try:
+                    if hasattr(database.db_pool, '_size'):
+                        pool_stats['size'] = database.db_pool._size
+                    if hasattr(database.db_pool, '_free_size'):
+                        pool_stats['free_size'] = database.db_pool._free_size
+                    if hasattr(database.db_pool, '_maxsize'):
+                        pool_stats['max_size'] = database.db_pool._maxsize
                     
-                    if details['utilization'] > 80:
-                        status = "degraded"
-                        details['warning'] = "High connection pool utilization"
+                    if 'size' in pool_stats and 'free_size' in pool_stats:
+                        details['pool_size'] = pool_stats['size']
+                        details['free_connections'] = pool_stats['free_size']
+                        
+                        if 'max_size' in pool_stats and pool_stats['max_size'] > 0:
+                            details['utilization'] = (
+                                (pool_stats['size'] - pool_stats['free_size']) /
+                                pool_stats['max_size'] * 100
+                            )
+                            
+                            if details['utilization'] > 80:
+                                status = "degraded"
+                                details['warning'] = "High connection pool utilization"
+                        else:
+                            details['utilization'] = 'unknown'
+                    else:
+                        details['pool_stats'] = 'Pool statistics not available'
+                        details['utilization'] = 'unknown'
+                        
+                except AttributeError as attr_error:
+                    details['pool_stats_error'] = str(attr_error)
+                    details['utilization'] = 'unknown'
                 
         except Exception as e:
             status = "unhealthy"

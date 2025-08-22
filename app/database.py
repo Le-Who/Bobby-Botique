@@ -44,8 +44,10 @@ async def _create_db_pool():
             }
         )
         
-        # Start connection pool monitoring
-        asyncio.create_task(_monitor_connection_pool(pool))
+        # Start connection pool monitoring only if pool is valid
+        if pool and not pool._closed:
+            asyncio.create_task(_monitor_connection_pool(pool))
+            logging.info("Database pool monitoring started")
         
         return pool
     except Exception as e:
@@ -64,34 +66,59 @@ async def _monitor_connection_pool(pool):
     """Мониторинг состояния пула соединений с базой данных"""
     while True:
         try:
-            if pool and not pool._closed:
-                # Получаем статистику пула
-                pool_stats = {
-                    'min_size': pool._minsize,
-                    'max_size': pool._maxsize,
-                    'size': pool._size,
-                    'free_size': pool._free_size,
-                    'in_use': pool._size - pool._free_size,
-                    'utilization': (pool._size - pool._free_size) / pool._maxsize * 100 if pool._maxsize > 0 else 0
-                }
+            # Проверяем, что пул все еще валиден
+            if not pool or pool._closed:
+                logging.debug("Pool is closed or invalid, stopping monitoring")
+                break
+                # Получаем статистику пула с безопасным доступом к атрибутам
+                pool_stats = {}
+                
+                try:
+                    # Попытка получить статистику через стандартные атрибуты
+                    if hasattr(pool, '_minsize'):
+                        pool_stats['min_size'] = pool._minsize
+                    if hasattr(pool, '_maxsize'):
+                        pool_stats['max_size'] = pool._maxsize
+                    if hasattr(pool, '_size'):
+                        pool_stats['size'] = pool._size
+                    if hasattr(pool, '_free_size'):
+                        pool_stats['free_size'] = pool._free_size
+                    
+                    # Вычисляем дополнительные метрики только если есть необходимые данные
+                    if 'size' in pool_stats and 'free_size' in pool_stats:
+                        pool_stats['in_use'] = pool_stats['size'] - pool_stats['free_size']
+                        if 'max_size' in pool_stats and pool_stats['max_size'] > 0:
+                            pool_stats['utilization'] = (pool_stats['size'] - pool_stats['free_size']) / pool_stats['max_size'] * 100
+                        else:
+                            pool_stats['utilization'] = 0
+                    else:
+                        pool_stats['in_use'] = 'unknown'
+                        pool_stats['utilization'] = 'unknown'
+                        
+                except AttributeError as attr_error:
+                    # Если атрибуты недоступны, логируем предупреждение
+                    logging.debug("Some pool attributes not available: %s", attr_error)
+                    pool_stats['error'] = 'Some pool attributes not accessible'
                 
                 # Логируем статистику каждые 30 секунд
                 logging.debug("Database pool stats: %s", pool_stats)
                 
-                # Предупреждение при высокой утилизации
-                if pool_stats['utilization'] > 80:
-                    logging.warning("Database pool high utilization: %.1f%%", pool_stats['utilization'])
+                # Предупреждения только если есть валидные данные
+                if 'utilization' in pool_stats and isinstance(pool_stats['utilization'], (int, float)):
+                    if pool_stats['utilization'] > 80:
+                        logging.warning("Database pool high utilization: %.1f%%", pool_stats['utilization'])
                 
-                # Предупреждение при нехватке свободных соединений
-                if pool_stats['free_size'] == 0:
-                    logging.warning("Database pool exhausted - no free connections available")
+                if 'free_size' in pool_stats and isinstance(pool_stats['free_size'], (int, float)):
+                    if pool_stats['free_size'] == 0:
+                        logging.warning("Database pool exhausted - no free connections available")
                 
             await asyncio.sleep(30)  # Проверяем каждые 30 секунд
             
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logging.error("Connection pool monitoring error: %s", e)
+            # Логируем ошибку, но не позволяем ей прервать мониторинг
+            logging.warning("Connection pool monitoring error (continuing): %s", e)
             await asyncio.sleep(60)  # При ошибке ждем дольше
 
 async def reconnect_database():
@@ -116,7 +143,7 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         raise Exception("Database pool is not initialized")
     
     # Проверяем состояние пула перед выполнением запроса
-    if db_pool._closed:
+    if hasattr(db_pool, '_closed') and db_pool._closed:
         logging.warning("Database pool is closed, attempting to reconnect...")
         if not await reconnect_database():
             raise Exception("Failed to reconnect to database")
