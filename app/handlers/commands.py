@@ -135,7 +135,11 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     chat_state.search_enabled = not chat_state.search_enabled
     await db.update_user_chat(user_id, chat_state)
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
-    await update.message.reply_text(f"🌐 Постоянный режим исследования *{status_text}*.", parse_mode='MarkdownV2')
+    
+    # Используем TelegramFormatter для правильного экранирования
+    from app.utils.formatting import TelegramFormatter
+    formatted_text, parse_mode = TelegramFormatter.format_text(f"🌐 Постоянный режим исследования *{status_text}*.")
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 # Команды /keystatus и /credits объединены с /metrics
 
@@ -149,7 +153,11 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         client = genai.Client(api_key=key_data['api_key'])
         models_list = [f"- `{m.name}`" for m in client.models.list() if 'generateContent' in m.supported_generation_methods]
-        await update.message.reply_text("✅ *Доступные модели:*\n" + "\n".join(models_list), parse_mode='MarkdownV2')
+        
+        # Используем TelegramFormatter для правильного экранирования
+        from app.utils.formatting import TelegramFormatter
+        formatted_text, parse_mode = TelegramFormatter.format_text("✅ *Доступные модели:*\n" + "\n".join(models_list))
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
