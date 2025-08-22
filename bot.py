@@ -67,7 +67,10 @@ def acquire_lock():
     global lock_file, lock_fd
     
     try:
-        lock_file = "/tmp/gemaibot.lock"
+        # IMPROVED: Use container-specific lock file path to prevent cross-container conflicts
+        # In Docker containers, /tmp is shared across container restarts, so we need a unique identifier
+        container_id = os.environ.get('HOSTNAME', 'unknown')
+        lock_file = f"/tmp/gemaibot.{container_id}.lock"
         
         # Проверяем, существует ли файл блокировки и не является ли он "мертвым"
         if os.path.exists(lock_file):
@@ -76,15 +79,22 @@ def acquire_lock():
                     pid_str = f.read().strip()
                     if pid_str.isdigit():
                         pid = int(pid_str)
-                        # Проверяем, существует ли процесс с этим PID
-                        try:
-                            os.kill(pid, 0)  # Проверяем существование процесса
-                            logging.warning(f"Process {pid} is still running, cannot acquire lock")
-                            return False
-                        except OSError:
-                            # Процесс не существует, удаляем "мертвую" блокировку
-                            logging.info(f"Removing stale lock file for dead process {pid}")
+                        
+                        # CRITICAL FIX: PID 1 is the container init process and should be ignored
+                        # In containerized environments, PID 1 is always running and represents the container itself
+                        if pid == 1:
+                            logging.info("Found lock file with PID 1 (container init) - this is stale, removing it")
                             os.unlink(lock_file)
+                        else:
+                            # Проверяем, существует ли процесс с этим PID
+                            try:
+                                os.kill(pid, 0)  # Проверяем существование процесса
+                                logging.warning(f"Process {pid} is still running, cannot acquire lock")
+                                return False
+                            except OSError:
+                                # Процесс не существует, удаляем "мертвую" блокировку
+                                logging.info(f"Removing stale lock file for dead process {pid}")
+                                os.unlink(lock_file)
             except Exception as e:
                 logging.warning(f"Error reading lock file: {e}, removing corrupted lock")
                 try:
@@ -103,7 +113,7 @@ def acquire_lock():
         os.write(lock_fd, pid.encode())
         os.fsync(lock_fd)
         
-        logging.info(f"Lock acquired successfully. PID: {pid}")
+        logging.info(f"Lock acquired successfully. PID: {pid}, Container: {container_id}")
         return True
         
     except (OSError, IOError) as e:
@@ -687,6 +697,11 @@ async def _notify_admin_of_crash(error: Exception):
 if __name__ == "__main__":
     print("=== BOT MAIN ENTRY POINT ===", flush=True)
     
+    # Log container information for debugging
+    container_id = os.environ.get('HOSTNAME', 'unknown')
+    print(f"Container ID: {container_id}", flush=True)
+    print(f"Process ID: {os.getpid()}", flush=True)
+    
     # Проверяем блокировку перед запуском
     print("Checking for existing bot instances...", flush=True)
     if not acquire_lock():
@@ -694,7 +709,13 @@ if __name__ == "__main__":
         print("If this is a fresh deployment, the lock may be stale. Try clearing it manually.", flush=True)
         sys.exit(1)
     
+    # Verify lock was properly acquired
+    if not lock_file or not os.path.exists(lock_file):
+        print("ERROR: Lock file verification failed after acquisition. Exiting.", flush=True)
+        sys.exit(1)
+    
     print("Lock acquired successfully. Starting bot...", flush=True)
+    print(f"Lock file: {lock_file}", flush=True)
     
     try:
         asyncio.run(main())

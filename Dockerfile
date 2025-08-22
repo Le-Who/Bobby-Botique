@@ -25,8 +25,11 @@ COPY . .
 # Создаем скрипт для очистки блокировок при запуске
 RUN echo '#!/bin/bash\n\
 echo "=== BOT STARTUP SCRIPT ==="\n\
+echo "Container ID: $HOSTNAME"\n\
+echo "Process ID: $$\n\
 echo "Checking for existing bot locks..."\n\
-python /app/clear_lock.py\n\
+python /app/clear_lock.py all\n\
+echo "Lock cleanup completed"\n\
 echo "Starting bot..."\n\
 exec python /app/bot.py' > /app/start.sh && \
 chmod +x /app/start.sh
