@@ -41,7 +41,7 @@ class DocumentProcessor:
         """Проверяет, есть ли уже такой файл у пользователя"""
         try:
             result = await database.db_query(
-                "SELECT id, filename, created_at FROM user_documents WHERE user_id = ? AND file_hash = ?",
+                "SELECT id, filename, created_at FROM user_documents WHERE user_id = $1 AND file_hash = $2",
                 (user_id, file_hash)
             )
             if result:
@@ -59,7 +59,7 @@ class DocumentProcessor:
         """Проверяет, не превышен ли лимит документов для пользователя"""
         try:
             result = await database.db_query(
-                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
+                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
                 (user_id,)
             )
             doc_count = result['doc_count'] if result else 0
@@ -74,9 +74,9 @@ class DocumentProcessor:
             # Получаем ID старых документов для удаления
             result = await database.db_query("""
                 SELECT id FROM user_documents
-                WHERE user_id = ?
+                WHERE user_id = $1
                 ORDER BY created_at ASC
-                OFFSET ?
+                OFFSET $2
             """, (user_id, keep_count))
             
             if not result:
@@ -85,7 +85,7 @@ class DocumentProcessor:
             # Удаляем старые документы
             old_doc_ids = [row['id'] for row in result]
             if old_doc_ids:
-                placeholders = ','.join(['?' for _ in old_doc_ids])
+                placeholders = ','.join([f'${i+1}' for i in range(len(old_doc_ids))])
                 await database.db_query(f"""
                     DELETE FROM user_documents
                     WHERE id IN ({placeholders})
@@ -338,7 +338,7 @@ class DocumentProcessor:
             
                          # Сохраняем документ
             await database.db_query(
-                "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES ($1, $2, $3, $4, $5, $6)",
                 (user_id, filename, content, pages, len(content), file_hash)
             )
             
@@ -351,7 +351,7 @@ class DocumentProcessor:
         """Получает документ по ID"""
         try:
             result = await database.db_query(
-                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = ? AND user_id = ?",
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = $1 AND user_id = $2",
                 (document_id, user_id)
             )
             
@@ -375,7 +375,7 @@ class DocumentProcessor:
         """Получает список документов пользователя"""
         try:
             result = await database.db_query(
-                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = ? ORDER BY created_at DESC",
+                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = $1 ORDER BY created_at DESC",
                 (user_id,)
             )
             
@@ -399,7 +399,7 @@ class DocumentProcessor:
         """Получает содержимое документа"""
         try:
             result = await database.db_query(
-                "SELECT content FROM user_documents WHERE id = ? AND user_id = ?",
+                "SELECT content FROM user_documents WHERE id = $1 AND user_id = $2",
                 (document_id, user_id)
             )
             
@@ -415,7 +415,7 @@ class DocumentProcessor:
         """Удаляет документ"""
         try:
             await database.db_query(
-                "DELETE FROM user_documents WHERE id = ? AND user_id = ?",
+                "DELETE FROM user_documents WHERE id = $1 AND user_id = $2",
                 (document_id, user_id)
             )
             return True
@@ -429,7 +429,7 @@ class DocumentProcessor:
         try:
             result = await database.db_query("""
                 DELETE FROM user_documents
-                WHERE created_at < (CURRENT_TIMESTAMP - (? * INTERVAL '1 day'))
+                WHERE created_at < (CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day'))
             """, (days_old,))
             
             deleted_count = result['count'] if result else 0
@@ -472,7 +472,7 @@ class DocumentProcessor:
         try:
             # Количество документов пользователя
             count_result = await database.db_query(
-                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = ?",
+                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
                 (user_id,)
             )
             doc_count = count_result['doc_count'] if count_result else 0
@@ -483,7 +483,7 @@ class DocumentProcessor:
                     COALESCE(SUM(file_size), 0) as total_size,
                     COALESCE(AVG(file_size), 0) as avg_size
                 FROM user_documents 
-                WHERE user_id = ?
+                WHERE user_id = $1
             """, (user_id,))
             
             if size_result:

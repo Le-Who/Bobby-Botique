@@ -24,11 +24,8 @@ class ChatState:
     system_prompt: Optional[str]
     is_deep_dive: bool = False
 
-def _prepare_query(query: str) -> str:
-    placeholders = re.findall(r'(\?|%s)', query)
-    for i, _ in enumerate(placeholders, 1):
-        query = re.sub(r'(\?|%s)', f'${i}', query, 1)
-    return query
+# CRITICAL: Function removed - prepared statements are disabled for PgBouncer compatibility
+# All queries must use $1, $2, $3 format directly
 
 async def _create_db_pool():
     """Создает пул соединений с базой данных с настройками для Supabase.com"""
@@ -38,6 +35,7 @@ async def _create_db_pool():
             min_size=2, 
             max_size=10,  # Optimized for Supabase.com free tier (200 concurrent connections)
             command_timeout=60,  # 60 seconds timeout for Supabase
+            statement_cache_size=0,  # CRITICAL: Disable prepared statements for PgBouncer compatibility
             server_settings={
                 'application_name': 'gemaibotv2',
                 'tcp_keepalives_idle': '60',
@@ -83,7 +81,7 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
         if not await reconnect_database():
             raise Exception("Failed to reconnect to database")
     
-    query_prepared = _prepare_query(query)
+    # CRITICAL: Since statement_cache_size=0, we use direct queries without prepared statements
     last_exception = None
 
     for attempt in range(retries):
@@ -97,9 +95,9 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
                     logging.debug(f"Failed to set session optimizations: {opt_e}")
                 
                 if query.strip().upper().startswith("SELECT"):
-                    return await conn.fetch(query_prepared, *params)
+                    return await conn.fetch(query, *params)
                 else:
-                    await conn.execute(query_prepared, *params)
+                    await conn.execute(query, *params)
                     return None
         except (asyncpg.exceptions.ConnectionDoesNotExistError, OSError) as e:
             logging.warning(f"DB connection error (attempt {attempt + 1}/{retries}): {e}. Retrying...")
@@ -112,9 +110,9 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
                     try:
                         async with db_pool.acquire() as conn:
                             if query.strip().upper().startswith("SELECT"):
-                                return await conn.fetch(query_prepared, *params)
+                                return await conn.fetch(query, *params)
                             else:
-                                await conn.execute(query_prepared, *params)
+                                await conn.execute(query, *params)
                                 return None
                     except Exception as final_e:
                         logging.critical(f"Query failed even after reconnection: {final_e}")
@@ -132,7 +130,7 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
             else:
                 raise e
         except Exception as e:
-            logging.error(f"An unexpected database error occurred during query: {query_prepared[:100]}... - {e}", exc_info=False)
+            logging.error(f"An unexpected database error occurred during query: {query[:100]}... - {e}", exc_info=False)
             raise e
 
     logging.error("All database retries failed.")
@@ -210,17 +208,17 @@ async def init_db():
     except asyncpg.PostgresError as e:
         logging.warning(f"A schema migration may have been skipped or failed: {e}")
     
-    await db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
+            await db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
     for key in settings.GEMINI_API_KEYS:
         key_hash = hashlib.sha256(key.encode()).hexdigest()
-        await db_query("INSERT INTO api_keys (key_hash, api_key) VALUES (?, ?) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+        await db_query("INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
     for key in settings.TAVILY_API_KEYS:
         key_hash = hashlib.sha256(key.encode()).hexdigest()
-        await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES (?, ?) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+        await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
 
 async def get_user_chat(user_id: int) -> ChatState:
-    chat_result = await db_query("SELECT * FROM chats WHERE user_id = ?", (user_id,))
-    user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = ?", (user_id,))
+            chat_result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,))
+        user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = $1", (user_id,))
 
     chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False)
 
@@ -241,7 +239,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
     history_json = json.dumps(chat_state.history)
     chat_query = """
     INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
-    VALUES (?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (user_id)
     DO UPDATE SET
         history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
@@ -249,7 +247,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
     """
     await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
 
-    user_query = "UPDATE users SET is_deep_dive = ? WHERE user_id = ?"
+            user_query = "UPDATE users SET is_deep_dive = $1 WHERE user_id = $2"
     await db_query(user_query, (chat_state.is_deep_dive, user_id))
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
@@ -260,7 +258,7 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
         return keys[0] if keys else None
     all_keys = await db_query("SELECT * FROM api_keys")
     for key_row in all_keys:
-        usage = await db_query("SELECT request_count FROM key_usage WHERE key_hash = ? AND model_name = ? AND usage_date = ?", (key_row['key_hash'], model_name, today_pacific))
+        usage = await db_query("SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3", (key_row['key_hash'], model_name, today_pacific))
         request_count = usage[0]['request_count'] if usage else 0
         if request_count < daily_limit * settings.LIMIT_THRESHOLD_PERCENT:
             return key_row
@@ -269,7 +267,7 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
 async def increment_gemini_key_usage(key_hash: str, model_name: str):
     today_pacific: date = datetime.now(PACIFIC_TZ).date()
     query = """
-    INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES (?, ?, ?, 1)
+                INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, 1)
     ON CONFLICT (key_hash, model_name, usage_date)
     DO UPDATE SET request_count = key_usage.request_count + 1;
     """
@@ -279,7 +277,7 @@ async def get_available_tavily_key():
     current_month = datetime.now(pytz.utc).strftime('%Y-%m')
     all_keys = await db_query("SELECT * FROM tavily_api_keys")
     for key_row in all_keys:
-        usage = await db_query("SELECT credit_usage FROM tavily_key_usage WHERE key_hash = ? AND usage_month = ?", (key_row['key_hash'], current_month))
+        usage = await db_query("SELECT credit_usage FROM tavily_key_usage WHERE key_hash = $1 AND usage_month = $2", (key_row['key_hash'], current_month))
         credit_usage = usage[0]['credit_usage'] if usage else 0
         if credit_usage < settings.TAVILY_MONTHLY_CREDIT_LIMIT * settings.TAVILY_LIMIT_THRESHOLD_PERCENT:
             return key_row
@@ -288,9 +286,9 @@ async def get_available_tavily_key():
 async def increment_tavily_key_usage(key_hash: str, cost: int):
     current_month = datetime.now(pytz.utc).strftime('%Y-%m')
     query = """
-    INSERT INTO tavily_key_usage (key_hash, usage_month, credit_usage) VALUES (?, ?, ?)
+            INSERT INTO tavily_key_usage (key_hash, usage_month, credit_usage) VALUES ($1, $2, $3)
     ON CONFLICT (key_hash, usage_month)
-    DO UPDATE SET credit_usage = tavily_key_usage.credit_usage + ?;
+            DO UPDATE SET credit_usage = tavily_key_usage.credit_usage + $1;
     """
     await db_query(query, (key_hash, current_month, cost, cost))
 
@@ -425,5 +423,5 @@ def is_admin(user_id: int) -> bool:
 async def is_authorized(user_id: int) -> bool:
     if is_admin(user_id):
         return True
-    result = await db_query("SELECT is_authorized FROM users WHERE user_id = ?", (user_id,))
+            result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,))
     return result and result[0]['is_authorized'] == 1

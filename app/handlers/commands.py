@@ -165,7 +165,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not db.is_admin(update.effective_user.id): return
     try:
         user_to_add = int(context.args[0])
-        await db.db_query("INSERT INTO users (user_id, is_authorized) VALUES (?, 1) ON CONFLICT (user_id) DO UPDATE SET is_authorized = 1", (user_to_add,))
+        await db.db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO UPDATE SET is_authorized = 1", (user_to_add,))
         await update.message.reply_text(f"Пользователь {user_to_add} добавлен.")
     except (IndexError, ValueError):
         await update.message.reply_text("Использование: /adduser <user_id>")
@@ -177,7 +177,7 @@ async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_to_del == settings.ADMIN_ID:
             await update.message.reply_text("Нельзя удалить администратора.")
             return
-        await db.db_query("UPDATE users SET is_authorized = 0 WHERE user_id = ?", (user_to_del,))
+        await db.db_query("UPDATE users SET is_authorized = 0 WHERE user_id = $1", (user_to_del,))
         await update.message.reply_text(f"Доступ для пользователя {user_to_del} отозван.")
     except (IndexError, ValueError):
         await update.message.reply_text("Использование: /deluser <user_id>")
@@ -236,7 +236,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for key_row in gemini_keys:
                 display_name = format_key_for_display(key_row['api_key'])
                 usage_data = await db.db_query(
-                    "SELECT model_name, request_count FROM key_usage WHERE key_hash = ? AND usage_date = ?", 
+                    "SELECT model_name, request_count FROM key_usage WHERE key_hash = $1 AND usage_date = $2", 
                     (key_row['key_hash'], today_pacific)
                 )
                 if not usage_data:
@@ -255,7 +255,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for key_row in tavily_keys:
                 display_name = format_key_for_display(key_row['api_key'])
                 usage = await db.db_query(
-                    "SELECT credit_usage FROM tavily_key_usage WHERE key_hash = ? AND usage_month = ?", 
+                    "SELECT credit_usage FROM tavily_key_usage WHERE key_hash = $1 AND usage_month = $2", 
                     (key_row['key_hash'], current_month)
                 )
                 count = usage[0]['credit_usage'] if usage else 0

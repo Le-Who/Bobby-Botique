@@ -83,16 +83,16 @@ class MetricsCollector:
             await db.db_query("""
                 INSERT INTO metrics (metric_date, request_count, total_response_time, error_count, 
                                    search_queries, cache_hits, cache_misses, api_calls, model_usage, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
                 ON CONFLICT (metric_date) DO UPDATE SET
-                    request_count = metrics.request_count + ?,
-                    total_response_time = metrics.total_response_time + ?,
-                    error_count = metrics.error_count + ?,
-                    search_queries = metrics.search_queries + ?,
-                    cache_hits = metrics.cache_hits + ?,
-                    cache_misses = metrics.cache_misses + ?,
-                    api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || ?::jsonb,
-                    model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || ?::jsonb,
+                    request_count = metrics.request_count + $10,
+                    total_response_time = metrics.total_response_time + $11,
+                    error_count = metrics.error_count + $12,
+                    search_queries = metrics.search_queries + $13,
+                    cache_hits = metrics.cache_hits + $14,
+                    cache_misses = metrics.cache_misses + $15,
+                    api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || $16::jsonb,
+                    model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || $17::jsonb,
                     updated_at = CURRENT_TIMESTAMP
             """, (
                 today, daily_metrics.request_count, daily_metrics.total_response_time, 
@@ -112,7 +112,7 @@ class MetricsCollector:
                 for error in new_errors:
                     await db.db_query("""
                         INSERT INTO error_logs (error_type, error_message)
-                        VALUES (?, ?)
+                        VALUES ($1, $2)
                     """, (error['type'], error['message']))
                     error['saved'] = True  # Помечаем как сохраненную
             
@@ -302,7 +302,7 @@ class MetricsCollector:
             try:
                 await self._ensure_metrics_tables()
                 await db.db_query(
-                    "INSERT INTO error_logs (error_type, error_message) VALUES (?, ?)",
+                    "INSERT INTO error_logs (error_type, error_message) VALUES ($1, $2)",
                     (error_type, error_message)
                 )
                 # Отмечаем как сохраненную

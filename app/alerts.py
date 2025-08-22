@@ -42,7 +42,7 @@ class AlertManager:
             
             for model_name, daily_limit in settings.DAILY_LIMITS.items():
                 usage = await db.db_query(
-                    "SELECT request_count FROM key_usage WHERE key_hash = ? AND model_name = ? AND usage_date = ?",
+                    "SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3",
                     (key_hash, model_name, today_pacific)
                 )
                 request_count = usage[0]['request_count'] if usage else 0
@@ -73,7 +73,7 @@ class AlertManager:
         for key_row in all_keys:
             key_hash = key_row['key_hash']
             usage = await db.db_query(
-                "SELECT credit_usage FROM tavily_key_usage WHERE key_hash = ? AND usage_month = ?",
+                "SELECT credit_usage FROM tavily_key_usage WHERE key_hash = $1 AND usage_month = $2",
                 (key_hash, current_month)
             )
             credit_usage = usage[0]['credit_usage'] if usage else 0
