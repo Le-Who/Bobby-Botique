@@ -5,10 +5,10 @@ from typing import Dict, List, Optional, Set
 from dataclasses import dataclass
 from collections import defaultdict
 
-from .config import settings
-from . import database as db
-from .utils import time as time_utils
-from .utils.formatting import TelegramFormatter
+from app.config import settings
+from app import database as db
+from app.utils import time as time_utils
+from app.utils.formatting import TelegramFormatter
 
 @dataclass
 class AlertThreshold:

@@ -6,17 +6,37 @@ from google.genai.errors import APIError
 from typing import Dict, Any, List
 from PIL import Image
 
-from .config import settings
-from . import database
-from .metrics import metrics_collector
-from .cache import get_cached_search_result, cache_search_result
-from .utils.network import NetworkErrorHandler
-from .utils.api_logger import api_logger
+from app.config import settings
+from app import database
+from app.metrics import metrics_collector
+from app.cache import get_cached_search_result, cache_search_result
+from app.utils.network import NetworkErrorHandler
+from app.utils.api_logger import api_logger
 
 # Используем улучшенную конфигурацию HTTP клиента
 http_client = NetworkErrorHandler.create_robust_http_client()
 
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None):
+    # Валидация входных параметров
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise ValueError("API key must be a non-empty string")
+    
+    if not isinstance(history, list):
+        raise ValueError("History must be a list")
+    
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError("Model name must be a non-empty string")
+    
+    if model_name not in settings.AVAILABLE_MODELS:
+        raise ValueError(f"Unknown model: {model_name}. Available models: {settings.AVAILABLE_MODELS}")
+    
+    # Валидация user_id и chat_id если они предоставлены
+    if user_id is not None and (not isinstance(user_id, int) or user_id <= 0):
+        raise ValueError("user_id must be a positive integer")
+    
+    if chat_id is not None and not isinstance(chat_id, int):
+        raise ValueError("chat_id must be an integer")
+    
     try:
         await metrics_collector.record_api_call("gemini", model_name)
         
@@ -153,6 +173,23 @@ async def _tavily_api_call(payload: Dict[str, Any]) -> Dict[str, Any]:
         raise
 
 async def tavily_search_agent(query: str, search_type: str = "search", user_id: int = None, chat_id: int = None):
+    # Валидация входных параметров
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("Query must be a non-empty string")
+    
+    if len(query) > 1000:  # Ограничение длины запроса
+        raise ValueError("Query too long. Maximum 1000 characters allowed")
+    
+    if search_type not in ["search", "qna"]:
+        raise ValueError("search_type must be 'search' or 'qna'")
+    
+    # Валидация user_id и chat_id если они предоставлены
+    if user_id is not None and (not isinstance(user_id, int) or user_id <= 0):
+        raise ValueError("user_id must be a positive integer")
+    
+    if chat_id is not None and not isinstance(chat_id, int):
+        raise ValueError("chat_id must be an integer")
+    
     # Проверяем кэш перед выполнением поиска
     cached_result = await get_cached_search_result(query, search_type)
     if cached_result:

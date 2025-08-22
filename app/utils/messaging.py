@@ -3,7 +3,7 @@ import logging
 import re
 from telegram import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.error import BadRequest
-from .formatting import strip_markdown, escape_markdown_v2, TelegramFormatter
+from app.utils.formatting import strip_markdown, escape_markdown_v2, TelegramFormatter
 
 def _strip_formatting(text: str) -> str:
     """Удаляет все форматирование из текста."""
@@ -52,7 +52,7 @@ def _split_text(text: str, max_length: int = 4000) -> list:
         text = text[slice_index + 1:] if last_newline != -1 else text[slice_index:]
     
     return parts
-from ..config import settings
+from app.config import settings
 
 async def send_long_message(message: Message, text: str, is_deep_dive: bool = False, reply_markup=None, preserve_formatting: bool = False):
     """
@@ -68,7 +68,7 @@ async def send_long_message(message: Message, text: str, is_deep_dive: bool = Fa
     # Валидация состояния deep dive
     if is_deep_dive:
         try:
-            from ..database import get_user_chat
+            from app.database import get_user_chat
             user_id = message.from_user.id if message.from_user else None
             if user_id:
                 chat_state = await get_user_chat(user_id)

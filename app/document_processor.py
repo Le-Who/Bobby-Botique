@@ -11,10 +11,10 @@ import PyPDF2
 from docx import Document
 # PyMuPDF removed for free tier optimization
 
-from .config import settings
-from . import database
-from .utils.network import NetworkErrorHandler
-from .metrics import metrics_collector
+from app.config import settings
+from app import database
+from app.utils.network import NetworkErrorHandler
+from app.metrics import metrics_collector
 
 # Проверяем поддержку документов
 try:

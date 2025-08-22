@@ -68,49 +68,50 @@ async def _monitor_connection_pool(pool):
         try:
             # Проверяем, что пул все еще валиден
             if not pool or pool._closed:
-                logging.debug("Pool is closed or invalid, stopping monitoring")
+                logging.info("Pool is closed or invalid, stopping monitoring")
                 break
-                # Получаем статистику пула с безопасным доступом к атрибутам
-                pool_stats = {}
                 
-                try:
-                    # Попытка получить статистику через стандартные атрибуты
-                    if hasattr(pool, '_minsize'):
-                        pool_stats['min_size'] = pool._minsize
-                    if hasattr(pool, '_maxsize'):
-                        pool_stats['max_size'] = pool._maxsize
-                    if hasattr(pool, '_size'):
-                        pool_stats['size'] = pool._size
-                    if hasattr(pool, '_free_size'):
-                        pool_stats['free_size'] = pool._free_size
-                    
-                    # Вычисляем дополнительные метрики только если есть необходимые данные
-                    if 'size' in pool_stats and 'free_size' in pool_stats:
-                        pool_stats['in_use'] = pool_stats['size'] - pool_stats['free_size']
-                        if 'max_size' in pool_stats and pool_stats['max_size'] > 0:
-                            pool_stats['utilization'] = (pool_stats['size'] - pool_stats['free_size']) / pool_stats['max_size'] * 100
-                        else:
-                            pool_stats['utilization'] = 0
+            # Получаем статистику пула с безопасным доступом к атрибутам
+            pool_stats = {}
+            
+            try:
+                # Попытка получить статистику через стандартные атрибуты
+                if hasattr(pool, '_minsize'):
+                    pool_stats['min_size'] = pool._minsize
+                if hasattr(pool, '_maxsize'):
+                    pool_stats['max_size'] = pool._maxsize
+                if hasattr(pool, '_size'):
+                    pool_stats['size'] = pool._size
+                if hasattr(pool, '_free_size'):
+                    pool_stats['free_size'] = pool._free_size
+                
+                # Вычисляем дополнительные метрики только если есть необходимые данные
+                if 'size' in pool_stats and 'free_size' in pool_stats:
+                    pool_stats['in_use'] = pool_stats['size'] - pool_stats['free_size']
+                    if 'max_size' in pool_stats and pool_stats['max_size'] > 0:
+                        pool_stats['utilization'] = (pool_stats['size'] - pool_stats['free_size']) / pool_stats['max_size'] * 100
                     else:
-                        pool_stats['in_use'] = 'unknown'
-                        pool_stats['utilization'] = 'unknown'
+                        pool_stats['utilization'] = 0
+                else:
+                    pool_stats['in_use'] = 'unknown'
+                    pool_stats['utilization'] = 'unknown'
                         
-                except AttributeError as attr_error:
-                    # Если атрибуты недоступны, логируем предупреждение
-                    logging.debug("Some pool attributes not available: %s", attr_error)
-                    pool_stats['error'] = 'Some pool attributes not accessible'
-                
-                # Логируем статистику каждые 30 секунд
-                logging.debug("Database pool stats: %s", pool_stats)
-                
-                # Предупреждения только если есть валидные данные
-                if 'utilization' in pool_stats and isinstance(pool_stats['utilization'], (int, float)):
-                    if pool_stats['utilization'] > 80:
-                        logging.warning("Database pool high utilization: %.1f%%", pool_stats['utilization'])
-                
-                if 'free_size' in pool_stats and isinstance(pool_stats['free_size'], (int, float)):
-                    if pool_stats['free_size'] == 0:
-                        logging.warning("Database pool exhausted - no free connections available")
+            except AttributeError as attr_error:
+                # Если атрибуты недоступны, логируем предупреждение
+                logging.info("Some pool attributes not available: %s", attr_error)
+                pool_stats['error'] = 'Some pool attributes not accessible'
+            
+            # Логируем статистику каждые 30 секунд
+            logging.info("Database pool stats: %s", pool_stats)
+            
+            # Предупреждения только если есть валидные данные
+            if 'utilization' in pool_stats and isinstance(pool_stats['utilization'], (int, float)):
+                if pool_stats['utilization'] > 80:
+                    logging.warning("Database pool high utilization: %.1f%%", pool_stats['utilization'])
+            
+            if 'free_size' in pool_stats and isinstance(pool_stats['free_size'], (int, float)):
+                if pool_stats['free_size'] == 0:
+                    logging.warning("Database pool exhausted - no free connections available")
                 
             await asyncio.sleep(30)  # Проверяем каждые 30 секунд
             
@@ -138,6 +139,16 @@ async def reconnect_database():
         return False
 
 async def db_query(query: str, params: tuple = (), retries: int = 3):
+    # Валидация входных параметров
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("Query must be a non-empty string")
+    
+    if not isinstance(params, (tuple, list)):
+        raise ValueError("Params must be a tuple or list")
+    
+    if not isinstance(retries, int) or retries < 0:
+        raise ValueError("Retries must be a non-negative integer")
+    
     if not db_pool:
         logging.critical("Database pool is not initialized - this should not happen!")
         raise Exception("Database pool is not initialized")
@@ -318,17 +329,36 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
     await db_query(user_query, (chat_state.is_deep_dive, user_id))
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
+    # Валидация входных параметров
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError("model_name must be a non-empty string")
+    
     today_pacific: date = datetime.now(PACIFIC_TZ).date()
     daily_limit = settings.DAILY_LIMITS.get(model_name)
+    
     if not daily_limit:
-        keys = await db_query("SELECT * FROM api_keys")
+        keys = await db_query("SELECT * FROM api_keys LIMIT 1")
         return keys[0] if keys else None
-    all_keys = await db_query("SELECT * FROM api_keys")
-    for key_row in all_keys:
-        usage = await db_query("SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3", (key_row['key_hash'], model_name, today_pacific))
-        request_count = usage[0]['request_count'] if usage else 0
-        if request_count < daily_limit * settings.LIMIT_THRESHOLD_PERCENT:
-            return key_row
+    
+    # Оптимизированный запрос: получаем все данные одним запросом
+    query = """
+        SELECT ak.key_hash, ak.api_key, COALESCE(ku.request_count, 0) as request_count
+        FROM api_keys ak
+        LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash 
+            AND ku.model_name = $1 AND ku.usage_date = $2
+        ORDER BY COALESCE(ku.request_count, 0) ASC
+    """
+    
+    results = await db_query(query, (model_name, today_pacific))
+    threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
+    
+    for row in results:
+        if row['request_count'] < threshold:
+            return {
+                'key_hash': row['key_hash'],
+                'api_key': row['api_key']
+            }
+    
     return None
 
 async def increment_gemini_key_usage(key_hash: str, model_name: str):
@@ -342,12 +372,26 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str):
 
 async def get_available_tavily_key():
     current_month = datetime.now(pytz.utc).strftime('%Y-%m')
-    all_keys = await db_query("SELECT * FROM tavily_api_keys")
-    for key_row in all_keys:
-        usage = await db_query("SELECT credit_usage FROM tavily_key_usage WHERE key_hash = $1 AND usage_month = $2", (key_row['key_hash'], current_month))
-        credit_usage = usage[0]['credit_usage'] if usage else 0
-        if credit_usage < settings.TAVILY_MONTHLY_CREDIT_LIMIT * settings.TAVILY_LIMIT_THRESHOLD_PERCENT:
-            return key_row
+    
+    # Оптимизированный запрос: получаем все данные одним запросом
+    query = """
+        SELECT tak.key_hash, tak.api_key, COALESCE(tku.credit_usage, 0) as credit_usage
+        FROM tavily_api_keys tak
+        LEFT JOIN tavily_key_usage tku ON tak.key_hash = tku.key_hash 
+            AND tku.usage_month = $1
+        ORDER BY COALESCE(tku.credit_usage, 0) ASC
+    """
+    
+    results = await db_query(query, (current_month,))
+    threshold = settings.TAVILY_MONTHLY_CREDIT_LIMIT * settings.TAVILY_LIMIT_THRESHOLD_PERCENT
+    
+    for row in results:
+        if row['credit_usage'] < threshold:
+            return {
+                'key_hash': row['key_hash'],
+                'api_key': row['api_key']
+            }
+    
     return None
 
 async def increment_tavily_key_usage(key_hash: str, cost: int):

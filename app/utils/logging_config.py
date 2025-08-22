@@ -12,7 +12,7 @@ def setup_detailed_logging(
     Настраивает детальное логирование для всех компонентов бота
     
     Args:
-        log_level: Уровень логирования (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        log_level: Уровень логирования (INFO, WARNING, ERROR, CRITICAL)
         log_to_file: Логировать ли в файл
         log_file_path: Путь к файлу логов
         enable_structured_logging: Включить JSON логирование для production

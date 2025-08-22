@@ -451,7 +451,7 @@ async def bot_watchdog(bot_task: asyncio.Task):
                     logging.warning("Bot task completed unexpectedly")
                     logging.info("Bot watchdog will trigger restart on next iteration")
             else:
-                logging.debug("Bot task is running normally")
+                logging.info("Bot task is running normally")
             
             # Каждые 60 проверок (1 час) выполняем профилактический перезапуск
             if check_counter % 60 == 0:

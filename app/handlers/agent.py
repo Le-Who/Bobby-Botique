@@ -6,14 +6,14 @@ from typing import Optional
 from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from ..config import settings
-from .. import database as db
-from .. import services
-from ..utils.messaging import send_long_message
-from .. import state
-from .. import prompts
-from ..metrics import metrics_collector
-from ..utils.api_logger import api_logger
+from app.config import settings
+from app import database as db
+from app import services
+from app.utils.messaging import send_long_message
+from app import state
+from app import prompts
+from app.metrics import metrics_collector
+from app.utils.api_logger import api_logger
 
 async def _resolve_gemini_request(preferred_model: str):
     key = await db.get_available_gemini_key(preferred_model)

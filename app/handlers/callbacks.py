@@ -2,11 +2,11 @@ import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
 
-from . import agent
-from .. import database as db
-from ..config import settings
-from .. import state
-from ..utils.formatting import TelegramFormatter
+from app.handlers import agent
+from app import database as db
+from app.config import settings
+from app import state
+from app.utils.formatting import TelegramFormatter
 
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

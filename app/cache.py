@@ -54,8 +54,18 @@ def _get_ttl(search_type: str) -> int:
         return 3600  # 1 hour
 
 async def get_cached_search_result(query: str, search_type: str) -> Optional[Dict[str, Any]]:
-    """Gets the search result from the cache."""
+    """Gets the search result from the cache (Redis first, then memory fallback)."""
+    # Сначала пробуем multi-layer cache
+    try:
+        result = await get_cached_search_result_ml(query, search_type)
+        if result:
+            return result
+    except Exception as e:
+        logging.warning("Multi-layer cache error, falling back to Redis: %s", e)
+    
+    # Fallback к старому Redis-only подходу
     if not redis_client:
+        await metrics_collector.record_cache_miss()
         return None
     
     cache_key = _generate_cache_key(query, search_type)
@@ -70,10 +80,19 @@ async def get_cached_search_result(query: str, search_type: str) -> Optional[Dic
             return None
     except Exception as e:
         logging.error("Error getting from Redis cache: %s", e)
+        await metrics_collector.record_cache_miss()
         return None
 
 async def cache_search_result(query: str, search_type: str, result: Dict[str, Any]):
-    """Saves the search result to the cache."""
+    """Saves the search result to the cache (multi-layer preferred)."""
+    # Сначала пробуем multi-layer cache
+    try:
+        await cache_search_result_ml(query, search_type, result)
+        return
+    except Exception as e:
+        logging.warning("Multi-layer cache save error, falling back to Redis: %s", e)
+    
+    # Fallback к старому Redis-only подходу
     if not redis_client:
         return
 
@@ -147,7 +166,7 @@ class MultiLayerCache:
         # Try memory cache first
         if key in self.memory_cache:
             if time.time() < self.memory_cache_ttl.get(key, 0):
-                logging.debug("Memory cache hit for key: %s", key)
+                logging.info("Memory cache hit for key: %s", key)
                 return self.memory_cache[key]
             else:
                 # Expired, remove from memory
@@ -190,7 +209,7 @@ class MultiLayerCache:
             try:
                 redis_key = f"{search_type}:{key}"
                 redis_client.setex(redis_key, ttl, json.dumps(value))
-                logging.debug("Stored in Redis cache: %s", key)
+                logging.info("Stored in Redis cache: %s", key)
             except Exception as e:
                 logging.warning("Failed to store in Redis cache: %s", e)
     

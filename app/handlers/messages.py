@@ -5,20 +5,29 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, MessageHandler, filters, Application
 
-from . import agent
-from ..config import settings
-from .. import database as db
-from .. import state
-from ..group_chat import group_chat_manager, log_group_message
-from ..document_processor import process_uploaded_document
-from ..metrics import metrics_collector
-from ..utils.formatting import TelegramFormatter
-from ..utils.api_logger import api_logger
+from app.config import settings
+from app import database as db
+from app import state
+from app.group_chat import group_chat_manager, log_group_message
+from app.document_processor import process_uploaded_document
+from app.metrics import metrics_collector
+from app.utils.formatting import TelegramFormatter
+from app.utils.api_logger import api_logger
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает входящие сообщения"""
+    # Валидация входных данных
+    if not update or not update.effective_user:
+        logging.error("Invalid update object received")
+        return
+    
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    
+    # Валидация user_id
+    if not isinstance(user_id, int) or user_id <= 0:
+        logging.error("Invalid user_id: %s", user_id)
+        return
     
     # Детальное логирование Telegram API запроса
     message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
@@ -29,24 +38,31 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_type=message_type
     )
     
-    logging.info(f"Received message from user {user_id}: {update.message.text[:100] if update.message.text else 'No text'}")
+    # Валидация текста сообщения
+    message_text = update.message.text if update.message and update.message.text else 'No text'
+    if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
+        logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
+        await update.message.reply_text("❌ Сообщение слишком длинное. Максимум 4096 символов.")
+        return
+    
+    logging.info("Received message from user %s: %s", user_id, message_text[:100])
     
     if not await db.is_authorized(user_id):
-        logging.warning(f"Unauthorized user {user_id} attempted to use bot")
+        logging.warning("Unauthorized user %s attempted to use bot", user_id)
         return
     
     # Обрабатываем документы
     if update.message.document:
-        logging.info(f"Processing document from user {user_id}: {update.message.document.file_name}")
+        logging.info("Processing document from user %s: %s", user_id, update.message.document.file_name)
         await handle_document(update, context)
         return
     
     # Проверяем, находится ли пользователь в режиме работы с документами
-    from ..state import is_in_document_mode, get_selected_document_id
+    from app.state import is_in_document_mode, get_selected_document_id
     
     if is_in_document_mode(user_id):
         document_id = get_selected_document_id(user_id)
-        logging.info(f"User {user_id} is in document mode, document_id: {document_id}")
+        logging.info("User %s is in document mode, document_id: %s", user_id, document_id)
         if document_id:
             await handle_document_question(update, context, document_id)
         else:
@@ -76,9 +92,17 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async def task_wrapper():
         try:
             async with state.get_user_lock(user_id):
-                logging.info(f"Starting task processing for user {user_id}")
-                await agent.process_long_request(placeholder_message, update, context)
-                logging.info(f"Completed task processing for user {user_id}")
+                logging.info("Starting task processing for user %s", user_id)
+                
+                # Восстанавливаем обработку через agent
+                try:
+                    from app.handlers.agent import process_long_request
+                    await process_long_request(placeholder_message, update, context)
+                except ImportError:
+                    # Fallback если agent недоступен
+                    await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
+                    
+                logging.info("Completed task processing for user %s", user_id)
                 
                 # Логируем успешный ответ Telegram API
                 api_logger.log_telegram_response(
@@ -115,13 +139,13 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
     user_message = update.message.text
     
     try:
-        from ..document_processor import get_document_content, get_document_by_id
+        from app.document_processor import get_document_content, get_document_by_id
         
         # Получаем информацию о документе
         document = await get_document_by_id(document_id, user_id)
         if not document:
             await update.message.reply_text("❌ Документ не найден.")
-            from ..state import clear_document_state
+            from app.state import clear_document_state
             clear_document_state(user_id)
             return
         
@@ -132,8 +156,8 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
             return
         
         # Обрабатываем вопрос через AI
-        from ..handlers.agent import _handle_document_question
-        from .. import database as db
+        from app.handlers.agent import _handle_document_question
+        from app import database as db
         
         chat_state = await db.get_user_chat(user_id)
         
@@ -220,7 +244,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
         
         # Получаем статистику пользователя для отображения лимитов
-        from ..document_processor import document_processor
+        from app.document_processor import document_processor
         user_stats = await document_processor.get_user_document_stats(user_id)
         
         # Отправляем результат
@@ -258,15 +282,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Устанавливаем состояние работы с документами
-        from ..state import set_document_mode
+        from app.state import set_document_mode
         set_document_mode(user_id, True)
         
         # Записываем метрики
         await metrics_collector.record_api_call("document_processing")
         
     except Exception as e:
-        logging.error(f"Error processing document: {e}")
-        await processing_msg.edit_text(f"❌ Произошла ошибка при обработке документа: {str(e)}")
+        error_msg = f"❌ Произошла ошибка при обработке документа: {str(e)[:100]}"
+        logging.error(f"Error processing document for user {user_id}: {e}", exc_info=True)
+        await processing_msg.edit_text(error_msg)
         await metrics_collector.record_error("document_processing", str(e))
 
 def register(application: Application):

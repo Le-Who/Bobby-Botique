@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, date
 import pytz
 
-from ..config import PACIFIC_TZ, KYIV_TZ
+from app.config import PACIFIC_TZ, KYIV_TZ
 
 def get_pacific_date() -> date:
     """Возвращает текущую дату по тихоокеанскому времени как объект date."""

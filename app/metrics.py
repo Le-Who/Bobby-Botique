@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from collections import defaultdict, deque
 import json
 
-from .config import settings
-from . import database as db
+from app.config import settings
+from app import database as db
 
 @dataclass
 class PerformanceMetrics:

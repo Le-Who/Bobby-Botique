@@ -169,7 +169,7 @@ class CircuitBreaker:
                 # Log periodic status
                 if self._total_requests > 0:
                     success_rate = (self._total_successes / self._total_requests) * 100
-                    logging.debug(
+                    logging.info(
                         f"Circuit Breaker '{self.name}' status: "
                         f"State={self._state.value}, "
                         f"Success Rate={success_rate:.1f}%, "

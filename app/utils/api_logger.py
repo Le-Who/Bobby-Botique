@@ -14,7 +14,7 @@ class APILogger:
     
     def __init__(self):
         self.logger = logging.getLogger('api_logger')
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(logging.INFO)
         
         # Создаем форматтер для детального логирования
         formatter = logging.Formatter(

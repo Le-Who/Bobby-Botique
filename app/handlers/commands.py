@@ -2,15 +2,15 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, Application
 
-from ..config import settings
+from app.config import settings
 from google import genai
-from .. import database as db
-from ..utils.formatting import format_key_for_display, TelegramFormatter
-from ..utils import time as time_utils
-from ..metrics import metrics_collector
-from ..cache import get_cache_stats
-from ..queue import task_queue
-from ..group_chat import group_chat_manager
+from app import database as db
+from app.utils.formatting import format_key_for_display, TelegramFormatter
+from app.utils import time as time_utils
+from app.metrics import metrics_collector
+from app.cache import get_cache_stats
+from app.queue import task_queue
+from app.group_chat import group_chat_manager
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -283,8 +283,9 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
     except Exception as e:
-        await update.message.reply_text(f"Ошибка получения метрик: {e}")
-        logging.error(f"Error in metrics command: {e}", exc_info=True)
+        error_msg = f"❌ Ошибка получения метрик: {str(e)[:100]}"
+        await update.message.reply_text(error_msg)
+        logging.error(f"Error in metrics command for user {update.effective_user.id}: {e}", exc_info=True)
 
 async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику кэша"""
@@ -305,7 +306,9 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
     except Exception as e:
-        await update.message.reply_text(f"Ошибка получения статистики кэша: {e}")
+        error_msg = f"❌ Ошибка получения статистики кэша: {str(e)[:100]}"
+        await update.message.reply_text(error_msg)
+        logging.error(f"Error in cache_stats command for user {update.effective_user.id}: {e}", exc_info=True)
 
 async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список документов пользователя и управляет ими"""
@@ -313,11 +316,11 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Очищаем состояние работы с документами при входе в команду
-    from ..state import clear_document_state
+    from app.state import clear_document_state
     clear_document_state(update.effective_user.id)
     
     try:
-        from ..document_processor import get_user_documents
+        from app.document_processor import get_user_documents
         documents = await get_user_documents(update.effective_user.id)
         if not documents:
             text = (
@@ -386,14 +389,16 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
     except Exception as e:
-        await update.message.reply_text(f"Ошибка получения статистики очереди: {e}")
+        error_msg = f"❌ Ошибка получения статистики очереди: {str(e)[:100]}"
+        await update.message.reply_text(error_msg)
+        logging.error(f"Error in queue_stats command for user {update.effective_user.id}: {e}", exc_info=True)
 
 async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Очищает кэш"""
     if not db.is_admin(update.effective_user.id): return
     
     try:
-        from ..cache import clear_cache
+        from app.cache import clear_cache
         await clear_cache()
         await update.message.reply_text("✅ Кэш очищен.")
         
@@ -474,7 +479,7 @@ async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_T
     if not db.is_admin(update.effective_user.id): return
     
     try:
-        from ..document_processor import document_processor
+        from app.document_processor import document_processor
         
         stats = await document_processor.get_document_stats()
         
@@ -503,7 +508,7 @@ async def clear_old_documents_command(update: Update, context: ContextTypes.DEFA
     if not db.is_admin(update.effective_user.id): return
     
     try:
-        from ..document_processor import document_processor
+        from app.document_processor import document_processor
         
         # Очищаем документы старше 3 дней
         deleted_count = await document_processor.cleanup_old_documents(3)

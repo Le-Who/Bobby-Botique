@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-from .config import settings
-from . import database as db
-from .metrics import metrics_collector
+from app.config import settings
+from app import database as db
+from app.metrics import metrics_collector
 
 @dataclass
 class GroupChat:

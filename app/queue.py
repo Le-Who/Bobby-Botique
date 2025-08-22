@@ -8,9 +8,9 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import uuid
 
-from .config import settings
-from . import database as db
-from .metrics import metrics_collector
+from app.config import settings
+from app import database as db
+from app.metrics import metrics_collector
 
 class TaskStatus(Enum):
     PENDING = "pending"
@@ -62,9 +62,6 @@ class TaskQueue:
         from .handlers import agent
         
         self._task_handlers = {
-            'research_agent': agent._handle_research_agent,
-            'qna_search': agent._handle_qna_search,
-            'complex_search': agent._handle_complex_agent_search,
             'document_processing': self._handle_document_processing,
             'cleanup_metrics': self._handle_cleanup_metrics,
         }
@@ -216,10 +213,34 @@ class TaskQueue:
         return result
     
     async def _handle_document_processing(self, **kwargs) -> Dict[str, Any]:
-        """Обработчик для обработки документов (заглушка)"""
-        # TODO: Реализовать обработку документов
-        await asyncio.sleep(5)  # Имитируем длительную обработку
-        return {"status": "processed", "pages": 10}
+        """Обработчик для обработки документов"""
+        try:
+            from app.document_processor import process_uploaded_document
+            
+            file_data = kwargs.get('file_data')
+            filename = kwargs.get('filename')
+            user_id = kwargs.get('user_id')
+            
+            if not all([file_data, filename, user_id]):
+                return {"status": "failed", "error": "Missing required parameters"}
+            
+            # Обрабатываем документ
+            result = await process_uploaded_document(file_data, filename, user_id)
+            
+            if result.get("error"):
+                return {"status": "failed", "error": result["error"]}
+            
+            return {
+                "status": "completed",
+                "pages": result.get("pages", 0),
+                "text_length": result.get("text_length", 0),
+                "paragraphs": result.get("paragraphs", 0),
+                "tables": result.get("tables", 0)
+            }
+            
+        except Exception as e:
+            logging.error(f"Error in document processing task: {e}")
+            return {"status": "failed", "error": str(e)}
     
     async def _handle_cleanup_metrics(self, **kwargs) -> Dict[str, Any]:
         """Обработчик для очистки старых метрик"""

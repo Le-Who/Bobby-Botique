@@ -116,7 +116,7 @@ class NetworkErrorHandler:
                 response = await client.get(url)
                 return response.status_code == 200
         except Exception as e:
-            logging.debug(f"Connectivity check failed for {url}: {e}")
+            logging.info(f"Connectivity check failed for {url}: {e}")
             return False
 
 def network_retry_decorator(

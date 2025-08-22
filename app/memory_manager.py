@@ -164,13 +164,13 @@ class MemoryManager:
     
     async def _preventive_cleanup(self):
         """Performs preventive memory cleanup."""
-        logging.debug("Performing preventive memory cleanup")
+        logging.info("Performing preventive memory cleanup")
         
         try:
             # Light garbage collection
             collected = gc.collect(0)  # Only collect young objects
             if collected > 0:
-                logging.debug("Preventive cleanup collected %d young objects", collected)
+                logging.info("Preventive cleanup collected %d young objects", collected)
             
             # Run cleanup callbacks with lower priority
             for callback in self._cleanup_callbacks:
@@ -180,7 +180,7 @@ class MemoryManager:
                     else:
                         callback()
                 except Exception as e:
-                    logging.debug("Cleanup callback error: %s", e)
+                    logging.warning("Cleanup callback error: %s", e)
             
             self._last_cleanup = time.time()
             
@@ -190,13 +190,13 @@ class MemoryManager:
     def add_cleanup_callback(self, callback: Callable) -> None:
         """Adds a cleanup callback function."""
         self._cleanup_callbacks.append(callback)
-        logging.debug("Added cleanup callback: %s", callback.__name__)
+        logging.info("Added cleanup callback: %s", callback.__name__)
     
     def remove_cleanup_callback(self, callback: Callable) -> None:
         """Removes a cleanup callback function."""
         if callback in self._cleanup_callbacks:
             self._cleanup_callbacks.remove(callback)
-            logging.debug("Removed cleanup callback: %s", callback.__name__)
+            logging.info("Removed cleanup callback: %s", callback.__name__)
     
     async def force_cleanup(self) -> Dict[str, Any]:
         """Forces immediate memory cleanup."""
@@ -387,4 +387,4 @@ class DocumentCache(AutoCleanupResource):
         for _ in range(items_to_remove):
             self._evict_oldest()
         
-        logging.debug("DocumentCache cleaned up %d items", items_to_remove)
+        logging.info("DocumentCache cleaned up %d items", items_to_remove)
