@@ -100,6 +100,8 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
 
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, search_query: str = None):
     """Обрабатывает запросы к исследовательскому агенту"""
+    logging.info(f"Research agent handler called for user {user_id}: is_deep_dive={chat_state.is_deep_dive}, search_enabled={chat_state.search_enabled}")
+    
     try:
         await placeholder_message.edit_text("🔍 Исследую тему...")
     except Exception as edit_error:
@@ -161,7 +163,9 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         
         # Обновляем состояние в базе данных
         await db.update_user_chat(user_id, chat_state)
+        logging.info(f"Research agent response sent successfully for user {user_id}, deep_dive_thread_id={chat_state.deep_dive_thread_id}")
     else:
+        logging.warning(f"Empty response from Gemini API for user {user_id}")
         chat_state.history.pop()  # Убираем вопрос, если ответ пустой
         await db.update_user_chat(user_id, chat_state)
         try:
@@ -291,6 +295,8 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
             await placeholder_message.reply_text(f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}")
 
 async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None):
+    logging.info(f"Regular chat handler called for user {user_id}: is_deep_dive={chat_state.is_deep_dive}, search_enabled={chat_state.search_enabled}")
+    
     model_for_this_request = model_override or chat_state.model
     gemini_key, model_used, resolution = await _resolve_gemini_request(model_for_this_request)
 
@@ -531,7 +537,11 @@ async def process_long_request(placeholder_message: Message, update: Update, con
     try:
         is_photo = bool(update.message.photo)
         text = update.message.text or update.message.caption or ""
-        chat_state = await db.get_user_chat(update.effective_user.id)
+        user_id = update.effective_user.id
+        chat_state = await db.get_user_chat(user_id)
+        
+        # Детальное логирование для отладки
+        logging.info(f"Processing request for user {user_id}: text='{text}', is_deep_dive={chat_state.is_deep_dive}, search_enabled={chat_state.search_enabled}")
 
         # СНАЧАЛА устанавливаем флаг deep dive для запросов с префиксом "??"
         if text.startswith('??'):
@@ -539,8 +549,8 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             chat_state.search_enabled = True
             chat_state.deep_dive_thread_id = None
             # ОБНОВЛЯЕМ БАЗУ ДАННЫХ СРАЗУ
-            await db.update_user_chat(update.effective_user.id, chat_state)
-            logging.info(f"Deep dive mode activated for user {update.effective_user.id} via '??' prefix")
+            await db.update_user_chat(user_id, chat_state)
+            logging.info(f"Deep dive mode activated for user {user_id} via '??' prefix")
 
         if is_photo and (text.startswith('?') or text.startswith('??')):
             keyboard = [
@@ -580,40 +590,47 @@ async def process_long_request(placeholder_message: Message, update: Update, con
         
         # Проверяем, является ли это продолжением deep dive
         if chat_state.is_deep_dive and not text.startswith('?') and not text.startswith('??'):
+            logging.info(f"Deep dive continuation detected for user {user_id}")
             # Валидация состояния deep dive перед продолжением
             if not chat_state.deep_dive_thread_id:
                 # Если режим deep dive включен через /res, но нет thread_id - это нормально для первого запроса
                 # Просто продолжаем как обычный deep dive запрос
-                logging.info(f"Deep dive mode enabled via /res for user {update.effective_user.id}, processing as deep dive")
-                await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
+                logging.info(f"Deep dive mode enabled via /res for user {user_id}, processing as deep dive")
+                await _handle_research_agent(placeholder_message, user_id, text, chat_state)
                 return
             
             # Проверка на бесконечные циклы - если сообщение слишком короткое, это может быть ошибка
             if len(text.strip()) < 3:
-                logging.warning(f"Very short message in deep dive from user {update.effective_user.id}: '{text}'")
+                logging.warning(f"Very short message in deep dive from user {user_id}: '{text}'")
                 await placeholder_message.edit_text("⚠️ Сообщение слишком короткое для продолжения deep dive. Напишите более подробный вопрос.")
                 return
             
             # Логируем продолжение deep dive для отладки
-            logging.info(f"Continuing deep dive for user {update.effective_user.id} with thread_id {chat_state.deep_dive_thread_id}")
+            logging.info(f"Continuing deep dive for user {user_id} with thread_id {chat_state.deep_dive_thread_id}")
             
             # Это продолжение deep dive - используем существующий контекст
-            await _handle_deep_dive_continuation(placeholder_message, update.effective_user.id, text, chat_state)
+            await _handle_deep_dive_continuation(placeholder_message, user_id, text, chat_state)
             return
         
+        # Логируем выбор типа обработки
         if text.startswith('??'):
+            logging.info(f"Processing '??' request for user {user_id} via research agent")
             # Флаг deep dive уже установлен в начале функции
-            await _handle_research_agent(placeholder_message, update.effective_user.id, text[2:].strip(), chat_state)
+            await _handle_research_agent(placeholder_message, user_id, text[2:].strip(), chat_state)
         elif text.startswith('?'):
+            logging.info(f"Processing '?' request for user {user_id} via qna search")
             await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
         elif chat_state.is_deep_dive:
+            logging.info(f"Processing deep dive request for user {user_id} via research agent")
             # Если включен deep dive режим, используем research agent для всех запросов
-            await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
+            await _handle_research_agent(placeholder_message, user_id, text, chat_state)
         elif chat_state.search_enabled:
+            logging.info(f"Processing search-enabled request for user {user_id} via research agent")
             # Если включен только режим поиска (без deep dive), используем research agent
-            await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
+            await _handle_research_agent(placeholder_message, user_id, text, chat_state)
         else:
-            await _handle_regular_chat(placeholder_message, update.effective_user.id, text, chat_state)
+            logging.info(f"Processing regular request for user {user_id} via regular chat")
+            await _handle_regular_chat(placeholder_message, user_id, text, chat_state)
 
     except Exception as e:
         logging.error(f"Error in background task dispatcher: {e}", exc_info=True)

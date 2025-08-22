@@ -136,6 +136,9 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not await db.is_authorized(user_id): return
     chat_state = await db.get_user_chat(user_id)
     
+    # Логируем текущее состояние
+    logging.info(f"Research mode command for user {user_id}: current is_deep_dive={chat_state.is_deep_dive}, search_enabled={chat_state.search_enabled}")
+    
     # Переключаем режим deep dive (включает в себя режим поиска)
     chat_state.is_deep_dive = not chat_state.is_deep_dive
     chat_state.search_enabled = chat_state.is_deep_dive  # Синхронизируем с deep dive
@@ -143,6 +146,9 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     # Если выключаем deep dive, сбрасываем thread_id
     if not chat_state.is_deep_dive:
         chat_state.deep_dive_thread_id = None
+    
+    # Логируем новое состояние
+    logging.info(f"Research mode command for user {user_id}: new is_deep_dive={chat_state.is_deep_dive}, search_enabled={chat_state.search_enabled}")
     
     await db.update_user_chat(user_id, chat_state)
     
