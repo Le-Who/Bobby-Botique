@@ -40,20 +40,54 @@ def status_check():
     """Расширенная проверка статуса для диагностики"""
     try:
         print("Status check request received", flush=True)
+        
         # Проверяем базовые компоненты
         status = {
             "bot": "running",
             "database": "connected" if database.db_pool else "disconnected",
             "timestamp": str(datetime.datetime.now()),
-            "uptime": "active"
+            "uptime": "active",
+            "version": "2.0.0",
+            "environment": os.getenv("ENVIRONMENT", "production")
         }
-        print(f"Status: {status}", flush=True)
+        
+        # Добавляем информацию о системе
+        import psutil
+        try:
+            status["system"] = {
+                "cpu_percent": psutil.cpu_percent(interval=1),
+                "memory_percent": psutil.virtual_memory().percent,
+                "disk_percent": psutil.disk_usage('/').percent
+            }
+        except ImportError:
+            status["system"] = {"error": "psutil not available"}
+        
+        print("Status: %s", status, flush=True)
         return status, 200
     except Exception as e:
-        error_msg = f"Status check error: {e}"
+        error_msg = "Status check error: %s" % e
         print(error_msg, flush=True)
         logging.error(error_msg)
         return {"error": str(e)}, 500
+
+
+@flask_app.route('/health')
+def health_check_endpoint():
+    """Health check endpoint для мониторинга"""
+    try:
+        # Здесь можно добавить вызов health checker
+        health_status = {
+            "status": "healthy",
+            "timestamp": str(datetime.datetime.now()),
+            "services": {
+                "bot": "running",
+                "database": "connected" if database.db_pool else "disconnected",
+                "redis": "unknown"  # Будет заполнено health checker'ом
+            }
+        }
+        return health_status, 200
+    except Exception as e:
+        return {"status": "unhealthy", "error": str(e)}, 500
 
 # Глобальная переменная для управления завершением
 shutdown_event = asyncio.Event()

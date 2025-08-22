@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import time
 
-from .config import settings, PACIFIC_TZ
+from app.config import settings, PACIFIC_TZ
 
 db_pool: Optional[Pool] = None
 
@@ -30,7 +30,7 @@ class ChatState:
 async def _create_db_pool():
     """Создает пул соединений с базой данных с настройками для Supabase.com"""
     try:
-        return await asyncpg.create_pool(
+        pool = await asyncpg.create_pool(
             dsn=settings.DATABASE_URL, 
             min_size=2, 
             max_size=10,  # Optimized for Supabase.com free tier (200 concurrent connections)
@@ -43,16 +43,56 @@ async def _create_db_pool():
                 'tcp_keepalives_count': '6'
             }
         )
+        
+        # Start connection pool monitoring
+        asyncio.create_task(_monitor_connection_pool(pool))
+        
+        return pool
     except Exception as e:
         if "rate limit" in str(e).lower() or "quota" in str(e).lower():
             logging.critical("Supabase.com rate limit exceeded. Please upgrade your plan or wait for quota reset.")
             raise Exception(f"Database rate limit exceeded: {e}")
         elif "connection" in str(e).lower() or "timeout" in str(e).lower():
-            logging.warning(f"Database connection issue: {e}. This might be temporary.")
+            logging.warning("Database connection issue: %s. This might be temporary.", e)
             raise Exception(f"Database connection failed: {e}")
         else:
-            logging.error(f"Unexpected database error: {e}")
+            logging.error("Unexpected database error: %s", e)
             raise Exception(f"Database initialization failed: {e}")
+
+
+async def _monitor_connection_pool(pool):
+    """Мониторинг состояния пула соединений с базой данных"""
+    while True:
+        try:
+            if pool and not pool._closed:
+                # Получаем статистику пула
+                pool_stats = {
+                    'min_size': pool._minsize,
+                    'max_size': pool._maxsize,
+                    'size': pool._size,
+                    'free_size': pool._free_size,
+                    'in_use': pool._size - pool._free_size,
+                    'utilization': (pool._size - pool._free_size) / pool._maxsize * 100 if pool._maxsize > 0 else 0
+                }
+                
+                # Логируем статистику каждые 30 секунд
+                logging.debug("Database pool stats: %s", pool_stats)
+                
+                # Предупреждение при высокой утилизации
+                if pool_stats['utilization'] > 80:
+                    logging.warning("Database pool high utilization: %.1f%%", pool_stats['utilization'])
+                
+                # Предупреждение при нехватке свободных соединений
+                if pool_stats['free_size'] == 0:
+                    logging.warning("Database pool exhausted - no free connections available")
+                
+            await asyncio.sleep(30)  # Проверяем каждые 30 секунд
+            
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logging.error("Connection pool monitoring error: %s", e)
+            await asyncio.sleep(60)  # При ошибке ждем дольше
 
 async def reconnect_database():
     """Переподключается к базе данных при потере соединения"""

@@ -2,11 +2,15 @@ import hashlib
 import json
 import logging
 import os
-from typing import Dict, Any, Optional
+import asyncio
+import time
+from typing import Dict, Any, Optional, Union
+from functools import lru_cache
 
 from redis import Redis
 
-from .metrics import metrics_collector
+from app.metrics import metrics_collector
+from app.exceptions import RedisConnectionError, CacheKeyError
 
 # Initialize Redis client from environment variable with Upstash.com optimizations
 redis_url = os.getenv("REDIS_URL")
@@ -31,7 +35,7 @@ else:
         redis_client.ping()
         logging.info("Redis client initialized successfully for Upstash.com")
     except Exception as e:
-        logging.error(f"Failed to connect to Redis: {e}")
+        logging.error("Failed to connect to Redis: %s", e)
         redis_client = None
 
 def _generate_cache_key(query: str, search_type: str) -> str:
@@ -59,13 +63,13 @@ async def get_cached_search_result(query: str, search_type: str) -> Optional[Dic
         cached_data = redis_client.get(cache_key)
         if cached_data:
             await metrics_collector.record_cache_hit()
-            logging.info(f"Cache hit for query: {query[:50]}...")
+            logging.info("Cache hit for query: %s...", query[:50])
             return json.loads(cached_data)
         else:
             await metrics_collector.record_cache_miss()
             return None
     except Exception as e:
-        logging.error(f"Error getting from Redis cache: {e}")
+        logging.error("Error getting from Redis cache: %s", e)
         return None
 
 async def cache_search_result(query: str, search_type: str, result: Dict[str, Any]):
@@ -107,5 +111,123 @@ async def clear_cache():
         redis_client.flushdb()
         logging.info("Cache cleared")
     except Exception as e:
-        logging.error(f"Error clearing Redis cache: {e}")
+        logging.error("Error clearing Redis cache: %s", e)
+
+
+# Multi-layer caching implementation
+class MultiLayerCache:
+    """Multi-layer caching system: Memory -> Redis -> Database"""
+    
+    def __init__(self):
+        self.memory_cache = {}
+        self.memory_cache_ttl = {}
+        self.memory_cache_max_size = 1000  # Maximum items in memory cache
+        
+    def _cleanup_memory_cache(self):
+        """Cleans up expired items from memory cache"""
+        current_time = time.time()
+        expired_keys = [
+            key for key, expiry in self.memory_cache_ttl.items() 
+            if current_time > expiry
+        ]
+        for key in expired_keys:
+            del self.memory_cache[key]
+            del self.memory_cache_ttl[key]
+        
+        # If still too many items, remove oldest
+        if len(self.memory_cache) > self.memory_cache_max_size:
+            items_to_remove = len(self.memory_cache) - self.memory_cache_max_size
+            oldest_keys = sorted(self.memory_cache_ttl.items(), key=lambda x: x[1])[:items_to_remove]
+            for key, _ in oldest_keys:
+                del self.memory_cache[key]
+                del self.memory_cache_ttl[key]
+    
+    async def get(self, key: str, search_type: str) -> Optional[Dict[str, Any]]:
+        """Gets value from multi-layer cache"""
+        # Try memory cache first
+        if key in self.memory_cache:
+            if time.time() < self.memory_cache_ttl.get(key, 0):
+                logging.debug("Memory cache hit for key: %s", key)
+                return self.memory_cache[key]
+            else:
+                # Expired, remove from memory
+                del self.memory_cache[key]
+                del self.memory_cache_ttl[key]
+        
+        # Try Redis cache
+        if redis_client:
+            try:
+                redis_key = f"{search_type}:{key}"
+                cached_data = redis_client.get(redis_key)
+                if cached_data:
+                    result = json.loads(cached_data)
+                    # Store in memory cache for faster access
+                    ttl = _get_ttl(search_type)
+                    self.memory_cache[key] = result
+                    self.memory_cache_ttl[key] = time.time() + ttl
+                    self._cleanup_memory_cache()
+                    
+                    await metrics_collector.record_cache_hit()
+                    logging.info("Redis cache hit for key: %s", key)
+                    return result
+            except Exception as e:
+                logging.warning("Redis cache error: %s", e)
+        
+        await metrics_collector.record_cache_miss()
+        return None
+    
+    async def set(self, key: str, search_type: str, value: Dict[str, Any]):
+        """Sets value in multi-layer cache"""
+        ttl = _get_ttl(search_type)
+        
+        # Store in memory cache
+        self.memory_cache[key] = value
+        self.memory_cache_ttl[key] = time.time() + ttl
+        self._cleanup_memory_cache()
+        
+        # Store in Redis cache
+        if redis_client:
+            try:
+                redis_key = f"{search_type}:{key}"
+                redis_client.setex(redis_key, ttl, json.dumps(value))
+                logging.debug("Stored in Redis cache: %s", key)
+            except Exception as e:
+                logging.warning("Failed to store in Redis cache: %s", e)
+    
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """Returns memory cache statistics"""
+        self._cleanup_memory_cache()
+        return {
+            'memory_items': len(self.memory_cache),
+            'memory_max_size': self.memory_cache_max_size,
+            'memory_utilization': len(self.memory_cache) / self.memory_cache_max_size * 100
+        }
+
+
+# Global multi-layer cache instance
+multi_layer_cache = MultiLayerCache()
+
+
+async def get_cached_search_result_ml(query: str, search_type: str) -> Optional[Dict[str, Any]]:
+    """Gets search result using multi-layer cache"""
+    cache_key = _generate_cache_key(query, search_type)
+    return await multi_layer_cache.get(cache_key, search_type)
+
+
+async def cache_search_result_ml(query: str, search_type: str, result: Dict[str, Any]):
+    """Saves search result using multi-layer cache"""
+    cache_key = _generate_cache_key(query, search_type)
+    await multi_layer_cache.set(cache_key, search_type, result)
+
+
+async def get_multi_layer_cache_stats() -> Dict[str, Any]:
+    """Returns multi-layer cache statistics"""
+    redis_stats = await get_cache_stats()
+    memory_stats = multi_layer_cache.get_memory_stats()
+    
+    return {
+        'redis': redis_stats,
+        'memory': memory_stats,
+        'total_utilization': memory_stats['memory_utilization']
+    }
 
