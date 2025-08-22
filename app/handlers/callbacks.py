@@ -418,6 +418,27 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                await query.message.reply_text("❌ Ошибка при включении режима deep dive. Попробуйте позже.")
                return
        
+       elif action == "enable":
+           try:
+               # Включаем режим deep dive для пользователя
+               chat_state = await db.get_user_chat(user_id)
+               chat_state.is_deep_dive = True
+               chat_state.search_enabled = True
+               await db.update_user_chat(user_id, chat_state)
+               
+               await query.edit_message_reply_markup(reply_markup=None)
+               text = "🎉 *Режим deep dive включен!*\n\n💡 *Теперь все ваши запросы будут обрабатываться в режиме глубокого исследования:*\n• Сохранение контекста разговора\n• Использование исследовательской модели\n• Возможность продолжать исследование\n\n📝 *Просто напишите ваш вопрос* - я начну исследование!"
+               formatted_text, parse_mode = TelegramFormatter.format_text(text)
+               await query.message.reply_text(
+                   formatted_text,
+                   parse_mode=parse_mode
+               )
+               logging.info(f"Deep dive mode enabled for user {user_id}")
+           except Exception as e:
+               logging.error(f"Error enabling deep dive mode for user {user_id}: {e}")
+               await query.message.reply_text("❌ Ошибка при включении режима deep dive. Попробуйте позже.")
+               return
+       
        else:
            logging.warning(f"Unknown deep dive action: {action}")
            await query.message.reply_text("❌ Неизвестное действие.")

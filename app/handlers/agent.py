@@ -143,22 +143,23 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         return
     
     if response_text:
-        # Отправляем ответ с кнопками deep dive
-        await send_long_message(placeholder_message, response_text, is_deep_dive=True)
+        # Отправляем ответ с кнопками deep dive только если это действительно deep dive
+        is_deep_dive_response = chat_state.is_deep_dive
+        await send_long_message(placeholder_message, response_text, is_deep_dive=is_deep_dive_response)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         
         # Добавляем ответ модели в историю
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
-        chat_state.is_deep_dive = True  # Устанавливаем флаг deep dive
         
-        # Устанавливаем ID потока deep dive для отслеживания контекста
-        if placeholder_message.message_id:
-            chat_state.deep_dive_thread_id = placeholder_message.message_id
-        else:
-            # Fallback: используем текущее время как идентификатор потока
-            import time
-            chat_state.deep_dive_thread_id = int(time.time())
+        # Устанавливаем ID потока deep dive только если это deep dive режим
+        if chat_state.is_deep_dive:
+            if placeholder_message.message_id:
+                chat_state.deep_dive_thread_id = placeholder_message.message_id
+            else:
+                # Fallback: используем текущее время как идентификатор потока
+                import time
+                chat_state.deep_dive_thread_id = int(time.time())
         
         await db.update_user_chat(user_id, chat_state)
     else:
@@ -342,6 +343,10 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
                 # Fallback: используем текущее время как идентификатор потока
                 import time
                 chat_state.deep_dive_thread_id = int(time.time())
+        elif chat_state.search_enabled:
+            # Если включен только режим поиска, показываем кнопку для начала deep dive
+            keyboard = [[InlineKeyboardButton("🔍 Включить режим deep dive", callback_data="deepdive:enable")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
 
         await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
@@ -587,14 +592,19 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             return
         
         if text.startswith('??'):
-            # Новый deep dive запрос - сбрасываем флаг и начинаем заново
-            chat_state.is_deep_dive = False
-            chat_state.deep_dive_thread_id = None  # Сбрасываем ID потока
+            # Новый deep dive запрос - включаем режим deep dive
+            chat_state.is_deep_dive = True
+            chat_state.search_enabled = True  # Синхронизируем с deep dive
+            chat_state.deep_dive_thread_id = None  # Сбрасываем ID потока для нового запроса
             await db.update_user_chat(update.effective_user.id, chat_state)
             await _handle_research_agent(placeholder_message, update.effective_user.id, text[2:].strip(), chat_state)
         elif text.startswith('?'):
             await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
+        elif chat_state.is_deep_dive:
+            # Если включен deep dive режим, используем research agent для всех запросов
+            await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
         elif chat_state.search_enabled:
+            # Если включен только режим поиска (без deep dive), используем research agent
             await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
         else:
             await _handle_regular_chat(placeholder_message, update.effective_user.id, text, chat_state)
