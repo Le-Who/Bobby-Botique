@@ -83,9 +83,9 @@ class Settings(BaseModel):
    - НИКОГДА не используй LaTeX математические выражения: `$...$` или `$$...$$`
 
 3. **МАТЕМАТИЧЕСКИЕ ВЫРАЖЕНИЯ:**
-   - НИКОГДА не используй LaTeX: `$1 \times 1 = 1$` или `$$\sqrt{2}$$`
+   - НИКОГДА не используй LaTeX: `$1 \\times 1 = 1$` или `$$\\sqrt{2}$$`
    - ВСЕГДА используй обычный текст: `1 × 1 = 1` или `√2` или `корень из 2`
-   - Для дробей: используй `/` (например, `1/2` вместо `$\frac{1}{2}$`)
+   - Для дробей: используй `/` (например, `1/2` вместо `$\\frac{1}{2}$`)
    - Для корней: используй `√` или `корень из` (например, `√2` или `корень из 2`)
    - Для степеней: используй `^` (например, `2^2 = 4` вместо `$2^2 = 4$`)
    - Для умножения: используй `×` или `*` (например, `2 × 3 = 6` или `2 * 3 = 6`)
@@ -103,7 +103,7 @@ def load_settings() -> Settings:
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
             "DATABASE_URL": os.getenv("DATABASE_URL"),
             "ADMIN_ID": os.getenv("ADMIN_ID"),
-            "PORT": os.getenv("PORT", 10000), # Provide a default for PORT
+            "PORT": os.getenv("PORT", "10000"), # Provide a default for PORT
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
         }

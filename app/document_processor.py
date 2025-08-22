@@ -1,15 +1,12 @@
 import logging
-import io
 import os
-import re
-import asyncio
 import hashlib
 import tempfile
+import asyncio
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 import httpx
-from PIL import Image
 import PyPDF2
 from docx import Document
 # PyMuPDF removed for free tier optimization
@@ -21,9 +18,6 @@ from .metrics import metrics_collector
 
 # Проверяем поддержку документов
 try:
-    import PyPDF2
-    import docx
-    from PIL import Image
     # PyMuPDF removed for free tier optimization
     DOCUMENT_SUPPORT = True
 except ImportError:
@@ -200,79 +194,26 @@ class DocumentProcessor:
                 temp_file.write(file_data)
                 temp_file_path = temp_file.name
             
-            try:
-                # Проверяем, что файл является корректным PDF
-                if not file_data.startswith(b'%PDF'):
-                    logging.warning(f"Invalid PDF format for {filename}")
-                    return {"error": "Invalid PDF file format"}
-                
-                logging.info(f"Processing PDF {filename} with PyMuPDF")
-                
-                # Используем PyMuPDF для лучшего извлечения текста
-                try:
-                    doc = fitz.open(temp_file_path)
-                    logging.info(f"Successfully opened PDF {filename} with {len(doc)} pages")
-                except Exception as fitz_error:
-                    logging.warning(f"PyMuPDF failed for {filename}, trying PyPDF2: {fitz_error}")
-                    # Fallback на PyPDF2
-                    return await self._process_pdf_with_pypdf2(file_data, filename, user_id, file_hash)
-                
-                if len(doc) > self.max_pages:
-                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
-                
-                text_content = []
-                page_info = []
-                
-                for page_num in range(len(doc)):
-                    page = doc.load_page(page_num)
-                    
-                    # Извлекаем текст
-                    text = page.get_text()
-                    if text.strip():
-                        text_content.append(f"--- Page {page_num + 1} ---\n{text}")
-                    
-                    # Извлекаем изображения (если есть)
-                    image_list = page.get_images()
-                    if image_list:
-                        page_info.append(f"Page {page_num + 1}: {len(image_list)} images found")
-                    
-                    # Проверяем лимит токенов
-                    if len('\n'.join(text_content)) > 100000:  # Примерный лимит
-                        text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
-                        break
-                
-                # Сохраняем количество страниц до закрытия документа
-                try:
-                    page_count = len(doc)
-                except ValueError:
-                    # Если документ уже закрыт, используем количество обработанных страниц
-                    page_count = len(text_content)
-                finally:
-                    doc.close()
-                
-                full_text = '\n\n'.join(text_content)
-                
-                # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, page_count, file_hash)
-                
-                return {
-                    "success": True,
-                    "filename": filename,
-                    "pages": page_count,
-                    "text_length": len(full_text),
-                    "content": full_text,
-                    "page_info": page_info
-                }
-                
-            finally:
-                # Удаляем временный файл
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
+            # Проверяем, что файл является корректным PDF
+            if not file_data.startswith(b'%PDF'):
+                logging.warning(f"Invalid PDF format for {filename}")
+                return {"error": "Invalid PDF file format"}
+            
+            logging.info(f"Processing PDF {filename} with PyMuPDF")
+            
+            # PyMuPDF removed for free tier optimization, using PyPDF2 directly
+            # Fallback на PyPDF2
+            return await self._process_pdf_with_pypdf2(file_data, filename, user_id, file_hash)
             
         except Exception as e:
             logging.error(f"Error processing PDF {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
+        finally:
+            # Удаляем временный файл если он был создан
+            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+
     
     async def _process_pdf_with_pypdf2(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает PDF документ с использованием PyPDF2 (fallback)"""
@@ -284,45 +225,41 @@ class DocumentProcessor:
             
             try:
                 # Используем PyPDF2 как fallback
-                try:
-                    with open(temp_file_path, 'rb') as file:
-                        pdf_reader = PyPDF2.PdfReader(file)
-                except Exception as pdf_error:
-                    logging.error(f"PyPDF2 failed to open {filename}: {pdf_error}")
-                    return {"error": f"Failed to open PDF file: {str(pdf_error)}"}
+                with open(temp_file_path, 'rb') as file:
+                    pdf_reader = PyPDF2.PdfReader(file)
+                
+                if len(pdf_reader.pages) > self.max_pages:
+                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
+                
+                text_content = []
+                
+                for page_num, page in enumerate(pdf_reader.pages):
+                    try:
+                        text = page.extract_text()
+                        if text.strip():
+                            text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                    except Exception as page_error:
+                        logging.warning(f"Error extracting text from page {page_num + 1}: {page_error}")
+                        text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
                     
-                    if len(pdf_reader.pages) > self.max_pages:
-                        return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
-                    
-                    text_content = []
-                    
-                    for page_num, page in enumerate(pdf_reader.pages):
-                        try:
-                            text = page.extract_text()
-                            if text.strip():
-                                text_content.append(f"--- Page {page_num + 1} ---\n{text}")
-                        except Exception as page_error:
-                            logging.warning(f"Error extracting text from page {page_num + 1}: {page_error}")
-                            text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
-                        
-                        # Проверяем лимит токенов
-                        if len('\n'.join(text_content)) > 100000:
-                            text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
-                            break
-                    
-                    full_text = '\n\n'.join(text_content)
-                    
-                    # Сохраняем в базу данных
-                    await self._save_document_content(user_id, filename, full_text, len(pdf_reader.pages), file_hash)
-                    
-                    return {
-                        "success": True,
-                        "filename": filename,
-                        "pages": len(pdf_reader.pages),
-                        "text_length": len(full_text),
-                        "content": full_text,
-                        "method": "PyPDF2"
-                    }
+                    # Проверяем лимит токенов
+                    if len('\n'.join(text_content)) > 100000:
+                        text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                        break
+                
+                full_text = '\n\n'.join(text_content)
+                
+                # Сохраняем в базу данных
+                await self._save_document_content(user_id, filename, full_text, len(pdf_reader.pages), file_hash)
+                
+                return {
+                    "success": True,
+                    "filename": filename,
+                    "pages": len(pdf_reader.pages),
+                    "text_length": len(full_text),
+                    "content": full_text,
+                    "method": "PyPDF2"
+                }
                     
             finally:
                 # Удаляем временный файл
@@ -343,7 +280,7 @@ class DocumentProcessor:
                 temp_file_path = temp_file.name
             
             try:
-                doc = docx.Document(temp_file_path)
+                doc = Document(temp_file_path)
                 
                 text_content = []
                 paragraph_count = 0
@@ -506,10 +443,6 @@ class DocumentProcessor:
     async def get_document_stats(self) -> Dict[str, Any]:
         """Получает статистику документов"""
         try:
-            # Общее количество документов
-            total_result = await database.db_query("SELECT COUNT(*) as total FROM user_documents")
-            total_docs = total_result['total'] if total_result else 0
-            
             # Размер БД (приблизительно)
             size_result = await database.db_query("""
                 SELECT 
@@ -652,8 +585,6 @@ async def get_document_by_id(document_id: int, user_id: int) -> Optional[Dict[st
 
 async def schedule_document_cleanup():
     """Планировщик автоматической очистки документов"""
-    import asyncio
-    from datetime import datetime
     
     while True:
         try:
@@ -680,5 +611,4 @@ async def schedule_document_cleanup():
 # Запускаем планировщик при старте приложения
 def start_cleanup_scheduler():
     """Запускает планировщик очистки документов"""
-    import asyncio
     asyncio.create_task(schedule_document_cleanup()) 
