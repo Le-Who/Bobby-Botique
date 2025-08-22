@@ -23,16 +23,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Создаем скрипт для очистки блокировок при запуске
-RUN echo '#!/bin/bash\n\
-echo "=== BOT STARTUP SCRIPT ==="\n\
-echo "Container ID: $HOSTNAME"\n\
-echo "Process ID: $$\n\
-echo "Checking for existing bot locks..."\n\
-python /app/clear_lock.py all\n\
-echo "Lock cleanup completed"\n\
-echo "Starting bot..."\n\
-exec python /app/bot.py' > /app/start.sh && \
-chmod +x /app/start.sh
+RUN echo '#!/bin/bash' > /app/start.sh && \
+    echo 'echo "=== BOT STARTUP SCRIPT ==="' >> /app/start.sh && \
+    echo 'echo "Container ID: $HOSTNAME"' >> /app/start.sh && \
+    echo 'echo "Process ID: $$"' >> /app/start.sh && \
+    echo 'echo "Checking for existing bot locks..."' >> /app/start.sh && \
+    echo 'python /app/clear_lock.py all' >> /app/start.sh && \
+    echo 'echo "Lock cleanup completed"' >> /app/start.sh && \
+    echo 'echo "Starting bot..."' >> /app/start.sh && \
+    echo 'exec python /app/bot.py' >> /app/start.sh && \
+    chmod +x /app/start.sh
 
 # Настраиваем переменные окружения для логирования
 ENV PYTHONUNBUFFERED=1
