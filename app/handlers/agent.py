@@ -142,13 +142,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         return
     
     if response_text:
-        # Устанавливаем флаг deep dive ДО отправки сообщения
-        if not chat_state.is_deep_dive:
-            chat_state.is_deep_dive = True
-            chat_state.search_enabled = True
-            # Обновляем состояние в базе данных сразу
-            await db.update_user_chat(user_id, chat_state)
-        
+        # Флаг deep dive уже установлен в process_long_request
         # Отправляем ответ с кнопками deep dive
         await send_long_message(placeholder_message, response_text, is_deep_dive=True)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
@@ -539,6 +533,15 @@ async def process_long_request(placeholder_message: Message, update: Update, con
         text = update.message.text or update.message.caption or ""
         chat_state = await db.get_user_chat(update.effective_user.id)
 
+        # СНАЧАЛА устанавливаем флаг deep dive для запросов с префиксом "??"
+        if text.startswith('??'):
+            chat_state.is_deep_dive = True
+            chat_state.search_enabled = True
+            chat_state.deep_dive_thread_id = None
+            # ОБНОВЛЯЕМ БАЗУ ДАННЫХ СРАЗУ
+            await db.update_user_chat(update.effective_user.id, chat_state)
+            logging.info(f"Deep dive mode activated for user {update.effective_user.id} via '??' prefix")
+
         if is_photo and (text.startswith('?') or text.startswith('??')):
             keyboard = [
                 [InlineKeyboardButton("🖼️ Только описать фото", callback_data="complex:vision_only")],
@@ -599,11 +602,7 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             return
         
         if text.startswith('??'):
-            # Новый deep dive запрос - включаем режим deep dive
-            chat_state.is_deep_dive = True
-            chat_state.search_enabled = True  # Синхронизируем с deep dive
-            chat_state.deep_dive_thread_id = None  # Сбрасываем ID потока для нового запроса
-            await db.update_user_chat(update.effective_user.id, chat_state)
+            # Флаг deep dive уже установлен в начале функции
             await _handle_research_agent(placeholder_message, update.effective_user.id, text[2:].strip(), chat_state)
         elif text.startswith('?'):
             await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
