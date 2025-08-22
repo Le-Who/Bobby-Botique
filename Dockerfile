@@ -22,6 +22,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем исходный код
 COPY . .
 
+# Создаем скрипт для очистки блокировок при запуске
+RUN echo '#!/bin/bash\n\
+echo "Clearing any existing bot locks..."\n\
+python /app/clear_lock.py clear\n\
+echo "Starting bot..."\n\
+exec python /app/bot.py' > /app/start.sh && \
+chmod +x /app/start.sh
+
 # Настраиваем переменные окружения для логирования
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -34,5 +42,5 @@ USER app
 # Expose порт для Render health check
 EXPOSE 10000
 
-# Команда для запуска бота
-CMD ["python", "bot.py"]
+# Команда для запуска бота с очисткой блокировок
+CMD ["/app/start.sh"]
