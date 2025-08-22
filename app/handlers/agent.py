@@ -107,8 +107,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         # Если не можем отредактировать, отправляем новое сообщение
         placeholder_message = await placeholder_message.reply_text("🔍 Исследую тему...")
     
-    # Получаем user_id и chat_id для логирования
-    user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
+    # Получаем chat_id для логирования (user_id уже передан как параметр)
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
     
     # Добавляем новый вопрос пользователя в историю
@@ -143,24 +142,30 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         return
     
     if response_text:
-        # Отправляем ответ с кнопками deep dive только если это действительно deep dive
-        is_deep_dive_response = chat_state.is_deep_dive
-        await send_long_message(placeholder_message, response_text, is_deep_dive=is_deep_dive_response)
+        # Устанавливаем флаг deep dive ДО отправки сообщения
+        if not chat_state.is_deep_dive:
+            chat_state.is_deep_dive = True
+            chat_state.search_enabled = True
+            # Обновляем состояние в базе данных сразу
+            await db.update_user_chat(user_id, chat_state)
+        
+        # Отправляем ответ с кнопками deep dive
+        await send_long_message(placeholder_message, response_text, is_deep_dive=True)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         
         # Добавляем ответ модели в историю
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
         
-        # Устанавливаем ID потока deep dive только если это deep dive режим
-        if chat_state.is_deep_dive:
-            if placeholder_message.message_id:
-                chat_state.deep_dive_thread_id = placeholder_message.message_id
-            else:
-                # Fallback: используем текущее время как идентификатор потока
-                import time
-                chat_state.deep_dive_thread_id = int(time.time())
+        # Устанавливаем ID потока deep dive
+        if placeholder_message.message_id:
+            chat_state.deep_dive_thread_id = placeholder_message.message_id
+        else:
+            # Fallback: используем текущее время как идентификатор потока
+            import time
+            chat_state.deep_dive_thread_id = int(time.time())
         
+        # Обновляем состояние в базе данных
         await db.update_user_chat(user_id, chat_state)
     else:
         chat_state.history.pop()  # Убираем вопрос, если ответ пустой
@@ -343,6 +348,9 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
                 # Fallback: используем текущее время как идентификатор потока
                 import time
                 chat_state.deep_dive_thread_id = int(time.time())
+            
+            # Обновляем состояние в базе данных
+            await db.update_user_chat(user_id, chat_state)
         elif chat_state.search_enabled:
             # Если включен только режим поиска, показываем кнопку для начала deep dive
             keyboard = [[InlineKeyboardButton("🔍 Включить режим deep dive", callback_data="deepdive:enable")]]
@@ -571,11 +579,10 @@ async def process_long_request(placeholder_message: Message, update: Update, con
         if chat_state.is_deep_dive and not text.startswith('?') and not text.startswith('??'):
             # Валидация состояния deep dive перед продолжением
             if not chat_state.deep_dive_thread_id:
-                logging.warning(f"Deep dive state corrupted for user {update.effective_user.id}, resetting")
-                chat_state.is_deep_dive = False
-                chat_state.deep_dive_thread_id = None
-                await db.update_user_chat(update.effective_user.id, chat_state)
-                await placeholder_message.edit_text("⚠️ Состояние deep dive было повреждено. Начните новый запрос с '??'")
+                # Если режим deep dive включен через /res, но нет thread_id - это нормально для первого запроса
+                # Просто продолжаем как обычный deep dive запрос
+                logging.info(f"Deep dive mode enabled via /res for user {update.effective_user.id}, processing as deep dive")
+                await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
                 return
             
             # Проверка на бесконечные циклы - если сообщение слишком короткое, это может быть ошибка
