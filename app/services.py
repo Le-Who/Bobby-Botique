@@ -6,6 +6,7 @@ from google.genai.errors import APIError
 from typing import Dict, Any, List
 from PIL import Image
 import asyncio
+import time
 
 from app.config import settings
 from app import database
@@ -30,31 +31,26 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         chat_id: ID чата для логирования
         
     Returns:
-        Tuple[str, int]: (ответ, количество токенов)
-        
-    Raises:
-        ValueError: При неверных параметрах
-        Exception: При ошибках API
+        Tuple (response_text, token_count) или (error_message, None)
     """
     # Валидация входных параметров
     if not isinstance(api_key, str) or not api_key.strip():
-        raise ValueError("API key must be a non-empty string")
+        raise ValueError("api_key must be a non-empty string")
     
-    if not isinstance(history, list):
-        raise ValueError("History must be a list")
+    if not isinstance(history, list) or not history:
+        raise ValueError("history must be a non-empty list")
     
     if not isinstance(model_name, str) or not model_name.strip():
-        raise ValueError("Model name must be a non-empty string")
+        raise ValueError("model_name must be a non-empty string")
     
-    if model_name not in settings.AVAILABLE_MODELS:
-        raise ValueError(f"Unknown model: {model_name}. Available models: {settings.AVAILABLE_MODELS}")
-    
-    # Валидация user_id и chat_id если они предоставлены
-    if user_id is not None and (not isinstance(user_id, int) or user_id <= 0):
-        raise ValueError("user_id must be a positive integer")
+    if user_id is not None and not isinstance(user_id, int):
+        raise ValueError("user_id must be an integer")
     
     if chat_id is not None and not isinstance(chat_id, int):
         raise ValueError("chat_id must be an integer")
+    
+    # Инициализируем start_time по умолчанию
+    start_time = None
     
     try:
         await metrics_collector.record_api_call("gemini", model_name)
@@ -70,6 +66,11 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             user_id=user_id,
             chat_id=chat_id
         )
+        
+        # Дополнительная проверка start_time
+        if start_time is None or not isinstance(start_time, (int, float)):
+            logging.warning(f"Invalid start_time returned from log_gemini_request: {start_time}, using current time")
+            start_time = time.time()
         
         client = genai.Client(api_key=api_key)
         
@@ -141,15 +142,16 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         )
         
         # Логируем успешный ответ Gemini API
-        api_logger.log_gemini_response(
-            start_time=start_time,
-            model=model_name,
-            response_length=len(response.text),
-            token_count=token_count_response.total_tokens,
-            success=True,
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        if start_time is not None:
+            api_logger.log_gemini_response(
+                start_time=start_time,
+                model=model_name,
+                response_length=len(response.text),
+                token_count=token_count_response.total_tokens,
+                success=True,
+                user_id=user_id,
+                chat_id=chat_id
+            )
         
         return response.text, token_count_response.total_tokens
         
@@ -158,29 +160,32 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         logging.error(error_msg)
         await metrics_collector.record_error("gemini_timeout", error_msg)
         
-        api_logger.log_gemini_response(
-            start_time=start_time,
-            model=model_name,
-            response_length=0,
-            success=False,
-            error_message=error_msg,
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        # Логируем ошибку timeout только если start_time был инициализирован
+        if start_time is not None:
+            api_logger.log_gemini_response(
+                start_time=start_time,
+                model=model_name,
+                response_length=0,
+                success=False,
+                error_message=error_msg,
+                user_id=user_id,
+                chat_id=chat_id
+            )
         
         return "⏰ Превышено время ожидания ответа от API. Попробуйте позже.", None
         
     except APIError as e:
-        # Логируем ошибку Gemini API
-        api_logger.log_gemini_response(
-            start_time=start_time,
-            model=model_name,
-            response_length=0,
-            success=False,
-            error_message=str(e),
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        # Логируем ошибку Gemini API только если start_time был инициализирован
+        if start_time is not None:
+            api_logger.log_gemini_response(
+                start_time=start_time,
+                model=model_name,
+                response_length=0,
+                success=False,
+                error_message=str(e),
+                user_id=user_id,
+                chat_id=chat_id
+            )
         
         logging.error(f"Gemini API Error: {e}")
         if "quota" in str(e).lower():
@@ -191,16 +196,17 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             return f"Произошла ошибка вызова API: {e}", None
             
     except Exception as e:
-        # Логируем общую ошибку Gemini API
-        api_logger.log_gemini_response(
-            start_time=start_time,
-            model=model_name,
-            response_length=0,
-            success=False,
-            error_message=str(e),
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        # Логируем общую ошибку Gemini API только если start_time был инициализирован
+        if start_time is not None:
+            api_logger.log_gemini_response(
+                start_time=start_time,
+                model=model_name,
+                response_length=0,
+                success=False,
+                error_message=str(e),
+                user_id=user_id,
+                chat_id=chat_id
+            )
         
         logging.error(f"Gemini API generic error: {e}")
         await metrics_collector.record_error("gemini_api", str(e))

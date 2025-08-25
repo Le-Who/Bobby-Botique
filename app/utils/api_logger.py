@@ -90,21 +90,28 @@ class APILogger:
                           user_id: Optional[int] = None,
                           chat_id: Optional[int] = None):
         """Специальное логирование для Gemini API"""
-        start_time = time.time()
-        
-        log_data = {
-            "timestamp": datetime.now().isoformat(),
-            "api": "gemini",
-            "model": model,
-            "prompt_length": prompt_length,
-            "has_images": has_images,
-            "user_id": user_id,
-            "chat_id": chat_id,
-            "status": "STARTED"
-        }
-        
-        self.logger.info(f"🤖 GEMINI REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}")
-        return start_time
+        try:
+            start_time = time.time()
+            
+            log_data = {
+                "timestamp": datetime.now().isoformat(),
+                "api": "gemini",
+                "model": model,
+                "prompt_length": prompt_length,
+                "has_images": has_images,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "status": "STARTED"
+            }
+            
+            self.logger.info(f"🤖 GEMINI REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}")
+            return start_time
+            
+        except Exception as e:
+            # Логируем ошибку логирования, но не прерываем выполнение
+            logging.error(f"Error in log_gemini_request: {e}")
+            # Возвращаем текущее время как fallback
+            return time.time()
     
     def log_gemini_response(self, 
                            start_time: float,
@@ -116,28 +123,39 @@ class APILogger:
                            user_id: Optional[int] = None,
                            chat_id: Optional[int] = None):
         """Логирует ответ Gemini API"""
-        duration = time.time() - start_time
-        
-        log_data = {
-            "timestamp": datetime.now().isoformat(),
-            "api": "gemini",
-            "model": model,
-            "duration_ms": round(duration * 1000, 2),
-            "response_length": response_length,
-            "token_count": token_count,
-            "success": success,
-            "user_id": user_id,
-            "chat_id": chat_id,
-            "error_message": error_message,
-            "status": "COMPLETED"
-        }
-        
-        if success:
-            self.logger.info(f"✅ GEMINI RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}")
-        else:
-            self.logger.error(f"❌ GEMINI RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}")
-        
-        return duration
+        try:
+            # Проверяем, что start_time является числом
+            if not isinstance(start_time, (int, float)) or start_time <= 0:
+                logging.warning(f"Invalid start_time in log_gemini_response: {start_time}, using current time")
+                start_time = time.time()
+            
+            duration = time.time() - start_time
+            
+            log_data = {
+                "timestamp": datetime.now().isoformat(),
+                "api": "gemini",
+                "model": model,
+                "duration_ms": round(duration * 1000, 2),
+                "response_length": response_length,
+                "token_count": token_count,
+                "success": success,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "error_message": error_message,
+                "status": "COMPLETED"
+            }
+            
+            if success:
+                self.logger.info(f"✅ GEMINI RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}")
+            else:
+                self.logger.error(f"❌ GEMINI RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}")
+            
+            return duration
+            
+        except Exception as e:
+            # Логируем ошибку логирования, но не прерываем выполнение
+            logging.error(f"Error in log_gemini_response: {e}")
+            return 0.0
     
     def log_tavily_request(self, 
                           query: str, 
