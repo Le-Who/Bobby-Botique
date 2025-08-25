@@ -20,7 +20,7 @@ db_pool: Optional[Pool] = None
 _active_keys_cache: Dict[str, Dict[str, Any]] = {}
 _cache_lock = asyncio.Lock()
 _cache_last_updated: Dict[str, float] = {}
-_cache_ttl = 300  # 5 минут TTL для кэша
+_cache_ttl = 60  # 1 минута TTL для кэша (было 300)
 
 @dataclass
 class ChatState:
@@ -353,21 +353,22 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     
     async with _cache_lock:
         # Проверяем кэш
-        current_time = time.time()
-        if (model_name in _active_keys_cache and 
-            model_name in _cache_last_updated and
-            current_time - _cache_last_updated[model_name] < _cache_ttl):
-            
+        if model_name in _active_keys_cache:
             cached_key = _active_keys_cache[model_name]
             # Проверяем, не исчерпан ли кэшированный ключ
             if await _is_key_available(cached_key['key_hash'], model_name):
                 return cached_key
+            else:
+                # Ключ исчерпан, удаляем из кэша
+                del _active_keys_cache[model_name]
+                if model_name in _cache_last_updated:
+                    del _cache_last_updated[model_name]
         
-        # Если кэш устарел или ключ исчерпан, получаем новый
+        # Если кэш пуст или ключ исчерпан, получаем новый
         new_key = await _get_fresh_available_key(model_name)
         if new_key:
             _active_keys_cache[model_name] = new_key
-            _cache_last_updated[model_name] = current_time
+            _cache_last_updated[model_name] = time.time()
         
         return new_key
 
@@ -582,6 +583,11 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str):
         if current_usage >= threshold:
             await invalidate_key_cache(model_name)
             logging.info(f"Key {key_hash[:8]}... reached limit for model {model_name}. Cache invalidated.")
+        else:
+            # Если ключ еще не достиг лимита, обновляем время последнего использования
+            async with _cache_lock:
+                if model_name in _cache_last_updated:
+                    _cache_last_updated[model_name] = time.time()
 
 async def get_available_tavily_key():
     current_month = datetime.now(pytz.utc).strftime('%Y-%m')

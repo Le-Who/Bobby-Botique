@@ -56,8 +56,13 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         await metrics_collector.record_api_call("gemini", model_name)
         
         # Детальное логирование Gemini API запроса
-        prompt_length = sum(len(str(part)) for item in history for part in item.get("parts", []))
-        has_images = any(isinstance(part, Image.Image) for item in history for part in item.get("parts", []))
+        try:
+            prompt_length = sum(len(str(part)) for item in history for part in item.get("parts", []))
+            has_images = any(isinstance(part, Image.Image) for item in history for part in item.get("parts", []))
+        except Exception as e:
+            logging.warning(f"Error calculating prompt metrics: {e}, using fallback values")
+            prompt_length = 0
+            has_images = False
         
         start_time = api_logger.log_gemini_request(
             model=model_name,
@@ -76,56 +81,69 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         
         # Преобразуем историю в формат types.Content
         contents = []
-        for item in history:
-            role = item.get("role", "user")
-            parts = item.get("parts", [])
-            # Убедимся, что parts - это список
-            if not isinstance(parts, list):
-                parts = [parts]
-            
-            # Преобразуем PIL Image в Part, если необходимо
-            processed_parts = []
-            for part in parts:
-                if isinstance(part, Image.Image): # Проверяем, является ли объект PIL Image
-                    # Правильно создаем Part для изображения
-                    # Конвертируем PIL Image в bytes для Gemini API
-                    import io
-                    img_byte_arr = io.BytesIO()
-                    part.save(img_byte_arr, format='JPEG')
-                    img_byte_arr = img_byte_arr.getvalue()
-                    
-                    try:
-                        # Создаем Part для изображения используя правильный метод
-                        # Согласно документации google-genai, используем inline_data
-                        image_part = types.Part(
-                            inline_data=types.Blob(
-                                mime_type="image/jpeg",
-                                data=img_byte_arr
-                            )
-                        )
-                    except Exception as e:
-                        logging.warning(f"Failed to create image part: {e}")
-                        # Fallback: пропускаем изображение
-                        logging.warning(f"Skipping image part due to creation error")
-                        continue
-                    
-                    processed_parts.append(image_part)
-                else:
-                    # Безопасное преобразование текста - убеждаемся, что это строка
-                    try:
-                        text_content = str(part)
-                        processed_parts.append(types.Part.from_text(text=text_content))
-                    except Exception as e:
-                        logging.warning(f"Failed to process text part: {e}, skipping")
-                        continue
-            
-            # Добавляем content только если есть обработанные parts
-            if processed_parts:
-                try:
-                    contents.append(types.Content(role=role, parts=processed_parts))
-                except Exception as e:
-                    logging.warning(f"Failed to create Content object: {e}, skipping")
+        try:
+            for item in history:
+                if not isinstance(item, dict):
+                    logging.warning(f"Skipping invalid history item (not dict): {type(item)}")
                     continue
+                    
+                role = item.get("role", "user")
+                parts = item.get("parts", [])
+                # Убедимся, что parts - это список
+                if not isinstance(parts, list):
+                    parts = [parts]
+                
+                # Преобразуем PIL Image в Part, если необходимо
+                processed_parts = []
+                for part in parts:
+                    if isinstance(part, Image.Image): # Проверяем, является ли объект PIL Image
+                        # Правильно создаем Part для изображения
+                        # Конвертируем PIL Image в bytes для Gemini API
+                        import io
+                        img_byte_arr = io.BytesIO()
+                        part.save(img_byte_arr, format='JPEG')
+                        img_byte_arr = img_byte_arr.getvalue()
+                        
+                        try:
+                            # Создаем Part для изображения используя правильный метод
+                            # Согласно документации google-genai, используем inline_data
+                            image_part = types.Part(
+                                inline_data=types.Blob(
+                                    mime_type="image/jpeg",
+                                    data=img_byte_arr
+                                )
+                            )
+                        except Exception as e:
+                            logging.warning(f"Failed to create image part: {e}")
+                            # Fallback: пропускаем изображение
+                            logging.warning(f"Skipping image part due to creation error")
+                            continue
+                        
+                        processed_parts.append(image_part)
+                    else:
+                        # Безопасное преобразование текста - убеждаемся, что это строка
+                        try:
+                            text_content = str(part)
+                            processed_parts.append(types.Part.from_text(text=text_content))
+                        except Exception as e:
+                            logging.warning(f"Failed to process text part: {e}, skipping")
+                            continue
+                
+                # Добавляем content только если есть обработанные parts
+                if processed_parts:
+                    try:
+                        contents.append(types.Content(role=role, parts=processed_parts))
+                    except Exception as e:
+                        logging.warning(f"Failed to create Content object: {e}, skipping")
+                        continue
+        except Exception as e:
+            logging.error(f"Error processing history: {e}")
+            # Fallback: создаем простой content с ошибкой
+            try:
+                contents.append(types.Content(role="user", parts=[types.Part.from_text("Error processing request")]))
+            except Exception as fallback_error:
+                logging.error(f"Failed to create fallback content: {fallback_error}")
+                return "❌ Ошибка обработки запроса", None
 
         # Проверяем, что contents не пустой
         if not contents:
@@ -139,7 +157,12 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         )
         
         if system_instruction:
-            config.system_instruction = system_instruction
+            try:
+                # Убеждаемся, что system_instruction - это строка
+                safe_system_instruction = str(system_instruction)
+                config.system_instruction = safe_system_instruction
+            except Exception as e:
+                logging.warning(f"Failed to set system_instruction: {e}, continuing without it")
 
         # Выполняем запрос с timeout
         response = await asyncio.wait_for(
