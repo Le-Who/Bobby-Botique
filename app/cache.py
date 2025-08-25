@@ -19,23 +19,24 @@ if not redis_url:
     redis_client = None
 else:
     try:
-        # Configure Redis client for Upstash.com free tier
+        # Configure Redis client for Upstash.com free tier with better error handling
         redis_client = Redis.from_url(
             redis_url,
-            socket_timeout=5,  # 5 seconds socket timeout
-            socket_connect_timeout=5,  # 5 seconds connect timeout
+            socket_timeout=10,  # Increased timeout for better reliability
+            socket_connect_timeout=10,  # Increased connect timeout
             socket_keepalive=True,  # Keep connections alive
             socket_keepalive_options={},
-            health_check_interval=30,  # Health check every 30 seconds
-            max_connections=2,  # Limit connections for free tier
-            retry_on_timeout=True
-            # Removed ssl_cert_reqs as it's not supported in newer Redis versions
+            health_check_interval=60,  # Health check every 60 seconds
+            max_connections=1,  # Single connection for stability
+            retry_on_timeout=True,
+            retry_on_error=True,
+            decode_responses=True  # Auto-decode responses
         )
-        # Test connection
+        # Test connection with timeout
         redis_client.ping()
         logging.info("Redis client initialized successfully for Upstash.com")
     except Exception as e:
-        logging.error("Failed to connect to Redis: %s", e)
+        logging.warning("Failed to connect to Redis: %s. Caching will be disabled.", e)
         redis_client = None
 
 def _generate_cache_key(query: str, search_type: str) -> str:

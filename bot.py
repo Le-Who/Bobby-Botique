@@ -75,19 +75,55 @@ def status_check():
 def health_check_endpoint():
     """Health check endpoint для мониторинга"""
     try:
-        # Здесь можно добавить вызов health checker
+        # Проверяем основные компоненты
+        bot_status = "running"
+        database_status = "connected" if database.db_pool and not database.db_pool._closed else "disconnected"
+        
+        # Проверяем Redis статус
+        try:
+            from app.cache import redis_client
+            if redis_client:
+                redis_client.ping()
+                redis_status = "connected"
+            else:
+                redis_status = "not_configured"
+        except Exception:
+            redis_status = "disconnected"
+        
+        # Определяем общий статус
+        if database_status == "connected" and bot_status == "running":
+            overall_status = "healthy"
+        elif database_status == "disconnected":
+            overall_status = "unhealthy"
+        else:
+            overall_status = "degraded"
+        
         health_status = {
-            "status": "healthy",
+            "status": overall_status,
             "timestamp": str(datetime.datetime.now()),
+            "container_id": os.environ.get('HOSTNAME', 'unknown'),
+            "process_id": os.getpid(),
             "services": {
-                "bot": "running",
-                "database": "connected" if database.db_pool else "disconnected",
-                "redis": "unknown"  # Будет заполнено health checker'ом
+                "bot": bot_status,
+                "database": database_status,
+                "redis": redis_status
             }
         }
-        return health_status, 200
+        
+        # Возвращаем соответствующий HTTP код
+        if overall_status == "healthy":
+            return health_status, 200
+        elif overall_status == "degraded":
+            return health_status, 200  # 200 для degraded, но с предупреждением
+        else:
+            return health_status, 503  # 503 для unhealthy
+            
     except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}, 500
+        return {
+            "status": "unhealthy", 
+            "error": str(e),
+            "timestamp": str(datetime.datetime.now())
+        }, 500
 
 # Глобальная переменная для управления завершением
 shutdown_event = asyncio.Event()
@@ -101,40 +137,17 @@ def acquire_lock():
     global lock_file, lock_fd
     
     try:
-        # IMPROVED: Use container-specific lock file path to prevent cross-container conflicts
-        # In Docker containers, /tmp is shared across container restarts, so we need a unique identifier
+        # Упрощенная логика для контейнерной среды
         container_id = os.environ.get('HOSTNAME', 'unknown')
         lock_file = f"/tmp/gemaibot.{container_id}.lock"
         
-        # Проверяем, существует ли файл блокировки и не является ли он "мертвым"
+        # В контейнерной среде всегда удаляем старые блокировки
         if os.path.exists(lock_file):
             try:
-                with open(lock_file, 'r') as f:
-                    pid_str = f.read().strip()
-                    if pid_str.isdigit():
-                        pid = int(pid_str)
-                        
-                        # CRITICAL FIX: PID 1 is the container init process and should be ignored
-                        # In containerized environments, PID 1 is always running and represents the container itself
-                        if pid == 1:
-                            logging.info("Found lock file with PID 1 (container init) - this is stale, removing it")
-                            os.unlink(lock_file)
-                        else:
-                            # Проверяем, существует ли процесс с этим PID
-                            try:
-                                os.kill(pid, 0)  # Проверяем существование процесса
-                                logging.warning(f"Process {pid} is still running, cannot acquire lock")
-                                return False
-                            except OSError:
-                                # Процесс не существует, удаляем "мертвую" блокировку
-                                logging.info(f"Removing stale lock file for dead process {pid}")
-                                os.unlink(lock_file)
+                os.unlink(lock_file)
+                logging.info(f"Removed existing lock file for container {container_id}")
             except Exception as e:
-                logging.warning(f"Error reading lock file: {e}, removing corrupted lock")
-                try:
-                    os.unlink(lock_file)
-                except:
-                    pass
+                logging.warning(f"Error removing existing lock: {e}")
         
         # Создаем новый файл блокировки
         lock_fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
@@ -158,10 +171,7 @@ def acquire_lock():
                 pass
             lock_fd = None
         
-        if "Resource temporarily unavailable" in str(e):
-            logging.warning("Lock is held by another process")
-        else:
-            logging.error(f"Failed to acquire lock: {e}")
+        logging.error(f"Failed to acquire lock: {e}")
         return False
 
 def release_lock():

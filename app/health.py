@@ -141,10 +141,12 @@ class HealthChecker:
         
         try:
             if not redis_client:
-                status = "unhealthy"
-                error_message = "Redis client not configured"
+                # Redis не настроен - это нормально для некоторых окружений
+                status = "degraded"
+                error_message = "Redis client not configured (caching disabled)"
+                details['note'] = "Redis is optional for this application"
             else:
-                # Test connection
+                # Test connection with timeout
                 redis_client.ping()
                 
                 # Get Redis info
@@ -155,9 +157,11 @@ class HealthChecker:
                 details['connected_clients'] = info.get('connected_clients', 'N/A')
                 
         except Exception as e:
-            status = "unhealthy"
-            error_message = str(e)
+            # Redis недоступен, но это не критично
+            status = "degraded"
+            error_message = f"Redis connection failed: {str(e)}"
             details['error_type'] = type(e).__name__
+            details['note'] = "Application will continue without caching"
         
         response_time = time.time() - start_time
         return HealthStatus(
