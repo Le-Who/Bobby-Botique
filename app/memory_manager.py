@@ -34,6 +34,7 @@ class MemoryManager:
         self._monitor_interval = 60  # seconds
         self._last_cleanup = time.time()
         self._cleanup_cooldown = 300  # 5 minutes between cleanups
+        self._running = False
         
         self._start_monitoring()
     
@@ -42,11 +43,12 @@ class MemoryManager:
         if self._monitoring_task and not self._monitoring_task.done():
             return
         
+        self._running = True
         self._monitoring_task = asyncio.create_task(self._monitor_memory())
     
     async def _monitor_memory(self):
         """Continuous memory monitoring loop."""
-        while True:
+        while self._running:
             try:
                 await asyncio.sleep(self._monitor_interval)
                 await self._check_memory_usage()
@@ -72,6 +74,10 @@ class MemoryManager:
         """Checks current memory usage and triggers cleanup if needed."""
         try:
             memory_info = self._get_memory_info()
+            if 'error' in memory_info:
+                logging.warning("Memory info error: %s", memory_info['error'])
+                return
+                
             self._memory_history.append(memory_info)
             
             # Check thresholds
@@ -94,14 +100,16 @@ class MemoryManager:
         try:
             process = psutil.Process()
             memory_info = process.memory_info()
+            virtual_memory = psutil.virtual_memory()
             
             return {
                 'timestamp': datetime.now(),
                 'rss_mb': memory_info.rss / 1024 / 1024,  # Resident Set Size in MB
                 'vms_mb': memory_info.vms / 1024 / 1024,  # Virtual Memory Size in MB
                 'percent': process.memory_percent(),
-                'available_mb': psutil.virtual_memory().available / 1024 / 1024,
-                'total_mb': psutil.virtual_memory().total / 1024 / 1024
+                'available_mb': virtual_memory.available / 1024 / 1024,
+                'total_mb': virtual_memory.total / 1024 / 1024,
+                'cpu_percent': process.cpu_percent(interval=0.1)
             }
         except Exception as e:
             logging.error("Failed to get memory info: %s", e)
@@ -115,17 +123,22 @@ class MemoryManager:
         logging.warning("Performing emergency memory cleanup")
         
         try:
-            # Force garbage collection
-            collected = gc.collect()
-            logging.info("Garbage collection collected %d objects", collected)
+            # Force garbage collection multiple times
+            for i in range(3):
+                collected = gc.collect()
+                if collected > 0:
+                    logging.info("Garbage collection round %d collected %d objects", i+1, collected)
+                await asyncio.sleep(0.1)  # Small delay between collections
             
             # Run all cleanup callbacks
             for callback in self._cleanup_callbacks:
                 try:
                     if asyncio.iscoroutinefunction(callback):
-                        await callback()
+                        await asyncio.wait_for(callback(), timeout=5.0)
                     else:
                         callback()
+                except asyncio.TimeoutError:
+                    logging.warning("Cleanup callback timed out")
                 except Exception as e:
                     logging.error("Cleanup callback error: %s", e)
             
@@ -151,9 +164,11 @@ class MemoryManager:
             for callback in self._cleanup_callbacks:
                 try:
                     if asyncio.iscoroutinefunction(callback):
-                        await callback()
+                        await asyncio.wait_for(callback(), timeout=2.0)
                     else:
                         callback()
+                except asyncio.TimeoutError:
+                    logging.warning("Cleanup callback timed out")
                 except Exception as e:
                     logging.error("Cleanup callback error: %s", e)
             
@@ -164,23 +179,13 @@ class MemoryManager:
     
     async def _preventive_cleanup(self):
         """Performs preventive memory cleanup."""
-        logging.info("Performing preventive memory cleanup")
+        logging.debug("Performing preventive memory cleanup")
         
         try:
             # Light garbage collection
-            collected = gc.collect(0)  # Only collect young objects
+            collected = gc.collect()
             if collected > 0:
-                logging.info("Preventive cleanup collected %d young objects", collected)
-            
-            # Run cleanup callbacks with lower priority
-            for callback in self._cleanup_callbacks:
-                try:
-                    if asyncio.iscoroutinefunction(callback):
-                        await callback()
-                    else:
-                        callback()
-                except Exception as e:
-                    logging.warning("Cleanup callback error: %s", e)
+                logging.debug("Preventive garbage collection collected %d objects", collected)
             
             self._last_cleanup = time.time()
             
@@ -190,83 +195,39 @@ class MemoryManager:
     def add_cleanup_callback(self, callback: Callable) -> None:
         """Adds a cleanup callback function."""
         self._cleanup_callbacks.append(callback)
-        logging.info("Added cleanup callback: %s", callback.__name__)
     
     def remove_cleanup_callback(self, callback: Callable) -> None:
         """Removes a cleanup callback function."""
         if callback in self._cleanup_callbacks:
             self._cleanup_callbacks.remove(callback)
-            logging.info("Removed cleanup callback: %s", callback.__name__)
-    
-    async def force_cleanup(self) -> Dict[str, Any]:
-        """Forces immediate memory cleanup."""
-        start_time = time.time()
-        
-        # Get memory before cleanup
-        memory_before = self._get_memory_info()
-        
-        # Perform cleanup
-        await self._emergency_cleanup()
-        
-        # Get memory after cleanup
-        memory_after = self._get_memory_info()
-        
-        # Calculate savings
-        rss_saved = memory_before.get('rss_mb', 0) - memory_after.get('rss_mb', 0)
-        percent_saved = memory_before.get('percent', 0) - memory_after.get('percent', 0)
-        
-        cleanup_stats = {
-            'timestamp': datetime.now(),
-            'rss_saved_mb': rss_saved,
-            'percent_saved': percent_saved,
-            'cleanup_duration': time.time() - start_time,
-            'memory_before': memory_before,
-            'memory_after': memory_after
-        }
-        
-        logging.info("Forced cleanup completed: saved %.1f MB (%.1f%%)", rss_saved, percent_saved)
-        return cleanup_stats
     
     def get_memory_stats(self) -> Dict[str, Any]:
-        """Returns memory usage statistics."""
-        current_memory = self._get_memory_info()
-        
-        if not self._memory_history:
+        """Returns current memory statistics."""
+        try:
+            memory_info = self._get_memory_info()
+            if 'error' in memory_info:
+                return {'error': memory_info['error']}
+            
             return {
-                'current': current_memory,
-                'history': [],
-                'thresholds': self.thresholds.__dict__
-            }
-        
-        # Calculate statistics from history
-        rss_values = [entry.get('rss_mb', 0) for entry in self._memory_history if 'rss_mb' in entry]
-        percent_values = [entry.get('percent', 0) for entry in self._memory_history if 'percent' in entry]
-        
-        stats = {
-            'current': current_memory,
-            'history': self._memory_history[-10:],  # Last 10 entries
-            'thresholds': self.thresholds.__dict__,
-            'statistics': {
-                'rss_mb': {
-                    'min': min(rss_values) if rss_values else 0,
-                    'max': max(rss_values) if rss_values else 0,
-                    'avg': sum(rss_values) / len(rss_values) if rss_values else 0
-                },
-                'percent': {
-                    'min': min(percent_values) if percent_values else 0,
-                    'max': max(percent_values) if percent_values else 0,
-                    'avg': sum(percent_values) / len(percent_values) if percent_values else 0
+                'current_usage_mb': memory_info['rss_mb'],
+                'current_usage_percent': memory_info['percent'],
+                'available_mb': memory_info['available_mb'],
+                'total_mb': memory_info['total_mb'],
+                'cpu_percent': memory_info['cpu_percent'],
+                'history_size': len(self._memory_history),
+                'last_cleanup': self._last_cleanup,
+                'thresholds': {
+                    'warning': self.thresholds.warning_percent,
+                    'critical': self.thresholds.critical_percent,
+                    'cleanup': self.thresholds.cleanup_percent
                 }
-            },
-            'cleanup_callbacks_count': len(self._cleanup_callbacks),
-            'last_cleanup': self._last_cleanup,
-            'monitoring_active': self._monitoring_task and not self._monitoring_task.done()
-        }
-        
-        return stats
+            }
+        except Exception as e:
+            return {'error': str(e)}
     
-    async def shutdown(self):
-        """Shuts down the memory manager."""
+    async def stop(self):
+        """Stops memory monitoring."""
+        self._running = False
         if self._monitoring_task and not self._monitoring_task.done():
             self._monitoring_task.cancel()
             try:
@@ -274,11 +235,18 @@ class MemoryManager:
             except asyncio.CancelledError:
                 pass
         
-        # Clear callbacks
+        # Final cleanup
         self._cleanup_callbacks.clear()
         self._memory_history.clear()
-        
-        logging.info("Memory manager shut down")
+        logging.info("Memory manager stopped")
+    
+    def __del__(self):
+        """Cleanup on destruction."""
+        if self._running:
+            logging.warning("Memory manager destroyed while running")
+            # Note: We can't await here, but we can try to cancel the task
+            if self._monitoring_task and not self._monitoring_task.done():
+                self._monitoring_task.cancel()
 
 
 # Global memory manager instance

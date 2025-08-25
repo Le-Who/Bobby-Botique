@@ -6,6 +6,7 @@ import asyncio
 import time
 from typing import Dict, Any, Optional, Union
 from functools import lru_cache
+import threading
 
 from redis import Redis
 
@@ -34,6 +35,9 @@ else:
     except Exception as e:
         logging.warning("Failed to connect to Redis: %s. Caching will be disabled.", e)
         redis_client = None
+
+# Thread-safe cache lock
+_cache_lock = threading.Lock()
 
 def _generate_cache_key(query: str, search_type: str) -> str:
     """Generates a cache key for the request."""
@@ -67,18 +71,19 @@ async def get_cached_search_result(query: str, search_type: str) -> Optional[Dic
     
     cache_key = _generate_cache_key(query, search_type)
     try:
-        cached_data = redis_client.get(cache_key)
-        if cached_data:
-            await metrics_collector.record_cache_hit()
-            logging.info("Cache hit for query: %s...", query[:50])
-            # Handle both bytes and string responses
-            if isinstance(cached_data, bytes):
-                return json.loads(cached_data.decode('utf-8'))
+        with _cache_lock:
+            cached_data = redis_client.get(cache_key)
+            if cached_data:
+                await metrics_collector.record_cache_hit()
+                logging.info("Cache hit for query: %s...", query[:50])
+                # Handle both bytes and string responses
+                if isinstance(cached_data, bytes):
+                    return json.loads(cached_data.decode('utf-8'))
+                else:
+                    return json.loads(cached_data)
             else:
-                return json.loads(cached_data)
-        else:
-            await metrics_collector.record_cache_miss()
-            return None
+                await metrics_collector.record_cache_miss()
+                return None
     except Exception as e:
         logging.error("Error getting from Redis cache: %s", e)
         await metrics_collector.record_cache_miss()
@@ -100,8 +105,9 @@ async def cache_search_result(query: str, search_type: str, result: Dict[str, An
     cache_key = _generate_cache_key(query, search_type)
     ttl = _get_ttl(search_type)
     try:
-        redis_client.setex(cache_key, ttl, json.dumps(result))
-        logging.info(f"Cached search result for query: {query[:50]}...")
+        with _cache_lock:
+            redis_client.setex(cache_key, ttl, json.dumps(result))
+            logging.info(f"Cached search result for query: {query[:50]}...")
     except Exception as e:
         logging.error(f"Error caching result to Redis: {e}")
 
@@ -111,13 +117,14 @@ async def get_cache_stats() -> Dict[str, Any]:
         return {"error": "Redis client not configured"}
     
     try:
-        info = redis_client.info()
-        return {
-            'total_keys': info.get('db0', {}).get('keys', 0),
-            'used_memory': info.get('used_memory_human', 'N/A'),
-            'uptime_in_days': info.get('uptime_in_days', 'N/A'),
-            'cache_hit_rate': await metrics_collector.get_cache_hit_rate()
-        }
+        with _cache_lock:
+            info = redis_client.info()
+            return {
+                'total_keys': info.get('db0', {}).get('keys', 0),
+                'used_memory': info.get('used_memory_human', 'N/A'),
+                'uptime_in_days': info.get('uptime_in_days', 'N/A'),
+                'cache_hit_rate': await metrics_collector.get_cache_hit_rate()
+            }
     except Exception as e:
         logging.error(f"Error getting Redis stats: {e}")
         return {"error": str(e)}
@@ -128,8 +135,9 @@ async def clear_cache():
         return
         
     try:
-        redis_client.flushdb()
-        logging.info("Cache cleared")
+        with _cache_lock:
+            redis_client.flushdb()
+            logging.info("Cache cleared")
     except Exception as e:
         logging.error("Error clearing Redis cache: %s", e)
 

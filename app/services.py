@@ -5,6 +5,7 @@ from google.genai import types
 from google.genai.errors import APIError
 from typing import Dict, Any, List
 from PIL import Image
+import asyncio
 
 from app.config import settings
 from app import database
@@ -17,6 +18,24 @@ from app.utils.api_logger import api_logger
 http_client = NetworkErrorHandler.create_robust_http_client()
 
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None):
+    """
+    Получает ответ от Gemini API с улучшенной обработкой ошибок.
+    
+    Args:
+        api_key: API ключ для Gemini
+        history: История сообщений
+        model_name: Название модели
+        system_instruction: Системная инструкция
+        user_id: ID пользователя для логирования
+        chat_id: ID чата для логирования
+        
+    Returns:
+        Tuple[str, int]: (ответ, количество токенов)
+        
+    Raises:
+        ValueError: При неверных параметрах
+        Exception: При ошибках API
+    """
     # Валидация входных параметров
     if not isinstance(api_key, str) or not api_key.strip():
         raise ValueError("API key must be a non-empty string")
@@ -102,16 +121,23 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         if system_instruction:
             config.system_instruction = system_instruction
 
-        response = client.models.generate_content(
-            model=model_name,
-            contents=contents,
-            config=config
+        # Выполняем запрос с timeout
+        response = await asyncio.wait_for(
+            client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config
+            ),
+            timeout=60.0  # 60 секунд timeout
         )
         
-        # Подсчет токенов
-        token_count_response = client.models.count_tokens(
-            model=model_name,
-            contents=contents
+        # Подсчет токенов с timeout
+        token_count_response = await asyncio.wait_for(
+            client.models.count_tokens(
+                model=model_name,
+                contents=contents
+            ),
+            timeout=10.0  # 10 секунд timeout
         )
         
         # Логируем успешный ответ Gemini API
@@ -126,6 +152,23 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         )
         
         return response.text, token_count_response.total_tokens
+        
+    except asyncio.TimeoutError:
+        error_msg = f"Gemini API request timed out for model {model_name}"
+        logging.error(error_msg)
+        await metrics_collector.record_error("gemini_timeout", error_msg)
+        
+        api_logger.log_gemini_response(
+            start_time=start_time,
+            model=model_name,
+            response_length=0,
+            success=False,
+            error_message=error_msg,
+            user_id=user_id,
+            chat_id=chat_id
+        )
+        
+        return "⏰ Превышено время ожидания ответа от API. Попробуйте позже.", None
         
     except APIError as e:
         # Логируем ошибку Gemini API
@@ -146,6 +189,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         else:
             await metrics_collector.record_error("gemini_api_call", str(e))
             return f"Произошла ошибка вызова API: {e}", None
+            
     except Exception as e:
         # Логируем общую ошибку Gemini API
         api_logger.log_gemini_response(

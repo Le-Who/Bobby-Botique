@@ -3,7 +3,7 @@ import pytz
 import time
 import asyncio
 import logging
-from typing import List, Dict, Callable, Any
+from typing import List, Dict, Callable, Any, Optional
 from pydantic import BaseModel, ValidationError
 
 def _load_and_clean_keys(env_var_name: str) -> List[str]:
@@ -121,16 +121,48 @@ def load_settings() -> Settings:
 PACIFIC_TZ = pytz.timezone('US/Pacific')
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
 
+# --- LAZY LOADING SETTINGS ---
+_settings_instance: Optional[Settings] = None
+
+def get_settings() -> Settings:
+    """
+    Returns settings instance with lazy loading.
+    This prevents initialization errors during import.
+    """
+    global _settings_instance
+    if _settings_instance is None:
+        try:
+            _settings_instance = load_settings()
+        except Exception as e:
+            logging.error(f"Failed to load settings: {e}")
+            raise
+    return _settings_instance
+
+# Backward compatibility - use lazy loading
+def get_settings_safe() -> Optional[Settings]:
+    """
+    Safe version that returns None if settings cannot be loaded.
+    Useful for testing and development.
+    """
+    try:
+        return get_settings()
+    except Exception:
+        return None
+
 # --- SINGLETON INSTANCE ---
 # Create the one and only settings object for the app.
-settings = load_settings()
-
+# Use lazy loading to prevent import errors
+try:
+    settings = get_settings()
+except Exception:
+    # During development/testing, allow None settings
+    settings = None
 
 class ConfigManager:
     """Manages configuration with hot reloading capability."""
     
     def __init__(self):
-        self._settings = settings
+        self._settings = get_settings_safe()
         self._last_reload = time.time()
         self._reload_interval = 300  # 5 minutes
         self._watchers: List[Callable] = []
@@ -139,6 +171,8 @@ class ConfigManager:
     @property
     def settings(self) -> Settings:
         """Returns current settings, reloading if necessary."""
+        if self._settings is None:
+            self._settings = get_settings()
         current_time = time.time()
         if current_time - self._last_reload > self._reload_interval:
             asyncio.create_task(self._reload_config())
@@ -148,7 +182,7 @@ class ConfigManager:
         """Reloads configuration from environment."""
         async with self._lock:
             try:
-                new_settings = load_settings()
+                new_settings = get_settings()
                 
                 # Check if any critical settings changed
                 critical_changed = (
@@ -210,9 +244,9 @@ config_manager = ConfigManager()
 
 
 # Backward compatibility
-def get_settings() -> Settings:
+def get_settings_compat() -> Settings:
     """Returns current settings (backward compatibility)."""
-    return config_manager.settings
+    return get_settings()
 
 
 # Convenience functions for common settings

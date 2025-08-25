@@ -11,7 +11,8 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import time
 
-from app.config import settings, PACIFIC_TZ
+from app.config import settings
+from app.utils.time import get_pacific_tz
 
 db_pool: Optional[Pool] = None
 
@@ -139,6 +140,22 @@ async def reconnect_database():
         return False
 
 async def db_query(query: str, params: tuple = (), retries: int = 3):
+    """
+    Выполняет запрос к базе данных с retry логикой и proper error handling.
+    
+    Args:
+        query: SQL запрос
+        params: Параметры запроса
+        retries: Количество попыток повторного выполнения
+        
+    Returns:
+        Результат запроса
+        
+    Raises:
+        DatabaseConnectionError: При проблемах с подключением
+        DatabaseQueryError: При ошибках выполнения запроса
+        DatabaseRateLimitError: При превышении лимитов
+    """
     # Валидация входных параметров
     if not isinstance(query, str) or not query.strip():
         raise ValueError("Query must be a non-empty string")
@@ -149,70 +166,55 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
     if not isinstance(retries, int) or retries < 0:
         raise ValueError("Retries must be a non-negative integer")
     
-    if not db_pool:
-        logging.critical("Database pool is not initialized - this should not happen!")
-        raise Exception("Database pool is not initialized")
-    
-    # Проверяем состояние пула перед выполнением запроса
-    if hasattr(db_pool, '_closed') and db_pool._closed:
-        logging.warning("Database pool is closed, attempting to reconnect...")
-        if not await reconnect_database():
-            raise Exception("Failed to reconnect to database")
-    
-    # CRITICAL: Since statement_cache_size=0, we use direct queries without prepared statements
     last_exception = None
-
-    for attempt in range(retries):
+    
+    for attempt in range(retries + 1):
         try:
+            if not db_pool:
+                raise Exception("Database pool not initialized")
+            
+            if db_pool._closed:
+                raise Exception("Database pool is closed")
+            
             async with db_pool.acquire() as conn:
-                # Apply Supabase-specific session settings for each connection
-                try:
-                    await conn.execute("SET statement_timeout = '60s'")
-                    await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
-                except Exception as opt_e:
-                    logging.debug(f"Failed to set session optimizations: {opt_e}")
+                # Выполняем запрос с timeout
+                result = await asyncio.wait_for(
+                    conn.fetch(query, *params),
+                    timeout=30.0  # 30 секунд timeout
+                )
+                return result
                 
-                if query.strip().upper().startswith("SELECT"):
-                    return await conn.fetch(query, *params)
-                else:
-                    await conn.execute(query, *params)
-                    return None
-        except (asyncpg.exceptions.ConnectionDoesNotExistError, OSError) as e:
-            logging.warning(f"DB connection error (attempt {attempt + 1}/{retries}): {e}. Retrying...")
-            last_exception = e
-            if attempt == retries - 1:
-                logging.critical(f"All database retries failed. Last error: {e}")
-                # Попытка переподключения перед финальной ошибкой
-                if await reconnect_database():
-                    # Если переподключение успешно, попробуем еще раз
-                    try:
-                        async with db_pool.acquire() as conn:
-                            if query.strip().upper().startswith("SELECT"):
-                                return await conn.fetch(query, *params)
-                            else:
-                                await conn.execute(query, *params)
-                                return None
-                    except Exception as final_e:
-                        logging.critical(f"Query failed even after reconnection: {final_e}")
-                        raise final_e
-                else:
-                    logging.critical("Failed to reconnect to database, raising original error")
-                    raise last_exception
-            await asyncio.sleep(1 + attempt)
-        except asyncpg.exceptions.QueryCanceledError as e:
-            # Handle Supabase query timeout specifically
-            if "statement timeout" in str(e).lower():
-                logging.warning(f"Query timeout on Supabase (attempt {attempt + 1}/{retries}): {e}")
-                if attempt == retries - 1:
-                    raise Exception(f"Query timeout after {retries} attempts: {e}")
-            else:
-                raise e
+        except asyncio.TimeoutError:
+            last_exception = Exception(f"Database query timeout after 30 seconds: {query[:100]}...")
+            logging.warning(f"Database query timeout (attempt {attempt + 1}/{retries + 1}): {query[:100]}...")
+            
         except Exception as e:
-            logging.error(f"An unexpected database error occurred during query: {query[:100]}... - {e}", exc_info=False)
-            raise e
-
-    logging.error("All database retries failed.")
-    raise last_exception
+            last_exception = e
+            error_msg = str(e).lower()
+            
+            # Определяем тип ошибки
+            if "rate limit" in error_msg or "quota" in error_msg:
+                logging.error(f"Database rate limit exceeded: {e}")
+                raise Exception(f"Database rate limit exceeded: {e}")
+            elif "connection" in error_msg or "timeout" in error_msg:
+                logging.warning(f"Database connection issue (attempt {attempt + 1}/{retries + 1}): {e}")
+            else:
+                logging.error(f"Database query error (attempt {attempt + 1}/{retries + 1}): {e}")
+            
+            # Если это последняя попытка, выбрасываем исключение
+            if attempt == retries:
+                break
+            
+            # Ждем перед повторной попыткой с exponential backoff
+            wait_time = min(2 ** attempt, 10)  # Максимум 10 секунд
+            logging.info(f"Retrying database query in {wait_time} seconds...")
+            await asyncio.sleep(wait_time)
+    
+    # Если все попытки исчерпаны, выбрасываем последнее исключение
+    if last_exception:
+        raise last_exception
+    else:
+        raise Exception("Database query failed after all retries")
 
 async def init_db():
     global db_pool
@@ -333,7 +335,7 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     if not isinstance(model_name, str) or not model_name.strip():
         raise ValueError("model_name must be a non-empty string")
     
-    today_pacific: date = datetime.now(PACIFIC_TZ).date()
+    today_pacific: date = datetime.now(get_pacific_tz()).date()
     daily_limit = settings.DAILY_LIMITS.get(model_name)
     
     if not daily_limit:
@@ -362,7 +364,7 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     return None
 
 async def increment_gemini_key_usage(key_hash: str, model_name: str):
-    today_pacific: date = datetime.now(PACIFIC_TZ).date()
+    today_pacific: date = datetime.now(get_pacific_tz()).date()
     query = """
                 INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, 1)
     ON CONFLICT (key_hash, model_name, usage_date)

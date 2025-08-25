@@ -605,134 +605,113 @@ async def startup_health_check():
     logging.info("✓ Core systems healthy - bot ready to start")
 
 async def main():
-    """Главная функция: настраивает логирование, БД и запускает приложение."""
+    """Main application entry point with improved error handling."""
+    print("=== BOT MAIN FUNCTION START ===", flush=True)
     
-    # Проверяем, не запущен ли уже другой экземпляр бота
-    if not acquire_lock():
-        logging.critical("Another bot instance is already running. Exiting.")
-        print("ERROR: Another bot instance is already running. Exiting.", flush=True)
-        sys.exit(1)
+    # Инициализируем компоненты
+    database_available = False
+    memory_manager = None
     
     try:
-        # Настройка детального логирования для Render
-        setup_detailed_logging(
-            log_level="INFO",
-            log_to_file=True,
-            log_file_path="/tmp/bot_detailed.log"
-        )
+        # Инициализация логирования
+        setup_detailed_logging()
+        logging.info("Bot starting up...")
         
-        # Выводим сводку по API логированию
-        log_api_summary()
-        
-        # Принудительно выводим в stdout для Render
-        print("=== BOT STARTUP INITIATED ===", flush=True)
-        logging.info("=== BOT STARTUP INITIATED ===")
-        
-        # Регистрируем обработчики сигналов
-        signal.signal(signal.SIGTERM, signal_handler)
-        signal.signal(signal.SIGINT, signal_handler)
-        
+        # Инициализация базы данных
         try:
-            print("Starting bot initialization...", flush=True)
-            logging.info("Starting bot initialization...")
-            
-            print("Initializing database...", flush=True)
-            logging.info("Initializing database...")
-            
-            database_available = False
-            try:
-                await database.init_db()
-                print("Database initialized successfully.", flush=True)
-                logging.info("Database initialized successfully.")
-                database_available = True
-            except Exception as e:
-                logging.error(f"Database initialization failed: {e}")
-                if "quota exceeded" in str(e).lower():
-                    logging.critical("CRITICAL: Database quota exceeded. Bot will start in limited mode.")
-                    print("WARNING: Database quota exceeded. Bot will start in limited mode.", flush=True)
-                else:
-                    logging.warning(f"Database unavailable: {e}. Bot will start in limited mode.")
-                    print(f"WARNING: Database unavailable: {e}. Bot will start in limited mode.", flush=True)
-            
-            if database_available:
-                logging.info("Initializing group chats...")
-                try:
-                    await initialize_group_chats()
-                    logging.info("Group chats initialized.")
-                except Exception as e:
-                    logging.warning(f"Group chats initialization failed: {e}")
-                
-                logging.info("Starting task queue...")
-                try:
-                    await start_task_queue()
-                    logging.info("Task queue started.")
-                except Exception as e:
-                    logging.warning(f"Task queue start failed: {e}")
-                
-                logging.info("Initializing metrics system...")
-                try:
-                    await metrics_collector.initialize()
-                    logging.info("Metrics system initialized.")
-                except Exception as e:
-                    logging.warning(f"Metrics system initialization failed: {e}")
-            else:
-                logging.warning("Skipping database-dependent initializations due to database unavailability")
-            
-            # Выполняем финальную проверку здоровья всех систем
-            logging.info("Performing final startup health check...")
-            try:
-                await startup_health_check()
-            except Exception as e:
-                logging.warning(f"Startup health check failed: {e}")
-                if not database_available:
-                    logging.warning("Bot will start in limited mode without full health verification")
-                else:
-                    raise e
-            
-            logging.info("Starting main application loop...")
-            await run_bot_and_server()
-        except asyncio.CancelledError:
-            logging.info("Main application loop was cancelled - this is normal during shutdown")
+            await database.init_db()
+            database_available = True
+            logging.info("Database initialized successfully")
         except Exception as e:
-            logging.critical(f"Application failed critically: {e}", exc_info=True)
-            # Добавить отправку уведомления администратору
-            await _notify_admin_of_crash(e)
-        finally:
-            logging.info("Shutting down services...")
+            logging.error(f"Database initialization failed: {e}")
+            database_available = False
+        
+        # Инициализация менеджера памяти
+        try:
+            from app.memory_manager import MemoryManager
+            memory_manager = MemoryManager()
+            logging.info("Memory manager initialized")
+        except Exception as e:
+            logging.warning(f"Memory manager initialization failed: {e}")
+        
+        # Инициализация очереди задач
+        if database_available:
             try:
-                if database_available:
-                    await stop_task_queue()
+                await start_task_queue()
+                logging.info("Task queue started")
+            except Exception as e:
+                logging.error(f"Task queue initialization failed: {e}")
+        
+        # Инициализация групповых чатов
+        try:
+            await initialize_group_chats()
+            logging.info("Group chats initialized")
+        except Exception as e:
+            logging.warning(f"Group chat initialization failed: {e}")
+        
+        # Проверка здоровья системы
+        try:
+            if database_available:
+                health_status = await startup_health_check()
+                if not health_status:
+                    logging.warning("Startup health check failed")
+        except Exception as e:
+            logging.warning(f"Startup health check failed: {e}")
+            if not database_available:
+                logging.warning("Bot will start in limited mode without full health verification")
+            else:
+                raise e
+        
+        logging.info("Starting main application loop...")
+        await run_bot_and_server()
+        
+    except asyncio.CancelledError:
+        logging.info("Main application loop was cancelled - this is normal during shutdown")
+    except Exception as e:
+        logging.critical(f"Application failed critically: {e}", exc_info=True)
+        await _notify_admin_of_crash(e)
+    finally:
+        logging.info("Shutting down services...")
+        
+        # Остановка менеджера памяти
+        if memory_manager:
+            try:
+                await memory_manager.stop()
+                logging.info("Memory manager stopped")
+            except Exception as e:
+                logging.warning(f"Error stopping memory manager: {e}")
+        
+        # Остановка очереди задач
+        if database_available:
+            try:
+                await stop_task_queue()
+                logging.info("Task queue stopped")
             except Exception as e:
                 logging.warning(f"Error stopping task queue: {e}")
-            
+        
+        # Очистка метрик
+        if database_available:
             try:
-                if database_available:
-                    await metrics_collector.cleanup()
+                await metrics_collector.cleanup()
+                logging.info("Metrics collector cleaned up")
             except Exception as e:
                 logging.warning(f"Error cleaning up metrics: {e}")
-            
-            # Закрываем пул базы данных только если он еще открыт
-            if database.db_pool and not database.db_pool._closed:
-                try:
-                    await database.db_pool.close()
-                    logging.info("Database pool closed.")
-                except Exception as e:
-                    logging.warning(f"Error closing database pool: {e}")
-            else:
-                logging.info("Database pool already closed or not initialized.")
-            
-            logging.info("Shutdown complete.")
-            
-    finally:
-        # Всегда освобождаем блокировку при завершении
-        release_lock()
-        print("Bot shutdown complete. Lock released.", flush=True)
+        
+        # Закрытие пула базы данных
+        if database.db_pool and not database.db_pool._closed:
+            try:
+                await database.db_pool.close()
+                logging.info("Database pool closed")
+            except Exception as e:
+                logging.warning(f"Error closing database pool: {e}")
+        else:
+            logging.info("Database pool already closed or not initialized")
+        
+        logging.info("Shutdown complete")
 
 async def _notify_admin_of_crash(error: Exception):
     """Уведомляет администратора о критической ошибке"""
     try:
-        # Здесь можно добавить отправку уведомления администратору
-        # Например, через Telegram API или email
         logging.critical(f"CRITICAL ERROR - Bot crashed: {error}")
         # В будущем можно добавить отправку сообщения администратору
     except Exception as e:
@@ -773,8 +752,6 @@ if __name__ == "__main__":
         error_msg = f"Unexpected error in main: {e}"
         print(error_msg, flush=True)
         logging.critical(error_msg, exc_info=True)
-        # Для Render важно логировать все критические ошибки
-        import sys
         sys.exit(1)
     finally:
         # Всегда освобождаем блокировку при завершении
