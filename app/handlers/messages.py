@@ -36,9 +36,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_photo = bool(update.message.photo)
     media_group_id = update.message.media_group_id if update.message else None
     
-    # Если это изображение с media_group_id, группируем его
+    # Если это изображение с media_group_id, проверяем, действительно ли это группа
     if is_photo and media_group_id:
-        logging.info(f"📸 Получено изображение из группы {media_group_id} от пользователя {user_id}")
+        logging.info(f"📸 Получено изображение с media_group_id {media_group_id} от пользователя {user_id}")
         
         # Инициализируем группу, если её нет
         if media_group_id not in MEDIA_GROUPS:
@@ -48,28 +48,23 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'messages': [],
                 'caption': update.message.caption,
                 'created_at': asyncio.get_event_loop().time(),
-                'placeholder_message': None
+                'placeholder_message': None,
+                'processing_scheduled': False
             }
         
         # Добавляем сообщение в группу
         MEDIA_GROUPS[media_group_id]['messages'].append(update.message)
         
-        # Если это первое сообщение группы, создаем placeholder
+        # Если это первое сообщение группы, создаем placeholder и планируем обработку
         if len(MEDIA_GROUPS[media_group_id]['messages']) == 1:
-            placeholder_message = await update.message.reply_text("🖼️ Обрабатываю группу изображений...")
+            placeholder_message = await update.message.reply_text("🖼️ Обрабатываю изображение...")
             MEDIA_GROUPS[media_group_id]['placeholder_message'] = placeholder_message
-            logging.info(f"📸 Создан placeholder для группы {media_group_id}")
-        
-        # Ждем немного, чтобы собрать все изображения группы
-        await asyncio.sleep(0.5)
-        
-        # Проверяем, все ли изображения группы получены
-        # Если прошло больше 2 секунд с создания группы, обрабатываем её
-        current_time = asyncio.get_event_loop().time()
-        group_age = current_time - MEDIA_GROUPS[media_group_id]['created_at']
-        
-        if group_age >= 2.0:  # Ждем 2 секунды для сбора всех изображений
-            await process_media_group(media_group_id, context)
+            logging.info(f"📸 Создан placeholder для media_group_id {media_group_id}")
+            
+            # Планируем обработку через 1 секунду
+            if not MEDIA_GROUPS[media_group_id]['processing_scheduled']:
+                MEDIA_GROUPS[media_group_id]['processing_scheduled'] = True
+                asyncio.create_task(delayed_process_media_group(media_group_id, context, 1.0))
         
         return  # Выходим, не обрабатывая отдельно
     
@@ -177,6 +172,56 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Запускаем обработку в фоне
     asyncio.create_task(task_wrapper())
 
+async def delayed_process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE, delay: float):
+    """Отложенная обработка группы изображений"""
+    await asyncio.sleep(delay)
+    
+    if media_group_id in MEDIA_GROUPS:
+        group_data = MEDIA_GROUPS[media_group_id]
+        message_count = len(group_data['messages'])
+        
+        logging.info(f"⏰ Отложенная обработка media_group_id {media_group_id}: {message_count} сообщений")
+        
+        # Если это действительно группа (больше 1 изображения), обрабатываем как группу
+        if message_count > 1:
+            logging.info(f"🔄 Обрабатываю группу из {message_count} изображений")
+            await process_media_group(media_group_id, context)
+        else:
+            # Если это одиночное изображение, обрабатываем через стандартный путь
+            logging.info(f"📸 Одиночное изображение, перенаправляю в стандартную обработку")
+            await process_single_image_from_group(media_group_id, context)
+
+async def process_single_image_from_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает одиночное изображение из группы"""
+    if media_group_id not in MEDIA_GROUPS:
+        return
+    
+    group_data = MEDIA_GROUPS[media_group_id]
+    message = group_data['messages'][0]
+    placeholder_message = group_data['placeholder_message']
+    
+    # Создаем мок Update для совместимости
+    mock_update = type('MockUpdate', (), {
+        'message': message,
+        'effective_user': message.from_user,
+        'effective_chat': message.chat
+    })()
+    
+    try:
+        # Обрабатываем через стандартный путь
+        from app.handlers.agent import process_long_request
+        await process_long_request(placeholder_message, mock_update, context)
+    except Exception as e:
+        logging.error(f"Error processing single image from group: {e}")
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при обработке изображения.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+    finally:
+        # Очищаем группу
+        if media_group_id in MEDIA_GROUPS:
+            del MEDIA_GROUPS[media_group_id]
+
 async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает группу изображений как единое целое"""
     if media_group_id not in MEDIA_GROUPS:
@@ -190,7 +235,14 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
     caption = group_data['caption']
     placeholder_message = group_data['placeholder_message']
     
-    logging.info(f"🔄 Обрабатываю группу изображений {media_group_id}: {len(messages)} изображений")
+    message_count = len(messages)
+    logging.info(f"🔄 Обрабатываю группу изображений {media_group_id}: {message_count} изображений")
+    
+    # Проверяем, что это действительно группа
+    if message_count <= 1:
+        logging.warning(f"Media group {media_group_id} содержит только {message_count} сообщений, перенаправляю в одиночную обработку")
+        await process_single_image_from_group(media_group_id, context)
+        return
     
     try:
         async with state.get_user_lock(user_id):
