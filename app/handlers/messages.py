@@ -14,6 +14,9 @@ from app.metrics import metrics_collector
 from app.utils.formatting import TelegramFormatter
 from app.utils.api_logger import api_logger
 
+# Глобальный словарь для хранения групп изображений
+MEDIA_GROUPS = {}
+
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает входящие сообщения"""
     # Валидация входных данных
@@ -28,6 +31,47 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not isinstance(user_id, int) or user_id <= 0:
         logging.error("Invalid user_id: %s", user_id)
         return
+    
+    # Проверяем, есть ли изображение и media_group_id
+    is_photo = bool(update.message.photo)
+    media_group_id = update.message.media_group_id if update.message else None
+    
+    # Если это изображение с media_group_id, группируем его
+    if is_photo and media_group_id:
+        logging.info(f"📸 Получено изображение из группы {media_group_id} от пользователя {user_id}")
+        
+        # Инициализируем группу, если её нет
+        if media_group_id not in MEDIA_GROUPS:
+            MEDIA_GROUPS[media_group_id] = {
+                'user_id': user_id,
+                'chat_id': chat_id,
+                'messages': [],
+                'caption': update.message.caption,
+                'created_at': asyncio.get_event_loop().time(),
+                'placeholder_message': None
+            }
+        
+        # Добавляем сообщение в группу
+        MEDIA_GROUPS[media_group_id]['messages'].append(update.message)
+        
+        # Если это первое сообщение группы, создаем placeholder
+        if len(MEDIA_GROUPS[media_group_id]['messages']) == 1:
+            placeholder_message = await update.message.reply_text("🖼️ Обрабатываю группу изображений...")
+            MEDIA_GROUPS[media_group_id]['placeholder_message'] = placeholder_message
+            logging.info(f"📸 Создан placeholder для группы {media_group_id}")
+        
+        # Ждем немного, чтобы собрать все изображения группы
+        await asyncio.sleep(0.5)
+        
+        # Проверяем, все ли изображения группы получены
+        # Если прошло больше 2 секунд с создания группы, обрабатываем её
+        current_time = asyncio.get_event_loop().time()
+        group_age = current_time - MEDIA_GROUPS[media_group_id]['created_at']
+        
+        if group_age >= 2.0:  # Ждем 2 секунды для сбора всех изображений
+            await process_media_group(media_group_id, context)
+        
+        return  # Выходим, не обрабатывая отдельно
     
     # Детальное логирование Telegram API запроса
     message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
@@ -78,11 +122,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
     
-    # Проверяем, есть ли изображение
+    # Проверяем, есть ли изображение (одиночное)
     is_photo = bool(update.message.photo)
     
     if is_photo:
-        logging.info(f"Processing photo from user {user_id}")
+        logging.info(f"Processing single photo from user {user_id}")
         placeholder_message = await update.message.reply_text("🖼️ Обрабатываю изображение...")
     else:
         logging.info(f"Processing text message from user {user_id}")
@@ -114,24 +158,65 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 
         except Exception as e:
-            logging.error(f"Error in task processing for user {user_id}: {e}", exc_info=True)
+            logging.error(f"Error in task wrapper for user {user_id}: {e}", exc_info=True)
+            try:
+                await placeholder_message.edit_text("❌ Произошла ошибка при обработке запроса.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
             
             # Логируем ошибку Telegram API
             api_logger.log_telegram_response(
                 start_time=start_time,
                 method="handle_message",
                 success=False,
-                error_message=str(e),
                 chat_id=chat_id,
-                user_id=user_id
+                user_id=user_id,
+                error=str(e)
             )
-            
-            try:
-                await placeholder_message.edit_text("❌ Произошла ошибка при обработке запроса. Попробуйте позже.")
-            except Exception as edit_error:
-                logging.error(f"Failed to edit error message for user {user_id}: {edit_error}")
     
+    # Запускаем обработку в фоне
     asyncio.create_task(task_wrapper())
+
+async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает группу изображений как единое целое"""
+    if media_group_id not in MEDIA_GROUPS:
+        logging.error(f"Media group {media_group_id} not found")
+        return
+    
+    group_data = MEDIA_GROUPS[media_group_id]
+    user_id = group_data['user_id']
+    chat_id = group_data['chat_id']
+    messages = group_data['messages']
+    caption = group_data['caption']
+    placeholder_message = group_data['placeholder_message']
+    
+    logging.info(f"🔄 Обрабатываю группу изображений {media_group_id}: {len(messages)} изображений")
+    
+    try:
+        async with state.get_user_lock(user_id):
+            # Создаем мок Update для совместимости с существующим кодом
+            mock_update = type('MockUpdate', (), {
+                'message': messages[0],  # Используем первое сообщение как основное
+                'effective_user': messages[0].from_user,
+                'effective_chat': messages[0].chat
+            })()
+            
+            # Обрабатываем группу через agent
+            from app.handlers.agent import process_media_group_request
+            await process_media_group_request(placeholder_message, mock_update, context, messages, caption)
+            
+    except Exception as e:
+        logging.error(f"Error processing media group {media_group_id}: {e}", exc_info=True)
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при обработке группы изображений.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+    
+    finally:
+        # Очищаем группу из памяти
+        if media_group_id in MEDIA_GROUPS:
+            del MEDIA_GROUPS[media_group_id]
+            logging.info(f"🧹 Очищена группа изображений {media_group_id}")
 
 async def handle_document_question(update: Update, context: ContextTypes.DEFAULT_TYPE, document_id: int):
     """Обрабатывает вопрос по конкретному документу"""

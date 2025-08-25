@@ -2,7 +2,7 @@ import logging
 import json
 import io
 from PIL import Image
-from typing import Optional
+from typing import Optional, List
 from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
@@ -287,7 +287,7 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
     """Обрабатывает вопросы по загруженным документам"""
     try:
         # Получаем последний документ пользователя
-        from ..document_processor import get_user_documents, get_document_content
+        from app.document_processor import get_user_documents, get_document_content
         
         documents = await get_user_documents(user_id)
         if not documents:
@@ -598,7 +598,7 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             return
 
         # Проверяем, есть ли у пользователя документы для вопросов
-        from ..document_processor import get_user_documents
+        from app.document_processor import get_user_documents
         user_documents = await get_user_documents(update.effective_user.id)
         
         if text.startswith('??'):
@@ -616,3 +616,187 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             await placeholder_message.edit_text(f"Произошла критическая ошибка: {e}")
         except Exception as inner_e:
             logging.error(f"Could not edit placeholder message: {inner_e}")
+
+async def process_media_group_request(placeholder_message: Message, update: Update, context: ContextTypes.DEFAULT_TYPE, messages: List[Message], caption: str):
+    """Обрабатывает группу изображений как единое целое"""
+    user_id = update.effective_user.id
+    chat_state = await db.get_user_chat(user_id)
+    
+    logging.info(f"🔄 Обрабатываю группу из {len(messages)} изображений для пользователя {user_id}")
+    
+    # Проверяем, есть ли поисковый префикс в caption
+    search_prefix = None
+    if caption:
+        if caption.startswith('??'):
+            search_prefix = '??'
+        elif caption.startswith('?'):
+            search_prefix = '?'
+    
+    # Если есть поисковый префикс, используем сложный поиск
+    if search_prefix:
+        await _handle_complex_media_group_search(placeholder_message, messages, caption, search_prefix, chat_state)
+    else:
+        # Обычная обработка группы изображений
+        await _handle_media_group_photos(placeholder_message, messages, caption, chat_state)
+
+async def _handle_media_group_photos(placeholder_message: Message, messages: List[Message], caption: str, chat_state: db.ChatState):
+    """Обрабатывает группу изображений для обычного описания"""
+    gemini_key, model_used, resolution = await _resolve_gemini_request(chat_state.model)
+    if resolution:
+        try:
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {chat_state.model} для обработки фото закончились.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+
+    try:
+        # Загружаем все изображения из группы
+        images = []
+        for i, message in enumerate(messages):
+            try:
+                photo_file = await message.photo[-1].get_file()
+                photo_data = await photo_file.download_as_bytearray()
+                img = Image.open(io.BytesIO(photo_data))
+                images.append(img)
+                logging.info(f"📸 Загружено изображение {i+1}/{len(messages)}")
+            except Exception as e:
+                logging.error(f"Error loading image {i+1}: {e}")
+                continue
+        
+        if not images:
+            await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения из группы.")
+            return
+        
+        # Формируем промпт для группы изображений
+        prompt = caption or f"Опиши эти {len(images)} изображения."
+        
+        # Добавляем инструкции по форматированию
+        formatted_prompt = f"""{prompt}
+
+**ВАЖНО:** Используй правильное форматирование для Telegram:
+- Для жирного текста: `*жирный текст*` (НЕ `**жирный текст**`)
+- Для курсива: `_курсив_` (НЕ `__курсив__`)
+- Для кода: `` `код` ``
+- НИКОГДА не используй HTML теги или LaTeX математические выражения (`$...$`)
+- Для математики используй обычный текст: `2 × 3 = 6`, `√2`, `1/2`
+
+**ИНСТРУКЦИИ ДЛЯ АНАЛИЗА ГРУППЫ ИЗОБРАЖЕНИЙ:**
+- Проанализируй каждое изображение отдельно
+- Опиши связи и отношения между изображениями
+- Выдели общие темы или контекст
+- Если изображения связаны, объясни их взаимосвязь
+- Пронумеруй изображения в описании для ясности"""
+        
+        # Создаем parts для Gemini API: текст + все изображения
+        parts = [formatted_prompt] + images
+        
+        # Получаем user_id и chat_id для логирования
+        user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
+        chat_id = placeholder_message.chat.id if placeholder_message.chat else None
+        
+        response_text, _ = await services.get_gemini_response(
+            gemini_key['api_key'], 
+            [{'role': 'user', 'parts': parts}], 
+            model_used,
+            user_id=user_id,
+            chat_id=chat_id
+        )
+        
+        await send_long_message(placeholder_message, response_text or "Не удалось обработать группу изображений.")
+        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        
+        logging.info(f"✅ Группа из {len(images)} изображений обработана успешно")
+        
+    except Exception as e:
+        logging.error(f"Error processing media group photos: {e}")
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при обработке группы изображений.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+
+async def _handle_complex_media_group_search(placeholder_message: Message, messages: List[Message], caption: str, search_prefix: str, chat_state: db.ChatState):
+    """Обрабатывает группу изображений для сложного поиска"""
+    user_id = placeholder_message.from_user.id
+    
+    try:
+        await placeholder_message.edit_text("🖼️ Анализирую группу изображений...")
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        placeholder_message = await placeholder_message.reply_text("🖼️ Анализирую группу изображений...")
+    
+    vision_model = settings.RESEARCH_MODEL
+    gemini_key, _, resolution = await _resolve_gemini_request(vision_model)
+    if resolution:
+        try:
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {vision_model} (анализ фото) закончились.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+
+    try:
+        # Загружаем все изображения из группы
+        images = []
+        for i, message in enumerate(messages):
+            try:
+                photo_file = await message.photo[-1].get_file()
+                photo_data = await photo_file.download_as_bytearray()
+                img = Image.open(io.BytesIO(photo_data))
+                images.append(img)
+                logging.info(f"📸 Загружено изображение {i+1}/{len(messages)} для анализа")
+            except Exception as e:
+                logging.error(f"Error loading image {i+1}: {e}")
+                continue
+        
+        if not images:
+            await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения для анализа.")
+            return
+        
+        # Анализируем группу изображений для поиска
+        analysis_prompt = f"""{prompts.IMAGE_ANALYSIS_PROMPT}
+
+**ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ДЛЯ ГРУППЫ ИЗОБРАЖЕНИЙ:**
+- Проанализируй все изображения как единый контекст
+- Выдели общие темы, объекты или концепции
+- Учти взаимосвязи между изображениями
+- Создай поисковый запрос, который охватывает весь контекст группы
+- Если изображения показывают последовательность или процесс, отрази это в запросе"""
+        
+        # Создаем parts для анализа: промпт + все изображения
+        parts = [analysis_prompt] + images
+        
+        # Получаем user_id и chat_id для логирования
+        user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
+        chat_id = placeholder_message.chat.id if placeholder_message.chat else None
+        
+        search_query, _ = await services.get_gemini_response(
+            gemini_key['api_key'], 
+            [{'role': 'user', 'parts': parts}], 
+            vision_model,
+            user_id=user_id,
+            chat_id=chat_id
+        )
+        await db.increment_gemini_key_usage(gemini_key['key_hash'], vision_model)
+
+        if not search_query:
+            try:
+                await placeholder_message.edit_text("Не удалось проанализировать группу изображений для поиска.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+            return
+
+        # Получаем оригинальное сообщение пользователя для локализации
+        original_user_message = caption or f"Опиши эти {len(images)} изображения."
+        
+        if search_prefix == '?':
+            await _handle_qna_search(placeholder_message, original_user_message, chat_state, search_query)
+        else:
+            await _handle_research_agent(placeholder_message, user_id, original_user_message, chat_state, search_query=search_query)
+        
+        logging.info(f"✅ Группа из {len(images)} изображений проанализирована для поиска")
+        
+    except Exception as e:
+        logging.error(f"Error processing complex media group search: {e}")
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при анализе группы изображений.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
