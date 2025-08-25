@@ -456,30 +456,6 @@ flake8 app/
 - **Discussions**: GitHub Discussions для вопросов
 - **Email**: [ваш-email@domain.com]
 
-## 🚀 Миграция на Northflank.com
-
-### Быстрый старт
-```bash
-# Автоматическая подготовка
-python migrate_to_northflank.py
-
-# Деплой
-./deploy_to_northflank.sh
-```
-
-### Документация
-- 📖 `NORTHFLANK_MIGRATION.md` - подробная инструкция
-- ⚡ `NORTHFLANK_QUICKSTART.md` - экспресс-руководство
-- 🔧 `northflank.yaml` - конфигурация
-
-### Основные изменения
-- ❌ Убраны keep-alive механизмы Render.com
-- ✅ Оптимизированы health checks
-- ✅ Упрощена конфигурация
-- ✅ Улучшена производительность
-
----
-
 ## 🔄 Обновления
 
 ### Версия 2.0 (Текущая)
@@ -489,7 +465,6 @@ python migrate_to_northflank.py
 - ✅ Групповые чаты
 - ✅ Кэширование и оптимизация
 - ✅ Расширенная аналитика
-- 🚀 Миграция на Northflank.com
 
 ### Планы развития
 - 🔄 Интеграция с другими AI моделями
