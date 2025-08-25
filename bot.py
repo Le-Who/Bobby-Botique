@@ -125,6 +125,86 @@ def health_check_endpoint():
             "timestamp": str(datetime.datetime.now())
         }, 500
 
+@flask_app.route('/keys')
+def keys_status():
+    """Endpoint для просмотра статуса ключей Gemini API"""
+    try:
+        import asyncio
+        from app import database
+        
+        # Создаем новый event loop для асинхронных операций
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Получаем статистику ключей
+            key_stats = loop.run_until_complete(database.get_gemini_key_usage_stats())
+            
+            # Получаем информацию об активных ключах
+            active_keys = {}
+            for model in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]:
+                active_info = loop.run_until_complete(database.get_active_key_info(model))
+                if active_info:
+                    active_keys[model] = active_info
+            
+            keys_status = {
+                "timestamp": str(datetime.datetime.now()),
+                "active_keys": active_keys,
+                "key_usage_stats": key_stats,
+                "cache_info": {
+                    "cache_ttl_seconds": 300,
+                    "models_cached": list(active_keys.keys())
+                }
+            }
+            
+            return keys_status, 200
+            
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        return {
+            "error": f"Failed to get keys status: {str(e)}",
+            "timestamp": str(datetime.datetime.now())
+        }, 500
+
+@flask_app.route('/keys/<model_name>')
+def model_keys_status(model_name):
+    """Endpoint для просмотра статуса ключей конкретной модели"""
+    try:
+        import asyncio
+        from app import database
+        
+        # Создаем новый event loop для асинхронных операций
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            # Получаем статистику ключей для конкретной модели
+            key_stats = loop.run_until_complete(database.get_gemini_key_usage_stats(model_name))
+            
+            # Получаем информацию об активном ключе
+            active_info = loop.run_until_complete(database.get_active_key_info(model_name))
+            
+            model_status = {
+                "model": model_name,
+                "timestamp": str(datetime.datetime.now()),
+                "active_key": active_info,
+                "all_keys": key_stats,
+                "daily_limit": settings.DAILY_LIMITS.get(model_name, "unlimited")
+            }
+            
+            return model_status, 200
+            
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        return {
+            "error": f"Failed to get model keys status: {str(e)}",
+            "timestamp": str(datetime.datetime.now())
+        }, 500
+
 # Глобальная переменная для управления завершением
 shutdown_event = asyncio.Event()
 

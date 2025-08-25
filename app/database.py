@@ -16,6 +16,12 @@ from app.utils.time import get_pacific_tz
 
 db_pool: Optional[Pool] = None
 
+# Кэш активных ключей для каждой модели
+_active_keys_cache: Dict[str, Dict[str, Any]] = {}
+_cache_lock = asyncio.Lock()
+_cache_last_updated: Dict[str, float] = {}
+_cache_ttl = 300  # 5 минут TTL для кэша
+
 @dataclass
 class ChatState:
     history: List[Dict[str, Any]]
@@ -331,18 +337,88 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
     await db_query(user_query, (chat_state.is_deep_dive, user_id))
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает доступный ключ Gemini API для модели.
+    Использует кэширование для оптимизации и стратегию "один ключ до исчерпания лимита".
+    
+    Args:
+        model_name: Название модели (gemini-2.5-flash, gemini-2.5-pro, etc.)
+        
+    Returns:
+        Dict с key_hash и api_key или None если все ключи исчерпаны
+    """
     # Валидация входных параметров
     if not isinstance(model_name, str) or not model_name.strip():
         raise ValueError("model_name must be a non-empty string")
     
+    async with _cache_lock:
+        # Проверяем кэш
+        current_time = time.time()
+        if (model_name in _active_keys_cache and 
+            model_name in _cache_last_updated and
+            current_time - _cache_last_updated[model_name] < _cache_ttl):
+            
+            cached_key = _active_keys_cache[model_name]
+            # Проверяем, не исчерпан ли кэшированный ключ
+            if await _is_key_available(cached_key['key_hash'], model_name):
+                return cached_key
+        
+        # Если кэш устарел или ключ исчерпан, получаем новый
+        new_key = await _get_fresh_available_key(model_name)
+        if new_key:
+            _active_keys_cache[model_name] = new_key
+            _cache_last_updated[model_name] = current_time
+        
+        return new_key
+
+async def _is_key_available(key_hash: str, model_name: str) -> bool:
+    """
+    Проверяет, доступен ли ключ для использования.
+    
+    Args:
+        key_hash: Хэш ключа
+        model_name: Название модели
+        
+    Returns:
+        True если ключ доступен, False если исчерпан
+    """
     today_pacific: date = datetime.now(get_pacific_tz()).date()
     daily_limit = settings.DAILY_LIMITS.get(model_name)
     
     if not daily_limit:
+        return True
+    
+    query = """
+        SELECT COALESCE(request_count, 0) as request_count
+        FROM key_usage 
+        WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3
+    """
+    
+    result = await db_query(query, (key_hash, model_name, today_pacific))
+    current_usage = result[0]['request_count'] if result else 0
+    threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
+    
+    return current_usage < threshold
+
+async def _get_fresh_available_key(model_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает свежий доступный ключ из базы данных.
+    
+    Args:
+        model_name: Название модели
+        
+    Returns:
+        Dict с key_hash и api_key или None если все ключи исчерпаны
+    """
+    today_pacific: date = datetime.now(get_pacific_tz()).date()
+    daily_limit = settings.DAILY_LIMITS.get(model_name)
+    
+    if not daily_limit:
+        # Если нет лимита для модели, берем первый доступный ключ
         keys = await db_query("SELECT * FROM api_keys LIMIT 1")
         return keys[0] if keys else None
     
-    # Оптимизированный запрос: получаем все данные одним запросом
+    # Получаем все ключи с их текущим использованием для данной модели
     query = """
         SELECT ak.key_hash, ak.api_key, COALESCE(ku.request_count, 0) as request_count
         FROM api_keys ak
@@ -352,6 +428,11 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     """
     
     results = await db_query(query, (model_name, today_pacific))
+    
+    if not results:
+        return None
+    
+    # Ищем ключ, который еще не достиг лимита
     threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
     
     for row in results:
@@ -361,16 +442,146 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
                 'api_key': row['api_key']
             }
     
+    # Если все ключи достигли лимита, возвращаем None
     return None
 
-async def increment_gemini_key_usage(key_hash: str, model_name: str):
+async def invalidate_key_cache(model_name: str = None):
+    """
+    Инвалидирует кэш ключей.
+    
+    Args:
+        model_name: Название модели для инвалидации (None для всех моделей)
+    """
+    async with _cache_lock:
+        if model_name:
+            if model_name in _active_keys_cache:
+                del _active_keys_cache[model_name]
+            if model_name in _cache_last_updated:
+                del _cache_last_updated[model_name]
+        else:
+            _active_keys_cache.clear()
+            _cache_last_updated.clear()
+
+async def get_current_active_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает текущий активный ключ для модели.
+    Если нет активного ключа, выбирает новый с наименьшим использованием.
+    
+    Args:
+        model_name: Название модели
+        
+    Returns:
+        Dict с key_hash и api_key или None если все ключи исчерпаны
+    """
     today_pacific: date = datetime.now(get_pacific_tz()).date()
+    daily_limit = settings.DAILY_LIMITS.get(model_name)
+    
+    if not daily_limit:
+        keys = await db_query("SELECT * FROM api_keys LIMIT 1")
+        return keys[0] if keys else None
+    
+    # Сначала проверяем, есть ли уже активный ключ для этой модели
+    active_key_query = """
+        SELECT ak.key_hash, ak.api_key, COALESCE(ku.request_count, 0) as request_count
+        FROM api_keys ak
+        LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash 
+            AND ku.model_name = $1 AND ku.usage_date = $2
+        WHERE COALESCE(ku.request_count, 0) < $3
+        ORDER BY COALESCE(ku.request_count, 0) ASC
+        LIMIT 1
+    """
+    
+    threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
+    results = await db_query(active_key_query, (model_name, today_pacific, threshold))
+    
+    if results:
+        return {
+            'key_hash': results[0]['key_hash'],
+            'api_key': results[0]['api_key']
+        }
+    
+    return None
+
+async def get_next_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает следующий доступный ключ для модели.
+    Используется когда текущий ключ исчерпан.
+    
+    Args:
+        model_name: Название модели
+        
+    Returns:
+        Dict с key_hash и api_key или None если все ключи исчерпаны
+    """
+    today_pacific: date = datetime.now(get_pacific_tz()).date()
+    daily_limit = settings.DAILY_LIMITS.get(model_name)
+    
+    if not daily_limit:
+        keys = await db_query("SELECT * FROM api_keys LIMIT 1")
+        return keys[0] if keys else None
+    
+    # Получаем ключ с наименьшим использованием
     query = """
-                INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, 1)
-    ON CONFLICT (key_hash, model_name, usage_date)
-    DO UPDATE SET request_count = key_usage.request_count + 1;
+        SELECT ak.key_hash, ak.api_key, COALESCE(ku.request_count, 0) as request_count
+        FROM api_keys ak
+        LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash 
+            AND ku.model_name = $1 AND ku.usage_date = $2
+        ORDER BY COALESCE(ku.request_count, 0) ASC
+        LIMIT 1
+    """
+    
+    results = await db_query(query, (model_name, today_pacific))
+    
+    if not results:
+        return None
+    
+    row = results[0]
+    threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
+    
+    # Проверяем, не достиг ли ключ лимита
+    if row['request_count'] >= threshold:
+        return None
+    
+    return {
+        'key_hash': row['key_hash'],
+        'api_key': row['api_key']
+    }
+
+async def increment_gemini_key_usage(key_hash: str, model_name: str):
+    """
+    Инкрементирует счетчик использования ключа и инвалидирует кэш при необходимости.
+    
+    Args:
+        key_hash: Хэш ключа
+        model_name: Название модели
+    """
+    today_pacific: date = datetime.now(get_pacific_tz()).date()
+    
+    # Инкрементируем использование
+    query = """
+        INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, 1)
+        ON CONFLICT (key_hash, model_name, usage_date)
+        DO UPDATE SET request_count = key_usage.request_count + 1;
     """
     await db_query(query, (key_hash, model_name, today_pacific))
+    
+    # Проверяем, не достиг ли ключ лимита
+    daily_limit = settings.DAILY_LIMITS.get(model_name)
+    if daily_limit:
+        threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
+        
+        # Получаем текущее использование
+        usage_query = """
+            SELECT request_count FROM key_usage 
+            WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3
+        """
+        result = await db_query(usage_query, (key_hash, model_name, today_pacific))
+        current_usage = result[0]['request_count'] if result else 0
+        
+        # Если достигли лимита, инвалидируем кэш для этой модели
+        if current_usage >= threshold:
+            await invalidate_key_cache(model_name)
+            logging.info(f"Key {key_hash[:8]}... reached limit for model {model_name}. Cache invalidated.")
 
 async def get_available_tavily_key():
     current_month = datetime.now(pytz.utc).strftime('%Y-%m')
@@ -529,6 +740,98 @@ async def check_supabase_limits():
     except Exception as e:
         logging.warning(f"Failed to check Supabase limits: {e}")
         return {"error": str(e)}
+
+async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, Any]]:
+    """
+    Получает статистику использования ключей Gemini API.
+    
+    Args:
+        model_name: Название модели (None для всех моделей)
+        
+    Returns:
+        Список словарей с информацией об использовании ключей
+    """
+    today_pacific: date = datetime.now(get_pacific_tz()).date()
+    
+    if model_name:
+        # Статистика для конкретной модели
+        query = """
+            SELECT 
+                ak.key_hash,
+                LEFT(ak.api_key, 10) || '...' as api_key_preview,
+                COALESCE(ku.request_count, 0) as request_count,
+                $2 as daily_limit,
+                CASE 
+                    WHEN $2 IS NULL THEN 0
+                    ELSE (COALESCE(ku.request_count, 0)::float / $2 * 100)
+                END as usage_percent,
+                CASE 
+                    WHEN $2 IS NULL THEN true
+                    ELSE COALESCE(ku.request_count, 0) < ($2 * $3)
+                END as is_available
+            FROM api_keys ak
+            LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash 
+                AND ku.model_name = $1 AND ku.usage_date = $4
+            ORDER BY COALESCE(ku.request_count, 0) ASC
+        """
+        results = await db_query(query, (model_name, settings.DAILY_LIMITS.get(model_name), settings.LIMIT_THRESHOLD_PERCENT, today_pacific))
+    else:
+        # Статистика для всех моделей
+        query = """
+            SELECT 
+                ak.key_hash,
+                LEFT(ak.api_key, 10) || '...' as api_key_preview,
+                ku.model_name,
+                COALESCE(ku.request_count, 0) as request_count,
+                CASE 
+                    WHEN ku.model_name = 'gemini-2.5-flash' THEN 250
+                    WHEN ku.model_name = 'gemini-2.5-pro' THEN 100
+                    WHEN ku.model_name = 'gemini-2.5-flash-lite' THEN 1000
+                    ELSE NULL
+                END as daily_limit,
+                CASE 
+                    WHEN ku.model_name = 'gemini-2.5-flash' THEN (COALESCE(ku.request_count, 0)::float / 250 * 100)
+                    WHEN ku.model_name = 'gemini-2.5-pro' THEN (COALESCE(ku.request_count, 0)::float / 100 * 100)
+                    WHEN ku.model_name = 'gemini-2.5-flash-lite' THEN (COALESCE(ku.request_count, 0)::float / 1000 * 100)
+                    ELSE 0
+                END as usage_percent,
+                CASE 
+                    WHEN ku.model_name = 'gemini-2.5-flash' THEN COALESCE(ku.request_count, 0) < (250 * $1)
+                    WHEN ku.model_name = 'gemini-2.5-pro' THEN COALESCE(ku.request_count, 0) < (100 * $1)
+                    WHEN ku.model_name = 'gemini-2.5-flash-lite' THEN COALESCE(ku.request_count, 0) < (1000 * $1)
+                    ELSE true
+                END as is_available
+            FROM api_keys ak
+            LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash AND ku.usage_date = $2
+            ORDER BY ku.model_name, COALESCE(ku.request_count, 0) ASC
+        """
+        results = await db_query(query, (settings.LIMIT_THRESHOLD_PERCENT, today_pacific))
+    
+    return results
+
+async def get_active_key_info(model_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает информацию о текущем активном ключе для модели.
+    
+    Args:
+        model_name: Название модели
+        
+    Returns:
+        Информация об активном ключе или None
+    """
+    async with _cache_lock:
+        if model_name in _active_keys_cache:
+            cached_key = _active_keys_cache[model_name]
+            is_available = await _is_key_available(cached_key['key_hash'], model_name)
+            
+            return {
+                'key_hash': cached_key['key_hash'],
+                'api_key_preview': cached_key['api_key'][:10] + '...',
+                'is_available': is_available,
+                'cached_at': _cache_last_updated.get(model_name, 0)
+            }
+    
+    return None
 
 def is_admin(user_id: int) -> bool:
     return user_id == settings.ADMIN_ID
