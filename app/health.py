@@ -148,15 +148,16 @@ class HealthChecker:
             else:
                 # Test connection with timeout using asyncio.to_thread
                 try:
+                    # Проверяем соединение с retry
                     await asyncio.wait_for(
                         asyncio.to_thread(redis_client.ping),
-                        timeout=5.0
+                        timeout=3.0  # Уменьшенный timeout для быстрой проверки
                     )
                     
                     # Get Redis info with timeout
                     info = await asyncio.wait_for(
                         asyncio.to_thread(redis_client.info),
-                        timeout=5.0
+                        timeout=3.0
                     )
                     details['version'] = info.get('redis_version', 'N/A')
                     details['uptime_days'] = info.get('uptime_in_days', 'N/A')
@@ -167,6 +168,19 @@ class HealthChecker:
                     status = "degraded"
                     error_message = "Redis connection timeout"
                     details['note'] = "Redis is responding slowly"
+                    details['warning'] = "Consider checking Upstash connection limits"
+                    
+                except ConnectionError as e:
+                    status = "degraded"
+                    error_message = f"Redis connection error: {str(e)}"
+                    details['note'] = "Redis connection lost, will retry on next operation"
+                    details['warning'] = "Upstash may have closed the connection"
+                    
+                except Exception as e:
+                    status = "degraded"
+                    error_message = f"Redis operation error: {str(e)}"
+                    details['note'] = "Redis is experiencing issues"
+                    details['warning'] = "Check Upstash dashboard for service status"
                     
         except Exception as e:
             # Redis недоступен, но это не критично
