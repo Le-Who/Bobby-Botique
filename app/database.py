@@ -346,64 +346,112 @@ async def create_rls_policies(table_name: str):
     try:
         if table_name == 'users':
             # Пользователи могут читать только свои данные
-            await db_query("""
-                CREATE POLICY IF NOT EXISTS users_select_policy ON users
-                FOR SELECT USING (user_id = current_setting('app.user_id', true)::bigint OR 
-                                current_setting('app.is_admin', true)::boolean = true);
-            """)
+            try:
+                await db_query("""
+                    CREATE POLICY users_select_policy ON users
+                    FOR SELECT USING (user_id = current_setting('app.user_id', true)::bigint OR 
+                                    current_setting('app.is_admin', true)::boolean = true);
+                """)
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logging.info(f"Policy users_select_policy already exists for table {table_name}")
+                else:
+                    raise e
             
             # Только админы могут изменять данные пользователей
-            await db_query("""
-                CREATE POLICY IF NOT EXISTS users_modify_policy ON users
-                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
-            """)
+            try:
+                await db_query("""
+                    CREATE POLICY users_modify_policy ON users
+                    FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
+                """)
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logging.info(f"Policy users_modify_policy already exists for table {table_name}")
+                else:
+                    raise e
             
         elif table_name == 'chats':
             # Пользователи могут читать/изменять только свои чаты
-            await db_query("""
-                CREATE POLICY IF NOT EXISTS chats_policy ON chats
-                FOR ALL USING (user_id = current_setting('app.user_id', true)::bigint OR 
-                             current_setting('app.is_admin', true)::boolean = true);
-            """)
+            try:
+                await db_query("""
+                    CREATE POLICY chats_policy ON chats
+                    FOR ALL USING (user_id = current_setting('app.user_id', true)::bigint OR 
+                                 current_setting('app.is_admin', true)::boolean = true);
+                """)
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logging.info(f"Policy chats_policy already exists for table {table_name}")
+                else:
+                    raise e
             
         elif table_name == 'user_documents':
             # Пользователи могут читать/изменять только свои документы
-            await db_query("""
-                CREATE POLICY IF NOT EXISTS user_documents_policy ON user_documents
-                FOR ALL USING (user_id = current_setting('app.user_id', true)::bigint OR 
-                             current_setting('app.is_admin', true)::boolean = true);
-            """)
+            try:
+                await db_query("""
+                    CREATE POLICY user_documents_policy ON user_documents
+                    FOR ALL USING (user_id = current_setting('app.user_id', true)::bigint OR 
+                                 current_setting('app.is_admin', true)::boolean = true);
+                """)
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logging.info(f"Policy user_documents_policy already exists for table {table_name}")
+                else:
+                    raise e
             
         elif table_name in ['api_keys', 'tavily_api_keys']:
             # Только админы могут работать с API ключами
-            await db_query(f"""
-                CREATE POLICY IF NOT EXISTS {table_name}_policy ON {table_name}
-                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
-            """)
+            try:
+                await db_query(f"""
+                    CREATE POLICY {table_name}_policy ON {table_name}
+                    FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
+                """)
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logging.info(f"Policy {table_name}_policy already exists for table {table_name}")
+                else:
+                    raise e
             
         elif table_name in ['key_usage', 'tavily_key_usage']:
             # Только админы могут читать статистику использования
-            await db_query(f"""
-                CREATE POLICY IF NOT EXISTS {table_name}_policy ON {table_name}
-                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
-            """)
+            try:
+                await db_query(f"""
+                    CREATE POLICY {table_name}_policy ON {table_name}
+                    FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
+                """)
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logging.info(f"Policy {table_name}_policy already exists for table {table_name}")
+                else:
+                    raise e
             
         elif table_name in ['group_chats', 'group_members', 'group_messages']:
             # Пользователи могут работать только с группами, где они участники
-            await db_query(f"""
-                CREATE POLICY IF NOT EXISTS {table_name}_policy ON {table_name}
-                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true OR
-                             EXISTS (SELECT 1 FROM group_members gm 
-                                    WHERE gm.chat_id = {table_name}.chat_id 
-                                    AND gm.user_id = current_setting('app.user_id', true)::bigint));
-            """)
+            try:
+                await db_query(f"""
+                    CREATE POLICY {table_name}_policy ON {table_name}
+                    FOR ALL USING (current_setting('app.is_admin', true)::boolean = true OR
+                                 EXISTS (SELECT 1 FROM group_members gm 
+                                        WHERE gm.chat_id = {table_name}.chat_id 
+                                        AND gm.user_id = current_setting('app.user_id', true)::bigint));
+                """)
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logging.info(f"Policy {table_name}_policy already exists for table {table_name}")
+                else:
+                    raise e
             
         elif table_name in ['metrics', 'error_logs']:
             # Только админы могут читать метрики и логи
-            await db_query(f"""
-                CREATE POLICY IF NOT EXISTS {table_name}_policy ON {table_name}
-                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
-            """)
+            try:
+                await db_query(f"""
+                    CREATE POLICY {table_name}_policy ON {table_name}
+                    FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
+                """)
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logging.info(f"Policy {table_name}_policy already exists for table {table_name}")
+                else:
+                    raise e
             
         logging.info(f"RLS policies created for table: {table_name}")
         
@@ -415,6 +463,7 @@ async def set_user_context(user_id: int, is_admin: bool = False):
     try:
         await db_query("SELECT set_config('app.user_id', $1, false)", (str(user_id),))
         await db_query("SELECT set_config('app.is_admin', $1, false)", (str(is_admin).lower(),))
+        logging.debug(f"User context set: user_id={user_id}, is_admin={is_admin}")
     except Exception as e:
         logging.warning(f"Failed to set user context: {e}")
 
