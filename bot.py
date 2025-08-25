@@ -683,6 +683,7 @@ async def startup_health_check():
         logging.warning("Bot will run without metrics collection")
     
     logging.info("✓ Core systems healthy - bot ready to start")
+    return True  # Возвращаем True для успешной проверки
 
 async def main():
     """Main application entry point with improved error handling."""
@@ -732,15 +733,14 @@ async def main():
         # Проверка здоровья системы
         try:
             if database_available:
-                health_status = await startup_health_check()
-                if not health_status:
-                    logging.warning("Startup health check failed")
+                await startup_health_check()
+                logging.info("✓ Startup health check completed successfully")
         except Exception as e:
             logging.warning(f"Startup health check failed: {e}")
             if not database_available:
                 logging.warning("Bot will start in limited mode without full health verification")
             else:
-                raise e
+                logging.warning("Bot will continue despite health check failure")
         
         logging.info("Starting main application loop...")
         await run_bot_and_server()

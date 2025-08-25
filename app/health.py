@@ -146,16 +146,28 @@ class HealthChecker:
                 error_message = "Redis client not configured (caching disabled)"
                 details['note'] = "Redis is optional for this application"
             else:
-                # Test connection with timeout
-                redis_client.ping()
-                
-                # Get Redis info
-                info = redis_client.info()
-                details['version'] = info.get('redis_version', 'N/A')
-                details['uptime_days'] = info.get('uptime_in_days', 'N/A')
-                details['used_memory'] = info.get('used_memory_human', 'N/A')
-                details['connected_clients'] = info.get('connected_clients', 'N/A')
-                
+                # Test connection with timeout using asyncio.to_thread
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(redis_client.ping),
+                        timeout=5.0
+                    )
+                    
+                    # Get Redis info with timeout
+                    info = await asyncio.wait_for(
+                        asyncio.to_thread(redis_client.info),
+                        timeout=5.0
+                    )
+                    details['version'] = info.get('redis_version', 'N/A')
+                    details['uptime_days'] = info.get('uptime_in_days', 'N/A')
+                    details['used_memory'] = info.get('used_memory_human', 'N/A')
+                    details['connected_clients'] = info.get('connected_clients', 'N/A')
+                    
+                except asyncio.TimeoutError:
+                    status = "degraded"
+                    error_message = "Redis connection timeout"
+                    details['note'] = "Redis is responding slowly"
+                    
         except Exception as e:
             # Redis недоступен, но это не критично
             status = "degraded"

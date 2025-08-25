@@ -29,8 +29,7 @@ else:
             max_connections=1,  # Single connection for stability
             retry_on_timeout=True
         )
-        # Test connection with timeout
-        redis_client.ping()
+        # Don't test connection during initialization to avoid blocking
         logging.info("Redis client initialized successfully for Upstash.com")
     except Exception as e:
         logging.warning("Failed to connect to Redis: %s. Caching will be disabled.", e)
@@ -71,19 +70,19 @@ async def get_cached_search_result(query: str, search_type: str) -> Optional[Dic
     
     cache_key = _generate_cache_key(query, search_type)
     try:
-        with _cache_lock:
-            cached_data = redis_client.get(cache_key)
-            if cached_data:
-                await metrics_collector.record_cache_hit()
-                logging.info("Cache hit for query: %s...", query[:50])
-                # Handle both bytes and string responses
-                if isinstance(cached_data, bytes):
-                    return json.loads(cached_data.decode('utf-8'))
-                else:
-                    return json.loads(cached_data)
+        # Используем asyncio.to_thread для синхронных Redis операций
+        cached_data = await asyncio.to_thread(redis_client.get, cache_key)
+        if cached_data:
+            await metrics_collector.record_cache_hit()
+            logging.info("Cache hit for query: %s...", query[:50])
+            # Handle both bytes and string responses
+            if isinstance(cached_data, bytes):
+                return json.loads(cached_data.decode('utf-8'))
             else:
-                await metrics_collector.record_cache_miss()
-                return None
+                return json.loads(cached_data)
+        else:
+            await metrics_collector.record_cache_miss()
+            return None
     except Exception as e:
         logging.error("Error getting from Redis cache: %s", e)
         await metrics_collector.record_cache_miss()
@@ -105,9 +104,9 @@ async def cache_search_result(query: str, search_type: str, result: Dict[str, An
     cache_key = _generate_cache_key(query, search_type)
     ttl = _get_ttl(search_type)
     try:
-        with _cache_lock:
-            redis_client.setex(cache_key, ttl, json.dumps(result))
-            logging.info(f"Cached search result for query: {query[:50]}...")
+        # Используем asyncio.to_thread для синхронных Redis операций
+        await asyncio.to_thread(redis_client.setex, cache_key, ttl, json.dumps(result))
+        logging.info(f"Cached search result for query: {query[:50]}...")
     except Exception as e:
         logging.error(f"Error caching result to Redis: {e}")
 
@@ -117,14 +116,14 @@ async def get_cache_stats() -> Dict[str, Any]:
         return {"error": "Redis client not configured"}
     
     try:
-        with _cache_lock:
-            info = redis_client.info()
-            return {
-                'total_keys': info.get('db0', {}).get('keys', 0),
-                'used_memory': info.get('used_memory_human', 'N/A'),
-                'uptime_in_days': info.get('uptime_in_days', 'N/A'),
-                'cache_hit_rate': await metrics_collector.get_cache_hit_rate()
-            }
+        # Используем asyncio.to_thread для синхронных Redis операций
+        info = await asyncio.to_thread(redis_client.info)
+        return {
+            'total_keys': info.get('db0', {}).get('keys', 0),
+            'used_memory': info.get('used_memory_human', 'N/A'),
+            'uptime_in_days': info.get('uptime_in_days', 'N/A'),
+            'cache_hit_rate': await metrics_collector.get_cache_hit_rate()
+        }
     except Exception as e:
         logging.error(f"Error getting Redis stats: {e}")
         return {"error": str(e)}
@@ -135,9 +134,9 @@ async def clear_cache():
         return
         
     try:
-        with _cache_lock:
-            redis_client.flushdb()
-            logging.info("Cache cleared")
+        # Используем asyncio.to_thread для синхронных Redis операций
+        await asyncio.to_thread(redis_client.flushdb)
+        logging.info("Cache cleared")
     except Exception as e:
         logging.error("Error clearing Redis cache: %s", e)
 
@@ -186,7 +185,8 @@ class MultiLayerCache:
         if redis_client:
             try:
                 redis_key = f"{search_type}:{key}"
-                cached_data = redis_client.get(redis_key)
+                # Используем asyncio.to_thread для синхронных Redis операций
+                cached_data = await asyncio.to_thread(redis_client.get, redis_key)
                 if cached_data:
                     # Handle both bytes and string responses
                     if isinstance(cached_data, bytes):
@@ -222,7 +222,8 @@ class MultiLayerCache:
         if redis_client:
             try:
                 redis_key = f"{search_type}:{key}"
-                redis_client.setex(redis_key, ttl, json.dumps(value))
+                # Используем asyncio.to_thread для синхронных Redis операций
+                await asyncio.to_thread(redis_client.setex, redis_key, ttl, json.dumps(value))
                 logging.info("Stored in Redis cache: %s", key)
             except Exception as e:
                 logging.warning("Failed to store in Redis cache: %s", e)

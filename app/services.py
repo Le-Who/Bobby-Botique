@@ -166,7 +166,8 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
 
         # Выполняем запрос с timeout
         response = await asyncio.wait_for(
-            client.models.generate_content(
+            asyncio.to_thread(
+                client.models.generate_content,
                 model=model_name,
                 contents=contents,
                 config=config
@@ -176,7 +177,8 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         
         # Подсчет токенов с timeout
         token_count_response = await asyncio.wait_for(
-            client.models.count_tokens(
+            asyncio.to_thread(
+                client.models.count_tokens,
                 model=model_name,
                 contents=contents
             ),
