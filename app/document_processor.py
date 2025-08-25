@@ -374,22 +374,29 @@ class DocumentProcessor:
     async def get_user_documents(self, user_id: int) -> List[Dict[str, Any]]:
         """Получает список документов пользователя"""
         try:
-            result = await database.db_query(
-                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = $1 ORDER BY created_at DESC",
-                (user_id,)
-            )
+            # Устанавливаем контекст пользователя для RLS
+            await database.set_user_context(user_id, database.is_admin(user_id))
             
-            return [
-                {
-                    'id': row['id'],
-                    'filename': row['filename'],
-                    'pages': row['pages'],
-                    'created_at': row['created_at'].isoformat() if row['created_at'] else None,
-                    'file_size': row['file_size'],
-                    'file_hash': row['file_hash']
-                }
-                for row in result
-            ]
+            try:
+                result = await database.db_query(
+                    "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = $1 ORDER BY created_at DESC",
+                    (user_id,)
+                )
+                
+                return [
+                    {
+                        'id': row['id'],
+                        'filename': row['filename'],
+                        'pages': row['pages'],
+                        'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                        'file_size': row['file_size'],
+                        'file_hash': row['file_hash']
+                    }
+                    for row in result
+                ]
+            finally:
+                # Очищаем контекст пользователя
+                await database.clear_user_context()
             
         except Exception as e:
             logging.error(f"Error getting user documents: {e}")
@@ -398,14 +405,21 @@ class DocumentProcessor:
     async def get_document_content(self, document_id: int, user_id: int) -> Optional[str]:
         """Получает содержимое документа"""
         try:
-            result = await database.db_query(
-                "SELECT content FROM user_documents WHERE id = $1 AND user_id = $2",
-                (document_id, user_id)
-            )
+            # Устанавливаем контекст пользователя для RLS
+            await database.set_user_context(user_id, database.is_admin(user_id))
             
-            if result:
-                return result['content']
-            return None
+            try:
+                result = await database.db_query(
+                    "SELECT content FROM user_documents WHERE id = $1 AND user_id = $2",
+                    (document_id, user_id)
+                )
+                
+                if result:
+                    return result['content']
+                return None
+            finally:
+                # Очищаем контекст пользователя
+                await database.clear_user_context()
             
         except Exception as e:
             logging.error(f"Error getting document content: {e}")

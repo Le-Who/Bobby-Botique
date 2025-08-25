@@ -252,6 +252,9 @@ async def init_db():
         )
     """)
 
+    # Настройка RLS (Row Level Security)
+    await setup_row_level_security()
+
     try:
         # --- Document Table Migration ---
         doc_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='user_documents'")
@@ -302,39 +305,174 @@ async def init_db():
         key_hash = hashlib.sha256(key.encode()).hexdigest()
         await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
 
-async def get_user_chat(user_id: int) -> ChatState:
-    chat_result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,))
-    user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = $1", (user_id,))
-
-    chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False)
-
-    if chat_result:
-        row = chat_result[0]
-        chat_state.history = json.loads(row['history']) if row['history'] else []
-        chat_state.model = row['model'] or settings.DEFAULT_MODEL
-        chat_state.token_count = row['token_count'] or 0
-        chat_state.search_enabled = bool(row['search_enabled'])
-        chat_state.system_prompt = row['system_prompt'] or None
-
-    if user_result:
-        chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
+async def setup_row_level_security():
+    """Настраивает Row Level Security для всех таблиц"""
+    try:
+        # Включаем RLS для всех таблиц
+        tables_with_rls = [
+            'users',
+            'chats', 
+            'user_documents',
+            'api_keys',
+            'key_usage',
+            'tavily_api_keys',
+            'tavily_key_usage',
+            'group_chats',
+            'group_members',
+            'group_messages',
+            'metrics',
+            'error_logs'
+        ]
         
-    return chat_state
+        for table in tables_with_rls:
+            try:
+                # Включаем RLS
+                await db_query(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
+                logging.info(f"RLS enabled for table: {table}")
+                
+                # Создаем политики безопасности
+                await create_rls_policies(table)
+                
+            except Exception as e:
+                logging.warning(f"Failed to enable RLS for table {table}: {e}")
+        
+        logging.info("Row Level Security setup completed")
+        
+    except Exception as e:
+        logging.error(f"Error setting up RLS: {e}")
+
+async def create_rls_policies(table_name: str):
+    """Создает политики безопасности для таблицы"""
+    try:
+        if table_name == 'users':
+            # Пользователи могут читать только свои данные
+            await db_query("""
+                CREATE POLICY IF NOT EXISTS users_select_policy ON users
+                FOR SELECT USING (user_id = current_setting('app.user_id', true)::bigint OR 
+                                current_setting('app.is_admin', true)::boolean = true);
+            """)
+            
+            # Только админы могут изменять данные пользователей
+            await db_query("""
+                CREATE POLICY IF NOT EXISTS users_modify_policy ON users
+                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
+            """)
+            
+        elif table_name == 'chats':
+            # Пользователи могут читать/изменять только свои чаты
+            await db_query("""
+                CREATE POLICY IF NOT EXISTS chats_policy ON chats
+                FOR ALL USING (user_id = current_setting('app.user_id', true)::bigint OR 
+                             current_setting('app.is_admin', true)::boolean = true);
+            """)
+            
+        elif table_name == 'user_documents':
+            # Пользователи могут читать/изменять только свои документы
+            await db_query("""
+                CREATE POLICY IF NOT EXISTS user_documents_policy ON user_documents
+                FOR ALL USING (user_id = current_setting('app.user_id', true)::bigint OR 
+                             current_setting('app.is_admin', true)::boolean = true);
+            """)
+            
+        elif table_name in ['api_keys', 'tavily_api_keys']:
+            # Только админы могут работать с API ключами
+            await db_query(f"""
+                CREATE POLICY IF NOT EXISTS {table_name}_policy ON {table_name}
+                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
+            """)
+            
+        elif table_name in ['key_usage', 'tavily_key_usage']:
+            # Только админы могут читать статистику использования
+            await db_query(f"""
+                CREATE POLICY IF NOT EXISTS {table_name}_policy ON {table_name}
+                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
+            """)
+            
+        elif table_name in ['group_chats', 'group_members', 'group_messages']:
+            # Пользователи могут работать только с группами, где они участники
+            await db_query(f"""
+                CREATE POLICY IF NOT EXISTS {table_name}_policy ON {table_name}
+                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true OR
+                             EXISTS (SELECT 1 FROM group_members gm 
+                                    WHERE gm.chat_id = {table_name}.chat_id 
+                                    AND gm.user_id = current_setting('app.user_id', true)::bigint));
+            """)
+            
+        elif table_name in ['metrics', 'error_logs']:
+            # Только админы могут читать метрики и логи
+            await db_query(f"""
+                CREATE POLICY IF NOT EXISTS {table_name}_policy ON {table_name}
+                FOR ALL USING (current_setting('app.is_admin', true)::boolean = true);
+            """)
+            
+        logging.info(f"RLS policies created for table: {table_name}")
+        
+    except Exception as e:
+        logging.error(f"Error creating RLS policies for {table_name}: {e}")
+
+async def set_user_context(user_id: int, is_admin: bool = False):
+    """Устанавливает контекст пользователя для RLS"""
+    try:
+        await db_query("SELECT set_config('app.user_id', $1, false)", (str(user_id),))
+        await db_query("SELECT set_config('app.is_admin', $1, false)", (str(is_admin).lower(),))
+    except Exception as e:
+        logging.warning(f"Failed to set user context: {e}")
+
+async def clear_user_context():
+    """Очищает контекст пользователя"""
+    try:
+        await db_query("SELECT set_config('app.user_id', '', false)")
+        await db_query("SELECT set_config('app.is_admin', 'false', false)")
+    except Exception as e:
+        logging.warning(f"Failed to clear user context: {e}")
+
+async def get_user_chat(user_id: int) -> ChatState:
+    # Устанавливаем контекст пользователя для RLS
+    await set_user_context(user_id, is_admin(user_id))
+    
+    try:
+        chat_result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,))
+        user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = $1", (user_id,))
+
+        chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False)
+
+        if chat_result:
+            row = chat_result[0]
+            chat_state.history = json.loads(row['history']) if row['history'] else []
+            chat_state.model = row['model'] or settings.DEFAULT_MODEL
+            chat_state.token_count = row['token_count'] or 0
+            chat_state.search_enabled = bool(row['search_enabled'])
+            chat_state.system_prompt = row['system_prompt'] or None
+
+        if user_result:
+            chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
+            
+        return chat_state
+    finally:
+        # Очищаем контекст пользователя
+        await clear_user_context()
 
 async def update_user_chat(user_id: int, chat_state: ChatState):
-    history_json = json.dumps(chat_state.history)
-    chat_query = """
-    INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    ON CONFLICT (user_id)
-    DO UPDATE SET
-        history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
-        search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt;
-    """
-    await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
+    # Устанавливаем контекст пользователя для RLS
+    await set_user_context(user_id, is_admin(user_id))
+    
+    try:
+        history_json = json.dumps(chat_state.history)
+        chat_query = """
+        INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (user_id)
+        DO UPDATE SET
+            history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
+            search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt;
+        """
+        await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
 
-    user_query = "UPDATE users SET is_deep_dive = $1 WHERE user_id = $2"
-    await db_query(user_query, (chat_state.is_deep_dive, user_id))
+        user_query = "UPDATE users SET is_deep_dive = $1 WHERE user_id = $2"
+        await db_query(user_query, (chat_state.is_deep_dive, user_id))
+    finally:
+        # Очищаем контекст пользователя
+        await clear_user_context()
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     """
@@ -351,26 +489,33 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     if not isinstance(model_name, str) or not model_name.strip():
         raise ValueError("model_name must be a non-empty string")
     
-    async with _cache_lock:
-        # Проверяем кэш
-        if model_name in _active_keys_cache:
-            cached_key = _active_keys_cache[model_name]
-            # Проверяем, не исчерпан ли кэшированный ключ
-            if await _is_key_available(cached_key['key_hash'], model_name):
-                return cached_key
-            else:
-                # Ключ исчерпан, удаляем из кэша
-                del _active_keys_cache[model_name]
-                if model_name in _cache_last_updated:
-                    del _cache_last_updated[model_name]
-        
-        # Если кэш пуст или ключ исчерпан, получаем новый
-        new_key = await _get_fresh_available_key(model_name)
-        if new_key:
-            _active_keys_cache[model_name] = new_key
-            _cache_last_updated[model_name] = time.time()
-        
-        return new_key
+    # Устанавливаем админский контекст для работы с API ключами
+    await set_user_context(settings.ADMIN_ID, True)
+    
+    try:
+        async with _cache_lock:
+            # Проверяем кэш
+            if model_name in _active_keys_cache:
+                cached_key = _active_keys_cache[model_name]
+                # Проверяем, не исчерпан ли кэшированный ключ
+                if await _is_key_available(cached_key['key_hash'], model_name):
+                    return cached_key
+                else:
+                    # Ключ исчерпан, удаляем из кэша
+                    del _active_keys_cache[model_name]
+                    if model_name in _cache_last_updated:
+                        del _cache_last_updated[model_name]
+            
+            # Если кэш пуст или ключ исчерпан, получаем новый
+            new_key = await _get_fresh_available_key(model_name)
+            if new_key:
+                _active_keys_cache[model_name] = new_key
+                _cache_last_updated[model_name] = time.time()
+            
+            return new_key
+    finally:
+        # Очищаем контекст пользователя
+        await clear_user_context()
 
 async def _is_key_available(key_hash: str, model_name: str) -> bool:
     """
@@ -845,5 +990,13 @@ def is_admin(user_id: int) -> bool:
 async def is_authorized(user_id: int) -> bool:
     if is_admin(user_id):
         return True
-    result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,))
-    return result and result[0]['is_authorized'] == 1
+    
+    # Устанавливаем контекст пользователя для RLS
+    await set_user_context(user_id, False)
+    
+    try:
+        result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,))
+        return result and result[0]['is_authorized'] == 1
+    finally:
+        # Очищаем контекст пользователя
+        await clear_user_context()
