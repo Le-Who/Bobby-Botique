@@ -20,17 +20,13 @@ if not redis_url:
 else:
     try:
         # Configure Redis client for Upstash.com free tier with better error handling
+        # Using minimal configuration to avoid compatibility issues
         redis_client = Redis.from_url(
             redis_url,
             socket_timeout=10,  # Increased timeout for better reliability
             socket_connect_timeout=10,  # Increased connect timeout
-            socket_keepalive=True,  # Keep connections alive
-            socket_keepalive_options={},
-            health_check_interval=60,  # Health check every 60 seconds
             max_connections=1,  # Single connection for stability
-            retry_on_timeout=True,
-            retry_on_error=True,
-            decode_responses=True  # Auto-decode responses
+            retry_on_timeout=True
         )
         # Test connection with timeout
         redis_client.ping()
@@ -75,7 +71,11 @@ async def get_cached_search_result(query: str, search_type: str) -> Optional[Dic
         if cached_data:
             await metrics_collector.record_cache_hit()
             logging.info("Cache hit for query: %s...", query[:50])
-            return json.loads(cached_data)
+            # Handle both bytes and string responses
+            if isinstance(cached_data, bytes):
+                return json.loads(cached_data.decode('utf-8'))
+            else:
+                return json.loads(cached_data)
         else:
             await metrics_collector.record_cache_miss()
             return None
@@ -180,7 +180,12 @@ class MultiLayerCache:
                 redis_key = f"{search_type}:{key}"
                 cached_data = redis_client.get(redis_key)
                 if cached_data:
-                    result = json.loads(cached_data)
+                    # Handle both bytes and string responses
+                    if isinstance(cached_data, bytes):
+                        result = json.loads(cached_data.decode('utf-8'))
+                    else:
+                        result = json.loads(cached_data)
+                    
                     # Store in memory cache for faster access
                     ttl = _get_ttl(search_type)
                     self.memory_cache[key] = result
