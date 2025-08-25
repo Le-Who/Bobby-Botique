@@ -118,8 +118,10 @@ def load_settings() -> Settings:
         exit(1)
 
 # --- TIMEZONES ---
+# Кэшируем временные зоны для предотвращения запросов к pg_timezone_names
 PACIFIC_TZ = pytz.timezone('US/Pacific')
 KYIV_TZ = pytz.timezone('Europe/Kyiv')
+UTC_TZ = pytz.UTC  # Используем константу вместо pytz.utc
 
 # --- LAZY LOADING SETTINGS ---
 _settings_instance: Optional[Settings] = None

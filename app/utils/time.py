@@ -1,14 +1,15 @@
 from datetime import datetime, timedelta, date
 import pytz
+from app.config import PACIFIC_TZ, KYIV_TZ, UTC_TZ
 
 # Safe timezone imports to prevent circular imports
 def get_pacific_tz():
     """Safely get Pacific timezone."""
-    return pytz.timezone('US/Pacific')
+    return PACIFIC_TZ
 
 def get_kyiv_tz():
     """Safely get Kyiv timezone."""
-    return pytz.timezone('Europe/Kyiv')
+    return KYIV_TZ
 
 def get_pacific_date() -> date:
     """Возвращает текущую дату по тихоокеанскому времени как объект date."""
@@ -16,7 +17,7 @@ def get_pacific_date() -> date:
 
 def get_current_month_str() -> str:
     """Возвращает текущий месяц в формате YYYY-MM."""
-    return datetime.now(pytz.utc).strftime('%Y-%m')
+    return datetime.now(UTC_TZ).strftime('%Y-%m')
 
 def get_kyiv_reset_time() -> str:
     """Рассчитывает и возвращает время сброса лимитов по киевскому времени."""

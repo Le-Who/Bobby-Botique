@@ -5,6 +5,7 @@ import asyncio
 import re
 from datetime import datetime, date
 import pytz
+from app.config import UTC_TZ
 import asyncpg
 from asyncpg.pool import Pool
 from typing import Dict, Any, List, Optional
@@ -811,7 +812,7 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str):
                     _cache_last_updated[model_name] = time.time()
 
 async def get_available_tavily_key():
-    current_month = datetime.now(pytz.utc).strftime('%Y-%m')
+    current_month = datetime.now(UTC_TZ).strftime('%Y-%m')
     
     # Оптимизированный запрос: получаем все данные одним запросом
     query = """
@@ -835,7 +836,7 @@ async def get_available_tavily_key():
     return None
 
 async def increment_tavily_key_usage(key_hash: str, cost: int):
-    current_month = datetime.now(pytz.utc).strftime('%Y-%m')
+    current_month = datetime.now(UTC_TZ).strftime('%Y-%m')
     query = """
     INSERT INTO tavily_key_usage (key_hash, usage_month, credit_usage) VALUES ($1, $2, $3)
     ON CONFLICT (key_hash, usage_month)
