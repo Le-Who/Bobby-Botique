@@ -145,6 +145,23 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
+    # Проверяем, что search_results содержит валидные данные
+    valid_results = []
+    for result in search_results:
+        if isinstance(result, dict) and result.get('url') and result.get('title'):
+            valid_results.append(result)
+        else:
+            logging.warning(f"Skipping invalid search result: {result}")
+    
+    if not valid_results:
+        try:
+            await placeholder_message.edit_text("Не удалось найти валидные источники для исследования.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
+    search_results = valid_results  # Используем только валидные результаты
+
     try:
         await placeholder_message.edit_text(f"✅ Найдено {len(search_results)} источников. Выбираю лучшие...")
     except Exception as edit_error:
@@ -164,6 +181,22 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     )
     
     try:
+        # Безопасная сериализация search_results
+        safe_search_results = []
+        for result in search_results:
+            safe_result = {
+                'title': str(result.get('title', '')),
+                'url': str(result.get('url', '')),
+                'content': str(result.get('content', '')),
+                'score': float(result.get('score', 0.0)) if result.get('score') is not None else 0.0
+            }
+            safe_search_results.append(safe_result)
+        
+        selection_prompt = prompts.URL_SELECTION_PROMPT.format(
+            user_message=user_message,
+            search_results_json=json.dumps(safe_search_results, indent=2, ensure_ascii=False)
+        )
+        
         selected_urls_str, _ = await services.get_gemini_response(
             gemini_key['api_key'], 
             [{'role': 'user', 'parts': [selection_prompt]}], 
@@ -293,13 +326,24 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
             document_content = document_content[:max_context_length] + "\n\n[Документ обрезан для экономии токенов]"
             logging.info(f"Document content truncated from {original_length} to {len(document_content)} characters")
         
-        logging.info(f"Processing document question for user {user_id}, document: {latest_document['filename']}, content length: {len(document_content)}")
+        # Безопасная обработка document_content
+        try:
+            safe_document_content = str(document_content)
+        except Exception as e:
+            logging.error(f"Failed to convert document content to string: {e}")
+            try:
+                await placeholder_message.edit_text("❌ Ошибка обработки содержимого документа.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+            return
+        
+        logging.info(f"Processing document question for user {user_id}, document: {latest_document['filename']}, content length: {len(safe_document_content)}")
         
         # Создаем промпт для вопроса по документу
         document_prompt = f"""Ты - помощник для анализа документов. Пользователь задал вопрос по документу.
 
 Содержимое документа:
-{document_content}
+{safe_document_content}
 
 Вопрос пользователя: {user_message}
 

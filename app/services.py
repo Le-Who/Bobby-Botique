@@ -111,9 +111,28 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                     
                     processed_parts.append(image_part)
                 else:
-                    processed_parts.append(types.Part.from_text(text=str(part)))
+                    # Безопасное преобразование текста - убеждаемся, что это строка
+                    try:
+                        text_content = str(part)
+                        processed_parts.append(types.Part.from_text(text=text_content))
+                    except Exception as e:
+                        logging.warning(f"Failed to process text part: {e}, skipping")
+                        continue
             
-            contents.append(types.Content(role=role, parts=processed_parts))
+            # Добавляем content только если есть обработанные parts
+            if processed_parts:
+                try:
+                    contents.append(types.Content(role=role, parts=processed_parts))
+                except Exception as e:
+                    logging.warning(f"Failed to create Content object: {e}, skipping")
+                    continue
+
+        # Проверяем, что contents не пустой
+        if not contents:
+            error_msg = "Failed to create valid content for Gemini API - no valid parts found"
+            logging.error(error_msg)
+            await metrics_collector.record_error("gemini_content_creation", error_msg)
+            return f"❌ Ошибка создания контента для API: {error_msg}", None
 
         config = types.GenerateContentConfig(
             safety_settings=settings.SAFETY_SETTINGS
