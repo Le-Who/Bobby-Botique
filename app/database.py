@@ -362,6 +362,14 @@ async def create_rls_policies(table_name: str):
                         (SELECT current_setting('app.is_admin', true)::boolean = true)
                     );
                 """)
+                
+                # Создаем индекс для оптимизации RLS политики
+                try:
+                    await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_user_id_rls ON users(user_id)")
+                    logging.info(f"Created index for RLS optimization on {table_name}")
+                except Exception as e:
+                    logging.warning(f"Could not create index for {table_name}: {e}")
+                    
             except Exception as e:
                 logging.error(f"Failed to create users_policy: {e}")
                 raise e
@@ -382,6 +390,14 @@ async def create_rls_policies(table_name: str):
                         (SELECT current_setting('app.is_admin', true)::boolean = true)
                     );
                 """)
+                
+                # Создаем индекс для оптимизации RLS политики
+                try:
+                    await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chats_user_id_rls ON chats(user_id)")
+                    logging.info(f"Created index for RLS optimization on {table_name}")
+                except Exception as e:
+                    logging.warning(f"Could not create index for {table_name}: {e}")
+                    
             except Exception as e:
                 logging.error(f"Failed to create chats_policy: {e}")
                 raise e
@@ -402,6 +418,14 @@ async def create_rls_policies(table_name: str):
                         (SELECT current_setting('app.is_admin', true)::boolean = true)
                     );
                 """)
+                
+                # Создаем индекс для оптимизации RLS политики
+                try:
+                    await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_documents_user_id_rls ON user_documents(user_id)")
+                    logging.info(f"Created index for RLS optimization on {table_name}")
+                except Exception as e:
+                    logging.warning(f"Could not create index for {table_name}: {e}")
+                    
             except Exception as e:
                 logging.error(f"Failed to create user_documents_policy: {e}")
                 raise e
@@ -460,6 +484,19 @@ async def create_rls_policies(table_name: str):
                         )
                     );
                 """)
+                
+                # Создаем индексы для оптимизации RLS политики
+                try:
+                    if table_name == 'group_chats':
+                        await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_group_chats_chat_id_rls ON group_chats(id)")
+                    elif table_name == 'group_members':
+                        await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_group_members_chat_user_rls ON group_members(chat_id, user_id)")
+                    elif table_name == 'group_messages':
+                        await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_group_messages_chat_id_rls ON group_messages(chat_id)")
+                    logging.info(f"Created indexes for RLS optimization on {table_name}")
+                except Exception as e:
+                    logging.warning(f"Could not create indexes for {table_name}: {e}")
+                    
             except Exception as e:
                 logging.error(f"Failed to create {table_name}_policy: {e}")
                 raise e
