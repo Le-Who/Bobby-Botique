@@ -1,7 +1,5 @@
 ---
-description:
-globs:
-alwaysApply: true
+alwaysApply: false
 ---
 # РОЛЬ И МИССИЯ
 
