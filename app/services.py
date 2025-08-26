@@ -18,9 +18,9 @@ from app.utils.api_logger import api_logger
 # Используем улучшенную конфигурацию HTTP клиента
 http_client = NetworkErrorHandler.create_robust_http_client()
 
-async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None):
+async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, max_retries: int = 3):
     """
-    Получает ответ от Gemini API с улучшенной обработкой ошибок.
+    Получает ответ от Gemini API с улучшенной обработкой ошибок и retry механизмом.
     
     Args:
         api_key: API ключ для Gemini
@@ -29,6 +29,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         system_instruction: Системная инструкция
         user_id: ID пользователя для логирования
         chat_id: ID чата для логирования
+        max_retries: Максимальное количество попыток при ошибках 503
         
     Returns:
         Tuple (response_text, token_count) или (error_message, None)
@@ -49,6 +50,30 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
     if chat_id is not None and not isinstance(chat_id, int):
         raise ValueError("chat_id must be an integer")
     
+    # Retry механизм для ошибок 503
+    for attempt in range(max_retries):
+        try:
+            return await _execute_gemini_request(api_key, history, model_name, system_instruction, user_id, chat_id)
+        except Exception as e:
+            error_message = str(e).lower()
+            
+            # Если это ошибка 503 и у нас еще есть попытки, пробуем снова
+            if ("503" in str(e) or "unavailable" in error_message or "overloaded" in error_message) and attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2  # Экспоненциальная задержка: 2, 4, 6 секунд
+                logging.warning(f"Gemini API overloaded (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+                continue
+            else:
+                # Если это не 503 ошибка или попытки закончились, пробрасываем ошибку
+                raise
+    
+    # Этот код не должен выполняться, но на всякий случай
+    return "❌ Превышено максимальное количество попыток. Попробуйте позже.", None
+
+async def _execute_gemini_request(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None):
+    """
+    Внутренняя функция для выполнения запроса к Gemini API.
+    """
     # Инициализируем start_time по умолчанию
     start_time = None
     
@@ -262,9 +287,19 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
             )
         
         logging.error(f"Gemini API Error: {e}")
-        if "quota" in str(e).lower():
+        
+        # Обработка специфических ошибок
+        error_message = str(e).lower()
+        
+        if "quota" in error_message:
             await metrics_collector.record_error("gemini_quota", str(e))
             return "🚫 Достигнут лимит запросов к API (Quota Exceeded).", None
+        elif "503" in str(e) or "unavailable" in error_message or "overloaded" in error_message:
+            await metrics_collector.record_error("gemini_overloaded", str(e))
+            return "🔄 Сервер Gemini перегружен. Попробуйте еще раз через несколько секунд.", None
+        elif "rate limit" in error_message:
+            await metrics_collector.record_error("gemini_rate_limit", str(e))
+            return "⏱️ Превышен лимит запросов в секунду. Подождите немного и попробуйте снова.", None
         else:
             await metrics_collector.record_error("gemini_api_call", str(e))
             return f"Произошла ошибка вызова API: {e}", None

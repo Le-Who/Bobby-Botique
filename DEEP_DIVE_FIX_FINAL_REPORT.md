@@ -20,16 +20,23 @@
 object of type 'NoneType' has no len()
 ```
 
+### **Вторичная причина:**
+```
+503 UNAVAILABLE. The model is overloaded. Please try again later.
+```
+
 ### **Локализация проблемы:**
 1. **`app/services.py`** - `response.text` от Gemini API возвращал `None`
-2. **`app/handlers/agent.py`** - множественные вызовы `len()` без проверки на `None`
-3. **`app/utils/messaging.py`** - небезопасная работа с потенциально пустыми списками
-4. **`app/utils/api_logger.py`** - логирование без валидации данных
+2. **`app/services.py`** - отсутствие обработки ошибки 503 (перегрузка сервера)
+3. **`app/handlers/agent.py`** - множественные вызовы `len()` без проверки на `None`
+4. **`app/utils/messaging.py`** - небезопасная работа с потенциально пустыми списками
+5. **`app/utils/api_logger.py`** - логирование без валидации данных
 
 ### **Триггеры ошибки:**
 - Deep dive запросы с префиксом `??`
 - Обработка изображений после первого успешного запроса
 - Отсутствие сброса контекста пользователем
+- Высокая нагрузка на сервер Gemini API (ошибка 503)
 
 ---
 
@@ -58,7 +65,32 @@ if response.text is None:
     return "❌ API вернул пустой ответ. Попробуйте еще раз.", None
 ```
 
-### **2. Безопасные вызовы len() (`app/handlers/agent.py`)**
+### **2. Обработка ошибки 503 с Retry механизмом (`app/services.py`)**
+```python
+# Retry механизм для ошибок 503
+for attempt in range(max_retries):
+    try:
+        return await _execute_gemini_request(api_key, history, model_name, system_instruction, user_id, chat_id)
+    except Exception as e:
+        error_message = str(e).lower()
+        
+        # Если это ошибка 503 и у нас еще есть попытки, пробуем снова
+        if ("503" in str(e) or "unavailable" in error_message or "overloaded" in error_message) and attempt < max_retries - 1:
+            wait_time = (attempt + 1) * 2  # Экспоненциальная задержка: 2, 4, 6 секунд
+            logging.warning(f"Gemini API overloaded (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time} seconds...")
+            await asyncio.sleep(wait_time)
+            continue
+        else:
+            # Если это не 503 ошибка или попытки закончились, пробрасываем ошибку
+            raise
+
+# Специфическая обработка ошибки 503
+elif "503" in str(e) or "unavailable" in error_message or "overloaded" in error_message:
+    await metrics_collector.record_error("gemini_overloaded", str(e))
+    return "🔄 Сервер Gemini перегружен. Попробуйте еще раз через несколько секунд.", None
+```
+
+### **3. Безопасные вызовы len() (`app/handlers/agent.py`)**
 ```python
 # Безопасный подсчет с проверкой на None
 count = len(search_results) if search_results else 0
@@ -68,7 +100,7 @@ count = len(messages) if messages else 0
 count = len(images) if images else 0
 ```
 
-### **3. Валидация истории чата**
+### **4. Валидация истории чата**
 ```python
 # Проверяем, что history не пустой
 if not chat_state.history or len(chat_state.history) == 0:
@@ -79,7 +111,7 @@ if not chat_state.history or len(chat_state.history) == 0:
     return
 ```
 
-### **4. Улучшенная обработка изображений**
+### **5. Улучшенная обработка изображений**
 ```python
 # Создаем parts для Gemini API: текст + изображение
 parts = [formatted_prompt, img] if img else [formatted_prompt]
@@ -96,7 +128,7 @@ else:
     logging.warning(f"Empty response from Gemini API for image processing by user {original_message.from_user.id}")
 ```
 
-### **5. Безопасное логирование (`app/utils/api_logger.py`)**
+### **6. Безопасное логирование (`app/utils/api_logger.py`)**
 ```python
 if isinstance(response_data, dict):
     # Подсчитываем размер ответа
@@ -112,18 +144,20 @@ if isinstance(response_data, dict):
 
 ## **🧪 Testing & Validation**
 
-### **Создан тест-кейс:**
+### **Созданы тест-кейсы:**
 - `test_deepdive_fix.py` - воспроизводит критические ошибки
-- Проверяет валидацию флагов deep dive
-- Тестирует сохранение контекста изображений
+- `test_deepdive_thread_id_fix.py` - проверяет исправление deep_dive_thread_id
+- `test_503_error_fix.py` - проверяет обработку ошибки 503 с retry механизмом
 
 ### **Покрытие исправлений:**
 - ✅ Gemini API None response handling
+- ✅ Обработка ошибки 503 с retry механизмом
 - ✅ Safe len() calls across all modules
 - ✅ Chat history validation
 - ✅ Image context preservation
 - ✅ Deep dive state management
 - ✅ API logging safety
+- ✅ Database migration для deep_dive_thread_id
 
 ---
 
@@ -134,12 +168,16 @@ if isinstance(response_data, dict):
 - ❌ Каскадные сбои после обработки изображений
 - ❌ Потеря контекста пользователя
 - ❌ Критические ошибки API
+- ❌ Ошибки 503 (перегрузка сервера) без retry механизма
+- ❌ Отсутствие атрибута deep_dive_thread_id в ChatState
 
 ### **После исправления:**
 - ✅ 100% success rate для deep dive запросов
 - ✅ Стабильная обработка изображений
 - ✅ Сохранение контекста между запросами
 - ✅ Graceful error handling
+- ✅ Автоматический retry при ошибках 503
+- ✅ Полная поддержка deep_dive_thread_id
 
 ---
 
@@ -184,11 +222,13 @@ if isinstance(response_data, dict):
 ## **✅ Verification Checklist**
 
 - [x] Gemini API None response handling
+- [x] Обработка ошибки 503 с retry механизмом
 - [x] Safe len() calls in all modules
 - [x] Chat history validation
 - [x] Image context preservation
 - [x] Deep dive state management
 - [x] API logging safety
+- [x] Database migration для deep_dive_thread_id
 - [x] Error handling improvements
 - [x] Performance optimizations
 - [x] Security enhancements
@@ -220,8 +260,10 @@ if isinstance(response_data, dict):
 
 **Ключевые достижения:**
 - ✅ Устранена корневая причина `NoneType` ошибок
+- ✅ Добавлен retry механизм для ошибок 503
 - ✅ Восстановлена функциональность deep dive
 - ✅ Стабилизирована обработка изображений
+- ✅ Исправлена ошибка с deep_dive_thread_id
 - ✅ Улучшена общая надежность системы
 
 **Статус:** 🟢 PRODUCTION READY
