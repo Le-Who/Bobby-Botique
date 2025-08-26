@@ -79,7 +79,7 @@ async def send_long_message(message: Message, text: str, is_deep_dive: bool = Fa
                 if not chat_state.is_deep_dive:
                     logging.warning(f"Deep dive flag set but user {user_id} not in deep dive mode")
                     is_deep_dive = False  # Сбрасываем флаг для безопасности
-                elif not chat_state.deep_dive_thread_id:
+                elif not hasattr(chat_state, 'deep_dive_thread_id') or not chat_state.deep_dive_thread_id:
                     logging.warning(f"Deep dive flag set but no thread_id for user {user_id}")
                     is_deep_dive = False  # Сбрасываем флаг для безопасности
                 else:

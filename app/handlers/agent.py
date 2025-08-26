@@ -307,7 +307,8 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         
         # Генерируем уникальный thread_id для deep dive сессии
         import uuid
-        if not chat_state.deep_dive_thread_id:
+        # Безопасная проверка атрибута deep_dive_thread_id
+        if not hasattr(chat_state, 'deep_dive_thread_id') or not chat_state.deep_dive_thread_id:
             chat_state.deep_dive_thread_id = str(uuid.uuid4())
             logging.info(f"Generated deep dive thread_id {chat_state.deep_dive_thread_id} for user {user_id}")
         

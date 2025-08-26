@@ -31,6 +31,7 @@ class ChatState:
     search_enabled: bool
     system_prompt: Optional[str]
     is_deep_dive: bool = False
+    deep_dive_thread_id: Optional[str] = None
 
 # CRITICAL: Function removed - prepared statements are disabled for PgBouncer compatibility
 # All queries must use $1, $2, $3 format directly
@@ -294,6 +295,12 @@ async def init_db():
             logging.info("Column 'is_deep_dive' not found in 'users' table. Attempting schema migration...")
             await db_query("ALTER TABLE users ADD COLUMN is_deep_dive BOOLEAN DEFAULT FALSE;")
             logging.info("Schema migration for 'is_deep_dive' successful.")
+        
+        # --- Users Table Migration (deep_dive_thread_id) ---
+        if 'deep_dive_thread_id' not in {c['column_name'] for c in users_columns}:
+            logging.info("Column 'deep_dive_thread_id' not found in 'users' table. Attempting schema migration...")
+            await db_query("ALTER TABLE users ADD COLUMN deep_dive_thread_id TEXT;")
+            logging.info("Schema migration for 'deep_dive_thread_id' successful.")
 
     except asyncpg.PostgresError as e:
         logging.warning(f"A schema migration may have been skipped or failed: {e}")
@@ -546,9 +553,9 @@ async def get_user_chat(user_id: int) -> ChatState:
     
     try:
         chat_result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,))
-        user_result = await db_query("SELECT is_deep_dive FROM users WHERE user_id = $1", (user_id,))
+        user_result = await db_query("SELECT is_deep_dive, deep_dive_thread_id FROM users WHERE user_id = $1", (user_id,))
 
-        chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False)
+        chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False, deep_dive_thread_id=None)
 
         if chat_result:
             row = chat_result[0]
@@ -560,6 +567,7 @@ async def get_user_chat(user_id: int) -> ChatState:
 
         if user_result:
             chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
+            chat_state.deep_dive_thread_id = user_result[0].get('deep_dive_thread_id')
             
         return chat_state
     finally:
@@ -582,8 +590,8 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
         """
         await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
 
-        user_query = "UPDATE users SET is_deep_dive = $1 WHERE user_id = $2"
-        await db_query(user_query, (chat_state.is_deep_dive, user_id))
+        user_query = "UPDATE users SET is_deep_dive = $1, deep_dive_thread_id = $2 WHERE user_id = $3"
+        await db_query(user_query, (chat_state.is_deep_dive, chat_state.deep_dive_thread_id, user_id))
     finally:
         # Очищаем контекст пользователя
         await clear_user_context()
