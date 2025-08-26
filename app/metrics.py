@@ -201,17 +201,21 @@ class MetricsCollector:
             """)
             
             for row in daily_result:
-                date_str = row['metric_date'].isoformat()
-                self.daily_metrics[date_str] = PerformanceMetrics(
-                    request_count=row['request_count'],
-                    total_response_time=row['total_response_time'],
-                    error_count=row['error_count'],
-                    search_queries=row['search_queries'],
-                    cache_hits=row['cache_hits'],
-                    cache_misses=row['cache_misses'],
-                    api_calls=dict(row['api_calls']) if row['api_calls'] and isinstance(row['api_calls'], dict) else {},
-                    model_usage=dict(row['model_usage']) if row['model_usage'] and isinstance(row['model_usage'], dict) else {}
-                )
+                try:
+                    date_str = row['metric_date'].isoformat()
+                    self.daily_metrics[date_str] = PerformanceMetrics(
+                        request_count=row.get('request_count', 0) or 0,
+                        total_response_time=row.get('total_response_time', 0.0) or 0.0,
+                        error_count=row.get('error_count', 0) or 0,
+                        search_queries=row.get('search_queries', 0) or 0,
+                        cache_hits=row.get('cache_hits', 0) or 0,
+                        cache_misses=row.get('cache_misses', 0) or 0,
+                        api_calls=dict(row['api_calls']) if row.get('api_calls') and isinstance(row['api_calls'], dict) else {},
+                        model_usage=dict(row['model_usage']) if row.get('model_usage') and isinstance(row['model_usage'], dict) else {}
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to process daily metrics row: {e}, row: {row}")
+                    continue
             
             # Загружаем последние ошибки
             error_result = await db.db_query("""

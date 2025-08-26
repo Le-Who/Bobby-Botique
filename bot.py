@@ -83,8 +83,23 @@ def health_check_endpoint():
         try:
             from app.cache import redis_client
             if redis_client:
-                redis_client.ping()
-                redis_status = "connected"
+                # Используем asyncio.to_thread для безопасной проверки Redis
+                import asyncio
+                try:
+                    # Создаем временный event loop для проверки Redis
+                    temp_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(temp_loop)
+                    temp_loop.run_until_complete(asyncio.wait_for(
+                        asyncio.to_thread(redis_client.ping),
+                        timeout=3.0
+                    ))
+                    temp_loop.close()
+                    redis_status = "connected"
+                except Exception:
+                    redis_status = "disconnected"
+                finally:
+                    if temp_loop and not temp_loop.is_closed():
+                        temp_loop.close()
             else:
                 redis_status = "not_configured"
         except Exception:

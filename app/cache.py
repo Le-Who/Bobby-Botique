@@ -109,6 +109,57 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
     
     raise RedisConnectionError(f"Redis operation failed after {max_retries} attempts: {last_error}")
 
+async def _redis_operation_with_retry_enhanced(operation, *args, max_retries=3, **kwargs):
+    """Enhanced Redis operation with better error handling and connection management."""
+    if not redis_client:
+        raise RedisConnectionError("Redis client not configured")
+    
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            # Check connection health before operation (starting from 2nd attempt)
+            if attempt > 0:
+                try:
+                    await asyncio.to_thread(redis_client.ping)
+                except Exception:
+                    logging.warning(f"Redis connection check failed, attempt {attempt + 1}")
+                    # Continue to retry even if ping fails
+                    pass
+            
+            # Execute operation with timeout
+            result = await asyncio.wait_for(
+                asyncio.to_thread(operation, *args, **kwargs),
+                timeout=5.0  # 5 second timeout for Redis operations
+            )
+            return result
+            
+        except asyncio.TimeoutError:
+            last_error = "Operation timeout"
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 0.2  # Exponential backoff: 0.2s, 0.4s, 0.8s
+                logging.warning(f"Redis operation timeout (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                logging.error(f"Redis operation timeout after {max_retries} attempts")
+                raise RedisConnectionError("Redis operation timeout")
+                
+        except (ConnectionError, TimeoutError) as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 0.2  # Exponential backoff: 0.2s, 0.4s, 0.8s
+                logging.warning(f"Redis operation failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                logging.error(f"Redis operation failed after {max_retries} attempts: {e}")
+                raise RedisConnectionError(f"Redis operation failed: {e}")
+                
+        except RedisError as e:
+            # Other Redis errors don't require retry
+            logging.error(f"Redis operation error: {e}")
+            raise RedisConnectionError(f"Redis operation error: {e}")
+    
+    raise RedisConnectionError(f"Redis operation failed after {max_retries} attempts: {last_error}")
+
 async def get_cached_search_result(query: str, search_type: str) -> Optional[Dict[str, Any]]:
     """Gets the search result from the cache (multi-layer first, then Redis fallback)."""
     # Try multi-layer cache first

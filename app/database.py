@@ -398,6 +398,13 @@ async def create_rls_policies(table_name: str):
                     );
                 """)
                 
+                # Создаем составной индекс для оптимизации RLS политики
+                try:
+                    await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chats_user_id_admin_rls ON chats(user_id, (SELECT current_setting('app.is_admin', true)::boolean))")
+                    logging.info(f"Created composite index for RLS optimization on {table_name}")
+                except Exception as e:
+                    logging.warning(f"Could not create composite index for {table_name}: {e}")
+                
                 # Создаем индекс для оптимизации RLS политики
                 try:
                     await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chats_user_id_rls ON chats(user_id)")

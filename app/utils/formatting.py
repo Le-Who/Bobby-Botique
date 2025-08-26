@@ -258,6 +258,9 @@ class TelegramFormatter:
     @classmethod
     def _is_part_of_formatting(cls, text: str, pos: int) -> bool:
         """Проверяет, является ли позиция частью форматирования."""
+        if not text or pos < 0 or pos >= len(text):
+            return False
+            
         char = text[pos]
         
         # Ищем парный символ

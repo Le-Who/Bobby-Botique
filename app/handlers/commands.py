@@ -216,17 +216,18 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Добавляем использование API и моделей
-        if metrics['api_calls']:
+        if metrics.get('api_calls'):
             text += "*🔌 Использование API:*\n"
             for api, count in metrics['api_calls'].items():
-                text += f"• {api}: `{count}`\n"
+                if isinstance(api, str) and isinstance(count, (int, float)):
+                    text += f"• {api}: `{count}`\n"
             text += "\n"
         
-        if metrics['model_usage']:
+        if metrics.get('model_usage'):
             text += "*🤖 Использование моделей:*\n"
             for model, count in metrics['model_usage'].items():
                 # Пропускаем записи, которые содержат имена файлов (это ошибки в логике)
-                if not any(char in model for char in ['/', '\\', '.pdf', '.docx', '.doc']):
+                if isinstance(model, str) and isinstance(count, (int, float)) and not any(char in model for char in ['/', '\\', '.pdf', '.docx', '.doc']):
                     text += f"• {model}: `{count}`\n"
             text += "\n"
         

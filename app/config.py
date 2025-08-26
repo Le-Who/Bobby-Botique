@@ -327,6 +327,8 @@ class ConfigManager:
                 
             except Exception as e:
                 logging.error("Failed to reload configuration: %s", e)
+                # Не прерываем работу при ошибке перезагрузки конфигурации
+                # Система продолжит работать со старыми настройками
     
     def add_watcher(self, callback: Callable[[Settings, Settings], None]) -> None:
         """Adds a configuration change watcher."""

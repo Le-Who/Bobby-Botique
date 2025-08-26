@@ -192,15 +192,34 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
                 logging.warning(f"Failed to set system_instruction: {e}, continuing without it")
 
         # Выполняем запрос с timeout
-        response = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.models.generate_content,
-                model=model_name,
-                contents=contents,
-                config=config
-            ),
-            timeout=60.0  # 60 секунд timeout
-        )
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=contents,
+                    config=config
+                ),
+                timeout=60.0  # 60 секунд timeout
+            )
+        except Exception as e:
+            error_msg = f"Failed to generate content from Gemini API: {e}"
+            logging.error(error_msg)
+            await metrics_collector.record_error("gemini_generation_failed", error_msg)
+            
+            # Логируем ошибку
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time,
+                    model=model_name,
+                    response_length=0,
+                    success=False,
+                    error_message=error_msg,
+                    user_id=user_id,
+                    chat_id=chat_id
+                )
+            
+            return f"❌ Ошибка генерации ответа: {error_msg}", None
         
         # Подсчет токенов с timeout
         try:
@@ -219,6 +238,26 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
                 def __init__(self):
                     self.total_tokens = 0
             token_count_response = FallbackTokenCount()
+        
+        # Дополнительная проверка response на None
+        if not response or not hasattr(response, 'text'):
+            error_msg = "Gemini API returned invalid response object"
+            logging.error(error_msg)
+            await metrics_collector.record_error("gemini_invalid_response", error_msg)
+            
+            # Логируем ошибку
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time,
+                    model=model_name,
+                    response_length=0,
+                    success=False,
+                    error_message=error_msg,
+                    user_id=user_id,
+                    chat_id=chat_id
+                )
+            
+            return "❌ API вернул некорректный ответ. Попробуйте еще раз.", None
         
         # Проверяем, что response.text не None перед логированием
         if response.text is None:
@@ -297,6 +336,9 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
         elif "503" in str(e) or "unavailable" in error_message or "overloaded" in error_message:
             await metrics_collector.record_error("gemini_overloaded", str(e))
             return "🔄 Сервер Gemini перегружен. Попробуйте еще раз через несколько секунд.", None
+        elif "invalid" in error_message or "malformed" in error_message:
+            await metrics_collector.record_error("gemini_invalid_request", str(e))
+            return "❌ Некорректный запрос к API. Проверьте параметры.", None
         elif "rate limit" in error_message:
             await metrics_collector.record_error("gemini_rate_limit", str(e))
             return "⏱️ Превышен лимит запросов в секунду. Подождите немного и попробуйте снова.", None

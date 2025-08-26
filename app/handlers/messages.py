@@ -235,7 +235,8 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
     caption = group_data['caption']
     placeholder_message = group_data['placeholder_message']
     
-    message_count = len(messages)
+    # Безопасная проверка количества сообщений
+    message_count = len(messages) if messages else 0
     logging.info(f"🔄 Обрабатываю группу изображений {media_group_id}: {message_count} изображений")
     
     # Проверяем, что это действительно группа
