@@ -177,11 +177,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    selection_prompt = prompts.URL_SELECTION_PROMPT.format(
-        user_message=user_message,
-        search_results_json=json.dumps(search_results, indent=2, ensure_ascii=False)
-    )
-    
     try:
         # Безопасная сериализация search_results
         safe_search_results = []
