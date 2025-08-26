@@ -57,8 +57,8 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         
         # Детальное логирование Gemini API запроса
         try:
-            prompt_length = sum(len(str(part)) for item in history for part in item.get("parts", []))
-            has_images = any(isinstance(part, Image.Image) for item in history for part in item.get("parts", []))
+            prompt_length = sum(len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None)
+            has_images = any(isinstance(part, Image.Image) for item in history for part in (item.get("parts", []) or []) if part is not None)
         except Exception as e:
             logging.warning(f"Error calculating prompt metrics: {e}, using fallback values")
             prompt_length = 0
@@ -91,7 +91,9 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                 parts = item.get("parts", [])
                 # Убедимся, что parts - это список
                 if not isinstance(parts, list):
-                    parts = [parts]
+                    parts = [parts] if parts is not None else []
+                elif parts is None:
+                    parts = []
                 
                 # Преобразуем PIL Image в Part, если необходимо
                 processed_parts = []
@@ -130,7 +132,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                             continue
                 
                 # Добавляем content только если есть обработанные parts
-                if processed_parts:
+                if processed_parts and len(processed_parts) > 0:
                     try:
                         contents.append(types.Content(role=role, parts=processed_parts))
                     except Exception as e:
@@ -146,7 +148,7 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
                 return "❌ Ошибка обработки запроса", None
 
         # Проверяем, что contents не пустой
-        if not contents:
+        if not contents or len(contents) == 0:
             error_msg = "Failed to create valid content for Gemini API - no valid parts found"
             logging.error(error_msg)
             await metrics_collector.record_error("gemini_content_creation", error_msg)
@@ -176,14 +178,42 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         )
         
         # Подсчет токенов с timeout
-        token_count_response = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.models.count_tokens,
-                model=model_name,
-                contents=contents
-            ),
-            timeout=10.0  # 10 секунд timeout
-        )
+        try:
+            token_count_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.count_tokens,
+                    model=model_name,
+                    contents=contents
+                ),
+                timeout=10.0  # 10 секунд timeout
+            )
+        except Exception as token_error:
+            logging.warning(f"Failed to count tokens: {token_error}, using fallback")
+            # Создаем fallback объект для токенов
+            class FallbackTokenCount:
+                def __init__(self):
+                    self.total_tokens = 0
+            token_count_response = FallbackTokenCount()
+        
+        # Проверяем, что response.text не None перед логированием
+        if response.text is None:
+            error_msg = "Gemini API returned None response text"
+            logging.error(error_msg)
+            await metrics_collector.record_error("gemini_none_response", error_msg)
+            
+            # Логируем ошибку
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time,
+                    model=model_name,
+                    response_length=0,
+                    success=False,
+                    error_message=error_msg,
+                    user_id=user_id,
+                    chat_id=chat_id
+                )
+            
+            return "❌ API вернул пустой ответ. Попробуйте еще раз.", None
         
         # Логируем успешный ответ Gemini API
         if start_time is not None:
@@ -271,7 +301,7 @@ async def tavily_search_agent(query: str, search_type: str = "search", user_id: 
     if not isinstance(query, str) or not query.strip():
         raise ValueError("Query must be a non-empty string")
     
-    if len(query) > 1000:  # Ограничение длины запроса
+    if query and len(query) > 1000:  # Ограничение длины запроса
         raise ValueError("Query too long. Maximum 1000 characters allowed")
     
     if search_type not in ["search", "qna"]:
@@ -335,7 +365,8 @@ async def tavily_search_agent(query: str, search_type: str = "search", user_id: 
         await cache_search_result(query, search_type, result)
         
         # Логируем успешный ответ Tavily API
-        results_count = len(result.get('results', [])) if result.get('type') == 'search' else 1
+        results = result.get('results', [])
+        results_count = len(results) if results and result.get('type') == 'search' else 1
         api_logger.log_tavily_response(
             start_time=start_time,
             search_type=search_type,

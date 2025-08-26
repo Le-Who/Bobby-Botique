@@ -145,25 +145,27 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    # Проверяем, что search_results содержит валидные данные
-    valid_results = []
-    for result in search_results:
-        if isinstance(result, dict) and result.get('url') and result.get('title'):
-            valid_results.append(result)
-        else:
-            logging.warning(f"Skipping invalid search result: {result}")
-    
-    if not valid_results:
-        try:
-            await placeholder_message.edit_text("Не удалось найти валидные источники для исследования.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-    
-    search_results = valid_results  # Используем только валидные результаты
+            # Проверяем, что search_results содержит валидные данные
+        valid_results = []
+        if search_results:
+            for result in search_results:
+                if isinstance(result, dict) and result.get('url') and result.get('title'):
+                    valid_results.append(result)
+                else:
+                    logging.warning(f"Skipping invalid search result: {result}")
+        
+        if not valid_results:
+            try:
+                await placeholder_message.edit_text("Не удалось найти валидные источники для исследования.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+            return
+        
+        search_results = valid_results  # Используем только валидные результаты
 
     try:
-        await placeholder_message.edit_text(f"✅ Найдено {len(search_results)} источников. Выбираю лучшие...")
+        count = len(search_results) if search_results else 0
+        await placeholder_message.edit_text(f"✅ Найдено {count} источников. Выбираю лучшие...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
     
@@ -183,23 +185,26 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     try:
         # Безопасная сериализация search_results
         safe_search_results = []
-        for result in search_results:
-            safe_result = {
-                'title': str(result.get('title', '')),
-                'url': str(result.get('url', '')),
-                'content': str(result.get('content', '')),
-                'score': float(result.get('score', 0.0)) if result.get('score') is not None else 0.0
-            }
-            safe_search_results.append(safe_result)
+        if search_results:
+            for result in search_results:
+                safe_result = {
+                    'title': str(result.get('title', '')),
+                    'url': str(result.get('url', '')),
+                    'content': str(result.get('content', '')),
+                    'score': float(result.get('score', 0.0)) if result.get('score') is not None else 0.0
+                }
+                safe_search_results.append(safe_result)
         
         selection_prompt = prompts.URL_SELECTION_PROMPT.format(
             user_message=user_message,
             search_results_json=json.dumps(safe_search_results, indent=2, ensure_ascii=False)
         )
         
+        # Создаем parts для Gemini API: промпт
+        parts = [selection_prompt] if selection_prompt else []
         selected_urls_str, _ = await services.get_gemini_response(
             gemini_key['api_key'], 
-            [{'role': 'user', 'parts': [selection_prompt]}], 
+            [{'role': 'user', 'parts': parts}], 
             model_used,
             user_id=user_id,
             chat_id=chat_id
@@ -223,12 +228,19 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         return
 
     try:
-        await placeholder_message.edit_text(f"✅ Выбрано {len(selected_urls)} источников. Собираю контент...")
+        count = len(selected_urls) if selected_urls else 0
+        await placeholder_message.edit_text(f"✅ Выбрано {count} источников. Собираю контент...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
     
-    final_context_list = [f"Источник (URL: {res.get('url')}):\n{res.get('content')}" for url in selected_urls for res in search_results if res.get('url') == url]
-    full_context = "\n\n---\n\n".join(final_context_list)
+    final_context_list = []
+    if selected_urls and search_results:
+        for url in selected_urls:
+            for res in search_results:
+                if res.get('url') == url:
+                    final_context_list.append(f"Источник (URL: {res.get('url')}):\n{res.get('content')}")
+    
+    full_context = "\n\n---\n\n".join(final_context_list) if final_context_list else ""
 
     if not full_context:
         try:
@@ -238,7 +250,8 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         return
 
     try:
-        await placeholder_message.edit_text(f"🧠 Синтезирую ответ на основе {len(full_context)} символов...")
+        count = len(full_context) if full_context else 0
+        await placeholder_message.edit_text(f"🧠 Синтезирую ответ на основе {count} символов...")
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
     
@@ -257,6 +270,22 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     chat_state.history.append({'role': 'user', 'parts': [augmented_prompt]})
     
     try:
+        # Проверяем, что history не пустой
+        if not chat_state.history or len(chat_state.history) == 0:
+            try:
+                await placeholder_message.edit_text("❌ История чата пуста. Невозможно обработать вопрос.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+            return
+        
+        # Проверяем, что history не пустой
+        if not chat_state.history or len(chat_state.history) == 0:
+            try:
+                await placeholder_message.edit_text("❌ История чата пуста. Невозможно обработать запрос.")
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+            return
+        
         response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
     except Exception as gemini_error:
         logging.error(f"Error in Gemini synthesis: {gemini_error}")
@@ -268,16 +297,26 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
     
-    if response_text:
+    if response_text and response_text.strip():
+        # Проверяем, что response_text не None и не пустой
         await send_long_message(placeholder_message, response_text, is_deep_dive=True)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
         chat_state.is_deep_dive = True
+        
+        # Генерируем уникальный thread_id для deep dive сессии
+        import uuid
+        if not chat_state.deep_dive_thread_id:
+            chat_state.deep_dive_thread_id = str(uuid.uuid4())
+            logging.info(f"Generated deep dive thread_id {chat_state.deep_dive_thread_id} for user {user_id}")
+        
         await db.update_user_chat(user_id, chat_state)
+        logging.info(f"Deep dive mode activated for user {user_id} with thread_id {chat_state.deep_dive_thread_id}")
     else:
         chat_state.history.pop()
         await db.update_user_chat(user_id, chat_state)
+        logging.warning(f"Empty response from Gemini API for deep dive synthesis by user {user_id}")
         try:
             await placeholder_message.edit_text("Получен пустой ответ от API.")
         except Exception as edit_error:
@@ -321,8 +360,8 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
         
         # Ограничиваем размер контекста документа
         max_context_length = 30000  # Ограничиваем до 30K символов
-        original_length = len(document_content)
-        if len(document_content) > max_context_length:
+        original_length = len(document_content) if document_content else 0
+        if document_content and len(document_content) > max_context_length:
             document_content = document_content[:max_context_length] + "\n\n[Документ обрезан для экономии токенов]"
             logging.info(f"Document content truncated from {original_length} to {len(document_content)} characters")
         
@@ -337,7 +376,8 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
                 logging.error(f"Could not edit placeholder message: {edit_error}")
             return
         
-        logging.info(f"Processing document question for user {user_id}, document: {latest_document['filename']}, content length: {len(safe_document_content)}")
+        content_length = len(safe_document_content) if safe_document_content else 0
+        logging.info(f"Processing document question for user {user_id}, document: {latest_document['filename']}, content length: {content_length}")
         
         # Создаем промпт для вопроса по документу
         document_prompt = f"""Ты - помощник для анализа документов. Пользователь задал вопрос по документу.
@@ -380,9 +420,11 @@ async def _handle_document_question(placeholder_message: Message, user_id: int, 
                 await placeholder_message.reply_text(f"🚫 Ключи для модели {settings.DEFAULT_MODEL} закончились.")
             return
         
+        # Создаем parts для Gemini API: промпт
+        parts = [document_prompt] if document_prompt else []
         response_text, _ = await services.get_gemini_response(
             gemini_key['api_key'], 
-            [{'role': 'user', 'parts': [document_prompt]}], 
+            [{'role': 'user', 'parts': parts}], 
             model_used
         )
         
@@ -500,9 +542,21 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
 - НИКОГДА не используй HTML теги или LaTeX математические выражения (`$...$`)
 - Для математики используй обычный текст: `2 × 3 = 6`, `√2`, `1/2`"""
         
-        response_text, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [formatted_prompt, img]}], model_used)
+        # Создаем parts для Gemini API: текст + изображение
+        parts = [formatted_prompt, img] if img else [formatted_prompt]
+        response_text, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': parts}], model_used)
         
-        await send_long_message(placeholder_message, response_text or "Не удалось обработать изображение.")
+        # Проверяем, что response_text не None и не пустой
+        if response_text and response_text.strip():
+            await send_long_message(placeholder_message, response_text)
+            # Сохраняем контекст изображения в истории
+            chat_state.history.append({'role': 'user', 'parts': [formatted_prompt]})
+            chat_state.history.append({'role': 'model', 'parts': [response_text]})
+            await db.update_user_chat(original_message.from_user.id, chat_state)
+        else:
+            await send_long_message(placeholder_message, "Не удалось обработать изображение.")
+            logging.warning(f"Empty response from Gemini API for image processing by user {original_message.from_user.id}")
+        
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
     except Exception as e:
         logging.error(f"Error processing photo: {e}")
@@ -540,7 +594,9 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
     
     analysis_prompt = prompts.IMAGE_ANALYSIS_PROMPT
     
-    search_query, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': [analysis_prompt, img]}], vision_model)
+    # Создаем parts для Gemini API: промпт + изображение
+    parts = [analysis_prompt, img] if img else [analysis_prompt]
+    search_query, _ = await services.get_gemini_response(gemini_key['api_key'], [{'role': 'user', 'parts': parts}], vision_model)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], vision_model)
 
     if not search_query:
@@ -622,7 +678,8 @@ async def process_media_group_request(placeholder_message: Message, update: Upda
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
     
-    logging.info(f"🔄 Обрабатываю группу из {len(messages)} изображений для пользователя {user_id}")
+    count = len(messages) if messages else 0
+    logging.info(f"🔄 Обрабатываю группу из {count} изображений для пользователя {user_id}")
     
     # Проверяем, есть ли поисковый префикс в caption
     search_prefix = None
@@ -658,7 +715,8 @@ async def _handle_media_group_photos(placeholder_message: Message, messages: Lis
                 photo_data = await photo_file.download_as_bytearray()
                 img = Image.open(io.BytesIO(photo_data))
                 images.append(img)
-                logging.info(f"📸 Загружено изображение {i+1}/{len(messages)}")
+                count = len(messages) if messages else 0
+                logging.info(f"📸 Загружено изображение {i+1}/{count}")
             except Exception as e:
                 logging.error(f"Error loading image {i+1}: {e}")
                 continue
@@ -668,7 +726,8 @@ async def _handle_media_group_photos(placeholder_message: Message, messages: Lis
             return
         
         # Формируем промпт для группы изображений
-        prompt = caption or f"Опиши эти {len(images)} изображения."
+        count = len(images) if images else 0
+        prompt = caption or f"Опиши эти {count} изображения."
         
         # Добавляем инструкции по форматированию
         formatted_prompt = f"""{prompt}
@@ -688,7 +747,7 @@ async def _handle_media_group_photos(placeholder_message: Message, messages: Lis
 - Пронумеруй изображения в описании для ясности"""
         
         # Создаем parts для Gemini API: текст + все изображения
-        parts = [formatted_prompt] + images
+        parts = [formatted_prompt] + (images or [])
         
         # Получаем user_id и chat_id для логирования
         user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
@@ -705,7 +764,8 @@ async def _handle_media_group_photos(placeholder_message: Message, messages: Lis
         await send_long_message(placeholder_message, response_text or "Не удалось обработать группу изображений.")
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         
-        logging.info(f"✅ Группа из {len(images)} изображений обработана успешно")
+        count = len(images) if images else 0
+        logging.info(f"✅ Группа из {count} изображений обработана успешно")
         
     except Exception as e:
         logging.error(f"Error processing media group photos: {e}")
@@ -742,7 +802,8 @@ async def _handle_complex_media_group_search(placeholder_message: Message, messa
                 photo_data = await photo_file.download_as_bytearray()
                 img = Image.open(io.BytesIO(photo_data))
                 images.append(img)
-                logging.info(f"📸 Загружено изображение {i+1}/{len(messages)} для анализа")
+                count = len(messages) if messages else 0
+                logging.info(f"📸 Загружено изображение {i+1}/{count} для анализа")
             except Exception as e:
                 logging.error(f"Error loading image {i+1}: {e}")
                 continue
@@ -762,7 +823,7 @@ async def _handle_complex_media_group_search(placeholder_message: Message, messa
 - Если изображения показывают последовательность или процесс, отрази это в запросе"""
         
         # Создаем parts для анализа: промпт + все изображения
-        parts = [analysis_prompt] + images
+        parts = [analysis_prompt] + (images or [])
         
         # Получаем user_id и chat_id для логирования
         user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
@@ -785,14 +846,16 @@ async def _handle_complex_media_group_search(placeholder_message: Message, messa
             return
 
         # Получаем оригинальное сообщение пользователя для локализации
-        original_user_message = caption or f"Опиши эти {len(images)} изображения."
+        count = len(images) if images else 0
+        original_user_message = caption or f"Опиши эти {count} изображения."
         
         if search_prefix == '?':
             await _handle_qna_search(placeholder_message, original_user_message, chat_state, search_query)
         else:
             await _handle_research_agent(placeholder_message, user_id, original_user_message, chat_state, search_query=search_query)
         
-        logging.info(f"✅ Группа из {len(images)} изображений проанализирована для поиска")
+        count = len(images) if images else 0
+        logging.info(f"✅ Группа из {count} изображений проанализирована для поиска")
         
     except Exception as e:
         logging.error(f"Error processing complex media group search: {e}")

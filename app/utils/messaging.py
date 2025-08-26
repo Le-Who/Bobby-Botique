@@ -32,7 +32,7 @@ def _split_text(text: str, max_length: int = 4000) -> list:
         return [text] if text else []
     
     parts = []
-    while len(text) > 0:
+    while text and len(text) > 0:
         if len(text) <= max_length:
             parts.append(text)
             break
@@ -50,6 +50,10 @@ def _split_text(text: str, max_length: int = 4000) -> list:
         
         parts.append(text[:slice_index])
         text = text[slice_index + 1:] if last_newline != -1 else text[slice_index:]
+        
+        # Дополнительная проверка безопасности
+        if not text or len(text) == 0:
+            break
     
     return parts
 from app.config import settings
@@ -78,6 +82,9 @@ async def send_long_message(message: Message, text: str, is_deep_dive: bool = Fa
                 elif not chat_state.deep_dive_thread_id:
                     logging.warning(f"Deep dive flag set but no thread_id for user {user_id}")
                     is_deep_dive = False  # Сбрасываем флаг для безопасности
+                else:
+                    # Дополнительная проверка: убеждаемся, что deep dive действительно активен
+                    logging.info(f"Deep dive mode confirmed for user {user_id}")
         except Exception as e:
             logging.error(f"Error validating deep dive state: {e}")
             is_deep_dive = False  # Сбрасываем флаг для безопасности
@@ -88,13 +95,13 @@ async def send_long_message(message: Message, text: str, is_deep_dive: bool = Fa
     is_first_part = True
     current_message = message  # Текущее сообщение для редактирования
     
-    for i, part in enumerate(parts):
-        if not part.strip():
+    for i, part in enumerate(parts or []):
+        if not part or not part.strip():
             continue
 
         # Determine the keyboard for this part
         current_reply_markup = None
-        is_last_part = (i == len(parts) - 1)
+        is_last_part = (i == len(parts) - 1) if parts and len(parts) > 0 else True
 
         if is_deep_dive:
             if is_last_part:
@@ -144,7 +151,7 @@ async def send_long_message(message: Message, text: str, is_deep_dive: bool = Fa
                         return
             else:
                 # Если форматирование не удалось, пробуем без форматирования
-                logging.warning(f"Formatting failed for part {len(parts)}: {e}. Falling back to plain text.")
+                logging.warning(f"Formatting failed for part {i+1}/{len(parts)}: {e}. Falling back to plain text.")
                 try:
                     plain_text = _strip_formatting(part)
                     if is_first_part:

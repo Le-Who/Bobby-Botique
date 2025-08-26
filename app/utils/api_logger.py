@@ -307,11 +307,11 @@ class APILogger:
         
         if isinstance(response_data, dict):
             # Подсчитываем размер ответа
-            if 'text' in response_data:
+            if 'text' in response_data and response_data['text'] is not None:
                 summary['text_length'] = len(str(response_data['text']))
-            if 'results' in response_data:
+            if 'results' in response_data and response_data['results'] is not None:
                 summary['results_count'] = len(response_data['results'])
-            if 'content' in response_data:
+            if 'content' in response_data and response_data['content'] is not None:
                 summary['content_length'] = len(str(response_data['content']))
         
         return summary
