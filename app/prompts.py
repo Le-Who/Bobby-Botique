@@ -55,12 +55,12 @@ SYNTHESIS_PROMPT = """
 
 **CONTEXT STRUCTURE:** The context contains multiple sources in this format:
 ```
-SOURCE_URL: https://example.com
-SOURCE_CONTENT:
+Источник: https://example.com
+Содержание:
 [content of the webpage]
 
-SOURCE_URL: https://another-example.com
-SOURCE_CONTENT:
+Источник: https://another-example.com
+Содержание:
 [content of another webpage]
 ```
 
@@ -91,7 +91,7 @@ SOURCE_CONTENT:
    - **CRITICAL:** ALWAYS add spaces around division: a / b, not a/b
    - **EXAMPLE:** "a_следующее = (a_предыдущее + 2 / a_предыдущее) / 2" (with proper spacing)
 5. **SOURCE CITATION FORMATTING - CRITICAL:**
-   - You MUST extract URLs from the SOURCE_URL lines in the context
+   - You MUST extract URLs from the "Источник:" lines in the context
    - You MUST create clickable links using MarkdownV2 format: [display text](URL)
    - The [display text] should be descriptive and relevant to the content
    - **CORRECT FORMATS:**
