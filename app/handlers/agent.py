@@ -238,7 +238,10 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         for url in selected_urls:
             for res in search_results:
                 if res.get('url') == url:
-                    final_context_list.append(f"Источник (URL: {res.get('url')}):\n{res.get('content')}")
+                    # Формируем структурированный контекст для AI
+                    # AI должен получать URL отдельно для создания правильных ссылок
+                    source_info = f"SOURCE_URL: {res.get('url')}\nSOURCE_CONTENT:\n{res.get('content')}"
+                    final_context_list.append(source_info)
     
     full_context = "\n\n---\n\n".join(final_context_list) if final_context_list else ""
 

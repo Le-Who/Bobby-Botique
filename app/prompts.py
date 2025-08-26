@@ -53,10 +53,16 @@ SYNTHESIS_PROMPT = """
 
 **IMPORTANT CONTEXT RULE:** The following context is raw text scraped from the web. It may contain formatting errors. Your primary task is to extract the factual information, ignoring any broken formatting within the context itself.
 
-**CONTEXT FROM WEB SEARCH:**
----
-{full_context}
----
+**CONTEXT STRUCTURE:** The context contains multiple sources in this format:
+```
+SOURCE_URL: https://example.com
+SOURCE_CONTENT:
+[content of the webpage]
+
+SOURCE_URL: https://another-example.com
+SOURCE_CONTENT:
+[content of another webpage]
+```
 
 **USER'S ORIGINAL QUERY:** "{user_message}"
 
@@ -84,15 +90,19 @@ SYNTHESIS_PROMPT = """
    - **CRITICAL:** ALWAYS add spaces around equals sign: a = b, not a=b
    - **CRITICAL:** ALWAYS add spaces around division: a / b, not a/b
    - **EXAMPLE:** "a_следующее = (a_предыдущее + 2 / a_предыдущее) / 2" (with proper spacing)
-5. **You MUST cite your sources using the correct MarkdownV2 link format ONLY:** [display text](URL).
-   - CRITICAL: You MUST NOT use any other link format, such as [[...]] or <a href="...">...</a>. This is a strict requirement.
-   - The [display text] should be short and descriptive (e.g., the article title or Источник 1).
-   - The (URL) MUST be the full, original URL from the context.
-   - Any special characters inside the [display text] part MUST be escaped with a preceding backslash.
-   - **IMPORTANT:** NEVER use double brackets [[...]] - only use single brackets [...] followed by (URL).
-   - **CRITICAL FORMATTING RULE:** EVERY source citation MUST be a clickable link. NEVER write "источник 1, источник 2 (URL)" - this is WRONG.
-   - **CORRECT FORMAT:** [Источник 1](URL1), [Источник 2](URL2)
-   - **WRONG FORMAT:** источник 1, источник 2 (URL) - this creates unclickable text
+5. **SOURCE CITATION FORMATTING - CRITICAL:**
+   - You MUST extract URLs from the SOURCE_URL lines in the context
+   - You MUST create clickable links using MarkdownV2 format: [display text](URL)
+   - The [display text] should be descriptive and relevant to the content
+   - **CORRECT FORMATS:**
+     * [Согласно статье на Example.com](https://example.com)
+     * [Подробнее здесь](https://example.com)
+     * [Источник: Example.com](https://example.com)
+     * [Согласно исследованию](https://example.com)
+   - **WRONG FORMATS:**
+     * "источник 1, источник 2 (URL)" - creates unclickable text
+     * "источник." - has no link at all
+     * [[text]] - double brackets are wrong
 6. If you find conflicting information, highlight this discrepancy.
 7. If the context is insufficient, state that clearly. Do not use any prior knowledge.
 
@@ -108,9 +118,9 @@ The price was listed as 5500 грн [according to this OLX listing](https://www.
 **CRITICAL SOURCE FORMATTING RULES:**
 - ❌ NEVER write: "источник 1, источник 2 (URL)" - this creates unclickable text
 - ❌ NEVER write: "источник." - this has no link at all
-- ✅ ALWAYS write: [Источник 1](URL1), [Источник 2](URL2)
-- ✅ ALWAYS write: [Подробнее здесь](URL)
 - ✅ ALWAYS write: [Согласно статье](URL)
+- ✅ ALWAYS write: [Подробнее здесь](URL)
+- ✅ ALWAYS write: [Источник: Example.com](URL)
 
 **CORRECT FORMATTING EXAMPLES:**
 - *Important term* should be bold
@@ -120,7 +130,7 @@ The price was listed as 5500 грн [according to this OLX listing](https://www.
 - Math: 2 × 3 = 6 (NOT $2 × 3 = 6$)
 - Square root: √2 (NOT $√2$)
 - Fraction: 1/2 (NOT $1/2$)
-- **Source citations:** [Источник 1](https://example1.com), [Источник 2](https://example2.com)
+- **Source citations:** [Согласно статье](https://example1.com), [Подробнее здесь](https://example2.com)
 - **Mathematical formulas:** a_следующее = (a_предыдущее + 2 / a_предыдущее) / 2
 - **Variables:** Always use underscores for subscripts: a_следующий, a_предыдущий
 """
