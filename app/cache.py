@@ -14,27 +14,23 @@ from redis.exceptions import ConnectionError, TimeoutError, RedisError
 from app.metrics import metrics_collector
 from app.exceptions import RedisConnectionError, CacheKeyError
 
-# Initialize Redis client from environment variable with Upstash.com optimizations
+# Initialize Redis client with Upstash.com optimized configuration
 redis_url = os.getenv("REDIS_URL")
 if not redis_url:
     logging.warning("REDIS_URL environment variable not set. Caching will be disabled.")
     redis_client = None
 else:
     try:
-        # Configure Redis client for Upstash.com free tier with better error handling
-        # Using minimal configuration to avoid compatibility issues
+        # Minimal Redis configuration for Upstash.com free tier compatibility
+        # Removed problematic parameters that cause connection issues
         redis_client = Redis.from_url(
             redis_url,
-            socket_timeout=5,  # Reduced timeout for faster failure detection
-            socket_connect_timeout=5,  # Reduced connect timeout
+            socket_timeout=5,  # Fast timeout for quick failure detection
+            socket_connect_timeout=5,  # Fast connect timeout
             max_connections=1,  # Single connection for stability
-            retry_on_timeout=True,
-            retry_on_error=[ConnectionError, TimeoutError],  # Retry on connection issues
-            health_check_interval=30,  # Check connection health every 30 seconds
-            socket_keepalive=True,  # Enable TCP keepalive
-            socket_keepalive_options={},  # Use system defaults for keepalive
+            retry_on_timeout=True,  # Only retry on timeout, not all errors
+            decode_responses=False,  # Keep as bytes for manual handling
         )
-        # Don't test connection during initialization to avoid blocking
         logging.info("Redis client initialized successfully for Upstash.com")
     except Exception as e:
         logging.warning("Failed to connect to Redis: %s. Caching will be disabled.", e)
@@ -58,24 +54,41 @@ def _get_ttl(search_type: str) -> int:
     else:
         return 3600  # 1 hour
 
+def _safe_decode_redis_response(data: Union[bytes, str, None]) -> Optional[Dict[str, Any]]:
+    """Safely decodes Redis response, handling both bytes and string responses."""
+    if data is None:
+        return None
+    
+    try:
+        if isinstance(data, bytes):
+            return json.loads(data.decode('utf-8'))
+        elif isinstance(data, str):
+            return json.loads(data)
+        else:
+            logging.warning(f"Unexpected Redis response type: {type(data)}")
+            return None
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logging.error(f"Failed to decode Redis response: {e}")
+        return None
+
 async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs):
-    """Выполняет Redis операцию с retry логикой"""
+    """Executes Redis operation with improved retry logic."""
     if not redis_client:
         raise RedisConnectionError("Redis client not configured")
     
     last_error = None
     for attempt in range(max_retries):
         try:
-            # Проверяем соединение перед операцией
+            # Check connection health before operation (starting from 2nd attempt)
             if attempt > 0:
                 try:
                     await asyncio.to_thread(redis_client.ping)
                 except Exception:
-                    # Пересоздаем клиент при проблемах с соединением
                     logging.warning(f"Redis connection check failed, attempt {attempt + 1}")
-                    continue
+                    # Continue to retry even if ping fails
+                    pass
             
-            # Выполняем операцию
+            # Execute operation
             result = await asyncio.to_thread(operation, *args, **kwargs)
             return result
             
@@ -90,15 +103,15 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
                 raise RedisConnectionError(f"Redis operation failed: {e}")
                 
         except RedisError as e:
-            # Другие Redis ошибки не требуют retry
+            # Other Redis errors don't require retry
             logging.error(f"Redis operation error: {e}")
             raise RedisConnectionError(f"Redis operation error: {e}")
     
     raise RedisConnectionError(f"Redis operation failed after {max_retries} attempts: {last_error}")
 
 async def get_cached_search_result(query: str, search_type: str) -> Optional[Dict[str, Any]]:
-    """Gets the search result from the cache (Redis first, then memory fallback)."""
-    # Сначала пробуем multi-layer cache
+    """Gets the search result from the cache (multi-layer first, then Redis fallback)."""
+    # Try multi-layer cache first
     try:
         result = await get_cached_search_result_ml(query, search_type)
         if result:
@@ -106,26 +119,32 @@ async def get_cached_search_result(query: str, search_type: str) -> Optional[Dic
     except Exception as e:
         logging.warning("Multi-layer cache error, falling back to Redis: %s", e)
     
-    # Fallback к старому Redis-only подходу
+    # Fallback to Redis-only approach
     if not redis_client:
         await metrics_collector.record_cache_miss()
         return None
     
     cache_key = _generate_cache_key(query, search_type)
     try:
-        # Используем retry логику для Redis операций
+        # Use retry logic for Redis operations
         cached_data = await _redis_operation_with_retry(redis_client.get, cache_key)
+        
         if cached_data:
             await metrics_collector.record_cache_hit()
             logging.info("Cache hit for query: %s...", query[:50])
-            # Handle both bytes and string responses
-            if isinstance(cached_data, bytes):
-                return json.loads(cached_data.decode('utf-8'))
+            
+            # Safely decode the response
+            result = _safe_decode_redis_response(cached_data)
+            if result:
+                return result
             else:
-                return json.loads(cached_data)
+                logging.warning("Failed to decode cached data for query: %s", query[:50])
+                await metrics_collector.record_cache_miss()
+                return None
         else:
             await metrics_collector.record_cache_miss()
             return None
+            
     except RedisConnectionError as e:
         logging.warning(f"Redis cache unavailable: {e}")
         await metrics_collector.record_cache_miss()
@@ -137,23 +156,28 @@ async def get_cached_search_result(query: str, search_type: str) -> Optional[Dic
 
 async def cache_search_result(query: str, search_type: str, result: Dict[str, Any]):
     """Saves the search result to the cache (multi-layer preferred)."""
-    # Сначала пробуем multi-layer cache
+    # Try multi-layer cache first
     try:
         await cache_search_result_ml(query, search_type, result)
         return
     except Exception as e:
         logging.warning("Multi-layer cache save error, falling back to Redis: %s", e)
     
-    # Fallback к старому Redis-only подходу
+    # Fallback to Redis-only approach
     if not redis_client:
         return
 
     cache_key = _generate_cache_key(query, search_type)
     ttl = _get_ttl(search_type)
+    
     try:
-        # Используем retry логику для Redis операций
-        await _redis_operation_with_retry(redis_client.setex, cache_key, ttl, json.dumps(result))
+        # Serialize result to JSON string
+        json_data = json.dumps(result, ensure_ascii=False)
+        
+        # Use retry logic for Redis operations
+        await _redis_operation_with_retry(redis_client.setex, cache_key, ttl, json_data)
         logging.info(f"Cached search result for query: {query[:50]}...")
+        
     except RedisConnectionError as e:
         logging.warning(f"Failed to store in Redis cache (connection issue): {e}")
     except Exception as e:
@@ -165,14 +189,29 @@ async def get_cache_stats() -> Dict[str, Any]:
         return {"error": "Redis client not configured"}
     
     try:
-        # Используем retry логику для Redis операций
+        # Use retry logic for Redis operations
         info = await _redis_operation_with_retry(redis_client.info)
+        
+        # Parse info response safely
+        if isinstance(info, bytes):
+            info_str = info.decode('utf-8')
+        else:
+            info_str = str(info)
+        
+        # Extract basic stats
+        stats = {}
+        for line in info_str.split('\n'):
+            if ':' in line:
+                key, value = line.split(':', 1)
+                stats[key.strip()] = value.strip()
+        
         return {
-            'total_keys': info.get('db0', {}).get('keys', 0),
-            'used_memory': info.get('used_memory_human', 'N/A'),
-            'uptime_in_days': info.get('uptime_in_days', 'N/A'),
+            'total_keys': stats.get('db0', '0'),
+            'used_memory': stats.get('used_memory_human', 'N/A'),
+            'uptime_in_days': stats.get('uptime_in_days', 'N/A'),
             'cache_hit_rate': await metrics_collector.get_cache_hit_rate()
         }
+        
     except RedisConnectionError as e:
         logging.warning(f"Redis stats unavailable: {e}")
         return {"error": f"Redis connection issue: {e}"}
@@ -186,14 +225,13 @@ async def clear_cache():
         return
         
     try:
-        # Используем retry логику для Redis операций
+        # Use retry logic for Redis operations
         await _redis_operation_with_retry(redis_client.flushdb)
         logging.info("Cache cleared")
     except RedisConnectionError as e:
         logging.warning(f"Failed to clear Redis cache (connection issue): {e}")
     except Exception as e:
         logging.error("Error clearing Redis cache: %s", e)
-
 
 # Multi-layer caching implementation
 class MultiLayerCache:
@@ -239,24 +277,26 @@ class MultiLayerCache:
         if redis_client:
             try:
                 redis_key = f"{search_type}:{key}"
-                # Используем retry логику для Redis операций
+                # Use retry logic for Redis operations
                 cached_data = await _redis_operation_with_retry(redis_client.get, redis_key)
+                
                 if cached_data:
-                    # Handle both bytes and string responses
-                    if isinstance(cached_data, bytes):
-                        result = json.loads(cached_data.decode('utf-8'))
+                    # Safely decode the response
+                    result = _safe_decode_redis_response(cached_data)
+                    
+                    if result:
+                        # Store in memory cache for faster access
+                        ttl = _get_ttl(search_type)
+                        self.memory_cache[key] = result
+                        self.memory_cache_ttl[key] = time.time() + ttl
+                        self._cleanup_memory_cache()
+                        
+                        await metrics_collector.record_cache_hit()
+                        logging.info("Redis cache hit for key: %s", key)
+                        return result
                     else:
-                        result = json.loads(cached_data)
-                    
-                    # Store in memory cache for faster access
-                    ttl = _get_ttl(search_type)
-                    self.memory_cache[key] = result
-                    self.memory_cache_ttl[key] = time.time() + ttl
-                    self._cleanup_memory_cache()
-                    
-                    await metrics_collector.record_cache_hit()
-                    logging.info("Redis cache hit for key: %s", key)
-                    return result
+                        logging.warning("Failed to decode Redis data for key: %s", key)
+                        
             except RedisConnectionError as e:
                 logging.warning(f"Redis cache unavailable: {e}")
             except Exception as e:
@@ -278,9 +318,12 @@ class MultiLayerCache:
         if redis_client:
             try:
                 redis_key = f"{search_type}:{key}"
-                # Используем retry логику для Redis операций
-                await _redis_operation_with_retry(redis_client.setex, redis_key, ttl, json.dumps(value))
+                json_data = json.dumps(value, ensure_ascii=False)
+                
+                # Use retry logic for Redis operations
+                await _redis_operation_with_retry(redis_client.setex, redis_key, ttl, json_data)
                 logging.info("Stored in Redis cache: %s", key)
+                
             except RedisConnectionError as e:
                 logging.warning(f"Failed to store in Redis cache (connection issue): {e}")
             except Exception as e:
@@ -295,22 +338,18 @@ class MultiLayerCache:
             'memory_utilization': len(self.memory_cache) / self.memory_cache_max_size * 100
         }
 
-
 # Global multi-layer cache instance
 multi_layer_cache = MultiLayerCache()
-
 
 async def get_cached_search_result_ml(query: str, search_type: str) -> Optional[Dict[str, Any]]:
     """Gets search result using multi-layer cache"""
     cache_key = _generate_cache_key(query, search_type)
     return await multi_layer_cache.get(cache_key, search_type)
 
-
 async def cache_search_result_ml(query: str, search_type: str, result: Dict[str, Any]):
     """Saves search result using multi-layer cache"""
     cache_key = _generate_cache_key(query, search_type)
     await multi_layer_cache.set(cache_key, search_type, result)
-
 
 async def get_multi_layer_cache_stats() -> Dict[str, Any]:
     """Returns multi-layer cache statistics"""
