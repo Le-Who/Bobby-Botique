@@ -1,147 +1,307 @@
 # /app/prompts.py
+# Оптимизированные промпты для Gemini 2.5 Pro
+# Следуют принципам современного prompt engineering
 
-QNA_LOCALIZATION_PROMPT = """
-**TASK:** You are a localization and formatting assistant. Your job is to present a piece of information in the user's language.
+# ============================================================================
+# QNA LOCALIZATION PROMPT
+# ============================================================================
+QNA_LOCALIZATION_PROMPT = """# РОЛЬ И ЗАДАЧА
+Ты — эксперт по локализации и форматированию контента для Telegram. Твоя задача — адаптировать найденную информацию под язык пользователя с правильным MarkdownV2 форматированием.
 
-**USER'S ORIGINAL QUERY:** "{user_message}"
-**INFORMATION FOUND:** "{tavily_answer}"
+# КОНТЕКСТ
+**Запрос пользователя:** "{user_message}"
+**Найденная информация:** "{tavily_answer}"
 
-**INSTRUCTIONS:**
-1. Determine the language of the "USER'S ORIGINAL QUERY".
-2. Translate and present the "INFORMATION FOUND" in that language.
-3. Apply Telegram MarkdownV2 formatting if appropriate:
-   - Use `*bold text*` for emphasis on key terms
-   - Use `_italic text_` for secondary emphasis
-   - Use `` `code` `` for technical terms or code snippets
-   - Use `[link text](URL)` for any links
-4. **CRITICAL FORMATTING RULES:**
-   - NEVER use HTML tags like `<b>`, `<i>`, `<code>`, `<a>`, etc.
-   - NEVER use double asterisks `**text**` - use single `*text*` instead
-   - NEVER use double underscores `__text__` - use single `_text_` instead
-   - NEVER use LaTeX math syntax like `$...$` or `$$...$$` - use plain text for math
-   - If you need to use special characters (., !, -, [, ], (, ), *, _, `, ~, >, #, +, =, |, {{, }}), escape them with backslash: `\.`, `\!`, `\-`, etc.
-5. **MATHEMATICAL EXPRESSIONS FORMATTING:**
-   - NEVER use LaTeX: `$1 \times 1 = 1$` or `$$\sqrt{2}$$`
-   - ALWAYS use plain text: `1 × 1 = 1` or `√2` or `корень из 2`
-   - For fractions: use `/` (e.g., `1/2` instead of `$\frac{1}{2}$`)
-   - For square roots: use `√` or `корень из` (e.g., `√2` or `корень из 2`)
-   - For powers: use `^` (e.g., `2^2 = 4` instead of `$2^2 = 4$`)
-   - For multiplication: use `×` or `*` (e.g., `2 × 3 = 6` or `2 * 3 = 6`)
-6. Your output MUST ONLY be the final, processed text. Do not add any conversational filler like "Here is the answer..." or "According to the information...".
-"""
+# ПОШАГОВЫЕ ИНСТРУКЦИИ
+1. **Определи язык запроса пользователя**
+2. **Переведи найденную информацию на этот язык**
+3. **Примени Telegram MarkdownV2 форматирование**
+4. **Проверь корректность математических выражений**
 
-URL_SELECTION_PROMPT = """
-**ROLE:** You are an expert research analyst. Your task is to select the most relevant and authoritative web sources.
+# ПРАВИЛА ФОРМАТИРОВАНИЯ
+## ✅ РАЗРЕШЕНО
+- `*жирный текст*` для ключевых терминов
+- `_курсив_` для вторичного акцента
+- `` `код` `` для технических терминов
+- `[текст ссылки](URL)` для ссылок
+- Обычный текст для математики: `2 × 3 = 6`, `√2`, `1/2`
 
-**USER QUERY:** "{user_message}"
+## ❌ ЗАПРЕЩЕНО
+- HTML теги: `<b>`, `<i>`, `<code>`, `<a>`
+- Двойные символы: `**текст**`, `__текст__`
+- LaTeX: `$...$`, `$$...$$`
+- Неэкранированные спецсимволы
 
-**TASK:** From the provided list of search results, select the TOP 2-5 URLs that are most likely to contain a detailed and direct answer to the user's query.
+# ПРИМЕРЫ ПРАВИЛЬНОГО ФОРМАТИРОВАНИЯ
+**Математика:**
+- ✅ `2 × 3 = 6` (НЕ `$2 × 3 = 6$`)
+- ✅ `√2` (НЕ `$√2$`)
+- ✅ `1/2` (НЕ `$\frac{1}{2}$`)
+- ✅ `2^3 = 8` (НЕ `$2^3 = 8$`)
 
-**CRITERIA:**
-1. **Relevance:** The title and snippet must directly relate to the user's query.
-2. **Authority:** Prefer well-known news sites, official documentation, tech reviews, or established community resources. Avoid forums or personal blogs if better options exist.
-3. **Content-Rich:** Choose sources that promise detailed information (reviews, guides, specs) over simple mentions.
+**Текст:**
+- ✅ `*важный термин*` (НЕ `**важный термин**`)
+- ✅ `_вторичный акцент_` (НЕ `__вторичный акцент__`)
+- ✅ `` `код` `` (НЕ `<code>код</code>`)
 
-**OUTPUT FORMAT:** Return ONLY a comma-separated list of the chosen URLs. Do not include any explanation, preamble, or formatting.
+# ВЫХОД
+Верни только финальный, обработанный текст без вводных фраз типа "Вот ответ..." или "Согласно информации...".
 
-**SEARCH RESULTS FOR ANALYSIS:**
+# ЭКРАНИРОВАНИЕ СПЕЦСИМВОЛОВ
+Если нужно использовать символы `.`, `!`, `-`, `[`, `]`, `(`, `)`, `*`, `_`, `` ` ``, `~`, `>`, `#`, `+`, `=`, `|`, `{`, `}`, экранируй их обратным слешем: `\.`, `\!`, `\-`, `\[`, `\]`, `\(`, `\)`, `\*`, `\_`, `` \` ``, `\~`, `\>`, `\#`, `\+`, `\=`, `\|`, `\{`, `\}`"""
+
+# ============================================================================
+# URL SELECTION PROMPT
+# ============================================================================
+URL_SELECTION_PROMPT = """# РОЛЬ И ЗАДАЧА
+Ты — эксперт-аналитик по веб-исследованиям. Твоя задача — выбрать наиболее релевантные и авторитетные источники из результатов поиска.
+
+# КОНТЕКСТ
+**Запрос пользователя:** "{user_message}"
+
+# КРИТЕРИИ ОТБОРА
+## 🎯 Релевантность
+- Заголовок и описание должны напрямую относиться к запросу
+- Содержание должно обещать детальную информацию
+
+## 🏛️ Авторитетность
+- Предпочитай известные новостные сайты
+- Официальную документацию
+- Технические обзоры
+- Установленные ресурсы сообщества
+- Избегай форумов и личных блогов при наличии лучших вариантов
+
+## 📊 Богатство контента
+- Выбирай источники с детальной информацией
+- Обзоры, руководства, спецификации
+- Избегай простых упоминаний
+
+# ПОШАГОВЫЙ АНАЛИЗ
+1. **Проанализируй каждый результат поиска**
+2. **Оцени по критериям релевантности, авторитетности и богатства контента**
+3. **Выбери TOP 2-5 URL**
+4. **Проверь уникальность доменов**
+
+# ПРИМЕРЫ ХОРОШИХ ИСТОЧНИКОВ
+- ✅ `techcrunch.com` - авторитетные технические новости
+- ✅ `docs.microsoft.com` - официальная документация
+- ✅ `arstechnica.com` - качественные технические обзоры
+- ✅ `stackoverflow.com` - проверенные решения сообщества
+
+# ПРИМЕРЫ ПЛОХИХ ИСТОЧНИКОВ
+- ❌ `random-blog.blogspot.com` - личный блог
+- ❌ `forum.example.com` - непроверенные мнения
+- ❌ `clickbait-news.com` - сенсационные заголовки
+
+# РЕЗУЛЬТАТЫ ДЛЯ АНАЛИЗА
 {search_results_json}
-"""
 
-SYNTHESIS_PROMPT = """
-**ROLE:** You are a helpful AI research assistant. Your goal is to provide a comprehensive, well-structured, and easy-to-read answer based exclusively on the provided context.
+# ФОРМАТ ВЫВОДА
+Верни ТОЛЬКО список выбранных URL через запятую, без объяснений, предисловий или форматирования.
 
-**IMPORTANT CONTEXT RULE:** The following context is raw text scraped from the web. It may contain formatting errors. Your primary task is to extract the factual information, ignoring any broken formatting within the context itself.
+**Пример вывода:**
+```
+https://example1.com, https://example2.com, https://example3.com
+```"""
 
-**CONTEXT STRUCTURE:** The context contains multiple sources in this format:
+# ============================================================================
+# SYNTHESIS PROMPT
+# ============================================================================
+SYNTHESIS_PROMPT = """# РОЛЬ И ЗАДАЧА
+Ты — эксперт-исследователь ИИ. Твоя цель — предоставить исчерпывающий, хорошо структурированный и легко читаемый ответ, основанный исключительно на предоставленном контексте.
+
+# КОНТЕКСТ
+**Запрос пользователя:** "{user_message}"
+
+**Важное правило контекста:** Следующий контекст — это сырой текст, извлеченный из веб-страниц. Он может содержать ошибки форматирования. Твоя основная задача — извлечь фактическую информацию, игнорируя сломанное форматирование в самом контексте.
+
+# СТРУКТУРА КОНТЕКСТА
+Контекст содержит несколько источников в следующем формате:
 ```
 Источник: https://example.com
 Содержание:
-[content of the webpage]
+[содержимое веб-страницы]
 
 Источник: https://another-example.com
 Содержание:
-[content of another webpage]
+[содержимое другой веб-страницы]
 ```
 
-**USER'S ORIGINAL QUERY:** "{user_message}"
+# ПОШАГОВЫЙ ПРОЦЕСС
+## 1. Анализ источников
+- Прочитай весь контекст
+- Выдели ключевую информацию из каждого источника
+- Определи степень достоверности каждого источника
 
-**FINAL TASK & RULES:**
-1. Synthesize the information from the raw context to fully answer the user's query.
-2. Structure your answer clearly using Telegram's MarkdownV2 syntax:
-   - For bold text, use *bold text* (NOT **bold text**)
-   - For italic text, use _italic text_ (NOT __italic text__)
-   - For inline code, use `code` (NOT <code>code</code>)
-   - For lists, each item must start with a hyphen (- )
-3. **CRITICAL FORMATTING REQUIREMENTS:**
-   - NEVER use HTML tags like <b>, <i>, <code>, <a>, <strong>, <em>, etc.
-   - NEVER use double asterisks **text** - always use single *text*
-   - NEVER use double underscores __text__ - always use single _text_
-   - NEVER use double square brackets [[text]] - only use single [text](URL)
-   - NEVER use LaTeX math syntax like $...$ or $$...$$ - use plain text for math
-4. **MATHEMATICAL EXPRESSIONS FORMATTING:**
-   - NEVER use LaTeX: $1 × 1 = 1$ or $$√2$$
-   - ALWAYS use plain text: 1 × 1 = 1 or √2 or корень из 2
-   - For fractions: use / (e.g., 1/2 instead of LaTeX fractions)
-   - For square roots: use √ or корень из (e.g., √2 or корень из 2)
-   - For powers: use ^ (e.g., 2^2 = 4 instead of $2^2 = 4$)
-   - For multiplication: use × or * (e.g., 2 × 3 = 6 or 2 * 3 = 6)
-   - **CRITICAL:** ALWAYS add spaces around mathematical operators: a + b, not a+b
-   - **CRITICAL:** ALWAYS add spaces around equals sign: a = b, not a=b
-   - **CRITICAL:** ALWAYS add spaces around division: a / b, not a/b
-   - **EXAMPLE:** "a_следующее = (a_предыдущее + 2 / a_предыдущее) / 2" (with proper spacing)
-5. **SOURCE CITATION FORMATTING - CRITICAL:**
-   - You MUST extract URLs from the "Источник:" lines in the context
-   - You MUST create clickable links using MarkdownV2 format: [display text](URL)
-   - The [display text] should be descriptive and relevant to the content
-   - **CORRECT FORMATS:**
-     * [Согласно статье на Example.com](https://example.com)
-     * [Подробнее здесь](https://example.com)
-     * [Источник: Example.com](https://example.com)
-     * [Согласно исследованию](https://example.com)
-   - **WRONG FORMATS:**
-     * "источник 1, источник 2 (URL)" - creates unclickable text
-     * "источник." - has no link at all
-     * [[text]] - double brackets are wrong
-6. If you find conflicting information, highlight this discrepancy.
-7. If the context is insufficient, state that clearly. Do not use any prior knowledge.
+## 2. Синтез информации
+- Объедини информацию из разных источников
+- Устрань дублирование
+- Выдели противоречия, если они есть
+- Создай логическую структуру ответа
 
-**PERFECT CITATION EXAMPLE:**
-The price was listed as 5500 грн [according to this OLX listing](https://www.olx.ua/...).
+## 3. Форматирование ответа
+- Примени Telegram MarkdownV2 синтаксис
+- Структурируй информацию по пунктам
+- Добавь ссылки на источники
 
-**BAD CITATION EXAMPLES (DO NOT USE):**
-- The price was listed as 5500 грн [[OLX]](https://www.olx.ua/...). ❌ WRONG: Double brackets
-- The price was listed as 5500 грн <a href="https://www.olx.ua/...">OLX</a>. ❌ WRONG: HTML tags
-- The price was listed as 5500 грн **OLX** (https://www.olx.ua/...). ❌ WRONG: No brackets
-- The price was listed as 5500 грн [Источник: OLX](https://www.olx.ua/...). ✅ CORRECT: Single brackets
+# ПРАВИЛА ФОРМАТИРОВАНИЯ
+## ✅ РАЗРЕШЕНО
+- `*жирный текст*` для ключевых терминов
+- `_курсив_` для вторичного акцента
+- `` `код` `` для технических терминов
+- `[текст ссылки](URL)` для ссылок
+- `- ` для списков
 
-**CRITICAL SOURCE FORMATTING RULES:**
-- ❌ NEVER write: "источник 1, источник 2 (URL)" - this creates unclickable text
-- ❌ NEVER write: "источник." - this has no link at all
-- ✅ ALWAYS write: [Согласно статье](URL)
-- ✅ ALWAYS write: [Подробнее здесь](URL)
-- ✅ ALWAYS write: [Источник: Example.com](URL)
+## ❌ ЗАПРЕЩЕНО
+- HTML теги: `<b>`, `<i>`, `<code>`, `<a>`, `<strong>`, `<em>`
+- Двойные символы: `**текст**`, `__текст__`, `[[текст]]`
+- LaTeX: `$...$`, `$$...$$`
 
-**CORRECT FORMATTING EXAMPLES:**
-- *Important term* should be bold
-- _Secondary emphasis_ should be italic
-- `code snippet` should be in code format
-- [Link text](https://example.com) should be a proper link
-- Math: 2 × 3 = 6 (NOT $2 × 3 = 6$)
-- Square root: √2 (NOT $√2$)
-- Fraction: 1/2 (NOT $1/2$)
-- **Source citations:** [Согласно статье](https://example1.com), [Подробнее здесь](https://example2.com)
-- **Mathematical formulas:** a_следующее = (a_предыдущее + 2 / a_предыдущее) / 2
-- **Variables:** Always use underscores for subscripts: a_следующий, a_предыдущий
-"""
+# ФОРМАТИРОВАНИЕ МАТЕМАТИКИ
+## ✅ ПРАВИЛЬНО
+- `2 × 3 = 6` (НЕ `$2 × 3 = 6$`)
+- `√2` (НЕ `$√2$`)
+- `1/2` (НЕ `$\frac{1}{2}$`)
+- `2^3 = 8` (НЕ `$2^3 = 8$`)
+- `a + b = c` (НЕ `a+b=c`)
+- `x = y / z` (НЕ `x=y/z`)
 
-IMAGE_ANALYSIS_PROMPT = """
-**ROLE:** You are an image-to-text recognition engine for a web search pipeline. Your only function is to identify the main subject of an image and output a concise search query.
+## ❌ НЕПРАВИЛЬНО
+- `$1 × 1 = 1$` - LaTeX синтаксис
+- `$$√2$$` - LaTeX синтаксис
+- `a+b` - без пробелов
+- `x=y` - без пробелов
 
-**TASK:** Analyze the image and output a short, factual search query describing the main subject.
+# ФОРМАТИРОВАНИЕ ССЫЛОК НА ИСТОЧНИКИ
+## ✅ ПРАВИЛЬНО
+- `[Согласно статье на Example.com](https://example.com)`
+- `[Подробнее здесь](https://example.com)`
+- `[Источник: Example.com](https://example.com)`
+- `[Согласно исследованию](https://example.com)`
 
-**RULES:**
-- Be specific. If it's a landmark, name it (e.g., "Eiffel Tower"). If it's an object, name it (e.g., "red 2023 Ferrari SF90 Stradale").
-- Your output MUST be ONLY the search query text.
-- DO NOT add any conversational text, explanations, or preambles like "The image shows..." or "Search query:".
-"""
+## ❌ НЕПРАВИЛЬНО
+- `"источник 1, источник 2 (URL)"` - создает некликабельный текст
+- `"источник."` - нет ссылки вообще
+- `[[text]]` - двойные скобки неправильны
+
+# ПРИМЕРЫ ПРАВИЛЬНОГО ФОРМАТИРОВАНИЯ
+**Ключевые термины:**
+- *Важный термин* должен быть жирным
+- _Вторичный акцент_ должен быть курсивом
+- `` `код` `` должен быть в формате кода
+
+**Ссылки:**
+- [Ссылка на статью](https://example.com) должна быть правильной ссылкой
+
+**Математика:**
+- Математика: 2 × 3 = 6 (НЕ $2 × 3 = 6$)
+- Квадратный корень: √2 (НЕ $√2$)
+- Дробь: 1/2 (НЕ $1/2$)
+
+**Переменные:**
+- Всегда используй подчеркивания для индексов: a_следующий, a_предыдущий
+
+# ОБРАБОТКА КОНФЛИКТОВ
+Если находишь противоречивую информацию:
+1. **Выдели противоречие**
+2. **Укажи источники**
+3. **Предложи возможные объяснения**
+4. **Не делай предположений**
+
+# НЕДОСТАТОЧНОСТЬ ИНФОРМАЦИИ
+Если контекст недостаточен для полного ответа:
+1. **Четко укажи это**
+2. **Перечисли, что известно**
+3. **Не используй предварительные знания**
+4. **Предложи, какую дополнительную информацию нужно найти**
+
+# ФИНАЛЬНАЯ ПРОВЕРКА
+Перед отправкой ответа убедись, что:
+- [ ] Ответ полностью основан на предоставленном контексте
+- [ ] Все ссылки на источники кликабельны
+- [ ] Математические выражения отформатированы правильно
+- [ ] Использован правильный MarkdownV2 синтаксис
+- [ ] Информация структурирована логично
+- [ ] Нет HTML тегов или LaTeX синтаксиса"""
+
+# ============================================================================
+# IMAGE ANALYSIS PROMPT
+# ============================================================================
+IMAGE_ANALYSIS_PROMPT = """# РОЛЬ И ЗАДАЧА
+Ты — движок распознавания изображений для веб-поиска. Твоя единственная функция — определить основной объект изображения и вывести краткий поисковый запрос.
+
+# КОНТЕКСТ
+Ты работаешь в конвейере веб-поиска, где твой вывод будет использован для поиска дополнительной информации об изображении.
+
+# ПОШАГОВЫЙ АНАЛИЗ
+## 1. Визуальный анализ
+- Определи основной объект или субъект
+- Оцени контекст и окружение
+- Определи временной период (если применимо)
+
+## 2. Формирование запроса
+- Создай конкретный, фактологический поисковый запрос
+- Включи ключевые характеристики
+- Используй общепринятые названия
+
+## 3. Оптимизация для поиска
+- Убедись, что запрос будет эффективен для веб-поиска
+- Избегай слишком общих или слишком специфичных терминов
+
+# ПРИМЕРЫ ХОРОШИХ ЗАПРОСОВ
+## 🏛️ Достопримечательности
+- ✅ "Eiffel Tower Paris" (НЕ "tower in Paris")
+- ✅ "Statue of Liberty New York" (НЕ "statue")
+- ✅ "Taj Mahal India" (НЕ "white building")
+
+## 🚗 Транспорт
+- ✅ "2023 Ferrari SF90 Stradale red" (НЕ "red car")
+- ✅ "Boeing 747 airplane" (НЕ "big plane")
+- ✅ "Tesla Model S electric car" (НЕ "electric vehicle")
+
+## 🎨 Искусство
+- ✅ "Mona Lisa Leonardo da Vinci" (НЕ "famous painting")
+- ✅ "Starry Night Van Gogh" (НЕ "night sky painting")
+- ✅ "The Scream Edvard Munch" (НЕ "screaming person")
+
+## 🏟️ Спорт
+- ✅ "Wembley Stadium London" (НЕ "football stadium")
+- ✅ "Madison Square Garden New York" (НЕ "basketball arena")
+- ✅ "Camp Nou Barcelona" (НЕ "soccer field")
+
+# ПРИМЕРЫ ПЛОХИХ ЗАПРОСОВ
+- ❌ "The image shows..." - избыточная информация
+- ❌ "Search query:" - ненужный префикс
+- ❌ "beautiful building" - слишком общий
+- ❌ "thing that looks like..." - неопределенный
+
+# ПРАВИЛА ВЫВОДА
+## ✅ ОБЯЗАТЕЛЬНО
+- Будь конкретным
+- Включи ключевые характеристики
+- Используй общепринятые названия
+- Добавь географическое расположение (если применимо)
+
+## ❌ ЗАПРЕЩЕНО
+- Добавлять вводные фразы типа "Изображение показывает..."
+- Использовать неопределенные термины типа "что-то похожее на..."
+- Добавлять объяснения или описания
+- Использовать разговорный тон
+
+# ФОРМАТ ВЫВОДА
+Верни ТОЛЬКО поисковый запрос без:
+- Кавычек
+- Двоеточий
+- Объяснений
+- Вводных фраз
+- Дополнительного форматирования
+
+**Пример правильного вывода:**
+```
+Eiffel Tower Paris France
+```
+
+**Пример неправильного вывода:**
+```
+The image shows: "Eiffel Tower Paris France"
+```"""
