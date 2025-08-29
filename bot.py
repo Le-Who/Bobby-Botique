@@ -344,25 +344,16 @@ async def main():
         # Проверка здоровья системы
         await startup_health_check()
         
-        # Запуск веб-сервера для Render
-        web_server_task = None
+        # Запуск health check сервера для Northflank
+        health_server = None
         try:
-            config = HypercornConfig()
-            config.bind = ["0.0.0.0:8000"]
-            config.worker_class = "asyncio"
+            # Запускаем простой HTTP сервер для health check
+            health_server = await start_health_server()
             
-            web_server_task = asyncio.create_task(
-                serve(flask_app, config)
-            )
-            logging.info("Web server started on port 8000")
-        except Exception as e:
-            logging.warning(f"Web server failed to start: {e}")
-        
-        # Запуск бота
-        bot_task = asyncio.create_task(run_bot_with_retry())
-        
-        # Ожидание завершения
-        try:
+            # Запуск бота
+            bot_task = asyncio.create_task(run_bot_with_retry())
+            
+            # Ожидание завершения
             await asyncio.gather(bot_task, return_exceptions=True)
         except Exception as e:
             logging.error(f"Bot task failed: {e}")
