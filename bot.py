@@ -7,7 +7,7 @@ import time
 import fcntl
 import sys
 from telegram import Update
-from telegram.ext import Application, CallbackQueryHandler
+from telegram.ext import Application
 from telegram.error import NetworkError, TimedOut, RetryAfter, Conflict
 from flask import Flask
 from hypercorn.config import Config as HypercornConfig
@@ -17,7 +17,7 @@ from hypercorn.asyncio import serve
 from app.config import settings
 from app import database
 from app.handlers import commands, messages, callbacks
-from app.handlers.callbacks import new_topic_callback
+
 from app.metrics import metrics_collector
 from app.alerts import alert_manager
 from app.utils.logging_config import setup_detailed_logging, log_api_summary
