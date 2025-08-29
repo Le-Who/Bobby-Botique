@@ -22,14 +22,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем исходный код
 COPY . .
 
-# Создаем скрипт для очистки блокировок при запуске
+# Создаем скрипт для запуска бота
 RUN echo '#!/bin/bash' > /app/start.sh && \
     echo 'echo "=== BOT STARTUP SCRIPT ==="' >> /app/start.sh && \
     echo 'echo "Container ID: $HOSTNAME"' >> /app/start.sh && \
     echo 'echo "Process ID: $$"' >> /app/start.sh && \
-    echo 'echo "Checking for existing bot locks..."' >> /app/start.sh && \
-    echo 'python /app/clear_lock.py all' >> /app/start.sh && \
-    echo 'echo "Lock cleanup completed"' >> /app/start.sh && \
     echo 'echo "Starting bot..."' >> /app/start.sh && \
     echo 'exec python /app/bot.py' >> /app/start.sh && \
     chmod +x /app/start.sh
@@ -43,8 +40,5 @@ ENV PYTHONPATH=/app
 RUN chown -R app:app /app
 USER app
 
-# Expose порт для Render health check
-EXPOSE 10000
-
-# Команда для запуска бота с очисткой блокировок
+# Команда для запуска бота
 CMD ["/app/start.sh"]
