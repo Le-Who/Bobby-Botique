@@ -353,22 +353,29 @@ async def create_rls_policies(table_name: str):
     """Создает политики безопасности для таблицы"""
     try:
         if table_name == 'users':
-            # Удаляем старые политики если они существуют
+            # Проверяем существование политики перед созданием
             try:
-                await db_query("DROP POLICY IF EXISTS users_select_policy ON users")
-                await db_query("DROP POLICY IF EXISTS users_modify_policy ON users")
-            except Exception as e:
-                logging.warning(f"Could not drop existing policies for {table_name}: {e}")
-            
-            # Создаем единую политику для всех операций с пользователями
-            try:
-                await db_query("""
-                    CREATE POLICY users_policy ON users
-                    FOR ALL USING (
-                        user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
-                        (SELECT current_setting('app.is_admin', true)::boolean = true)
-                    );
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = 'users' AND policyname = 'users_policy'
                 """)
+                
+                if not existing_policy:
+                    # Создаем единую политику для всех операций с пользователями
+                    await db_query("""
+                        CREATE POLICY users_policy ON users
+                        FOR ALL USING (
+                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
+                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                        );
+                    """)
+                    logging.info(f"Created users_policy for table: {table_name}")
+                else:
+                    logging.info(f"Policy users_policy already exists for table: {table_name}")
+                    
+            except Exception as e:
+                logging.error(f"Failed to create users_policy: {e}")
+                raise e
                 
                 # Создаем индекс для оптимизации RLS политики
                 try:
@@ -382,25 +389,33 @@ async def create_rls_policies(table_name: str):
                 raise e
             
         elif table_name == 'chats':
-            # Удаляем старую политику если она существует
+            # Проверяем существование политики перед созданием
             try:
-                await db_query("DROP POLICY IF EXISTS chats_policy ON chats")
-            except Exception as e:
-                logging.warning(f"Could not drop existing policy for {table_name}: {e}")
-            
-            # Пользователи могут читать/изменять только свои чаты
-            try:
-                await db_query("""
-                    CREATE POLICY chats_policy ON chats
-                    FOR ALL USING (
-                        user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
-                        (SELECT current_setting('app.is_admin', true)::boolean = true)
-                    );
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = 'chats' AND policyname = 'chats_policy'
                 """)
+                
+                if not existing_policy:
+                    # Пользователи могут читать/изменять только свои чаты
+                    await db_query("""
+                        CREATE POLICY chats_policy ON chats
+                        FOR ALL USING (
+                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
+                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                        );
+                    """)
+                    logging.info(f"Created chats_policy for table: {table_name}")
+                else:
+                    logging.info(f"Policy chats_policy already exists for table: {table_name}")
+                    
+            except Exception as e:
+                logging.error(f"Failed to create chats_policy: {e}")
+                raise e
                 
                 # Создаем составной индекс для оптимизации RLS политики
                 try:
-                    await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chats_user_id_admin_rls ON chats(user_id, (SELECT current_setting('app.is_admin', true)::boolean))")
+                    await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chats_user_id_admin_rls ON chats(user_id)")
                     logging.info(f"Created composite index for RLS optimization on {table_name}")
                 except Exception as e:
                     logging.warning(f"Could not create composite index for {table_name}: {e}")
@@ -417,21 +432,29 @@ async def create_rls_policies(table_name: str):
                 raise e
             
         elif table_name == 'user_documents':
-            # Удаляем старую политику если она существует
+            # Проверяем существование политики перед созданием
             try:
-                await db_query("DROP POLICY IF EXISTS user_documents_policy ON user_documents")
-            except Exception as e:
-                logging.warning(f"Could not drop existing policy for {table_name}: {e}")
-            
-            # Пользователи могут читать/изменять только свои документы
-            try:
-                await db_query("""
-                    CREATE POLICY user_documents_policy ON user_documents
-                    FOR ALL USING (
-                        user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
-                        (SELECT current_setting('app.is_admin', true)::boolean = true)
-                    );
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = 'user_documents' AND policyname = 'user_documents_policy'
                 """)
+                
+                if not existing_policy:
+                    # Пользователи могут читать/изменять только свои документы
+                    await db_query("""
+                        CREATE POLICY user_documents_policy ON user_documents
+                        FOR ALL USING (
+                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
+                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                        );
+                    """)
+                    logging.info(f"Created user_documents_policy for table: {table_name}")
+                else:
+                    logging.info(f"Policy user_documents_policy already exists for table: {table_name}")
+                    
+            except Exception as e:
+                logging.error(f"Failed to create user_documents_policy: {e}")
+                raise e
                 
                 # Создаем индекс для оптимизации RLS политики
                 try:
@@ -445,64 +468,82 @@ async def create_rls_policies(table_name: str):
                 raise e
             
         elif table_name in ['api_keys', 'tavily_api_keys']:
-            # Удаляем старую политику если она существует
+            # Проверяем существование политики перед созданием
             try:
-                await db_query(f"DROP POLICY IF EXISTS {table_name}_policy ON {table_name}")
-            except Exception as e:
-                logging.warning(f"Could not drop existing policy for {table_name}: {e}")
-            
-            # Только админы могут работать с API ключами
-            try:
-                await db_query(f"""
-                    CREATE POLICY {table_name}_policy ON {table_name}
-                    FOR ALL USING ((SELECT current_setting('app.is_admin', true)::boolean = true));
-                """)
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = $1 AND policyname = $2
+                """, (table_name, f"{table_name}_policy"))
+                
+                if not existing_policy:
+                    # Только админы могут работать с API ключами
+                    await db_query(f"""
+                        CREATE POLICY {table_name}_policy ON {table_name}
+                        FOR ALL USING ((SELECT current_setting('app.is_admin', true)::boolean = true));
+                    """)
+                    logging.info(f"Created {table_name}_policy for table: {table_name}")
+                else:
+                    logging.info(f"Policy {table_name}_policy already exists for table: {table_name}")
+                    
             except Exception as e:
                 logging.error(f"Failed to create {table_name}_policy: {e}")
                 raise e
             
         elif table_name in ['key_usage', 'tavily_key_usage']:
-            # Удаляем старую политику если она существует
+            # Проверяем существование политики перед созданием
             try:
-                await db_query(f"DROP POLICY IF EXISTS {table_name}_policy ON {table_name}")
-            except Exception as e:
-                logging.warning(f"Could not drop existing policy for {table_name}: {e}")
-            
-            # Только админы могут читать статистику использования
-            try:
-                await db_query(f"""
-                    CREATE POLICY {table_name}_policy ON {table_name}
-                    FOR ALL USING ((SELECT current_setting('app.is_admin', true)::boolean = true));
-                """)
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = $1 AND policyname = $2
+                """, (table_name, f"{table_name}_policy"))
+                
+                if not existing_policy:
+                    # Только админы могут читать статистику использования
+                    await db_query(f"""
+                        CREATE POLICY {table_name}_policy ON {table_name}
+                        FOR ALL USING ((SELECT current_setting('app.is_admin', true)::boolean = true));
+                    """)
+                    logging.info(f"Created {table_name}_policy for table: {table_name}")
+                else:
+                    logging.info(f"Policy {table_name}_policy already exists for table: {table_name}")
+                    
             except Exception as e:
                 logging.error(f"Failed to create {table_name}_policy: {e}")
                 raise e
             
         elif table_name in ['group_chats', 'group_members', 'group_messages']:
-            # Удаляем старую политику если она существует
+            # Проверяем существование политики перед созданием
             try:
-                await db_query(f"DROP POLICY IF EXISTS {table_name}_policy ON {table_name}")
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = $1 AND policyname = $2
+                """, (table_name, f"{table_name}_policy"))
+                
+                if not existing_policy:
+                    # Пользователи могут работать только с группами, где они участники
+                    await db_query(f"""
+                        CREATE POLICY {table_name}_policy ON {table_name}
+                        FOR ALL USING (
+                            (SELECT current_setting('app.is_admin', true)::boolean = true) OR
+                            EXISTS (
+                                SELECT 1 FROM group_members gm 
+                                WHERE gm.chat_id = {table_name}.chat_id 
+                                AND gm.user_id = (SELECT current_setting('app.user_id', true)::bigint)
+                            )
+                        );
+                    """)
+                    logging.info(f"Created {table_name}_policy for table: {table_name}")
+                else:
+                    logging.info(f"Policy {table_name}_policy already exists for table: {table_name}")
+                    
             except Exception as e:
-                logging.warning(f"Could not drop existing policy for {table_name}: {e}")
-            
-            # Пользователи могут работать только с группами, где они участники
-            try:
-                await db_query(f"""
-                    CREATE POLICY {table_name}_policy ON {table_name}
-                    FOR ALL USING (
-                        (SELECT current_setting('app.is_admin', true)::boolean = true) OR
-                        EXISTS (
-                            SELECT 1 FROM group_members gm 
-                            WHERE gm.chat_id = {table_name}.chat_id 
-                            AND gm.user_id = (SELECT current_setting('app.user_id', true)::bigint)
-                        )
-                    );
-                """)
+                logging.error(f"Failed to create {table_name}_policy: {e}")
+                raise e
                 
                 # Создаем индексы для оптимизации RLS политики
                 try:
                     if table_name == 'group_chats':
-                        await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_group_chats_chat_id_rls ON group_chats(id)")
+                        await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_group_chats_chat_id_rls ON group_chats(chat_id)")
                     elif table_name == 'group_members':
                         await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_group_members_chat_user_rls ON group_members(chat_id, user_id)")
                     elif table_name == 'group_messages':
@@ -516,18 +557,23 @@ async def create_rls_policies(table_name: str):
                 raise e
             
         elif table_name in ['metrics', 'error_logs']:
-            # Удаляем старую политику если она существует
+            # Проверяем существование политики перед созданием
             try:
-                await db_query(f"DROP POLICY IF EXISTS {table_name}_policy ON {table_name}")
-            except Exception as e:
-                logging.warning(f"Could not drop existing policy for {table_name}: {e}")
-            
-            # Только админы могут читать метрики и логи
-            try:
-                await db_query(f"""
-                    CREATE POLICY {table_name}_policy ON {table_name}
-                    FOR ALL USING ((SELECT current_setting('app.is_admin', true)::boolean = true));
-                """)
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = $1 AND policyname = $2
+                """, (table_name, f"{table_name}_policy"))
+                
+                if not existing_policy:
+                    # Только админы могут читать метрики и логи
+                    await db_query(f"""
+                        CREATE POLICY {table_name}_policy ON {table_name}
+                        FOR ALL USING ((SELECT current_setting('app.is_admin', true)::boolean = true));
+                    """)
+                    logging.info(f"Created {table_name}_policy for table: {table_name}")
+                else:
+                    logging.info(f"Policy {table_name}_policy already exists for table: {table_name}")
+                    
             except Exception as e:
                 logging.error(f"Failed to create {table_name}_policy: {e}")
                 raise e
