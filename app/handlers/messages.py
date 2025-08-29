@@ -127,12 +127,12 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await placeholder_message.edit_text("❌ Произошла ошибка при обработке. Попробуйте позже.")
     
     # Запускаем задачу в очереди
-    from app.queue import task_queue
+    from app.queue import task_queue, TaskPriority
     await task_queue.add_task(
         user_id=user_id,
         task_type="message_processing",
         data={"message": update.message.text, "chat_id": chat_id},
-        priority=1
+        priority=TaskPriority.NORMAL
     )
 
 async def _process_media_group(media_group_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE):

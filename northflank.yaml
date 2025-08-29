@@ -10,7 +10,7 @@ services:
       url: https://github.com/Le-Who/gemaibotv2
       branch: main
     build:
-      dockerfile: ./Dockerfile.northflank
+      dockerfile: ./Dockerfile
       context: .
     env:
       - name: LOG_JSON
