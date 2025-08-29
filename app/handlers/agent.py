@@ -14,6 +14,7 @@ from app import state
 from app import prompts
 from app.metrics import metrics_collector
 from app.utils.api_logger import api_logger
+from app.utils.formatting import escape_format_chars
 
 async def _resolve_gemini_request(preferred_model: str):
     key = await db.get_available_gemini_key(preferred_model)
@@ -80,8 +81,12 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
+    # Экранируем фигурные скобки в данных для предотвращения ошибок форматирования
+    safe_user_message = escape_format_chars(user_message)
+    safe_tavily_answer = escape_format_chars(tavily_answer)
+    
     localization_prompt = prompts.QNA_LOCALIZATION_PROMPT.format(
-        user_message=user_message, tavily_answer=tavily_answer
+        user_message=safe_user_message, tavily_answer=safe_tavily_answer
     )
     # Получаем user_id и chat_id для логирования
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
@@ -190,8 +195,13 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
                 }
                 safe_search_results.append(safe_result)
         
+        # Экранируем фигурные скобки в user_message для предотвращения ошибок форматирования
+        from app.utils.formatting import escape_format_chars
+        
+        safe_user_message = escape_format_chars(user_message)
+        
         selection_prompt = prompts.URL_SELECTION_PROMPT.format(
-            user_message=user_message,
+            user_message=safe_user_message,
             search_results_json=json.dumps(safe_search_results, indent=2, ensure_ascii=False)
         )
         
@@ -261,9 +271,20 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
+    
+    # Экранируем фигурные скобки в данных для предотвращения ошибок форматирования
+    def escape_format_chars(text: str) -> str:
+        """Экранирует фигурные скобки { и } для безопасного форматирования строк"""
+        if not text:
+            return text
+        return text.replace('{', '{{').replace('}', '}}')
+    
+    # Применяем экранирование к данным перед форматированием промпта
+    safe_full_context = escape_format_chars(full_context)
+    safe_user_message = escape_format_chars(user_message)
         
     augmented_prompt = prompts.SYNTHESIS_PROMPT.format(
-        full_context=full_context, user_message=user_message
+        full_context=safe_full_context, user_message=safe_user_message
     )
     chat_state.history.append({'role': 'user', 'parts': [augmented_prompt]})
     
