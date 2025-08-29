@@ -1134,3 +1134,98 @@ cooking process step by step recipe preparation
             await placeholder_message.edit_text("❌ Произошла ошибка при анализе группы изображений.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
+
+async def handle_agent_request(placeholder_message: Message, user_id: int, content, chat_state=None, context="general", **kwargs):
+    """Основная функция для обработки запросов через agent"""
+    try:
+        chat_id = placeholder_message.chat.id if placeholder_message.chat else None
+        
+        if isinstance(content, str):
+            # Текстовый запрос
+            if context == "text_processing":
+                await _handle_text_request(placeholder_message, user_id, content, chat_state)
+            elif context == "qna_search":
+                await _handle_qna_search(placeholder_message, content, chat_state)
+            else:
+                await _handle_research_agent(placeholder_message, user_id, content, chat_state)
+        elif isinstance(content, (list, tuple)) and all(isinstance(item, Image.Image) for item in content):
+            # Группа изображений
+            await _handle_media_group_search(placeholder_message, user_id, content, chat_state, context="media_group_processing")
+        elif hasattr(content, 'file_id'):
+            # Одиночное изображение
+            await _handle_single_image_search(placeholder_message, user_id, content, chat_state, context="image_processing")
+        else:
+            # Неизвестный тип контента
+            await placeholder_message.edit_text("❌ Неподдерживаемый тип контента")
+            
+    except Exception as e:
+        logging.error(f"Error in handle_agent_request: {e}")
+        try:
+            await placeholder_message.edit_text("❌ Произошла ошибка при обработке запроса. Попробуйте позже.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+
+async def _handle_text_request(placeholder_message: Message, user_id: int, text: str, chat_state=None):
+    """Обрабатывает текстовый запрос"""
+    try:
+        await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос...")
+        
+        # Получаем доступный ключ Gemini
+        gemini_key, model_used, _ = await _resolve_gemini_request(settings.DEFAULT_MODEL)
+        if not gemini_key:
+            await placeholder_message.edit_text("❌ Сервис временно недоступен. Попробуйте позже.")
+            return
+        
+        # Обрабатываем запрос через Gemini
+        response, _ = await services.get_gemini_response(
+            gemini_key['api_key'],
+            [{'role': 'user', 'parts': [text]}],
+            model_used,
+            user_id=user_id,
+            chat_id=placeholder_message.chat.id
+        )
+        
+        if response:
+            await placeholder_message.edit_text(response)
+        else:
+            await placeholder_message.edit_text("❌ Не удалось обработать запрос. Попробуйте позже.")
+            
+    except Exception as e:
+        logging.error(f"Error in _handle_text_request: {e}")
+        await placeholder_message.edit_text("❌ Произошла ошибка при обработке текста.")
+
+async def _handle_single_image_search(placeholder_message: Message, user_id: int, photo, chat_state=None, context="image_processing"):
+    """Обрабатывает одиночное изображение"""
+    try:
+        await placeholder_message.edit_text("🖼️ Анализирую изображение...")
+        
+        # Получаем доступный ключ Gemini Vision
+        gemini_key, vision_model, _ = await _resolve_gemini_request(settings.VISION_MODEL)
+        if not gemini_key:
+            await placeholder_message.edit_text("❌ Сервис анализа изображений временно недоступен.")
+            return
+        
+        # Загружаем изображение
+        photo_file = await photo.get_file()
+        photo_data = await photo_file.download_as_bytearray()
+        img = Image.open(io.BytesIO(photo_data))
+        
+        # Анализируем изображение
+        analysis_prompt = f"{prompts.IMAGE_ANALYSIS_PROMPT}\n\nОпиши это изображение подробно."
+        
+        response, _ = await services.get_gemini_response(
+            gemini_key['api_key'],
+            [{'role': 'user', 'parts': [analysis_prompt, img]}],
+            vision_model,
+            user_id=user_id,
+            chat_id=placeholder_message.chat.id
+        )
+        
+        if response:
+            await placeholder_message.edit_text(response)
+        else:
+            await placeholder_message.edit_text("❌ Не удалось проанализировать изображение.")
+            
+    except Exception as e:
+        logging.error(f"Error in _handle_single_image_search: {e}")
+        await placeholder_message.edit_text("❌ Произошла ошибка при анализе изображения.")
