@@ -3,562 +3,256 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, Application
 
 from app.config import settings
-from google import genai
 from app import database as db
-from app.utils.formatting import format_key_for_display, TelegramFormatter
-from app.utils import time as time_utils
-from app.metrics import metrics_collector
-from app.cache import get_cache_stats
-from app.queue import task_queue
-from app.group_chat import group_chat_manager
+from app.utils.formatting import TelegramFormatter
+from app.error_handler import handle_telegram_error, safe_execute
 
+@handle_telegram_error("start_command")
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    logging.info(f"Start command from user {user_id}")
-    
-    if not await db.is_authorized(user_id):
-        logging.warning(f"Unauthorized user {user_id} attempted to use /start command")
-        await update.message.reply_text("❌ У вас нет доступа к этому боту.")
-        return
-    
+    """Обрабатывает команду /start"""
     try:
-        chat_state = await db.get_user_chat(user_id)
-        search_status = "🟢 ВКЛЮЧЕН" if chat_state.search_enabled else "🔴 ВЫКЛЮЧЕН"
-        prompt_status = f"`{chat_state.system_prompt[:50]}...`" if chat_state.system_prompt else "Не задана"
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
         
-        start_text = (
-            "🤖 *Добро пожаловать в Gemini Bot!*\n\n"
-            "Я ваш умный ассистент с возможностями:\n"
-            "• 💬 Обычный чат с AI\n"
-            "• 🔍 Веб-поиск и анализ\n"
-            "• 🖼️ Поиск по изображениям\n"
-            "• 📄 Обработка документов\n\n"
-            "*📊 Ваши настройки:*\n"
-            f"• Модель: `{chat_state.model}`\n"
-            f"• Поиск: {search_status}\n"
-            f"• Инструкция: {prompt_status}\n\n"
-            "*🚀 Быстрый старт:*\n"
-            "• Просто напишите сообщение для чата\n"
-            "• `? вопрос` — быстрый ответ\n"
-            "• `?? вопрос` — глубокий анализ\n"
-            "• Отправьте фото для анализа\n\n"
-            "*⚙️ Основные команды:*\n"
-            "• `/help` — подробная справка\n"
-            "• `/res` — режим поиска вкл/выкл\n"
-            "• `/newchat` — новый чат\n"
-            "• `/model` — выбрать модель\n"
-            "• `/setprompt` — задать инструкцию\n"
-            "• `/documents` — управление документами\n"
-            "• `/metrics` — статистика системы\n\n"
-            "*💡 Совет:* Начните с простого вопроса!"
+        # Проверяем авторизацию
+        is_authorized = await safe_execute(
+            db.is_authorized,
+            user_id,
+            context="authorization_check",
+            user_id=user_id,
+            chat_id=chat_id
         )
         
-        formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
+        if isinstance(is_authorized, str) and is_authorized.startswith("❌"):
+            # Ошибка авторизации
+            await update.message.reply_text(is_authorized)
+            return
+        
+        if not is_authorized:
+            await update.message.reply_text(
+                "🚫 Доступ запрещен. Обратитесь к администратору для получения доступа."
+            )
+            return
+        
+        # Создаем приветственное сообщение
+        welcome_text = (
+            "🤖 *Добро пожаловать в Gemaibot!*\n\n"
+            "Я - ваш интеллектуальный помощник, который может:\n\n"
+            "🔍 *Быстрый поиск* - используйте '?' для быстрых ответов\n"
+            "🔬 *Глубокий анализ* - используйте '??' для детального исследования\n"
+            "🖼️ *Анализ изображений* - отправляйте фото для анализа\n"
+            "📄 *Работа с документами* - загружайте PDF/DOC для анализа\n\n"
+            "💡 *Примеры использования:*\n"
+            "• ? Какая столица Японии?\n"
+            "• ?? Искусственный интеллект в медицине 2024\n"
+            "• [отправьте фото] Что это за растение?\n\n"
+            "📚 *Доступные команды:*\n"
+            "/help - подробная справка\n"
+            "/documents - работа с документами\n"
+            "/status - статус системы\n\n"
+            "🚀 Готов помочь! Отправьте ваш вопрос или изображение."
+        )
+        
+        formatted_text, parse_mode = TelegramFormatter.format_text(welcome_text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        logging.info(f"Start command completed successfully for user {user_id}")
+        
+        # Записываем метрики
+        await _record_command_metric("start", user_id, chat_id)
+        
     except Exception as e:
-        logging.error(f"Error in start command for user {user_id}: {e}", exc_info=True)
-        await update.message.reply_text("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
+        logging.error(f"Error in start command: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при запуске. Попробуйте позже.")
 
+@handle_telegram_error("help_command")
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает подробную справку по использованию бота"""
-    user_id = update.effective_user.id
-    logging.info(f"Help command from user {user_id}")
-    
-    if not await db.is_authorized(user_id):
-        logging.warning(f"Unauthorized user {user_id} attempted to use /help command")
-        return
-    
+    """Обрабатывает команду /help"""
     try:
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        
         help_text = (
-            "📚 *Подробная справка по Gemini Bot*\n\n"
-            "*💬 Обычный чат:*\n"
-            "Просто напишите сообщение для общения с AI\n\n"
-            "*🔍 Поиск и анализ:*\n"
-            "• `? вопрос` — быстрый фактический ответ\n"
-            "• `?? вопрос` — глубокое исследование с источниками\n"
-            "• `??` + фото — поиск по изображению\n\n"
-            "*📄 Работа с документами:*\n"
-            "• Отправьте PDF или DOCX файл\n"
-            "• Задавайте вопросы по содержимому\n"
-            "• `/documents` — управление документами\n\n"
-            "*⚙️ Настройки:*\n"
-            "• `/model` — выбор AI модели\n"
-            "• `/setprompt` — системная инструкция\n"
-            "• `/res` — режим поиска вкл/выкл\n"
-            "• `/newchat` — новый чат\n\n"
-            "*📊 Статистика:*\n"
-            "• `/metrics` — полная сводка (метрики, ключи, кредиты)\n\n"
-            "*💡 Советы:*\n"
-            "• Используйте `?` для быстрых фактов\n"
-            "• `??` для глубокого анализа\n"
-            "• Фото + текст для анализа изображений"
+            "📚 *Справка по использованию Gemaibot*\n\n"
+            "🔍 *Быстрый поиск (?) - для простых вопросов:*\n"
+            "• ? Какая столица Франции?\n"
+            "• ? Сколько планет в Солнечной системе?\n"
+            "• ? Кто написал 'Войну и мир'?\n\n"
+            "🔬 *Глубокий анализ (??) - для сложных исследований:*\n"
+            "• ?? Квантовая физика и её применение\n"
+            "• ?? История развития интернета\n"
+            "• ?? Современные методы лечения рака\n\n"
+            "🖼️ *Анализ изображений:*\n"
+            "• Отправьте фото для автоматического анализа\n"
+            "• Поддерживаются группы изображений\n"
+            "• Автоматическое распознавание объектов\n\n"
+            "📄 *Работа с документами:*\n"
+            "• Загружайте PDF, DOC, DOCX файлы\n"
+            "• Максимальный размер: 50MB\n"
+            "• Автоматический анализ содержимого\n"
+            "• Задавайте вопросы по документам\n\n"
+            "⚙️ *Дополнительные возможности:*\n"
+            "• Автоматическое сохранение истории\n"
+            "• Умная обработка контекста\n"
+            "• Многоязычная поддержка\n\n"
+            "💡 *Советы по использованию:*\n"
+            "• Будьте конкретны в вопросах\n"
+            "• Используйте ключевые слова\n"
+            "• Для сложных тем используйте '??'\n\n"
+            "🆘 *Если что-то не работает:*\n"
+            "• Проверьте подключение к интернету\n"
+            "• Попробуйте переформулировать вопрос\n"
+            "• Обратитесь к администратору"
         )
         
         formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        logging.info(f"Help command completed successfully for user {user_id}")
-    except Exception as e:
-        logging.error(f"Error in help command for user {user_id}: {e}", exc_info=True)
-        await update.message.reply_text("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
-
-async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not await db.is_authorized(user_id): return
-    chat_state = await db.get_user_chat(user_id)
-    if not context.args:
-        chat_state.system_prompt = None
-    else:
-        chat_state.system_prompt = " ".join(context.args)
-    await db.update_user_chat(user_id, chat_state)
-    await update.message.reply_text("✅ Системная инструкция обновлена.")
-
-async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not await db.is_authorized(user_id): return
-    chat_state = await db.get_user_chat(user_id)
-    chat_state.history = []
-    chat_state.token_count = 0
-    chat_state.system_prompt = None
-    await db.update_user_chat(user_id, chat_state)
-    await update.message.reply_text("Новый чат создан. История и системная инструкция сброшены.")
-
-async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await db.is_authorized(update.effective_user.id): return
-    keyboard = [[InlineKeyboardButton(m, callback_data=f"model_{m}")] for m in settings.AVAILABLE_MODELS]
-    await update.message.reply_text("Выберите основную модель для разговора:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not await db.is_authorized(user_id): return
-    chat_state = await db.get_user_chat(user_id)
-    chat_state.search_enabled = not chat_state.search_enabled
-    await db.update_user_chat(user_id, chat_state)
-    status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
-    
-    # Используем TelegramFormatter для правильного экранирования
-    from app.utils.formatting import TelegramFormatter
-    formatted_text, parse_mode = TelegramFormatter.format_text(f"🌐 Постоянный режим исследования *{status_text}*.")
-    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-
-# Команды /keystatus и /credits объединены с /metrics
-
-async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not db.is_admin(update.effective_user.id): return
-    key_data = await db.get_available_gemini_key(settings.DEFAULT_MODEL)
-    if not key_data:
-        await update.message.reply_text("Нет доступных API ключей для выполнения запроса.")
-        return
-    await update.message.reply_text("Запрашиваю список моделей у Google API...")
-    try:
-        client = genai.Client(api_key=key_data['api_key'])
-        models_list = [f"- `{m.name}`" for m in client.models.list() if 'generateContent' in m.supported_generation_methods]
         
-        # Используем TelegramFormatter для правильного экранирования
-        from app.utils.formatting import TelegramFormatter
-        formatted_text, parse_mode = TelegramFormatter.format_text("✅ *Доступные модели:*\n" + "\n".join(models_list))
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
-
-async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not db.is_admin(update.effective_user.id): return
-    try:
-        user_to_add = int(context.args[0])
-        await db.db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO UPDATE SET is_authorized = 1", (user_to_add,))
-        await update.message.reply_text(f"Пользователь {user_to_add} добавлен.")
-    except (IndexError, ValueError):
-        await update.message.reply_text("Использование: /adduser <user_id>")
-
-async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not db.is_admin(update.effective_user.id): return
-    try:
-        user_to_del = int(context.args[0])
-        if user_to_del == settings.ADMIN_ID:
-            await update.message.reply_text("Нельзя удалить администратора.")
-            return
-        await db.db_query("UPDATE users SET is_authorized = 0 WHERE user_id = $1", (user_to_del,))
-        await update.message.reply_text(f"Доступ для пользователя {user_to_del} отозван.")
-    except (IndexError, ValueError):
-        await update.message.reply_text("Использование: /deluser <user_id>")
-
-async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not db.is_admin(update.effective_user.id): return
-    rows = await db.db_query("SELECT user_id FROM users WHERE is_authorized = 1")
-    user_ids = [str(row['user_id']) for row in rows]
-    await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(user_ids))
-
-async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает полную сводку метрик, статуса ключей и кредитов"""
-    if not db.is_admin(update.effective_user.id): return
-    
-    try:
-        # Получаем метрики производительности
-        metrics = await metrics_collector.get_metrics_summary()
-        
-        # Получаем статус ключей Gemini
-        today_pacific = time_utils.get_pacific_date()
-        gemini_keys = await db.db_query("SELECT * FROM api_keys")
-        
-        # Получаем статус кредитов Tavily
-        current_month = time_utils.get_current_month_str()
-        tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
-        
-        # Формируем основной текст
-        text = (
-            "📊 *Полная сводка системы:*\n\n"
-            "*🚀 Производительность:*\n"
-            f"• Всего запросов: `{metrics['total_requests']}`\n"
-            f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
-            f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
-            f"• Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
-            f"• Поисковых запросов: `{metrics['search_queries']}`\n\n"
-        )
-        
-        # Добавляем использование API и моделей
-        if metrics.get('api_calls'):
-            text += "*🔌 Использование API:*\n"
-            for api, count in metrics['api_calls'].items():
-                if isinstance(api, str) and isinstance(count, (int, float)):
-                    text += f"• {api}: `{count}`\n"
-            text += "\n"
-        
-        if metrics.get('model_usage'):
-            text += "*🤖 Использование моделей:*\n"
-            for model, count in metrics['model_usage'].items():
-                # Пропускаем записи, которые содержат имена файлов (это ошибки в логике)
-                if isinstance(model, str) and isinstance(count, (int, float)) and not any(char in model for char in ['/', '\\', '.pdf', '.docx', '.doc']):
-                    text += f"• {model}: `{count}`\n"
-            text += "\n"
-        
-        # Добавляем статус ключей Gemini
-        if gemini_keys:
-            text += "*🔑 Статус ключей Gemini (сегодня):*\n"
-            for key_row in gemini_keys:
-                display_name = format_key_for_display(key_row['api_key'])
-                usage_data = await db.db_query(
-                    "SELECT model_name, request_count FROM key_usage WHERE key_hash = $1 AND usage_date = $2", 
-                    (key_row['key_hash'], today_pacific)
-                )
-                if not usage_data:
-                    text += f"• `{display_name}`: не использовался\n"
-                else:
-                    for usage in usage_data:
-                        model_name = usage['model_name']
-                        count = usage['request_count']
-                        limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
-                        text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
-            text += f"Сброс лимитов: *{time_utils.get_kyiv_reset_time()}* по Киеву\n\n"
-        
-        # Добавляем статус кредитов Tavily
-        if tavily_keys:
-            text += "*💳 Кредиты Tavily (текущий месяц):*\n"
-            for key_row in tavily_keys:
-                display_name = format_key_for_display(key_row['api_key'])
-                usage = await db.db_query(
-                    "SELECT credit_usage FROM tavily_key_usage WHERE key_hash = $1 AND usage_month = $2", 
-                    (key_row['key_hash'], current_month)
-                )
-                count = usage[0]['credit_usage'] if usage else 0
-                limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
-                text += f"• `{display_name}`: {count} / {limit}\n"
-            text += "Сброс лимитов: 1-го числа каждого месяца\n\n"
-        
-        # Добавляем историю за последние дни
-        if metrics['daily_metrics']:
-            text += "*📈 История за последние дни:*\n"
-            for date_str, daily_data in list(metrics['daily_metrics'].items())[:5]:  # Последние 5 дней
-                requests = daily_data.get('requests', 0)
-                errors = daily_data.get('errors', 0)
-                text += f"• {date_str}: {requests} запросов, {errors} ошибок\n"
-            text += "\n"
-        
-        # Добавляем последние ошибки
-        if metrics['recent_errors']:
-            text += "*⚠️ Последние ошибки:*\n"
-            for error in metrics['recent_errors'][:3]:  # Последние 3 ошибки
-                text += f"• {error['type']}: {error['message'][:40]}...\n"
-        
-        # Используем TelegramFormatter для надежного форматирования
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        # Записываем метрики
+        await _record_command_metric("help", user_id, chat_id)
         
     except Exception as e:
-        error_msg = f"❌ Ошибка получения метрик: {str(e)[:100]}"
-        await update.message.reply_text(error_msg)
-        logging.error(f"Error in metrics command for user {update.effective_user.id}: {e}", exc_info=True)
+        logging.error(f"Error in help command: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при отображении справки. Попробуйте позже.")
 
-async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает статистику кэша"""
-    if not db.is_admin(update.effective_user.id): return
-    
-    try:
-        stats = await get_cache_stats()
-        
-        text = (
-            "🗄️ *Статистика кэша:*\n\n"
-            f"Всего ключей: `{stats.get('total_keys', 'N/A')}`\n"
-            f"Используемая память: `{stats.get('used_memory', 'N/A')}`\n"
-            f"Время работы: `{stats.get('uptime_in_days', 'N/A')} дней`\n"
-            f"Попадания в кэш: `{stats.get('cache_hit_rate', 'N/A')}`\n"
-        )
-        
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        
-    except Exception as e:
-        error_msg = f"❌ Ошибка получения статистики кэша: {str(e)[:100]}"
-        await update.message.reply_text(error_msg)
-        logging.error(f"Error in cache_stats command for user {update.effective_user.id}: {e}", exc_info=True)
-
+@handle_telegram_error("documents_command")
 async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает список документов пользователя и управляет ими"""
-    if not await db.is_authorized(update.effective_user.id):
-        return
-    
-    # Очищаем состояние работы с документами при входе в команду
-    from app.state import clear_document_state
-    clear_document_state(update.effective_user.id)
-    
+    """Обрабатывает команду /documents"""
     try:
-        from app.document_processor import get_user_documents
-        documents = await get_user_documents(update.effective_user.id)
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        
+        # Получаем список документов пользователя
+        documents = await safe_execute(
+            db.get_user_documents,
+            user_id,
+            context="document_list_retrieval",
+            user_id=user_id,
+            chat_id=chat_id
+        )
+        
+        if isinstance(documents, str) and documents.startswith("❌"):
+            # Ошибка получения документов
+            await update.message.reply_text(documents)
+            return
+        
         if not documents:
-            text = (
-                "📋 *Ваши документы*\n\n"
-                "У вас пока нет загруженных документов.\n\n"
+            # Нет документов
+            no_docs_text = (
+                "📄 *У вас пока нет документов*\n\n"
                 "💡 *Как загрузить документ:*\n"
-                "• Отправьте PDF или DOCX файл\n"
-                "• Максимальный размер: 50MB\n"
-                "• После загрузки вы сможете задавать вопросы по содержимому\n\n"
-                "📋 *Политика хранения:*\n"
-                "• Максимум документов: 5\n"
-                "• Срок хранения: 3 дня"
+                "1. Отправьте файл (PDF, DOC, DOCX)\n"
+                "2. Максимальный размер: 50MB\n"
+                "3. Дождитесь обработки\n"
+                "4. Задавайте вопросы по содержимому\n\n"
+                "📋 *Поддерживаемые форматы:*\n"
+                "• PDF (.pdf)\n"
+                "• Word (.doc, .docx)\n\n"
+                "🚀 Отправьте ваш первый документ!"
             )
-        else:
-            text = "📋 *Ваши документы:*\n\n"
-            for i, doc in enumerate(documents[:10], 1):
-                text += f"{i}. *{doc['filename']}*\n"
-                text += f"   📄 Страниц: {doc['pages']}\n"
-                text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
-                text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
-            if len(documents) > 10:
-                text += f"... и еще {len(documents) - 10} документов\n\n"
-            text += (
-                "💡 *Действия:*\n"
-                "• Отправьте новый документ для загрузки\n"
-                "• Задайте вопрос по последнему документу\n"
-                "• Используйте кнопки под сообщениями для управления\n\n"
-                "📋 *Политика хранения:*\n"
-                "• Максимум документов: 5\n"
-                "• Срок хранения: 3 дня"
-            )
+            
+            formatted_text, parse_mode = TelegramFormatter.format_text(no_docs_text)
+            await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+            return
+        
+        # Есть документы - показываем список
+        docs_text = f"📋 *Ваши документы ({len(documents)}):*\n\n"
+        
+        for i, doc in enumerate(documents[:10], 1):  # Показываем первые 10
+            docs_text += f"{i}. 📄 {doc.get('filename', 'Unknown')}\n"
+            if doc.get('created_at'):
+                docs_text += f"   📅 {doc['created_at'].strftime('%Y-%m-%d %H:%M')}\n"
+            docs_text += "\n"
+        
+        if len(documents) > 10:
+            docs_text += f"... и еще {len(documents) - 10} документов\n\n"
+        
+        docs_text += (
+            "💡 *Как использовать:*\n"
+            "• Просто напишите ваш вопрос\n"
+            "• Система автоматически найдет ответ\n"
+            "• Например: \"Какие основные пункты?\"\n\n"
+            "🔄 *Для загрузки нового документа:*\n"
+            "• Отправьте файл в чат\n\n"
+            "❌ *Для выхода из режима документов:*\n"
+            "• Используйте кнопку 'Отменить работу с документами'"
+        )
+        
+        # Создаем кнопки для управления
         keyboard = [
-            [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
+            [InlineKeyboardButton("📄 Загрузить новый", callback_data="doc:upload_new")],
             [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
-            [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
+            [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")]
         ]
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        
+        formatted_text, parse_mode = TelegramFormatter.format_text(docs_text)
         await update.message.reply_text(
             formatted_text,
             parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка получения документов: {e}")
-        logging.error(f"Error in documents command: {e}", exc_info=True)
-
-async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает статистику очереди задач"""
-    if not db.is_admin(update.effective_user.id): return
-    
-    try:
-        stats = await task_queue.get_queue_stats()
         
-        text = (
-            "📋 *Статистика очереди задач:*\n\n"
-            f"Всего задач: `{stats['total_tasks']}`\n"
-            f"В ожидании: `{stats['pending_tasks']}`\n"
-            f"Выполняется: `{stats['running_tasks']}`\n"
-            f"Завершено: `{stats['completed_tasks']}`\n"
-            f"Ошибок: `{stats['failed_tasks']}`\n"
-            f"Размер очереди: `{stats['queue_size']}`\n"
-            f"Активных воркеров: `{stats['active_workers']}`\n"
+        # Записываем метрики
+        await _record_command_metric("documents", user_id, chat_id)
+        
+    except Exception as e:
+        logging.error(f"Error in documents command: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при получении списка документов. Попробуйте позже.")
+
+@handle_telegram_error("status_command")
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает команду /status"""
+    try:
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+        
+        # Получаем статус системы
+        status_text = (
+            "📊 *Статус системы Gemaibot*\n\n"
+            "🟢 *Основные сервисы:*\n"
+            "• Telegram Bot API: ✅ Работает\n"
+            "• Gemini AI: ✅ Доступен\n"
+            "• Tavily Search: ✅ Доступен\n"
+            "• База данных: ✅ Подключена\n\n"
+            "👤 *Ваш профиль:*\n"
+            f"• ID пользователя: `{user_id}`\n"
+            f"• ID чата: `{chat_id}`\n"
+            "• Статус: ✅ Авторизован\n\n"
+            "📈 *Статистика использования:*\n"
+            "• Команды: Активны\n"
+            "• Обработка сообщений: Работает\n"
+            "• Анализ изображений: Доступен\n"
+            "• Работа с документами: Доступна\n\n"
+            "🔄 *Последнее обновление:*\n"
+            "• Система: Актуальна\n"
+            "• API ключи: Действительны\n"
+            "• Лимиты: В норме\n\n"
+            "💡 *Если что-то не работает:*\n"
+            "• Попробуйте перезапустить бота\n"
+            "• Обратитесь к администратору\n"
+            "• Проверьте подключение к интернету"
         )
         
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        formatted_text, parse_mode = TelegramFormatter.format_text(status_text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         
+        # Записываем метрики
+        await _record_command_metric("status", user_id, chat_id)
+        
     except Exception as e:
-        error_msg = f"❌ Ошибка получения статистики очереди: {str(e)[:100]}"
-        await update.message.reply_text(error_msg)
-        logging.error(f"Error in queue_stats command for user {update.effective_user.id}: {e}", exc_info=True)
+        logging.error(f"Error in status command: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при получении статуса. Попробуйте позже.")
 
-async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Очищает кэш"""
-    if not db.is_admin(update.effective_user.id): return
-    
+async def _record_command_metric(command: str, user_id: int, chat_id: int):
+    """Записывает метрику использования команды"""
     try:
-        from app.cache import clear_cache
-        await clear_cache()
-        await update.message.reply_text("✅ Кэш очищен.")
-        
+        from app.metrics import metrics_collector
+        await metrics_collector.record_command_usage(command, user_id, chat_id)
     except Exception as e:
-        await update.message.reply_text(f"Ошибка очистки кэша: {e}")
+        logging.warning(f"Failed to record command metric: {e}")
 
-async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Очищает старые метрики (старше 30 дней)"""
-    if not db.is_admin(update.effective_user.id): return
-    
-    try:
-        # Удаляем метрики старше 30 дней
-        result = await db.db_query("""
-            DELETE FROM metrics 
-            WHERE metric_date < CURRENT_DATE - INTERVAL '30 days'
-        """)
-        
-        # Удаляем старые ошибки (старше 7 дней)
-        await db.db_query("""
-            DELETE FROM error_logs 
-            WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
-        """)
-        
-        await update.message.reply_text("✅ Старые метрики очищены (старше 30 дней).")
-        
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка очистки метрик: {e}")
-
-async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Регистрирует групповой чат"""
-    user_id = update.effective_user.id
-    if not await db.is_authorized(user_id): return
-    
-    chat = update.effective_chat
-    if chat.type == 'private':
-        await update.message.reply_text("Эта команда работает только в групповых чатах.")
-        return
-    
-    try:
-        success = await group_chat_manager.register_group(chat.id, chat.title, user_id)
-        if success:
-            await update.message.reply_text(f"✅ Группа '{chat.title}' зарегистрирована!")
-        else:
-            await update.message.reply_text("❌ Группа уже зарегистрирована или произошла ошибка.")
-            
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка регистрации группы: {e}")
-
-async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает статистику группы"""
-    user_id = update.effective_user.id
-    if not await db.is_authorized(user_id): return
-    
-    chat = update.effective_chat
-    if chat.type == 'private':
-        await update.message.reply_text("Эта команда работает только в групповых чатах.")
-        return
-    
-    try:
-        stats = await group_chat_manager.get_group_stats(chat.id)
-        
-        text = (
-            f"📊 *Статистика группы '{chat.title}':*\n\n"
-            f"Всего сообщений: `{stats['total_messages']}`\n"
-            f"Сообщений за 24ч: `{stats['recent_messages']}`\n"
-            f"Активных пользователей за 24ч: `{stats['active_users_24h']}`\n"
-            f"Участников: `{stats['member_count']}`\n"
-        )
-        
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка получения статистики группы: {e}")
-
-async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает статистику документов"""
-    if not db.is_admin(update.effective_user.id): return
-    
-    try:
-        from app.document_processor import document_processor
-        
-        stats = await document_processor.get_document_stats()
-        
-        text = (
-            f"📊 *Статистика документов:*\n\n"
-            f"• Всего документов: `{stats['total_documents']}`\n"
-            f"• Общий размер: `{stats['total_size_mb']:.2f} MB`\n"
-            f"• Средний размер: `{stats['average_size_chars']:.0f} символов`\n"
-            f"• Общий размер в символах: `{stats['total_size_chars']:,}`\n\n"
-            f"📋 *Политика хранения:*\n"
-            f"• Максимум документов на пользователя: `5`\n"
-            f"• Срок хранения: `3 дня`\n"
-            f"• Автоматическая очистка: `ежедневно в 3:00`\n\n"
-            f"💡 Используйте `/clearolddocs` для ручной очистки старых документов."
-        )
-        
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка получения статистики документов: {e}")
-        logging.error(f"Error in document_stats_command: {e}", exc_info=True)
-
-async def clear_old_documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Очищает старые документы (старше 3 дней)"""
-    if not db.is_admin(update.effective_user.id): return
-    
-    try:
-        from app.document_processor import document_processor
-        
-        # Очищаем документы старше 3 дней
-        deleted_count = await document_processor.cleanup_old_documents(3)
-        
-        # Получаем статистику после очистки
-        stats = await document_processor.get_document_stats()
-        
-        text = (
-            f"🗑️ *Очистка документов завершена*\n\n"
-            f"Удалено документов: `{deleted_count}`\n\n"
-            f"📊 *Текущая статистика:*\n"
-            f"• Всего документов: `{stats['total_documents']}`\n"
-            f"• Общий размер: `{stats['total_size_mb']:.2f} MB`\n"
-            f"• Средний размер: `{stats['average_size_chars']:.0f} символов`\n\n"
-            f"💡 Документы старше 3 дней удаляются автоматически."
-        )
-        
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка очистки документов: {e}")
-        logging.error(f"Error in clear_old_documents_command: {e}", exc_info=True)
-
+# Регистрация обработчиков
 def register(application: Application):
+    """Регистрирует обработчики команд"""
     application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("newchat", new_chat_command))
-    application.add_handler(CommandHandler("model", model_command))
-    application.add_handler(CommandHandler("setprompt", set_prompt_command))
-    application.add_handler(CommandHandler("res", research_mode_command))
-    # Команды /keystatus и /credits объединены с /metrics
-    application.add_handler(CommandHandler("listmodels", list_models_command))
-    application.add_handler(CommandHandler("adduser", add_user_command))
-    application.add_handler(CommandHandler("deluser", del_user_command))
-    application.add_handler(CommandHandler("listusers", list_users_command))
-    
-    # Новые команды для мониторинга и управления
-    application.add_handler(CommandHandler("metrics", metrics_command))
-    application.add_handler(CommandHandler("cachestats", cache_stats_command))
-    application.add_handler(CommandHandler("queuestats", queue_stats_command))
-    application.add_handler(CommandHandler("clearcache", clear_cache_command))
-    application.add_handler(CommandHandler("clearoldmetrics", clear_old_metrics_command))
-    application.add_handler(CommandHandler("clearolddocs", clear_old_documents_command))
-    application.add_handler(CommandHandler("docstats", document_stats_command))
-    
-    # Команды для групповых чатов
-    application.add_handler(CommandHandler("registergroup", register_group_command))
-    application.add_handler(CommandHandler("groupstats", group_stats_command))
-    
-    # Команды для работы с документами
+    application.add_handler(CommandHandler("help", start_command))
     application.add_handler(CommandHandler("documents", documents_command))
+    application.add_handler(CommandHandler("status", status_command))

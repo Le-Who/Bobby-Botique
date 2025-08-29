@@ -1,6 +1,42 @@
 import logging
 import sys
+import json
 from typing import Optional
+
+# Единый JSON форматтер для всех логгеров
+class UnifiedJSONFormatter(logging.Formatter):
+    """Унифицированный JSON форматтер для структурированного логирования"""
+    
+    def format(self, record):
+        log_entry = {
+            "timestamp": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno
+        }
+        
+        # Добавляем дополнительные поля если они есть
+        if hasattr(record, 'user_id'):
+            log_entry['user_id'] = record.user_id
+        if hasattr(record, 'chat_id'):
+            log_entry['chat_id'] = record.chat_id
+        if record.exc_info:
+            log_entry['exception'] = self.formatException(record.exc_info)
+        
+        return json.dumps(log_entry, ensure_ascii=False)
+
+# Единый текстовый форматтер для всех логгеров
+class UnifiedTextFormatter(logging.Formatter):
+    """Унифицированный текстовый форматтер для development логирования"""
+    
+    def __init__(self):
+        super().__init__(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
 
 def setup_detailed_logging(
     log_level: str = "INFO",
@@ -31,34 +67,9 @@ def setup_detailed_logging(
     
     # Выбираем форматтер в зависимости от настроек
     if enable_structured_logging:
-        # JSON форматтер для production
-        import json
-        class JSONFormatter(logging.Formatter):
-            def format(self, record):
-                log_entry = {
-                    "timestamp": self.formatTime(record),
-                    "level": record.levelname,
-                    "logger": record.name,
-                    "message": record.getMessage(),
-                    "module": record.module,
-                    "function": record.funcName,
-                    "line": record.lineno
-                }
-                if hasattr(record, 'user_id'):
-                    log_entry['user_id'] = record.user_id
-                if hasattr(record, 'chat_id'):
-                    log_entry['chat_id'] = record.chat_id
-                if record.exc_info:
-                    log_entry['exception'] = self.formatException(record.exc_info)
-                return json.dumps(log_entry, ensure_ascii=False)
-        
-        formatter = JSONFormatter()
+        formatter = UnifiedJSONFormatter()
     else:
-        # Детальный форматтер для development
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
+        formatter = UnifiedTextFormatter()
     
     # Handler для stdout (обязательно для Render)
     stdout_handler = logging.StreamHandler(sys.stdout)
@@ -76,10 +87,10 @@ def setup_detailed_logging(
         except Exception as e:
             print("Warning: Could not create file handler: %s", e, flush=True)
     
-    # Настраиваем специальные логгеры
-    setup_api_logger(numeric_level, enable_structured_logging)
-    setup_telegram_logger(numeric_level, enable_structured_logging)
-    setup_database_logger(numeric_level, enable_structured_logging)
+    # Настраиваем специальные логгеры с единым форматтером
+    setup_api_logger(numeric_level, formatter)
+    setup_telegram_logger(numeric_level, formatter)
+    setup_database_logger(numeric_level, formatter)
     
     # Принудительно выводим в stdout для Render
     print("=== DETAILED LOGGING SETUP COMPLETE ===", flush=True)
@@ -89,41 +100,13 @@ def setup_detailed_logging(
         print("Log file: %s", log_file_path, flush=True)
     print("=== LOGGING READY ===", flush=True)
 
-def setup_api_logger(level: int, enable_structured_logging: bool = False) -> None:
+def setup_api_logger(level: int, formatter: logging.Formatter) -> None:
     """Настраивает логгер для API запросов"""
     api_logger = logging.getLogger('api_logger')
     api_logger.setLevel(level)
     
     # Не добавляем handlers если они уже есть
     if not api_logger.handlers:
-        if enable_structured_logging:
-            import json
-            class JSONFormatter(logging.Formatter):
-                def format(self, record):
-                    log_entry = {
-                        "timestamp": self.formatTime(record),
-                        "level": record.levelname,
-                        "logger": record.name,
-                        "message": record.getMessage(),
-                        "module": record.module,
-                        "function": record.funcName,
-                        "line": record.lineno
-                    }
-                    if hasattr(record, 'user_id'):
-                        log_entry['user_id'] = record.user_id
-                    if hasattr(record, 'chat_id'):
-                        log_entry['chat_id'] = record.chat_id
-                    if record.exc_info:
-                        log_entry['exception'] = self.formatException(record.exc_info)
-                    return json.dumps(log_entry, ensure_ascii=False)
-            
-            formatter = JSONFormatter()
-        else:
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-        
         handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(level)
         handler.setFormatter(formatter)
@@ -132,41 +115,13 @@ def setup_api_logger(level: int, enable_structured_logging: bool = False) -> Non
     # Отключаем propagation для избежания дублирования
     api_logger.propagate = False
 
-def setup_telegram_logger(level: int, enable_structured_logging: bool = False) -> None:
+def setup_telegram_logger(level: int, formatter: logging.Formatter) -> None:
     """Настраивает логгер для Telegram Bot API"""
     telegram_logger = logging.getLogger('telegram')
     telegram_logger.setLevel(level)
     
     # Не добавляем handlers если они уже есть
     if not telegram_logger.handlers:
-        if enable_structured_logging:
-            import json
-            class JSONFormatter(logging.Formatter):
-                def format(self, record):
-                    log_entry = {
-                        "timestamp": self.formatTime(record),
-                        "level": record.levelname,
-                        "logger": record.name,
-                        "message": record.getMessage(),
-                        "module": record.module,
-                        "function": record.funcName,
-                        "line": record.lineno
-                    }
-                    if hasattr(record, 'user_id'):
-                        log_entry['user_id'] = record.user_id
-                    if hasattr(record, 'chat_id'):
-                        log_entry['chat_id'] = record.chat_id
-                    if record.exc_info:
-                        log_entry['exception'] = self.formatException(record.exc_info)
-                    return json.dumps(log_entry, ensure_ascii=False)
-            
-            formatter = JSONFormatter()
-        else:
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-        
         handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(level)
         handler.setFormatter(formatter)
@@ -175,41 +130,13 @@ def setup_telegram_logger(level: int, enable_structured_logging: bool = False) -
     # Отключаем propagation для избежания дублирования
     telegram_logger.propagate = False
 
-def setup_database_logger(level: int, enable_structured_logging: bool = False) -> None:
+def setup_database_logger(level: int, formatter: logging.Formatter) -> None:
     """Настраивает логгер для базы данных"""
     db_logger = logging.getLogger('asyncpg')
     db_logger.setLevel(level)
     
     # Не добавляем handlers если они уже есть
     if not db_logger.handlers:
-        if enable_structured_logging:
-            import json
-            class JSONFormatter(logging.Formatter):
-                def format(self, record):
-                    log_entry = {
-                        "timestamp": self.formatTime(record),
-                        "level": record.levelname,
-                        "logger": record.name,
-                        "message": record.getMessage(),
-                        "module": record.module,
-                        "function": record.funcName,
-                        "line": record.lineno
-                    }
-                    if hasattr(record, 'user_id'):
-                        log_entry['user_id'] = record.user_id
-                    if hasattr(record, 'chat_id'):
-                        log_entry['chat_id'] = record.chat_id
-                    if record.exc_info:
-                        log_entry['exception'] = self.formatException(record.exc_info)
-                    return json.dumps(log_entry, ensure_ascii=False)
-            
-            formatter = JSONFormatter()
-        else:
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                datefmt='%Y-%m-%d %H:%M:%S'
-            )
-        
         handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(level)
         handler.setFormatter(formatter)
