@@ -59,7 +59,7 @@ class CircuitBreaker:
         
         # Start monitoring task
         self._monitor_task: Optional[asyncio.Task] = None
-        self._start_monitoring()
+        # Don't start monitoring automatically - will be started when needed
         
         logging.info(f"Circuit Breaker '{name}' initialized with config: {self.config}")
     
@@ -158,7 +158,23 @@ class CircuitBreaker:
         if self._monitor_task and not self._monitor_task.done():
             return
         
-        self._monitor_task = asyncio.create_task(self._monitor_loop())
+        try:
+            loop = asyncio.get_running_loop()
+            self._monitor_task = loop.create_task(self._monitor_loop())
+        except RuntimeError:
+            # No running event loop - monitoring will be started later
+            logging.warning(f"Circuit Breaker '{self.name}' monitoring not started - no event loop")
+    
+    async def start_monitoring(self) -> None:
+        """Starts monitoring when event loop is available."""
+        if self._monitor_task and not self._monitor_task.done():
+            return
+        
+        try:
+            self._monitor_task = asyncio.create_task(self._monitor_loop())
+            logging.info(f"Circuit Breaker '{self.name}' monitoring started")
+        except Exception as e:
+            logging.error(f"Failed to start Circuit Breaker '{self.name}' monitoring: {e}")
     
     async def _monitor_loop(self) -> None:
         """Monitoring loop for circuit breaker metrics."""

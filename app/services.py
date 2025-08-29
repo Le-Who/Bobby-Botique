@@ -19,16 +19,23 @@ from app.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 # Используем улучшенную конфигурацию HTTP клиента
 http_client = NetworkErrorHandler.create_robust_http_client()
 
-# Circuit Breaker для Gemini API с оптимизированными настройками для 503 ошибок
-gemini_circuit_breaker = CircuitBreaker(
-    name="gemini_api",
-    config=CircuitBreakerConfig(
-        failure_threshold=3,        # Открываем circuit после 3 ошибок 503
-        recovery_timeout=30.0,      # Ждем 30 секунд перед попыткой восстановления
-        expected_exception=Exception,  # Ловим все исключения
-        monitor_interval=5.0        # Проверяем состояние каждые 5 секунд
-    )
-)
+# Lazy initialization для Circuit Breaker
+_gemini_circuit_breaker = None
+
+def get_gemini_circuit_breaker() -> CircuitBreaker:
+    """Получает или создает Circuit Breaker для Gemini API."""
+    global _gemini_circuit_breaker
+    if _gemini_circuit_breaker is None:
+        _gemini_circuit_breaker = CircuitBreaker(
+            name="gemini_api",
+            config=CircuitBreakerConfig(
+                failure_threshold=3,        # Открываем circuit после 3 ошибок 503
+                recovery_timeout=30.0,      # Ждем 30 секунд перед попыткой восстановления
+                expected_exception=Exception,  # Ловим все исключения
+                monitor_interval=5.0        # Проверяем состояние каждые 5 секунд
+            )
+        )
+    return _gemini_circuit_breaker
 
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, max_retries: int = 3):
     """
@@ -64,7 +71,8 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
     
     # Используем circuit breaker для защиты от каскадных сбоев
     try:
-        return await gemini_circuit_breaker.call(
+        circuit_breaker = get_gemini_circuit_breaker()
+        return await circuit_breaker.call(
             _execute_gemini_request_with_retry,
             api_key, history, model_name, system_instruction, user_id, chat_id, max_retries
         )

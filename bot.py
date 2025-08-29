@@ -105,7 +105,7 @@ def status_check():
         return f"Error: {str(e)}", 500
 
 # --- BOT INITIALIZATION ---
-def create_application():
+async def create_application():
     """Создает и настраивает приложение бота"""
     try:
         # Создаем Application с кастомными настройками Request
@@ -130,6 +130,15 @@ def create_application():
         
         # Регистрируем обработчик ошибок
         application.add_error_handler(error_handler.handle_telegram_update("global_error"))
+        
+        # Инициализируем Circuit Breaker мониторинг
+        try:
+            from app.services import get_gemini_circuit_breaker
+            circuit_breaker = get_gemini_circuit_breaker()
+            await circuit_breaker.start_monitoring()
+            logging.info("Circuit Breaker monitoring started successfully")
+        except Exception as e:
+            logging.warning(f"Failed to start Circuit Breaker monitoring: {e}")
         
         logging.info("Application created successfully")
         return application
@@ -181,7 +190,7 @@ async def run_bot_with_retry():
         
         try:
             # Создаем приложение
-            application = create_application()
+            application = await create_application()
             
             # Запускаем бота
             await application.initialize()
