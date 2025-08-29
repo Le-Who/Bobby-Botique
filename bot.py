@@ -4,7 +4,7 @@ import asyncio
 import signal
 import datetime
 import time
-import fcntl
+
 import sys
 from telegram import Update
 from telegram.ext import Application
@@ -138,34 +138,7 @@ def create_application():
         logging.error(f"Failed to create application: {e}")
         raise
 
-# --- LOCK MANAGEMENT ---
-def acquire_lock():
-    """Приобретает блокировку для предотвращения запуска нескольких экземпляров"""
-    try:
-        lock_file = "/tmp/bot.lock"
-        lock_fd = open(lock_file, 'w')
-        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        
-        # Записываем PID в файл блокировки
-        lock_fd.write(str(os.getpid()))
-        lock_fd.flush()
-        
-        logging.info(f"Lock acquired by PID {os.getpid()}")
-        return lock_fd
-        
-    except IOError:
-        logging.error("Another bot instance is already running")
-        return None
 
-def release_lock():
-    """Освобождает блокировку"""
-    try:
-        lock_file = "/tmp/bot.lock"
-        if os.path.exists(lock_file):
-            os.remove(lock_file)
-            logging.info("Lock released")
-    except Exception as e:
-        logging.error(f"Error releasing lock: {e}")
 
 # --- SHUTDOWN MANAGEMENT ---
 shutdown_event = asyncio.Event()
@@ -193,7 +166,7 @@ async def run_bot_with_retry():
     application = None
     attempt = 0
     
-    # Для Render Free Tier важно логировать все попытки
+    # Логируем все попытки запуска
     print(f"Starting bot with retry mechanism (max attempts: {max_retries})", flush=True)
     logging.info(f"Starting bot with retry mechanism (max attempts: {max_retries})")
     
@@ -233,8 +206,7 @@ async def run_bot_with_retry():
             logging.error(f"Telegram API conflict detected: {e}")
             logging.critical("Another bot instance is running. This instance will exit.")
             
-            # Освобождаем блокировку и завершаем работу
-            release_lock()
+            # Завершаем работу при конфликте
             break
             
         except NetworkError as e:
@@ -422,12 +394,6 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Приобретаем блокировку
-    lock_fd = acquire_lock()
-    if not lock_fd:
-        print("Another bot instance is already running. Exiting.")
-        sys.exit(1)
-    
     try:
         # Запускаем бота
         asyncio.run(main())
@@ -437,8 +403,4 @@ if __name__ == "__main__":
         logging.error(f"Bot failed to start: {e}")
         sys.exit(1)
     finally:
-        # Освобождаем блокировку
-        if lock_fd:
-            lock_fd.close()
-        release_lock()
         logging.info("Bot shutdown completed")
