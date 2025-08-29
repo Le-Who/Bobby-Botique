@@ -183,37 +183,63 @@ async def run_bot_with_retry():
 # --- HEALTH CHECKS ---
 async def startup_health_check():
     """Проверяет здоровье системы при запуске"""
-    try:
-        # Проверяем Telegram API
-        from telegram import Bot
-        test_bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
-        await test_bot.get_me()
-        logging.info("✓ Telegram API check passed")
-        
-        # Проверяем базу данных
-        if database.db_pool and not database.db_pool._closed:
-            await database.db_query("SELECT 1")
-            logging.info("✓ Database check passed")
-        else:
-            logging.warning("⚠ Database unavailable")
-        
-        # Проверяем метрики только если база данных доступна
+    max_retries = 3
+    retry_delay = 5  # секунды
+    
+    for attempt in range(max_retries):
         try:
+            # Проверяем Telegram API
+            from telegram import Bot
+            test_bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+            await test_bot.get_me()
+            logging.info("✓ Telegram API check passed")
+            
+            # Проверяем базу данных
             if database.db_pool and not database.db_pool._closed:
-                await metrics_collector.initialize()
-                logging.info("✓ Metrics system verified")
+                await database.db_query("SELECT 1")
+                logging.info("✓ Database check passed")
             else:
-                logging.warning("⚠ Metrics system skipped - database unavailable")
+                logging.warning("⚠ Database unavailable")
+            
+            # Проверяем метрики только если база данных доступна
+            try:
+                if database.db_pool and not database.db_pool._closed:
+                    await metrics_collector.initialize()
+                    logging.info("✓ Metrics system verified")
+                else:
+                    logging.warning("⚠ Metrics system skipped - database unavailable")
+            except Exception as e:
+                logging.warning(f"⚠ Metrics system check failed: {e}")
+                logging.warning("Bot will run without metrics collection")
+            
+            logging.info("✓ Core systems healthy - bot ready to start")
+            return True  # Возвращаем True для успешной проверки
+            
         except Exception as e:
-            logging.warning(f"⚠ Metrics system check failed: {e}")
-            logging.warning("Bot will run without metrics collection")
-        
-        logging.info("✓ Core systems healthy - bot ready to start")
-        return True  # Возвращаем True для успешной проверки
-        
-    except Exception as e:
-        logging.error(f"✗ Health check failed: {e}")
-        raise Exception(f"Health check failed: {e}")
+            error_msg = str(e).lower()
+            
+            # Специальная обработка для ошибок Telegram API
+            if "unauthorized" in error_msg or "invalid token" in error_msg:
+                logging.error(f"✗ Telegram API authentication failed: {e}")
+                logging.error("Please check TELEGRAM_BOT_TOKEN environment variable")
+                raise Exception(f"Telegram API authentication failed: {e}")
+            
+            elif "network" in error_msg or "timeout" in error_msg:
+                if attempt < max_retries - 1:
+                    logging.warning(f"⚠ Network error during health check (attempt {attempt + 1}/{max_retries}): {e}")
+                    logging.info(f"Retrying in {retry_delay} seconds...")
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    logging.error(f"✗ Network error after {max_retries} attempts: {e}")
+                    raise Exception(f"Network error during health check: {e}")
+            
+            else:
+                logging.error(f"✗ Health check failed: {e}")
+                raise Exception(f"Health check failed: {e}")
+    
+    # Этот код не должен выполняться, но на всякий случай
+    raise Exception(f"Health check failed after {max_retries} attempts")
 
 async def main():
     """Main application entry point with improved error handling."""

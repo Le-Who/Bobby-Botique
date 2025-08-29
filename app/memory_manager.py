@@ -240,6 +240,16 @@ class MemoryManager:
         self._memory_history.clear()
         logging.info("Memory manager stopped")
     
+    async def cleanup(self):
+        """Performs cleanup of memory manager resources."""
+        try:
+            logging.info("Memory manager cleanup started")
+            await self.stop()
+            logging.info("Memory manager cleanup completed")
+        except Exception as e:
+            logging.error(f"Memory manager cleanup error: {e}")
+            raise
+    
     def __del__(self):
         """Cleanup on destruction."""
         if self._running:

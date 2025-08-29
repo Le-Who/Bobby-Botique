@@ -31,11 +31,6 @@ RUN echo '#!/bin/bash' > /app/start.sh && \
     echo 'echo "Process ID: $$"' >> /app/start.sh && \
     echo 'echo "Timestamp: $(date)"' >> /app/start.sh && \
     echo '' >> /app/start.sh && \
-    echo '# Очистка старых блокировок' >> /app/start.sh && \
-    echo 'echo "Cleaning up old locks..."' >> /app/start.sh && \
-    echo 'find /tmp -name "*.lock" -delete 2>/dev/null || true' >> /app/start.sh && \
-    echo 'echo "Lock cleanup completed"' >> /app/start.sh && \
-    echo '' >> /app/start.sh && \
     echo '# Проверка переменных окружения' >> /app/start.sh && \
     echo 'echo "Checking environment variables..."' >> /app/start.sh && \
     echo 'if [ -z "$TELEGRAM_BOT_TOKEN" ]; then' >> /app/start.sh && \
