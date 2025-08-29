@@ -3,7 +3,7 @@
 
 services:
   - name: gemaibotv2
-    type: web
+    type: worker
     runtime: docker
     source:
       type: git
@@ -13,8 +13,6 @@ services:
       dockerfile: ./Dockerfile.northflank
       context: .
     env:
-      - name: PORT
-        value: "10000"
       - name: LOG_JSON
         value: "true"
       - name: REDIS_URL
@@ -31,20 +29,9 @@ services:
         secret: true
       - name: ADMIN_ID
         secret: true
-    ports:
-      - port: 10000
-        protocol: http
-    healthcheck:
-      path: /health
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
     resources:
       cpu: 0.5
       memory: 512Mi
     scaling:
       min_replicas: 1
       max_replicas: 1
-    domains:
-      - gemaibotv2.northflank.app

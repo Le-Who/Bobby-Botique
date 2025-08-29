@@ -9,9 +9,6 @@ import sys
 from telegram import Update
 from telegram.ext import Application
 from telegram.error import NetworkError, TimedOut, RetryAfter, Conflict
-from flask import Flask
-from hypercorn.config import Config as HypercornConfig
-from hypercorn.asyncio import serve
 
 # Импортируем наши модули
 from app.config import settings
@@ -25,84 +22,6 @@ from app.error_handler import error_handler
 
 from app.queue import start_task_queue, stop_task_queue
 from app.group_chat import initialize_group_chats
-
-# --- WEB SERVER FOR RENDER HEALTH CHECK ---
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-def health_check():
-    """Health check endpoint для Render Free Tier"""
-    print("Health check request received from Render", flush=True)
-    logging.info("Health check request received from Render")
-    return "I am alive!", 200
-
-@flask_app.route('/status')
-def status_check():
-    """
-    Расширенный статус системы для мониторинга
-    """
-    try:
-        # Базовая информация о системе
-        status_info = {
-            "status": "healthy",
-            "timestamp": datetime.datetime.now().isoformat(),
-            "version": "2.0.0",
-            "environment": os.getenv("ENVIRONMENT", "production")
-        }
-        
-        # Проверяем доступность базы данных
-        try:
-            if database.db_pool and not database.db_pool._closed:
-                status_info["database"] = "connected"
-            else:
-                status_info["database"] = "disconnected"
-        except Exception as e:
-            status_info["database"] = f"error: {str(e)}"
-        
-        # Проверяем метрики
-        try:
-            if hasattr(metrics_collector, 'get_metrics_summary'):
-                metrics = metrics_collector.get_metrics_summary()
-                status_info["metrics"] = "available"
-                status_info["total_requests"] = metrics.get('total_requests', 0)
-            else:
-                status_info["metrics"] = "unavailable"
-        except Exception as e:
-            status_info["metrics"] = f"error: {str(e)}"
-        
-        # Проверяем очередь задач
-        try:
-            from app.queue import task_queue
-            if task_queue and hasattr(task_queue, 'get_queue_stats'):
-                queue_stats = task_queue.get_queue_stats()
-                status_info["queue"] = "healthy"
-                status_info["pending_tasks"] = queue_stats.get('pending_tasks', 0)
-            else:
-                status_info["queue"] = "unavailable"
-        except Exception as e:
-            status_info["queue"] = f"error: {str(e)}"
-        
-        # Форматируем ответ
-        response_lines = [
-            f"Status: {status_info['status']}",
-            f"Timestamp: {status_info['timestamp']}",
-            f"Version: {status_info['version']}",
-            f"Environment: {status_info['environment']}",
-            f"Database: {status_info['database']}",
-            f"Metrics: {status_info['metrics']}",
-            f"Queue: {status_info['queue']}"
-        ]
-        
-        if 'total_requests' in status_info:
-            response_lines.append(f"Total Requests: {status_info['total_requests']}")
-        if 'pending_tasks' in status_info:
-            response_lines.append(f"Pending Tasks: {status_info['pending_tasks']}")
-        
-        return "\n".join(response_lines), 200
-        
-    except Exception as e:
-        logging.error(f"Error in status check: {e}")
-        return f"Error: {str(e)}", 500
 
 # --- BOT INITIALIZATION ---
 async def create_application():
@@ -344,19 +263,11 @@ async def main():
         # Проверка здоровья системы
         await startup_health_check()
         
-        # Запуск health check сервера для Northflank
-        health_server = None
-        try:
-            # Запускаем простой HTTP сервер для health check
-            health_server = await start_health_server()
-            
-            # Запуск бота
-            bot_task = asyncio.create_task(run_bot_with_retry())
-            
-            # Ожидание завершения
-            await asyncio.gather(bot_task, return_exceptions=True)
-        except Exception as e:
-            logging.error(f"Bot task failed: {e}")
+        # Запуск бота
+        bot_task = asyncio.create_task(run_bot_with_retry())
+        
+        # Ожидание завершения
+        await asyncio.gather(bot_task, return_exceptions=True)
         
     except Exception as e:
         logging.error(f"Critical error in main: {e}")
@@ -378,14 +289,6 @@ async def main():
             logging.info("Task queue stopped")
         except Exception as e:
             logging.warning(f"Task queue cleanup failed: {e}")
-        
-        if web_server_task:
-            web_server_task.cancel()
-            try:
-                await web_server_task
-            except asyncio.CancelledError:
-                pass
-            logging.info("Web server stopped")
         
         logging.info("Resource cleanup completed")
 
