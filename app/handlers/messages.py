@@ -129,10 +129,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Запускаем задачу в очереди
     from app.queue import task_queue
     await task_queue.add_task(
-        task_type="message_processing",
-        priority=1,
         user_id=user_id,
-        task_func=task_wrapper
+        task_type="message_processing",
+        data={"message": update.message.text, "chat_id": chat_id},
+        priority=1
     )
 
 async def _process_media_group(media_group_id: str, update: Update, context: ContextTypes.DEFAULT_TYPE):

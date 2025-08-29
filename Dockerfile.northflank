@@ -23,6 +23,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем исходный код
 COPY . .
 
+# Принудительно удаляем старые скрипты блокировок
+RUN rm -f /app/clear_lock.py || true
+
 # Создаем улучшенный скрипт для запуска
 RUN echo '#!/bin/bash' > /app/start.sh && \
     echo 'set -e' >> /app/start.sh && \
