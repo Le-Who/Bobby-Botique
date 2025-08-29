@@ -191,6 +191,7 @@ async def run_bot_with_retry():
     max_retries = 5
     base_delay = 1  # секунды
     application = None
+    attempt = 0
     
     # Для Render Free Tier важно логировать все попытки
     print(f"Starting bot with retry mechanism (max attempts: {max_retries})", flush=True)
@@ -200,9 +201,10 @@ async def run_bot_with_retry():
     print(f"Python-telegram-bot version: {version_info}", flush=True)
     logging.info(f"Python-telegram-bot version: {version_info}")
     
-    while not shutdown_event.is_set():
-        print(f"Bot startup attempt initiated", flush=True)
-        logging.info("Bot startup attempt initiated")
+    while not shutdown_event.is_set() and attempt < max_retries:
+        attempt += 1
+        print(f"Bot startup attempt {attempt}/{max_retries} initiated", flush=True)
+        logging.info(f"Bot startup attempt {attempt}/{max_retries} initiated")
         
         try:
             # Создаем приложение
@@ -235,6 +237,22 @@ async def run_bot_with_retry():
             release_lock()
             break
             
+        except NetworkError as e:
+            logging.error(f"Network error during bot operation: {e}")
+            
+            # Очищаем ресурсы при ошибке
+            await _cleanup_application(application)
+            
+            # Проверяем, не нужно ли завершить работу
+            if shutdown_event.is_set():
+                logging.info("Shutdown requested during retry, stopping bot")
+                break
+            
+            # Экспоненциальная задержка для сетевых ошибок
+            delay = base_delay * (2 ** min(attempt, 4))  # 1, 2, 4, 8, 16 секунд
+            logging.info(f"Retrying in {delay} seconds due to network error...")
+            await asyncio.sleep(delay)
+            
         except Exception as e:
             logging.error(f"Unexpected error during bot operation: {e}")
             
@@ -247,6 +265,8 @@ async def run_bot_with_retry():
                 break
             
             # Ждем перед повторной попыткой
+            delay = base_delay * (2 ** min(attempt, 4))  # 1, 2, 4, 8, 16 секунд
+            logging.info(f"Retrying in {delay} seconds...")
             await asyncio.sleep(delay)
             
         finally:
@@ -254,7 +274,11 @@ async def run_bot_with_retry():
             if application:
                 await _cleanup_application(application)
     
-    logging.info("Bot shutdown completed")
+    if attempt >= max_retries:
+        logging.error(f"Bot failed after {max_retries} attempts. Giving up.")
+        print(f"Bot failed after {max_retries} attempts. Giving up.", flush=True)
+    else:
+        logging.info("Bot shutdown completed")
 
 # --- HEALTH CHECKS ---
 async def startup_health_check():

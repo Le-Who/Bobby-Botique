@@ -14,13 +14,25 @@ from app.metrics import metrics_collector
 from app.cache import get_cached_search_result, cache_search_result
 from app.utils.network import NetworkErrorHandler
 from app.utils.api_logger import api_logger
+from app.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 
 # Используем улучшенную конфигурацию HTTP клиента
 http_client = NetworkErrorHandler.create_robust_http_client()
 
+# Circuit Breaker для Gemini API с оптимизированными настройками для 503 ошибок
+gemini_circuit_breaker = CircuitBreaker(
+    name="gemini_api",
+    config=CircuitBreakerConfig(
+        failure_threshold=3,        # Открываем circuit после 3 ошибок 503
+        recovery_timeout=30.0,      # Ждем 30 секунд перед попыткой восстановления
+        expected_exception=Exception,  # Ловим все исключения
+        monitor_interval=5.0        # Проверяем состояние каждые 5 секунд
+    )
+)
+
 async def get_gemini_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, max_retries: int = 3):
     """
-    Получает ответ от Gemini API с улучшенной обработкой ошибок и retry механизмом.
+    Получает ответ от Gemini API с circuit breaker защитой и улучшенной обработкой ошибок.
     
     Args:
         api_key: API ключ для Gemini
@@ -50,6 +62,25 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
     if chat_id is not None and not isinstance(chat_id, int):
         raise ValueError("chat_id must be an integer")
     
+    # Используем circuit breaker для защиты от каскадных сбоев
+    try:
+        return await gemini_circuit_breaker.call(
+            _execute_gemini_request_with_retry,
+            api_key, history, model_name, system_instruction, user_id, chat_id, max_retries
+        )
+    except Exception as e:
+        # Если circuit breaker открыт, возвращаем понятное сообщение
+        if "circuit breaker" in str(e).lower() or "open" in str(e).lower():
+            logging.warning(f"Gemini API circuit breaker is open: {e}")
+            return "🔄 Сервер Gemini временно недоступен из-за высокой нагрузки. Попробуйте через несколько минут.", None
+        else:
+            # Другие ошибки пробрасываем как обычно
+            raise
+
+async def _execute_gemini_request_with_retry(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, max_retries: int = 3):
+    """
+    Внутренняя функция для выполнения запроса к Gemini API с retry механизмом.
+    """
     # Retry механизм для ошибок 503
     for attempt in range(max_retries):
         try:
@@ -335,7 +366,8 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
             return "🚫 Достигнут лимит запросов к API (Quota Exceeded).", None
         elif "503" in str(e) or "unavailable" in error_message or "overloaded" in error_message:
             await metrics_collector.record_error("gemini_overloaded", str(e))
-            return "🔄 Сервер Gemini перегружен. Попробуйте еще раз через несколько секунд.", None
+            # Для 503 ошибок пробрасываем исключение, чтобы circuit breaker мог их отслеживать
+            raise Exception(f"Gemini API overloaded: {e}")
         elif "invalid" in error_message or "malformed" in error_message:
             await metrics_collector.record_error("gemini_invalid_request", str(e))
             return "❌ Некорректный запрос к API. Проверьте параметры.", None

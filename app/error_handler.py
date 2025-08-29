@@ -159,6 +159,18 @@ class ErrorHandler:
             "TimeoutError": "⏰ Превышено время выполнения"
         }
         
+        # Специальная обработка для 503 ошибок и NetworkError
+        if error.details and "original_error" in error.details:
+            original_error = str(error.details["original_error"]).lower()
+            
+            # 503 ошибки Gemini API
+            if "503" in original_error and ("unavailable" in original_error or "overloaded" in original_error):
+                return "🔄 Сервер Gemini временно перегружен. Попробуйте через несколько минут."
+            
+            # NetworkError httpx.ReadError
+            if "httpx.readerror" in original_error or "networkerror" in original_error:
+                return "🌐 Проблемы с сетевым соединением. Попробуйте позже."
+        
         # Получаем базовое сообщение
         base_message = base_messages.get(error_type, "❌ Произошла ошибка")
         
