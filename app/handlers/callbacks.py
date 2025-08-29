@@ -1,6 +1,7 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
+from telegram.constants import ParseMode
 
 from app.config import settings
 from app import database as db
@@ -87,13 +88,7 @@ async def _handle_select_document(query, user_id: int, chat_id: int):
     """Обрабатывает выбор документа"""
     try:
         # Получаем список документов пользователя
-        documents = await safe_execute(
-            db.get_user_documents,
-            user_id,
-            context="document_selection",
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        documents = await db.get_user_documents(user_id, chat_id)
         
         if isinstance(documents, str) and documents.startswith("❌"):
             await query.edit_message_text(documents)
@@ -144,13 +139,7 @@ async def _handle_cancel_documents(query, user_id: int, chat_id: int):
     """Обрабатывает отмену работы с документами"""
     try:
         # Очищаем состояние работы с документами
-        await safe_execute(
-            db.clear_document_mode,
-            chat_id,
-            context="document_mode_clear",
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        await db.clear_document_mode(chat_id, user_id, chat_id)
         
         text = (
             "❌ *Работа с документами отменена*\n\n"
@@ -172,14 +161,7 @@ async def _handle_use_existing_document(query, document_id: str, user_id: int, c
     """Обрабатывает использование существующего документа"""
     try:
         # Получаем информацию о документе
-        document = await safe_execute(
-            db.get_document_by_id,
-            int(document_id),
-            user_id,
-            context="document_retrieval",
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        document = await db.get_document_by_id(int(document_id), user_id, chat_id)
         
         if isinstance(document, str) and document.startswith("❌"):
             await query.edit_message_text(document)
@@ -190,14 +172,7 @@ async def _handle_use_existing_document(query, document_id: str, user_id: int, c
             return
         
         # Устанавливаем режим работы с документами
-        await safe_execute(
-            db.set_document_mode,
-            chat_id,
-            int(document_id),
-            context="document_mode_set",
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        await db.set_document_mode(chat_id, int(document_id), user_id, chat_id)
         
         text = (
             f"✅ *Документ выбран:* {document.get('filename', 'Unknown')}\n\n"
@@ -242,14 +217,7 @@ async def _handle_model_callback(query, callback_data: str, user_id: int, chat_i
         model_name = callback_data.split(":")[1]
         
         # Обновляем модель пользователя
-        success = await safe_execute(
-            db.update_user_model,
-            user_id,
-            model_name,
-            context="model_update",
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        success = await db.update_user_model(user_id, model_name, user_id, chat_id)
         
         if isinstance(success, str) and success.startswith("❌"):
             await query.edit_message_text(success)
@@ -284,13 +252,7 @@ async def _handle_enable_search(query, user_id: int, chat_id: int):
     """Включает режим поиска"""
     try:
         # Включаем режим поиска
-        success = await safe_execute(
-            db.enable_search_mode,
-            chat_id,
-            context="search_enable",
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        success = await db.enable_search_mode(chat_id, user_id, chat_id)
         
         if isinstance(success, str) and success.startswith("❌"):
             await query.edit_message_text(success)
@@ -316,13 +278,7 @@ async def _handle_disable_search(query, user_id: int, chat_id: int):
     """Отключает режим поиска"""
     try:
         # Отключаем режим поиска
-        success = await safe_execute(
-            db.disable_search_mode,
-            chat_id,
-            context="search_disable",
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        success = await db.disable_search_mode(chat_id, user_id, chat_id)
         
         if isinstance(success, str) and success.startswith("❌"):
             await query.edit_message_text(success)

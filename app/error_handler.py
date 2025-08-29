@@ -439,3 +439,18 @@ def handle_database_error(func_name: str = "unknown"):
 def handle_api_error(api_name: str, func_name: str = "unknown"):
     """Декоратор для обработки ошибок API"""
     return error_handler.handle_api_error(api_name, func_name)
+
+# Функция safe_execute для обратной совместимости
+async def safe_execute(func: Callable, *args, **kwargs) -> Any:
+    """
+    Безопасно выполняет функцию с обработкой ошибок.
+    Добавлена для обратной совместимости.
+    """
+    try:
+        if asyncio.iscoroutinefunction(func):
+            return await func(*args, **kwargs)
+        else:
+            return func(*args, **kwargs)
+    except Exception as e:
+        logging.error(f"Error in safe_execute: {e}")
+        return f"❌ Произошла ошибка: {str(e)}"

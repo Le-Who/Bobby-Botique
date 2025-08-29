@@ -5,7 +5,7 @@ from telegram.ext import ContextTypes, CommandHandler, Application
 from app.config import settings
 from app import database as db
 from app.utils.formatting import TelegramFormatter
-from app.error_handler import handle_telegram_error, safe_execute
+from app.error_handler import handle_telegram_error
 
 @handle_telegram_error("start_command")
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -15,13 +15,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         
         # Проверяем авторизацию
-        is_authorized = await safe_execute(
-            db.is_authorized,
-            user_id,
-            context="authorization_check",
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        is_authorized = await db.is_authorized(user_id, chat_id)
         
         if isinstance(is_authorized, str) and is_authorized.startswith("❌"):
             # Ошибка авторизации
@@ -121,13 +115,7 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = update.effective_chat.id
         
         # Получаем список документов пользователя
-        documents = await safe_execute(
-            db.get_user_documents,
-            user_id,
-            context="document_list_retrieval",
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        documents = await db.get_user_documents(user_id, chat_id)
         
         if isinstance(documents, str) and documents.startswith("❌"):
             # Ошибка получения документов

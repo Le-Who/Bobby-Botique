@@ -13,7 +13,7 @@ from app.document_processor import process_uploaded_document
 from app.metrics import metrics_collector
 from app.utils.formatting import TelegramFormatter
 from app.utils.api_logger import api_logger
-from app.error_handler import handle_telegram_error, safe_execute
+from app.error_handler import handle_telegram_error
 
 # Глобальный словарь для хранения групп изображений
 MEDIA_GROUPS = {}
@@ -86,27 +86,17 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if is_photo:
                     # Обработка изображения
-                    result = await safe_execute(
-                        handle_agent_request,
+                    result = await handle_agent_request(
                         placeholder_message,
                         user_id,
-                        update.message.photo[-1],
-                        chat_state=None,
-                        context="image_processing",
-                        user_id=user_id,
-                        chat_id=chat_id
+                        update.message.photo[-1]
                     )
                 else:
                     # Обработка текста
-                    result = await safe_execute(
-                        handle_agent_request,
+                    result = await handle_agent_request(
                         placeholder_message,
                         user_id,
-                        update.message.text,
-                        chat_state=None,
-                        context="text_processing",
-                        user_id=user_id,
-                        chat_id=chat_id
+                        update.message.text
                     )
                 
                 # Проверяем результат
@@ -156,15 +146,10 @@ async def _process_media_group(media_group_id: str, update: Update, context: Con
         # Обрабатываем группу через agent
         from app.handlers.agent import handle_agent_request
         
-        result = await safe_execute(
-            handle_agent_request,
+        result = await handle_agent_request(
             placeholder_message,
             user_id,
-            photos,
-            chat_state=None,
-            context="media_group_processing",
-            user_id=user_id,
-            chat_id=chat_id
+            photos
         )
         
         # Очищаем группу
@@ -194,14 +179,10 @@ async def _handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Обрабатываем документ
-        result = await safe_execute(
-            process_uploaded_document,
+        result = await process_uploaded_document(
             update.message.document,
             user_id,
-            chat_id,
-            context="document_processing",
-            user_id=user_id,
-            chat_id=chat_id
+            chat_id
         )
         
         if isinstance(result, str) and result.startswith("❌"):
