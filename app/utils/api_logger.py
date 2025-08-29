@@ -9,87 +9,72 @@ import asyncio
 
 class APILogger:
     """
-    Унифицированное логирование для всех API запросов (Telegram, Gemini, Tavily)
+    Детальное логирование для всех API запросов (Telegram, Gemini, Tavily)
     """
     
     def __init__(self):
         self.logger = logging.getLogger('api_logger')
         self.logger.setLevel(logging.INFO)
         
+        # Создаем форматтер для детального логирования
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        
         # Добавляем handler если его нет
         if not self.logger.handlers:
             handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            ))
+            handler.setFormatter(formatter)
             self.logger.addHandler(handler)
-    
-    def _create_log_entry(self, 
-                          api_name: str, 
-                          status: str,
-                          **kwargs) -> Dict[str, Any]:
-        """Создает базовую структуру лог-записи"""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "api": api_name,
-            "status": status
-        }
-        
-        # Добавляем дополнительные поля
-        for key, value in kwargs.items():
-            if value is not None:
-                log_entry[key] = value
-        
-        return log_entry
     
     def log_api_request(self, 
                        api_name: str, 
-                       endpoint: str = "", 
+                       endpoint: str, 
                        method: str = "GET",
                        request_data: Optional[Dict[str, Any]] = None,
                        user_id: Optional[int] = None,
-                       chat_id: Optional[int] = None,
-                       **additional_data) -> float:
+                       chat_id: Optional[int] = None):
         """Логирует начало API запроса"""
-        log_data = self._create_log_entry(
-            api_name=api_name,
-            status="STARTED",
-            endpoint=endpoint,
-            method=method,
-            request_data=self._sanitize_data(request_data),
-            user_id=user_id,
-            chat_id=chat_id,
-            **additional_data
-        )
+        log_data = {
+            "timestamp": datetime.now().isoformat(),
+            "api": api_name,
+            "endpoint": endpoint,
+            "method": method,
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "request_data": self._sanitize_data(request_data),
+            "status": "STARTED"
+        }
         
         self.logger.info(f"🚀 API REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}")
         return time.time()
     
     def log_api_response(self, 
                         api_name: str, 
+                        endpoint: str,
                         start_time: float,
-                        success: bool = True,
                         response_data: Optional[Dict[str, Any]] = None,
                         status_code: Optional[int] = None,
+                        success: bool = True,
                         error_message: Optional[str] = None,
                         user_id: Optional[int] = None,
-                        chat_id: Optional[int] = None,
-                        **additional_data) -> float:
+                        chat_id: Optional[int] = None):
         """Логирует завершение API запроса"""
         duration = time.time() - start_time
         
-        log_data = self._create_log_entry(
-            api_name=api_name,
-            status="COMPLETED",
-            duration_ms=round(duration * 1000, 2),
-            status_code=status_code,
-            success=success,
-            user_id=user_id,
-            chat_id=chat_id,
-            response_summary=self._summarize_response(response_data),
-            error_message=error_message,
-            **additional_data
-        )
+        log_data = {
+            "timestamp": datetime.now().isoformat(),
+            "api": api_name,
+            "endpoint": endpoint,
+            "duration_ms": round(duration * 1000, 2),
+            "status_code": status_code,
+            "success": success,
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "response_summary": self._summarize_response(response_data),
+            "error_message": error_message,
+            "status": "COMPLETED"
+        }
         
         if success:
             self.logger.info(f"✅ API REQUEST COMPLETED: {json.dumps(log_data, ensure_ascii=False)}")
@@ -103,18 +88,30 @@ class APILogger:
                           prompt_length: int, 
                           has_images: bool = False,
                           user_id: Optional[int] = None,
-                          chat_id: Optional[int] = None) -> float:
-        """Логирует запрос к Gemini API"""
-        return self.log_api_request(
-            api_name="gemini",
-            endpoint="generate_content",
-            method="POST",
-            user_id=user_id,
-            chat_id=chat_id,
-            model=model,
-            prompt_length=prompt_length,
-            has_images=has_images
-        )
+                          chat_id: Optional[int] = None):
+        """Специальное логирование для Gemini API"""
+        try:
+            start_time = time.time()
+            
+            log_data = {
+                "timestamp": datetime.now().isoformat(),
+                "api": "gemini",
+                "model": model,
+                "prompt_length": prompt_length,
+                "has_images": has_images,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "status": "STARTED"
+            }
+            
+            self.logger.info(f"🤖 GEMINI REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}")
+            return start_time
+            
+        except Exception as e:
+            # Логируем ошибку логирования, но не прерываем выполнение
+            logging.error(f"Error in log_gemini_request: {e}")
+            # Возвращаем текущее время как fallback
+            return time.time()
     
     def log_gemini_response(self, 
                            start_time: float,
@@ -124,36 +121,63 @@ class APILogger:
                            success: bool = True,
                            error_message: Optional[str] = None,
                            user_id: Optional[int] = None,
-                           chat_id: Optional[int] = None) -> float:
+                           chat_id: Optional[int] = None):
         """Логирует ответ Gemini API"""
-        return self.log_api_response(
-            api_name="gemini",
-            start_time=start_time,
-            success=success,
-            error_message=error_message,
-            user_id=user_id,
-            chat_id=chat_id,
-            model=model,
-            response_length=response_length,
-            token_count=token_count
-        )
+        try:
+            # Проверяем, что start_time является числом
+            if not isinstance(start_time, (int, float)) or start_time <= 0:
+                logging.warning(f"Invalid start_time in log_gemini_response: {start_time}, using current time")
+                start_time = time.time()
+            
+            duration = time.time() - start_time
+            
+            log_data = {
+                "timestamp": datetime.now().isoformat(),
+                "api": "gemini",
+                "model": model,
+                "duration_ms": round(duration * 1000, 2),
+                "response_length": response_length,
+                "token_count": token_count,
+                "success": success,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "error_message": error_message,
+                "status": "COMPLETED"
+            }
+            
+            if success:
+                self.logger.info(f"✅ GEMINI RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}")
+            else:
+                self.logger.error(f"❌ GEMINI RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}")
+            
+            return duration
+            
+        except Exception as e:
+            # Логируем ошибку логирования, но не прерываем выполнение
+            logging.error(f"Error in log_gemini_response: {e}")
+            return 0.0
     
     def log_tavily_request(self, 
                           query: str, 
                           search_type: str,
                           user_id: Optional[int] = None,
-                          chat_id: Optional[int] = None) -> float:
-        """Логирует запрос к Tavily API"""
-        return self.log_api_request(
-            api_name="tavily",
-            endpoint="search",
-            method="POST",
-            user_id=user_id,
-            chat_id=chat_id,
-            search_type=search_type,
-            query_length=len(query),
-            query_preview=query[:100] + "..." if len(query) > 100 else query
-        )
+                          chat_id: Optional[int] = None):
+        """Специальное логирование для Tavily API"""
+        start_time = time.time()
+        
+        log_data = {
+            "timestamp": datetime.now().isoformat(),
+            "api": "tavily",
+            "search_type": search_type,
+            "query_length": len(query),
+            "query_preview": query[:100] + "..." if len(query) > 100 else query,
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "status": "STARTED"
+        }
+        
+        self.logger.info(f"🔍 TAVILY REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}")
+        return start_time
     
     def log_tavily_response(self, 
                            start_time: float,
@@ -162,33 +186,50 @@ class APILogger:
                            success: bool = True,
                            error_message: Optional[str] = None,
                            user_id: Optional[int] = None,
-                           chat_id: Optional[int] = None) -> float:
+                           chat_id: Optional[int] = None):
         """Логирует ответ Tavily API"""
-        return self.log_api_response(
-            api_name="tavily",
-            start_time=start_time,
-            success=success,
-            error_message=error_message,
-            user_id=user_id,
-            chat_id=chat_id,
-            search_type=search_type,
-            results_count=results_count
-        )
+        duration = time.time() - start_time
+        
+        log_data = {
+            "timestamp": datetime.now().isoformat(),
+            "api": "tavily",
+            "search_type": search_type,
+            "duration_ms": round(duration * 1000, 2),
+            "results_count": results_count,
+            "success": success,
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "error_message": error_message,
+            "status": "COMPLETED"
+        }
+        
+        if success:
+            self.logger.info(f"✅ TAVILY RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}")
+        else:
+            self.logger.error(f"❌ TAVILY RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}")
+        
+        return duration
     
     def log_telegram_request(self, 
                             method: str,
                             chat_id: Optional[int] = None,
                             user_id: Optional[int] = None,
-                            message_type: Optional[str] = None) -> float:
-        """Логирует запрос к Telegram Bot API"""
-        return self.log_api_request(
-            api_name="telegram",
-            endpoint=method,
-            method="POST",
-            chat_id=chat_id,
-            user_id=user_id,
-            message_type=message_type
-        )
+                            message_type: Optional[str] = None):
+        """Специальное логирование для Telegram Bot API"""
+        start_time = time.time()
+        
+        log_data = {
+            "timestamp": datetime.now().isoformat(),
+            "api": "telegram",
+            "method": method,
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "message_type": message_type,
+            "status": "STARTED"
+        }
+        
+        self.logger.info(f"📱 TELEGRAM REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}")
+        return start_time
     
     def log_telegram_response(self, 
                              start_time: float,
@@ -196,35 +237,47 @@ class APILogger:
                              success: bool = True,
                              error_message: Optional[str] = None,
                              chat_id: Optional[int] = None,
-                             user_id: Optional[int] = None) -> float:
+                             user_id: Optional[int] = None):
         """Логирует ответ Telegram Bot API"""
-        return self.log_api_response(
-            api_name="telegram",
-            start_time=start_time,
-            success=success,
-            error_message=error_message,
-            chat_id=chat_id,
-            user_id=user_id,
-            method=method
-        )
+        duration = time.time() - start_time
+        
+        log_data = {
+            "timestamp": datetime.now().isoformat(),
+            "api": "telegram",
+            "method": method,
+            "duration_ms": round(duration * 1000, 2),
+            "success": success,
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "error_message": error_message,
+            "status": "COMPLETED"
+        }
+        
+        if success:
+            self.logger.info(f"✅ TELEGRAM RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}")
+        else:
+            self.logger.error(f"❌ TELEGRAM RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}")
+        
+        return duration
     
     def log_error(self, 
                   api_name: str, 
                   error: Exception, 
                   context: Optional[Dict[str, Any]] = None,
                   user_id: Optional[int] = None,
-                  chat_id: Optional[int] = None) -> None:
+                  chat_id: Optional[int] = None):
         """Логирует ошибки API с полным стектрейсом"""
-        error_data = self._create_log_entry(
-            api_name=api_name,
-            status="ERROR",
-            error_type=type(error).__name__,
-            error_message=str(error),
-            traceback=traceback.format_exc(),
-            context=context,
-            user_id=user_id,
-            chat_id=chat_id
-        )
+        error_data = {
+            "timestamp": datetime.now().isoformat(),
+            "api": api_name,
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+            "traceback": traceback.format_exc(),
+            "context": context,
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "status": "ERROR"
+        }
         
         self.logger.error(f"💥 API ERROR: {json.dumps(error_data, ensure_ascii=False)}")
     
