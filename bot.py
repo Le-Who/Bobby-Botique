@@ -343,13 +343,13 @@ async def main():
         web_server_task = None
         try:
             config = HypercornConfig()
-            config.bind = ["0.0.0.0:8000"]
+            config.bind = ["0.0.0.0:10000"]
             config.worker_class = "asyncio"
             
             web_server_task = asyncio.create_task(
                 serve(flask_app, config)
             )
-            logging.info("Web server started on port 8000")
+            logging.info("Web server started on port 10000")
         except Exception as e:
             logging.warning(f"Web server failed to start: {e}")
         

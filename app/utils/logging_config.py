@@ -1,6 +1,5 @@
 import logging
 import sys
-import json
 from typing import Optional
 
 # Единый JSON форматтер для всех логгеров
@@ -8,6 +7,8 @@ class UnifiedJSONFormatter(logging.Formatter):
     """Унифицированный JSON форматтер для структурированного логирования"""
     
     def format(self, record):
+        import json
+        
         log_entry = {
             "timestamp": self.formatTime(record),
             "level": record.levelname,
@@ -30,13 +31,10 @@ class UnifiedJSONFormatter(logging.Formatter):
 
 # Единый текстовый форматтер для всех логгеров
 class UnifiedTextFormatter(logging.Formatter):
-    """Унифицированный текстовый форматтер для development логирования"""
+    """Унифицированный текстовый форматтер для детального логирования"""
     
-    def __init__(self):
-        super().__init__(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
+    def format(self, record):
+        return f'{self.formatTime(record)} - {record.name} - {record.levelname} - {record.getMessage()}'
 
 def setup_detailed_logging(
     log_level: str = "INFO",
