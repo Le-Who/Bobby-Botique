@@ -428,6 +428,90 @@ async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAUL
     except Exception as e:
         await update.message.reply_text(f"Ошибка очистки метрик: {e}")
 
+async def update_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для обновления ключей Tavily API"""
+    if not db.is_admin(update.effective_user.id): 
+        return
+    
+    try:
+        await update.message.reply_text("🔄 Обновляю ключи Tavily API...")
+        
+        # Принудительно обновляем ключи
+        success = await db.force_update_tavily_keys()
+        
+        if success:
+            await update.message.reply_text(
+                "✅ Ключи Tavily API успешно обновлены!\n"
+                "💡 Система готова к работе с новыми ключами."
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Не удалось обновить ключи Tavily API.\n"
+                "🔍 Проверьте логи для получения дополнительной информации."
+            )
+            
+    except Exception as e:
+        error_msg = f"Ошибка при обновлении ключей Tavily: {e}"
+        logging.error(error_msg)
+        await update.message.reply_text(f"💥 {error_msg}")
+
+async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для проверки статуса ключей Tavily API"""
+    if not db.is_admin(update.effective_user.id): 
+        return
+    
+    try:
+        await update.message.reply_text("🔍 Проверяю статус ключей Tavily API...")
+        
+        # Получаем текущие ключи из базы данных
+        keys_result = await db.db_query("SELECT key_hash, api_key FROM tavily_api_keys")
+        
+        if not keys_result:
+            await update.message.reply_text("❌ В базе данных нет ключей Tavily API")
+            return
+        
+        # Формируем отчет
+        report = f"📋 Найдено {len(keys_result)} ключей Tavily API:\n\n"
+        
+        for i, row in enumerate(keys_result, 1):
+            key_hash = row['key_hash']
+            api_key = row['api_key']
+            report += f"🔑 *Ключ {i}:*\n"
+            report += f"   Хэш: `{key_hash[:16]}...`\n"
+            report += f"   API: `{api_key[:10]}...{api_key[-4:]}`\n\n"
+        
+        # Проверяем использование
+        current_month = time_utils.get_current_month_str()
+        usage_result = await db.db_query("""
+            SELECT 
+                key_hash,
+                credit_usage
+            FROM tavily_key_usage 
+            WHERE usage_month = $1
+        """, (current_month,))
+        
+        if usage_result:
+            report += f"📊 *Использование за {current_month}:*\n"
+            for row in usage_result:
+                key_preview = row['key_hash'][:16] + "..."
+                usage = row['credit_usage']
+                report += f"   `{key_preview}`: {usage} кредитов\n"
+        else:
+            report += f"📊 *Использование за {current_month}:*\n   Нет данных\n"
+        
+        # Добавляем информацию о лимитах
+        from app.config import settings
+        report += f"\n⚡ *Лимиты:*\n"
+        report += f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n"
+        report += f"   Порог предупреждения: {settings.TAVILY_LIMIT_THRESHOLD_PERCENT * 100}%\n"
+        
+        await update.message.reply_text(report, parse_mode='Markdown')
+        
+    except Exception as e:
+        error_msg = f"Ошибка при проверке ключей Tavily: {e}"
+        logging.error(error_msg)
+        await update.message.reply_text(f"💥 {error_msg}")
+
 async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Регистрирует групповой чат"""
     user_id = update.effective_user.id
@@ -555,6 +639,8 @@ def register(application: Application):
     application.add_handler(CommandHandler("clearoldmetrics", clear_old_metrics_command))
     application.add_handler(CommandHandler("clearolddocs", clear_old_documents_command))
     application.add_handler(CommandHandler("docstats", document_stats_command))
+    application.add_handler(CommandHandler("updatetavilykeys", update_tavily_keys_command))
+    application.add_handler(CommandHandler("checktavilykeys", check_tavily_keys_command))
     
     # Команды для групповых чатов
     application.add_handler(CommandHandler("registergroup", register_group_command))

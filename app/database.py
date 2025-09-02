@@ -1159,6 +1159,46 @@ async def get_active_key_info(model_name: str) -> Optional[Dict[str, Any]]:
     
     return None
 
+async def force_update_tavily_keys():
+    """Принудительно обновляет ключи Tavily из настроек"""
+    try:
+        from app.config import get_settings
+        
+        settings = get_settings()
+        if not settings or not settings.TAVILY_API_KEYS:
+            logging.error("TAVILY_API_KEYS not found in settings")
+            return False
+        
+        # Очищаем старые ключи
+        await db_query("DELETE FROM tavily_api_keys")
+        logging.info("Old Tavily API keys cleared")
+        
+        # Добавляем новые ключи
+        for key in settings.TAVILY_API_KEYS:
+            key_hash = hashlib.sha256(key.encode()).hexdigest()
+            await db_query(
+                "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2)",
+                (key_hash, key)
+            )
+            logging.info(f"Added new Tavily API key: {key[:10]}...")
+        
+        # Очищаем старые записи использования
+        await db_query("DELETE FROM tavily_key_usage")
+        logging.info("Old Tavily key usage records cleared")
+        
+        # Очищаем кэш активных ключей
+        global _active_keys_cache
+        async with _cache_lock:
+            _active_keys_cache.clear()
+            _cache_last_updated.clear()
+        
+        logging.info("Tavily API keys updated successfully")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Failed to update Tavily API keys: {e}")
+        return False
+
 def is_admin(user_id: int) -> bool:
     return user_id == settings.ADMIN_ID
 
