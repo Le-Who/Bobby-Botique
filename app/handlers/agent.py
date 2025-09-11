@@ -286,7 +286,43 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     augmented_prompt = prompts.SYNTHESIS_PROMPT.format(
         full_context=safe_full_context, user_message=safe_user_message
     )
+    # Подготавливаем контекст с учётом лимитов токенов
+    from app import prompts
+    
+    # Извлекаем суммаризацию из истории, если есть
+    summary = None
+    if chat_state.history and len(chat_state.history) > 0:
+        # Проверяем, есть ли суммаризация в первом сообщении
+        first_msg = chat_state.history[0]
+        if (isinstance(first_msg, dict) and 
+            'role' in first_msg and 
+            'parts' in first_msg and 
+            len(first_msg['parts']) > 0 and
+            isinstance(first_msg['parts'][0], str) and
+            '[Суммаризация предыдущего контекста]' in first_msg['parts'][0]):
+            summary = first_msg['parts'][0]
+            # Убираем суммаризацию из истории для обработки
+            chat_state.history = chat_state.history[1:]
+    
+    # Добавляем augmented_prompt в историю
     chat_state.history.append({'role': 'user', 'parts': [augmented_prompt]})
+    
+    # Подготавливаем контекст с лимитами
+    prepared_history, new_summary = prompts.prepare_context_with_limits(
+        chat_state.history, 
+        "", 
+        summary
+    )
+    
+    # Строим финальный контекст
+    final_context = prompts.build_context_with_summary(
+        prepared_history, 
+        new_summary, 
+        ""
+    )
+    
+    # Обновляем историю в chat_state
+    chat_state.history = final_context
     
     try:
         # Проверяем, что history не пустой
@@ -297,15 +333,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
                 logging.error(f"Could not edit placeholder message: {edit_error}")
             return
         
-        # Проверяем, что history не пустой
-        if not chat_state.history or len(chat_state.history) == 0:
-            try:
-                await placeholder_message.edit_text("❌ История чата пуста. Невозможно обработать запрос.")
-            except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
-            return
-        
-        response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=chat_state.system_prompt)
+        response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=prompts.compose_system_instruction(chat_state.system_prompt))
     except Exception as gemini_error:
         logging.error(f"Error in Gemini synthesis: {gemini_error}")
         chat_state.history.pop()  # Убираем добавленный промпт
@@ -584,7 +612,41 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-    chat_state.history.append({'role': 'user', 'parts': [user_message]})
+    # Подготавливаем контекст с учётом лимитов токенов
+    from app import prompts
+    
+    # Извлекаем суммаризацию из истории, если есть
+    summary = None
+    if chat_state.history and len(chat_state.history) > 0:
+        # Проверяем, есть ли суммаризация в первом сообщении
+        first_msg = chat_state.history[0]
+        if (isinstance(first_msg, dict) and 
+            'role' in first_msg and 
+            'parts' in first_msg and 
+            len(first_msg['parts']) > 0 and
+            isinstance(first_msg['parts'][0], str) and
+            '[Суммаризация предыдущего контекста]' in first_msg['parts'][0]):
+            summary = first_msg['parts'][0]
+            # Убираем суммаризацию из истории для обработки
+            chat_state.history = chat_state.history[1:]
+    
+    # Подготавливаем контекст с лимитами
+    prepared_history, new_summary = prompts.prepare_context_with_limits(
+        chat_state.history, 
+        user_message, 
+        summary
+    )
+    
+    # Строим финальный контекст
+    final_context = prompts.build_context_with_summary(
+        prepared_history, 
+        new_summary, 
+        user_message
+    )
+    
+    # Обновляем историю в chat_state
+    chat_state.history = final_context
+    
     try:
         await placeholder_message.edit_text(f"🧠 Модель {model_used} думает...")
     except Exception as edit_error:
@@ -593,7 +655,7 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         placeholder_message = await placeholder_message.reply_text(f"🧠 Модель {model_used} думает...")
     
     # Используем системную инструкцию пользователя или инструкцию по умолчанию
-    system_instruction = chat_state.system_prompt or settings.DEFAULT_SYSTEM_PROMPT
+    system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
     response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=system_instruction)
     
     if response_text:

@@ -1353,3 +1353,201 @@ async def is_authorized(user_id: int) -> bool:
     finally:
         # Очищаем контекст пользователя
         await clear_user_context()
+
+# ============================================================================
+# CONVERSATION MANAGEMENT
+# ============================================================================
+
+async def save_conversation(user_id: int, title: str, role_type: str = None, role_id: int = None) -> int:
+    """Сохранить текущую беседу пользователя"""
+    try:
+        chat_state = await get_user_chat(user_id)
+        if not chat_state:
+            return None
+            
+        # Создаём беседу
+        result = await db_query(
+            """INSERT INTO conversations (user_id, title, role_type, role_id, summary, token_budget, created_at) 
+               VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING id""",
+            (user_id, title, role_type, role_id, None, chat_state.token_count)
+        )
+        conv_id = result[0]['id'] if result else None
+        
+        if conv_id:
+            # Сохраняем сообщения из истории
+            if chat_state.history:
+                import json
+                try:
+                    history_data = json.loads(chat_state.history)
+                    for msg in history_data.get('messages', []):
+                        await db_query(
+                            """INSERT INTO conversation_messages (conversation_id, role, content, created_at) 
+                               VALUES ($1, $2, $3, CURRENT_TIMESTAMP)""",
+                            (conv_id, msg.get('role', 'user'), msg.get('content', ''))
+                        )
+                except json.JSONDecodeError:
+                    logging.warning(f"Failed to parse history for conversation {conv_id}")
+        
+        return conv_id
+    except Exception as e:
+        logging.error(f"Error saving conversation for user {user_id}: {e}")
+        return None
+
+async def get_user_conversations(user_id: int, limit: int = 10, offset: int = 0) -> list:
+    """Получить список бесед пользователя с пагинацией"""
+    try:
+        result = await db_query(
+            """SELECT c.id, c.title, c.role_type, c.role_id, c.summary, c.token_budget, c.created_at,
+                      r.title as role_title, ur.title as user_role_title
+               FROM conversations c
+               LEFT JOIN roles r ON c.role_type = 'role' AND c.role_id = r.id
+               LEFT JOIN user_roles ur ON c.role_type = 'user_role' AND c.role_id = ur.id
+               WHERE c.user_id = $1 
+               ORDER BY c.created_at DESC 
+               LIMIT $2 OFFSET $3""",
+            (user_id, limit, offset)
+        )
+        
+        conversations = []
+        for row in result:
+            conversations.append({
+                'id': row['id'],
+                'title': row['title'],
+                'role_type': row['role_type'],
+                'role_id': row['role_id'],
+                'summary': row['summary'],
+                'token_budget': row['token_budget'],
+                'created_at': row['created_at'],
+                'role_title': row['role_title'] or row['user_role_title']
+            })
+        return conversations
+    except Exception as e:
+        logging.error(f"Error getting conversations for user {user_id}: {e}")
+        return []
+
+async def get_conversation_messages(conversation_id: int, user_id: int) -> list:
+    """Получить сообщения беседы (с проверкой принадлежности пользователю)"""
+    try:
+        # Проверяем принадлежность беседы пользователю
+        conv_check = await db_query(
+            "SELECT id FROM conversations WHERE id = $1 AND user_id = $2",
+            (conversation_id, user_id)
+        )
+        if not conv_check:
+            return None
+            
+        result = await db_query(
+            """SELECT role, content, created_at 
+               FROM conversation_messages 
+               WHERE conversation_id = $1 
+               ORDER BY created_at ASC""",
+            (conversation_id,)
+        )
+        
+        messages = []
+        for row in result:
+            messages.append({
+                'role': row['role'],
+                'content': row['content'],
+                'created_at': row['created_at']
+            })
+        return messages
+    except Exception as e:
+        logging.error(f"Error getting conversation messages for {conversation_id}: {e}")
+        return None
+
+async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
+    """Переключиться на беседу (загрузить её в текущий чат)"""
+    try:
+        # Получаем беседу и проверяем принадлежность
+        conv_data = await db_query(
+            "SELECT role_type, role_id, summary FROM conversations WHERE id = $1 AND user_id = $2",
+            (conversation_id, user_id)
+        )
+        if not conv_data:
+            return False
+            
+        role_type, role_id, summary = conv_data[0]['role_type'], conv_data[0]['role_id'], conv_data[0]['summary']
+        
+        # Получаем сообщения беседы
+        messages = await get_conversation_messages(conversation_id, user_id)
+        if messages is None:
+            return False
+            
+        # Формируем историю в формате JSON
+        import json
+        history_data = {
+            'messages': messages,
+            'conversation_id': conversation_id,
+            'summary': summary
+        }
+        history_json = json.dumps(history_data, ensure_ascii=False)
+        
+        # Обновляем текущий чат
+        await db_query(
+            "UPDATE chats SET history = $1, token_count = 0 WHERE user_id = $2",
+            (history_json, user_id)
+        )
+        
+        # Если есть роль, применяем её
+        if role_type and role_id:
+            if role_type == 'role':
+                role_data = await db_query("SELECT prompt FROM roles WHERE id = $1", (role_id,))
+            elif role_type == 'user_role':
+                role_data = await db_query("SELECT prompt FROM user_roles WHERE id = $1", (role_id,))
+            else:
+                role_data = None
+                
+            if role_data:
+                await db_query(
+                    "UPDATE chats SET system_prompt = $1 WHERE user_id = $2",
+                    (role_data[0]['prompt'], user_id)
+                )
+        
+        return True
+    except Exception as e:
+        logging.error(f"Error switching to conversation {conversation_id} for user {user_id}: {e}")
+        return False
+
+async def rename_conversation(user_id: int, conversation_id: int, new_title: str) -> bool:
+    """Переименовать беседу"""
+    try:
+        result = await db_query(
+            "UPDATE conversations SET title = $1 WHERE id = $2 AND user_id = $3",
+            (new_title, conversation_id, user_id)
+        )
+        return result is not None
+    except Exception as e:
+        logging.error(f"Error renaming conversation {conversation_id} for user {user_id}: {e}")
+        return False
+
+async def delete_conversation(user_id: int, conversation_id: int) -> bool:
+    """Удалить беседу и все её сообщения"""
+    try:
+        # Проверяем принадлежность
+        conv_check = await db_query(
+            "SELECT id FROM conversations WHERE id = $1 AND user_id = $2",
+            (conversation_id, user_id)
+        )
+        if not conv_check:
+            return False
+            
+        # Удаляем сообщения
+        await db_query("DELETE FROM conversation_messages WHERE conversation_id = $1", (conversation_id,))
+        
+        # Удаляем беседу
+        await db_query("DELETE FROM conversations WHERE id = $1 AND user_id = $2", (conversation_id, user_id))
+        
+        return True
+    except Exception as e:
+        logging.error(f"Error deleting conversation {conversation_id} for user {user_id}: {e}")
+        return False
+
+async def get_conversation_count(user_id: int) -> int:
+    """Получить общее количество бесед пользователя"""
+    try:
+        result = await db_query("SELECT COUNT(*) FROM conversations WHERE user_id = $1", (user_id,))
+        return result[0]['count'] if result else 0
+    except Exception as e:
+        logging.error(f"Error getting conversation count for user {user_id}: {e}")
+        return 0

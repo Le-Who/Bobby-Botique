@@ -12,6 +12,7 @@ from app.cache import get_cache_stats
 from app.queue import task_queue
 from app.group_chat import group_chat_manager
 from app import prompts
+from app.metrics import role_conv_metrics
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -631,6 +632,204 @@ async def clear_old_documents_command(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text(f"Ошибка очистки документов: {e}")
         logging.error(f"Error in clear_old_documents_command: {e}", exc_info=True)
 
+# ============================================================================
+# CONVERSATION MANAGEMENT COMMANDS
+# ============================================================================
+
+async def save_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохранить текущую беседу"""
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text("Использование: /save <название беседы>")
+        return
+    
+    title = " ".join(args)
+    if len(title) > 100:
+        await update.message.reply_text("❌ Название беседы слишком длинное (максимум 100 символов)")
+        return
+    
+    # Определяем текущую роль
+    chat_state = await db.get_user_chat(user_id)
+    role_type = None
+    role_id = None
+    
+    if chat_state and chat_state.system_prompt:
+        # Проверяем, есть ли активная роль
+        for key, role_data in prompts.DEFAULT_ROLES.items():
+            if role_data['prompt'] in chat_state.system_prompt:
+                role_type = 'role'
+                role_id = key
+                break
+    
+    conv_id = await db.save_conversation(user_id, title, role_type, role_id)
+    if conv_id:
+        await role_conv_metrics.record_conversation_saved()
+        await update.message.reply_text(f"✅ Беседа сохранена с ID: {conv_id}")
+    else:
+        await update.message.reply_text("❌ Ошибка при сохранении беседы")
+
+async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать список сохранённых бесед"""
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    
+    # Парсим аргументы для пагинации
+    page = 1
+    if context.args and context.args[0].isdigit():
+        page = int(context.args[0])
+    
+    limit = 5
+    offset = (page - 1) * limit
+    
+    conversations = await db.get_user_conversations(user_id, limit, offset)
+    total_count = await db.get_conversation_count(user_id)
+    
+    if not conversations:
+        await update.message.reply_text("📝 У вас пока нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.")
+        return
+    
+    text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
+    
+    for conv in conversations:
+        role_info = f" | {conv['role_title']}" if conv['role_title'] else ""
+        created = conv['created_at'].strftime("%d.%m.%Y %H:%M") if conv['created_at'] else "Неизвестно"
+        text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
+        text += f"📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n"
+    
+    # Кнопки навигации
+    keyboard = []
+    if page > 1:
+        keyboard.append([InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page-1}")])
+    if len(conversations) == limit and offset + limit < total_count:
+        keyboard.append([InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page+1}")])
+    
+    # Кнопки действий
+    if conversations:
+        keyboard.append([InlineKeyboardButton("🔄 Переключиться", callback_data="conv_switch")])
+        keyboard.append([InlineKeyboardButton("✏️ Переименовать", callback_data="conv_rename")])
+        keyboard.append([InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def switch_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключиться на беседу"""
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Использование: /switch <ID беседы>\n\nИспользуйте /conversations для просмотра списка бесед.")
+        return
+    
+    conv_id = int(args[0])
+    success = await db.switch_to_conversation(user_id, conv_id)
+    
+    if success:
+        await role_conv_metrics.record_conversation_switched()
+        await update.message.reply_text(f"✅ Переключились на беседу {conv_id}")
+    else:
+        await update.message.reply_text("❌ Беседа не найдена или у вас нет доступа к ней")
+
+async def rename_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переименовать беседу"""
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    
+    args = context.args
+    if len(args) < 2 or not args[0].isdigit():
+        await update.message.reply_text("Использование: /rename <ID беседы> <новое название>")
+        return
+    
+    conv_id = int(args[0])
+    new_title = " ".join(args[1:])
+    
+    if len(new_title) > 100:
+        await update.message.reply_text("❌ Название беседы слишком длинное (максимум 100 символов)")
+        return
+    
+    success = await db.rename_conversation(user_id, conv_id, new_title)
+    
+    if success:
+        await role_conv_metrics.record_conversation_renamed()
+        await update.message.reply_text(f"✅ Беседа {conv_id} переименована в '{new_title}'")
+    else:
+        await update.message.reply_text("❌ Беседа не найдена или у вас нет доступа к ней")
+
+async def delete_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удалить беседу"""
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Использование: /delete <ID беседы>\n\nИспользуйте /conversations для просмотра списка бесед.")
+        return
+    
+    conv_id = int(args[0])
+    
+    # Подтверждение удаления
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, удалить", callback_data=f"conv_delete_confirm:{conv_id}")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="conv_delete_cancel")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"⚠️ Вы уверены, что хотите удалить беседу {conv_id}?\n\nЭто действие нельзя отменить!",
+        reply_markup=reply_markup
+    )
+
+async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать метрики ролей и бесед"""
+    if not db.is_admin(update.effective_user.id): return
+    
+    try:
+        metrics = await role_conv_metrics.get_metrics_summary()
+        
+        text = "📊 *Метрики ролей и бесед:*\n\n"
+        
+        # Метрики ролей
+        text += "*🎭 Роли:*\n"
+        text += f"• Применений ролей: `{sum(metrics['roles']['applications'].values())}`\n"
+        text += f"• Кастомных ролей создано: `{metrics['roles']['custom_created']}`\n"
+        text += f"• Сбросов ролей: `{metrics['roles']['clears']}`\n"
+        text += f"• Сохранений ролей: `{metrics['roles']['saves']}`\n\n"
+        
+        # Популярные роли
+        if metrics['roles']['applications']:
+            text += "*🔥 Популярные роли:*\n"
+            sorted_roles = sorted(metrics['roles']['applications'].items(), key=lambda x: x[1], reverse=True)
+            for role_key, count in sorted_roles[:5]:
+                role_title = prompts.DEFAULT_ROLES.get(role_key, {}).get('title', role_key)
+                text += f"• {role_title}: `{count}`\n"
+            text += "\n"
+        
+        # Метрики бесед
+        text += "*💬 Беседы:*\n"
+        text += f"• Сохранено: `{metrics['conversations']['saved']}`\n"
+        text += f"• Переключений: `{metrics['conversations']['switched']}`\n"
+        text += f"• Переименований: `{metrics['conversations']['renamed']}`\n"
+        text += f"• Удалений: `{metrics['conversations']['deleted']}`\n\n"
+        
+        # Метрики суммаризации
+        text += "*📝 Суммаризация:*\n"
+        text += f"• Срабатываний: `{metrics['summarization']['triggered']}`\n"
+        text += f"• Мягких лимитов: `{metrics['summarization']['soft_limit']}`\n"
+        text += f"• Жёстких лимитов: `{metrics['summarization']['hard_limit']}`\n"
+        text += f"• Токенов сэкономлено: `{metrics['summarization']['tokens_saved']}`\n"
+        text += f"• Средняя длина суммаризации: `{metrics['summarization']['avg_summary_length']:.0f}` символов\n"
+        
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка получения метрик: {e}")
+        logging.error(f"Error in role_conv_metrics_command: {e}", exc_info=True)
+
 def register(application: Application):
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -663,3 +862,13 @@ def register(application: Application):
     application.add_handler(CommandHandler("documents", documents_command))
     # Новая команда ролей
     application.add_handler(CommandHandler("roles", roles_command))
+    
+    # Команды для работы с беседами
+    application.add_handler(CommandHandler("save", save_conversation_command))
+    application.add_handler(CommandHandler("conversations", conversations_command))
+    application.add_handler(CommandHandler("switch", switch_conversation_command))
+    application.add_handler(CommandHandler("rename", rename_conversation_command))
+    application.add_handler(CommandHandler("delete", delete_conversation_command))
+    
+    # Команды метрик
+    application.add_handler(CommandHandler("rolemetrics", role_conv_metrics_command))

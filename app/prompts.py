@@ -64,6 +64,178 @@ def compose_system_instruction(role_prompt: Optional[str]) -> str:
     return base
 
 # ============================================================================
+# CONTEXT MANAGEMENT WITH TOKEN LIMITS
+# ============================================================================
+
+# Лимиты токенов для контекста (учитывая 1M токенов у Gemini 2.5 Pro)
+SOFT_TOKEN_LIMIT = 300000  # Мягкий лимит - начинаем суммаризацию
+HARD_TOKEN_LIMIT = 800000  # Жёсткий лимит - принудительная суммаризация
+MAX_MESSAGES_SOFT = 50     # Максимум сообщений до мягкой суммаризации
+MAX_MESSAGES_HARD = 100    # Максимум сообщений до жёсткой суммаризации
+
+def estimate_tokens(text: str) -> int:
+    """Примерная оценка количества токенов в тексте (1 токен ≈ 4 символа)"""
+    if not text:
+        return 0
+    return len(str(text)) // 4
+
+def should_summarize_context(history: list, current_tokens: int = 0) -> tuple[bool, str]:
+    """
+    Определяет, нужно ли суммаризировать контекст
+    
+    Returns:
+        (should_summarize, reason)
+    """
+    if not history:
+        return False, ""
+    
+    # Подсчитываем токены в истории
+    total_tokens = current_tokens
+    message_count = len(history)
+    
+    for msg in history:
+        if isinstance(msg, dict) and 'parts' in msg:
+            for part in msg['parts']:
+                if isinstance(part, str):
+                    total_tokens += estimate_tokens(part)
+    
+    # Проверяем жёсткие лимиты
+    if total_tokens > HARD_TOKEN_LIMIT:
+        return True, f"Превышен жёсткий лимит токенов: {total_tokens} > {HARD_TOKEN_LIMIT}"
+    
+    if message_count > MAX_MESSAGES_HARD:
+        return True, f"Превышен жёсткий лимит сообщений: {message_count} > {MAX_MESSAGES_HARD}"
+    
+    # Проверяем мягкие лимиты
+    if total_tokens > SOFT_TOKEN_LIMIT:
+        return True, f"Превышен мягкий лимит токенов: {total_tokens} > {SOFT_TOKEN_LIMIT}"
+    
+    if message_count > MAX_MESSAGES_SOFT:
+        return True, f"Превышен мягкий лимит сообщений: {message_count} > {MAX_MESSAGES_SOFT}"
+    
+    return False, ""
+
+def prepare_context_with_limits(history: list, current_message: str = "", summary: str = None) -> tuple[list, str]:
+    """
+    Подготавливает контекст с учётом лимитов токенов
+    
+    Args:
+        history: История диалога
+        current_message: Текущее сообщение пользователя
+        summary: Существующая суммаризация (если есть)
+    
+    Returns:
+        (prepared_history, new_summary)
+    """
+    if not history:
+        return [], summary or ""
+    
+    current_tokens = estimate_tokens(current_message)
+    should_sum, reason = should_summarize_context(history, current_tokens)
+    
+    if not should_sum:
+        # Лимиты не превышены, возвращаем историю как есть
+        return history, summary or ""
+    
+    logging.info(f"Контекст требует суммаризации: {reason}")
+    
+    # Если есть готовая суммаризация, используем её
+    if summary:
+        # Оставляем только последние 10-15 сообщений + суммаризацию
+        recent_messages = history[-15:] if len(history) > 15 else history
+        return recent_messages, summary
+    
+    # Создаём суммаризацию из старых сообщений
+    # Берём первые 70% сообщений для суммаризации, оставляем последние 30%
+    split_point = max(1, int(len(history) * 0.7))
+    old_messages = history[:split_point]
+    recent_messages = history[split_point:]
+    
+    # Создаём суммаризацию из старых сообщений
+    summary_text = create_conversation_summary(old_messages)
+    
+    # Записываем метрики суммаризации
+    try:
+        from app.metrics import role_conv_metrics
+        tokens_saved = sum(estimate_tokens(str(part)) for msg in old_messages for part in msg.get('parts', []) if isinstance(part, str))
+        await role_conv_metrics.record_summarization(reason, tokens_saved, len(summary_text))
+    except Exception as e:
+        logging.warning(f"Failed to record summarization metrics: {e}")
+    
+    return recent_messages, summary_text
+
+def create_conversation_summary(messages: list) -> str:
+    """
+    Создаёт суммаризацию диалога из списка сообщений
+    
+    Args:
+        messages: Список сообщений для суммаризации
+    
+    Returns:
+        Текст суммаризации
+    """
+    if not messages:
+        return ""
+    
+    # Собираем текст из сообщений
+    conversation_text = ""
+    for msg in messages:
+        if isinstance(msg, dict) and 'role' in msg and 'parts' in msg:
+            role = msg['role']
+            parts = msg['parts']
+            
+            if role == 'user':
+                conversation_text += "Пользователь: "
+            elif role == 'model':
+                conversation_text += "Ассистент: "
+            else:
+                conversation_text += f"{role}: "
+            
+            for part in parts:
+                if isinstance(part, str):
+                    conversation_text += part + " "
+            conversation_text += "\n"
+    
+    # Если суммаризация слишком длинная, обрезаем её
+    if len(conversation_text) > 2000:
+        conversation_text = conversation_text[:2000] + "..."
+    
+    return f"Предыдущий контекст беседы:\n{conversation_text}"
+
+def build_context_with_summary(history: list, summary: str = None, current_message: str = "") -> list:
+    """
+    Строит финальный контекст с суммаризацией
+    
+    Args:
+        history: Подготовленная история (уже обрезанная)
+        summary: Суммаризация старых сообщений
+        current_message: Текущее сообщение пользователя
+    
+    Returns:
+        Готовый контекст для отправки в модель
+    """
+    context = []
+    
+    # Добавляем суммаризацию в начало, если есть
+    if summary:
+        context.append({
+            'role': 'user',
+            'parts': [f"[Суммаризация предыдущего контекста]\n{summary}"]
+        })
+    
+    # Добавляем историю
+    context.extend(history)
+    
+    # Добавляем текущее сообщение, если есть
+    if current_message:
+        context.append({
+            'role': 'user',
+            'parts': [current_message]
+        })
+    
+    return context
+
+# ============================================================================
 # PROMPT-ENGINEER SYSTEM PROMPT (для генерации кастомных ролей)
 # ============================================================================
 PROMPT_ENGINEER_SYSTEM_PROMPT = (

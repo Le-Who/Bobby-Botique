@@ -11,6 +11,7 @@ from app.utils.formatting import TelegramFormatter
 from app.state import begin_custom_role_creation
 from app.state import get_generated_role, clear_custom_role_state
 from app import prompts
+from app.metrics import role_conv_metrics
 
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -397,8 +398,16 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_apply_callback, pattern="^role_apply:"))
    application.add_handler(CallbackQueryHandler(role_clear_callback, pattern="^role_clear$"))
    application.add_handler(CallbackQueryHandler(role_create_callback, pattern="^role_create$"))
-   application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
-   application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
+    application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
+    application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
+    
+    # Conversation management callbacks
+    application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
+    application.add_handler(CallbackQueryHandler(conv_switch_callback, pattern="^conv_switch$"))
+    application.add_handler(CallbackQueryHandler(conv_rename_callback, pattern="^conv_rename$"))
+    application.add_handler(CallbackQueryHandler(conv_delete_callback, pattern="^conv_delete$"))
+    application.add_handler(CallbackQueryHandler(conv_delete_confirm_callback, pattern="^conv_delete_confirm:"))
+    application.add_handler(CallbackQueryHandler(conv_delete_cancel_callback, pattern="^conv_delete_cancel$"))
 
 async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
@@ -412,6 +421,7 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
        return
    chat_state.system_prompt = prompts.compose_system_instruction(meta.get("prompt"))
    await db.update_user_chat(user_id, chat_state)
+   await role_conv_metrics.record_role_application(key)
    await query.edit_message_text(f"✅ Роль '{meta.get('title', key)}' применена.")
 
 async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -421,6 +431,7 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
    chat_state = await db.get_user_chat(user_id)
    chat_state.system_prompt = prompts.compose_system_instruction(None)
    await db.update_user_chat(user_id, chat_state)
+   await role_conv_metrics.record_role_clear()
    await query.edit_message_text("🧹 Роль сброшена. Использую базовые правила форматирования.")
 
 async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -458,6 +469,108 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
            (user_id, role.get('title', 'Моя роль'), role.get('system_prompt', ''))
        )
        clear_custom_role_state(user_id)
+       await role_conv_metrics.record_custom_role_creation()
        await query.edit_message_text("💾 Роль сохранена. Доступна в списке /roles.")
    except Exception as e:
        await query.edit_message_text(f"❌ Ошибка сохранения роли: {e}")
+
+# ============================================================================
+# CONVERSATION MANAGEMENT CALLBACKS
+# ============================================================================
+
+async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка пагинации списка бесед"""
+    query = update.callback_query
+    await query.answer()
+    
+    page = int(query.data.split(":")[1])
+    user_id = query.from_user.id
+    
+    # Получаем беседы для страницы
+    limit = 5
+    offset = (page - 1) * limit
+    conversations = await db.get_user_conversations(user_id, limit, offset)
+    total_count = await db.get_conversation_count(user_id)
+    
+    if not conversations:
+        await query.edit_message_text("📝 У вас пока нет сохранённых бесед.")
+        return
+    
+    text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
+    
+    for conv in conversations:
+        role_info = f" | {conv['role_title']}" if conv['role_title'] else ""
+        created = conv['created_at'].strftime("%d.%m.%Y %H:%M") if conv['created_at'] else "Неизвестно"
+        text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
+        text += f"📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n"
+    
+    # Кнопки навигации
+    keyboard = []
+    if page > 1:
+        keyboard.append([InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page-1}")])
+    if len(conversations) == limit and offset + limit < total_count:
+        keyboard.append([InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page+1}")])
+    
+    # Кнопки действий
+    if conversations:
+        keyboard.append([InlineKeyboardButton("🔄 Переключиться", callback_data="conv_switch")])
+        keyboard.append([InlineKeyboardButton("✏️ Переименовать", callback_data="conv_rename")])
+        keyboard.append([InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключение на беседу"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "🔄 Введите ID беседы для переключения:\n\n"
+        "Используйте /conversations для просмотра списка бесед."
+    )
+
+async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переименование беседы"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "✏️ Введите ID беседы и новое название:\n\n"
+        "Формат: /rename <ID> <новое название>\n"
+        "Пример: /rename 123 Моя новая беседа"
+    )
+
+async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаление беседы"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "🗑️ Введите ID беседы для удаления:\n\n"
+        "Используйте /conversations для просмотра списка бесед.\n"
+        "⚠️ Это действие нельзя отменить!"
+    )
+
+async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение удаления беседы"""
+    query = update.callback_query
+    await query.answer()
+    
+    conv_id = int(query.data.split(":")[1])
+    user_id = query.from_user.id
+    
+    success = await db.delete_conversation(user_id, conv_id)
+    
+    if success:
+        await role_conv_metrics.record_conversation_deleted()
+        await query.edit_message_text(f"✅ Беседа {conv_id} удалена")
+    else:
+        await query.edit_message_text("❌ Ошибка при удалении беседы")
+
+async def conv_delete_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена удаления беседы"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text("❌ Удаление отменено")
