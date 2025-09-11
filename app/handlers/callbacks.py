@@ -407,6 +407,7 @@ def register(application: Application):
    # Conversation management callbacks
    application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
    application.add_handler(CallbackQueryHandler(conv_switch_callback, pattern="^conv_switch$"))
+   application.add_handler(CallbackQueryHandler(conv_switch_to_callback, pattern="^conv_switch_to:"))
    application.add_handler(CallbackQueryHandler(conv_rename_callback, pattern="^conv_rename$"))
    application.add_handler(CallbackQueryHandler(conv_delete_callback, pattern="^conv_delete$"))
    application.add_handler(CallbackQueryHandler(conv_delete_confirm_callback, pattern="^conv_delete_confirm:"))
@@ -418,14 +419,29 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
    user_id = query.from_user.id
    chat_state = await db.get_user_chat(user_id)
    key = query.data.split(":", 1)[1]
-   meta = prompts.DEFAULT_ROLES.get(key)
-   if not meta:
-       await query.edit_message_text("❌ Роль не найдена.")
-       return
-   chat_state.system_prompt = prompts.compose_system_instruction(meta.get("prompt"))
-   await db.update_user_chat(user_id, chat_state)
-   await role_conv_metrics.record_role_application(key)
-   await query.edit_message_text(f"✅ Роль '{meta.get('title', key)}' применена.")
+   
+   # Проверяем, это кастомная роль пользователя
+   if key.startswith("user_role:"):
+       role_id = int(key.split(":")[1])
+       role_data = await db.db_query("SELECT title, prompt FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
+       if not role_data:
+           await query.edit_message_text("❌ Кастомная роль не найдена.")
+           return
+       role = role_data[0]
+       chat_state.system_prompt = prompts.compose_system_instruction(role['prompt'])
+       await db.update_user_chat(user_id, chat_state)
+       await role_conv_metrics.record_role_application(f"user_role:{role_id}")
+       await query.edit_message_text(f"✅ Кастомная роль '{role['title']}' применена.")
+   else:
+       # Предустановленная роль
+       meta = prompts.DEFAULT_ROLES.get(key)
+       if not meta:
+           await query.edit_message_text("❌ Роль не найдена.")
+           return
+       chat_state.system_prompt = prompts.compose_system_instruction(meta.get("prompt"))
+       await db.update_user_chat(user_id, chat_state)
+       await role_conv_metrics.record_role_application(key)
+       await query.edit_message_text(f"✅ Роль '{meta.get('title', key)}' применена.")
 
 async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
@@ -469,7 +485,7 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
    try:
        await db.db_query(
            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-           (user_id, role.get('title', 'Моя роль'), role.get('system_prompt', ''))
+           (user_id, role.get('title', 'Моя роль'), role.get('prompt', ''))
        )
        clear_custom_role_state(user_id)
        await role_conv_metrics.record_custom_role_creation()
@@ -585,11 +601,48 @@ async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     """Переключение на беседу"""
     query = update.callback_query
     await query.answer()
+    user_id = query.from_user.id
     
-    await query.edit_message_text(
-        "🔄 Введите ID беседы для переключения:\n\n"
-        "Используйте /conversations для просмотра списка бесед."
-    )
+    # Получаем список бесед для выбора
+    conversations = await db.get_user_conversations(user_id, 10, 0)
+    if not conversations:
+        await query.edit_message_text("📝 У вас нет сохранённых бесед.")
+        return
+    
+    text = "🔄 *Выберите беседу для переключения:*\n\n"
+    buttons = []
+    
+    for conv in conversations:
+        role_info = f" | {conv['role_title']}" if conv['role_title'] else ""
+        created = conv['created_at'].strftime("%d.%m %H:%M") if conv['created_at'] else "Неизвестно"
+        text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
+        text += f"📅 {created}\n\n"
+        
+        buttons.append([InlineKeyboardButton(
+            f"🆔 {conv['id']} | {conv['title'][:30]}{'...' if len(conv['title']) > 30 else ''}", 
+            callback_data=f"conv_switch_to:{conv['id']}"
+        )])
+    
+    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+
+async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключение на конкретную беседу"""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    conv_id = int(query.data.split(":")[1])
+    
+    try:
+        success = await db.switch_to_conversation(user_id, conv_id)
+        if success:
+            await role_conv_metrics.record_conversation_switched()
+            await query.edit_message_text(f"✅ Переключились на беседу ID: {conv_id}")
+        else:
+            await query.edit_message_text("❌ Ошибка при переключении на беседу.")
+    except Exception as e:
+        logging.error(f"Error switching to conversation {conv_id}: {e}")
+        await query.edit_message_text("❌ Ошибка при переключении на беседу.")
 
 async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переименование беседы"""

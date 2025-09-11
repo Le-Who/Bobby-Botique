@@ -238,6 +238,24 @@ def build_context_with_summary(history: list, summary: str = None, current_messa
     return context
 
 # ============================================================================
+# CUSTOM ROLE CACHE
+# ============================================================================
+_custom_role_cache = {}  # Простой кэш в памяти
+
+def get_cached_custom_role(prompt: str) -> Optional[dict]:
+    """Получить кастомную роль из кэша по промпту"""
+    return _custom_role_cache.get(prompt)
+
+def cache_custom_role(prompt: str, role: dict):
+    """Сохранить кастомную роль в кэш"""
+    _custom_role_cache[prompt] = role
+    # Ограничиваем размер кэша
+    if len(_custom_role_cache) > 100:
+        # Удаляем самые старые записи
+        oldest_key = next(iter(_custom_role_cache))
+        del _custom_role_cache[oldest_key]
+
+# ============================================================================
 # HELPERS
 # ============================================================================
 def extract_json_object(text: str) -> Optional[dict]:

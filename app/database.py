@@ -1378,15 +1378,32 @@ async def save_conversation(user_id: int, title: str, role_type: str = None, rol
             if chat_state.history:
                 import json
                 try:
-                    history_data = json.loads(chat_state.history)
+                    # chat_state.history может быть уже списком или JSON строкой
+                    if isinstance(chat_state.history, list):
+                        history_data = {'messages': chat_state.history}
+                    else:
+                        history_data = json.loads(chat_state.history)
+                    
                     for msg in history_data.get('messages', []):
+                        # Обрабатываем разные форматы сообщений
+                        if isinstance(msg, dict):
+                            role = msg.get('role', 'user')
+                            content = msg.get('content', '')
+                            if isinstance(content, list):
+                                # Если content это список parts, объединяем
+                                content = ' '.join(str(part) for part in content)
+                        else:
+                            # Если msg не словарь, используем как есть
+                            role = 'user'
+                            content = str(msg)
+                        
                         await db_query(
                             """INSERT INTO conversation_messages (conversation_id, role, content, created_at) 
                                VALUES ($1, $2, $3, CURRENT_TIMESTAMP)""",
-                            (conv_id, msg.get('role', 'user'), msg.get('content', ''))
+                            (conv_id, role, content)
                         )
-                except json.JSONDecodeError:
-                    logging.warning(f"Failed to parse history for conversation {conv_id}")
+                except (json.JSONDecodeError, TypeError) as e:
+                    logging.warning(f"Failed to parse history for conversation {conv_id}: {e}")
         
         return conv_id
     except Exception as e:

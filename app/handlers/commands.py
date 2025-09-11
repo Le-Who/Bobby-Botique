@@ -117,14 +117,35 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
-    # Кнопки: дефолтные роли + Сброс роли + Создать свою
+    
+    # Загружаем кастомные роли пользователя
+    custom_roles = await db.db_query(
+        "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
+        (user_id,)
+    )
+    
+    # Кнопки: дефолтные роли + кастомные роли + Сброс роли + Создать свою
     buttons = []
+    
+    # Предустановленные роли
     for key, meta in prompts.DEFAULT_ROLES.items():
         title = meta.get("title", key)
         buttons.append([InlineKeyboardButton(title, callback_data=f"role_apply:{key}")])
+    
+    # Кастомные роли пользователя
+    if custom_roles:
+        for role in custom_roles:
+            title = f"🎭 {role['title']}"
+            buttons.append([InlineKeyboardButton(title, callback_data=f"role_apply:user_role:{role['id']}")])
+    
     buttons.append([InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear")])
     buttons.append([InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
-    await update.message.reply_text("Выберите роль или создайте свою:", reply_markup=InlineKeyboardMarkup(buttons))
+    
+    text = "Выберите роль или создайте свою:"
+    if custom_roles:
+        text += f"\n\n🎭 *Ваши кастомные роли:* {len(custom_roles)}"
+    
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -643,13 +664,31 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
     
     args = context.args
     if not args:
-        await update.message.reply_text("Использование: /save <название беседы>")
-        return
+        # Автогенерация названия на основе последних сообщений
+        chat_state = await db.get_user_chat(user_id)
+        if chat_state and chat_state.history:
+            # Берем последнее сообщение пользователя для генерации названия
+            last_user_msg = None
+            if isinstance(chat_state.history, list):
+                for msg in reversed(chat_state.history):
+                    if isinstance(msg, dict) and msg.get('role') == 'user':
+                        content = msg.get('content', '')
+                        if isinstance(content, list):
+                            content = ' '.join(str(part) for part in content)
+                        last_user_msg = str(content)[:50]  # Первые 50 символов
+                        break
+            
+            if last_user_msg:
+                title = f"Беседа: {last_user_msg}..."
+            else:
+                title = f"Беседа от {time_utils.get_current_time_str()}"
+        else:
+            title = f"Беседа от {time_utils.get_current_time_str()}"
+    else:
+        title = " ".join(args)
     
-    title = " ".join(args)
     if len(title) > 100:
-        await update.message.reply_text("❌ Название беседы слишком длинное (максимум 100 символов)")
-        return
+        title = title[:97] + "..."
     
     # Определяем текущую роль
     chat_state = await db.get_user_chat(user_id)

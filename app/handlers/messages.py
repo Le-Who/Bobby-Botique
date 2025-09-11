@@ -103,6 +103,29 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Генерация кастомной роли: если ждём описания, генерируем роль и показываем превью
     if is_awaiting_custom_role_input(user_id):
         try:
+            # Проверяем кэш
+            cached_role = prompts.get_cached_custom_role(message_text)
+            if cached_role:
+                set_generated_role(user_id, cached_role)
+                # Превью роли из кэша
+                title = cached_role.get('title', 'Кастомная роль')
+                purpose = cached_role.get('purpose', '')
+                style = ", ".join(cached_role.get('style', [])[:3])
+                preview = (
+                    f"🆕 *Новая роль (из кэша):* {title}\n\n"
+                    f"🎯 Цель: {purpose}\n"
+                    f"🧭 Стиль: {style}\n\n"
+                    f"Применить сейчас или сохранить?"
+                )
+                kb = [
+                    [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
+                    [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
+                    [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
+                ]
+                formatted_text, parse_mode = TelegramFormatter.format_text(preview)
+                await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
+                return
+            
             chat_state = await db.get_user_chat(user_id)
             # Системная инструкция для генерации роли — PROMPT_ENGINEER_SYSTEM_PROMPT
             system_instruction = prompts.PROMPT_ENGINEER_SYSTEM_PROMPT
@@ -121,6 +144,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             role_obj = prompts.extract_json_object(response_text)
             if not role_obj:
                 raise ValueError("Invalid JSON from model")
+            # Сохраняем в кэш
+            prompts.cache_custom_role(message_text, role_obj)
             set_generated_role(user_id, role_obj)
             # Превью роли
             title = role_obj.get('title', 'Кастомная роль')
