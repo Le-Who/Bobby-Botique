@@ -401,13 +401,13 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
    application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
     
-    # Conversation management callbacks
-    application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
-    application.add_handler(CallbackQueryHandler(conv_switch_callback, pattern="^conv_switch$"))
-    application.add_handler(CallbackQueryHandler(conv_rename_callback, pattern="^conv_rename$"))
-    application.add_handler(CallbackQueryHandler(conv_delete_callback, pattern="^conv_delete$"))
-    application.add_handler(CallbackQueryHandler(conv_delete_confirm_callback, pattern="^conv_delete_confirm:"))
-    application.add_handler(CallbackQueryHandler(conv_delete_cancel_callback, pattern="^conv_delete_cancel$"))
+   # Conversation management callbacks
+   application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
+   application.add_handler(CallbackQueryHandler(conv_switch_callback, pattern="^conv_switch$"))
+   application.add_handler(CallbackQueryHandler(conv_rename_callback, pattern="^conv_rename$"))
+   application.add_handler(CallbackQueryHandler(conv_delete_callback, pattern="^conv_delete$"))
+   application.add_handler(CallbackQueryHandler(conv_delete_confirm_callback, pattern="^conv_delete_confirm:"))
+   application.add_handler(CallbackQueryHandler(conv_delete_cancel_callback, pattern="^conv_delete_cancel$"))
 
 async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
