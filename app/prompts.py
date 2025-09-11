@@ -4,6 +4,8 @@
 
 from typing import Dict, Optional
 from app.config import settings
+import asyncio
+import logging
 
 # ============================================================================
 # ROLE COMPOSITION
@@ -154,11 +156,11 @@ def prepare_context_with_limits(history: list, current_message: str = "", summar
     # Создаём суммаризацию из старых сообщений
     summary_text = create_conversation_summary(old_messages)
     
-    # Записываем метрики суммаризации
+    # Записываем метрики суммаризации (неблокирующе)
     try:
         from app.metrics import role_conv_metrics
         tokens_saved = sum(estimate_tokens(str(part)) for msg in old_messages for part in msg.get('parts', []) if isinstance(part, str))
-        await role_conv_metrics.record_summarization(reason, tokens_saved, len(summary_text))
+        asyncio.create_task(role_conv_metrics.record_summarization(reason, tokens_saved, len(summary_text)))
     except Exception as e:
         logging.warning(f"Failed to record summarization metrics: {e}")
     
