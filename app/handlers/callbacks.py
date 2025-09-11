@@ -12,6 +12,7 @@ from app.state import begin_custom_role_creation
 from app.state import get_generated_role, clear_custom_role_state
 from app import prompts
 from app.metrics import role_conv_metrics
+from app.state import get_last_custom_role_prompt, set_generating_custom_role, set_last_custom_role_prompt
 
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -400,6 +401,8 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_create_callback, pattern="^role_create$"))
    application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
    application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
+   application.add_handler(CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$"))
+   application.add_handler(CallbackQueryHandler(open_roles_callback, pattern="^open_roles$"))
     
    # Conversation management callbacks
    application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
@@ -473,6 +476,64 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
        await query.edit_message_text("💾 Роль сохранена. Доступна в списке /roles.")
    except Exception as e:
        await query.edit_message_text(f"❌ Ошибка сохранения роли: {e}")
+
+async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+   query = update.callback_query
+   await query.answer()
+   user_id = query.from_user.id
+   last_prompt = get_last_custom_role_prompt(user_id)
+   if not last_prompt:
+       await query.edit_message_text("❌ Нет предыдущего запроса для повтора.")
+       return
+   # Запускаем повтор генерации как в messages.handle_request
+   chat_state = await db.get_user_chat(user_id)
+   key_data = await db.get_available_gemini_key(chat_state.model)
+   if not key_data:
+       await query.edit_message_text("❌ Нет доступных ключей API для генерации роли.")
+       return
+   progress_msg = await query.message.reply_text("🛠️ Генерирую роль…")
+   set_generating_custom_role(user_id, True)
+   history = [{'role': 'user', 'parts': [last_prompt]}]
+   response_text, _ = await agent.services.get_gemini_response(key_data['api_key'], history, chat_state.model, system_instruction=prompts.PROMPT_ENGINEER_SYSTEM_PROMPT, user_id=user_id, chat_id=user_id)
+   role_obj = prompts.extract_json_object(response_text)
+   if not role_obj:
+       await progress_msg.edit_text("❌ Снова не удалось сгенерировать роль. Попробуйте изменить описание.")
+       set_generating_custom_role(user_id, False)
+       return
+   set_last_custom_role_prompt(user_id, last_prompt)
+   from app.state import set_generated_role
+   set_generated_role(user_id, role_obj)
+   title = role_obj.get('title', 'Кастомная роль')
+   purpose = role_obj.get('purpose', '')
+   style = ", ".join(role_obj.get('style', [])[:3])
+   preview = (
+       f"🆕 *Новая роль:* {title}\n\n"
+       f"🎯 Цель: {purpose}\n"
+       f"🧭 Стиль: {style}\n\n"
+       f"Применить сейчас или сохранить?"
+   )
+   kb = [
+       [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
+       [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
+       [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
+   ]
+   formatted_text, parse_mode = TelegramFormatter.format_text(preview)
+   await progress_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
+   set_generating_custom_role(user_id, False)
+
+async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+   query = update.callback_query
+   await query.answer()
+   user_id = query.from_user.id
+   if not await db.is_authorized(user_id):
+       return
+   buttons = []
+   for key, meta in prompts.DEFAULT_ROLES.items():
+       title = meta.get("title", key)
+       buttons.append([InlineKeyboardButton(title, callback_data=f"role_apply:{key}")])
+   buttons.append([InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear")])
+   buttons.append([InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
+   await query.message.reply_text("Выберите роль:", reply_markup=InlineKeyboardMarkup(buttons))
 
 # ============================================================================
 # CONVERSATION MANAGEMENT CALLBACKS

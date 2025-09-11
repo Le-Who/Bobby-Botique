@@ -16,7 +16,7 @@ from app.utils.api_logger import api_logger
 from app import prompts
 from app.services import get_gemini_response
 from app.utils.formatting import TelegramFormatter
-from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state
+from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state, set_last_custom_role_prompt, get_last_custom_role_prompt, set_generating_custom_role
 
 # Глобальный словарь для хранения групп изображений
 MEDIA_GROUPS = {}
@@ -112,9 +112,15 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ Нет доступных ключей API для генерации роли.")
                 clear_custom_role_state(user_id)
                 return
+            # Индикатор прогресса
+            progress_msg = await update.message.reply_text("🛠️ Генерирую роль…")
+            set_last_custom_role_prompt(user_id, message_text)
+            set_generating_custom_role(user_id, True)
             response_text, _ = await get_gemini_response(key_data['api_key'], history, chat_state.model, system_instruction=system_instruction, user_id=user_id, chat_id=chat_id)
-            import json
-            role_obj = json.loads(response_text)
+            # Надёжный парсинг JSON (убираем code-fence, извлекаем объект)
+            role_obj = prompts.extract_json_object(response_text)
+            if not role_obj:
+                raise ValueError("Invalid JSON from model")
             set_generated_role(user_id, role_obj)
             # Превью роли
             title = role_obj.get('title', 'Кастомная роль')
@@ -132,12 +138,18 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
             ]
             formatted_text, parse_mode = TelegramFormatter.format_text(preview)
-            await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
+            await progress_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
+            set_generating_custom_role(user_id, False)
             return
         except Exception as e:
             logging.error(f"Custom role generation failed: {e}")
-            await update.message.reply_text("❌ Не удалось сгенерировать роль. Попробуйте ещё раз.")
-            clear_custom_role_state(user_id)
+            # Кнопка повторной попытки
+            retry_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="role_custom_retry")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
+            ])
+            await update.message.reply_text("❌ Не удалось сгенерировать роль. Попробуйте ещё раз.", reply_markup=retry_kb)
+            set_generating_custom_role(user_id, False)
             return
 
     # Проверяем, находится ли пользователь в режиме работы с документами

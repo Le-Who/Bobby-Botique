@@ -15,6 +15,8 @@ class UserState:
         # Кастомные роли
         self.awaiting_custom_role_input: bool = False
         self.generated_role: Optional[dict] = None
+        self.last_custom_role_prompt: Optional[str] = None
+        self.generating_custom_role: bool = False
 
 # Хранилище состояний пользователей
 USER_STATES: Dict[int, UserState] = defaultdict(UserState)
@@ -51,6 +53,8 @@ def begin_custom_role_creation(user_id: int):
     state = get_user_state(user_id)
     state.awaiting_custom_role_input = True
     state.generated_role = None
+    state.last_custom_role_prompt = None
+    state.generating_custom_role = False
 
 def set_generated_role(user_id: int, role: dict):
     state = get_user_state(user_id)
@@ -61,6 +65,19 @@ def clear_custom_role_state(user_id: int):
     state = get_user_state(user_id)
     state.awaiting_custom_role_input = False
     state.generated_role = None
+    state.last_custom_role_prompt = None
+    state.generating_custom_role = False
+
+def set_last_custom_role_prompt(user_id: int, prompt: str):
+    state = get_user_state(user_id)
+    state.last_custom_role_prompt = prompt
+
+def get_last_custom_role_prompt(user_id: int) -> Optional[str]:
+    return get_user_state(user_id).last_custom_role_prompt
+
+def set_generating_custom_role(user_id: int, value: bool):
+    state = get_user_state(user_id)
+    state.generating_custom_role = value
 
 def is_awaiting_custom_role_input(user_id: int) -> bool:
     return get_user_state(user_id).awaiting_custom_role_input

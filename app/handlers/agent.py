@@ -659,10 +659,15 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=system_instruction)
     
     if response_text:
-        reply_markup = None
+        # Постоянные кнопки под ответом
+        buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
         if chat_state.is_deep_dive:
-            keyboard = [[InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+            buttons.append([InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")])
+        reply_markup = InlineKeyboardMarkup(buttons)
+        buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+        if chat_state.is_deep_dive:
+            buttons.append([InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")])
+        reply_markup = InlineKeyboardMarkup(buttons)
 
         await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
