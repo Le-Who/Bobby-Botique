@@ -398,8 +398,8 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_apply_callback, pattern="^role_apply:"))
    application.add_handler(CallbackQueryHandler(role_clear_callback, pattern="^role_clear$"))
    application.add_handler(CallbackQueryHandler(role_create_callback, pattern="^role_create$"))
-    application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
-    application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
+   application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
+   application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
     
     # Conversation management callbacks
     application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
