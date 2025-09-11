@@ -140,9 +140,14 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_last_custom_role_prompt(user_id, message_text)
             set_generating_custom_role(user_id, True)
             response_text, _ = await get_gemini_response(key_data['api_key'], history, chat_state.model, system_instruction=system_instruction, user_id=user_id, chat_id=chat_id)
+            
+            # Логируем ответ модели для отладки
+            logging.info(f"Model response for role generation: {response_text[:500]}...")
+            
             # Надёжный парсинг JSON (убираем code-fence, извлекаем объект)
             role_obj = prompts.extract_json_object(response_text)
             if not role_obj:
+                logging.error(f"Failed to parse role JSON. Response: {response_text}")
                 raise ValueError("Invalid JSON from model")
             # Сохраняем в кэш
             prompts.cache_custom_role(message_text, role_obj)

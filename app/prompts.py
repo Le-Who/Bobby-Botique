@@ -264,19 +264,49 @@ def extract_json_object(text: str) -> Optional[dict]:
         return None
     try:
         cleaned = text.strip()
+        
         # Убираем ```json ... ``` или ``` ... ```
         if cleaned.startswith("```"):
-            cleaned = cleaned.strip('`')
-            if cleaned.lower().startswith("json"):
-                cleaned = cleaned[4:].strip()
+            lines = cleaned.split('\n')
+            if len(lines) > 1:
+                # Убираем первую строку (```json или ```)
+                cleaned = '\n'.join(lines[1:])
+            # Убираем последнюю строку (```)
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+        
+        # Убираем возможные префиксы
+        prefixes_to_remove = ["json", "JSON", "```json", "```JSON"]
+        for prefix in prefixes_to_remove:
+            if cleaned.lower().startswith(prefix.lower()):
+                cleaned = cleaned[len(prefix):].strip()
+        
         # Находим первую { и последнюю }
         start = cleaned.find('{')
         end = cleaned.rfind('}')
         if start == -1 or end == -1 or end <= start:
             return None
+        
+        json_str = cleaned[start:end+1]
+        
+        # Пытаемся распарсить
         import json
-        return json.loads(cleaned[start:end+1])
-    except Exception:
+        result = json.loads(json_str)
+        
+        # Проверяем, что это словарь с нужными полями
+        if not isinstance(result, dict):
+            return None
+            
+        # Проверяем наличие обязательных полей
+        required_fields = ['title', 'purpose', 'prompt']
+        if not all(field in result for field in required_fields):
+            return None
+            
+        return result
+        
+    except Exception as e:
+        logging.warning(f"Failed to extract JSON from text: {e}")
         return None
 
 # ============================================================================

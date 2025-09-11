@@ -291,7 +291,9 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     
     # Извлекаем суммаризацию из истории, если есть
     summary = None
-    if chat_state.history and len(chat_state.history) > 0:
+    if (chat_state.history and 
+        isinstance(chat_state.history, list) and 
+        len(chat_state.history) > 0):
         # Проверяем, есть ли суммаризация в первом сообщении
         first_msg = chat_state.history[0]
         if (isinstance(first_msg, dict) and 
@@ -617,7 +619,9 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     
     # Извлекаем суммаризацию из истории, если есть
     summary = None
-    if chat_state.history and len(chat_state.history) > 0:
+    if (chat_state.history and 
+        isinstance(chat_state.history, list) and 
+        len(chat_state.history) > 0):
         # Проверяем, есть ли суммаризация в первом сообщении
         first_msg = chat_state.history[0]
         if (isinstance(first_msg, dict) and 

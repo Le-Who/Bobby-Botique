@@ -428,6 +428,10 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
            await query.edit_message_text("❌ Кастомная роль не найдена.")
            return
        role = role_data[0]
+       # Проверяем, что роль содержит корректный промпт
+       if not role.get('prompt'):
+           await query.edit_message_text("❌ Кастомная роль содержит некорректный промпт.")
+           return
        chat_state.system_prompt = prompts.compose_system_instruction(role['prompt'])
        await db.update_user_chat(user_id, chat_state)
        await role_conv_metrics.record_role_application(f"user_role:{role_id}")
@@ -511,8 +515,13 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
    set_generating_custom_role(user_id, True)
    history = [{'role': 'user', 'parts': [last_prompt]}]
    response_text, _ = await agent.services.get_gemini_response(key_data['api_key'], history, chat_state.model, system_instruction=prompts.PROMPT_ENGINEER_SYSTEM_PROMPT, user_id=user_id, chat_id=user_id)
+   
+   # Логируем ответ модели для отладки
+   logging.info(f"Model response for role retry: {response_text[:500]}...")
+   
    role_obj = prompts.extract_json_object(response_text)
    if not role_obj:
+       logging.error(f"Failed to parse role JSON on retry. Response: {response_text}")
        await progress_msg.edit_text("❌ Снова не удалось сгенерировать роль. Попробуйте изменить описание.")
        set_generating_custom_role(user_id, False)
        return
