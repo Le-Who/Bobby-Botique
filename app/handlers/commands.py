@@ -11,6 +11,7 @@ from app.metrics import metrics_collector
 from app.cache import get_cache_stats
 from app.queue import task_queue
 from app.group_chat import group_chat_manager
+from app import prompts
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -49,7 +50,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/model` — выбрать модель\n"
             "• `/setprompt` — задать инструкцию\n"
             "• `/documents` — управление документами\n"
-            "• `/metrics` — статистика системы\n\n"
+            "• `/metrics` — статистика системы\n"
+            "• `/roles` — выбор ролей и создание своей\n\n"
             "*💡 Совет:* Начните с простого вопроса!"
         )
         
@@ -89,10 +91,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/newchat` — новый чат\n\n"
             "*📊 Статистика:*\n"
             "• `/metrics` — полная сводка (метрики, ключи, кредиты)\n\n"
-            "*💡 Советы:*\n"
-            "• Используйте `?` для быстрых фактов\n"
-            "• `??` для глубокого анализа\n"
-            "• Фото + текст для анализа изображений"
+            "*🧩 Роли:*\n"
+            "• `/roles` — выбрать предустановленную роль или создать свою\n"
         )
         
         formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
@@ -112,6 +112,19 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         chat_state.system_prompt = " ".join(context.args)
     await db.update_user_chat(user_id, chat_state)
     await update.message.reply_text("✅ Системная инструкция обновлена.")
+
+async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not await db.is_authorized(user_id): return
+    # Кнопки: дефолтные роли + Сброс роли + Создать свою
+    buttons = []
+    for key, meta in prompts.DEFAULT_ROLES.items():
+        title = meta.get("title", key)
+        buttons.append([InlineKeyboardButton(title, callback_data=f"role_apply:{key}")])
+    buttons.append([InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear")])
+    buttons.append([InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
+    await update.message.reply_text("Выберите роль или создайте свою:", reply_markup=InlineKeyboardMarkup(buttons))
+
 
 async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -648,3 +661,5 @@ def register(application: Application):
     
     # Команды для работы с документами
     application.add_handler(CommandHandler("documents", documents_command))
+    # Новая команда ролей
+    application.add_handler(CommandHandler("roles", roles_command))

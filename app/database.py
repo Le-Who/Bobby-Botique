@@ -235,6 +235,53 @@ async def init_db():
     
     await db_query("""CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)""")
     await db_query("""CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)""")
+    # --- Roles & Conversations schema ---
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS roles (
+            id SERIAL PRIMARY KEY,
+            key TEXT UNIQUE,
+            title TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            is_default BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS user_roles (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            title TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            title TEXT NOT NULL,
+            role_type TEXT NULL,
+            role_id INTEGER NULL,
+            summary TEXT NULL,
+            token_budget BIGINT NULL,
+            archived BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id SERIAL PRIMARY KEY,
+            conversation_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            token_estimate BIGINT DEFAULT 0,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # Useful indexes
+    await db_query("CREATE INDEX IF NOT EXISTS idx_conversations_user_updated ON conversations(user_id, updated_at DESC)")
+    await db_query("CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON conversation_messages(conversation_id, created_at)")
     await db_query("""CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
     await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
@@ -320,6 +367,10 @@ async def setup_row_level_security():
         tables_with_rls = [
             'users',
             'chats', 
+            'roles',
+            'user_roles',
+            'conversations',
+            'conversation_messages',
             'user_documents',
             'api_keys',
             'key_usage',
@@ -467,6 +518,93 @@ async def create_rls_policies(table_name: str):
                 logging.error(f"Failed to create user_documents_policy: {e}")
                 raise e
             
+        elif table_name == 'roles':
+            # Предустановленные роли доступны на чтение всем, изменение только админом
+            try:
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = 'roles' AND policyname = 'roles_read_policy'
+                """)
+                if not existing_policy:
+                    await db_query("""
+                        CREATE POLICY roles_read_policy ON roles
+                        FOR SELECT USING (true);
+                    """)
+                existing_write = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = 'roles' AND policyname = 'roles_write_policy'
+                """)
+                if not existing_write:
+                    await db_query("""
+                        CREATE POLICY roles_write_policy ON roles
+                        FOR ALL USING ((SELECT current_setting('app.is_admin', true)::boolean = true));
+                    """)
+            except Exception as e:
+                logging.error(f"Failed to create roles policies: {e}")
+                raise e
+
+        elif table_name == 'user_roles':
+            # Пользователь видит/меняет только свои пользовательские роли
+            try:
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = 'user_roles' AND policyname = 'user_roles_policy'
+                """
+                )
+                if not existing_policy:
+                    await db_query("""
+                        CREATE POLICY user_roles_policy ON user_roles
+                        FOR ALL USING (
+                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
+                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                        );
+                    """)
+            except Exception as e:
+                logging.error(f"Failed to create user_roles policy: {e}")
+                raise e
+
+        elif table_name == 'conversations':
+            # Пользователь видит/меняет только свои беседы
+            try:
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = 'conversations' AND policyname = 'conversations_policy'
+                """)
+                if not existing_policy:
+                    await db_query("""
+                        CREATE POLICY conversations_policy ON conversations
+                        FOR ALL USING (
+                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
+                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                        );
+                    """)
+            except Exception as e:
+                logging.error(f"Failed to create conversations policy: {e}")
+                raise e
+
+        elif table_name == 'conversation_messages':
+            # Доступ к сообщениям лишь если владеешь соответствующей беседой
+            try:
+                existing_policy = await db_query("""
+                    SELECT 1 FROM pg_policies 
+                    WHERE tablename = 'conversation_messages' AND policyname = 'conversation_messages_policy'
+                """)
+                if not existing_policy:
+                    await db_query("""
+                        CREATE POLICY conversation_messages_policy ON conversation_messages
+                        FOR ALL USING (
+                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                            OR EXISTS (
+                                SELECT 1 FROM conversations c 
+                                WHERE c.id = conversation_messages.conversation_id
+                                  AND c.user_id = (SELECT current_setting('app.user_id', true)::bigint)
+                            )
+                        );
+                    """)
+            except Exception as e:
+                logging.error(f"Failed to create conversation_messages policy: {e}")
+                raise e
+
         elif table_name in ['api_keys', 'tavily_api_keys']:
             # Проверяем существование политики перед созданием
             try:

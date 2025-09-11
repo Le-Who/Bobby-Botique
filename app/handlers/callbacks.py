@@ -1,6 +1,7 @@
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
+from app import prompts
 
 from app.handlers import agent
 from app import database as db
@@ -389,3 +390,35 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
    application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
    application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))
+   # Роль: apply/clear/create
+   application.add_handler(CallbackQueryHandler(role_apply_callback, pattern="^role_apply:"))
+   application.add_handler(CallbackQueryHandler(role_clear_callback, pattern="^role_clear$"))
+   application.add_handler(CallbackQueryHandler(role_create_callback, pattern="^role_create$"))
+
+async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+   query = update.callback_query
+   await query.answer()
+   user_id = query.from_user.id
+   chat_state = await db.get_user_chat(user_id)
+   key = query.data.split(":", 1)[1]
+   meta = prompts.DEFAULT_ROLES.get(key)
+   if not meta:
+       await query.edit_message_text("❌ Роль не найдена.")
+       return
+   chat_state.system_prompt = prompts.compose_system_instruction(meta.get("prompt"))
+   await db.update_user_chat(user_id, chat_state)
+   await query.edit_message_text(f"✅ Роль '{meta.get('title', key)}' применена.")
+
+async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+   query = update.callback_query
+   await query.answer()
+   user_id = query.from_user.id
+   chat_state = await db.get_user_chat(user_id)
+   chat_state.system_prompt = prompts.compose_system_instruction(None)
+   await db.update_user_chat(user_id, chat_state)
+   await query.edit_message_text("🧹 Роль сброшена. Использую базовые правила форматирования.")
+
+async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+   query = update.callback_query
+   await query.answer()
+   await query.message.reply_text("Опишите, какую роль хотите создать (1–2 предложения):")
