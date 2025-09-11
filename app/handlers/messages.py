@@ -13,6 +13,10 @@ from app.document_processor import process_uploaded_document
 from app.metrics import metrics_collector
 from app.utils.formatting import TelegramFormatter
 from app.utils.api_logger import api_logger
+from app import prompts
+from app.services import get_gemini_response
+from app.utils.formatting import TelegramFormatter
+from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state
 
 # Глобальный словарь для хранения групп изображений
 MEDIA_GROUPS = {}
@@ -96,6 +100,46 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_document(update, context)
         return
     
+    # Генерация кастомной роли: если ждём описания, генерируем роль и показываем превью
+    if is_awaiting_custom_role_input(user_id):
+        try:
+            chat_state = await db.get_user_chat(user_id)
+            # Системная инструкция для генерации роли — PROMPT_ENGINEER_SYSTEM_PROMPT
+            system_instruction = prompts.PROMPT_ENGINEER_SYSTEM_PROMPT
+            history = [{'role': 'user', 'parts': [f"{message_text}"]}]
+            key_data = await db.get_available_gemini_key(chat_state.model)
+            if not key_data:
+                await update.message.reply_text("❌ Нет доступных ключей API для генерации роли.")
+                clear_custom_role_state(user_id)
+                return
+            response_text, _ = await get_gemini_response(key_data['api_key'], history, chat_state.model, system_instruction=system_instruction, user_id=user_id, chat_id=chat_id)
+            import json
+            role_obj = json.loads(response_text)
+            set_generated_role(user_id, role_obj)
+            # Превью роли
+            title = role_obj.get('title', 'Кастомная роль')
+            purpose = role_obj.get('purpose', '')
+            style = ", ".join(role_obj.get('style', [])[:3])
+            preview = (
+                f"🆕 *Новая роль:* {title}\n\n"
+                f"🎯 Цель: {purpose}\n"
+                f"🧭 Стиль: {style}\n\n"
+                f"Применить сейчас или сохранить?"
+            )
+            kb = [
+                [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
+                [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
+            ]
+            formatted_text, parse_mode = TelegramFormatter.format_text(preview)
+            await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
+            return
+        except Exception as e:
+            logging.error(f"Custom role generation failed: {e}")
+            await update.message.reply_text("❌ Не удалось сгенерировать роль. Попробуйте ещё раз.")
+            clear_custom_role_state(user_id)
+            return
+
     # Проверяем, находится ли пользователь в режиме работы с документами
     from app.state import is_in_document_mode, get_selected_document_id
     

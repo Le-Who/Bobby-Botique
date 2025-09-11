@@ -8,6 +8,9 @@ from app import database as db
 from app.config import settings
 from app import state
 from app.utils.formatting import TelegramFormatter
+from app.state import begin_custom_role_creation
+from app.state import get_generated_role, clear_custom_role_state
+from app import prompts
 
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -394,6 +397,8 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_apply_callback, pattern="^role_apply:"))
    application.add_handler(CallbackQueryHandler(role_clear_callback, pattern="^role_clear$"))
    application.add_handler(CallbackQueryHandler(role_create_callback, pattern="^role_create$"))
+   application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
+   application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
 
 async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
@@ -421,4 +426,38 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
    await query.answer()
+   begin_custom_role_creation(query.from_user.id)
    await query.message.reply_text("Опишите, какую роль хотите создать (1–2 предложения):")
+
+async def role_custom_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+   query = update.callback_query
+   await query.answer()
+   user_id = query.from_user.id
+   chat_state = await db.get_user_chat(user_id)
+   role = get_generated_role(user_id)
+   if not role:
+       await query.edit_message_text("❌ Нет сгенерированной роли для применения.")
+       return
+   chat_state.system_prompt = prompts.compose_system_instruction(role.get('system_prompt', ''))
+   await db.update_user_chat(user_id, chat_state)
+   clear_custom_role_state(user_id)
+   await query.edit_message_text(f"✅ Роль '{role.get('title','Кастомная роль')}' применена.")
+
+async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+   query = update.callback_query
+   await query.answer()
+   user_id = query.from_user.id
+   role = get_generated_role(user_id)
+   if not role:
+       await query.edit_message_text("❌ Нет сгенерированной роли для сохранения.")
+       return
+   # Сохраняем в user_roles
+   try:
+       await db.db_query(
+           "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
+           (user_id, role.get('title', 'Моя роль'), role.get('system_prompt', ''))
+       )
+       clear_custom_role_state(user_id)
+       await query.edit_message_text("💾 Роль сохранена. Доступна в списке /roles.")
+   except Exception as e:
+       await query.edit_message_text(f"❌ Ошибка сохранения роли: {e}")

@@ -12,6 +12,9 @@ class UserState:
         self.document_mode = False
         self.selected_document_id: Optional[int] = None
         self.last_document_message_id: Optional[int] = None
+        # Кастомные роли
+        self.awaiting_custom_role_input: bool = False
+        self.generated_role: Optional[dict] = None
 
 # Хранилище состояний пользователей
 USER_STATES: Dict[int, UserState] = defaultdict(UserState)
@@ -43,6 +46,27 @@ def clear_document_state(user_id: int):
     state.document_mode = False
     state.selected_document_id = None
     state.last_document_message_id = None
+
+def begin_custom_role_creation(user_id: int):
+    state = get_user_state(user_id)
+    state.awaiting_custom_role_input = True
+    state.generated_role = None
+
+def set_generated_role(user_id: int, role: dict):
+    state = get_user_state(user_id)
+    state.generated_role = role
+    state.awaiting_custom_role_input = False
+
+def clear_custom_role_state(user_id: int):
+    state = get_user_state(user_id)
+    state.awaiting_custom_role_input = False
+    state.generated_role = None
+
+def is_awaiting_custom_role_input(user_id: int) -> bool:
+    return get_user_state(user_id).awaiting_custom_role_input
+
+def get_generated_role(user_id: int) -> Optional[dict]:
+    return get_user_state(user_id).generated_role
 
 def is_in_document_mode(user_id: int) -> bool:
     """Проверяет, находится ли пользователь в режиме работы с документами"""
