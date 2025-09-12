@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
 from app import prompts
@@ -545,8 +546,12 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
    
    role_obj = prompts.extract_json_object(response_text)
    if not role_obj:
-       logging.error(f"Failed to parse role JSON on retry. Response: {response_text}")
-       await progress_msg.edit_text("❌ Снова не удалось сгенерировать роль. Попробуйте изменить описание.")
+       # Обработка явной 503 ошибки из текста
+       if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
+           await progress_msg.edit_text("🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.")
+       else:
+           logging.error(f"Failed to parse role JSON on retry. Response: {response_text}")
+           await progress_msg.edit_text("❌ Снова не удалось сгенерировать роль. Попробуйте изменить описание.")
        set_generating_custom_role(user_id, False)
        return
    set_last_custom_role_prompt(user_id, last_prompt)

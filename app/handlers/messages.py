@@ -173,12 +173,19 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         except Exception as e:
             logging.error(f"Custom role generation failed: {e}")
+            # Закрываем состояние ожидания роли, чтобы обычные сообщения снова шли в чат
+            try:
+                clear_custom_role_state(user_id)
+            except Exception:
+                pass
             # Кнопка повторной попытки
             retry_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="role_custom_retry")],
                 [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
             ])
-            await update.message.reply_text("❌ Не удалось сгенерировать роль. Попробуйте ещё раз.", reply_markup=retry_kb)
+            # Дружественный текст при 503
+            msg = "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд." if "503" in str(e) or "unavailable" in str(e).lower() else "❌ Не удалось сгенерировать роль. Попробуйте ещё раз."
+            await update.message.reply_text(msg, reply_markup=retry_kb)
             set_generating_custom_role(user_id, False)
             return
 
