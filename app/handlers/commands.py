@@ -152,7 +152,8 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if temp:
         two_col.append(temp)
 
-    two_col.append([InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear"), InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
+    two_col.append([InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear"), InlineKeyboardButton("✏️ Переименовать роль", callback_data="role_rename_menu")])
+    two_col.append([InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
 
     text = "Выберите роль или создайте свою:"
     if custom_roles:

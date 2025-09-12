@@ -410,6 +410,31 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     from app.handlers.agent import _handle_regular_chat
     await _handle_regular_chat(placeholder_message, user_id, last_text, chat_state)
 
+async def role_rename_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if not await db.is_authorized(user_id):
+        return
+    roles = await db.db_query("SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC", (user_id,))
+    if not roles:
+        await query.edit_message_text("У вас пока нет кастомных ролей.")
+        return
+    buttons = []
+    for r in roles:
+        buttons.append([InlineKeyboardButton(f"✏️ {r['title']}", callback_data=f"role_rename_pick:{r['id']}")])
+    await query.message.reply_text("Выберите роль для переименования:", reply_markup=InlineKeyboardMarkup(buttons))
+
+async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if not await db.is_authorized(user_id):
+        return
+    role_id = int(query.data.split(":")[1])
+    context.user_data["rename_role_id"] = role_id
+    await query.message.reply_text("Введите новое название роли одной строкой:")
+
 def register(application: Application):
    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model_"))
    application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
@@ -427,6 +452,8 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$"))
    application.add_handler(CallbackQueryHandler(open_roles_callback, pattern="^open_roles$"))
    application.add_handler(CallbackQueryHandler(role_delete_callback, pattern="^role_delete:"))
+   application.add_handler(CallbackQueryHandler(role_rename_menu_callback, pattern="^role_rename_menu$"))
+   application.add_handler(CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:"))
     
    # Conversation management callbacks
    application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
@@ -512,13 +539,19 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
        return
    # Сохраняем в user_roles
    try:
+       # Сохраняем
        await db.db_query(
            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-           (user_id, role.get('title', 'Моя роль'), role.get('prompt', ''))
+           (user_id, role.get('title', 'Моя роль'), role.get('prompt') or role.get('system_prompt', ''))
        )
-       clear_custom_role_state(user_id)
        await role_conv_metrics.record_custom_role_creation()
-       await query.edit_message_text("💾 Роль сохранена. Доступна в списке /roles.")
+       # И сразу применяем
+       prompt_text = role.get('prompt') or role.get('system_prompt') or ''
+       chat_state = await db.get_user_chat(user_id)
+       chat_state.system_prompt = prompts.compose_system_instruction(prompt_text)
+       await db.update_user_chat(user_id, chat_state)
+       clear_custom_role_state(user_id)
+       await query.edit_message_text("💾 Роль сохранена и применена.")
    except Exception as e:
        await query.edit_message_text(f"❌ Ошибка сохранения роли: {e}")
 

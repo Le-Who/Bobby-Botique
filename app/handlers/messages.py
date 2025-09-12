@@ -100,6 +100,30 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_document(update, context)
         return
     
+    # Переименование роли: если пользователь ввёл новое имя после выбора role_rename_pick
+    if context.user_data.get("rename_role_id") and update.message and update.message.text:
+        try:
+            new_title = update.message.text.strip()
+            role_id = int(context.user_data.get("rename_role_id"))
+            if 1 <= len(new_title) <= 100:
+                await db.db_query("UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3", (new_title, role_id, user_id))
+                context.user_data.pop("rename_role_id", None)
+                await update.message.reply_text(f"✅ Роль переименована в: {new_title}")
+                # Возврат в меню ролей
+                from app.handlers.commands import roles_command
+                class Dummy:
+                    def __init__(self, msg): self.message = msg
+                await roles_command(Dummy(update.message), context)
+                return
+            else:
+                await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")
+                return
+        except Exception as e:
+            logging.error(f"Error renaming role: {e}")
+            await update.message.reply_text("❌ Не удалось переименовать роль. Попробуйте позже.")
+            context.user_data.pop("rename_role_id", None)
+            return
+
     # Генерация кастомной роли: если ждём описания, генерируем роль и показываем превью
     if is_awaiting_custom_role_input(user_id):
         try:

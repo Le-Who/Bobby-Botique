@@ -1392,6 +1392,23 @@ async def save_conversation(user_id: int, title: str, role_type: str = None, rol
                             if isinstance(content, list):
                                 # Если content это список parts, объединяем
                                 content = ' '.join(str(part) for part in content)
+                            # Фильтруем технические/системные сообщения и команды
+                            text_lower = (content or '').strip()
+                            if role not in ('user', 'assistant'):
+                                continue
+                            if text_lower.startswith('/'):
+                                continue
+                            # Фильтруем наши служебные тексты-индикаторы
+                            if any(prefix in text_lower for prefix in (
+                                '🖼️ обрабатываю изображение',
+                                '🤔 думаю',
+                                '📄 обрабатываю документ',
+                                '✅ новый чат создан',
+                                'опишите, какую роль хотите создать',
+                                'не удалось сгенерировать роль',
+                                'сервер перегружен'
+                            )):
+                                continue
                         else:
                             # Если msg не словарь, используем как есть
                             role = 'user'
