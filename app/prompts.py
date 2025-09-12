@@ -259,55 +259,75 @@ def cache_custom_role(prompt: str, role: dict):
 # HELPERS
 # ============================================================================
 def extract_json_object(text: str) -> Optional[dict]:
-    """Пытается извлечь JSON-объект из произвольного текста (убирает code-fence)."""
+    """Извлекает первый валидный JSON-объект из мусорного ответа модели.
+
+    Поддерживает варианты:
+    - Ответ в code fence (```json ... ```)
+    - Наличие лишнего текста до/после объекта
+    - Несколько JSON-структур подряд: берем первый корректный объект с нужными полями
+    - Наличие поля 'system_prompt' вместо 'prompt' (конвертируем)
+    """
     if not text:
         return None
-    try:
-        cleaned = text.strip()
-        
-        # Убираем ```json ... ``` или ``` ... ```
-        if cleaned.startswith("```"):
-            lines = cleaned.split('\n')
-            if len(lines) > 1:
-                # Убираем первую строку (```json или ```)
-                cleaned = '\n'.join(lines[1:])
-            # Убираем последнюю строку (```)
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-        
-        # Убираем возможные префиксы
-        prefixes_to_remove = ["json", "JSON", "```json", "```JSON"]
-        for prefix in prefixes_to_remove:
-            if cleaned.lower().startswith(prefix.lower()):
-                cleaned = cleaned[len(prefix):].strip()
-        
-        # Находим первую { и последнюю }
-        start = cleaned.find('{')
-        end = cleaned.rfind('}')
-        if start == -1 or end == -1 or end <= start:
-            return None
-        
-        json_str = cleaned[start:end+1]
-        
-        # Пытаемся распарсить
-        import json
-        result = json.loads(json_str)
-        
-        # Проверяем, что это словарь с нужными полями
-        if not isinstance(result, dict):
-            return None
-            
-        # Проверяем наличие обязательных полей
-        required_fields = ['title', 'purpose', 'prompt']
-        if not all(field in result for field in required_fields):
-            return None
-            
-        return result
-        
-    except Exception as e:
-        logging.warning(f"Failed to extract JSON from text: {e}")
-        return None
+    cleaned = text.strip()
+
+    # Снимаем внешний code-fence
+    if cleaned.startswith("```"):
+        lines = cleaned.split('\n')
+        if len(lines) > 1:
+            cleaned = '\n'.join(lines[1:])
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+    # Убираем возможные текстовые префиксы типа `json`/`JSON`
+    lower = cleaned.lstrip()
+    for prefix in ("json\n", "json\r\n", "json ", "JSON\n", "JSON\r\n", "JSON "):
+        if lower.startswith(prefix):
+            cleaned = cleaned[len(cleaned) - len(lower) + len(prefix):].lstrip()
+            break
+
+    import json
+
+    # Проходим по всем возможным вхождениям '{' и пытаемся собрать сбалансированный объект
+    n = len(cleaned)
+    for i in range(n):
+        if cleaned[i] != '{':
+            continue
+        depth = 0
+        in_string = False
+        escape = False
+        for j in range(i, n):
+            ch = cleaned[j]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == '\\':
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+            else:
+                if ch == '"':
+                    in_string = True
+                elif ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        candidate = cleaned[i:j+1]
+                        try:
+                            obj = json.loads(candidate)
+                        except Exception:
+                            break  # текущий блок некорректен, пробуем следующий i
+                        if isinstance(obj, dict):
+                            # Приводим поле system_prompt -> prompt при необходимости
+                            if 'prompt' not in obj and 'system_prompt' in obj:
+                                obj['prompt'] = obj.get('system_prompt')
+                            # Проверяем обязательные поля
+                            if all(k in obj for k in ('title', 'purpose', 'prompt')):
+                                return obj
+                        break
+    return None
 
 # ============================================================================
 # PROMPT-ENGINEER SYSTEM PROMPT (для генерации кастомных ролей)

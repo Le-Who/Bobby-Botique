@@ -495,7 +495,8 @@ async def role_custom_apply_callback(update: Update, context: ContextTypes.DEFAU
    if not role:
        await query.edit_message_text("❌ Нет сгенерированной роли для применения.")
        return
-   chat_state.system_prompt = prompts.compose_system_instruction(role.get('system_prompt', ''))
+   prompt_text = role.get('prompt') or role.get('system_prompt') or ''
+   chat_state.system_prompt = prompts.compose_system_instruction(prompt_text)
    await db.update_user_chat(user_id, chat_state)
    clear_custom_role_state(user_id)
    await query.edit_message_text(f"✅ Роль '{role.get('title','Кастомная роль')}' применена.")
