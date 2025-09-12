@@ -111,9 +111,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"✅ Роль переименована в: {new_title}")
                 # Возврат в меню ролей
                 from app.handlers.commands import roles_command
-                class Dummy:
-                    def __init__(self, msg): self.message = msg
-                await roles_command(Dummy(update.message), context)
+                class DummyUpdate:
+                    def __init__(self, msg, user):
+                        self.message = msg
+                        self.effective_user = user
+                await roles_command(DummyUpdate(update.message, update.effective_user), context)
                 return
             else:
                 await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")

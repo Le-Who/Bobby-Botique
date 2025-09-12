@@ -669,7 +669,15 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
             buttons.append([InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")])
         reply_markup = InlineKeyboardMarkup(buttons)
 
-        await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
+        try:
+            await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
+        except Exception as send_err:
+            logging.warning(f"send_long_message failed, fallback to reply_text: {send_err}")
+            try:
+                formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
+                await placeholder_message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+            except Exception as e2:
+                await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
