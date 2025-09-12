@@ -123,8 +123,8 @@ async def send_long_message(message: Message, text: str, is_deep_dive: bool = Fa
                 current_reply_markup = InlineKeyboardMarkup(keyboard)
         else:
             keyboard = [
-                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
-                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
             ]
             current_reply_markup = InlineKeyboardMarkup(keyboard)
 

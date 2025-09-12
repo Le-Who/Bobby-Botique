@@ -629,9 +629,11 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
        return
    # Отображаем меню ролей так же, как и команда /roles
    from app.handlers.commands import roles_command
-   class Dummy:
-       def __init__(self, msg): self.message = msg
-   await roles_command(Dummy(query.message), context)
+   class DummyUpdate:
+       def __init__(self, msg, user):
+           self.message = msg
+           self.effective_user = user
+   await roles_command(DummyUpdate(query.message, query.from_user), context)
 
 # ============================================================================
 # CONVERSATION MANAGEMENT CALLBACKS

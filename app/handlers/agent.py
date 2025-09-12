@@ -100,8 +100,11 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
         chat_id=chat_id
     )
     
-    # Add role button to QNA responses
-    buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+    # Add role button and new topic button to QNA responses
+    buttons = [
+        [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+        [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
+    ]
     reply_markup = InlineKeyboardMarkup(buttons)
     await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
@@ -567,7 +570,8 @@ _Основные сервисы:_
                 [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
                 [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
                 [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")],
-                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
             ]
             
             # Отправляем ответ с кнопками
@@ -668,9 +672,10 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     
     if response_text:
         # Постоянные кнопки под ответом
-        buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
-        if chat_state.is_deep_dive:
-            buttons.append([InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")])
+        buttons = [
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+            [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic" if chat_state.is_deep_dive else "new_topic")]
+        ]
         reply_markup = InlineKeyboardMarkup(buttons)
 
         try:
@@ -799,8 +804,11 @@ _Особенности:_
         
         # Проверяем, что response_text не None и не пустой
         if response_text and response_text.strip():
-            # Add role button to photo responses
-            buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+            # Add role button and new topic button to photo responses
+            buttons = [
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
+            ]
             reply_markup = InlineKeyboardMarkup(buttons)
             await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
             # Сохраняем контекст изображения в истории
@@ -808,8 +816,11 @@ _Особенности:_
             chat_state.history.append({'role': 'model', 'parts': [response_text]})
             await db.update_user_chat(original_message.from_user.id, chat_state)
         else:
-            # Add role button to error responses too
-            buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+            # Add role button and new topic button to error responses too
+            buttons = [
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
+            ]
             reply_markup = InlineKeyboardMarkup(buttons)
             await send_long_message(placeholder_message, "Не удалось обработать изображение.", reply_markup=reply_markup)
             logging.warning(f"Empty response from Gemini API for image processing by user {original_message.from_user.id}")
@@ -1088,8 +1099,11 @@ _Изображение 2:_ *Современное здание* с иннов�
             chat_id=chat_id
         )
         
-        # Add role button to media group responses
-        buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+        # Add role button and new topic button to media group responses
+        buttons = [
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+            [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
+        ]
         reply_markup = InlineKeyboardMarkup(buttons)
         await send_long_message(placeholder_message, response_text or "Не удалось обработать группу изображений.", reply_markup=reply_markup)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
