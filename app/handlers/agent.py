@@ -668,10 +668,6 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         if chat_state.is_deep_dive:
             buttons.append([InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")])
         reply_markup = InlineKeyboardMarkup(buttons)
-        buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
-        if chat_state.is_deep_dive:
-            buttons.append([InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")])
-        reply_markup = InlineKeyboardMarkup(buttons)
 
         await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
@@ -912,7 +908,9 @@ async def process_long_request(placeholder_message: Message, update: Update, con
     except Exception as e:
         logging.error(f"Error in background task dispatcher: {e}", exc_info=True)
         try:
-            await placeholder_message.edit_text(f"Произошла критическая ошибка: {e}")
+            from app.errors import user_friendly_error, build_retry_and_roles_keyboard
+            friendly = user_friendly_error(e)
+            await placeholder_message.edit_text(friendly, reply_markup=build_retry_and_roles_keyboard())
         except Exception as inner_e:
             logging.error(f"Could not edit placeholder message: {inner_e}")
 

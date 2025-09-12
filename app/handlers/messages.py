@@ -203,6 +203,14 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
     
+    # Сохраняем последний пользовательский ввод для кнопки "🔁 Попробовать ещё раз"
+    try:
+        from app.state import get_user_state
+        if update.message and update.message.text:
+            get_user_state(user_id).last_sent_message_text = update.message.text
+    except Exception:
+        pass
+
     # Проверяем, есть ли изображение (одиночное)
     is_photo = bool(update.message.photo)
     

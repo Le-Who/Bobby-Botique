@@ -17,6 +17,8 @@ class UserState:
         self.generated_role: Optional[dict] = None
         self.last_custom_role_prompt: Optional[str] = None
         self.generating_custom_role: bool = False
+        # Повтор последнего запроса (для кнопки "🔁 Попробовать ещё раз")
+        self.last_sent_message_text: Optional[str] = None
 
 # Хранилище состояний пользователей
 USER_STATES: Dict[int, UserState] = defaultdict(UserState)

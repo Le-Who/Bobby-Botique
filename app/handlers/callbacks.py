@@ -13,6 +13,7 @@ from app.state import get_generated_role, clear_custom_role_state
 from app import prompts
 from app.metrics import role_conv_metrics
 from app.state import get_last_custom_role_prompt, set_generating_custom_role, set_last_custom_role_prompt
+from app.errors import build_roles_keyboard
 
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -388,6 +389,26 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Send confirmation message
     await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
 
+async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Повтор последнего пользовательского запроса по кнопке."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    chat_state = await db.get_user_chat(user_id)
+    last_text = None
+    try:
+        from app.state import get_user_state
+        last_text = get_user_state(user_id).last_sent_message_text
+    except Exception:
+        last_text = None
+    if not last_text:
+        await query.edit_message_text("Нет запроса для повтора.")
+        return
+    # Создаём плейсхолдер и запускаем обычную обработку как при новом сообщении
+    placeholder_message = await query.message.reply_text("🔁 Повторяю предыдущий запрос…")
+    from app.handlers.agent import _handle_regular_chat
+    await _handle_regular_chat(placeholder_message, user_id, last_text, chat_state)
+
 def register(application: Application):
    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model_"))
    application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
@@ -395,6 +416,7 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
    application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
    application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))
+   application.add_handler(CallbackQueryHandler(retry_last_callback, pattern="^retry_last$"))
    # Роль: apply/clear/create
    application.add_handler(CallbackQueryHandler(role_apply_callback, pattern="^role_apply:"))
    application.add_handler(CallbackQueryHandler(role_clear_callback, pattern="^role_clear$"))
@@ -403,6 +425,7 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
    application.add_handler(CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$"))
    application.add_handler(CallbackQueryHandler(open_roles_callback, pattern="^open_roles$"))
+   application.add_handler(CallbackQueryHandler(role_delete_callback, pattern="^role_delete:"))
     
    # Conversation management callbacks
    application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
@@ -546,19 +569,30 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
    await progress_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
    set_generating_custom_role(user_id, False)
 
+async def role_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+   query = update.callback_query
+   await query.answer()
+   user_id = query.from_user.id
+   if not await db.is_authorized(user_id):
+       return
+   try:
+       role_id = int(query.data.split(":")[1])
+       await db.db_query("DELETE FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
+       await query.edit_message_text("🗑️ Роль удалена.")
+   except Exception as e:
+       await query.edit_message_text(f"❌ Ошибка удаления роли: {e}")
+
 async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
    await query.answer()
    user_id = query.from_user.id
    if not await db.is_authorized(user_id):
        return
-   buttons = []
-   for key, meta in prompts.DEFAULT_ROLES.items():
-       title = meta.get("title", key)
-       buttons.append([InlineKeyboardButton(title, callback_data=f"role_apply:{key}")])
-   buttons.append([InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear")])
-   buttons.append([InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
-   await query.message.reply_text("Выберите роль:", reply_markup=InlineKeyboardMarkup(buttons))
+   # Отображаем меню ролей так же, как и команда /roles
+   from app.handlers.commands import roles_command
+   class Dummy:
+       def __init__(self, msg): self.message = msg
+   await roles_command(Dummy(query.message), context)
 
 # ============================================================================
 # CONVERSATION MANAGEMENT CALLBACKS

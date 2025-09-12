@@ -118,34 +118,47 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
     
-    # Загружаем кастомные роли пользователя
+    # Загружаем кастомные роли пользователя (сначала пользовательские)
     custom_roles = await db.db_query(
         "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
         (user_id,)
     )
-    
-    # Кнопки: дефолтные роли + кастомные роли + Сброс роли + Создать свою
-    buttons = []
-    
-    # Предустановленные роли
-    for key, meta in prompts.DEFAULT_ROLES.items():
-        title = meta.get("title", key)
-        buttons.append([InlineKeyboardButton(title, callback_data=f"role_apply:{key}")])
-    
-    # Кастомные роли пользователя
+
+    # Формируем список кнопок: кастомные сверху, затем стандартные
+    btn_rows = []
     if custom_roles:
         for role in custom_roles:
             title = f"🎭 {role['title']}"
-            buttons.append([InlineKeyboardButton(title, callback_data=f"role_apply:user_role:{role['id']}")])
-    
-    buttons.append([InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear")])
-    buttons.append([InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
-    
+            btn_rows.append([
+                InlineKeyboardButton(title, callback_data=f"role_apply:user_role:{role['id']}"),
+                InlineKeyboardButton("🗑️", callback_data=f"role_delete:{role['id']}")
+            ])
+
+    for key, meta in prompts.DEFAULT_ROLES.items():
+        title = meta.get("title", key)
+        btn_rows.append([InlineKeyboardButton(title, callback_data=f"role_apply:{key}")])
+
+    # Разбиваем в две колонки равномерно
+    two_col = []
+    temp = []
+    for row in btn_rows:
+        if len(row) == 2 and row[1].text == "🗑️":
+            two_col.append(row)
+        else:
+            temp.append(row[0])
+            if len(temp) == 2:
+                two_col.append(temp)
+                temp = []
+    if temp:
+        two_col.append(temp)
+
+    two_col.append([InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear"), InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
+
     text = "Выберите роль или создайте свою:"
     if custom_roles:
         text += f"\n\n🎭 *Ваши кастомные роли:* {len(custom_roles)}"
-    
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(two_col))
 
 
 async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
