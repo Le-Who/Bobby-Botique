@@ -100,7 +100,10 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
         chat_id=chat_id
     )
     
-    await send_long_message(placeholder_message, final_answer)
+    # Add role button to QNA responses
+    buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+    reply_markup = InlineKeyboardMarkup(buttons)
+    await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
     await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
 
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):
@@ -563,7 +566,8 @@ _Основные сервисы:_
             keyboard = [
                 [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
                 [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
-                [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")]
+                [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")],
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
             ]
             
             # Отправляем ответ с кнопками
@@ -795,13 +799,19 @@ _Особенности:_
         
         # Проверяем, что response_text не None и не пустой
         if response_text and response_text.strip():
-            await send_long_message(placeholder_message, response_text)
+            # Add role button to photo responses
+            buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+            reply_markup = InlineKeyboardMarkup(buttons)
+            await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
             # Сохраняем контекст изображения в истории
             chat_state.history.append({'role': 'user', 'parts': [formatted_prompt]})
             chat_state.history.append({'role': 'model', 'parts': [response_text]})
             await db.update_user_chat(original_message.from_user.id, chat_state)
         else:
-            await send_long_message(placeholder_message, "Не удалось обработать изображение.")
+            # Add role button to error responses too
+            buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+            reply_markup = InlineKeyboardMarkup(buttons)
+            await send_long_message(placeholder_message, "Не удалось обработать изображение.", reply_markup=reply_markup)
             logging.warning(f"Empty response from Gemini API for image processing by user {original_message.from_user.id}")
         
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
@@ -1078,7 +1088,10 @@ _Изображение 2:_ *Современное здание* с иннов�
             chat_id=chat_id
         )
         
-        await send_long_message(placeholder_message, response_text or "Не удалось обработать группу изображений.")
+        # Add role button to media group responses
+        buttons = [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+        reply_markup = InlineKeyboardMarkup(buttons)
+        await send_long_message(placeholder_message, response_text or "Не удалось обработать группу изображений.", reply_markup=reply_markup)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         
         count = len(images) if images else 0

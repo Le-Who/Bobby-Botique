@@ -103,18 +103,29 @@ async def send_long_message(message: Message, text: str, is_deep_dive: bool = Fa
         current_reply_markup = None
         is_last_part = (i == len(parts) - 1) if parts and len(parts) > 0 else True
 
-        if is_deep_dive:
+        # Use provided reply_markup if available, otherwise use default logic
+        if reply_markup is not None:
+            # Use the provided markup for the last part only
+            current_reply_markup = reply_markup if is_last_part else None
+        elif is_deep_dive:
             if is_last_part:
                 keyboard = [
                     [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
-                    [InlineKeyboardButton("👇 Копнуть глубже", callback_data="deepdive:deeper_dive")]
+                    [InlineKeyboardButton("👇 Копнуть глубже", callback_data="deepdive:deeper_dive")],
+                    [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
                 ]
                 current_reply_markup = InlineKeyboardMarkup(keyboard)
             else:
-                keyboard = [[InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")]]
+                keyboard = [
+                    [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
+                    [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
+                ]
                 current_reply_markup = InlineKeyboardMarkup(keyboard)
         else:
-            keyboard = [[InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]]
+            keyboard = [
+                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
+            ]
             current_reply_markup = InlineKeyboardMarkup(keyboard)
 
         # Используем новую систему форматирования
