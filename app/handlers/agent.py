@@ -202,8 +202,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
                 safe_search_results.append(safe_result)
         
         # Экранируем фигурные скобки в user_message для предотвращения ошибок форматирования
-        from app.utils.formatting import escape_format_chars
-        
         safe_user_message = escape_format_chars(user_message)
         
         selection_prompt = prompts.URL_SELECTION_PROMPT.format(
@@ -279,12 +277,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         return
     
     # Экранируем фигурные скобки в данных для предотвращения ошибок форматирования
-    def escape_format_chars(text: str) -> str:
-        """Экранирует фигурные скобки { и } для безопасного форматирования строк"""
-        if not text:
-            return text
-        return text.replace('{', '{{').replace('}', '}}')
-    
     # Применяем экранирование к данным перед форматированием промпта
     safe_full_context = escape_format_chars(full_context)
     safe_user_message = escape_format_chars(user_message)
@@ -293,7 +285,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         full_context=safe_full_context, user_message=safe_user_message
     )
     # Подготавливаем контекст с учётом лимитов токенов
-    from app import prompts
     
     # Извлекаем суммаризацию из истории, если есть
     summary = None
@@ -623,7 +614,6 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         return
 
     # Подготавливаем контекст с учётом лимитов токенов
-    from app import prompts
     
     # Извлекаем суммаризацию из истории, если есть
     summary = None

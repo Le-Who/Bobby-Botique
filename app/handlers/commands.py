@@ -883,6 +883,65 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(f"Ошибка получения метрик: {e}")
         logging.error(f"Error in role_conv_metrics_command: {e}", exc_info=True)
 
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает справку по админским командам"""
+    if not db.is_admin(update.effective_user.id): 
+        await update.message.reply_text("❌ У вас нет прав администратора.")
+        return
+    
+    try:
+        user_id = update.effective_user.id
+        logging.info(f"Admin command from user {user_id}")
+        
+        help_text = (
+            "🔧 *Админские команды Gemini Bot*\n\n"
+            
+            "*👥 Управление пользователями:*\n"
+            "• `/adduser <user_id>` — добавить пользователя\n"
+            "• `/deluser <user_id>` — удалить пользователя\n"
+            "• `/listusers` — список авторизованных пользователей\n\n"
+            
+            "*📊 Мониторинг и статистика:*\n"
+            "• `/metrics` — полная сводка (метрики, ключи, кредиты)\n"
+            "• `/cachestats` — статистика кэша\n"
+            "• `/queuestats` — статистика очереди задач\n"
+            "• `/docstats` — статистика документов\n"
+            "• `/rolemetrics` — метрики ролей и бесед\n"
+            "• `/groupstats` — статистика групповых чатов\n\n"
+            
+            "*🔧 Управление системой:*\n"
+            "• `/clearcache` — очистить кэш\n"
+            "• `/clearoldmetrics` — очистить старые метрики (30+ дней)\n"
+            "• `/clearolddocs` — очистить старые документы (3+ дня)\n"
+            "• `/listmodels` — список доступных моделей\n\n"
+            
+            "*🌐 API ключи:*\n"
+            "• `/updatetavilykeys` — обновить ключи Tavily API\n"
+            "• `/checktavilykeys` — проверить статус ключей Tavily\n\n"
+            
+            "*👥 Групповые чаты:*\n"
+            "• `/registergroup` — зарегистрировать групповой чат\n"
+            "• `/groupstats` — статистика групповых чатов\n\n"
+            
+            "*💬 Управление беседами:*\n"
+            "• `/save` — сохранить текущую беседу\n"
+            "• `/conversations` — список сохраненных бесед\n"
+            "• `/switch` — переключиться между беседами\n"
+            "• `/rename` — переименовать беседу\n"
+            "• `/delete` — удалить беседу\n\n"
+            
+            "*📄 Документы:*\n"
+            "• `/documents` — управление документами пользователя\n"
+        )
+        
+        formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        logging.info(f"Admin command completed successfully for user {user_id}")
+        
+    except Exception as e:
+        logging.error(f"Error in admin command for user {user_id}: {e}", exc_info=True)
+        await update.message.reply_text("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
+
 def register(application: Application):
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -925,3 +984,6 @@ def register(application: Application):
     
     # Команды метрик
     application.add_handler(CommandHandler("rolemetrics", role_conv_metrics_command))
+    
+    # Админская справка
+    application.add_handler(CommandHandler("admin", admin_command))
