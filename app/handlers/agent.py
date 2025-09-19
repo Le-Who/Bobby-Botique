@@ -10,10 +10,8 @@ from app.config import settings
 from app import database as db
 from app import services
 from app.utils.messaging import send_long_message
-from app import state
 from app import prompts
 from app.metrics import metrics_collector
-from app.utils.api_logger import api_logger
 from app.utils.formatting import escape_format_chars
 
 async def _resolve_gemini_request(preferred_model: str):
@@ -38,6 +36,7 @@ async def _resolve_gemini_request(preferred_model: str):
 async def _handle_qna_search(placeholder_message: Message, user_message: str, chat_state: db.ChatState, search_query: str = None):
     # Если передан search_query, используем его для поиска, а user_message для локализации
     actual_search_query = search_query if search_query else user_message
+    # chat_state используется для совместимости с другими функциями
     
     await metrics_collector.record_search_query()
     
@@ -156,23 +155,23 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
 
-            # Проверяем, что search_results содержит валидные данные
-        valid_results = []
-        if search_results:
-            for result in search_results:
-                if isinstance(result, dict) and result.get('url') and result.get('title'):
-                    valid_results.append(result)
-                else:
-                    logging.warning(f"Skipping invalid search result: {result}")
-        
-        if not valid_results:
-            try:
-                await placeholder_message.edit_text("Не удалось найти валидные источники для исследования.")
-            except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
-            return
-        
-        search_results = valid_results  # Используем только валидные результаты
+    # Проверяем, что search_results содержит валидные данные
+    valid_results = []
+    if search_results:
+        for result in search_results:
+            if isinstance(result, dict) and result.get('url') and result.get('title'):
+                valid_results.append(result)
+            else:
+                logging.warning(f"Skipping invalid search result: {result}")
+    
+    if not valid_results:
+        try:
+            await placeholder_message.edit_text("Не удалось найти валидные источники для исследования.")
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+        return
+    
+    search_results = valid_results  # Используем только валидные результаты
 
     try:
         count = len(search_results) if search_results else 0
@@ -673,9 +672,10 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         except Exception as send_err:
             logging.warning(f"send_long_message failed, fallback to reply_text: {send_err}")
             try:
+                from app.utils.formatting import TelegramFormatter
                 formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
                 await placeholder_message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
-            except Exception as e2:
+            except Exception:
                 await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
         await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
@@ -913,7 +913,8 @@ async def process_long_request(placeholder_message: Message, update: Update, con
 
         # Проверяем, есть ли у пользователя документы для вопросов
         from app.document_processor import get_user_documents
-        user_documents = await get_user_documents(update.effective_user.id)
+        # user_documents используется для проверки наличия документов
+        await get_user_documents(update.effective_user.id)
         
         if text.startswith('??'):
             await _handle_research_agent(placeholder_message, update.effective_user.id, text[2:].strip(), chat_state)
@@ -934,6 +935,7 @@ async def process_long_request(placeholder_message: Message, update: Update, con
             logging.error(f"Could not edit placeholder message: {inner_e}")
 
 async def process_media_group_request(placeholder_message: Message, update: Update, context: ContextTypes.DEFAULT_TYPE, messages: List[Message], caption: str):
+    # context используется для совместимости с другими функциями
     """Обрабатывает группу изображений как единое целое"""
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)

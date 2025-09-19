@@ -15,6 +15,7 @@ from app import prompts
 from app.metrics import role_conv_metrics
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     user_id = update.effective_user.id
     logging.info(f"Start command from user {user_id}")
     
@@ -64,6 +65,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Показывает подробную справку по использованию бота"""
     user_id = update.effective_user.id
     logging.info(f"Help command from user {user_id}")
@@ -104,6 +106,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
 
 async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для получения аргументов команды
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
     chat_state = await db.get_user_chat(user_id)
@@ -115,6 +118,7 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("✅ Системная инструкция обновлена.")
 
 async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
     
@@ -163,6 +167,7 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
     chat_state = await db.get_user_chat(user_id)
@@ -173,11 +178,13 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Новый чат создан. История и системная инструкция сброшены.")
 
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     if not await db.is_authorized(update.effective_user.id): return
     keyboard = [[InlineKeyboardButton(m, callback_data=f"model_{m}")] for m in settings.AVAILABLE_MODELS]
     await update.message.reply_text("Выберите основную модель для разговора:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
     chat_state = await db.get_user_chat(user_id)
@@ -186,13 +193,13 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
     
     # Используем TelegramFormatter для правильного экранирования
-    from app.utils.formatting import TelegramFormatter
     formatted_text, parse_mode = TelegramFormatter.format_text(f"🌐 Постоянный режим исследования *{status_text}*.")
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 # Команды /keystatus и /credits объединены с /metrics
 
 async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     if not db.is_admin(update.effective_user.id): return
     key_data = await db.get_available_gemini_key(settings.DEFAULT_MODEL)
     if not key_data:
@@ -204,13 +211,13 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         models_list = [f"- `{m.name}`" for m in client.models.list() if 'generateContent' in m.supported_generation_methods]
         
         # Используем TelegramFormatter для правильного экранирования
-        from app.utils.formatting import TelegramFormatter
         formatted_text, parse_mode = TelegramFormatter.format_text("✅ *Доступные модели:*\n" + "\n".join(models_list))
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для получения аргументов команды
     if not db.is_admin(update.effective_user.id): return
     try:
         user_to_add = int(context.args[0])
@@ -220,6 +227,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Использование: /adduser <user_id>")
 
 async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для получения аргументов команды
     if not db.is_admin(update.effective_user.id): return
     try:
         user_to_del = int(context.args[0])
@@ -232,12 +240,14 @@ async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Использование: /deluser <user_id>")
 
 async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     if not db.is_admin(update.effective_user.id): return
     rows = await db.db_query("SELECT user_id FROM users WHERE is_authorized = 1")
     user_ids = [str(row['user_id']) for row in rows]
     await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(user_ids))
 
 async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Показывает полную сводку метрик, статуса ключей и кредитов"""
     if not db.is_admin(update.effective_user.id): return
     
@@ -338,6 +348,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Error in metrics command for user {update.effective_user.id}: {e}", exc_info=True)
 
 async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Показывает статистику кэша"""
     if not db.is_admin(update.effective_user.id): return
     
@@ -361,6 +372,7 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         logging.error(f"Error in cache_stats command for user {update.effective_user.id}: {e}", exc_info=True)
 
 async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Показывает список документов пользователя и управляет ими"""
     if not await db.is_authorized(update.effective_user.id):
         return
@@ -418,6 +430,7 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Error in documents command: {e}", exc_info=True)
 
 async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Показывает статистику очереди задач"""
     if not db.is_admin(update.effective_user.id): return
     
@@ -444,6 +457,7 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         logging.error(f"Error in queue_stats command for user {update.effective_user.id}: {e}", exc_info=True)
 
 async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Очищает кэш"""
     if not db.is_admin(update.effective_user.id): return
     
@@ -456,12 +470,13 @@ async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"Ошибка очистки кэша: {e}")
 
 async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Очищает старые метрики (старше 30 дней)"""
     if not db.is_admin(update.effective_user.id): return
     
     try:
         # Удаляем метрики старше 30 дней
-        result = await db.db_query("""
+        await db.db_query("""
             DELETE FROM metrics 
             WHERE metric_date < CURRENT_DATE - INTERVAL '30 days'
         """)
@@ -478,6 +493,7 @@ async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(f"Ошибка очистки метрик: {e}")
 
 async def update_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Команда для обновления ключей Tavily API"""
     if not db.is_admin(update.effective_user.id): 
         return
@@ -505,6 +521,7 @@ async def update_tavily_keys_command(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text(f"💥 {error_msg}")
 
 async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Команда для проверки статуса ключей Tavily API"""
     if not db.is_admin(update.effective_user.id): 
         return
@@ -549,8 +566,7 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
             report += f"📊 *Использование за {current_month}:*\n   Нет данных\n"
         
         # Добавляем информацию о лимитах
-        from app.config import settings
-        report += f"\n⚡ *Лимиты:*\n"
+        report += "\n⚡ *Лимиты:*\n"
         report += f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n"
         report += f"   Порог предупреждения: {settings.TAVILY_LIMIT_THRESHOLD_PERCENT * 100}%\n"
         
@@ -562,6 +578,7 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(f"💥 {error_msg}")
 
 async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Регистрирует групповой чат"""
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
@@ -582,6 +599,7 @@ async def register_group_command(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(f"Ошибка регистрации группы: {e}")
 
 async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Показывает статистику группы"""
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
@@ -609,6 +627,7 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"Ошибка получения статистики группы: {e}")
 
 async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Показывает статистику документов"""
     if not db.is_admin(update.effective_user.id): return
     
@@ -638,6 +657,7 @@ async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_T
         logging.error(f"Error in document_stats_command: {e}", exc_info=True)
 
 async def clear_old_documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Очищает старые документы (старше 3 дней)"""
     if not db.is_admin(update.effective_user.id): return
     
@@ -672,6 +692,7 @@ async def clear_old_documents_command(update: Update, context: ContextTypes.DEFA
 # ============================================================================
 
 async def save_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для получения аргументов команды
     """Сохранить текущую беседу"""
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
@@ -695,9 +716,11 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
             if last_user_msg:
                 title = f"Беседа: {last_user_msg}..."
             else:
-                title = f"Беседа от {time_utils.get_current_time_str()}"
+                from datetime import datetime
+                title = f"Беседа от {datetime.now().strftime('%d.%m.%Y %H:%M')}"
         else:
-            title = f"Беседа от {time_utils.get_current_time_str()}"
+            from datetime import datetime
+            title = f"Беседа от {datetime.now().strftime('%d.%m.%Y %H:%M')}"
     else:
         title = " ".join(args)
     
@@ -725,6 +748,7 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("❌ Ошибка при сохранении беседы")
 
 async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для получения аргументов команды
     """Показать список сохранённых бесед"""
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
@@ -769,6 +793,7 @@ async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
 
 async def switch_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для получения аргументов команды
     """Переключиться на беседу"""
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
@@ -788,6 +813,7 @@ async def switch_conversation_command(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text("❌ Беседа не найдена или у вас нет доступа к ней")
 
 async def rename_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для получения аргументов команды
     """Переименовать беседу"""
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
@@ -813,6 +839,7 @@ async def rename_conversation_command(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text("❌ Беседа не найдена или у вас нет доступа к ней")
 
 async def delete_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для получения аргументов команды
     """Удалить беседу"""
     user_id = update.effective_user.id
     if not await db.is_authorized(user_id): return
@@ -837,6 +864,7 @@ async def delete_conversation_command(update: Update, context: ContextTypes.DEFA
     )
 
 async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Показать метрики ролей и бесед"""
     if not db.is_admin(update.effective_user.id): return
     
@@ -884,6 +912,7 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
         logging.error(f"Error in role_conv_metrics_command: {e}", exc_info=True)
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
     """Показывает справку по админским командам"""
     if not db.is_admin(update.effective_user.id): 
         await update.message.reply_text("❌ У вас нет прав администратора.")
