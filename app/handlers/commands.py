@@ -926,12 +926,12 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔧 *Админские команды Gemini Bot*\n\n"
             
             "*👥 Управление пользователями:*\n"
-            "• `/adduser \\<user_id\\>` — добавить пользователя\n"
-            "• `/deluser \\<user_id\\>` — удалить пользователя\n"
+            "• `/adduser user_id` — добавить пользователя\n"
+            "• `/deluser user_id` — удалить пользователя\n"
             "• `/listusers` — список авторизованных пользователей\n\n"
             
             "*📊 Мониторинг и статистика:*\n"
-            "• `/metrics` — полная сводка \\(метрики, ключи, кредиты\\)\n"
+            "• `/metrics` — полная сводка метрик, ключей, кредитов\n"
             "• `/cachestats` — статистика кэша\n"
             "• `/queuestats` — статистика очереди задач\n"
             "• `/docstats` — статистика документов\n"
@@ -940,8 +940,8 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             "*🔧 Управление системой:*\n"
             "• `/clearcache` — очистить кэш\n"
-            "• `/clearoldmetrics` — очистить старые метрики \\(30\\+ дней\\)\n"
-            "• `/clearolddocs` — очистить старые документы \\(3\\+ дня\\)\n"
+            "• `/clearoldmetrics` — очистить старые метрики 30\\+ дней\n"
+            "• `/clearolddocs` — очистить старые документы 3\\+ дня\n"
             "• `/listmodels` — список доступных моделей\n\n"
             
             "*🌐 API ключи:*\n"
