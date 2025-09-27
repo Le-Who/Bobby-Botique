@@ -55,8 +55,10 @@ class Settings(BaseModel):
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     DAILY_LIMITS: Dict[str, int] = {
         "gemini-2.5-flash": 250,
+        "gemini-flash-latest": 250,
         "gemini-2.5-pro": 100,
         "gemini-2.5-flash-lite": 1000,
+        "gemini-flash-lite-latest": 1000,
     }
     ALERT_COOLDOWN_SECONDS: int = 3600
     MAX_DOCUMENTS_PER_USER: int = 5
