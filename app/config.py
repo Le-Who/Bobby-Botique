@@ -41,7 +41,7 @@ class Settings(BaseModel):
     TELEGRAM_MESSAGE_LIMIT: int = 4096
 
     # --- MODELS ---
-    AVAILABLE_MODELS: List[str] = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]
+    AVAILABLE_MODELS: List[str] = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
     DEFAULT_MODEL: str = "gemini-2.5-flash"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
     RESEARCH_MODEL: str = "gemini-2.5-pro"
