@@ -28,7 +28,7 @@
 
 ### 🌟 Ключевые особенности
 
-- **🤖 Множественные AI модели**: Поддержка различных моделей Gemini (Gemini-1.5-flash, Gemini-1.5-pro, Gemini-2.0-flash-exp)
+- **🤖 Множественные AI модели**: Поддержка различных моделей Gemini (Gemini-2.5-flash, Gemini-2.5-pro, Gemini-2.5-flash-lite)
 - **🔍 Интеллектуальный поиск**: Интеграция с Tavily API для веб-поиска и Q&A
 - **📄 Обработка документов**: Поддержка PDF и DOCX файлов с возможностью Q&A по содержимому
 - **🎭 Система ролей**: Предустановленные и пользовательские роли для настройки поведения бота
@@ -322,24 +322,24 @@ MAX_FILE_SIZE_MB=10
 ```python
 # Доступные модели Gemini
 AVAILABLE_MODELS = [
-    "gemini-1.5-flash",
-    "gemini-1.5-pro", 
-    "gemini-2.0-flash-exp"
+    "gemini-2.5-flash",
+    "gemini-2.5-pro", 
+    "gemini-2.5-flash-lite"
 ]
 
 # Модели по умолчанию
-DEFAULT_MODEL = "gemini-1.5-flash"
-RESEARCH_MODEL = "gemini-1.5-pro"
-QNA_MODEL = "gemini-1.5-flash"
+DEFAULT_MODEL = "gemini-2.5-flash"
+RESEARCH_MODEL = "gemini-2.5-pro"
+QNA_MODEL = "gemini-2.5-flash"
 ```
 
 #### **Лимиты использования**
 ```python
 # Дневные лимиты для API ключей
 DAILY_LIMITS = {
-    "gemini-1.5-flash": 1500,
-    "gemini-1.5-pro": 1000,
-    "gemini-2.0-flash-exp": 500
+    "gemini-2.5-flash": 250,
+    "gemini-2.5-pro": 100,
+    "gemini-2.5-flash-lite": 1000
 }
 
 # Лимиты для документов
