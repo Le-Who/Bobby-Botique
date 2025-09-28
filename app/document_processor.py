@@ -46,9 +46,9 @@ class DocumentProcessor:
             )
             if result:
                 return {
-                    'id': result['id'],
-                    'filename': result['filename'],
-                    'created_at': result['created_at']
+                    'id': result[0]['id'],
+                    'filename': result[0]['filename'],
+                    'created_at': result[0]['created_at']
                 }
             return None
         except Exception as e:
@@ -62,7 +62,7 @@ class DocumentProcessor:
                 "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
                 (user_id,)
             )
-            doc_count = result['doc_count'] if result else 0
+            doc_count = result[0]['doc_count'] if result else 0
             return doc_count < settings.MAX_DOCUMENTS_PER_USER
         except Exception as e:
             logging.error(f"Error checking document limit: {e}")
@@ -217,16 +217,16 @@ class DocumentProcessor:
     
     async def _process_pdf_with_pypdf2(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает PDF документ с использованием PyPDF2 (fallback)"""
+        temp_file_path = None
         try:
             # Создаем временный файл для обработки
             with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
                 temp_file.write(file_data)
                 temp_file_path = temp_file.name
             
-            try:
-                # Используем PyPDF2 как fallback
-                with open(temp_file_path, 'rb') as file:
-                    pdf_reader = PyPDF2.PdfReader(file)
+            # Используем PyPDF2 как fallback - keep file open during processing
+            with open(temp_file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
                 
                 if len(pdf_reader.pages) > self.max_pages:
                     return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
@@ -261,15 +261,17 @@ class DocumentProcessor:
                     "method": "PyPDF2"
                 }
                     
-            finally:
-                # Удаляем временный файл
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-                    
         except Exception as e:
             logging.error(f"Error processing PDF with PyPDF2 {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
             return {"error": f"Error processing PDF with PyPDF2: {str(e)}"}
+        finally:
+            # Удаляем временный файл
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except Exception as cleanup_error:
+                    logging.warning(f"Error cleaning up temp file {temp_file_path}: {cleanup_error}")
     
     async def _process_word(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает Word документ"""
@@ -356,7 +358,7 @@ class DocumentProcessor:
             )
             
             if result:
-                row = result
+                row = result[0]
                 return {
                     'id': row['id'],
                     'filename': row['filename'],
@@ -415,7 +417,7 @@ class DocumentProcessor:
                 )
                 
                 if result:
-                    return result['content']
+                    return result[0]['content']
                 return None
             finally:
                 # Очищаем контекст пользователя
@@ -446,7 +448,8 @@ class DocumentProcessor:
                 WHERE created_at < (CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day'))
             """, (days_old,))
             
-            deleted_count = result['count'] if result else 0
+            # DELETE queries return the number of affected rows
+            deleted_count = len(result) if result else 0
             logging.info(f"Cleaned up {deleted_count} old documents (older than {days_old} days)")
             return deleted_count
             
@@ -467,7 +470,7 @@ class DocumentProcessor:
             """)
             
             if size_result:
-                stats = size_result
+                stats = size_result[0]
                 return {
                     'total_documents': stats['doc_count'],
                     'total_size_chars': stats['total_size'],
@@ -489,7 +492,7 @@ class DocumentProcessor:
                 "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
                 (user_id,)
             )
-            doc_count = count_result['doc_count'] if count_result else 0
+            doc_count = count_result[0]['doc_count'] if count_result else 0
             
             # Размер документов пользователя
             size_result = await database.db_query("""
@@ -501,7 +504,7 @@ class DocumentProcessor:
             """, (user_id,))
             
             if size_result:
-                stats = size_result
+                stats = size_result[0]
                 return {
                     'document_count': doc_count,
                     'total_size_chars': stats['total_size'],

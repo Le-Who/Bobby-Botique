@@ -190,7 +190,8 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
                     conn.fetch(query, *params),
                     timeout=30.0  # 30 секунд timeout
                 )
-                return result
+                # Convert asyncpg Records to dictionaries for easier handling
+                return [dict(record) for record in result]
                 
         except asyncio.TimeoutError:
             last_exception = Exception(f"Database query timeout after 30 seconds: {query[:100]}...")
