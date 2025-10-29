@@ -17,6 +17,17 @@ from app.utils.time import get_pacific_tz
 
 db_pool: Optional[Pool] = None
 
+async def get_pool() -> Pool:
+    """Возвращает активный пул соединений, переподключаясь при необходимости."""
+    global db_pool
+    # Если пула нет или он закрыт — пытаемся переподключиться
+    if not db_pool or getattr(db_pool, "_closed", False):
+        logging.warning("Database pool not initialized or closed — attempting reconnect...")
+        ok = await reconnect_database()
+        if not ok or not db_pool or getattr(db_pool, "_closed", False):
+            raise Exception("Database pool not initialized")
+    return db_pool
+
 # Кэш активных ключей для каждой модели
 _active_keys_cache: Dict[str, Dict[str, Any]] = {}
 _cache_lock = asyncio.Lock()
@@ -178,13 +189,8 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
     
     for attempt in range(retries + 1):
         try:
-            if not db_pool:
-                raise Exception("Database pool not initialized")
-            
-            if db_pool._closed:
-                raise Exception("Database pool is closed")
-            
-            async with db_pool.acquire() as conn:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
                 # Выполняем запрос с timeout
                 result = await asyncio.wait_for(
                     conn.fetch(query, *params),
@@ -196,6 +202,22 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
             last_exception = Exception(f"Database query timeout after 30 seconds: {query[:100]}...")
             logging.warning(f"Database query timeout (attempt {attempt + 1}/{retries + 1}): {query[:100]}...")
             
+        except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
+            # Ошибки соединения — пытаемся переподключиться и повторить
+            last_exception = e
+            logging.warning(f"Database connection issue (attempt {attempt + 1}/{retries + 1}): {e}")
+            try:
+                await reconnect_database()
+            except Exception as re_err:
+                logging.error(f"Database reconnection failed: {re_err}")
+            # Ждем перед повтором (exponential backoff)
+            if attempt < retries:
+                wait_time = min(2 ** attempt, 10)
+                logging.info(f"Retrying database query in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+                continue
+            break
+
         except Exception as e:
             last_exception = e
             error_msg = str(e).lower()
@@ -206,6 +228,10 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
                 raise Exception(f"Database rate limit exceeded: {e}")
             elif "connection" in error_msg or "timeout" in error_msg:
                 logging.warning(f"Database connection issue (attempt {attempt + 1}/{retries + 1}): {e}")
+                try:
+                    await reconnect_database()
+                except Exception as re_err:
+                    logging.error(f"Database reconnection failed: {re_err}")
             else:
                 logging.error(f"Database query error (attempt {attempt + 1}/{retries + 1}): {e}")
             
