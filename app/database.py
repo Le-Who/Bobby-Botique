@@ -178,12 +178,14 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
     
     for attempt in range(retries + 1):
         try:
-            if not db_pool:
-                raise Exception("Database pool not initialized")
-            
-            if db_pool._closed:
-                raise Exception("Database pool is closed")
-            
+            # Ensure pool exists and is healthy; attempt reconnection if needed
+            global db_pool
+            if not db_pool or getattr(db_pool, "_closed", False):
+                logging.warning("Database pool not initialized or closed – attempting reconnect...")
+                await reconnect_database()
+                if not db_pool or getattr(db_pool, "_closed", False):
+                    raise Exception("Database pool is closed")
+
             async with db_pool.acquire() as conn:
                 # Выполняем запрос с timeout
                 result = await asyncio.wait_for(
@@ -197,6 +199,20 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
             last_exception = Exception(f"Database query timeout after 30 seconds: {query[:100]}...")
             logging.warning(f"Database query timeout (attempt {attempt + 1}/{retries + 1}): {query[:100]}...")
             
+        except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
+            # Typical connection issues – try to reconnect and retry
+            last_exception = e
+            logging.warning(f"Database connection issue (attempt {attempt + 1}/{retries + 1}): {e}")
+            if attempt < retries:
+                wait_time = min(2 ** attempt, 10)
+                logging.info(f"Retrying database query in {wait_time} seconds after reconnection attempt...")
+                try:
+                    await reconnect_database()
+                except Exception as rec_err:
+                    logging.error(f"Database reconnection failed: {rec_err}")
+                await asyncio.sleep(wait_time)
+                continue
+        
         except Exception as e:
             last_exception = e
             error_msg = str(e).lower()
@@ -205,8 +221,13 @@ async def db_query(query: str, params: tuple = (), retries: int = 3):
             if "rate limit" in error_msg or "quota" in error_msg:
                 logging.error(f"Database rate limit exceeded: {e}")
                 raise Exception(f"Database rate limit exceeded: {e}")
-            elif "connection" in error_msg or "timeout" in error_msg:
+            elif "connection" in error_msg or "timeout" in error_msg or "pool is closed" in error_msg:
                 logging.warning(f"Database connection issue (attempt {attempt + 1}/{retries + 1}): {e}")
+                # Try reconnecting the pool before next retry
+                try:
+                    await reconnect_database()
+                except Exception as rec_err:
+                    logging.error(f"Database reconnection failed: {rec_err}")
             else:
                 logging.error(f"Database query error (attempt {attempt + 1}/{retries + 1}): {e}")
             
