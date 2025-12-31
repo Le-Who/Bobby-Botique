@@ -41,8 +41,8 @@ class Settings(BaseModel):
     TELEGRAM_MESSAGE_LIMIT: int = 4096
 
     # --- MODELS ---
-    AVAILABLE_MODELS: List[str] = ["gemini-2.5-flash-exp", "gemini-2.5-pro", "gemini-2.5-flash-lite"]
-    DEFAULT_MODEL: str = "gemini-2.5-flash-exp"
+    AVAILABLE_MODELS: List[str] = ["gemini-exp-1206", "gemini-2.5-pro", "gemini-2.5-flash-lite"]
+    DEFAULT_MODEL: str = "gemini-exp-1206"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
     RESEARCH_MODEL: str = "gemini-2.5-pro"
     URL_SELECTION_MODEL: str = "gemini-2.5-flash"
@@ -54,7 +54,7 @@ class Settings(BaseModel):
     TAVILY_ADVANCED_SEARCH_COST: int = 2
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     DAILY_LIMITS: Dict[str, int] = {
-        "gemini-2.5-flash-exp": 250,
+        "gemini-exp-1206": 250,
         "gemini-2.5-pro": 15,
         "gemini-2.5-flash-lite": 15,
     }
