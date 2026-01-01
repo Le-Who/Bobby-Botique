@@ -6,19 +6,25 @@ import logging
 from typing import List, Dict, Callable, Any, Optional
 from pydantic import BaseModel, ValidationError
 
-def _load_and_clean_keys(env_var_name: str) -> List[str]:
+def _load_and_clean_keys(env_var_name: str, required: bool = True) -> List[str]:
     """
     Manually loads a comma-separated string from env, cleans it, and returns a list.
     This is the most robust way to handle env vars from hosting providers.
+    
+    Args:
+        env_var_name: Name of environment variable
+        required: If True, raises error if not set. If False, returns empty list.
     """
     value = os.getenv(env_var_name)
     if not value:
-        raise ValueError(f"Required environment variable '{env_var_name}' is not set.")
+        if required:
+            raise ValueError(f"Required environment variable '{env_var_name}' is not set.")
+        return []
     
     # Clean the string from quotes and whitespace, then split.
     cleaned_v = value.strip().strip('"').strip("'")
     keys = [key.strip() for key in cleaned_v.split(',') if key.strip()]
-    if not keys:
+    if required and not keys:
         raise ValueError(f"Environment variable '{env_var_name}' is set but contains no valid keys.")
     return keys
 
@@ -32,6 +38,7 @@ class Settings(BaseModel):
     TELEGRAM_BOT_TOKEN: str
     GEMINI_API_KEYS: List[str]
     TAVILY_API_KEYS: List[str]
+    OPENROUTER_API_KEYS: List[str] = []  # Опционально, по умолчанию пустой список
     DATABASE_URL: str
     ADMIN_ID: int
     PORT: int
@@ -46,6 +53,25 @@ class Settings(BaseModel):
     QNA_MODEL: str = "gemini-2.5-flash-lite"
     RESEARCH_MODEL: str = "gemini-2.5-pro"
     URL_SELECTION_MODEL: str = "gemini-2.5-flash-exp"
+    
+    # --- OPENROUTER MODELS ---
+    OPENROUTER_AVAILABLE_MODELS: List[str] = [
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini",
+        "openai/gpt-4-turbo",
+        "anthropic/claude-3.5-sonnet",
+        "anthropic/claude-3-opus",
+        "google/gemini-pro-1.5",
+        "meta-llama/llama-3.1-70b-instruct",
+        "mistralai/mistral-large"
+    ]
+    OPENROUTER_DEFAULT_MODEL: str = "openai/gpt-4o-mini"
+    OPENROUTER_QNA_MODEL: str = "openai/gpt-4o-mini"
+    OPENROUTER_RESEARCH_MODEL: str = "openai/gpt-4o"
+    OPENROUTER_URL_SELECTION_MODEL: str = "openai/gpt-4o-mini"
+    
+    # --- API PROVIDER SELECTION ---
+    USE_OPENROUTER: bool = False  # По умолчанию используем Gemini, можно переключить на OpenRouter
 
     # --- LIMITS ---
     TAVILY_MONTHLY_CREDIT_LIMIT: int = 1000
@@ -230,6 +256,7 @@ def load_settings() -> Settings:
             "PORT": os.getenv("PORT", "10000"), # Provide a default for PORT
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
+            "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
         }
         # Use the Pydantic model ONLY for validation of the manually loaded data.
         return Settings(**raw_settings)
@@ -398,3 +425,11 @@ def get_gemini_keys() -> List[str]:
 def get_tavily_keys() -> List[str]:
     """Returns Tavily API keys."""
     return config_manager.get_setting('TAVILY_API_KEYS', [])
+
+def get_openrouter_keys() -> List[str]:
+    """Returns OpenRouter API keys."""
+    return config_manager.get_setting('OPENROUTER_API_KEYS', [])
+
+def get_use_openrouter() -> bool:
+    """Returns whether to use OpenRouter instead of Gemini."""
+    return config_manager.get_setting('USE_OPENROUTER', False)

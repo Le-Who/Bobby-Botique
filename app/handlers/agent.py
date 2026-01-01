@@ -6,13 +6,35 @@ from typing import Optional, List
 from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from app.config import settings
+from app.config import settings, get_use_openrouter, get_openrouter_keys
 from app import database as db
 from app import services
 from app.utils.messaging import send_long_message
 from app import prompts
 from app.metrics import metrics_collector
 from app.utils.formatting import escape_format_chars
+
+async def _resolve_ai_request(preferred_model: str, use_openrouter: bool = None):
+    """
+    Универсальная функция для получения ключа и модели для AI запроса.
+    Поддерживает как Gemini, так и OpenRouter.
+    
+    Args:
+        preferred_model: Предпочитаемая модель
+        use_openrouter: Использовать OpenRouter (None = из настроек)
+        
+    Returns:
+        Tuple (key_data, model_used, resolution_status)
+    """
+    if use_openrouter is None:
+        use_openrouter = get_use_openrouter()
+    
+    # Если OpenRouter не настроен или не включен, используем Gemini
+    if not use_openrouter or not get_openrouter_keys():
+        return await _resolve_gemini_request(preferred_model)
+    
+    # Используем OpenRouter
+    return await _resolve_openrouter_request(preferred_model)
 
 async def _resolve_gemini_request(preferred_model: str):
     key = await db.get_available_gemini_key(preferred_model)
@@ -32,6 +54,76 @@ async def _resolve_gemini_request(preferred_model: str):
             
     logging.error("All Gemini API keys for all models are exhausted.")
     return None, None, "all_exhausted"
+
+async def _resolve_openrouter_request(preferred_model: str):
+    """
+    Получает ключ OpenRouter для модели.
+    Маппит модели Gemini на модели OpenRouter, если нужно.
+    """
+    # Маппинг моделей Gemini на OpenRouter
+    model_mapping = {
+        settings.DEFAULT_MODEL: settings.OPENROUTER_DEFAULT_MODEL,
+        settings.QNA_MODEL: settings.OPENROUTER_QNA_MODEL,
+        settings.RESEARCH_MODEL: settings.OPENROUTER_RESEARCH_MODEL,
+        settings.URL_SELECTION_MODEL: settings.OPENROUTER_URL_SELECTION_MODEL,
+    }
+    
+    # Если модель уже в формате OpenRouter, используем её
+    if "/" in preferred_model:
+        openrouter_model = preferred_model
+    else:
+        # Маппим модель Gemini на OpenRouter
+        openrouter_model = model_mapping.get(preferred_model, settings.OPENROUTER_DEFAULT_MODEL)
+    
+    key = await db.get_available_openrouter_key(openrouter_model)
+    if key:
+        return key, openrouter_model, None
+    
+    logging.warning(f"All OpenRouter keys for model {openrouter_model} are exhausted. Attempting fallback.")
+    
+    # Пробуем fallback модели
+    fallback_priority = [
+        settings.OPENROUTER_RESEARCH_MODEL,
+        settings.OPENROUTER_DEFAULT_MODEL,
+        settings.OPENROUTER_QNA_MODEL
+    ]
+    for fallback_model in fallback_priority:
+        if fallback_model == openrouter_model:
+            continue
+        key = await db.get_available_openrouter_key(fallback_model)
+        if key:
+            logging.info(f"Found available fallback OpenRouter key for model {fallback_model}.")
+            return key, fallback_model, "confirm_fallback"
+    
+    logging.error("All OpenRouter API keys are exhausted.")
+    return None, None, "all_exhausted"
+
+async def _get_ai_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, use_openrouter: bool = None):
+    """
+    Универсальная функция для получения ответа от AI.
+    Выбирает между Gemini и OpenRouter на основе настроек.
+    """
+    if use_openrouter is None:
+        use_openrouter = get_use_openrouter()
+    
+    # Если OpenRouter не настроен или не включен, используем Gemini
+    if not use_openrouter or not get_openrouter_keys():
+        return await services.get_gemini_response(api_key, history, model_name, system_instruction, user_id, chat_id)
+    
+    # Используем OpenRouter
+    return await services.get_openrouter_response(api_key, history, model_name, system_instruction, user_id, chat_id)
+
+async def _increment_key_usage(key_hash: str, model_name: str, use_openrouter: bool = None):
+    """
+    Универсальная функция для инкремента использования ключа.
+    """
+    if use_openrouter is None:
+        use_openrouter = get_use_openrouter()
+    
+    if not use_openrouter or not get_openrouter_keys():
+        await db.increment_gemini_key_usage(key_hash, model_name)
+    else:
+        await db.increment_openrouter_key_usage(key_hash, model_name)
 
 async def _handle_qna_search(placeholder_message: Message, user_message: str, chat_state: db.ChatState, search_query: str = None):
     # Если передан search_query, используем его для поиска, а user_message для локализации
@@ -72,10 +164,13 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
         # Если не можем отредактировать, отправляем новое сообщение
         placeholder_message = await placeholder_message.reply_text("🌍 Адаптирую ответ...")
     
-    gemini_key, model_used, _ = await _resolve_gemini_request(settings.QNA_MODEL)
-    if not gemini_key:
+    use_openrouter = get_use_openrouter() and get_openrouter_keys()
+    preferred_model = settings.OPENROUTER_QNA_MODEL if use_openrouter else settings.QNA_MODEL
+    
+    ai_key, model_used, _ = await _resolve_ai_request(preferred_model, use_openrouter)
+    if not ai_key:
         try:
-            await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.QNA_MODEL} закончились.")
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {preferred_model} закончились.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
@@ -91,12 +186,13 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
     
-    final_answer, _ = await services.get_gemini_response(
-        gemini_key['api_key'], 
+    final_answer, _ = await _get_ai_response(
+        ai_key['api_key'], 
         [{'role': 'user', 'parts': [localization_prompt]}], 
         model_used,
         user_id=user_id,
-        chat_id=chat_id
+        chat_id=chat_id,
+        use_openrouter=use_openrouter
     )
     
     # Add role button and new topic button to QNA responses
@@ -106,7 +202,7 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     ]
     reply_markup = InlineKeyboardMarkup(buttons)
     await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
-    await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+    await _increment_key_usage(ai_key['key_hash'], model_used, use_openrouter)
 
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):
     # Если передан search_query, используем его для поиска, а user_message для локализации
@@ -179,10 +275,13 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
     
-    gemini_key, model_used, _ = await _resolve_gemini_request(settings.URL_SELECTION_MODEL)
-    if not gemini_key:
+    use_openrouter = get_use_openrouter() and get_openrouter_keys()
+    preferred_model = settings.OPENROUTER_URL_SELECTION_MODEL if use_openrouter else settings.URL_SELECTION_MODEL
+    
+    ai_key, model_used, _ = await _resolve_ai_request(preferred_model, use_openrouter)
+    if not ai_key:
         try:
-            await placeholder_message.edit_text(f"🚫 Ключи для модели {settings.URL_SELECTION_MODEL} (выбор URL) закончились.")
+            await placeholder_message.edit_text(f"🚫 Ключи для модели {preferred_model} (выбор URL) закончились.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
@@ -208,16 +307,17 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             search_results_json=json.dumps(safe_search_results, indent=2, ensure_ascii=False)
         )
         
-        # Создаем parts для Gemini API: промпт
+        # Создаем parts для API: промпт
         parts = [selection_prompt] if selection_prompt else []
-        selected_urls_str, _ = await services.get_gemini_response(
-            gemini_key['api_key'], 
+        selected_urls_str, _ = await _get_ai_response(
+            ai_key['api_key'], 
             [{'role': 'user', 'parts': parts}], 
             model_used,
             user_id=user_id,
-            chat_id=chat_id
+            chat_id=chat_id,
+            use_openrouter=use_openrouter
         )
-        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        await _increment_key_usage(ai_key['key_hash'], model_used, use_openrouter)
     except Exception as gemini_error:
         logging.error(f"Error in Gemini URL selection: {gemini_error}")
         try:
@@ -266,9 +366,10 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
     
-    model_for_synthesis = model_override or settings.RESEARCH_MODEL
-    gemini_key, model_used, _ = await _resolve_gemini_request(model_for_synthesis)
-    if not gemini_key:
+    use_openrouter = get_use_openrouter() and get_openrouter_keys()
+    model_for_synthesis = model_override or (settings.OPENROUTER_RESEARCH_MODEL if use_openrouter else settings.RESEARCH_MODEL)
+    ai_key, model_used, _ = await _resolve_ai_request(model_for_synthesis, use_openrouter)
+    if not ai_key:
         try:
             await placeholder_message.edit_text(f"🚫 Ключи для модели {model_for_synthesis} закончились.")
         except Exception as edit_error:
@@ -331,9 +432,17 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
                 logging.error(f"Could not edit placeholder message: {edit_error}")
             return
         
-        response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=prompts.compose_system_instruction(chat_state.system_prompt))
-    except Exception as gemini_error:
-        logging.error(f"Error in Gemini synthesis: {gemini_error}")
+        response_text, new_token_count = await _get_ai_response(
+            ai_key['api_key'], 
+            chat_state.history, 
+            model_used, 
+            system_instruction=prompts.compose_system_instruction(chat_state.system_prompt),
+            user_id=user_id,
+            chat_id=chat_id,
+            use_openrouter=use_openrouter
+        )
+    except Exception as ai_error:
+        logging.error(f"Error in AI synthesis: {ai_error}")
         chat_state.history.pop()  # Убираем добавленный промпт
         await db.update_user_chat(user_id, chat_state)
         try:
@@ -345,7 +454,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     if response_text and response_text.strip():
         # Проверяем, что response_text не None и не пустой
         await send_long_message(placeholder_message, response_text, is_deep_dive=True)
-        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        await _increment_key_usage(ai_key['key_hash'], model_used, use_openrouter)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
         chat_state.is_deep_dive = True
@@ -586,12 +695,14 @@ _Основные сервисы:_
             await placeholder_message.reply_text(f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}")
 
 async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None):
+    use_openrouter = get_use_openrouter() and get_openrouter_keys()
     model_for_this_request = model_override or chat_state.model
-    gemini_key, model_used, resolution = await _resolve_gemini_request(model_for_this_request)
+    ai_key, model_used, resolution = await _resolve_ai_request(model_for_this_request, use_openrouter)
 
     if resolution == "all_exhausted":
+        provider_name = "OpenRouter" if use_openrouter else "Gemini"
         try:
-            await placeholder_message.edit_text("🚫 Все лимиты для всех моделей Gemini на сегодня исчерпаны. Попробуйте позже.")
+            await placeholder_message.edit_text(f"🚫 Все лимиты для всех моделей {provider_name} на сегодня исчерпаны. Попробуйте позже.")
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
         return
@@ -657,7 +768,15 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     
     # Используем системную инструкцию пользователя или инструкцию по умолчанию
     system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
-    response_text, new_token_count = await services.get_gemini_response(gemini_key['api_key'], chat_state.history, model_used, system_instruction=system_instruction)
+    response_text, new_token_count = await _get_ai_response(
+        ai_key['api_key'], 
+        chat_state.history, 
+        model_used, 
+        system_instruction=system_instruction,
+        user_id=user_id,
+        chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
+        use_openrouter=use_openrouter
+    )
     
     if response_text:
         # Постоянные кнопки под ответом
@@ -677,7 +796,7 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
                 await placeholder_message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
             except Exception:
                 await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
-        await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+        await _increment_key_usage(ai_key['key_hash'], model_used, use_openrouter)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
         await db.update_user_chat(user_id, chat_state)

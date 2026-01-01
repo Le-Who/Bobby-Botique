@@ -308,6 +308,8 @@ async def init_db():
     await db_query("""CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
     await db_query("""CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))""")
+    await db_query("""CREATE TABLE IF NOT EXISTS openrouter_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)""")
+    await db_query("""CREATE TABLE IF NOT EXISTS openrouter_key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))""")
     await db_query("DROP TABLE IF EXISTS user_documents;")
     await db_query("""
         CREATE TABLE IF NOT EXISTS user_documents (
@@ -381,6 +383,9 @@ async def init_db():
     for key in settings.TAVILY_API_KEYS:
         key_hash = hashlib.sha256(key.encode()).hexdigest()
         await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+    for key in settings.OPENROUTER_API_KEYS:
+        key_hash = hashlib.sha256(key.encode()).hexdigest()
+        await db_query("INSERT INTO openrouter_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
 
 async def setup_row_level_security():
     """Настраивает Row Level Security для всех таблиц"""
@@ -1101,6 +1106,65 @@ async def increment_tavily_key_usage(key_hash: str, cost: int):
     DO UPDATE SET credit_usage = tavily_key_usage.credit_usage + $4;
     """
     await db_query(query, (key_hash, current_month, cost, cost))
+
+async def get_available_openrouter_key(model_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Получает доступный ключ OpenRouter API для модели.
+    Аналогично get_available_gemini_key, но для OpenRouter.
+    
+    Args:
+        model_name: Название модели (openai/gpt-4o, anthropic/claude-3.5-sonnet, etc.)
+        
+    Returns:
+        Dict с key_hash и api_key или None если все ключи исчерпаны
+    """
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError("model_name must be a non-empty string")
+    
+    await set_user_context(settings.ADMIN_ID, True)
+    
+    try:
+        today_pacific: date = datetime.now(get_pacific_tz()).date()
+        
+        # Для OpenRouter используем более простую логику без лимитов по умолчанию
+        # Можно добавить лимиты позже, если потребуется
+        query = """
+            SELECT oak.key_hash, oak.api_key, COALESCE(oku.request_count, 0) as request_count
+            FROM openrouter_api_keys oak
+            LEFT JOIN openrouter_key_usage oku ON oak.key_hash = oku.key_hash 
+                AND oku.model_name = $1 AND oku.usage_date = $2
+            ORDER BY COALESCE(oku.request_count, 0) ASC
+            LIMIT 1
+        """
+        
+        results = await db_query(query, (model_name, today_pacific))
+        
+        if results:
+            return {
+                'key_hash': results[0]['key_hash'],
+                'api_key': results[0]['api_key']
+            }
+        
+        return None
+    finally:
+        await clear_user_context()
+
+async def increment_openrouter_key_usage(key_hash: str, model_name: str):
+    """
+    Инкрементирует счетчик использования ключа OpenRouter.
+    
+    Args:
+        key_hash: Хэш ключа
+        model_name: Название модели
+    """
+    today_pacific: date = datetime.now(get_pacific_tz()).date()
+    
+    query = """
+        INSERT INTO openrouter_key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, 1)
+        ON CONFLICT (key_hash, model_name, usage_date)
+        DO UPDATE SET request_count = openrouter_key_usage.request_count + 1;
+    """
+    await db_query(query, (key_hash, model_name, today_pacific))
 
 async def check_database_health():
     """Проверяет здоровье соединения с базой данных с оптимизациями для Supabase"""

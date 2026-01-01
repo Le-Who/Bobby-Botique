@@ -485,3 +485,310 @@ async def tavily_search_agent(query: str, search_type: str = "search", user_id: 
         logging.error(f"Tavily API call failed: {e}")
         await metrics_collector.record_error("tavily_api", str(e))
         return {"error": f"Произошла непредвиденная ошибка API: {e}"}
+
+async def get_openrouter_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, max_retries: int = 3):
+    """
+    Получает ответ от OpenRouter API с улучшенной обработкой ошибок и retry механизмом.
+    
+    Args:
+        api_key: API ключ для OpenRouter
+        history: История сообщений (в формате Gemini: [{'role': 'user', 'parts': [...]}])
+        model_name: Название модели (например, "openai/gpt-4o")
+        system_instruction: Системная инструкция
+        user_id: ID пользователя для логирования
+        chat_id: ID чата для логирования
+        max_retries: Максимальное количество попыток при ошибках 503
+        
+    Returns:
+        Tuple (response_text, token_count) или (error_message, None)
+    """
+    # Валидация входных параметров
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise ValueError("api_key must be a non-empty string")
+    
+    if not isinstance(history, list) or not history:
+        raise ValueError("history must be a non-empty list")
+    
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError("model_name must be a non-empty string")
+    
+    if user_id is not None and not isinstance(user_id, int):
+        raise ValueError("user_id must be an integer")
+    
+    if chat_id is not None and not isinstance(chat_id, int):
+        raise ValueError("chat_id must be an integer")
+    
+    # Retry механизм для ошибок 503
+    for attempt in range(max_retries):
+        try:
+            return await _execute_openrouter_request(api_key, history, model_name, system_instruction, user_id, chat_id)
+        except Exception as e:
+            error_message = str(e).lower()
+            
+            # Если это ошибка 503 и у нас еще есть попытки, пробуем снова
+            if ("503" in str(e) or "unavailable" in error_message or "overloaded" in error_message) and attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2  # Экспоненциальная задержка: 2, 4, 6 секунд
+                logging.warning(f"OpenRouter API overloaded (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+                continue
+            else:
+                # Если это не 503 ошибка или попытки закончились, пробрасываем ошибку
+                raise
+    
+    # Этот код не должен выполняться, но на всякий случай
+    return "❌ Превышено максимальное количество попыток. Попробуйте позже.", None
+
+async def _execute_openrouter_request(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None):
+    """
+    Внутренняя функция для выполнения запроса к OpenRouter API.
+    """
+    start_time = None
+    
+    try:
+        await metrics_collector.record_api_call("openrouter", model_name)
+        
+        # Детальное логирование OpenRouter API запроса
+        try:
+            prompt_length = sum(len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None)
+            has_images = any(isinstance(part, Image.Image) for item in history for part in (item.get("parts", []) or []) if part is not None)
+        except Exception as e:
+            logging.warning(f"Error calculating prompt metrics: {e}, using fallback values")
+            prompt_length = 0
+            has_images = False
+        
+        # Используем тот же api_logger, но с типом "openrouter"
+        start_time = time.time()
+        
+        # Преобразуем историю Gemini в формат OpenAI для OpenRouter
+        messages = []
+        
+        # Добавляем системное сообщение, если есть
+        if system_instruction:
+            messages.append({
+                "role": "system",
+                "content": str(system_instruction)
+            })
+        
+        # Преобразуем историю из формата Gemini в формат OpenAI
+        for item in history:
+            if not isinstance(item, dict):
+                logging.warning(f"Skipping invalid history item (not dict): {type(item)}")
+                continue
+            
+            role = item.get("role", "user")
+            # В OpenRouter используем "assistant" вместо "model"
+            if role == "model":
+                role = "assistant"
+            
+            parts = item.get("parts", [])
+            if not isinstance(parts, list):
+                parts = [parts] if parts is not None else []
+            elif parts is None:
+                parts = []
+            
+            # Объединяем все части в один контент
+            # Для изображений конвертируем в base64 (если нужно)
+            content_parts = []
+            for part in parts:
+                if isinstance(part, Image.Image):
+                    # Конвертируем изображение в base64
+                    import io
+                    import base64
+                    img_byte_arr = io.BytesIO()
+                    part.save(img_byte_arr, format='JPEG')
+                    img_base64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{img_base64}"
+                        }
+                    })
+                else:
+                    # Текстовый контент
+                    text_content = str(part)
+                    if text_content.strip():
+                        content_parts.append({
+                            "type": "text",
+                            "text": text_content
+                        })
+            
+            # Если есть контент, добавляем сообщение
+            if content_parts:
+                # Если только один текстовый элемент, упрощаем формат
+                if len(content_parts) == 1 and content_parts[0].get("type") == "text":
+                    messages.append({
+                        "role": role,
+                        "content": content_parts[0]["text"]
+                    })
+                else:
+                    messages.append({
+                        "role": role,
+                        "content": content_parts
+                    })
+        
+        if not messages:
+            error_msg = "Failed to create valid messages for OpenRouter API"
+            logging.error(error_msg)
+            await metrics_collector.record_error("openrouter_content_creation", error_msg)
+            return f"❌ Ошибка создания контента для API: {error_msg}", None
+        
+        # Формируем запрос к OpenRouter API
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/your-repo",  # Опционально, для аналитики
+            "X-Title": "GeminiBot v2"  # Опционально, для аналитики
+        }
+        
+        payload = {
+            "model": model_name,
+            "messages": messages
+        }
+        
+        # Выполняем запрос с timeout
+        try:
+            response = await asyncio.wait_for(
+                http_client.post(url, json=payload, headers=headers),
+                timeout=60.0  # 60 секунд timeout
+            )
+            response.raise_for_status()
+            response_data = response.json()
+        except httpx.HTTPStatusError as e:
+            error_msg = f"OpenRouter API HTTP error: {e.response.status_code} - {e.response.text}"
+            logging.error(error_msg)
+            await metrics_collector.record_error("openrouter_http", error_msg)
+            
+            if start_time is not None:
+                api_logger.log_gemini_response(  # Используем тот же логгер
+                    start_time=start_time,
+                    model=model_name,
+                    response_length=0,
+                    success=False,
+                    error_message=error_msg,
+                    user_id=user_id,
+                    chat_id=chat_id
+                )
+            
+            # Обработка специфических ошибок
+            if e.response.status_code == 429:
+                return "⏱️ Превышен лимит запросов. Подождите немного и попробуйте снова.", None
+            elif e.response.status_code == 401:
+                return "🔑 Неверный API ключ. Проверьте настройки.", None
+            elif e.response.status_code == 402:
+                return "💳 Недостаточно средств на счету OpenRouter.", None
+            elif e.response.status_code == 503:
+                return "🔄 Сервер OpenRouter перегружен. Попробуйте еще раз через несколько секунд.", None
+            else:
+                return f"❌ Ошибка API: {e.response.status_code}", None
+        except asyncio.TimeoutError:
+            error_msg = f"OpenRouter API request timed out for model {model_name}"
+            logging.error(error_msg)
+            await metrics_collector.record_error("openrouter_timeout", error_msg)
+            
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time,
+                    model=model_name,
+                    response_length=0,
+                    success=False,
+                    error_message=error_msg,
+                    user_id=user_id,
+                    chat_id=chat_id
+                )
+            
+            return "⏰ Превышено время ожидания ответа от API. Попробуйте позже.", None
+        except Exception as e:
+            error_msg = f"OpenRouter API error: {e}"
+            logging.error(error_msg)
+            await metrics_collector.record_error("openrouter_api", error_msg)
+            
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time,
+                    model=model_name,
+                    response_length=0,
+                    success=False,
+                    error_message=error_msg,
+                    user_id=user_id,
+                    chat_id=chat_id
+                )
+            
+            return f"❌ Ошибка API: {error_msg}", None
+        
+        # Извлекаем ответ
+        if not response_data or "choices" not in response_data or not response_data["choices"]:
+            error_msg = "OpenRouter API returned invalid response"
+            logging.error(error_msg)
+            await metrics_collector.record_error("openrouter_invalid_response", error_msg)
+            
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time,
+                    model=model_name,
+                    response_length=0,
+                    success=False,
+                    error_message=error_msg,
+                    user_id=user_id,
+                    chat_id=chat_id
+                )
+            
+            return "❌ API вернул некорректный ответ. Попробуйте еще раз.", None
+        
+        choice = response_data["choices"][0]
+        message = choice.get("message", {})
+        response_text = message.get("content", "")
+        
+        if not response_text:
+            error_msg = "OpenRouter API returned empty response"
+            logging.error(error_msg)
+            await metrics_collector.record_error("openrouter_empty_response", error_msg)
+            
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time,
+                    model=model_name,
+                    response_length=0,
+                    success=False,
+                    error_message=error_msg,
+                    user_id=user_id,
+                    chat_id=chat_id
+                )
+            
+            return "❌ API вернул пустой ответ. Попробуйте еще раз.", None
+        
+        # Подсчет токенов из ответа API (если доступно)
+        usage = response_data.get("usage", {})
+        token_count = usage.get("total_tokens", 0)
+        
+        # Логируем успешный ответ
+        if start_time is not None:
+            api_logger.log_gemini_response(
+                start_time=start_time,
+                model=model_name,
+                response_length=len(response_text),
+                token_count=token_count,
+                success=True,
+                user_id=user_id,
+                chat_id=chat_id
+            )
+        
+        return response_text, token_count
+        
+    except Exception as e:
+        error_msg = f"OpenRouter API generic error: {e}"
+        logging.error(error_msg)
+        await metrics_collector.record_error("openrouter_api", error_msg)
+        
+        if start_time is not None:
+            api_logger.log_gemini_response(
+                start_time=start_time,
+                model=model_name,
+                response_length=0,
+                success=False,
+                error_message=error_msg,
+                user_id=user_id,
+                chat_id=chat_id
+            )
+        
+        return f"❌ Произошла непредвиденная ошибка API: {e}", None
