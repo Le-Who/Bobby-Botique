@@ -235,14 +235,40 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
         chat_id=chat_id
     )
     
-    # Add role button and new topic button to QNA responses
-    buttons = [
-        [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
-        [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
-    ]
-    reply_markup = InlineKeyboardMarkup(buttons)
-    await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
-    await _increment_key_usage(ai_key['key_hash'], model_used)
+    # Проверяем, является ли ответ ошибкой
+    from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
+    
+    if final_answer and is_error_message(final_answer):
+        # Это ошибка - показываем с кнопкой повтора, если ошибка временная
+        if is_retryable_error(final_answer):
+            reply_markup = build_retry_and_roles_keyboard()
+        else:
+            from app.errors import build_roles_keyboard
+            reply_markup = build_roles_keyboard()
+        
+        try:
+            await placeholder_message.edit_text(final_answer, reply_markup=reply_markup)
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
+            try:
+                await placeholder_message.reply_text(final_answer, reply_markup=reply_markup)
+            except Exception:
+                pass
+    elif final_answer:
+        # Успешный ответ
+        buttons = [
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+            [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
+        ]
+        reply_markup = InlineKeyboardMarkup(buttons)
+        await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
+        await _increment_key_usage(ai_key['key_hash'], model_used)
+    else:
+        # Пустой ответ
+        try:
+            await placeholder_message.edit_text("Получен пустой ответ от API.", reply_markup=build_retry_and_roles_keyboard())
+        except Exception as edit_error:
+            logging.error(f"Could not edit placeholder message: {edit_error}")
 
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):
     # Если передан search_query, используем его для поиска, а user_message для локализации
@@ -360,6 +386,31 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             user_id=user_id,
             chat_id=chat_id
         )
+        
+        # Проверяем, является ли ответ ошибкой
+        from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
+        
+        if selected_urls_str and is_error_message(selected_urls_str):
+            # Это ошибка - показываем с кнопкой повтора
+            if is_retryable_error(selected_urls_str):
+                reply_markup = build_retry_and_roles_keyboard()
+            else:
+                from app.errors import build_roles_keyboard
+                reply_markup = build_roles_keyboard()
+            
+            try:
+                await placeholder_message.edit_text(selected_urls_str, reply_markup=reply_markup)
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+            return
+        
+        if not selected_urls_str:
+            try:
+                await placeholder_message.edit_text("Не удалось выбрать источники.", reply_markup=build_retry_and_roles_keyboard())
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+            return
+        
         await _increment_key_usage(ai_key['key_hash'], model_used)
     except Exception as gemini_error:
         logging.error(f"Error in Gemini URL selection: {gemini_error}")
@@ -494,28 +545,48 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         return
     
     if response_text and response_text.strip():
-        # Проверяем, что response_text не None и не пустой
-        await send_long_message(placeholder_message, response_text, is_deep_dive=True)
-        await _increment_key_usage(ai_key['key_hash'], model_used)
-        chat_state.history.append({'role': 'model', 'parts': [response_text]})
-        chat_state.token_count = new_token_count
-        chat_state.is_deep_dive = True
+        # Проверяем, является ли ответ ошибкой
+        from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
         
-        # Генерируем уникальный thread_id для deep dive сессии
-        import uuid
-        # Безопасная проверка атрибута deep_dive_thread_id
-        if not hasattr(chat_state, 'deep_dive_thread_id') or not chat_state.deep_dive_thread_id:
-            chat_state.deep_dive_thread_id = str(uuid.uuid4())
-            logging.info(f"Generated deep dive thread_id {chat_state.deep_dive_thread_id} for user {user_id}")
-        
-        await db.update_user_chat(user_id, chat_state)
-        logging.info(f"Deep dive mode activated for user {user_id} with thread_id {chat_state.deep_dive_thread_id}")
+        if is_error_message(response_text):
+            # Это ошибка - не добавляем в историю и показываем с кнопкой повтора
+            chat_state.history.pop()  # Убираем добавленный промпт
+            await db.update_user_chat(user_id, chat_state)
+            
+            if is_retryable_error(response_text):
+                reply_markup = build_retry_and_roles_keyboard()
+            else:
+                from app.errors import build_roles_keyboard
+                reply_markup = build_roles_keyboard()
+            
+            try:
+                await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+        else:
+            # Успешный ответ
+            await send_long_message(placeholder_message, response_text, is_deep_dive=True)
+            await _increment_key_usage(ai_key['key_hash'], model_used)
+            chat_state.history.append({'role': 'model', 'parts': [response_text]})
+            chat_state.token_count = new_token_count
+            chat_state.is_deep_dive = True
+            
+            # Генерируем уникальный thread_id для deep dive сессии
+            import uuid
+            # Безопасная проверка атрибута deep_dive_thread_id
+            if not hasattr(chat_state, 'deep_dive_thread_id') or not chat_state.deep_dive_thread_id:
+                chat_state.deep_dive_thread_id = str(uuid.uuid4())
+                logging.info(f"Generated deep dive thread_id {chat_state.deep_dive_thread_id} for user {user_id}")
+            
+            await db.update_user_chat(user_id, chat_state)
+            logging.info(f"Deep dive mode activated for user {user_id} with thread_id {chat_state.deep_dive_thread_id}")
     else:
         chat_state.history.pop()
         await db.update_user_chat(user_id, chat_state)
         logging.warning(f"Empty response from Gemini API for deep dive synthesis by user {user_id}")
         try:
-            await placeholder_message.edit_text("Получен пустой ответ от API.")
+            from app.errors import build_retry_and_roles_keyboard
+            await placeholder_message.edit_text("Получен пустой ответ от API.", reply_markup=build_retry_and_roles_keyboard())
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
 
@@ -706,26 +777,51 @@ _Основные сервисы:_
         )
         
         if response_text:
-            # Создаем кнопки для управления документом
-            keyboard = [
-                [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
-                [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
-                [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")],
-                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
-                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
-            ]
+            # Проверяем, является ли ответ ошибкой
+            from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
             
-            # Отправляем ответ с кнопками
-            await send_long_message(placeholder_message, response_text, reply_markup=InlineKeyboardMarkup(keyboard))
-            await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
-            await metrics_collector.record_api_call("document_question", model_used)
+            if is_error_message(response_text):
+                # Это ошибка - показываем с кнопкой повтора
+                if is_retryable_error(response_text):
+                    reply_markup = build_retry_and_roles_keyboard()
+                else:
+                    from app.errors import build_roles_keyboard
+                    reply_markup = build_roles_keyboard()
+                
+                try:
+                    await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
+                except Exception as edit_error:
+                    logging.error(f"Could not edit placeholder message: {edit_error}")
+                    try:
+                        await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
+                    except Exception:
+                        pass
+            else:
+                # Успешный ответ - показываем обычные кнопки для документов
+                keyboard = [
+                    [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
+                    [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
+                    [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")],
+                    [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+                    [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
+                ]
+                
+                # Отправляем ответ с кнопками
+                await send_long_message(placeholder_message, response_text, reply_markup=InlineKeyboardMarkup(keyboard))
+                await db.increment_gemini_key_usage(gemini_key['key_hash'], model_used)
+                await metrics_collector.record_api_call("document_question", model_used)
         else:
             try:
-                await placeholder_message.edit_text("❌ Не удалось получить ответ от AI.")
+                from app.errors import build_retry_and_roles_keyboard
+                await placeholder_message.edit_text("❌ Не удалось получить ответ от AI.", reply_markup=build_retry_and_roles_keyboard())
             except Exception as edit_error:
                 logging.error(f"Could not edit placeholder message: {edit_error}")
                 # Fallback на новое сообщение
-                await placeholder_message.reply_text("❌ Не удалось получить ответ от AI.")
+                try:
+                    from app.errors import build_retry_and_roles_keyboard
+                    await placeholder_message.reply_text("❌ Не удалось получить ответ от AI.", reply_markup=build_retry_and_roles_keyboard())
+                except Exception:
+                    pass
             
     except Exception as e:
         logging.error(f"Error processing document question: {e}", exc_info=True)
@@ -827,32 +923,58 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     )
     
     if response_text:
-        # Постоянные кнопки под ответом
-        buttons = [
-            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
-            [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic" if chat_state.is_deep_dive else "new_topic")]
-        ]
-        reply_markup = InlineKeyboardMarkup(buttons)
-
-        try:
-            await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
-        except Exception as send_err:
-            logging.warning(f"send_long_message failed, fallback to reply_text: {send_err}")
+        # Проверяем, является ли ответ ошибкой
+        from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
+        
+        if is_error_message(response_text):
+            # Это ошибка - не добавляем в историю и показываем с кнопкой повтора
+            chat_state.history.pop()  # Убираем добавленный промпт
+            await db.update_user_chat(user_id, chat_state)
+            
+            # Если ошибка временная, показываем кнопку повтора
+            if is_retryable_error(response_text):
+                reply_markup = build_retry_and_roles_keyboard()
+            else:
+                # Для постоянных ошибок (quota, invalid request) не показываем кнопку повтора
+                from app.errors import build_roles_keyboard
+                reply_markup = build_roles_keyboard()
+            
             try:
-                from app.utils.formatting import TelegramFormatter
-                formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
-                await placeholder_message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
-            except Exception:
-                await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
-        await _increment_key_usage(ai_key['key_hash'], model_used)
-        chat_state.history.append({'role': 'model', 'parts': [response_text]})
-        chat_state.token_count = new_token_count
-        await db.update_user_chat(user_id, chat_state)
+                await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
+            except Exception as edit_error:
+                logging.error(f"Could not edit placeholder message: {edit_error}")
+                try:
+                    await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
+                except Exception:
+                    pass
+        else:
+            # Успешный ответ - добавляем в историю и показываем обычные кнопки
+            buttons = [
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+                [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic" if chat_state.is_deep_dive else "new_topic")]
+            ]
+            reply_markup = InlineKeyboardMarkup(buttons)
+
+            try:
+                await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
+            except Exception as send_err:
+                logging.warning(f"send_long_message failed, fallback to reply_text: {send_err}")
+                try:
+                    from app.utils.formatting import TelegramFormatter
+                    formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
+                    await placeholder_message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+                except Exception:
+                    await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
+            await _increment_key_usage(ai_key['key_hash'], model_used)
+            chat_state.history.append({'role': 'model', 'parts': [response_text]})
+            chat_state.token_count = new_token_count
+            await db.update_user_chat(user_id, chat_state)
     else:
         chat_state.history.pop()
         await db.update_user_chat(user_id, chat_state)
         try:
-            await placeholder_message.edit_text("Получен пустой ответ от API.")
+            from app.errors import build_retry_and_roles_keyboard
+            await placeholder_message.edit_text("Получен пустой ответ от API.", reply_markup=build_retry_and_roles_keyboard())
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
 

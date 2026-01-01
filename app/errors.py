@@ -38,3 +38,31 @@ def log_and_format_error(context: str, err: Exception) -> str:
     return user_friendly_error(err)
 
 
+def is_error_message(text: str) -> bool:
+    """Определяет, является ли сообщение ошибкой по наличию эмодзи ошибок."""
+    if not text:
+        return False
+    error_indicators = ["⏰", "❌", "🔄", "🚫", "⏱️", "💳"]
+    return any(text.startswith(indicator) for indicator in error_indicators)
+
+
+def is_retryable_error(text: str) -> bool:
+    """Определяет, можно ли повторить запрос при этой ошибке."""
+    if not text:
+        return False
+    # Временные ошибки, которые можно повторить
+    retryable_patterns = [
+        "⏰",  # Таймаут
+        "🔄",  # Перегрузка сервера
+        "⏱️",  # Rate limit
+        "Превышено время ожидания",
+        "перегружен",
+        "rate limit",
+        "503",
+        "unavailable",
+        "overloaded"
+    ]
+    text_lower = text.lower()
+    return any(pattern.lower() in text_lower or text.startswith(pattern) for pattern in retryable_patterns)
+
+

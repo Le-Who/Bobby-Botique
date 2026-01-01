@@ -200,7 +200,7 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
                     contents=contents,
                     config=config
                 ),
-                timeout=60.0  # 60 секунд timeout
+                timeout=120.0  # 120 секунд timeout (увеличено для медленных моделей)
             )
         except Exception as e:
             error_msg = f"Failed to generate content from Gemini API: {e}"
@@ -672,7 +672,7 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
         try:
             response = await asyncio.wait_for(
                 http_client.post(url, json=payload, headers=headers),
-                timeout=60.0  # 60 секунд timeout
+                timeout=120.0  # 120 секунд timeout (увеличено для медленных моделей)
             )
             response.raise_for_status()
             response_data = response.json()
