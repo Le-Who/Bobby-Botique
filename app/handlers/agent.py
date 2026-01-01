@@ -221,7 +221,7 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
     
-        final_answer, _ = await _get_ai_response(
+    final_answer, _ = await _get_ai_response(
         ai_key['api_key'], 
         [{'role': 'user', 'parts': [localization_prompt]}], 
         model_used,
@@ -732,7 +732,9 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     ai_key, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
     if resolution == "all_exhausted":
-        provider_name = "OpenRouter" if use_openrouter else "Gemini"
+        # Определяем провайдер на основе модели
+        is_openrouter = "/" in model_for_this_request if model_for_this_request else False
+        provider_name = "OpenRouter" if is_openrouter else "Gemini"
         try:
             await placeholder_message.edit_text(f"🚫 Все лимиты для всех моделей {provider_name} на сегодня исчерпаны. Попробуйте позже.")
         except Exception as edit_error:
