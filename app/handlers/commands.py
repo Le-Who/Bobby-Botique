@@ -190,14 +190,32 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     openrouter_available = bool(get_openrouter_keys())
     is_current_openrouter = "/" in current_model if current_model else False
     
+    # Создаем единый список всех моделей для индексации
+    all_models = []
+    if settings.AVAILABLE_MODELS:
+        all_models.extend(settings.AVAILABLE_MODELS)
+    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
+        all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+    
+    if not all_models:
+        await update.message.reply_text("❌ Нет доступных моделей. Проверьте настройки.")
+        return
+    
+    # Сохраняем маппинг моделей в context для использования в callback
+    if not hasattr(context, 'user_data'):
+        context.user_data = {}
+    context.user_data['model_list'] = all_models
+    
     keyboard = []
+    model_index = 0
     
     # Добавляем модели Gemini
     if settings.AVAILABLE_MODELS:
-        # Заголовок секции (не кликабельный, просто для визуального разделения)
         for m in settings.AVAILABLE_MODELS:
             is_selected = "✅ " if m == current_model and not is_current_openrouter else ""
-            keyboard.append([InlineKeyboardButton(f"{is_selected}🤖 {m}", callback_data=f"model_{m}")])
+            # Используем индекс вместо полного имени модели (ограничение Telegram: 64 байта)
+            keyboard.append([InlineKeyboardButton(f"{is_selected}🤖 {m}", callback_data=f"model:{model_index}")])
+            model_index += 1
     
     # Добавляем разделитель, если есть оба провайдера
     if settings.AVAILABLE_MODELS and openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
@@ -210,11 +228,9 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Показываем короткое имя модели с иконкой провайдера
             display_name = m.split("/")[-1] if "/" in m else m
             provider_icon = "🌐"
-            keyboard.append([InlineKeyboardButton(f"{is_selected}{provider_icon} {display_name}", callback_data=f"model_{m}")])
-    
-    if not keyboard:
-        await update.message.reply_text("❌ Нет доступных моделей. Проверьте настройки.")
-        return
+            # Используем индекс вместо полного имени модели
+            keyboard.append([InlineKeyboardButton(f"{is_selected}{provider_icon} {display_name}", callback_data=f"model:{model_index}")])
+            model_index += 1
     
     # Формируем текст с информацией о текущей модели
     provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"

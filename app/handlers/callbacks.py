@@ -24,9 +24,36 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data == "model_none":
         return
     
-    # Обрабатываем выбор конкретной модели
-    model_name = query.data.split("_", 1)[1]
     user_id = query.from_user.id
+    
+    # Получаем модель из индекса (новый формат) или из полного имени (старый формат для совместимости)
+    if query.data.startswith("model:"):
+        # Новый формат: model:0, model:1, и т.д.
+        try:
+            model_index = int(query.data.split(":")[1])
+            # Получаем список моделей из context или пересоздаем его
+            from app.config import get_openrouter_keys, settings
+            all_models = []
+            if settings.AVAILABLE_MODELS:
+                all_models.extend(settings.AVAILABLE_MODELS)
+            openrouter_available = bool(get_openrouter_keys())
+            if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
+                all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+            
+            if 0 <= model_index < len(all_models):
+                model_name = all_models[model_index]
+            else:
+                await query.edit_message_text("❌ Ошибка: неверный индекс модели.")
+                return
+        except (ValueError, IndexError):
+            await query.edit_message_text("❌ Ошибка: неверный формат callback_data.")
+            return
+    else:
+        # Старый формат для совместимости: model_gemini-2.5-pro
+        model_name = query.data.split("_", 1)[1] if "_" in query.data else None
+        if not model_name:
+            await query.edit_message_text("❌ Ошибка: неверный формат callback_data.")
+            return
     chat_state = await db.get_user_chat(user_id)
     chat_state.model = model_name
     await db.update_user_chat(user_id, chat_state)
@@ -455,7 +482,8 @@ async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAUL
     await query.message.reply_text("Введите новое название роли одной строкой:")
 
 def register(application: Application):
-   application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model_"))
+   # Обрабатываем оба формата: model:0 (новый) и model_none (разделитель)
+   application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model"))
    application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
    application.add_handler(CallbackQueryHandler(fallback_callback, pattern="^fallback:"))
    application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
