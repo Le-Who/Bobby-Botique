@@ -19,22 +19,37 @@ async def _resolve_ai_request(preferred_model: str, use_openrouter: bool = None)
     Универсальная функция для получения ключа и модели для AI запроса.
     Поддерживает как Gemini, так и OpenRouter.
     
+    Автоматически определяет провайдер на основе имени модели:
+    - Если модель содержит "/" (например, "openai/gpt-4o"), используется OpenRouter
+    - Иначе используется Gemini
+    
     Args:
         preferred_model: Предпочитаемая модель
-        use_openrouter: Использовать OpenRouter (None = из настроек)
+        use_openrouter: Использовать OpenRouter (None = автоматическое определение по модели)
         
     Returns:
         Tuple (key_data, model_used, resolution_status)
     """
+    # Автоматическое определение провайдера по имени модели
     if use_openrouter is None:
-        use_openrouter = get_use_openrouter()
+        # Если модель содержит "/", это модель OpenRouter
+        if "/" in preferred_model:
+            use_openrouter = True
+        else:
+            # Проверяем глобальную настройку, если модель не указывает провайдер
+            use_openrouter = get_use_openrouter()
     
-    # Если OpenRouter не настроен или не включен, используем Gemini
-    if not use_openrouter or not get_openrouter_keys():
-        return await _resolve_gemini_request(preferred_model)
+    # Если OpenRouter не настроен, но выбрана модель OpenRouter, возвращаем ошибку
+    if use_openrouter and not get_openrouter_keys():
+        logging.warning(f"OpenRouter model {preferred_model} selected but no keys available")
+        return None, None, "no_keys"
     
-    # Используем OpenRouter
-    return await _resolve_openrouter_request(preferred_model)
+    # Если модель OpenRouter, используем OpenRouter
+    if use_openrouter or "/" in preferred_model:
+        return await _resolve_openrouter_request(preferred_model)
+    
+    # Иначе используем Gemini
+    return await _resolve_gemini_request(preferred_model)
 
 async def _resolve_gemini_request(preferred_model: str):
     key = await db.get_available_gemini_key(preferred_model)
@@ -101,29 +116,49 @@ async def _resolve_openrouter_request(preferred_model: str):
 async def _get_ai_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, use_openrouter: bool = None):
     """
     Универсальная функция для получения ответа от AI.
-    Выбирает между Gemini и OpenRouter на основе настроек.
+    Выбирает между Gemini и OpenRouter на основе имени модели или настроек.
+    
+    Автоматически определяет провайдер:
+    - Если модель содержит "/" (например, "openai/gpt-4o"), используется OpenRouter
+    - Иначе используется Gemini
     """
+    # Автоматическое определение провайдера по имени модели
     if use_openrouter is None:
-        use_openrouter = get_use_openrouter()
+        # Если модель содержит "/", это модель OpenRouter
+        if "/" in model_name:
+            use_openrouter = True
+        else:
+            # Проверяем глобальную настройку, если модель не указывает провайдер
+            use_openrouter = get_use_openrouter()
     
-    # Если OpenRouter не настроен или не включен, используем Gemini
-    if not use_openrouter or not get_openrouter_keys():
+    # Если OpenRouter не настроен, но выбрана модель OpenRouter, возвращаем ошибку
+    if use_openrouter and not get_openrouter_keys():
+        return "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.", None
+    
+    # Используем соответствующий провайдер
+    if use_openrouter:
+        return await services.get_openrouter_response(api_key, history, model_name, system_instruction, user_id, chat_id)
+    else:
         return await services.get_gemini_response(api_key, history, model_name, system_instruction, user_id, chat_id)
-    
-    # Используем OpenRouter
-    return await services.get_openrouter_response(api_key, history, model_name, system_instruction, user_id, chat_id)
 
 async def _increment_key_usage(key_hash: str, model_name: str, use_openrouter: bool = None):
     """
     Универсальная функция для инкремента использования ключа.
+    Автоматически определяет провайдер на основе имени модели.
     """
+    # Автоматическое определение провайдера по имени модели
     if use_openrouter is None:
-        use_openrouter = get_use_openrouter()
+        # Если модель содержит "/", это модель OpenRouter
+        if "/" in model_name:
+            use_openrouter = True
+        else:
+            # Проверяем глобальную настройку, если модель не указывает провайдер
+            use_openrouter = get_use_openrouter()
     
-    if not use_openrouter or not get_openrouter_keys():
-        await db.increment_gemini_key_usage(key_hash, model_name)
-    else:
+    if use_openrouter:
         await db.increment_openrouter_key_usage(key_hash, model_name)
+    else:
+        await db.increment_gemini_key_usage(key_hash, model_name)
 
 async def _handle_qna_search(placeholder_message: Message, user_message: str, chat_state: db.ChatState, search_query: str = None):
     # Если передан search_query, используем его для поиска, а user_message для локализации
@@ -164,10 +199,10 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
         # Если не можем отредактировать, отправляем новое сообщение
         placeholder_message = await placeholder_message.reply_text("🌍 Адаптирую ответ...")
     
-    use_openrouter = get_use_openrouter() and get_openrouter_keys()
-    preferred_model = settings.OPENROUTER_QNA_MODEL if use_openrouter else settings.QNA_MODEL
+    # Используем модель из chat_state, если она указана, иначе используем настройки по умолчанию
+    preferred_model = chat_state.model if chat_state.model else (settings.OPENROUTER_QNA_MODEL if get_openrouter_keys() else settings.QNA_MODEL)
     
-    ai_key, model_used, _ = await _resolve_ai_request(preferred_model, use_openrouter)
+    ai_key, model_used, _ = await _resolve_ai_request(preferred_model)
     if not ai_key:
         try:
             await placeholder_message.edit_text(f"🚫 Ключи для модели {preferred_model} закончились.")
@@ -186,13 +221,12 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
     
-    final_answer, _ = await _get_ai_response(
+        final_answer, _ = await _get_ai_response(
         ai_key['api_key'], 
         [{'role': 'user', 'parts': [localization_prompt]}], 
         model_used,
         user_id=user_id,
-        chat_id=chat_id,
-        use_openrouter=use_openrouter
+        chat_id=chat_id
     )
     
     # Add role button and new topic button to QNA responses
@@ -202,7 +236,7 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     ]
     reply_markup = InlineKeyboardMarkup(buttons)
     await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
-    await _increment_key_usage(ai_key['key_hash'], model_used, use_openrouter)
+    await _increment_key_usage(ai_key['key_hash'], model_used)
 
 async def _handle_research_agent(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None, search_query: str = None):
     # Если передан search_query, используем его для поиска, а user_message для локализации
@@ -275,10 +309,10 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
     
-    use_openrouter = get_use_openrouter() and get_openrouter_keys()
-    preferred_model = settings.OPENROUTER_URL_SELECTION_MODEL if use_openrouter else settings.URL_SELECTION_MODEL
+    # Используем модель из chat_state, если она указана, иначе используем настройки по умолчанию
+    preferred_model = chat_state.model if chat_state.model else (settings.OPENROUTER_URL_SELECTION_MODEL if get_openrouter_keys() else settings.URL_SELECTION_MODEL)
     
-    ai_key, model_used, _ = await _resolve_ai_request(preferred_model, use_openrouter)
+    ai_key, model_used, _ = await _resolve_ai_request(preferred_model)
     if not ai_key:
         try:
             await placeholder_message.edit_text(f"🚫 Ключи для модели {preferred_model} (выбор URL) закончились.")
@@ -314,10 +348,9 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             [{'role': 'user', 'parts': parts}], 
             model_used,
             user_id=user_id,
-            chat_id=chat_id,
-            use_openrouter=use_openrouter
+            chat_id=chat_id
         )
-        await _increment_key_usage(ai_key['key_hash'], model_used, use_openrouter)
+        await _increment_key_usage(ai_key['key_hash'], model_used)
     except Exception as gemini_error:
         logging.error(f"Error in Gemini URL selection: {gemini_error}")
         try:
@@ -366,9 +399,9 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     except Exception as edit_error:
         logging.error(f"Could not edit placeholder message: {edit_error}")
     
-    use_openrouter = get_use_openrouter() and get_openrouter_keys()
-    model_for_synthesis = model_override or (settings.OPENROUTER_RESEARCH_MODEL if use_openrouter else settings.RESEARCH_MODEL)
-    ai_key, model_used, _ = await _resolve_ai_request(model_for_synthesis, use_openrouter)
+    # Используем модель из chat_state или переопределение, если указано
+    model_for_synthesis = model_override or chat_state.model or (settings.OPENROUTER_RESEARCH_MODEL if get_openrouter_keys() else settings.RESEARCH_MODEL)
+    ai_key, model_used, _ = await _resolve_ai_request(model_for_synthesis)
     if not ai_key:
         try:
             await placeholder_message.edit_text(f"🚫 Ключи для модели {model_for_synthesis} закончились.")
@@ -438,8 +471,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             model_used, 
             system_instruction=prompts.compose_system_instruction(chat_state.system_prompt),
             user_id=user_id,
-            chat_id=chat_id,
-            use_openrouter=use_openrouter
+            chat_id=chat_id
         )
     except Exception as ai_error:
         logging.error(f"Error in AI synthesis: {ai_error}")
@@ -454,7 +486,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     if response_text and response_text.strip():
         # Проверяем, что response_text не None и не пустой
         await send_long_message(placeholder_message, response_text, is_deep_dive=True)
-        await _increment_key_usage(ai_key['key_hash'], model_used, use_openrouter)
+        await _increment_key_usage(ai_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
         chat_state.is_deep_dive = True
@@ -695,9 +727,9 @@ _Основные сервисы:_
             await placeholder_message.reply_text(f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}")
 
 async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_message: str, chat_state: db.ChatState, model_override: Optional[str] = None):
-    use_openrouter = get_use_openrouter() and get_openrouter_keys()
+    # Используем переопределение модели, если указано, иначе модель из chat_state
     model_for_this_request = model_override or chat_state.model
-    ai_key, model_used, resolution = await _resolve_ai_request(model_for_this_request, use_openrouter)
+    ai_key, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
     if resolution == "all_exhausted":
         provider_name = "OpenRouter" if use_openrouter else "Gemini"
@@ -774,8 +806,7 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         model_used, 
         system_instruction=system_instruction,
         user_id=user_id,
-        chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
-        use_openrouter=use_openrouter
+        chat_id=placeholder_message.chat.id if placeholder_message.chat else None
     )
     
     if response_text:
@@ -796,7 +827,7 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
                 await placeholder_message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
             except Exception:
                 await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
-        await _increment_key_usage(ai_key['key_hash'], model_used, use_openrouter)
+        await _increment_key_usage(ai_key['key_hash'], model_used)
         chat_state.history.append({'role': 'model', 'parts': [response_text]})
         chat_state.token_count = new_token_count
         await db.update_user_chat(user_id, chat_state)

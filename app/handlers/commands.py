@@ -180,8 +180,51 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
     if not await db.is_authorized(update.effective_user.id): return
-    keyboard = [[InlineKeyboardButton(m, callback_data=f"model_{m}")] for m in settings.AVAILABLE_MODELS]
-    await update.message.reply_text("Выберите основную модель для разговора:", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    user_id = update.effective_user.id
+    chat_state = await db.get_user_chat(user_id)
+    current_model = chat_state.model
+    
+    # Определяем, какой провайдер используется для текущей модели
+    from app.config import get_openrouter_keys
+    openrouter_available = bool(get_openrouter_keys())
+    is_current_openrouter = "/" in current_model if current_model else False
+    
+    keyboard = []
+    
+    # Добавляем модели Gemini
+    if settings.AVAILABLE_MODELS:
+        # Заголовок секции (не кликабельный, просто для визуального разделения)
+        for m in settings.AVAILABLE_MODELS:
+            is_selected = "✅ " if m == current_model and not is_current_openrouter else ""
+            keyboard.append([InlineKeyboardButton(f"{is_selected}🤖 {m}", callback_data=f"model_{m}")])
+    
+    # Добавляем разделитель, если есть оба провайдера
+    if settings.AVAILABLE_MODELS and openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
+        keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
+    
+    # Добавляем модели OpenRouter, если доступны
+    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
+        for m in settings.OPENROUTER_AVAILABLE_MODELS:
+            is_selected = "✅ " if m == current_model and is_current_openrouter else ""
+            # Показываем короткое имя модели с иконкой провайдера
+            display_name = m.split("/")[-1] if "/" in m else m
+            provider_icon = "🌐"
+            keyboard.append([InlineKeyboardButton(f"{is_selected}{provider_icon} {display_name}", callback_data=f"model_{m}")])
+    
+    if not keyboard:
+        await update.message.reply_text("❌ Нет доступных моделей. Проверьте настройки.")
+        return
+    
+    # Формируем текст с информацией о текущей модели
+    provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
+    text = f"*Выберите модель для разговора:*\n\n"
+    text += f"*Текущая модель:* `{current_model}`\n"
+    text += f"*Провайдер:* {provider_name}\n\n"
+    text += "Нажмите на модель для выбора."
+    
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами

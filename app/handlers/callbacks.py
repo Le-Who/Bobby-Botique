@@ -19,11 +19,30 @@ from app.errors import build_roles_keyboard
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
+    # Игнорируем клики на разделитель
+    if query.data == "model_none":
+        return
+    
+    # Обрабатываем выбор конкретной модели
     model_name = query.data.split("_", 1)[1]
-    chat_state = await db.get_user_chat(query.from_user.id)
+    user_id = query.from_user.id
+    chat_state = await db.get_user_chat(user_id)
     chat_state.model = model_name
-    await db.update_user_chat(query.from_user.id, chat_state)
-    await query.edit_message_text(f"Основная модель изменена на: {chat_state.model}")
+    await db.update_user_chat(user_id, chat_state)
+    
+    # Определяем провайдер
+    is_openrouter = "/" in model_name
+    provider_name = "OpenRouter" if is_openrouter else "Google Gemini"
+    display_name = model_name.split("/")[-1] if is_openrouter else model_name
+    
+    text = f"✅ *Модель изменена*\n\n"
+    text += f"*Модель:* `{display_name}`\n"
+    text += f"*Провайдер:* {provider_name}\n"
+    text += f"*Полное имя:* `{model_name}`"
+    
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await query.edit_message_text(formatted_text, parse_mode=parse_mode)
 
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
