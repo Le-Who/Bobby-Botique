@@ -584,14 +584,30 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
        return
    # Запускаем повтор генерации как в messages.handle_request
    chat_state = await db.get_user_chat(user_id)
-   key_data = await db.get_available_gemini_key(chat_state.model)
+   
+   # Используем универсальную функцию для получения ключа (поддерживает и Gemini, и OpenRouter)
+   from app.config import settings
+   model_for_role = chat_state.model or settings.DEFAULT_MODEL
+   key_data, model_used, resolution = await agent._resolve_ai_request(model_for_role)
    if not key_data:
        await query.edit_message_text("❌ Нет доступных ключей API для генерации роли.")
        return
    progress_msg = await query.message.reply_text("🛠️ Генерирую роль…")
    set_generating_custom_role(user_id, True)
    history = [{'role': 'user', 'parts': [last_prompt]}]
-   response_text, _ = await agent.services.get_gemini_response(key_data['api_key'], history, chat_state.model, system_instruction=prompts.PROMPT_ENGINEER_SYSTEM_PROMPT, user_id=user_id, chat_id=user_id)
+   
+   # Используем универсальную функцию для получения ответа (поддерживает и Gemini, и OpenRouter)
+   response_text, _ = await agent._get_ai_response(
+       key_data['api_key'], 
+       history, 
+       model_used, 
+       system_instruction=prompts.PROMPT_ENGINEER_SYSTEM_PROMPT, 
+       user_id=user_id, 
+       chat_id=user_id
+   )
+   
+   # Инкрементируем использование ключа
+   await agent._increment_key_usage(key_data['key_hash'], model_used)
    
    # Логируем ответ модели для отладки
    logging.info(f"Model response for role retry: {response_text[:500]}...")

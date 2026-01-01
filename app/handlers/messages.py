@@ -15,7 +15,7 @@ from app.utils.formatting import TelegramFormatter
 from app.utils.api_logger import api_logger
 from app import prompts
 from app.services import get_gemini_response
-from app.utils.formatting import TelegramFormatter
+from app.handlers import agent
 from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state, set_last_custom_role_prompt, get_last_custom_role_prompt, set_generating_custom_role
 
 # Глобальный словарь для хранения групп изображений
@@ -156,16 +156,32 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Системная инструкция для генерации роли — PROMPT_ENGINEER_SYSTEM_PROMPT
             system_instruction = prompts.PROMPT_ENGINEER_SYSTEM_PROMPT
             history = [{'role': 'user', 'parts': [f"{message_text}"]}]
-            key_data = await db.get_available_gemini_key(chat_state.model)
+            
+            # Используем универсальную функцию для получения ключа (поддерживает и Gemini, и OpenRouter)
+            model_for_role = chat_state.model or settings.DEFAULT_MODEL
+            key_data, model_used, resolution = await agent._resolve_ai_request(model_for_role)
             if not key_data:
                 await update.message.reply_text("❌ Нет доступных ключей API для генерации роли.")
                 clear_custom_role_state(user_id)
                 return
+            
             # Индикатор прогресса
             progress_msg = await update.message.reply_text("🛠️ Генерирую роль…")
             set_last_custom_role_prompt(user_id, message_text)
             set_generating_custom_role(user_id, True)
-            response_text, _ = await get_gemini_response(key_data['api_key'], history, chat_state.model, system_instruction=system_instruction, user_id=user_id, chat_id=chat_id)
+            
+            # Используем универсальную функцию для получения ответа (поддерживает и Gemini, и OpenRouter)
+            response_text, _ = await agent._get_ai_response(
+                key_data['api_key'], 
+                history, 
+                model_used, 
+                system_instruction=system_instruction, 
+                user_id=user_id, 
+                chat_id=chat_id
+            )
+            
+            # Инкрементируем использование ключа
+            await agent._increment_key_usage(key_data['key_hash'], model_used)
             
             # Логируем ответ модели для отладки
             logging.info(f"Model response for role generation: {response_text[:500]}...")
