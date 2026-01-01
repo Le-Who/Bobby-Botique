@@ -48,27 +48,22 @@ class Settings(BaseModel):
     TELEGRAM_MESSAGE_LIMIT: int = 4096
 
     # --- MODELS ---
-    AVAILABLE_MODELS: List[str] = ["gemini-2.5-flash-exp", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
-    DEFAULT_MODEL: str = "gemini-2.5-flash-exp"
+    AVAILABLE_MODELS: List[str] = ["gemini-exp-1206", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
+    DEFAULT_MODEL: str = "gemini-flash-latest"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
     RESEARCH_MODEL: str = "gemini-2.5-pro"
-    URL_SELECTION_MODEL: str = "gemini-2.5-flash-exp"
+    URL_SELECTION_MODEL: str = "gemini-flash-latest"
     
     # --- OPENROUTER MODELS ---
     OPENROUTER_AVAILABLE_MODELS: List[str] = [
-        "openai/gpt-4o",
-        "openai/gpt-4o-mini",
-        "openai/gpt-4-turbo",
-        "anthropic/claude-3.5-sonnet",
-        "anthropic/claude-3-opus",
-        "google/gemini-pro-1.5",
-        "meta-llama/llama-3.1-70b-instruct",
-        "mistralai/mistral-large"
+        "tngtech/deepseek-r1t2-chimera:free",
+        "xiaomi/mimo-v2-flash:free",
+        "nex-agi/deepseek-v3.1-nex-n1:free"
     ]
-    OPENROUTER_DEFAULT_MODEL: str = "openai/gpt-4o-mini"
-    OPENROUTER_QNA_MODEL: str = "openai/gpt-4o-mini"
-    OPENROUTER_RESEARCH_MODEL: str = "openai/gpt-4o"
-    OPENROUTER_URL_SELECTION_MODEL: str = "openai/gpt-4o-mini"
+    OPENROUTER_DEFAULT_MODEL: str = "xiaomi/mimo-v2-flash:free"
+    OPENROUTER_QNA_MODEL: str = "xiaomi/mimo-v2-flash:free"
+    OPENROUTER_RESEARCH_MODEL: str = "xiaomi/mimo-v2-flash:free"
+    OPENROUTER_URL_SELECTION_MODEL: str = "xiaomi/mimo-v2-flash:free"
     
     # --- API PROVIDER SELECTION ---
     USE_OPENROUTER: bool = False  # По умолчанию используем Gemini, можно переключить на OpenRouter
@@ -80,7 +75,7 @@ class Settings(BaseModel):
     TAVILY_ADVANCED_SEARCH_COST: int = 2
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     DAILY_LIMITS: Dict[str, int] = {
-        "gemini-2.5-flash-exp": 250,
+        "gemini-exp-1206": 250,
         "gemini-flash-latest": 15,
         "gemini-2.5-pro": 15,
         "gemini-2.5-flash-lite": 15,
