@@ -56,16 +56,20 @@ class Settings(BaseModel):
     
     # --- OPENROUTER MODELS ---
     OPENROUTER_AVAILABLE_MODELS: List[str] = [
-        "arcee-ai/trinity-mini:free",
-		"openai/gpt-oss-120b:free",
-		"google/gemma-3-27b-it:free",
-		"tngtech/tng-r1t-chimera:free",
-		"cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
+        "tngtech/tng-r1t-chimera:free",
 		"xiaomi/mimo-v2-flash:free",
 		"tngtech/deepseek-r1t-chimera:free",
+		"-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-",
+		"-_-_-_-_-_-_-OTBROSY_-_-_-_-_-_-",
+		"-_-_-_-_-_-_⌄⌄⌄⌄⌄⌄⌄⌄⌄_-_-_-_-_-_-",
+		"openai/gpt-oss-120b:free",
+		"nex-agi/deepseek-v3.1-nex-n1:free",
+		"openai/gpt-oss-120b:free",
+		"google/gemma-3-27b-it:free",
+		"cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
 		"allenai/olmo-3.1-32b-think:free",
 		"tngtech/deepseek-r1t2-chimera:free",
-		"nex-agi/deepseek-v3.1-nex-n1:free"
+		"arcee-ai/trinity-mini:free"
     ]
     OPENROUTER_DEFAULT_MODEL: str = "xiaomi/mimo-v2-flash:free"
     OPENROUTER_QNA_MODEL: str = "xiaomi/mimo-v2-flash:free"
