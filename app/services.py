@@ -518,6 +518,9 @@ async def get_openrouter_response(api_key: str, history: list, model_name: str, 
     if chat_id is not None and not isinstance(chat_id, int):
         raise ValueError("chat_id must be an integer")
     
+    # Логируем входящие параметры
+    logging.info(f"🔍 get_openrouter_response called: model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
+    
     # Retry механизм для ошибок 503
     for attempt in range(max_retries):
         try:
@@ -571,7 +574,11 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
                     "role": "system",
                     "content": system_content
                 })
-                logging.debug(f"Added system instruction to OpenRouter request (length: {len(system_content)})")
+                logging.info(f"✅ OpenRouter: Added system instruction (length: {len(system_content)}, preview: {system_content[:100]}...)")
+            else:
+                logging.warning(f"⚠️ OpenRouter: system_instruction is empty after strip()")
+        else:
+            logging.warning(f"⚠️ OpenRouter: system_instruction is None or falsy")
         
         # Преобразуем историю из формата Gemini в формат OpenAI
         for item in history:
@@ -650,10 +657,16 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
             "messages": messages
         }
         
-        # Логируем структуру сообщений для отладки (только первый раз)
-        if len(messages) > 0 and messages[0].get("role") == "system":
-            logging.debug(f"OpenRouter request includes system message (length: {len(messages[0].get('content', ''))})")
-            logging.debug(f"Total messages in request: {len(messages)}")
+        # Логируем структуру сообщений для отладки
+        has_system = len(messages) > 0 and messages[0].get("role") == "system"
+        if has_system:
+            system_content = messages[0].get('content', '')
+            logging.info(f"✅ OpenRouter: Request includes system message (length: {len(system_content)}, first 200 chars: {system_content[:200]}...)")
+        else:
+            logging.warning(f"⚠️ OpenRouter: Request does NOT include system message! Total messages: {len(messages)}")
+            if len(messages) > 0:
+                logging.warning(f"⚠️ OpenRouter: First message role: {messages[0].get('role')}")
+        logging.info(f"📤 OpenRouter: Sending request with {len(messages)} messages, model: {model_name}")
         
         # Выполняем запрос с timeout
         try:

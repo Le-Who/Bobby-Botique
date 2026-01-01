@@ -137,8 +137,10 @@ async def _get_ai_response(api_key: str, history: list, model_name: str, system_
     
     # Используем соответствующий провайдер
     if use_openrouter:
+        logging.info(f"🔍 _get_ai_response: routing to OpenRouter, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
         return await services.get_openrouter_response(api_key, history, model_name, system_instruction, user_id, chat_id)
     else:
+        logging.info(f"🔍 _get_ai_response: routing to Gemini, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
         return await services.get_gemini_response(api_key, history, model_name, system_instruction, user_id, chat_id)
 
 async def _increment_key_usage(key_hash: str, model_name: str, use_openrouter: bool = None):
@@ -221,10 +223,14 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
     
+    # Используем системную инструкцию из chat_state
+    system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
+    
     final_answer, _ = await _get_ai_response(
         ai_key['api_key'], 
         [{'role': 'user', 'parts': [localization_prompt]}], 
         model_used,
+        system_instruction=system_instruction,
         user_id=user_id,
         chat_id=chat_id
     )
@@ -343,10 +349,14 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         
         # Создаем parts для API: промпт
         parts = [selection_prompt] if selection_prompt else []
+        # Используем системную инструкцию из chat_state
+        system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
+        
         selected_urls_str, _ = await _get_ai_response(
             ai_key['api_key'], 
             [{'role': 'user', 'parts': parts}], 
             model_used,
+            system_instruction=system_instruction,
             user_id=user_id,
             chat_id=chat_id
         )
@@ -802,6 +812,11 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     
     # Используем системную инструкцию пользователя или инструкцию по умолчанию
     system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
+    
+    # Логируем для отладки
+    if "/" in model_used:  # OpenRouter модель
+        logging.info(f"🔍 OpenRouter request: model={model_used}, system_prompt from chat_state={chat_state.system_prompt[:100] if chat_state.system_prompt else 'None'}..., system_instruction length={len(system_instruction) if system_instruction else 0}")
+    
     response_text, new_token_count = await _get_ai_response(
         ai_key['api_key'], 
         chat_state.history, 
