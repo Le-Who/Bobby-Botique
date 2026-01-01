@@ -563,11 +563,15 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
         messages = []
         
         # Добавляем системное сообщение, если есть
+        # В OpenRouter системное сообщение должно быть первым в массиве messages
         if system_instruction:
-            messages.append({
-                "role": "system",
-                "content": str(system_instruction)
-            })
+            system_content = str(system_instruction).strip()
+            if system_content:
+                messages.append({
+                    "role": "system",
+                    "content": system_content
+                })
+                logging.debug(f"Added system instruction to OpenRouter request (length: {len(system_content)})")
         
         # Преобразуем историю из формата Gemini в формат OpenAI
         for item in history:
@@ -645,6 +649,11 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
             "model": model_name,
             "messages": messages
         }
+        
+        # Логируем структуру сообщений для отладки (только первый раз)
+        if len(messages) > 0 and messages[0].get("role") == "system":
+            logging.debug(f"OpenRouter request includes system message (length: {len(messages[0].get('content', ''))})")
+            logging.debug(f"Total messages in request: {len(messages)}")
         
         # Выполняем запрос с timeout
         try:

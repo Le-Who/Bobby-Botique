@@ -502,7 +502,9 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
        if not role.get('prompt'):
            await query.edit_message_text("❌ Кастомная роль содержит некорректный промпт.")
            return
-       chat_state.system_prompt = prompts.compose_system_instruction(role['prompt'])
+       # Сохраняем только промпт роли (без базового системного промпта)
+       # compose_system_instruction будет вызван при использовании
+       chat_state.system_prompt = role['prompt']
        await db.update_user_chat(user_id, chat_state)
        await role_conv_metrics.record_role_application(f"user_role:{role_id}")
        await query.edit_message_text(f"✅ Кастомная роль '{role['title']}' применена.")
@@ -512,7 +514,9 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
        if not meta:
            await query.edit_message_text("❌ Роль не найдена.")
            return
-       chat_state.system_prompt = prompts.compose_system_instruction(meta.get("prompt"))
+       # Сохраняем только промпт роли (без базового системного промпта)
+       # compose_system_instruction будет вызван при использовании
+       chat_state.system_prompt = meta.get("prompt")
        await db.update_user_chat(user_id, chat_state)
        await role_conv_metrics.record_role_application(key)
        await query.edit_message_text(f"✅ Роль '{meta.get('title', key)}' применена.")
@@ -522,7 +526,8 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
    await query.answer()
    user_id = query.from_user.id
    chat_state = await db.get_user_chat(user_id)
-   chat_state.system_prompt = prompts.compose_system_instruction(None)
+   # Очищаем системный промпт (будет использован базовый)
+   chat_state.system_prompt = None
    await db.update_user_chat(user_id, chat_state)
    await role_conv_metrics.record_role_clear()
    await query.edit_message_text("🧹 Роль сброшена. Использую базовые правила форматирования.")
@@ -543,7 +548,9 @@ async def role_custom_apply_callback(update: Update, context: ContextTypes.DEFAU
        await query.edit_message_text("❌ Нет сгенерированной роли для применения.")
        return
    prompt_text = role.get('prompt') or role.get('system_prompt') or ''
-   chat_state.system_prompt = prompts.compose_system_instruction(prompt_text)
+   # Сохраняем только промпт роли (без базового системного промпта)
+   # compose_system_instruction будет вызван при использовании
+   chat_state.system_prompt = prompt_text
    await db.update_user_chat(user_id, chat_state)
    clear_custom_role_state(user_id)
    await query.edit_message_text(f"✅ Роль '{role.get('title','Кастомная роль')}' применена.")
@@ -567,7 +574,9 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
        # И сразу применяем
        prompt_text = role.get('prompt') or role.get('system_prompt') or ''
        chat_state = await db.get_user_chat(user_id)
-       chat_state.system_prompt = prompts.compose_system_instruction(prompt_text)
+       # Сохраняем только промпт роли (без базового системного промпта)
+       # compose_system_instruction будет вызван при использовании
+       chat_state.system_prompt = prompt_text
        await db.update_user_chat(user_id, chat_state)
        clear_custom_role_state(user_id)
        await query.edit_message_text("💾 Роль сохранена и применена.")
