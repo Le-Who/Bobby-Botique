@@ -3,7 +3,7 @@ import httpx
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from PIL import Image
 import asyncio
 import time
