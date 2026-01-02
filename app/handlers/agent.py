@@ -14,7 +14,7 @@ from app import prompts
 from app.metrics import metrics_collector
 from app.utils.formatting import escape_format_chars
 
-async def _resolve_ai_request(preferred_model: str, use_openrouter: bool = None):
+async def _resolve_ai_request(preferred_model: str, use_openrouter: bool = None, excluded_key_hashes: set = None):
     """
     Универсальная функция для получения ключа и модели для AI запроса.
     Поддерживает как Gemini, так и OpenRouter.
@@ -26,10 +26,14 @@ async def _resolve_ai_request(preferred_model: str, use_openrouter: bool = None)
     Args:
         preferred_model: Предпочитаемая модель
         use_openrouter: Использовать OpenRouter (None = автоматическое определение по модели)
+        excluded_key_hashes: Множество хэшей ключей, которые нужно исключить (для ротации)
         
     Returns:
         Tuple (key_data, model_used, resolution_status)
     """
+    if excluded_key_hashes is None:
+        excluded_key_hashes = set()
+    
     # Автоматическое определение провайдера по имени модели
     if use_openrouter is None:
         # Если модель содержит "/", это модель OpenRouter
@@ -46,35 +50,85 @@ async def _resolve_ai_request(preferred_model: str, use_openrouter: bool = None)
     
     # Если модель OpenRouter, используем OpenRouter
     if use_openrouter or "/" in preferred_model:
-        return await _resolve_openrouter_request(preferred_model)
+        return await _resolve_openrouter_request(preferred_model, excluded_key_hashes)
     
     # Иначе используем Gemini
-    return await _resolve_gemini_request(preferred_model)
+    return await _resolve_gemini_request(preferred_model, excluded_key_hashes)
 
-async def _resolve_gemini_request(preferred_model: str):
-    key = await db.get_available_gemini_key(preferred_model)
-    if key:
-        return key, preferred_model, None
+async def _resolve_gemini_request(preferred_model: str, excluded_key_hashes: set = None):
+    """
+    Получает ключ Gemini для модели.
+    
+    Args:
+        preferred_model: Предпочитаемая модель
+        excluded_key_hashes: Множество хэшей ключей, которые нужно исключить (для ротации)
+    
+    Returns:
+        Tuple (key_data, model_used, resolution_status)
+    """
+    if excluded_key_hashes is None:
+        excluded_key_hashes = set()
+    
+    # Инвалидируем кэш, если есть исключенные ключи (чтобы получить новый ключ)
+    if excluded_key_hashes:
+        await db.invalidate_key_cache(preferred_model)
+    
+    # Пробуем получить ключ, игнорируя исключенные
+    max_attempts = 5  # Максимум попыток для одной модели
+    for attempt in range(max_attempts):
+        key = await db.get_available_gemini_key(preferred_model)
+        if key and key['key_hash'] not in excluded_key_hashes:
+            return key, preferred_model, None
+        
+        # Если ключ исключен, инвалидируем кэш и пробуем снова
+        if key and key['key_hash'] in excluded_key_hashes:
+            await db.invalidate_key_cache(preferred_model)
+            continue
+        
+        # Если ключ не найден, выходим из цикла
+        break
 
-    logging.warning(f"All keys for preferred model {preferred_model} are exhausted. Attempting fallback.")
+    logging.warning(f"All keys for preferred model {preferred_model} are exhausted or excluded. Attempting fallback.")
     
     fallback_priority = [settings.RESEARCH_MODEL, settings.DEFAULT_MODEL, settings.QNA_MODEL]
     for fallback_model in fallback_priority:
         if fallback_model == preferred_model:
             continue
-        key = await db.get_available_gemini_key(fallback_model)
-        if key:
-            logging.info(f"Found available fallback key for model {fallback_model}.")
-            return key, fallback_model, "confirm_fallback"
+        
+        # Инвалидируем кэш для fallback модели
+        if excluded_key_hashes:
+            await db.invalidate_key_cache(fallback_model)
+        
+        for attempt in range(max_attempts):
+            key = await db.get_available_gemini_key(fallback_model)
+            if key and key['key_hash'] not in excluded_key_hashes:
+                logging.info(f"Found available fallback key for model {fallback_model}.")
+                return key, fallback_model, "confirm_fallback"
             
-    logging.error("All Gemini API keys for all models are exhausted.")
+            if key and key['key_hash'] in excluded_key_hashes:
+                await db.invalidate_key_cache(fallback_model)
+                continue
+            
+            break
+            
+    logging.error("All Gemini API keys for all models are exhausted or excluded.")
     return None, None, "all_exhausted"
 
-async def _resolve_openrouter_request(preferred_model: str):
+async def _resolve_openrouter_request(preferred_model: str, excluded_key_hashes: set = None):
     """
     Получает ключ OpenRouter для модели.
     Маппит модели Gemini на модели OpenRouter, если нужно.
+    
+    Args:
+        preferred_model: Предпочитаемая модель
+        excluded_key_hashes: Множество хэшей ключей, которые нужно исключить (для ротации)
+    
+    Returns:
+        Tuple (key_data, model_used, resolution_status)
     """
+    if excluded_key_hashes is None:
+        excluded_key_hashes = set()
+    
     # Маппинг моделей Gemini на OpenRouter
     model_mapping = {
         settings.DEFAULT_MODEL: settings.OPENROUTER_DEFAULT_MODEL,
@@ -90,11 +144,21 @@ async def _resolve_openrouter_request(preferred_model: str):
         # Маппим модель Gemini на OpenRouter
         openrouter_model = model_mapping.get(preferred_model, settings.OPENROUTER_DEFAULT_MODEL)
     
-    key = await db.get_available_openrouter_key(openrouter_model)
-    if key:
-        return key, openrouter_model, None
+    # Пробуем получить ключ, игнорируя исключенные
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        key = await db.get_available_openrouter_key(openrouter_model)
+        if key and key['key_hash'] not in excluded_key_hashes:
+            return key, openrouter_model, None
+        
+        # Если ключ исключен, пробуем снова (OpenRouter не использует кэш)
+        if key and key['key_hash'] in excluded_key_hashes:
+            continue
+        
+        # Если ключ не найден, выходим из цикла
+        break
     
-    logging.warning(f"All OpenRouter keys for model {openrouter_model} are exhausted. Attempting fallback.")
+    logging.warning(f"All OpenRouter keys for model {openrouter_model} are exhausted or excluded. Attempting fallback.")
     
     # Пробуем fallback модели
     fallback_priority = [
@@ -105,12 +169,19 @@ async def _resolve_openrouter_request(preferred_model: str):
     for fallback_model in fallback_priority:
         if fallback_model == openrouter_model:
             continue
-        key = await db.get_available_openrouter_key(fallback_model)
-        if key:
-            logging.info(f"Found available fallback OpenRouter key for model {fallback_model}.")
-            return key, fallback_model, "confirm_fallback"
+        
+        for attempt in range(max_attempts):
+            key = await db.get_available_openrouter_key(fallback_model)
+            if key and key['key_hash'] not in excluded_key_hashes:
+                logging.info(f"Found available fallback OpenRouter key for model {fallback_model}.")
+                return key, fallback_model, "confirm_fallback"
+            
+            if key and key['key_hash'] in excluded_key_hashes:
+                continue
+            
+            break
     
-    logging.error("All OpenRouter API keys are exhausted.")
+    logging.error("All OpenRouter API keys are exhausted or excluded.")
     return None, None, "all_exhausted"
 
 async def _get_ai_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, use_openrouter: bool = None):
@@ -142,6 +213,89 @@ async def _get_ai_response(api_key: str, history: list, model_name: str, system_
     else:
         logging.info(f"🔍 _get_ai_response: routing to Gemini, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
         return await services.get_gemini_response(api_key, history, model_name, system_instruction, user_id, chat_id)
+
+async def _get_ai_response_with_key_rotation(
+    preferred_model: str,
+    history: list,
+    system_instruction: str = None,
+    user_id: int = None,
+    chat_id: int = None,
+    use_openrouter: bool = None,
+    max_key_retries: int = 3
+):
+    """
+    Получает ответ от AI с автоматической ротацией ключей при ошибках, связанных с ключом.
+    
+    Если ключ выдает ошибку, связанную с ключом (quota exceeded, invalid key, etc.),
+    автоматически пробует другой ключ. Максимум max_key_retries попыток.
+    
+    Args:
+        preferred_model: Предпочитаемая модель
+        history: История сообщений
+        system_instruction: Системная инструкция
+        user_id: ID пользователя
+        chat_id: ID чата
+        use_openrouter: Использовать OpenRouter (None = автоматическое определение)
+        max_key_retries: Максимальное количество попыток с разными ключами
+        
+    Returns:
+        Tuple (response_text, token_count) или (error_message, None)
+    """
+    from app.errors import is_error_message, is_key_related_error
+    
+    failed_keys = set()  # Временная пометка проблемных ключей для этого запроса
+    
+    for attempt in range(max_key_retries):
+        # Получаем ключ, исключая проблемные
+        key_data, model_used, resolution = await _resolve_ai_request(
+            preferred_model,
+            use_openrouter=use_openrouter,
+            excluded_key_hashes=failed_keys
+        )
+        
+        if not key_data:
+            if resolution == "all_exhausted":
+                is_openrouter = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
+                provider_name = "OpenRouter" if is_openrouter else "Gemini"
+                return f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже.", None
+            elif resolution == "no_keys":
+                return "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.", None
+            else:
+                return "🚫 Не удалось получить доступный ключ API. Попробуйте позже.", None
+        
+        # Пробуем запрос
+        response_text, token_count = await _get_ai_response(
+            key_data['api_key'],
+            history,
+            model_used,
+            system_instruction,
+            user_id,
+            chat_id,
+            use_openrouter
+        )
+        
+        # Проверяем, является ли ответ ошибкой, связанной с ключом
+        if response_text and is_error_message(response_text) and is_key_related_error(response_text):
+            # Ошибка связана с ключом - помечаем как проблемный и пробуем следующий
+            failed_keys.add(key_data['key_hash'])
+            logging.warning(
+                f"Key {key_data['key_hash'][:8]}... failed with key-related error (attempt {attempt + 1}/{max_key_retries}). "
+                f"Error: {response_text[:100]}..."
+            )
+            continue  # Пробуем следующий ключ
+        
+        # Успех или ошибка, не связанная с ключом (503, timeout, etc.) - возвращаем как есть
+        if response_text and not is_error_message(response_text):
+            # Успешный ответ - инкрементируем использование ключа
+            await _increment_key_usage(key_data['key_hash'], model_used, use_openrouter)
+        
+        return response_text, token_count
+    
+    # Все ключи не сработали
+    logging.error(f"All {max_key_retries} key attempts failed for model {preferred_model}")
+    is_openrouter = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
+    provider_name = "OpenRouter" if is_openrouter else "Gemini"
+    return f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.", None
 
 async def _increment_key_usage(key_hash: str, model_name: str, use_openrouter: bool = None):
     """
@@ -204,14 +358,6 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     # Используем модель из chat_state, если она указана, иначе используем настройки по умолчанию
     preferred_model = chat_state.model if chat_state.model else (settings.OPENROUTER_QNA_MODEL if get_openrouter_keys() else settings.QNA_MODEL)
     
-    ai_key, model_used, _ = await _resolve_ai_request(preferred_model)
-    if not ai_key:
-        try:
-            await placeholder_message.edit_text(f"🚫 Ключи для модели {preferred_model} закончились.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-
     # Экранируем фигурные скобки в данных для предотвращения ошибок форматирования
     safe_user_message = escape_format_chars(user_message)
     safe_tavily_answer = escape_format_chars(tavily_answer)
@@ -226,10 +372,10 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     # Используем системную инструкцию из chat_state
     system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
     
-    final_answer, _ = await _get_ai_response(
-        ai_key['api_key'], 
-        [{'role': 'user', 'parts': [localization_prompt]}], 
-        model_used,
+    # Используем обертку с ротацией ключей
+    final_answer, _ = await _get_ai_response_with_key_rotation(
+        preferred_model,
+        [{'role': 'user', 'parts': [localization_prompt]}],
         system_instruction=system_instruction,
         user_id=user_id,
         chat_id=chat_id
@@ -262,7 +408,6 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
         await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
-        await _increment_key_usage(ai_key['key_hash'], model_used)
     else:
         # Пустой ответ
         try:
@@ -344,14 +489,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     # Используем модель из chat_state, если она указана, иначе используем настройки по умолчанию
     preferred_model = chat_state.model if chat_state.model else (settings.OPENROUTER_URL_SELECTION_MODEL if get_openrouter_keys() else settings.URL_SELECTION_MODEL)
     
-    ai_key, model_used, _ = await _resolve_ai_request(preferred_model)
-    if not ai_key:
-        try:
-            await placeholder_message.edit_text(f"🚫 Ключи для модели {preferred_model} (выбор URL) закончились.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-
     try:
         # Безопасная сериализация search_results
         safe_search_results = []
@@ -378,10 +515,10 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         # Используем системную инструкцию из chat_state
         system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
         
-        selected_urls_str, _ = await _get_ai_response(
-            ai_key['api_key'], 
-            [{'role': 'user', 'parts': parts}], 
-            model_used,
+        # Используем обертку с ротацией ключей
+        selected_urls_str, _ = await _get_ai_response_with_key_rotation(
+            preferred_model,
+            [{'role': 'user', 'parts': parts}],
             system_instruction=system_instruction,
             user_id=user_id,
             chat_id=chat_id
@@ -410,8 +547,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
             except Exception as edit_error:
                 logging.error(f"Could not edit placeholder message: {edit_error}")
             return
-        
-        await _increment_key_usage(ai_key['key_hash'], model_used)
     except Exception as gemini_error:
         logging.error(f"Error in Gemini URL selection: {gemini_error}")
         try:
@@ -462,14 +597,7 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     
     # Используем модель из chat_state или переопределение, если указано
     model_for_synthesis = model_override or chat_state.model or (settings.OPENROUTER_RESEARCH_MODEL if get_openrouter_keys() else settings.RESEARCH_MODEL)
-    ai_key, model_used, _ = await _resolve_ai_request(model_for_synthesis)
-    if not ai_key:
-        try:
-            await placeholder_message.edit_text(f"🚫 Ключи для модели {model_for_synthesis} закончились.")
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-        return
-    
+
     # Экранируем фигурные скобки в данных для предотвращения ошибок форматирования
     # Применяем экранирование к данным перед форматированием промпта
     safe_full_context = escape_format_chars(full_context)
@@ -526,10 +654,10 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
                 logging.error(f"Could not edit placeholder message: {edit_error}")
             return
         
-        response_text, new_token_count = await _get_ai_response(
-            ai_key['api_key'], 
+        # Используем обертку с ротацией ключей
+        response_text, new_token_count = await _get_ai_response_with_key_rotation(
+            model_for_synthesis,
             chat_state.history, 
-            model_used, 
             system_instruction=prompts.compose_system_instruction(chat_state.system_prompt),
             user_id=user_id,
             chat_id=chat_id
@@ -566,7 +694,6 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         else:
             # Успешный ответ
             await send_long_message(placeholder_message, response_text, is_deep_dive=True)
-            await _increment_key_usage(ai_key['key_hash'], model_used)
             chat_state.history.append({'role': 'model', 'parts': [response_text]})
             chat_state.token_count = new_token_count
             chat_state.is_deep_dive = True
@@ -899,6 +1026,9 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     # Обновляем историю в chat_state
     chat_state.history = final_context
     
+    # Используем системную инструкцию пользователя или инструкцию по умолчанию
+    system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
+    
     try:
         await placeholder_message.edit_text(f"🧠 Модель {model_used} думает...")
     except Exception as edit_error:
@@ -906,17 +1036,11 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         # Если не можем отредактировать, отправляем новое сообщение
         placeholder_message = await placeholder_message.reply_text(f"🧠 Модель {model_used} думает...")
     
-    # Используем системную инструкцию пользователя или инструкцию по умолчанию
-    system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
-    
-    # Логируем для отладки
-    if "/" in model_used:  # OpenRouter модель
-        logging.info(f"🔍 OpenRouter request: model={model_used}, system_prompt from chat_state={chat_state.system_prompt[:100] if chat_state.system_prompt else 'None'}..., system_instruction length={len(system_instruction) if system_instruction else 0}")
-    
-    response_text, new_token_count = await _get_ai_response(
-        ai_key['api_key'], 
+    # Используем обертку с ротацией ключей (но с уже полученным ключом через confirm_fallback)
+    # Если ключ не сработает, ротация автоматически попробует другие
+    response_text, new_token_count = await _get_ai_response_with_key_rotation(
+        model_used,  # Используем модель, которая уже была выбрана (возможно через fallback)
         chat_state.history, 
-        model_used, 
         system_instruction=system_instruction,
         user_id=user_id,
         chat_id=placeholder_message.chat.id if placeholder_message.chat else None
@@ -965,7 +1089,6 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
                     await placeholder_message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
                 except Exception:
                     await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
-            await _increment_key_usage(ai_key['key_hash'], model_used)
             chat_state.history.append({'role': 'model', 'parts': [response_text]})
             chat_state.token_count = new_token_count
             await db.update_user_chat(user_id, chat_state)

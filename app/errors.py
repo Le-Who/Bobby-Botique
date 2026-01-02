@@ -66,3 +66,67 @@ def is_retryable_error(text: str) -> bool:
     return any(pattern.lower() in text_lower or text.startswith(pattern) for pattern in retryable_patterns)
 
 
+def is_key_related_error(text: str) -> bool:
+    """
+    Определяет, является ли ошибка связанной с ключом API.
+    Такие ошибки требуют попытки с другим ключом.
+    
+    Ошибки, связанные с ключом:
+    - Quota Exceeded (🚫) - ключ валиден, но исчерпан лимит
+    - Invalid API Key - ключ невалиден
+    - Authentication Error - проблема с авторизацией
+    - Rate Limit (⏱️) - ключ валиден, но превышен лимит запросов/сек
+    
+    Ошибки, НЕ связанные с ключом (не требуют смены ключа):
+    - 503 Service Unavailable (🔄) - проблема сервера
+    - Timeout (⏰) - проблема сети/сервера
+    - Invalid Request (❌) - ошибка в запросе (коде)
+    """
+    if not text:
+        return False
+    
+    text_lower = text.lower()
+    
+    # Ошибки, связанные с ключом - пробуем другой ключ
+    key_related_patterns = [
+        "🚫",  # Quota/лимит
+        "⏱️",  # Rate limit
+        "quota",
+        "quota exceeded",
+        "limit",
+        "invalid api key",
+        "authentication",
+        "unauthorized",
+        "forbidden",
+        "api key",
+        "api_key",
+        "rate limit",
+        "rate_limit",
+        "достигнут лимит",
+        "превышен лимит",
+        "лимит запросов"
+    ]
+    
+    # Ошибки, НЕ связанные с ключом - не меняем ключ
+    not_key_related_patterns = [
+        "⏰",  # Timeout
+        "🔄",  # Service unavailable (503)
+        "503",
+        "unavailable",
+        "overloaded",
+        "timeout",
+        "превышено время ожидания",
+        "перегружен",
+        "некорректный запрос",
+        "invalid request",
+        "malformed"
+    ]
+    
+    # Сначала проверяем на ошибки, НЕ связанные с ключом (приоритет выше)
+    if any(pattern.lower() in text_lower or text.startswith(pattern) for pattern in not_key_related_patterns):
+        return False
+    
+    # Проверяем на ошибки, связанные с ключом
+    return any(pattern.lower() in text_lower or text.startswith(pattern) for pattern in key_related_patterns)
+
+
