@@ -57,50 +57,67 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
         except Exception as e:
             error_message = str(e).lower()
             
-            # Если это ошибка 503 и у нас еще есть попытки, пробуем снова
             if ("503" in str(e) or "unavailable" in error_message or "overloaded" in error_message) and attempt < max_retries - 1:
-                wait_time = (attempt + 1) * 2  # Экспоненциальная задержка: 2, 4, 6 секунд
+                # Экспоненциальная задержка с максимумом 10 секунд
+                wait_time = min(2 ** (attempt + 1), 10)
                 logging.warning(f"Gemini API overloaded (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time} seconds...")
                 await asyncio.sleep(wait_time)
                 continue
             else:
-                # Если это не 503 ошибка или попытки закончились, пробрасываем ошибку
                 raise
     
     # Этот код не должен выполняться, но на всякий случай
     return "❌ Превышено максимальное количество попыток. Попробуйте позже.", None
 
+async def _save_image_as_bytes(image: Image.Image, timeout: float = 5.0, max_size_mb: int = 10) -> Optional[bytes]:
+    """Сохраняет изображение как bytes с timeout и сжатием."""
+    import io, math
+    try:
+        # Проверяем размер в памяти
+        img_bytes_approx = len(image.tobytes())
+        if img_bytes_approx > max_size_mb * 1024 * 1024:
+             # Уменьшаем
+            ratio = math.sqrt((max_size_mb * 1024 * 1024) / img_bytes_approx)
+            new_size = tuple(int(dim * ratio) for dim in image.size)
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+
+        def _save():
+            buf = io.BytesIO()
+            image.save(buf, format='JPEG', quality=85, optimize=True)
+            return buf.getvalue()
+
+        return await asyncio.wait_for(asyncio.to_thread(_save), timeout=timeout)
+    except Exception as e:
+        logging.error(f"Image processing error: {e}")
+        return None
+
 async def _execute_gemini_request(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None):
     """
     Внутренняя функция для выполнения запроса к Gemini API.
     """
-    # Инициализируем start_time по умолчанию
-    start_time = None
+    # Гарантированная инициализация времени
+    start_time = time.time()
     
     try:
         await metrics_collector.record_api_call("gemini", model_name)
         
-        # Детальное логирование Gemini API запроса
         try:
             prompt_length = sum(len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None)
             has_images = any(isinstance(part, Image.Image) for item in history for part in (item.get("parts", []) or []) if part is not None)
         except Exception as e:
-            logging.warning(f"Error calculating prompt metrics: {e}, using fallback values")
+            logging.warning(f"Metrics calc error: {e}")
             prompt_length = 0
             has_images = False
         
-        start_time = api_logger.log_gemini_request(
+        # Логируем с явным start_time
+        api_logger.log_gemini_request(
             model=model_name,
             prompt_length=prompt_length,
             has_images=has_images,
             user_id=user_id,
-            chat_id=chat_id
+            chat_id=chat_id,
+            start_time=start_time
         )
-        
-        # Дополнительная проверка start_time
-        if start_time is None or not isinstance(start_time, (int, float)):
-            logging.warning(f"Invalid start_time returned from log_gemini_request: {start_time}, using current time")
-            start_time = time.time()
         
         client = genai.Client(api_key=api_key)
         
@@ -123,30 +140,24 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
                 # Преобразуем PIL Image в Part, если необходимо
                 processed_parts = []
                 for part in parts:
-                    if isinstance(part, Image.Image): # Проверяем, является ли объект PIL Image
-                        # Правильно создаем Part для изображения
-                        # Конвертируем PIL Image в bytes для Gemini API
-                        import io
-                        img_byte_arr = io.BytesIO()
-                        part.save(img_byte_arr, format='JPEG')
-                        img_byte_arr = img_byte_arr.getvalue()
+                    if isinstance(part, Image.Image): 
+                        # Используем безопасное сохранение с таймаутом
+                        img_bytes = await _save_image_as_bytes(part)
                         
-                        try:
-                            # Создаем Part для изображения используя правильный метод
-                            # Согласно документации google-genai, используем inline_data
-                            image_part = types.Part(
-                                inline_data=types.Blob(
-                                    mime_type="image/jpeg",
-                                    data=img_byte_arr
+                        if img_bytes:
+                            try:
+                                image_part = types.Part(
+                                    inline_data=types.Blob(
+                                        mime_type="image/jpeg",
+                                        data=img_bytes
+                                    )
                                 )
-                            )
-                        except Exception as e:
-                            logging.warning(f"Failed to create image part: {e}")
-                            # Fallback: пропускаем изображение
-                            logging.warning(f"Skipping image part due to creation error")
-                            continue
-                        
-                        processed_parts.append(image_part)
+                                processed_parts.append(image_part)
+                            except Exception as e:
+                                logging.warning(f"Failed to create image part: {e}")
+                        else:
+                            logging.warning("Skipping image part due to processing error")
+                        continue
                     else:
                         # Безопасное преобразование текста - убеждаемся, что это строка
                         try:
