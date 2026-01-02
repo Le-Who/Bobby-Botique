@@ -254,10 +254,10 @@ async def _get_ai_response(api_key: str, history: list, model_name: str, system_
     
     # Используем соответствующий провайдер
     if use_openrouter:
-        logging.info(f"🔍 _get_ai_response: routing to OpenRouter, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}")
+        logging.info(f"🔍 _get_ai_response: routing to OpenRouter, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
         return await services.get_openrouter_response(api_key, history, model_name, system_instruction, user_id, chat_id)
     else:
-        logging.info(f"🔍 _get_ai_response: routing to Gemini, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}")
+        logging.info(f"🔍 _get_ai_response: routing to Gemini, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
         return await services.get_gemini_response(api_key, history, model_name, system_instruction, user_id, chat_id)
 
 async def _get_ai_response_with_key_rotation(

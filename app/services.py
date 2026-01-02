@@ -529,8 +529,8 @@ async def get_openrouter_response(api_key: str, history: list, model_name: str, 
     if chat_id is not None and not isinstance(chat_id, int):
         raise ValueError("chat_id must be an integer")
     
-    # Логируем входящие параметры (без деталей промптов для безопасности)
-    logging.info(f"🔍 get_openrouter_response called: model={model_name}, system_instruction={'provided' if system_instruction else 'None'}")
+    # Логируем входящие параметры
+    logging.info(f"🔍 get_openrouter_response called: model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
     
     # Retry механизм для ошибок 503
     for attempt in range(max_retries):
@@ -585,7 +585,7 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
                     "role": "system",
                     "content": system_content
                 })
-                logging.info(f"✅ OpenRouter: Added system instruction (length: {len(system_content)})")
+                logging.info(f"✅ OpenRouter: Added system instruction (length: {len(system_content)}, preview: {system_content[:100]}...)")
             else:
                 logging.warning(f"⚠️ OpenRouter: system_instruction is empty after strip()")
         else:
@@ -668,11 +668,11 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
             "messages": messages
         }
         
-        # Логируем структуру сообщений для отладки (без содержимого для безопасности)
+        # Логируем структуру сообщений для отладки
         has_system = len(messages) > 0 and messages[0].get("role") == "system"
         if has_system:
             system_content = messages[0].get('content', '')
-            logging.info(f"✅ OpenRouter: Request includes system message (length: {len(system_content)})")
+            logging.info(f"✅ OpenRouter: Request includes system message (length: {len(system_content)}, first 200 chars: {system_content[:200]}...)")
         else:
             logging.warning(f"⚠️ OpenRouter: Request does NOT include system message! Total messages: {len(messages)}")
             if len(messages) > 0:
