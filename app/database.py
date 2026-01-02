@@ -286,7 +286,12 @@ async def init_db():
     global db_pool
     if not settings.DATABASE_URL:
         raise Exception("DATABASE_URL not set")
+    
     db_pool = await _create_db_pool()
+    
+    # ДОДАЙТЕ ЦЮ ПЕРЕВІРКУ:
+    if not db_pool:
+        raise Exception("Failed to create database pool")
     
     # Apply Supabase-specific optimizations
     await optimize_database_connections()
