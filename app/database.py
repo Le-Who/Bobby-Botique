@@ -21,7 +21,40 @@ db_pool: Optional[Pool] = None
 _active_keys_cache: Dict[str, Dict[str, Any]] = {}
 _cache_lock = asyncio.Lock()
 _cache_last_updated: Dict[str, float] = {}
-_cache_ttl = 60  # 1 минута TTL для кэша (было 300)
+_cache_ttl = 60  # 1 минута TTL для кэша
+_max_cache_size = 100  # Максимальный размер кэша
+
+async def _cleanup_expired_cache():
+    """Периодически очищает просроченные записи кэша."""
+    while True:
+        try:
+            async with _cache_lock:
+                current_time = time.time()
+                expired_keys = []
+                
+                # Поиск просроченных ключей
+                for model_name, update_time in _cache_last_updated.items():
+                    if current_time - update_time > _cache_ttl:
+                        expired_keys.append(model_name)
+                
+                # Удаление просроченных
+                for key in expired_keys:
+                    del _active_keys_cache[key]
+                    del _cache_last_updated[key]
+                
+                # Очистка если превышен размер
+                if len(_active_keys_cache) > _max_cache_size:
+                    sorted_items = sorted(_cache_last_updated.items(), key=lambda x: x[1])
+                    for key, _ in sorted_items[:len(_active_keys_cache) - _max_cache_size]:
+                        del _active_keys_cache[key]
+                        del _cache_last_updated[key]
+            
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logging.error(f"Cache cleanup error: {e}")
+            await asyncio.sleep(60)
 
 @dataclass
 class ChatState:
@@ -41,15 +74,18 @@ async def _create_db_pool():
     try:
         pool = await asyncpg.create_pool(
             dsn=settings.DATABASE_URL, 
-            min_size=2, 
-            max_size=10,  # Optimized for Supabase.com free tier (200 concurrent connections)
-            command_timeout=60,  # 60 seconds timeout for Supabase
+            min_size=5,  # Increased from 2
+            max_size=20, # Increased from 10 (Supabase free tier max is 200)
+            command_timeout=30,  # Reduced timeout for fail-fast
             statement_cache_size=0,  # CRITICAL: Disable prepared statements for PgBouncer compatibility
+            max_cached_statement_lifetime=300,
+            max_cacheable_statement_size=15000,
             server_settings={
                 'application_name': 'gemaibotv2',
-                'tcp_keepalives_idle': '60',
+                'tcp_keepalives_idle': '30',
                 'tcp_keepalives_interval': '10',
-                'tcp_keepalives_count': '6'
+                'tcp_keepalives_count': '5',
+                'jit': 'off' # Disable JIT to save memory
             }
         )
         
@@ -387,6 +423,15 @@ async def init_db():
         key_hash = hashlib.sha256(key.encode()).hexdigest()
         await db_query("INSERT INTO openrouter_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
 
+    # Добавляем отсутствующие индексы
+    await db_query("CREATE INDEX IF NOT EXISTS idx_chats_user_id ON chats(user_id)")
+    await db_query("CREATE INDEX IF NOT EXISTS idx_conversation_messages_conv_id ON conversation_messages(conversation_id)")
+    await db_query("CREATE INDEX IF NOT EXISTS idx_conversations_user_created ON conversations(user_id, created_at DESC)")
+    await db_query("CREATE INDEX IF NOT EXISTS idx_key_usage_model_date ON key_usage(model_name, usage_date)")
+
+    # Запускаем задачу очистки кэша
+    asyncio.create_task(_cleanup_expired_cache())
+
 async def setup_row_level_security():
     """Настраивает Row Level Security для всех таблиц"""
     try:
@@ -427,11 +472,22 @@ async def setup_row_level_security():
     except Exception as e:
         logging.error(f"Error setting up RLS: {e}")
 
+VALID_TABLES = {
+    'users', 'chats', 'roles', 'user_roles', 'conversations', 
+    'conversation_messages', 'user_documents', 'api_keys', 'key_usage',
+    'tavily_api_keys', 'tavily_key_usage', 'openrouter_api_keys', 
+    'openrouter_key_usage', 'group_chats', 'group_members', 
+    'group_messages', 'metrics', 'error_logs'
+}
+
 async def create_rls_policies(table_name: str):
     """Создает политики безопасности для таблицы"""
+    if table_name not in VALID_TABLES:
+        logging.error(f"Invalid table name for RLS policy: {table_name}")
+        return
+
     try:
         if table_name == 'users':
-            # Проверяем существование политики перед созданием
             try:
                 existing_policy = await db_query("""
                     SELECT 1 FROM pg_policies 
@@ -439,7 +495,6 @@ async def create_rls_policies(table_name: str):
                 """)
                 
                 if not existing_policy:
-                    # Создаем единую политику для всех операций с пользователями
                     await db_query("""
                         CREATE POLICY users_policy ON users
                         FOR ALL USING (
@@ -454,17 +509,13 @@ async def create_rls_policies(table_name: str):
             except Exception as e:
                 logging.error(f"Failed to create users_policy: {e}")
                 raise e
-                
-                # Создаем индекс для оптимизации RLS политики
-                try:
-                    await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_user_id_rls ON users(user_id)")
-                    logging.info(f"Created index for RLS optimization on {table_name}")
-                except Exception as e:
-                    logging.warning(f"Could not create index for {table_name}: {e}")
-                    
+            
+            # Индекс создается ПОСЛЕ успешной проверки/создания политики
+            try:
+                await db_query("CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_user_id_rls ON users(user_id)")
+                logging.info(f"Created index for RLS optimization on {table_name}")
             except Exception as e:
-                logging.error(f"Failed to create users_policy: {e}")
-                raise e
+                logging.warning(f"Could not create index for {table_name}: {e}")
             
         elif table_name == 'chats':
             # Проверяем существование политики перед созданием
@@ -817,36 +868,32 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     """
     Получает доступный ключ Gemini API для модели.
-    Использует кэширование для оптимизации и стратегию "один ключ до исчерпания лимита".
-    
-    Args:
-        model_name: Название модели (gemini-2.5-flash, gemini-2.5-pro, etc.)
-        
-    Returns:
-        Dict с key_hash и api_key или None если все ключи исчерпаны
+    Исправлен Race Condition: блокировка держится до конца операции обновления.
     """
-    # Валидация входных параметров
     if not isinstance(model_name, str) or not model_name.strip():
         raise ValueError("model_name must be a non-empty string")
     
-    # Устанавливаем админский контекст для работы с API ключами
     await set_user_context(settings.ADMIN_ID, True)
     
     try:
         async with _cache_lock:
-            # Проверяем кэш
+            # 1. Проверяем кэш с учетом TTL
             if model_name in _active_keys_cache:
                 cached_key = _active_keys_cache[model_name]
-                # Проверяем, не исчерпан ли кэшированный ключ
-                if await _is_key_available(cached_key['key_hash'], model_name):
-                    return cached_key
-                else:
-                    # Ключ исчерпан, удаляем из кэша
-                    del _active_keys_cache[model_name]
-                    if model_name in _cache_last_updated:
-                        del _cache_last_updated[model_name]
+                last_update = _cache_last_updated.get(model_name, 0)
+                
+                # Если кэш свежий
+                if time.time() - last_update < _cache_ttl:
+                    # Проверяем лимит (быстрая проверка)
+                    if await _is_key_available(cached_key['key_hash'], model_name):
+                        return cached_key
+                
+                # Если устарел или исчерпан - удаляем
+                del _active_keys_cache[model_name]
+                if model_name in _cache_last_updated:
+                    del _cache_last_updated[model_name]
             
-            # Если кэш пуст или ключ исчерпан, получаем новый
+            # 2. Получаем новый ключ (внутри той же блокировки!)
             new_key = await _get_fresh_available_key(model_name)
             if new_key:
                 _active_keys_cache[model_name] = new_key
@@ -854,7 +901,6 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
             
             return new_key
     finally:
-        # Очищаем контекст пользователя
         await clear_user_context()
 
 async def _is_key_available(key_hash: str, model_name: str) -> bool:
