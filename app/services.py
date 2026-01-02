@@ -109,14 +109,13 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
             prompt_length = 0
             has_images = False
         
-        # Логируем с явным start_time
-        api_logger.log_gemini_request(
+        # Логируем запрос (функция вернет start_time)
+        start_time = api_logger.log_gemini_request(
             model=model_name,
             prompt_length=prompt_length,
             has_images=has_images,
             user_id=user_id,
-            chat_id=chat_id,
-            start_time=start_time
+            chat_id=chat_id
         )
         
         client = genai.Client(api_key=api_key)
