@@ -269,9 +269,10 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
             
             return "❌ API вернул некорректный ответ. Попробуйте еще раз.", None
         
-        # Проверяем, что response.text не None перед логированием
-        if response.text is None:
-            error_msg = "Gemini API returned None response text"
+        # Безопасная проверка и извлечение response.text
+        response_text = response.text if response.text else ""
+        if not response_text:
+            error_msg = "Gemini API returned None or empty response text"
             logging.error(error_msg)
             await metrics_collector.record_error("gemini_none_response", error_msg)
             
@@ -289,19 +290,19 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
             
             return "❌ API вернул пустой ответ. Попробуйте еще раз.", None
         
-        # Логируем успешный ответ Gemini API
+        # Логируем успешный ответ Gemini API (используем безопасную переменную)
         if start_time is not None:
             api_logger.log_gemini_response(
                 start_time=start_time,
                 model=model_name,
-                response_length=len(response.text),
+                response_length=len(response_text),
                 token_count=token_count_response.total_tokens,
                 success=True,
                 user_id=user_id,
                 chat_id=chat_id
             )
         
-        return response.text, token_count_response.total_tokens
+        return response_text, token_count_response.total_tokens
         
     except asyncio.TimeoutError:
         error_msg = f"Gemini API request timed out for model {model_name}"
@@ -528,8 +529,8 @@ async def get_openrouter_response(api_key: str, history: list, model_name: str, 
     if chat_id is not None and not isinstance(chat_id, int):
         raise ValueError("chat_id must be an integer")
     
-    # Логируем входящие параметры
-    logging.info(f"🔍 get_openrouter_response called: model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
+    # Логируем входящие параметры (без деталей промптов для безопасности)
+    logging.info(f"🔍 get_openrouter_response called: model={model_name}, system_instruction={'provided' if system_instruction else 'None'}")
     
     # Retry механизм для ошибок 503
     for attempt in range(max_retries):
@@ -584,7 +585,7 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
                     "role": "system",
                     "content": system_content
                 })
-                logging.info(f"✅ OpenRouter: Added system instruction (length: {len(system_content)}, preview: {system_content[:100]}...)")
+                logging.info(f"✅ OpenRouter: Added system instruction (length: {len(system_content)})")
             else:
                 logging.warning(f"⚠️ OpenRouter: system_instruction is empty after strip()")
         else:
@@ -667,11 +668,11 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
             "messages": messages
         }
         
-        # Логируем структуру сообщений для отладки
+        # Логируем структуру сообщений для отладки (без содержимого для безопасности)
         has_system = len(messages) > 0 and messages[0].get("role") == "system"
         if has_system:
             system_content = messages[0].get('content', '')
-            logging.info(f"✅ OpenRouter: Request includes system message (length: {len(system_content)}, first 200 chars: {system_content[:200]}...)")
+            logging.info(f"✅ OpenRouter: Request includes system message (length: {len(system_content)})")
         else:
             logging.warning(f"⚠️ OpenRouter: Request does NOT include system message! Total messages: {len(messages)}")
             if len(messages) > 0:

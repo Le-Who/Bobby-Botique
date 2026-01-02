@@ -14,6 +14,52 @@ from app import prompts
 from app.metrics import metrics_collector
 from app.utils.formatting import escape_format_chars
 
+async def handle_ai_response_error(response_text: str, placeholder_message: Message, on_error_callback=None) -> bool:
+    """
+    Универсальная обработка ошибок AI ответов.
+    Убирает дублирование кода обработки ошибок.
+    
+    Args:
+        response_text: Текст ответа от AI
+        placeholder_message: Сообщение для редактирования
+        on_error_callback: Опциональный callback для дополнительных действий при ошибке (async функция)
+    
+    Returns:
+        True если это была ошибка и она была обработана, False если это не ошибка
+    """
+    from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard, build_roles_keyboard
+    
+    if not response_text or not is_error_message(response_text):
+        return False
+    
+    # Выполняем дополнительные действия перед обработкой ошибки (например, очистка истории)
+    if on_error_callback:
+        try:
+            if asyncio.iscoroutinefunction(on_error_callback):
+                await on_error_callback()
+            else:
+                on_error_callback()
+        except Exception as e:
+            logging.error(f"Error in on_error_callback: {e}")
+    
+    # Определяем тип клавиатуры в зависимости от типа ошибки
+    if is_retryable_error(response_text):
+        reply_markup = build_retry_and_roles_keyboard()
+    else:
+        reply_markup = build_roles_keyboard()
+    
+    # Пытаемся отредактировать сообщение, если не получается - отправляем новое
+    try:
+        await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
+    except Exception as edit_error:
+        logging.error(f"Could not edit placeholder message: {edit_error}")
+        try:
+            await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
+        except Exception:
+            pass
+    
+    return True
+
 async def _resolve_ai_request(preferred_model: str, use_openrouter: bool = None, excluded_key_hashes: set = None):
     """
     Универсальная функция для получения ключа и модели для AI запроса.
@@ -208,10 +254,10 @@ async def _get_ai_response(api_key: str, history: list, model_name: str, system_
     
     # Используем соответствующий провайдер
     if use_openrouter:
-        logging.info(f"🔍 _get_ai_response: routing to OpenRouter, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
+        logging.info(f"🔍 _get_ai_response: routing to OpenRouter, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}")
         return await services.get_openrouter_response(api_key, history, model_name, system_instruction, user_id, chat_id)
     else:
-        logging.info(f"🔍 _get_ai_response: routing to Gemini, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
+        logging.info(f"🔍 _get_ai_response: routing to Gemini, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}")
         return await services.get_gemini_response(api_key, history, model_name, system_instruction, user_id, chat_id)
 
 async def _get_ai_response_with_key_rotation(
@@ -381,25 +427,9 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
         chat_id=chat_id
     )
     
-    # Проверяем, является ли ответ ошибкой
-    from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
-    
-    if final_answer and is_error_message(final_answer):
-        # Это ошибка - показываем с кнопкой повтора, если ошибка временная
-        if is_retryable_error(final_answer):
-            reply_markup = build_retry_and_roles_keyboard()
-        else:
-            from app.errors import build_roles_keyboard
-            reply_markup = build_roles_keyboard()
-        
-        try:
-            await placeholder_message.edit_text(final_answer, reply_markup=reply_markup)
-        except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-            try:
-                await placeholder_message.reply_text(final_answer, reply_markup=reply_markup)
-            except Exception:
-                pass
+    # Проверяем, является ли ответ ошибкой (используем универсальную функцию)
+    if await handle_ai_response_error(final_answer, placeholder_message):
+        return  # Ошибка обработана, выходим
     elif final_answer:
         # Успешный ответ
         buttons = [
@@ -676,21 +706,13 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         # Проверяем, является ли ответ ошибкой
         from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
         
-        if is_error_message(response_text):
-            # Это ошибка - не добавляем в историю и показываем с кнопкой повтора
+        # Используем универсальную функцию обработки ошибок
+        async def cleanup_on_error():
             chat_state.history.pop()  # Убираем добавленный промпт
             await db.update_user_chat(user_id, chat_state)
-            
-            if is_retryable_error(response_text):
-                reply_markup = build_retry_and_roles_keyboard()
-            else:
-                from app.errors import build_roles_keyboard
-                reply_markup = build_roles_keyboard()
-            
-            try:
-                await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
-            except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
+        
+        if await handle_ai_response_error(response_text, placeholder_message, on_error_callback=cleanup_on_error):
+            return  # Ошибка обработана, выходим
         else:
             # Успешный ответ
             await send_long_message(placeholder_message, response_text, is_deep_dive=True)
@@ -907,22 +929,9 @@ _Основные сервисы:_
             # Проверяем, является ли ответ ошибкой
             from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
             
-            if is_error_message(response_text):
-                # Это ошибка - показываем с кнопкой повтора
-                if is_retryable_error(response_text):
-                    reply_markup = build_retry_and_roles_keyboard()
-                else:
-                    from app.errors import build_roles_keyboard
-                    reply_markup = build_roles_keyboard()
-                
-                try:
-                    await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
-                except Exception as edit_error:
-                    logging.error(f"Could not edit placeholder message: {edit_error}")
-                    try:
-                        await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
-                    except Exception:
-                        pass
+            # Используем универсальную функцию обработки ошибок
+            if await handle_ai_response_error(response_text, placeholder_message):
+                return  # Ошибка обработана, выходим
             else:
                 # Успешный ответ - показываем обычные кнопки для документов
                 keyboard = [
@@ -1050,23 +1059,13 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         # Проверяем, является ли ответ ошибкой
         from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
         
-        if is_error_message(response_text):
-            # Это ошибка - не добавляем в историю и показываем с кнопкой повтора
+        # Используем универсальную функцию обработки ошибок
+        async def cleanup_on_error():
             chat_state.history.pop()  # Убираем добавленный промпт
             await db.update_user_chat(user_id, chat_state)
-            
-            # Если ошибка временная, показываем кнопку повтора
-            if is_retryable_error(response_text):
-                reply_markup = build_retry_and_roles_keyboard()
-            else:
-                # Для постоянных ошибок (quota, invalid request) не показываем кнопку повтора
-                from app.errors import build_roles_keyboard
-                reply_markup = build_roles_keyboard()
-            
-            try:
-                await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
-            except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
+        
+        if await handle_ai_response_error(response_text, placeholder_message, on_error_callback=cleanup_on_error):
+            return  # Ошибка обработана, выходим
                 try:
                     await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
                 except Exception:

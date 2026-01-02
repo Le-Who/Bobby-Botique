@@ -17,9 +17,52 @@ from app import prompts
 from app.services import get_gemini_response
 from app.handlers import agent
 from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state, set_last_custom_role_prompt, get_last_custom_role_prompt, set_generating_custom_role
+from app.security import check_user_rate_limit
 
 # Глобальный словарь для хранения групп изображений
 MEDIA_GROUPS = {}
+MEDIA_GROUPS_TTL = {}  # TTL для автоматической очистки старых групп
+MEDIA_GROUP_TIMEOUT = 300  # 5 минут таймаут для группы изображений
+
+async def cleanup_old_media_groups():
+    """Очищает старые группы изображений для предотвращения утечки памяти"""
+    current_time = asyncio.get_event_loop().time()
+    expired_groups = []
+    
+    for media_group_id, created_at in MEDIA_GROUPS_TTL.items():
+        if current_time - created_at > MEDIA_GROUP_TIMEOUT:
+            expired_groups.append(media_group_id)
+    
+    for media_group_id in expired_groups:
+        MEDIA_GROUPS.pop(media_group_id, None)
+        MEDIA_GROUPS_TTL.pop(media_group_id, None)
+        logging.info(f"🧹 Очищена устаревшая группа изображений: {media_group_id}")
+    
+    if expired_groups:
+        logging.info(f"🧹 Очищено {len(expired_groups)} устаревших групп изображений")
+
+# Запускаем периодическую очистку при импорте модуля
+_cleanup_task = None
+
+async def start_media_groups_cleanup():
+    """Запускает периодическую очистку групп изображений"""
+    global _cleanup_task
+    if _cleanup_task and not _cleanup_task.done():
+        return
+    
+    async def cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(60)  # Проверяем каждую минуту
+                await cleanup_old_media_groups()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logging.error(f"Error in media groups cleanup: {e}")
+                await asyncio.sleep(60)
+    
+    _cleanup_task = asyncio.create_task(cleanup_loop())
+    logging.info("Media groups cleanup task started")
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает входящие сообщения"""
@@ -46,15 +89,21 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Инициализируем группу, если её нет
         if media_group_id not in MEDIA_GROUPS:
+            current_time = asyncio.get_event_loop().time()
             MEDIA_GROUPS[media_group_id] = {
                 'user_id': user_id,
                 'chat_id': chat_id,
                 'messages': [],
                 'caption': update.message.caption,
-                'created_at': asyncio.get_event_loop().time(),
+                'created_at': current_time,
                 'placeholder_message': None,
                 'processing_scheduled': False
             }
+            # Устанавливаем TTL для автоматической очистки
+            MEDIA_GROUPS_TTL[media_group_id] = current_time
+            # Запускаем очистку при первом создании группы
+            if _cleanup_task is None or _cleanup_task.done():
+                asyncio.create_task(start_media_groups_cleanup())
         
         # Добавляем сообщение в группу
         MEDIA_GROUPS[media_group_id]['messages'].append(update.message)
@@ -89,6 +138,14 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     logging.info("Received message from user %s: %s", user_id, message_text[:100])
+    
+    # Проверка rate limit для защиты от злоупотреблений
+    if not await check_user_rate_limit(user_id):
+        logging.warning("Rate limit exceeded for user %s", user_id)
+        await update.message.reply_text(
+            "⏱️ Превышен лимит запросов. Пожалуйста, подождите немного перед следующим запросом."
+        )
+        return
     
     if not await db.is_authorized(user_id):
         logging.warning("Unauthorized user %s attempted to use bot", user_id)
@@ -325,14 +382,20 @@ async def delayed_process_media_group(media_group_id: str, context: ContextTypes
         
         logging.info(f"⏰ Отложенная обработка media_group_id {media_group_id}: {message_count} сообщений")
         
-        # Если это действительно группа (больше 1 изображения), обрабатываем как группу
-        if message_count > 1:
-            logging.info(f"🔄 Обрабатываю группу из {message_count} изображений")
-            await process_media_group(media_group_id, context)
-        else:
-            # Если это одиночное изображение, обрабатываем через стандартный путь
-            logging.info(f"📸 Одиночное изображение, перенаправляю в стандартную обработку")
-            await process_single_image_from_group(media_group_id, context)
+        try:
+            # Если это действительно группа (больше 1 изображения), обрабатываем как группу
+            if message_count > 1:
+                logging.info(f"🔄 Обрабатываю группу из {message_count} изображений")
+                await process_media_group(media_group_id, context)
+            else:
+                # Если это одиночное изображение, обрабатываем через стандартный путь
+                logging.info(f"📸 Одиночное изображение, перенаправляю в стандартную обработку")
+                await process_single_image_from_group(media_group_id, context)
+        finally:
+            # Очищаем группу после обработки
+            MEDIA_GROUPS.pop(media_group_id, None)
+            MEDIA_GROUPS_TTL.pop(media_group_id, None)
+            logging.info(f"🧹 Очищена обработанная группа изображений: {media_group_id}")
 
 async def process_single_image_from_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает одиночное изображение из группы"""
@@ -361,9 +424,12 @@ async def process_single_image_from_group(media_group_id: str, context: ContextT
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
     finally:
-        # Очищаем группу
+        # Очищаем группу (включая TTL)
         if media_group_id in MEDIA_GROUPS:
             del MEDIA_GROUPS[media_group_id]
+        if media_group_id in MEDIA_GROUPS_TTL:
+            del MEDIA_GROUPS_TTL[media_group_id]
+        logging.info(f"🧹 Очищена одиночная группа изображений {media_group_id}")
 
 async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает группу изображений как единое целое"""
@@ -409,10 +475,12 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
             logging.error(f"Could not edit placeholder message: {edit_error}")
     
     finally:
-        # Очищаем группу из памяти
+        # Очищаем группу из памяти (включая TTL)
         if media_group_id in MEDIA_GROUPS:
             del MEDIA_GROUPS[media_group_id]
-            logging.info(f"🧹 Очищена группа изображений {media_group_id}")
+        if media_group_id in MEDIA_GROUPS_TTL:
+            del MEDIA_GROUPS_TTL[media_group_id]
+        logging.info(f"🧹 Очищена группа изображений {media_group_id}")
 
 async def handle_document_question(update: Update, context: ContextTypes.DEFAULT_TYPE, document_id: int):
     """Обрабатывает вопрос по конкретному документу"""

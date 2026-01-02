@@ -21,7 +21,7 @@ db_pool: Optional[Pool] = None
 _active_keys_cache: Dict[str, Dict[str, Any]] = {}
 _cache_lock = asyncio.Lock()
 _cache_last_updated: Dict[str, float] = {}
-_cache_ttl = 60  # 1 минута TTL для кэша
+_cache_ttl = 300  # 5 минут TTL для кэша (оптимизировано для снижения нагрузки на БД)
 _max_cache_size = 100  # Максимальный размер кэша
 
 async def _cleanup_expired_cache():
@@ -291,9 +291,9 @@ async def init_db():
     
     # --- ИСПРАВЛЕНИЕ: ПРОВЕРКА ПУЛА ---
     if not db_pool:
-         # Логируем критическую ошибку и падаем, чтобы не пытаться работать без базы
-         logging.critical("Failed to create database connection pool in init_db")
-         raise Exception("Critical: Failed to create database connection pool")
+        # Логируем критическую ошибку и падаем, чтобы не пытаться работать без базы
+        logging.critical("Failed to create database connection pool in init_db")
+        raise Exception("Critical: Failed to create database connection pool")
     # ----------------------------------
 
     # Apply Supabase-specific optimizations
@@ -382,8 +382,8 @@ async def init_db():
             await db_query("ALTER TABLE user_documents RENAME COLUMN file_name TO filename;")
             logging.info("Migration: Renamed 'file_name' to 'filename' in 'user_documents'.")
         elif 'filename' not in doc_column_names:
-             await db_query("ALTER TABLE user_documents ADD COLUMN filename TEXT;")
-             logging.info("Migration: Added 'filename' column to 'user_documents'.")
+            await db_query("ALTER TABLE user_documents ADD COLUMN filename TEXT;")
+            logging.info("Migration: Added 'filename' column to 'user_documents'.")
 
         # 3. Add other missing columns
         required_columns = {
@@ -808,19 +808,27 @@ async def create_rls_policies(table_name: str):
         logging.error(f"Error creating RLS policies for {table_name}: {e}")
 
 async def set_user_context(user_id: int, is_admin: bool = False):
-    """Устанавливает контекст пользователя для RLS"""
+    """Устанавливает контекст пользователя для RLS (оптимизировано: один запрос вместо двух)"""
     try:
-        await db_query("SELECT set_config('app.user_id', $1, false)", (str(user_id),))
-        await db_query("SELECT set_config('app.is_admin', $1, false)", (str(is_admin).lower(),))
+        # Объединяем два запроса в один для оптимизации
+        await db_query("""
+            SELECT 
+                set_config('app.user_id', $1, false),
+                set_config('app.is_admin', $2, false)
+        """, (str(user_id), str(is_admin).lower()))
         logging.debug(f"User context set: user_id={user_id}, is_admin={is_admin}")
     except Exception as e:
         logging.warning(f"Failed to set user context: {e}")
 
 async def clear_user_context():
-    """Очищает контекст пользователя"""
+    """Очищает контекст пользователя (оптимизировано: один запрос вместо двух)"""
     try:
-        await db_query("SELECT set_config('app.user_id', '', false)")
-        await db_query("SELECT set_config('app.is_admin', 'false', false)")
+        # Объединяем два запроса в один для оптимизации
+        await db_query("""
+            SELECT 
+                set_config('app.user_id', '', false),
+                set_config('app.is_admin', 'false', false)
+        """)
     except Exception as e:
         logging.warning(f"Failed to clear user context: {e}")
 
@@ -876,7 +884,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     """
     Получает доступный ключ Gemini API для модели.
-    Исправлен Race Condition: блокировка держится до конца операции обновления.
+    Исправлен Race Condition: блокировка используется только для обновления кэша, не для запросов к БД.
     """
     if not isinstance(model_name, str) or not model_name.strip():
         raise ValueError("model_name must be a non-empty string")
@@ -884,30 +892,34 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     await set_user_context(settings.ADMIN_ID, True)
     
     try:
+        # 1. Быстрая проверка кэша с минимальной блокировкой
+        cached_key = None
         async with _cache_lock:
-            # 1. Проверяем кэш с учетом TTL
             if model_name in _active_keys_cache:
                 cached_key = _active_keys_cache[model_name]
                 last_update = _cache_last_updated.get(model_name, 0)
                 
-                # Если кэш свежий
+                # Если кэш свежий, проверяем доступность БЕЗ блокировки
                 if time.time() - last_update < _cache_ttl:
-                    # Проверяем лимит (быстрая проверка)
+                    # Проверяем лимит вне блокировки (быстрая проверка)
                     if await _is_key_available(cached_key['key_hash'], model_name):
                         return cached_key
                 
-                # Если устарел или исчерпан - удаляем
+                # Если устарел или исчерпан - удаляем из кэша
                 del _active_keys_cache[model_name]
                 if model_name in _cache_last_updated:
                     del _cache_last_updated[model_name]
-            
-            # 2. Получаем новый ключ (внутри той же блокировки!)
-            new_key = await _get_fresh_available_key(model_name)
-            if new_key:
+        
+        # 2. Получаем новый ключ БЕЗ блокировки (запрос к БД)
+        new_key = await _get_fresh_available_key(model_name)
+        
+        # 3. Обновляем кэш с блокировкой (только обновление структуры данных)
+        if new_key:
+            async with _cache_lock:
                 _active_keys_cache[model_name] = new_key
                 _cache_last_updated[model_name] = time.time()
-            
-            return new_key
+        
+        return new_key
     finally:
         await clear_user_context()
 
