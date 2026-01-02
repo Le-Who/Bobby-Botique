@@ -4,8 +4,14 @@ import asyncio
 import signal
 import datetime
 import time
-import fcntl
 import sys
+
+# fcntl доступен только на Unix-подобных системах
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler
 from telegram.error import NetworkError, TimedOut, RetryAfter, Conflict
@@ -231,6 +237,48 @@ def acquire_lock():
     """Приобретает блокировку файла для предотвращения множественных экземпляров"""
     global lock_file, lock_fd
     
+    # На Windows без fcntl используем упрощенную проверку
+    if not HAS_FCNTL:
+        logging.warning("fcntl not available (Windows detected). Using simplified lock mechanism.")
+        container_id = os.environ.get('HOSTNAME', 'unknown')
+        lock_file = os.path.join(os.path.expanduser("~"), f"gemaibot.{container_id}.lock")
+        
+        # Проверяем, существует ли файл блокировки
+        if os.path.exists(lock_file):
+            try:
+                # Читаем PID из файла
+                with open(lock_file, 'r') as f:
+                    pid_str = f.read().strip()
+                    if pid_str.isdigit():
+                        pid = int(pid_str)
+                        # Проверяем, существует ли процесс
+                        try:
+                            os.kill(pid, 0)  # Проверка существования процесса
+                            logging.warning(f"Process {pid} is still running - lock is active")
+                            return False
+                        except (OSError, ProcessLookupError):
+                            # Процесс не существует - удаляем старый lock
+                            logging.info(f"Process {pid} is not running - removing stale lock")
+                            os.unlink(lock_file)
+            except Exception as e:
+                logging.warning(f"Error checking lock file: {e}")
+                # Пытаемся удалить файл, если он поврежден
+                try:
+                    os.unlink(lock_file)
+                except:
+                    pass
+        
+        # Создаем новый файл блокировки
+        try:
+            with open(lock_file, 'w') as f:
+                f.write(str(os.getpid()))
+            logging.info(f"Lock acquired successfully (Windows mode). PID: {os.getpid()}, Container: {container_id}")
+            return True
+        except Exception as e:
+            logging.error(f"Failed to acquire lock (Windows mode): {e}")
+            return False
+    
+    # Unix-подобные системы - используем fcntl
     try:
         # Упрощенная логика для контейнерной среды
         container_id = os.environ.get('HOSTNAME', 'unknown')
@@ -274,6 +322,18 @@ def release_lock():
     global lock_file, lock_fd
     
     try:
+        # На Windows просто удаляем файл
+        if not HAS_FCNTL:
+            if lock_file and os.path.exists(lock_file):
+                try:
+                    os.unlink(lock_file)
+                    logging.info("Lock file removed successfully (Windows mode)")
+                except Exception as e:
+                    logging.warning(f"Error removing lock file (Windows mode): {e}")
+            lock_file = None
+            return
+        
+        # Unix-подобные системы - используем fcntl
         if lock_fd:
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -294,7 +354,8 @@ def release_lock():
         logging.error(f"Error releasing lock: {e}")
     finally:
         lock_file = None
-        lock_fd = None
+        if HAS_FCNTL:
+            lock_fd = None
 
 def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения"""

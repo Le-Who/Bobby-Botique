@@ -1,6 +1,7 @@
 import logging
 import json
 import io
+import asyncio
 from PIL import Image
 from typing import Optional, List
 from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
@@ -441,6 +442,7 @@ async def _handle_qna_search(placeholder_message: Message, user_message: str, ch
     else:
         # Пустой ответ
         try:
+            from app.errors import build_retry_and_roles_keyboard
             await placeholder_message.edit_text("Получен пустой ответ от API.", reply_markup=build_retry_and_roles_keyboard())
         except Exception as edit_error:
             logging.error(f"Could not edit placeholder message: {edit_error}")
