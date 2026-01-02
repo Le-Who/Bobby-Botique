@@ -183,35 +183,35 @@ async def reconnect_database():
         logging.critical(f"Failed to reconnect to database: {e}")
         return False
 
-async def db_query(query: str, params: tuple = (), retries: int = 3):
+# Добавлен аргумент conn=None
+async def db_query(query: str, params: tuple = (), retries: int = 3, conn=None):
     """
     Выполняет запрос к базе данных с retry логикой и proper error handling.
-    
-    Args:
-        query: SQL запрос
-        params: Параметры запроса
-        retries: Количество попыток повторного выполнения
-        
-    Returns:
-        Результат запроса
-        
-    Raises:
-        DatabaseConnectionError: При проблемах с подключением
-        DatabaseQueryError: При ошибках выполнения запроса
-        DatabaseRateLimitError: При превышении лимитов
+    Теперь поддерживает передачу явного соединения (conn) для транзакций.
     """
     # Валидация входных параметров
     if not isinstance(query, str) or not query.strip():
         raise ValueError("Query must be a non-empty string")
-    
     if not isinstance(params, (tuple, list)):
         raise ValueError("Params must be a tuple or list")
     
+    # --- ИСПРАВЛЕНИЕ: ПОДДЕРЖКА ТРАНЗАКЦИЙ ---
+    # Если передано соединение, используем его напрямую (нужно для RLS)
+    if conn:
+        try:
+            result = await conn.fetch(query, *params)
+            return [dict(record) for record in result]
+        except Exception as e:
+            logging.error(f"Error in provided connection query: {e}")
+            raise e
+    # -----------------------------------------
+
     if not isinstance(retries, int) or retries < 0:
         raise ValueError("Retries must be a non-negative integer")
-    
+
     last_exception = None
     
+    # Дальше код остается без изменений (цикл for attempt in range...)
     for attempt in range(retries + 1):
         try:
             # Ensure pool exists and is healthy; attempt reconnection if needed
