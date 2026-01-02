@@ -1066,10 +1066,6 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         
         if await handle_ai_response_error(response_text, placeholder_message, on_error_callback=cleanup_on_error):
             return  # Ошибка обработана, выходим
-                try:
-                    await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
-                except Exception:
-                    pass
         else:
             # Успешный ответ - добавляем в историю и показываем обычные кнопки
             buttons = [
