@@ -57,13 +57,71 @@ DEFAULT_ROLES: Dict[str, Dict[str, str]] = {
     },
 }
 
-def compose_system_instruction(role_prompt: Optional[str]) -> str:
+# Кэш для оптимизации формирования системного промпта
+_base_prompt_cache: Optional[str] = None
+_prompt_cache: Dict[str, str] = {}
+_MAX_CACHE_SIZE = 100  # Максимальное количество кэшированных комбинаций
+
+def compose_system_instruction(role_prompt: Optional[str], use_compact: bool = True) -> str:
     """Собирает системную инструкцию: форматирование по умолчанию + опциональная роль.
-    Роль не перезаписывает правила форматирования (`settings.DEFAULT_SYSTEM_PROMPT`)."""
-    base = settings.DEFAULT_SYSTEM_PROMPT.strip()
-    if role_prompt:
-        return base + "\n\n# ДОПОЛНИТЕЛЬНАЯ РОЛЬ\n" + role_prompt.strip()
-    return base
+    Роль не перезаписывает правила форматирования (`settings.DEFAULT_SYSTEM_PROMPT`).
+    
+    Оптимизировано с кэшированием для уменьшения времени формирования промпта.
+    
+    Args:
+        role_prompt: Опциональный промпт роли
+        use_compact: Если True и есть роль, использует компактную версию базового промпта
+                    для экономии токенов. По умолчанию True.
+    
+    Returns:
+        Сформированный системный промпт
+    """
+    global _base_prompt_cache, _prompt_cache
+    
+    # Если роли нет, используем полный базовый промпт
+    if not role_prompt:
+        if _base_prompt_cache is None:
+            _base_prompt_cache = settings.DEFAULT_SYSTEM_PROMPT.strip()
+        return _base_prompt_cache
+    
+    # Нормализуем промпт роли для использования в качестве ключа кэша
+    normalized_role = role_prompt.strip()
+    
+    # Выбираем базовый промпт: компактный для ролей (экономия токенов) или полный
+    if use_compact:
+        # Используем компактную версию для экономии токенов при наличии роли
+        base_prompt = getattr(settings, 'COMPACT_SYSTEM_PROMPT', settings.DEFAULT_SYSTEM_PROMPT).strip()
+        cache_key = f"compact:{normalized_role}"
+    else:
+        # Используем полную версию
+        if _base_prompt_cache is None:
+            _base_prompt_cache = settings.DEFAULT_SYSTEM_PROMPT.strip()
+        base_prompt = _base_prompt_cache
+        cache_key = f"full:{normalized_role}"
+    
+    # Проверяем кэш для комбинации базовый + роль
+    if cache_key in _prompt_cache:
+        return _prompt_cache[cache_key]
+    
+    # Формируем новый промпт
+    composed = base_prompt + "\n\n# ДОПОЛНИТЕЛЬНАЯ РОЛЬ\n" + normalized_role
+    
+    # Ограничиваем размер кэша (FIFO)
+    if len(_prompt_cache) >= _MAX_CACHE_SIZE:
+        # Удаляем самую старую запись (первый ключ)
+        oldest_key = next(iter(_prompt_cache))
+        del _prompt_cache[oldest_key]
+    
+    # Сохраняем в кэш
+    _prompt_cache[cache_key] = composed
+    
+    return composed
+
+def clear_prompt_cache():
+    """Очищает кэш промптов. Полезно для тестирования или при изменении настроек."""
+    global _base_prompt_cache, _prompt_cache
+    _base_prompt_cache = None
+    _prompt_cache.clear()
 
 # ============================================================================
 # CONTEXT MANAGEMENT WITH TOKEN LIMITS
