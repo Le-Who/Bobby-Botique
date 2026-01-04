@@ -6,7 +6,7 @@ from app import prompts
 
 from app.handlers import agent
 from app import database as db
-from app.config import settings
+from app.config import settings, get_model_hash, get_openrouter_keys
 from app import state
 from app.utils.formatting import TelegramFormatter
 from app.state import begin_custom_role_creation
@@ -26,13 +26,15 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     user_id = query.from_user.id
     
-    # Получаем модель из индекса (новый формат) или из полного имени (старый формат для совместимости)
+    # Получаем модель из индекса (новый формат с хэшем) или из полного имени (старый формат для совместимости)
     if query.data.startswith("model:"):
-        # Новый формат: model:0, model:1, и т.д.
+        # Новый формат: model:index:hash или model:index (старый формат без хэша)
         try:
-            model_index = int(query.data.split(":")[1])
-            # Получаем список моделей из context или пересоздаем его
-            from app.config import get_openrouter_keys, settings
+            parts = query.data.split(":")
+            model_index = int(parts[1])
+            expected_hash = parts[2] if len(parts) > 2 else None
+            
+            # Получаем актуальный список моделей из настроек
             all_models = []
             if settings.AVAILABLE_MODELS:
                 all_models.extend(settings.AVAILABLE_MODELS)
@@ -42,11 +44,22 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             
             if 0 <= model_index < len(all_models):
                 model_name = all_models[model_index]
+                
+                # Если есть хэш, проверяем валидность
+                if expected_hash:
+                    actual_hash = get_model_hash(model_name)
+                    if actual_hash != expected_hash:
+                        # Модель изменилась (удалена/добавлена), просим выбрать заново
+                        await query.edit_message_text(
+                            "⚠️ Список моделей обновился. Пожалуйста, выберите модель заново через /model"
+                        )
+                        return
             else:
                 await query.edit_message_text("❌ Ошибка: неверный индекс модели.")
                 return
-        except (ValueError, IndexError):
+        except (ValueError, IndexError) as e:
             await query.edit_message_text("❌ Ошибка: неверный формат callback_data.")
+            logging.error(f"Error parsing model callback: {e}, data: {query.data}")
             return
     else:
         # Старый формат для совместимости: model_gemini-2.5-pro

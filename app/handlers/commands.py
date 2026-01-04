@@ -2,7 +2,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, Application
 
-from app.config import settings
+from app.config import settings, get_model_hash
 from google import genai
 from app import database as db
 from app.utils.formatting import format_key_for_display, TelegramFormatter
@@ -213,8 +213,9 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if settings.AVAILABLE_MODELS:
         for m in settings.AVAILABLE_MODELS:
             is_selected = "✅ " if m == current_model and not is_current_openrouter else ""
-            # Используем индекс вместо полного имени модели (ограничение Telegram: 64 байта)
-            keyboard.append([InlineKeyboardButton(f"{is_selected}🤖 {m}", callback_data=f"model:{model_index}")])
+            # Используем индекс + хэш для валидации (ограничение Telegram: 64 байта)
+            model_hash = get_model_hash(m)
+            keyboard.append([InlineKeyboardButton(f"{is_selected}🤖 {m}", callback_data=f"model:{model_index}:{model_hash}")])
             model_index += 1
     
     # Добавляем разделитель, если есть оба провайдера
@@ -228,8 +229,9 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Показываем короткое имя модели с иконкой провайдера
             display_name = m.split("/")[-1] if "/" in m else m
             provider_icon = "🌐"
-            # Используем индекс вместо полного имени модели
-            keyboard.append([InlineKeyboardButton(f"{is_selected}{provider_icon} {display_name}", callback_data=f"model:{model_index}")])
+            # Используем индекс + хэш для валидации
+            model_hash = get_model_hash(m)
+            keyboard.append([InlineKeyboardButton(f"{is_selected}{provider_icon} {display_name}", callback_data=f"model:{model_index}:{model_hash}")])
             model_index += 1
     
     # Формируем текст с информацией о текущей модели
@@ -970,6 +972,49 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text(f"Ошибка получения метрик: {e}")
         logging.error(f"Error in role_conv_metrics_command: {e}", exc_info=True)
 
+async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
+    """Перезагружает конфигурацию из переменных окружения"""
+    if not db.is_admin(update.effective_user.id): 
+        await update.message.reply_text("❌ У вас нет прав администратора.")
+        return
+    
+    try:
+        await update.message.reply_text("🔄 Перезагружаю конфигурацию...")
+        
+        # Используем существующий ConfigManager
+        from app.config import config_manager
+        await config_manager.force_reload()
+        
+        # Получаем обновленные настройки
+        new_settings = config_manager.settings
+        
+        # Формируем отчет
+        report = "✅ *Конфигурация перезагружена*\n\n"
+        report += f"🔑 *API ключи:*\n"
+        report += f"• Gemini: `{len(new_settings.GEMINI_API_KEYS)}` ключей\n"
+        report += f"• Tavily: `{len(new_settings.TAVILY_API_KEYS)}` ключей\n"
+        report += f"• OpenRouter: `{len(new_settings.OPENROUTER_API_KEYS)}` ключей\n\n"
+        report += f"🤖 *Модели:*\n"
+        report += f"• Gemini: `{len(new_settings.AVAILABLE_MODELS)}` моделей\n"
+        report += f"• OpenRouter: `{len(new_settings.OPENROUTER_AVAILABLE_MODELS)}` моделей\n"
+        report += f"• По умолчанию: `{new_settings.DEFAULT_MODEL}`\n\n"
+        report += f"⚙️ *Настройки:*\n"
+        report += f"• PORT: `{new_settings.PORT}`\n"
+        report += f"• ADMIN_ID: `{new_settings.ADMIN_ID}`\n"
+        report += f"• Лимитов моделей: `{len(new_settings.DAILY_LIMITS)}`\n\n"
+        report += "💡 Все настройки загружены из переменных окружения."
+        
+        formatted_text, parse_mode = TelegramFormatter.format_text(report)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        
+        logging.info(f"Configuration reloaded by admin {update.effective_user.id}")
+        
+    except Exception as e:
+        error_msg = f"❌ Ошибка перезагрузки: {str(e)[:200]}"
+        await update.message.reply_text(error_msg)
+        logging.error(f"Error reloading config: {e}", exc_info=True)
+
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
     """Показывает справку по админским командам"""
@@ -998,6 +1043,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/groupstats` — статистика групповых чатов\n\n"
             
             "*🔧 Управление системой:*\n"
+            "• `/reloadconfig` — перезагрузить конфигурацию из env\n"
             "• `/clearcache` — очистить кэш\n"
             "• `/clearoldmetrics` — очистить старые метрики 30\\+ дней\n"
             "• `/clearolddocs` — очистить старые документы 3\\+ дня\n"
@@ -1075,3 +1121,6 @@ def register(application: Application):
     
     # Админская справка
     application.add_handler(CommandHandler("admin", admin_command))
+    
+    # Команда перезагрузки конфигурации
+    application.add_handler(CommandHandler("reloadconfig", reload_config_command))

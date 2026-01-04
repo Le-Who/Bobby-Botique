@@ -3,6 +3,8 @@ import pytz
 import time
 import asyncio
 import logging
+import json
+import hashlib
 from typing import List, Dict, Callable, Any, Optional
 from pydantic import BaseModel, ValidationError
 
@@ -28,6 +30,66 @@ def _load_and_clean_keys(env_var_name: str, required: bool = True) -> List[str]:
         raise ValueError(f"Environment variable '{env_var_name}' is set but contains no valid keys.")
     return keys
 
+def _load_daily_limits() -> Dict[str, int]:
+    """
+    Загружает DAILY_LIMITS из env переменной в формате JSON или компактном формате.
+    
+    Формат в env (JSON, рекомендуется):
+    DAILY_LIMITS='{"gemini-exp-1206": 250, "gemini-flash-latest": 15}'
+    
+    Или компактный формат:
+    DAILY_LIMITS='gemini-exp-1206:250,gemini-flash-latest:15'
+    
+    Returns:
+        Dict[str, int]: Словарь с лимитами для моделей
+    """
+    value = os.getenv("DAILY_LIMITS")
+    
+    # Значения по умолчанию
+    default_limits = {
+        "gemini-exp-1206": 250,
+        "gemini-flash-latest": 15,
+        "gemini-2.5-pro": 15,
+        "gemini-2.5-flash-lite": 15,
+        "gemini-flash-lite-latest": 15,
+    }
+    
+    if not value:
+        return default_limits
+    
+    try:
+        cleaned = value.strip().strip('"').strip("'")
+        
+        # Пробуем JSON формат
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Если не JSON, пробуем компактный формат: "model1:limit1,model2:limit2"
+            result = {}
+            for item in cleaned.split(','):
+                if ':' in item:
+                    model, limit = item.split(':', 1)
+                    result[model.strip()] = int(limit.strip())
+            if result:
+                return result
+            else:
+                raise ValueError("No valid limits found")
+    except (ValueError, AttributeError, json.JSONDecodeError) as e:
+        logging.warning(f"Failed to parse DAILY_LIMITS from env: {e}. Using defaults.")
+        return default_limits
+
+def get_model_hash(model_name: str) -> str:
+    """
+    Генерирует короткий хэш модели (8 символов) для использования в callback_data.
+    
+    Args:
+        model_name: Полное имя модели
+        
+    Returns:
+        str: 8-символьный хэш модели
+    """
+    return hashlib.md5(model_name.encode()).hexdigest()[:8]
+
 # We use BaseModel, NOT BaseSettings. We are not auto-loading from the environment.
 class Settings(BaseModel):
     """
@@ -48,6 +110,7 @@ class Settings(BaseModel):
     TELEGRAM_MESSAGE_LIMIT: int = 4096
 
     # --- MODELS ---
+    # Модели загружаются из env переменных, значения по умолчанию используются если не указаны
     AVAILABLE_MODELS: List[str] = ["gemini-exp-1206", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
     DEFAULT_MODEL: str = "gemini-flash-latest"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
@@ -55,6 +118,7 @@ class Settings(BaseModel):
     URL_SELECTION_MODEL: str = "gemini-flash-latest"
     
     # --- OPENROUTER MODELS ---
+    # Модели загружаются из env переменных, значения по умолчанию используются если не указаны
     OPENROUTER_AVAILABLE_MODELS: List[str] = [
         "tngtech/tng-r1t-chimera:free",
 		"xiaomi/mimo-v2-flash:free",
@@ -100,6 +164,7 @@ class Settings(BaseModel):
     TAVILY_QNA_SEARCH_COST: int = 2
     TAVILY_ADVANCED_SEARCH_COST: int = 2
     LIMIT_THRESHOLD_PERCENT: float = 0.95
+    # DAILY_LIMITS загружается из env переменной DAILY_LIMITS в формате JSON
     DAILY_LIMITS: Dict[str, int] = {
         "gemini-exp-1206": 250,
         "gemini-flash-latest": 15,
@@ -300,6 +365,40 @@ def load_settings() -> Settings:
     using the Pydantic model. This is the most robust method.
     """
     try:
+        # Значения по умолчанию для моделей
+        default_gemini_models = ["gemini-exp-1206", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
+        default_openrouter_models = [
+            "tngtech/tng-r1t-chimera:free",
+            "xiaomi/mimo-v2-flash:free",
+            "tngtech/deepseek-r1t-chimera:free",
+            "-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-",
+            "-_-_-_-_-_-_-_TESTY_-_-_-_-_-_-_-",
+            "nvidia/nemotron-3-nano-30b-a3b:free",
+            "qwen/qwen3-4b:free",
+            "qwen/qwen-2.5-vl-7b-instruct:free",
+            "alibaba/tongyi-deepresearch-30b-a3b:free",
+            "nvidia/nemotron-nano-9b-v2:free",
+            "mistralai/mistral-small-3.1-24b-instruct:free",
+            "nvidia/nemotron-nano-12b-v2-vl:free",
+            "mistralai/devstral-2512:free",
+            "deepseek/deepseek-r1-0528:free",
+            "meta-llama/llama-3.3-70b-instruct:free",
+            "z-ai/glm-4.5-air:free",
+            "qwen/qwen3-coder:free",
+            "-_-_-_-_-_-_⌄⌄⌄⌄⌄⌄⌄⌄⌄_-_-_-_-_-_-",
+            "-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-",
+            "-_-_-_-_-_-_-OTBROSY_-_-_-_-_-_-",
+            "-_-_-_-_-_-_⌄⌄⌄⌄⌄⌄⌄⌄⌄_-_-_-_-_-_-",
+            "openai/gpt-oss-120b:free",
+            "nex-agi/deepseek-v3.1-nex-n1:free",
+            "openai/gpt-oss-120b:free",
+            "google/gemma-3-27b-it:free",
+            "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
+            "allenai/olmo-3.1-32b-think:free",
+            "tngtech/deepseek-r1t2-chimera:free",
+            "arcee-ai/trinity-mini:free"
+        ]
+        
         # Manually load all values from the environment.
         raw_settings = {
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
@@ -309,9 +408,42 @@ def load_settings() -> Settings:
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
+            # Загружаем модели из env или используем значения по умолчанию
+            "AVAILABLE_MODELS": _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False) or default_gemini_models,
+            "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False) or default_openrouter_models,
+            "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gemini-flash-latest"),
+            "QNA_MODEL": os.getenv("QNA_MODEL", "gemini-2.5-flash-lite"),
+            "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-2.5-pro"),
+            "URL_SELECTION_MODEL": os.getenv("URL_SELECTION_MODEL", "gemini-flash-latest"),
+            "OPENROUTER_DEFAULT_MODEL": os.getenv("OPENROUTER_DEFAULT_MODEL", "xiaomi/mimo-v2-flash:free"),
+            "OPENROUTER_QNA_MODEL": os.getenv("OPENROUTER_QNA_MODEL", "xiaomi/mimo-v2-flash:free"),
+            "OPENROUTER_RESEARCH_MODEL": os.getenv("OPENROUTER_RESEARCH_MODEL", "xiaomi/mimo-v2-flash:free"),
+            "OPENROUTER_URL_SELECTION_MODEL": os.getenv("OPENROUTER_URL_SELECTION_MODEL", "xiaomi/mimo-v2-flash:free"),
+            "DAILY_LIMITS": _load_daily_limits(),
         }
-        # Use the Pydantic model ONLY for validation of the manually loaded data.
-        return Settings(**raw_settings)
+        
+        # Валидация: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей
+        settings_obj = Settings(**raw_settings)
+        
+        # Проверяем Gemini модели
+        if settings_obj.DEFAULT_MODEL not in settings_obj.AVAILABLE_MODELS:
+            logging.warning(f"DEFAULT_MODEL '{settings_obj.DEFAULT_MODEL}' not in AVAILABLE_MODELS. Adding it.")
+            settings_obj.AVAILABLE_MODELS.append(settings_obj.DEFAULT_MODEL)
+        
+        if settings_obj.QNA_MODEL not in settings_obj.AVAILABLE_MODELS:
+            logging.warning(f"QNA_MODEL '{settings_obj.QNA_MODEL}' not in AVAILABLE_MODELS. Adding it.")
+            settings_obj.AVAILABLE_MODELS.append(settings_obj.QNA_MODEL)
+        
+        if settings_obj.RESEARCH_MODEL not in settings_obj.AVAILABLE_MODELS:
+            logging.warning(f"RESEARCH_MODEL '{settings_obj.RESEARCH_MODEL}' not in AVAILABLE_MODELS. Adding it.")
+            settings_obj.AVAILABLE_MODELS.append(settings_obj.RESEARCH_MODEL)
+        
+        # Проверяем OpenRouter модели
+        if settings_obj.OPENROUTER_DEFAULT_MODEL not in settings_obj.OPENROUTER_AVAILABLE_MODELS:
+            logging.warning(f"OPENROUTER_DEFAULT_MODEL '{settings_obj.OPENROUTER_DEFAULT_MODEL}' not in OPENROUTER_AVAILABLE_MODELS. Adding it.")
+            settings_obj.OPENROUTER_AVAILABLE_MODELS.append(settings_obj.OPENROUTER_DEFAULT_MODEL)
+        
+        return settings_obj
     except (ValidationError, ValueError) as e:
         # Catch errors from both Pydantic and our manual functions.
         print(f"FATAL: Could not load settings. Please check your environment variables. Error: {e}")
@@ -381,7 +513,7 @@ class ConfigManager:
         return self._settings
     
     async def _reload_config(self) -> None:
-        """Reloads configuration from environment."""
+        """Reloads configuration from environment and migrates users with invalid models."""
         async with self._lock:
             try:
                 new_settings = get_settings()
@@ -396,6 +528,71 @@ class ConfigManager:
                 if critical_changed:
                     logging.warning("Critical configuration changed, restart may be required")
                 
+                # === ВАЛИДАЦИЯ И МИГРАЦИЯ АКТИВНЫХ ПОЛЬЗОВАТЕЛЕЙ ===
+                migrated_count = 0
+                try:
+                    # Импортируем database только здесь, чтобы избежать циклических импортов
+                    from app import database as db
+                    
+                    # Получаем все доступные модели (Gemini + OpenRouter)
+                    all_available_models = set()
+                    if new_settings.AVAILABLE_MODELS:
+                        all_available_models.update(new_settings.AVAILABLE_MODELS)
+                    if new_settings.OPENROUTER_AVAILABLE_MODELS:
+                        all_available_models.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
+                    
+                    if all_available_models and db.db_pool and not db.db_pool._closed:
+                        # Находим пользователей с несуществующими моделями
+                        # Используем параметризованный запрос для безопасности
+                        placeholders = ','.join([f'${i+1}' for i in range(len(all_available_models))])
+                        invalid_chats = await db.db_query(
+                            f"""
+                            SELECT user_id, model 
+                            FROM chats 
+                            WHERE model IS NOT NULL 
+                            AND model NOT IN ({placeholders})
+                            """,
+                            tuple(all_available_models)
+                        )
+                        
+                        # Мигрируем пользователей на DEFAULT_MODEL
+                        for chat in invalid_chats:
+                            user_id = chat['user_id']
+                            old_model = chat['model']
+                            
+                            # Определяем правильный DEFAULT_MODEL
+                            if "/" in old_model:  # OpenRouter модель
+                                default_model = new_settings.OPENROUTER_DEFAULT_MODEL
+                            else:  # Gemini модель
+                                default_model = new_settings.DEFAULT_MODEL
+                            
+                            # Обновляем модель пользователя
+                            await db.db_query("""
+                                UPDATE chats 
+                                SET model = $1 
+                                WHERE user_id = $2
+                            """, (default_model, user_id))
+                            
+                            migrated_count += 1
+                            logging.info(f"Migrated user {user_id} from {old_model} to {default_model}")
+                        
+                        if migrated_count > 0:
+                            logging.warning(f"Migrated {migrated_count} users to default models after config reload")
+                except Exception as migration_error:
+                    # Не прерываем перезагрузку при ошибке миграции
+                    logging.error(f"Error during user migration: {migration_error}")
+                
+                # Проверяем, что DEFAULT_MODEL существует
+                all_available_models_check = set()
+                if new_settings.AVAILABLE_MODELS:
+                    all_available_models_check.update(new_settings.AVAILABLE_MODELS)
+                if new_settings.OPENROUTER_AVAILABLE_MODELS:
+                    all_available_models_check.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
+                
+                if new_settings.DEFAULT_MODEL not in all_available_models_check:
+                    logging.error(f"DEFAULT_MODEL '{new_settings.DEFAULT_MODEL}' not in AVAILABLE_MODELS!")
+                    raise ValueError(f"DEFAULT_MODEL must be in AVAILABLE_MODELS")
+                
                 # Update settings
                 old_settings = self._settings
                 self._settings = new_settings
@@ -404,7 +601,7 @@ class ConfigManager:
                 # Notify watchers
                 await self._notify_watchers(old_settings, new_settings)
                 
-                logging.info("Configuration reloaded successfully")
+                logging.info(f"Configuration reloaded successfully. Migrated {migrated_count} users.")
                 
             except Exception as e:
                 logging.error("Failed to reload configuration: %s", e)
