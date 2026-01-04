@@ -578,29 +578,9 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
         
         # Добавляем системное сообщение, если есть
         # В OpenRouter системное сообщение должно быть первым в массиве messages
-        # ВАЖНО: Для OpenRouter системное сообщение отправляется с каждым запросом и занимает токены,
-        # поэтому используем компактную версию промпта для экономии токенов
         if system_instruction:
             system_content = str(system_instruction).strip()
             if system_content:
-                # Для OpenRouter используем компактную версию системного промпта, если доступна
-                # Это экономит токены, так как системное сообщение отправляется с каждым запросом
-                try:
-                    # Извлекаем роль из системного промпта (если есть)
-                    # Если системный промпт содержит "# ДОПОЛНИТЕЛЬНАЯ РОЛЬ", используем компактную версию
-                    if "# ДОПОЛНИТЕЛЬНАЯ РОЛЬ" in system_content:
-                        # Разделяем базовый промпт и роль
-                        parts = system_content.split("# ДОПОЛНИТЕЛЬНАЯ РОЛЬ", 1)
-                        if len(parts) == 2:
-                            role_prompt = parts[1].strip()
-                            # Используем компактную версию для OpenRouter
-                            compact_base = getattr(settings, 'COMPACT_SYSTEM_PROMPT', None)
-                            if compact_base:
-                                system_content = compact_base.strip() + "\n\n# ДОПОЛНИТЕЛЬНАЯ РОЛЬ\n" + role_prompt
-                                logging.info("✅ OpenRouter: Using compact system prompt (saved ~%d chars)", len(parts[0]) - len(compact_base))
-                except Exception as e:
-                    logging.warning("⚠️ OpenRouter: Failed to optimize system prompt: %s, using original", e)
-                
                 messages.append({
                     "role": "system",
                     "content": system_content
