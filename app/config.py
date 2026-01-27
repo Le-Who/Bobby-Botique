@@ -47,9 +47,8 @@ def _load_daily_limits() -> Dict[str, int]:
     
     # Значения по умолчанию
     default_limits = {
-        "gemini-exp-1206": 250,
-        "gemini-flash-latest": 15,
-        "gemini-2.5-pro": 15,
+        "gemini-2.5-flash": 15,
+        "gemini-2.5-flash-latest": 15,
         "gemini-2.5-flash-lite": 15,
         "gemini-flash-lite-latest": 15,
     }
@@ -111,17 +110,17 @@ class Settings(BaseModel):
 
     # --- MODELS ---
     # Модели загружаются из env переменных, значения по умолчанию используются если не указаны
-    AVAILABLE_MODELS: List[str] = ["gemini-exp-1206", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
+    AVAILABLE_MODELS: List[str] = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
     DEFAULT_MODEL: str = "gemini-flash-latest"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
-    RESEARCH_MODEL: str = "gemini-2.5-pro"
+    RESEARCH_MODEL: str = "gemini-2.5-flash"
     URL_SELECTION_MODEL: str = "gemini-flash-latest"
     
     # --- OPENROUTER MODELS ---
     # Модели загружаются из env переменных, значения по умолчанию используются если не указаны
     OPENROUTER_AVAILABLE_MODELS: List[str] = [
         "tngtech/tng-r1t-chimera:free",
-		"xiaomi/mimo-v2-flash:free",
+		"upstage/solar-pro-3:free",
 		"tngtech/deepseek-r1t-chimera:free",
 		"-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-",
 		"-_-_-_-_-_-_-_TESTY_-_-_-_-_-_-_-",
@@ -150,10 +149,10 @@ class Settings(BaseModel):
 		"tngtech/deepseek-r1t2-chimera:free",
 		"arcee-ai/trinity-mini:free"
     ]
-    OPENROUTER_DEFAULT_MODEL: str = "xiaomi/mimo-v2-flash:free"
-    OPENROUTER_QNA_MODEL: str = "xiaomi/mimo-v2-flash:free"
-    OPENROUTER_RESEARCH_MODEL: str = "xiaomi/mimo-v2-flash:free"
-    OPENROUTER_URL_SELECTION_MODEL: str = "xiaomi/mimo-v2-flash:free"
+    OPENROUTER_DEFAULT_MODEL: str = "upstage/solar-pro-3:free"
+    OPENROUTER_QNA_MODEL: str = "upstage/solar-pro-3:free"
+    OPENROUTER_RESEARCH_MODEL: str = "upstage/solar-pro-3:free"
+    OPENROUTER_URL_SELECTION_MODEL: str = "upstage/solar-pro-3:free"
     
     # --- API PROVIDER SELECTION ---
     USE_OPENROUTER: bool = False  # По умолчанию используем Gemini, можно переключить на OpenRouter
@@ -166,9 +165,8 @@ class Settings(BaseModel):
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     # DAILY_LIMITS загружается из env переменной DAILY_LIMITS в формате JSON
     DAILY_LIMITS: Dict[str, int] = {
-        "gemini-exp-1206": 250,
+        "gemini-2.5-flash": 15,
         "gemini-flash-latest": 15,
-        "gemini-2.5-pro": 15,
         "gemini-2.5-flash-lite": 15,
         "gemini-flash-lite-latest": 15,
     }
@@ -366,10 +364,10 @@ def load_settings() -> Settings:
     """
     try:
         # Значения по умолчанию для моделей
-        default_gemini_models = ["gemini-exp-1206", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
+        default_gemini_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
         default_openrouter_models = [
             "tngtech/tng-r1t-chimera:free",
-            "xiaomi/mimo-v2-flash:free",
+            "upstage/solar-pro-3:free",
             "tngtech/deepseek-r1t-chimera:free",
             "-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-_-",
             "-_-_-_-_-_-_-_TESTY_-_-_-_-_-_-_-",
@@ -415,10 +413,10 @@ def load_settings() -> Settings:
             "QNA_MODEL": os.getenv("QNA_MODEL", "gemini-2.5-flash-lite"),
             "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-2.5-pro"),
             "URL_SELECTION_MODEL": os.getenv("URL_SELECTION_MODEL", "gemini-flash-latest"),
-            "OPENROUTER_DEFAULT_MODEL": os.getenv("OPENROUTER_DEFAULT_MODEL", "xiaomi/mimo-v2-flash:free"),
-            "OPENROUTER_QNA_MODEL": os.getenv("OPENROUTER_QNA_MODEL", "xiaomi/mimo-v2-flash:free"),
-            "OPENROUTER_RESEARCH_MODEL": os.getenv("OPENROUTER_RESEARCH_MODEL", "xiaomi/mimo-v2-flash:free"),
-            "OPENROUTER_URL_SELECTION_MODEL": os.getenv("OPENROUTER_URL_SELECTION_MODEL", "xiaomi/mimo-v2-flash:free"),
+            "OPENROUTER_DEFAULT_MODEL": os.getenv("OPENROUTER_DEFAULT_MODEL", "upstage/solar-pro-3:free"),
+            "OPENROUTER_QNA_MODEL": os.getenv("OPENROUTER_QNA_MODEL", "upstage/solar-pro-3:free"),
+            "OPENROUTER_RESEARCH_MODEL": os.getenv("OPENROUTER_RESEARCH_MODEL", "upstage/solar-pro-3:free"),
+            "OPENROUTER_URL_SELECTION_MODEL": os.getenv("OPENROUTER_URL_SELECTION_MODEL", "upstage/solar-pro-3:free"),
             "DAILY_LIMITS": _load_daily_limits(),
         }
         
