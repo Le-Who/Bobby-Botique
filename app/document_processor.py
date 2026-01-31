@@ -273,8 +273,9 @@ class DocumentProcessor:
                 except Exception as cleanup_error:
                     logging.warning(f"Error cleaning up temp file {temp_file_path}: {cleanup_error}")
     
-    async def _process_word(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
-        """Обрабатывает Word документ"""
+    def _process_word_sync(self, file_data: bytes, filename: str) -> Dict[str, Any]:
+        """Синхронная обработка Word документа (выполняется в отдельном потоке)"""
+        temp_file_path = None
         try:
             # Создаем временный файл
             with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
@@ -308,9 +309,6 @@ class DocumentProcessor:
                 
                 full_text = '\n\n'.join(text_content)
                 
-                # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, 1, file_hash)  # Word документы считаем как 1 страницу
-                
                 return {
                     "success": True,
                     "filename": filename,
@@ -323,9 +321,31 @@ class DocumentProcessor:
                 
             finally:
                 # Удаляем временный файл
-                if os.path.exists(temp_file_path):
+                if temp_file_path and os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
                     
+        except Exception as e:
+            # Re-raise exception to be handled by the caller
+            raise
+
+    async def _process_word(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
+        """Обрабатывает Word документ"""
+        try:
+            # Выполняем синхронную обработку в отдельном потоке, чтобы не блокировать event loop
+            result = await asyncio.to_thread(self._process_word_sync, file_data, filename)
+
+            # Сохраняем в базу данных (асинхронно)
+            if result.get("success"):
+                await self._save_document_content(
+                    user_id,
+                    filename,
+                    result["content"],
+                    result["pages"],
+                    file_hash
+                )
+
+            return result
+
         except Exception as e:
             logging.error(f"Error processing Word document {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("word_processing", str(e))
