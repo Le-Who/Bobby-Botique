@@ -215,6 +215,39 @@ class DocumentProcessor:
                 os.unlink(temp_file_path)
 
     
+    @staticmethod
+    def _process_pdf_sync(temp_file_path: str, max_pages: int) -> Dict[str, Any]:
+        """Synchronous part of PDF processing to run in executor"""
+        with open(temp_file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+
+            if len(pdf_reader.pages) > max_pages:
+                return {"error": f"PDF too large. Maximum {max_pages} pages allowed"}
+
+            text_content = []
+
+            for page_num, page in enumerate(pdf_reader.pages):
+                try:
+                    text = page.extract_text()
+                    if text.strip():
+                        text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                except Exception as page_error:
+                    logging.warning(f"Error extracting text from page {page_num + 1}: {page_error}")
+                    text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
+
+                # Проверяем лимит токенов
+                if len('\n'.join(text_content)) > 100000:
+                    text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
+                    break
+
+            full_text = '\n\n'.join(text_content)
+
+            return {
+                "success": True,
+                "pages": len(pdf_reader.pages),
+                "content": full_text
+            }
+
     async def _process_pdf_with_pypdf2(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает PDF документ с использованием PyPDF2 (fallback)"""
         temp_file_path = None
@@ -225,41 +258,32 @@ class DocumentProcessor:
                 temp_file_path = temp_file.name
             
             # Используем PyPDF2 как fallback - keep file open during processing
-            with open(temp_file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                
-                if len(pdf_reader.pages) > self.max_pages:
-                    return {"error": f"PDF too large. Maximum {self.max_pages} pages allowed"}
-                
-                text_content = []
-                
-                for page_num, page in enumerate(pdf_reader.pages):
-                    try:
-                        text = page.extract_text()
-                        if text.strip():
-                            text_content.append(f"--- Page {page_num + 1} ---\n{text}")
-                    except Exception as page_error:
-                        logging.warning(f"Error extracting text from page {page_num + 1}: {page_error}")
-                        text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
-                    
-                    # Проверяем лимит токенов
-                    if len('\n'.join(text_content)) > 100000:
-                        text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
-                        break
-                
-                full_text = '\n\n'.join(text_content)
-                
-                # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, len(pdf_reader.pages), file_hash)
-                
-                return {
-                    "success": True,
-                    "filename": filename,
-                    "pages": len(pdf_reader.pages),
-                    "text_length": len(full_text),
-                    "content": full_text,
-                    "method": "PyPDF2"
-                }
+            # Run CPU-bound task in executor
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._process_pdf_sync,
+                temp_file_path,
+                self.max_pages
+            )
+
+            if "error" in result:
+                return result
+
+            full_text = result["content"]
+            pages_count = result["pages"]
+
+            # Сохраняем в базу данных
+            await self._save_document_content(user_id, filename, full_text, pages_count, file_hash)
+
+            return {
+                "success": True,
+                "filename": filename,
+                "pages": pages_count,
+                "text_length": len(full_text),
+                "content": full_text,
+                "method": "PyPDF2"
+            }
                     
         except Exception as e:
             logging.error(f"Error processing PDF with PyPDF2 {filename}: {e}", exc_info=True)
