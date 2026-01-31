@@ -8,6 +8,7 @@ import html
 import logging
 import time
 import asyncio
+import ipaddress
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse, urljoin
 from collections import defaultdict
@@ -202,9 +203,32 @@ class InputSanitizer:
         if not parsed.netloc:
             raise InputSanitizationError("Missing hostname")
         
-        # Check for IP addresses (optional security measure)
+        hostname = parsed.hostname
+        if not hostname:
+             # Fallback if parsed.hostname is None but netloc exists
+             hostname = parsed.netloc.split(':')[0]
+             # Remove brackets if present (for IPv6)
+             if hostname.startswith('[') and hostname.endswith(']'):
+                 hostname = hostname[1:-1]
+
+        # Check for localhost
+        if hostname.lower() == 'localhost':
+             raise InputSanitizationError("Localhost URLs not allowed")
+
+        # Check for IP addresses
+        try:
+            # This handles both IPv4 and IPv6
+            ipaddress.ip_address(hostname)
+            # If we are here, it IS an IP address.
+            # Current policy: Block ALL IP addresses.
+            raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
+        except ValueError:
+            # Not an IP address, continue
+            pass
+
+        # Legacy regex check (kept for backward compatibility)
         ip_pattern = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
-        if re.match(ip_pattern, parsed.netloc):
+        if re.match(ip_pattern, hostname):
             raise InputSanitizationError("IP addresses not allowed in URLs")
         
         return url
