@@ -33,6 +33,14 @@ class DocumentProcessor:
         self.max_file_size = 10 * 1024 * 1024  # 10MB for free tier
         self.max_pages = 50  # Reduced page limit for performance
     
+    def _write_temp_file_sync(self, file_data: bytes, suffix: str) -> str:
+        """Synchronously write data to a temp file and return path.
+        This should be run in a separate thread to avoid blocking the event loop.
+        """
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_file.write(file_data)
+            return temp_file.name
+
     def _calculate_file_hash(self, file_data: bytes) -> str:
         """Вычисляет SHA-256 хэш файла"""
         return hashlib.sha256(file_data).hexdigest()
@@ -188,16 +196,15 @@ class DocumentProcessor:
     
     async def _process_pdf(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает PDF документ"""
+        temp_file_path = None
         try:
-            # Создаем временный файл для обработки
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-                temp_file.write(file_data)
-                temp_file_path = temp_file.name
-            
-            # Проверяем, что файл является корректным PDF
+            # Проверяем, что файл является корректным PDF до создания временного файла
             if not file_data.startswith(b'%PDF'):
                 logging.warning(f"Invalid PDF format for {filename}")
                 return {"error": "Invalid PDF file format"}
+
+            # Создаем временный файл для обработки (в отдельном потоке)
+            temp_file_path = await asyncio.to_thread(self._write_temp_file_sync, file_data, '.pdf')
             
             logging.info(f"Processing PDF {filename} with PyMuPDF")
             
@@ -211,18 +218,19 @@ class DocumentProcessor:
             return {"error": f"Error processing PDF: {str(e)}"}
         finally:
             # Удаляем временный файл если он был создан
-            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
-                os.unlink(temp_file_path)
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except Exception as e:
+                    logging.warning(f"Error deleting temp file {temp_file_path}: {e}")
 
     
     async def _process_pdf_with_pypdf2(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает PDF документ с использованием PyPDF2 (fallback)"""
         temp_file_path = None
         try:
-            # Создаем временный файл для обработки
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-                temp_file.write(file_data)
-                temp_file_path = temp_file.name
+            # Создаем временный файл для обработки (в отдельном потоке)
+            temp_file_path = await asyncio.to_thread(self._write_temp_file_sync, file_data, '.pdf')
             
             # Используем PyPDF2 как fallback - keep file open during processing
             with open(temp_file_path, 'rb') as file:
@@ -275,11 +283,10 @@ class DocumentProcessor:
     
     async def _process_word(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает Word документ"""
+        temp_file_path = None
         try:
-            # Создаем временный файл
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.docx') as temp_file:
-                temp_file.write(file_data)
-                temp_file_path = temp_file.name
+            # Создаем временный файл (в отдельном потоке)
+            temp_file_path = await asyncio.to_thread(self._write_temp_file_sync, file_data, '.docx')
             
             try:
                 doc = Document(temp_file_path)
@@ -323,8 +330,11 @@ class DocumentProcessor:
                 
             finally:
                 # Удаляем временный файл
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.unlink(temp_file_path)
+                    except Exception as e:
+                        logging.warning(f"Error deleting temp file {temp_file_path}: {e}")
                     
         except Exception as e:
             logging.error(f"Error processing Word document {filename}: {e}", exc_info=True)
