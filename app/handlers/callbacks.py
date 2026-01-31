@@ -16,6 +16,12 @@ from app.metrics import role_conv_metrics
 from app.state import get_last_custom_role_prompt, set_generating_custom_role, set_last_custom_role_prompt
 from app.errors import build_roles_keyboard
 
+class DummyUpdate:
+    """Helper class to mock an Update object for calling commands from callbacks."""
+    def __init__(self, msg, user):
+        self.message = msg
+        self.effective_user = user
+
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -494,7 +500,30 @@ async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAUL
     context.user_data["rename_role_id"] = role_id
     await query.message.reply_text("Введите новое название роли одной строкой:")
 
+async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    from app.handlers.commands import new_chat_command
+    await new_chat_command(DummyUpdate(query.message, query.from_user), context)
+
+async def model_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    from app.handlers.commands import model_command
+    await model_command(DummyUpdate(query.message, query.from_user), context)
+
+async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    from app.handlers.commands import help_command
+    await help_command(DummyUpdate(query.message, query.from_user), context)
+
 def register(application: Application):
+   # Новые кнопки меню
+   application.add_handler(CallbackQueryHandler(new_chat_callback, pattern="^new_chat$"))
+   application.add_handler(CallbackQueryHandler(model_menu_callback, pattern="^model_menu$"))
+   application.add_handler(CallbackQueryHandler(help_callback, pattern="^help$"))
+
    # Обрабатываем оба формата: model:0 (новый) и model_none (разделитель)
    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model"))
    application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
@@ -714,10 +743,6 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
        return
    # Отображаем меню ролей так же, как и команда /roles
    from app.handlers.commands import roles_command
-   class DummyUpdate:
-       def __init__(self, msg, user):
-           self.message = msg
-           self.effective_user = user
    await roles_command(DummyUpdate(query.message, query.from_user), context)
 
 # ============================================================================
