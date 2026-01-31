@@ -1536,6 +1536,9 @@ async def save_conversation(user_id: int, title: str, role_type: str = None, rol
                     else:
                         history_data = json.loads(chat_state.history)
                     
+                    roles_to_insert = []
+                    contents_to_insert = []
+
                     for msg in history_data.get('messages', []):
                         # Обрабатываем разные форматы сообщений
                         if isinstance(msg, dict):
@@ -1566,10 +1569,15 @@ async def save_conversation(user_id: int, title: str, role_type: str = None, rol
                             role = 'user'
                             content = str(msg)
                         
+                        roles_to_insert.append(role)
+                        contents_to_insert.append(content)
+
+                    if roles_to_insert:
                         await db_query(
                             """INSERT INTO conversation_messages (conversation_id, role, content, created_at) 
-                               VALUES ($1, $2, $3, CURRENT_TIMESTAMP)""",
-                            (conv_id, role, content)
+                               SELECT $1, u.role, u.content, CURRENT_TIMESTAMP
+                               FROM unnest($2::text[], $3::text[]) AS u(role, content)""",
+                            (conv_id, roles_to_insert, contents_to_insert)
                         )
                 except (json.JSONDecodeError, TypeError) as e:
                     logging.warning(f"Failed to parse history for conversation {conv_id}: {e}")
