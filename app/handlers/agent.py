@@ -1367,6 +1367,33 @@ async def process_media_group_request(placeholder_message: Message, update: Upda
         # Обычная обработка группы изображений
         await _handle_media_group_photos(placeholder_message, messages, caption, chat_state)
 
+async def _download_images_concurrently(messages: List[Message], log_context: str = "") -> List[Image.Image]:
+    """
+    Downloads images from a list of messages concurrently.
+    """
+    async def download_one(index, message):
+        try:
+            photo_file = await message.photo[-1].get_file()
+            photo_data = await photo_file.download_as_bytearray()
+            img = Image.open(io.BytesIO(photo_data))
+
+            # Format log message
+            count = len(messages)
+            log_msg = f"📸 Загружено изображение {index+1}/{count}"
+            if log_context:
+                log_msg += f" {log_context}"
+            logging.info(log_msg)
+
+            return img
+        except Exception as e:
+            logging.error(f"Error loading image {index+1}: {e}")
+            return None
+
+    tasks = [download_one(i, msg) for i, msg in enumerate(messages)]
+    results = await asyncio.gather(*tasks)
+
+    return [img for img in results if img is not None]
+
 async def _handle_media_group_photos(placeholder_message: Message, messages: List[Message], caption: str, chat_state: db.ChatState):
     """Обрабатывает группу изображений для обычного описания"""
     gemini_key, model_used, resolution = await _resolve_gemini_request(chat_state.model)
@@ -1379,18 +1406,7 @@ async def _handle_media_group_photos(placeholder_message: Message, messages: Lis
 
     try:
         # Загружаем все изображения из группы
-        images = []
-        for i, message in enumerate(messages):
-            try:
-                photo_file = await message.photo[-1].get_file()
-                photo_data = await photo_file.download_as_bytearray()
-                img = Image.open(io.BytesIO(photo_data))
-                images.append(img)
-                count = len(messages) if messages else 0
-                logging.info(f"📸 Загружено изображение {i+1}/{count}")
-            except Exception as e:
-                logging.error(f"Error loading image {i+1}: {e}")
-                continue
+        images = await _download_images_concurrently(messages)
         
         if not images:
             await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения из группы.")
@@ -1540,18 +1556,7 @@ async def _handle_complex_media_group_search(placeholder_message: Message, messa
 
     try:
         # Загружаем все изображения из группы
-        images = []
-        for i, message in enumerate(messages):
-            try:
-                photo_file = await message.photo[-1].get_file()
-                photo_data = await photo_file.download_as_bytearray()
-                img = Image.open(io.BytesIO(photo_data))
-                images.append(img)
-                count = len(messages) if messages else 0
-                logging.info(f"📸 Загружено изображение {i+1}/{count} для анализа")
-            except Exception as e:
-                logging.error(f"Error loading image {i+1}: {e}")
-                continue
+        images = await _download_images_concurrently(messages, log_context="для анализа")
         
         if not images:
             await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения для анализа.")
