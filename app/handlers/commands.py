@@ -58,7 +58,19 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+
+        keyboard = [
+            [
+                InlineKeyboardButton("🆕 Новый чат", callback_data="new_chat"),
+                InlineKeyboardButton("⚙️ Модели", callback_data="model_menu")
+            ],
+            [
+                InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
+                InlineKeyboardButton("📚 Справка", callback_data="help")
+            ]
+        ]
+
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
         logging.info(f"Start command completed successfully for user {user_id}")
     except Exception as e:
         logging.error(f"Error in start command for user {user_id}: {e}", exc_info=True)
