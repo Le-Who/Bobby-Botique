@@ -807,7 +807,7 @@ async def create_rls_policies(table_name: str):
     except Exception as e:
         logging.error(f"Error creating RLS policies for {table_name}: {e}")
 
-async def set_user_context(user_id: int, is_admin: bool = False):
+async def set_user_context(user_id: int, is_admin: bool = False, conn=None):
     """Устанавливает контекст пользователя для RLS (оптимизировано: один запрос вместо двух)"""
     try:
         # Объединяем два запроса в один для оптимизации
@@ -815,12 +815,12 @@ async def set_user_context(user_id: int, is_admin: bool = False):
             SELECT 
                 set_config('app.user_id', $1, false),
                 set_config('app.is_admin', $2, false)
-        """, (str(user_id), str(is_admin).lower()))
+        """, (str(user_id), str(is_admin).lower()), conn=conn)
         logging.debug(f"User context set: user_id={user_id}, is_admin={is_admin}")
     except Exception as e:
         logging.warning(f"Failed to set user context: {e}")
 
-async def clear_user_context():
+async def clear_user_context(conn=None):
     """Очищает контекст пользователя (оптимизировано: один запрос вместо двух)"""
     try:
         # Объединяем два запроса в один для оптимизации
@@ -828,58 +828,68 @@ async def clear_user_context():
             SELECT 
                 set_config('app.user_id', '', false),
                 set_config('app.is_admin', 'false', false)
-        """)
+        """, conn=conn)
     except Exception as e:
         logging.warning(f"Failed to clear user context: {e}")
 
 async def get_user_chat(user_id: int) -> ChatState:
-    # Устанавливаем контекст пользователя для RLS
-    await set_user_context(user_id, is_admin(user_id))
-    
-    try:
-        chat_result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,))
-        user_result = await db_query("SELECT is_deep_dive, deep_dive_thread_id FROM users WHERE user_id = $1", (user_id,))
+    global db_pool
+    if not db_pool or getattr(db_pool, "_closed", False):
+        await reconnect_database()
 
-        chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False, deep_dive_thread_id=None)
+    async with db_pool.acquire() as conn:
+        # Устанавливаем контекст пользователя для RLS
+        await set_user_context(user_id, is_admin(user_id), conn=conn)
 
-        if chat_result:
-            row = chat_result[0]
-            chat_state.history = json.loads(row['history']) if row['history'] else []
-            chat_state.model = row['model'] or settings.DEFAULT_MODEL
-            chat_state.token_count = row['token_count'] or 0
-            chat_state.search_enabled = bool(row['search_enabled'])
-            chat_state.system_prompt = row['system_prompt'] or None
+        try:
+            chat_result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,), conn=conn)
+            user_result = await db_query("SELECT is_deep_dive, deep_dive_thread_id FROM users WHERE user_id = $1", (user_id,), conn=conn)
 
-        if user_result:
-            chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
-            chat_state.deep_dive_thread_id = user_result[0].get('deep_dive_thread_id')
-            
-        return chat_state
-    finally:
-        # Очищаем контекст пользователя
-        await clear_user_context()
+            chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False, deep_dive_thread_id=None)
+
+            if chat_result:
+                row = chat_result[0]
+                chat_state.history = json.loads(row['history']) if row['history'] else []
+                chat_state.model = row['model'] or settings.DEFAULT_MODEL
+                chat_state.token_count = row['token_count'] or 0
+                chat_state.search_enabled = bool(row['search_enabled'])
+                chat_state.system_prompt = row['system_prompt'] or None
+
+            if user_result:
+                chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
+                chat_state.deep_dive_thread_id = user_result[0].get('deep_dive_thread_id')
+
+            return chat_state
+        finally:
+            # Очищаем контекст пользователя
+            await clear_user_context(conn=conn)
 
 async def update_user_chat(user_id: int, chat_state: ChatState):
-    # Устанавливаем контекст пользователя для RLS
-    await set_user_context(user_id, is_admin(user_id))
-    
-    try:
-        history_json = json.dumps(chat_state.history)
-        chat_query = """
-        INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (user_id)
-        DO UPDATE SET
-            history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
-            search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt;
-        """
-        await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt))
+    global db_pool
+    if not db_pool or getattr(db_pool, "_closed", False):
+        await reconnect_database()
 
-        user_query = "UPDATE users SET is_deep_dive = $1, deep_dive_thread_id = $2 WHERE user_id = $3"
-        await db_query(user_query, (chat_state.is_deep_dive, chat_state.deep_dive_thread_id, user_id))
-    finally:
-        # Очищаем контекст пользователя
-        await clear_user_context()
+    async with db_pool.acquire() as conn:
+        # Устанавливаем контекст пользователя для RLS
+        await set_user_context(user_id, is_admin(user_id), conn=conn)
+
+        try:
+            history_json = json.dumps(chat_state.history)
+            chat_query = """
+            INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
+                search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt;
+            """
+            await db_query(chat_query, (user_id, history_json, chat_state.model, chat_state.token_count, int(chat_state.search_enabled), chat_state.system_prompt), conn=conn)
+
+            user_query = "UPDATE users SET is_deep_dive = $1, deep_dive_thread_id = $2 WHERE user_id = $3"
+            await db_query(user_query, (chat_state.is_deep_dive, chat_state.deep_dive_thread_id, user_id), conn=conn)
+        finally:
+            # Очищаем контекст пользователя
+            await clear_user_context(conn=conn)
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     """
@@ -1496,15 +1506,20 @@ async def is_authorized(user_id: int) -> bool:
     if is_admin(user_id):
         return True
     
-    # Устанавливаем контекст пользователя для RLS
-    await set_user_context(user_id, False)
-    
-    try:
-        result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,))
-        return result and result[0]['is_authorized'] == 1
-    finally:
-        # Очищаем контекст пользователя
-        await clear_user_context()
+    global db_pool
+    if not db_pool or getattr(db_pool, "_closed", False):
+        await reconnect_database()
+
+    async with db_pool.acquire() as conn:
+        # Устанавливаем контекст пользователя для RLS
+        await set_user_context(user_id, False, conn=conn)
+
+        try:
+            result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,), conn=conn)
+            return result and result[0]['is_authorized'] == 1
+        finally:
+            # Очищаем контекст пользователя
+            await clear_user_context(conn=conn)
 
 # ============================================================================
 # CONVERSATION MANAGEMENT
