@@ -2,360 +2,33 @@ import os
 import logging
 import asyncio
 import signal
-import datetime
 import time
 import sys
+import threading
 
-# fcntl доступен только на Unix-подобных системах
-try:
-    import fcntl
-    HAS_FCNTL = True
-except ImportError:
-    HAS_FCNTL = False
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler
 from telegram.error import NetworkError, TimedOut, RetryAfter, Conflict
-from flask import Flask
 from hypercorn.config import Config as HypercornConfig
 from hypercorn.asyncio import serve
 
-# Импортируем наши модули
+# Import custom modules
 from app.config import settings
 from app import database
 from app.handlers import commands, messages, callbacks
 from app.handlers.callbacks import new_topic_callback
 from app.metrics import metrics_collector
-from app.alerts import alert_manager
-from app.utils.logging_config import setup_detailed_logging, log_api_summary
+from app.utils.logging_config import setup_detailed_logging
 
 from app.queue import start_task_queue, stop_task_queue
 from app.group_chat import initialize_group_chats
 
-# --- WEB SERVER FOR RENDER HEALTH CHECK ---
-flask_app = Flask(__name__)
+# Import extracted modules
+from app.web import flask_app
+from app.utils.lock import process_lock
 
-@flask_app.route('/')
-def health_check():
-    """Health check endpoint для Render Free Tier"""
-    print("Health check request received from Render", flush=True)
-    logging.info("Health check request received from Render")
-    return "I am alive!", 200
-
-@flask_app.route('/status')
-def status_check():
-    """Расширенная проверка статуса для диагностики"""
-    try:
-        print("Status check request received", flush=True)
-        
-        # Проверяем базовые компоненты
-        status = {
-            "bot": "running",
-            "database": "connected" if database.db_pool else "disconnected",
-            "timestamp": str(datetime.datetime.now()),
-            "uptime": "active",
-            "version": "2.0.0",
-            "environment": os.getenv("ENVIRONMENT", "production")
-        }
-        
-        # Добавляем информацию о системе
-        import psutil
-        try:
-            status["system"] = {
-                "cpu_percent": psutil.cpu_percent(interval=1),
-                "memory_percent": psutil.virtual_memory().percent,
-                "disk_percent": psutil.disk_usage('/').percent
-            }
-        except ImportError:
-            status["system"] = {"error": "psutil not available"}
-        
-        print("Status: %s", status, flush=True)
-        return status, 200
-    except Exception as e:
-        error_msg = "Status check error: %s" % e
-        print(error_msg, flush=True)
-        logging.error(error_msg)
-        return {"error": str(e)}, 500
-
-
-@flask_app.route('/health')
-def health_check_endpoint():
-    """Health check endpoint для мониторинга"""
-    try:
-        # Проверяем основные компоненты
-        bot_status = "running"
-        database_status = "connected" if database.db_pool and not database.db_pool._closed else "disconnected"
-        
-        # Проверяем Redis статус
-        try:
-            from app.cache import redis_client
-            if redis_client:
-                # Используем asyncio.to_thread для безопасной проверки Redis
-                import asyncio
-                try:
-                    # Создаем временный event loop для проверки Redis
-                    temp_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(temp_loop)
-                    temp_loop.run_until_complete(asyncio.wait_for(
-                        asyncio.to_thread(redis_client.ping),
-                        timeout=3.0
-                    ))
-                    temp_loop.close()
-                    redis_status = "connected"
-                except Exception:
-                    redis_status = "disconnected"
-                finally:
-                    if temp_loop and not temp_loop.is_closed():
-                        temp_loop.close()
-            else:
-                redis_status = "not_configured"
-        except Exception:
-            redis_status = "disconnected"
-        
-        # Определяем общий статус
-        if database_status == "connected" and bot_status == "running":
-            overall_status = "healthy"
-        elif database_status == "disconnected":
-            overall_status = "unhealthy"
-        else:
-            overall_status = "degraded"
-        
-        health_status = {
-            "status": overall_status,
-            "timestamp": str(datetime.datetime.now()),
-            "container_id": os.environ.get('HOSTNAME', 'unknown'),
-            "process_id": os.getpid(),
-            "services": {
-                "bot": bot_status,
-                "database": database_status,
-                "redis": redis_status
-            }
-        }
-        
-        # Возвращаем соответствующий HTTP код
-        if overall_status == "healthy":
-            return health_status, 200
-        elif overall_status == "degraded":
-            return health_status, 200  # 200 для degraded, но с предупреждением
-        else:
-            return health_status, 503  # 503 для unhealthy
-            
-    except Exception as e:
-        return {
-            "status": "unhealthy", 
-            "error": str(e),
-            "timestamp": str(datetime.datetime.now())
-        }, 500
-
-@flask_app.route('/keys')
-def keys_status():
-    """Endpoint для просмотра статуса ключей Gemini API"""
-    try:
-        import asyncio
-        from app import database
-        
-        # Создаем новый event loop для асинхронных операций
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            # Получаем статистику ключей
-            key_stats = loop.run_until_complete(database.get_gemini_key_usage_stats())
-            
-            # Получаем информацию об активных ключах
-            active_keys = {}
-            for model in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]:
-                active_info = loop.run_until_complete(database.get_active_key_info(model))
-                if active_info:
-                    active_keys[model] = active_info
-            
-            keys_status = {
-                "timestamp": str(datetime.datetime.now()),
-                "active_keys": active_keys,
-                "key_usage_stats": key_stats,
-                "cache_info": {
-                    "cache_ttl_seconds": 300,
-                    "models_cached": list(active_keys.keys())
-                }
-            }
-            
-            return keys_status, 200
-            
-        finally:
-            loop.close()
-            
-    except Exception as e:
-        return {
-            "error": f"Failed to get keys status: {str(e)}",
-            "timestamp": str(datetime.datetime.now())
-        }, 500
-
-@flask_app.route('/keys/<model_name>')
-def model_keys_status(model_name):
-    """Endpoint для просмотра статуса ключей конкретной модели"""
-    try:
-        import asyncio
-        from app import database
-        
-        # Создаем новый event loop для асинхронных операций
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        try:
-            # Получаем статистику ключей для конкретной модели
-            key_stats = loop.run_until_complete(database.get_gemini_key_usage_stats(model_name))
-            
-            # Получаем информацию об активном ключе
-            active_info = loop.run_until_complete(database.get_active_key_info(model_name))
-            
-            model_status = {
-                "model": model_name,
-                "timestamp": str(datetime.datetime.now()),
-                "active_key": active_info,
-                "all_keys": key_stats,
-                "daily_limit": settings.DAILY_LIMITS.get(model_name, "unlimited")
-            }
-            
-            return model_status, 200
-            
-        finally:
-            loop.close()
-            
-    except Exception as e:
-        return {
-            "error": f"Failed to get model keys status: {str(e)}",
-            "timestamp": str(datetime.datetime.now())
-        }, 500
-
-# Глобальная переменная для управления завершением
+# Global shutdown event
 shutdown_event = asyncio.Event()
-
-# Механизм блокировки для предотвращения множественных экземпляров
-lock_file = None
-lock_fd = None
-
-def acquire_lock():
-    """Приобретает блокировку файла для предотвращения множественных экземпляров"""
-    global lock_file, lock_fd
-    
-    # На Windows без fcntl используем упрощенную проверку
-    if not HAS_FCNTL:
-        logging.warning("fcntl not available (Windows detected). Using simplified lock mechanism.")
-        container_id = os.environ.get('HOSTNAME', 'unknown')
-        lock_file = os.path.join(os.path.expanduser("~"), f"gemaibot.{container_id}.lock")
-        
-        # Проверяем, существует ли файл блокировки
-        if os.path.exists(lock_file):
-            try:
-                # Читаем PID из файла
-                with open(lock_file, 'r') as f:
-                    pid_str = f.read().strip()
-                    if pid_str.isdigit():
-                        pid = int(pid_str)
-                        # Проверяем, существует ли процесс
-                        try:
-                            os.kill(pid, 0)  # Проверка существования процесса
-                            logging.warning(f"Process {pid} is still running - lock is active")
-                            return False
-                        except (OSError, ProcessLookupError):
-                            # Процесс не существует - удаляем старый lock
-                            logging.info(f"Process {pid} is not running - removing stale lock")
-                            os.unlink(lock_file)
-            except Exception as e:
-                logging.warning(f"Error checking lock file: {e}")
-                # Пытаемся удалить файл, если он поврежден
-                try:
-                    os.unlink(lock_file)
-                except:
-                    pass
-        
-        # Создаем новый файл блокировки
-        try:
-            with open(lock_file, 'w') as f:
-                f.write(str(os.getpid()))
-            logging.info(f"Lock acquired successfully (Windows mode). PID: {os.getpid()}, Container: {container_id}")
-            return True
-        except Exception as e:
-            logging.error(f"Failed to acquire lock (Windows mode): {e}")
-            return False
-    
-    # Unix-подобные системы - используем fcntl
-    try:
-        # Упрощенная логика для контейнерной среды
-        container_id = os.environ.get('HOSTNAME', 'unknown')
-        lock_file = f"/tmp/gemaibot.{container_id}.lock"
-        
-        # В контейнерной среде всегда удаляем старые блокировки
-        if os.path.exists(lock_file):
-            try:
-                os.unlink(lock_file)
-                logging.info(f"Removed existing lock file for container {container_id}")
-            except Exception as e:
-                logging.warning(f"Error removing existing lock: {e}")
-        
-        # Создаем новый файл блокировки
-        lock_fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
-        
-        # Пытаемся приобрести эксклюзивную блокировку
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        
-        # Записываем PID текущего процесса
-        pid = str(os.getpid())
-        os.write(lock_fd, pid.encode())
-        os.fsync(lock_fd)
-        
-        logging.info(f"Lock acquired successfully. PID: {pid}, Container: {container_id}")
-        return True
-        
-    except (OSError, IOError) as e:
-        if lock_fd:
-            try:
-                os.close(lock_fd)
-            except:
-                pass
-            lock_fd = None
-        
-        logging.error(f"Failed to acquire lock: {e}")
-        return False
-
-def release_lock():
-    """Освобождает блокировку файла"""
-    global lock_file, lock_fd
-    
-    try:
-        # На Windows просто удаляем файл
-        if not HAS_FCNTL:
-            if lock_file and os.path.exists(lock_file):
-                try:
-                    os.unlink(lock_file)
-                    logging.info("Lock file removed successfully (Windows mode)")
-                except Exception as e:
-                    logging.warning(f"Error removing lock file (Windows mode): {e}")
-            lock_file = None
-            return
-        
-        # Unix-подобные системы - используем fcntl
-        if lock_fd:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
-            except (OSError, IOError) as e:
-                logging.warning(f"Error releasing file lock: {e}")
-            finally:
-                lock_fd = None
-        
-        if lock_file and os.path.exists(lock_file):
-            try:
-                os.unlink(lock_file)
-                logging.info("Lock file removed successfully")
-            except (OSError, IOError) as e:
-                logging.warning(f"Error removing lock file: {e}")
-            
-    except Exception as e:
-        logging.error(f"Error releasing lock: {e}")
-    finally:
-        lock_file = None
-        if HAS_FCNTL:
-            lock_fd = None
 
 def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения"""
@@ -368,13 +41,10 @@ def signal_handler(signum, frame):
     if signum == signal.SIGTERM:
         logging.info("SIGTERM received - Render is shutting down the service")
         # Даем 30 секунд на graceful shutdown
-        import threading
         def force_shutdown():
-            import time
             time.sleep(30)
             logging.warning("Force shutdown after timeout")
-            release_lock()  # Освобождаем блокировку перед выходом
-            import os
+            process_lock.release()  # Освобождаем блокировку перед выходом
             os._exit(1)
         
         force_thread = threading.Thread(target=force_shutdown, daemon=True)
@@ -399,33 +69,26 @@ async def basic_monitoring():
             check_counter += 1
             
             # Простая проверка базы данных
-            try:
-                if database.db_pool and not database.db_pool._closed:
-                    await database.ensure_database_connection()
-                    logging.info("Database connection: OK")
-                else:
-                    logging.warning("Database unavailable - skipping connection check")
-            except Exception as e:
-                logging.error(f"Database connection issue: {e}")
-                # Попытка переподключения уже выполнена в ensure_database_connection
+            if await database.check_database_health():
+                logging.info("Database connection: OK")
+            else:
+                logging.warning("Database unavailable")
+                # Attempt reconnect
+                await database.ensure_database_connection()
             
             # Каждые 12 проверок (1 час) выполняем расширенную диагностику
             if check_counter % 12 == 0:
                 try:
-                    # Проверяем состояние очереди задач только если база данных доступна
-                    if database.db_pool and not database.db_pool._closed:
+                    # Проверяем метрики только если база данных доступна
+                    if await database.check_database_health():
                         from app.queue import task_queue
                         stats = await task_queue.get_queue_stats()
                         logging.info(f"Task queue stats: {stats}")
-                    else:
-                        logging.warning("Task queue stats unavailable - database not accessible")
-                    
-                    # Проверяем метрики только если база данных доступна
-                    if database.db_pool and not database.db_pool._closed:
+
                         metrics_summary = await metrics_collector.get_metrics_summary()
                         logging.info(f"Metrics summary: {metrics_summary['total_requests']} requests, {metrics_summary['error_rate']:.1f}% errors")
                     else:
-                        logging.warning("Metrics unavailable - database not accessible")
+                        logging.warning("Metrics/Queue stats unavailable - database not accessible")
                     
                 except Exception as e:
                     logging.warning(f"Extended monitoring failed: {e}")
@@ -435,8 +98,7 @@ async def basic_monitoring():
                     
         except Exception as e:
             logging.error(f"Monitoring error: {e}")
-            # При ошибке мониторинга продолжаем работу, не завершаем задачу
-            await asyncio.sleep(60)  # Ждем минуту перед следующей попыткой
+            await asyncio.sleep(60)
     
     logging.info("Monitoring task stopped due to shutdown signal")
 
@@ -446,14 +108,12 @@ async def _cleanup_application(application):
         return
     
     try:
-        # Проверяем, был ли updater запущен
         if hasattr(application, 'updater') and application.updater:
             await application.updater.stop()
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (updater): {cleanup_error}")
     
     try:
-        # Проверяем, была ли application инициализирована
         if hasattr(application, '_initialized') and application._initialized:
             await application.stop()
     except Exception as cleanup_error:
@@ -462,46 +122,36 @@ async def _cleanup_application(application):
 async def run_bot_with_retry():
     """Запускает бота с автоматическими повторами при сетевых ошибках"""
     max_retries = 5
-    base_delay = 1  # секунды
+    base_delay = 1
     application = None
     
-    # Для Render Free Tier важно логировать все попытки
     print(f"Starting bot with retry mechanism (max attempts: {max_retries})", flush=True)
     logging.info(f"Starting bot with retry mechanism (max attempts: {max_retries})")
     
     version_info = Application.__version__ if hasattr(Application, '__version__') else 'Unknown'
-    print(f"Python-telegram-bot version: {version_info}", flush=True)
     logging.info(f"Python-telegram-bot version: {version_info}")
     
     while not shutdown_event.is_set():
-        print(f"Bot startup attempt initiated", flush=True)
         logging.info("Bot startup attempt initiated")
         
         try:
-            # Настройка таймаутов через Application.builder()
-            # Создаем Application с кастомными настройками Request
             from telegram.request import HTTPXRequest
             
-            # Создаем кастомный Request объект
             custom_request = HTTPXRequest(
                 connection_pool_size=8,
-                connect_timeout=10.0,  # 10 секунд на подключение
-                read_timeout=30.0,     # 30 секунд на чтение
-                write_timeout=30.0,    # 30 секунд на запись
-                pool_timeout=30.0      # 30 секунд на получение соединения из пула
+                connect_timeout=10.0,
+                read_timeout=30.0,
+                write_timeout=30.0,
+                pool_timeout=30.0
             )
             
-            # Создаем Application с кастомным Request
             application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
             
-            # Регистрация всех обработчиков
             commands.register(application)
             callbacks.register(application)
             messages.register(application)
             application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
             
-            # Запускаем бота без async with для лучшего контроля
-            # В новой версии python-telegram-bot ОБЯЗАТЕЛЬНО нужно вызывать initialize()
             try:
                 await application.initialize()
                 logging.info("Application initialized successfully")
@@ -516,116 +166,83 @@ async def run_bot_with_retry():
                 logging.error(f"Failed to start application: {start_error}")
                 raise
             
-            # Настройка polling с улучшенными параметрами
             await application.updater.start_polling(
                 allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,  # Игнорируем старые обновления
-                timeout=30,  # Таймаут для long polling
-                read_timeout=30,  # Таймаут для чтения
-                write_timeout=30,  # Таймаут для записи
-                connect_timeout=10,  # Таймаут для подключения
-                pool_timeout=30,  # Таймаут для получения соединения из пула
+                drop_pending_updates=True,
+                timeout=30,
+                read_timeout=30,
+                write_timeout=30,
+                connect_timeout=10,
+                pool_timeout=30,
             )
             
             logging.info("Bot started successfully")
             logging.info("Bot is now polling for updates...")
             
-            # Ждем завершения
             while not shutdown_event.is_set():
                 await asyncio.sleep(1)
             
-            # Graceful shutdown
             logging.info("Shutting down bot gracefully...")
             logging.info("Stopping updater...")
             await application.updater.stop()
             logging.info("Stopping application...")
             await application.stop()
             logging.info("Bot shutdown complete")
-            break  # Успешное завершение
+            break
                 
         except (NetworkError, TimedOut, RetryAfter) as e:
-            # Простая экспоненциальная задержка с ограничением
             retry_count = 0
-            delay = min(base_delay * (2 ** retry_count), 60)  # Максимум 60 секунд
+            delay = min(base_delay * (2 ** retry_count), 60)
             retry_count += 1
             
             logging.warning(f"Network error during bot operation: {e}")
             logging.info(f"Retrying in {delay} seconds...")
             
-            # Очищаем ресурсы перед повторной попыткой
             await _cleanup_application(application)
             
-            # Проверяем, не нужно ли завершить работу
             if shutdown_event.is_set():
-                logging.info("Shutdown requested during retry, stopping bot")
                 break
             
-            # Ждем перед повторной попыткой
             await asyncio.sleep(delay)
             
         except Conflict as e:
             logging.error(f"Telegram API conflict detected: {e}")
             logging.critical("Another bot instance is running. This instance will exit.")
-            
-            # Освобождаем блокировку и завершаем работу
-            release_lock()
+            process_lock.release()
             break
             
         except Exception as e:
             logging.error(f"Unexpected error during bot operation: {e}")
-            
-            # Очищаем ресурсы при ошибке
             await _cleanup_application(application)
             
-            # Проверяем, не нужно ли завершить работу
             if shutdown_event.is_set():
-                logging.info("Shutdown requested after error, stopping bot")
                 break
             
-            # Логируем детали ошибки для диагностики
             import traceback
             logging.error(f"Bot error details: {traceback.format_exc()}")
-            
-            # Ждем перед повторной попыткой
-            await asyncio.sleep(30)  # Ждем 30 секунд перед повторной попыткой
+            await asyncio.sleep(30)
     
     logging.info("Bot retry loop stopped due to shutdown signal")
 
 async def bot_watchdog(bot_task: asyncio.Task):
     """Следит за состоянием бота и перезапускает его при необходимости"""
     logging.info("Bot watchdog started")
-    
-    # Счетчик для периодических проверок
     check_counter = 0
-    last_restart_time = 0
     
     while not shutdown_event.is_set():
         try:
-            await asyncio.sleep(60)  # Проверяем каждую минуту
-            
-            if shutdown_event.is_set():
-                break
+            await asyncio.sleep(60)
+            if shutdown_event.is_set(): break
             
             check_counter += 1
             
-            # Проверяем, что задача бота все еще работает
             if bot_task.done():
                 if bot_task.exception():
                     logging.error(f"Bot task failed with exception: {bot_task.exception()}")
-                    logging.info("Bot watchdog will trigger restart on next iteration")
                 else:
                     logging.warning("Bot task completed unexpectedly")
-                    logging.info("Bot watchdog will trigger restart on next iteration")
             else:
                 logging.info("Bot task is running normally")
-            
-            # Каждые 60 проверок (1 час) выполняем профилактический перезапуск
-            if check_counter % 60 == 0:
-                current_time = time.time()
-                if current_time - last_restart_time > 3600:  # Не чаще чем раз в час
-                    logging.info("Performing preventive bot restart (hourly maintenance)")
-                    last_restart_time = current_time
-                    # Здесь можно добавить логику перезапуска бота
                 
         except Exception as e:
             logging.error(f"Watchdog error: {e}")
@@ -635,85 +252,49 @@ async def bot_watchdog(bot_task: asyncio.Task):
 
 async def run_bot_and_server():
     """Основная логика: запускает бота и веб-сервер параллельно."""
-    
     hypercorn_config = HypercornConfig()
     hypercorn_config.bind = [f"0.0.0.0:{settings.PORT}"]
     
     logging.info(f"Health check server will run on port {settings.PORT}.")
     logging.info("Bot is running...")
     
-    # Запускаем базовый мониторинг в фоне
     monitoring_task = asyncio.create_task(basic_monitoring())
-    
-    # Запускаем бота с обработкой ошибок
     bot_task = asyncio.create_task(run_bot_with_retry())
-    
-    # Запускаем watchdog для бота
     watchdog_task = asyncio.create_task(bot_watchdog(bot_task))
-    
-    # Создаем задачу для веб-сервера
     server_task = asyncio.create_task(serve(flask_app, hypercorn_config))
-    
-    # Создаем задачу для обработки сигналов завершения
     shutdown_task = asyncio.create_task(_wait_for_shutdown())
     
     try:
-        # Ждем только сигнала завершения, НЕ завершения задач
         await shutdown_task
-        
         logging.info("Shutdown signal received, initiating graceful shutdown...")
-        
     except Exception as e:
         logging.error(f"Critical error in main loop: {e}")
-        # При критической ошибке также инициируем shutdown
-        logging.info("Critical error detected, initiating shutdown...")
-        
-        # Если это конфликт Telegram API, освобождаем блокировку
         if "Conflict" in str(e) or "terminated by other getUpdates request" in str(e):
-            logging.critical("Telegram API conflict detected, releasing lock and shutting down")
-            release_lock()
+            process_lock.release()
     finally:
-        # Graceful shutdown всех задач
         logging.info("Starting graceful shutdown...")
-        
-        # Отменяем все задачи
         for task in [monitoring_task, bot_task, watchdog_task, server_task, shutdown_task]:
             if not task.done():
                 task.cancel()
         
-        # Ждем завершения всех задач
         await asyncio.gather(
             monitoring_task, bot_task, watchdog_task, server_task, shutdown_task,
             return_exceptions=True
         )
         
-        logging.info("All tasks shutdown complete")
-        
         logging.info("Shutting down services...")
-        try:
-            await stop_task_queue()
-        except Exception as e:
-            logging.warning(f"Error stopping task queue: {e}")
+        try: await stop_task_queue()
+        except Exception: pass
         
-        try:
-            await metrics_collector.cleanup()
-        except Exception as e:
-            logging.warning(f"Error cleaning up metrics: {e}")
+        try: await metrics_collector.cleanup()
+        except Exception: pass
         
-        # Закрываем пул базы данных только если он еще открыт
-        if database.db_pool and not database.db_pool._closed:
-            try:
-                await database.db_pool.close()
-                logging.info("Database pool closed.")
-            except Exception as e:
-                logging.warning(f"Error closing database pool: {e}")
-        else:
-            logging.info("Database pool already closed or not initialized.")
+        try: await database.db_manager.close()
+        except Exception: pass
         
         logging.info("Shutdown complete.")
 
 async def _wait_for_shutdown():
-    """Ждет сигнала завершения от shutdown_event"""
     await shutdown_event.wait()
     logging.info("Shutdown event triggered")
 
@@ -721,16 +302,13 @@ async def startup_health_check():
     """Проверяет здоровье всех критических систем при запуске"""
     logging.info("Performing startup health check...")
     
-    # Проверяем базу данных
     try:
         await database.ensure_database_connection()
         logging.info("✓ Database connection verified")
     except Exception as e:
         logging.warning(f"⚠ Database connection failed: {e}")
         logging.warning("Bot will run in limited mode without database functionality")
-        # Не прерываем запуск, если база данных недоступна
     
-    # Проверяем Telegram API
     try:
         import httpx
         async with httpx.AsyncClient() as client:
@@ -747,43 +325,33 @@ async def startup_health_check():
         logging.error(f"✗ Telegram API check failed: {e}")
         raise Exception(f"Telegram API health check failed: {e}")
     
-    # Проверяем метрики только если база данных доступна
-    try:
-        if database.db_pool and not database.db_pool._closed:
+    if await database.check_database_health():
+        try:
             await metrics_collector.initialize()
             logging.info("✓ Metrics system verified")
-        else:
-            logging.warning("⚠ Metrics system skipped - database unavailable")
-    except Exception as e:
-        logging.warning(f"⚠ Metrics system check failed: {e}")
-        logging.warning("Bot will run without metrics collection")
+        except Exception:
+            logging.warning("⚠ Metrics system check failed")
     
     logging.info("✓ Core systems healthy - bot ready to start")
-    return True  # Возвращаем True для успешной проверки
+    return True
 
 async def main():
-    """Main application entry point with improved error handling."""
     print("=== BOT MAIN FUNCTION START ===", flush=True)
     
-    # Инициализируем компоненты
     database_available = False
     memory_manager = None
     
     try:
-        # Инициализация логирования
         setup_detailed_logging()
         logging.info("Bot starting up...")
         
-        # Инициализация базы данных
         try:
             await database.init_db()
             database_available = True
             logging.info("Database initialized successfully")
         except Exception as e:
             logging.error(f"Database initialization failed: {e}")
-            database_available = False
         
-        # Инициализация менеджера памяти
         try:
             from app.memory_manager import MemoryManager
             memory_manager = MemoryManager()
@@ -791,7 +359,6 @@ async def main():
         except Exception as e:
             logging.warning(f"Memory manager initialization failed: {e}")
         
-        # Инициализация очереди задач
         if database_available:
             try:
                 await start_task_queue()
@@ -799,118 +366,66 @@ async def main():
             except Exception as e:
                 logging.error(f"Task queue initialization failed: {e}")
         
-        # Инициализация групповых чатов
         try:
             await initialize_group_chats()
             logging.info("Group chats initialized")
         except Exception as e:
             logging.warning(f"Group chat initialization failed: {e}")
         
-        # Проверка здоровья системы
         try:
             if database_available:
                 await startup_health_check()
-                logging.info("✓ Startup health check completed successfully")
         except Exception as e:
             logging.warning(f"Startup health check failed: {e}")
-            if not database_available:
-                logging.warning("Bot will start in limited mode without full health verification")
-            else:
-                logging.warning("Bot will continue despite health check failure")
         
         logging.info("Starting main application loop...")
         await run_bot_and_server()
         
     except asyncio.CancelledError:
-        logging.info("Main application loop was cancelled - this is normal during shutdown")
+        logging.info("Main application loop was cancelled")
     except Exception as e:
         logging.critical(f"Application failed critically: {e}", exc_info=True)
-        await _notify_admin_of_crash(e)
     finally:
         logging.info("Shutting down services...")
-        
-        # Остановка менеджера памяти
         if memory_manager:
-            try:
-                await memory_manager.stop()
-                logging.info("Memory manager stopped")
-            except Exception as e:
-                logging.warning(f"Error stopping memory manager: {e}")
-        
-        # Остановка очереди задач
+            try: await memory_manager.stop()
+            except Exception: pass
         if database_available:
-            try:
-                await stop_task_queue()
-                logging.info("Task queue stopped")
-            except Exception as e:
-                logging.warning(f"Error stopping task queue: {e}")
-        
-        # Очистка метрик
-        if database_available:
-            try:
-                await metrics_collector.cleanup()
-                logging.info("Metrics collector cleaned up")
-            except Exception as e:
-                logging.warning(f"Error cleaning up metrics: {e}")
-        
-        # Закрытие пула базы данных
-        if database.db_pool and not database.db_pool._closed:
-            try:
-                await database.db_pool.close()
-                logging.info("Database pool closed")
-            except Exception as e:
-                logging.warning(f"Error closing database pool: {e}")
-        else:
-            logging.info("Database pool already closed or not initialized")
-        
+            try: await stop_task_queue()
+            except Exception: pass
+            try: await metrics_collector.cleanup()
+            except Exception: pass
+        try: await database.db_manager.close()
+        except Exception: pass
         logging.info("Shutdown complete")
-
-async def _notify_admin_of_crash(error: Exception):
-    """Уведомляет администратора о критической ошибке"""
-    try:
-        logging.critical(f"CRITICAL ERROR - Bot crashed: {error}")
-        # В будущем можно добавить отправку сообщения администратору
-    except Exception as e:
-        logging.error(f"Failed to notify admin of crash: {e}")
 
 if __name__ == "__main__":
     print("=== BOT MAIN ENTRY POINT ===", flush=True)
     
-    # Log container information for debugging
     container_id = os.environ.get('HOSTNAME', 'unknown')
     print(f"Container ID: {container_id}", flush=True)
     print(f"Process ID: {os.getpid()}", flush=True)
     
-    # Проверяем блокировку перед запуском
     print("Checking for existing bot instances...", flush=True)
-    if not acquire_lock():
+    if not process_lock.acquire():
         print("ERROR: Another bot instance is already running or lock cannot be acquired. Exiting.", flush=True)
-        print("If this is a fresh deployment, the lock may be stale. Try clearing it manually.", flush=True)
-        sys.exit(1)
-    
-    # Verify lock was properly acquired
-    if not lock_file or not os.path.exists(lock_file):
-        print("ERROR: Lock file verification failed after acquisition. Exiting.", flush=True)
+        print(f"Lock file: {process_lock.lock_file}", flush=True)
         sys.exit(1)
     
     print("Lock acquired successfully. Starting bot...", flush=True)
-    print(f"Lock file: {lock_file}", flush=True)
     
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         print("Bot stopped by user.", flush=True)
-        logging.info("Bot stopped by user.")
     except asyncio.CancelledError:
-        print("Bot was cancelled - this is normal during shutdown", flush=True)
-        logging.info("Bot was cancelled - this is normal during shutdown")
+        print("Bot was cancelled", flush=True)
     except Exception as e:
         error_msg = f"Unexpected error in main: {e}"
         print(error_msg, flush=True)
         logging.critical(error_msg, exc_info=True)
         sys.exit(1)
     finally:
-        # Всегда освобождаем блокировку при завершении
         print("Shutting down bot and releasing lock...", flush=True)
-        release_lock()
+        process_lock.release()
         print("Bot shutdown complete. Lock released.", flush=True)
