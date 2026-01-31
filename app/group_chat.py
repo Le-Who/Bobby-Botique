@@ -84,6 +84,7 @@ class GroupChatManager:
                 "SELECT * FROM group_chats WHERE is_active = TRUE"
             )
             
+            chat_ids = []
             for row in result:
                 group = GroupChat(
                     chat_id=row['chat_id'],
@@ -98,15 +99,17 @@ class GroupChatManager:
                 
                 self.active_groups[group.chat_id] = group
                 self.group_settings[group.chat_id] = group.settings
-                
-                # Загружаем участников группы
+                chat_ids.append(group.chat_id)
+
+            if chat_ids:
+                # Загружаем участников всех активных групп одним запросом
                 members = await db.db_query(
-                    "SELECT user_id FROM group_members WHERE chat_id = $1",
-                    (group.chat_id,)
+                    "SELECT chat_id, user_id FROM group_members WHERE chat_id = ANY($1::bigint[])",
+                    (chat_ids,)
                 )
                 
                 for member in members:
-                    self.user_groups[member['user_id']].add(group.chat_id)
+                    self.user_groups[member['user_id']].add(member['chat_id'])
             
             logging.info(f"Loaded {len(self.active_groups)} active groups")
             
