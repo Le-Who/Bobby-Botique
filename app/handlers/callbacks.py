@@ -518,8 +518,23 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from app.handlers.commands import help_command
     await help_command(DummyUpdate(query.message, query.from_user), context)
 
+async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    chat_state = await db.get_user_chat(user_id)
+    chat_state.search_enabled = not chat_state.search_enabled
+    await db.update_user_chat(user_id, chat_state)
+
+    from app.handlers.commands import get_start_menu_content
+    formatted_text, parse_mode, reply_markup = get_start_menu_content(chat_state)
+
+    await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+
 def register(application: Application):
    # Новые кнопки меню
+   application.add_handler(CallbackQueryHandler(toggle_search_callback, pattern="^toggle_search$"))
    application.add_handler(CallbackQueryHandler(new_chat_callback, pattern="^new_chat$"))
    application.add_handler(CallbackQueryHandler(model_menu_callback, pattern="^model_menu$"))
    application.add_handler(CallbackQueryHandler(help_callback, pattern="^help$"))
