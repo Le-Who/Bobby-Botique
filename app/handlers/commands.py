@@ -15,6 +15,57 @@ from app import prompts
 from app.metrics import role_conv_metrics
 from app.utils.decorators import authorized_only, admin_only
 
+def get_start_menu_content(chat_state):
+    search_status = "🟢 ВКЛЮЧЕН" if chat_state.search_enabled else "🔴 ВЫКЛЮЧЕН"
+    prompt_status = f"`{chat_state.system_prompt[:50]}...`" if chat_state.system_prompt else "Не задана"
+    search_icon = "🟢" if chat_state.search_enabled else "🔴"
+
+    start_text = (
+        "🤖 *Добро пожаловать в Gemini Bot!*\n\n"
+        "Я ваш умный ассистент с возможностями:\n"
+        "• 💬 Обычный чат с AI\n"
+        "• 🔍 Веб-поиск и анализ\n"
+        "• 🖼️ Поиск по изображениям\n"
+        "• 📄 Обработка документов\n\n"
+        "*📊 Ваши настройки:*\n"
+        f"• Модель: `{chat_state.model}`\n"
+        f"• Поиск: {search_status}\n"
+        f"• Инструкция: {prompt_status}\n\n"
+        "*🚀 Быстрый старт:*\n"
+        "• Просто напишите сообщение для чата\n"
+        "• `? вопрос` — быстрый ответ\n"
+        "• `?? вопрос` — глубокий анализ\n"
+        "• Отправьте фото для анализа\n\n"
+        "*⚙️ Основные команды:*\n"
+        "• `/help` — подробная справка\n"
+        "• `/res` — режим поиска вкл/выкл\n"
+        "• `/newchat` — новый чат\n"
+        "• `/model` — выбрать модель\n"
+        "• `/setprompt` — задать инструкцию\n"
+        "• `/documents` — управление документами\n"
+        "• `/metrics` — статистика системы\n"
+        "• `/roles` — выбор ролей и создание своей\n\n"
+        "*💡 Совет:* Начните с простого вопроса!"
+    )
+
+    formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🆕 Новый чат", callback_data="new_chat"),
+            InlineKeyboardButton("⚙️ Модели", callback_data="model_menu")
+        ],
+        [
+            InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
+            InlineKeyboardButton("📚 Справка", callback_data="help")
+        ],
+        [
+            InlineKeyboardButton(f"🌐 Поиск: {search_icon}", callback_data="toggle_search")
+        ]
+    ]
+
+    return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+
 @authorized_only
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
@@ -23,51 +74,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         chat_state = await db.get_user_chat(user_id)
-        search_status = "🟢 ВКЛЮЧЕН" if chat_state.search_enabled else "🔴 ВЫКЛЮЧЕН"
-        prompt_status = f"`{chat_state.system_prompt[:50]}...`" if chat_state.system_prompt else "Не задана"
+        formatted_text, parse_mode, reply_markup = get_start_menu_content(chat_state)
         
-        start_text = (
-            "🤖 *Добро пожаловать в Gemini Bot!*\n\n"
-            "Я ваш умный ассистент с возможностями:\n"
-            "• 💬 Обычный чат с AI\n"
-            "• 🔍 Веб-поиск и анализ\n"
-            "• 🖼️ Поиск по изображениям\n"
-            "• 📄 Обработка документов\n\n"
-            "*📊 Ваши настройки:*\n"
-            f"• Модель: `{chat_state.model}`\n"
-            f"• Поиск: {search_status}\n"
-            f"• Инструкция: {prompt_status}\n\n"
-            "*🚀 Быстрый старт:*\n"
-            "• Просто напишите сообщение для чата\n"
-            "• `? вопрос` — быстрый ответ\n"
-            "• `?? вопрос` — глубокий анализ\n"
-            "• Отправьте фото для анализа\n\n"
-            "*⚙️ Основные команды:*\n"
-            "• `/help` — подробная справка\n"
-            "• `/res` — режим поиска вкл/выкл\n"
-            "• `/newchat` — новый чат\n"
-            "• `/model` — выбрать модель\n"
-            "• `/setprompt` — задать инструкцию\n"
-            "• `/documents` — управление документами\n"
-            "• `/metrics` — статистика системы\n"
-            "• `/roles` — выбор ролей и создание своей\n\n"
-            "*💡 Совет:* Начните с простого вопроса!"
-        )
-        
-        formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
-
-        keyboard = [
-            [
-                InlineKeyboardButton("🆕 Новый чат", callback_data="new_chat"),
-                InlineKeyboardButton("⚙️ Модели", callback_data="model_menu")
-            ],
-            [
-                InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
-                InlineKeyboardButton("📚 Справка", callback_data="help")
-            ]
-        ]
-
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
         logging.info(f"Start command completed successfully for user {user_id}")
     except Exception as e:
         logging.error(f"Error in start command for user {user_id}: {e}", exc_info=True)
