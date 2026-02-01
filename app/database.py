@@ -700,21 +700,39 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     await set_user_context(settings.ADMIN_ID, True)
     try:
-        # Cache logic moved to db_manager? Or we access it here.
-        # Accessing private members of db_manager for now to keep logic same
+        cached_key = None
+
+        # Check cache first (lock needed for safe access)
         async with db_manager._cache_lock:
             if model_name in db_manager._active_keys_cache:
-                cached_key = db_manager._active_keys_cache[model_name]
+                key_data = db_manager._active_keys_cache[model_name]
                 last_update = db_manager._cache_last_updated.get(model_name, 0)
                 
                 if time.time() - last_update < db_manager._cache_ttl:
-                    if await _is_key_available(cached_key['key_hash'], model_name):
-                        return cached_key
-                
-                del db_manager._active_keys_cache[model_name]
-                if model_name in db_manager._cache_last_updated:
-                    del db_manager._cache_last_updated[model_name]
+                    cached_key = key_data
+                else:
+                    # Expired, clean up
+                    del db_manager._active_keys_cache[model_name]
+                    if model_name in db_manager._cache_last_updated:
+                        del db_manager._cache_last_updated[model_name]
+
+        # Validation logic outside the lock to allow concurrency
+        # This prevents blocking other threads while waiting for DB
+        if cached_key:
+            if await _is_key_available(cached_key['key_hash'], model_name):
+                return cached_key
+            else:
+                # Cache was invalid/limit reached, invalidate it safely
+                async with db_manager._cache_lock:
+                    if model_name in db_manager._active_keys_cache:
+                        # Double check it hasn't been updated by another thread to a new valid key
+                        current_cached = db_manager._active_keys_cache[model_name]
+                        if current_cached['key_hash'] == cached_key['key_hash']:
+                            del db_manager._active_keys_cache[model_name]
+                            if model_name in db_manager._cache_last_updated:
+                                del db_manager._cache_last_updated[model_name]
         
+        # Fetch new key if cache missed or was invalid
         new_key = await _get_fresh_available_key(model_name)
         
         if new_key:
