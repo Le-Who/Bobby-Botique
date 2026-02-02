@@ -190,7 +190,32 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_state.token_count = 0
     chat_state.system_prompt = None
     await db.update_user_chat(user_id, chat_state)
-    await update.message.reply_text("Новый чат создан. История и системная инструкция сброшены.")
+
+    # Формируем статус для UX
+    search_icon = "🟢" if chat_state.search_enabled else "🔴"
+    search_status = "ВКЛ" if chat_state.search_enabled else "ВЫКЛ"
+
+    text = (
+        "🧹 *Чат очищен!*\n"
+        "История и контекст сброшены.\n\n"
+        "⚙️ *Текущие настройки:*\n"
+        f"• Модель: `{chat_state.model}`\n"
+        f"• Поиск: {search_icon} {search_status}\n"
+        f"• Роль: 👤 Базовая\n\n"
+        "Готов к новой теме!"
+    )
+
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+
+    keyboard = [
+        [InlineKeyboardButton("⚙️ Настройки модели", callback_data="model_menu")]
+    ]
+
+    await update.message.reply_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 @authorized_only
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
