@@ -5,3 +5,7 @@
 ## 2024-05-24 - Async Lock Contention
 **Learning:** Holding an `asyncio.Lock` while performing I/O operations (like database queries) serializes all concurrent requests, defeating the purpose of `asyncio`. In `get_available_gemini_key`, verifying a cached key inside the lock caused 100 concurrent requests to take 5s instead of 0.05s.
 **Action:** Always move I/O or long-running validation logic *outside* of the lock. Use the lock only for quick in-memory dictionary access. If validation fails, re-acquire the lock to safely invalidate the cache (double-checked locking).
+
+## 2024-05-25 - Blocking Word Processing
+**Learning:** `python-docx` operations are synchronous and CPU-bound. In `_process_word`, instantiating `Document(path)` and iterating over paragraphs blocked the event loop for ~0.6s even for small files.
+**Action:** Always offload `python-docx` or similar synchronous library calls to a thread using `asyncio.to_thread` or `loop.run_in_executor`. Extract the synchronous logic into a pure `_sync` static method.
