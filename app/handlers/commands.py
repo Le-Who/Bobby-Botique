@@ -195,29 +195,46 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await db.update_user_chat(user_id, chat_state)
     await update.message.reply_text("✅ Системная инструкция обновлена.")
 
-@authorized_only
-async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
-    user_id = update.effective_user.id
-    
+async def get_roles_menu_content(user_id, chat_state):
     # Загружаем кастомные роли пользователя (сначала пользовательские)
     custom_roles = await db.db_query(
-        "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
+        "SELECT id, title, prompt FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
         (user_id,)
     )
+
+    # Определяем активную роль
+    current_prompt = chat_state.system_prompt
+    active_role_key = None
+
+    if current_prompt:
+        # Проверяем стандартные роли
+        for key, meta in prompts.DEFAULT_ROLES.items():
+            if meta.get("prompt") == current_prompt:
+                active_role_key = key
+                break
+
+        # Проверяем кастомные роли, если не нашли в стандартных
+        if not active_role_key and custom_roles:
+            for role in custom_roles:
+                if role.get("prompt") == current_prompt:
+                    active_role_key = f"user_role:{role['id']}"
+                    break
 
     # Формируем список кнопок: кастомные сверху, затем стандартные
     btn_rows = []
     if custom_roles:
         for role in custom_roles:
-            title = f"🎭 {role['title']}"
+            role_key = f"user_role:{role['id']}"
+            is_active = "✅ " if role_key == active_role_key else ""
+            title = f"{is_active}🎭 {role['title']}"
             btn_rows.append([
-                InlineKeyboardButton(title, callback_data=f"role_apply:user_role:{role['id']}"),
+                InlineKeyboardButton(title, callback_data=f"role_apply:{role_key}"),
                 InlineKeyboardButton("🗑️", callback_data=f"role_delete:{role['id']}")
             ])
 
     for key, meta in prompts.DEFAULT_ROLES.items():
-        title = meta.get("title", key)
+        is_active = "✅ " if key == active_role_key else ""
+        title = f"{is_active}{meta.get('title', key)}"
         btn_rows.append([InlineKeyboardButton(title, callback_data=f"role_apply:{key}")])
 
     # Разбиваем в две колонки равномерно
@@ -234,14 +251,33 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if temp:
         two_col.append(temp)
 
-    two_col.append([InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear"), InlineKeyboardButton("✏️ Переименовать роль", callback_data="role_rename_menu")])
+    # Добавляем кнопки управления
+    control_buttons = []
+    # Кнопка сброса активна только если есть активная роль
+    if current_prompt:
+        control_buttons.append(InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear"))
+
+    control_buttons.append(InlineKeyboardButton("✏️ Переименовать", callback_data="role_rename_menu"))
+    two_col.append(control_buttons)
     two_col.append([InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
 
     text = "Выберите роль или создайте свою:"
+    if active_role_key:
+         text += "\n\n✅ *Есть активная роль*"
     if custom_roles:
         text += f"\n\n🎭 *Ваши кастомные роли:* {len(custom_roles)}"
 
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(two_col))
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    return formatted_text, parse_mode, InlineKeyboardMarkup(two_col)
+
+@authorized_only
+async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для совместимости с другими командами
+    user_id = update.effective_user.id
+    chat_state = await db.get_user_chat(user_id)
+
+    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state)
+    await update.message.reply_text(text, reply_markup=reply_markup)
 
 
 @authorized_only
@@ -454,6 +490,49 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(error_msg)
         logging.error(f"Error in cache_stats command for user {update.effective_user.id}: {e}", exc_info=True)
 
+async def get_documents_menu_content(user_id):
+    from app.document_processor import get_user_documents
+    documents = await get_user_documents(user_id)
+
+    if not documents:
+        text = (
+            "📋 *Ваши документы*\n\n"
+            "У вас пока нет загруженных документов.\n\n"
+            "💡 *Как загрузить документ:*\n"
+            "• Отправьте PDF или DOCX файл\n"
+            "• Максимальный размер: 50MB\n"
+            "• После загрузки вы сможете задавать вопросы по содержимому\n\n"
+            "📋 *Политика хранения:*\n"
+            "• Максимум документов: 5\n"
+            "• Срок хранения: 3 дня"
+        )
+    else:
+        text = "📋 *Ваши документы:*\n\n"
+        for i, doc in enumerate(documents[:10], 1):
+            text += f"{i}. *{doc['filename']}*\n"
+            text += f"   📄 Страниц: {doc['pages']}\n"
+            text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
+            text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
+        if len(documents) > 10:
+            text += f"... и еще {len(documents) - 10} документов\n\n"
+        text += (
+            "💡 *Действия:*\n"
+            "• Отправьте новый документ для загрузки\n"
+            "• Задайте вопрос по последнему документу\n"
+            "• Используйте кнопки под сообщениями для управления\n\n"
+            "📋 *Политика хранения:*\n"
+            "• Максимум документов: 5\n"
+            "• Срок хранения: 3 дня"
+        )
+
+    keyboard = [
+        [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
+        [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
+        [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
+    ]
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+
 @authorized_only
 async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
@@ -464,48 +543,11 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_document_state(update.effective_user.id)
     
     try:
-        from app.document_processor import get_user_documents
-        documents = await get_user_documents(update.effective_user.id)
-        if not documents:
-            text = (
-                "📋 *Ваши документы*\n\n"
-                "У вас пока нет загруженных документов.\n\n"
-                "💡 *Как загрузить документ:*\n"
-                "• Отправьте PDF или DOCX файл\n"
-                "• Максимальный размер: 50MB\n"
-                "• После загрузки вы сможете задавать вопросы по содержимому\n\n"
-                "📋 *Политика хранения:*\n"
-                "• Максимум документов: 5\n"
-                "• Срок хранения: 3 дня"
-            )
-        else:
-            text = "📋 *Ваши документы:*\n\n"
-            for i, doc in enumerate(documents[:10], 1):
-                text += f"{i}. *{doc['filename']}*\n"
-                text += f"   📄 Страниц: {doc['pages']}\n"
-                text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
-                text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
-            if len(documents) > 10:
-                text += f"... и еще {len(documents) - 10} документов\n\n"
-            text += (
-                "💡 *Действия:*\n"
-                "• Отправьте новый документ для загрузки\n"
-                "• Задайте вопрос по последнему документу\n"
-                "• Используйте кнопки под сообщениями для управления\n\n"
-                "📋 *Политика хранения:*\n"
-                "• Максимум документов: 5\n"
-                "• Срок хранения: 3 дня"
-            )
-        keyboard = [
-            [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
-            [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
-            [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
-        ]
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        formatted_text, parse_mode, reply_markup = await get_documents_menu_content(update.effective_user.id)
         await update.message.reply_text(
             formatted_text,
             parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=reply_markup
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка получения документов: {e}")
@@ -820,17 +862,7 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
     else:
         await update.message.reply_text("❌ Ошибка при сохранении беседы")
 
-@authorized_only
-async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для получения аргументов команды
-    """Показать список сохранённых бесед"""
-    user_id = update.effective_user.id
-    
-    # Парсим аргументы для пагинации
-    page = 1
-    if context.args and context.args[0].isdigit():
-        page = int(context.args[0])
-    
+async def get_conversations_menu_content(user_id, page=1):
     limit = 5
     offset = (page - 1) * limit
     
@@ -838,8 +870,7 @@ async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TY
     total_count = await db.get_conversation_count(user_id)
     
     if not conversations:
-        await update.message.reply_text("📝 У вас пока нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.")
-        return
+        return "📝 У вас пока нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.", None, None
     
     text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
     
@@ -851,10 +882,14 @@ async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TY
     
     # Кнопки навигации
     keyboard = []
+    nav_row = []
     if page > 1:
-        keyboard.append([InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page-1}")])
+        nav_row.append(InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page-1}"))
     if len(conversations) == limit and offset + limit < total_count:
-        keyboard.append([InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page+1}")])
+        nav_row.append(InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page+1}"))
+
+    if nav_row:
+        keyboard.append(nav_row)
     
     # Кнопки действий
     if conversations:
@@ -862,8 +897,25 @@ async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard.append([InlineKeyboardButton("✏️ Переименовать", callback_data="conv_rename")])
         keyboard.append([InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")])
     
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    return text, 'Markdown', InlineKeyboardMarkup(keyboard)
+
+@authorized_only
+async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # context используется для получения аргументов команды
+    """Показать список сохранённых бесед"""
+    user_id = update.effective_user.id
+
+    # Парсим аргументы для пагинации
+    page = 1
+    if context.args and context.args[0].isdigit():
+        page = int(context.args[0])
+
+    text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, page)
+
+    if reply_markup is None:
+        await update.message.reply_text(text)
+    else:
+        await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 @authorized_only
 async def switch_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
