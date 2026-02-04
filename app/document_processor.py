@@ -304,6 +304,47 @@ class DocumentProcessor:
                     os.unlink(temp_file_path)
                 except Exception as cleanup_error:
                     logging.warning(f"Error cleaning up temp file {temp_file_path}: {cleanup_error}")
+
+    @staticmethod
+    def _process_word_sync(temp_file_path: str) -> Dict[str, Any]:
+        """Synchronous part of Word processing to run in executor"""
+        try:
+            doc = Document(temp_file_path)
+
+            text_content = []
+            paragraph_count = 0
+
+            # Извлекаем текст из параграфов
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    text_content.append(para.text)
+                    paragraph_count += 1
+
+            # Извлекаем текст из таблиц
+            table_count = 0
+            for table in doc.tables:
+                table_count += 1
+                text_content.append(f"\n--- Table {table_count} ---")
+                for row in table.rows:
+                    row_text = []
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            row_text.append(cell.text.strip())
+                    if row_text:
+                        text_content.append(" | ".join(row_text))
+
+            full_text = '\n\n'.join(text_content)
+
+            return {
+                "success": True,
+                "pages": 1,
+                "paragraphs": paragraph_count,
+                "tables": table_count,
+                "text_length": len(full_text),
+                "content": full_text
+            }
+        except Exception as e:
+            return {"error": str(e)}
     
     async def _process_word(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает Word документ"""
@@ -312,58 +353,38 @@ class DocumentProcessor:
             # Создаем временный файл (в отдельном потоке)
             temp_file_path = await asyncio.to_thread(self._write_temp_file_sync, file_data, '.docx')
             
-            try:
-                doc = Document(temp_file_path)
+            # Offload CPU-bound task to executor
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                self._process_word_sync,
+                temp_file_path
+            )
+
+            if "error" in result:
+                logging.error(f"Error processing Word document {filename}: {result['error']}")
+                return {"error": f"Error processing Word document: {result['error']}"}
+
+            full_text = result["content"]
+
+            # Сохраняем в базу данных
+            await self._save_document_content(user_id, filename, full_text, 1, file_hash)  # Word документы считаем как 1 страницу
+
+            # Merge filename into result as it's not in sync output
+            result["filename"] = filename
+            return result
                 
-                text_content = []
-                paragraph_count = 0
-                
-                # Извлекаем текст из параграфов
-                for para in doc.paragraphs:
-                    if para.text.strip():
-                        text_content.append(para.text)
-                        paragraph_count += 1
-                
-                # Извлекаем текст из таблиц
-                table_count = 0
-                for table in doc.tables:
-                    table_count += 1
-                    text_content.append(f"\n--- Table {table_count} ---")
-                    for row in table.rows:
-                        row_text = []
-                        for cell in row.cells:
-                            if cell.text.strip():
-                                row_text.append(cell.text.strip())
-                        if row_text:
-                            text_content.append(" | ".join(row_text))
-                
-                full_text = '\n\n'.join(text_content)
-                
-                # Сохраняем в базу данных
-                await self._save_document_content(user_id, filename, full_text, 1, file_hash)  # Word документы считаем как 1 страницу
-                
-                return {
-                    "success": True,
-                    "filename": filename,
-                    "pages": 1,
-                    "paragraphs": paragraph_count,
-                    "tables": table_count,
-                    "text_length": len(full_text),
-                    "content": full_text
-                }
-                
-            finally:
-                # Удаляем временный файл
-                if temp_file_path and os.path.exists(temp_file_path):
-                    try:
-                        os.unlink(temp_file_path)
-                    except Exception as e:
-                        logging.warning(f"Error deleting temp file {temp_file_path}: {e}")
-                    
         except Exception as e:
             logging.error(f"Error processing Word document {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
+        finally:
+            # Удаляем временный файл
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except Exception as e:
+                    logging.warning(f"Error deleting temp file {temp_file_path}: {e}")
     
     async def _save_document_content(self, user_id: int, filename: str, content: str, pages: int, file_hash: str):
         """Сохраняет содержимое документа в базу данных"""

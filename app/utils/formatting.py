@@ -1,4 +1,5 @@
 import re
+import html
 import logging
 import html
 from typing import Tuple, Optional

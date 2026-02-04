@@ -125,12 +125,42 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # context используется для получения аргументов команды
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
+
     if not context.args:
+        # UX Improvement: Show current status instead of clearing
+        current_prompt = chat_state.system_prompt
+        if current_prompt:
+            prompt_display = f"`{current_prompt}`"
+        else:
+            prompt_display = "_(не задана, используется стандартная)_"
+
+        help_text = (
+            f"⚙️ *Текущая системная инструкция:*\n{prompt_display}\n\n"
+            "📝 *Как изменить:*\n"
+            "`/setprompt Вы - опытный программист Python...`\n\n"
+            "🧹 *Как сбросить:*\n"
+            "`/setprompt clear`"
+        )
+        formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        return
+
+    # Check for clear command
+    command_arg = context.args[0].lower()
+    if command_arg in ('clear', 'reset') and len(context.args) == 1:
         chat_state.system_prompt = None
-    else:
-        chat_state.system_prompt = " ".join(context.args)
+        await db.update_user_chat(user_id, chat_state)
+        await update.message.reply_text("✅ Системная инструкция сброшена. Использую стандартное поведение.")
+        return
+
+    # Set new prompt
+    chat_state.system_prompt = " ".join(context.args)
     await db.update_user_chat(user_id, chat_state)
-    await update.message.reply_text("✅ Системная инструкция обновлена.")
+
+    # Show preview of what was set
+    preview = chat_state.system_prompt[:100] + "..." if len(chat_state.system_prompt) > 100 else chat_state.system_prompt
+    formatted_text, parse_mode = TelegramFormatter.format_text(f"✅ Системная инструкция обновлена:\n`{preview}`")
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 @authorized_only
 async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -190,7 +220,35 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_state.token_count = 0
     chat_state.system_prompt = None
     await db.update_user_chat(user_id, chat_state)
-    await update.message.reply_text("Новый чат создан. История и системная инструкция сброшены.")
+
+    # Формируем статус для UX
+    search_icon = "🟢" if chat_state.search_enabled else "🔴"
+    search_status = "ВКЛ" if chat_state.search_enabled else "ВЫКЛ"
+
+    text = (
+        "🧹 *Чат очищен!*\n"
+        "История и контекст сброшены.\n\n"
+        "⚙️ *Текущие настройки:*\n"
+        f"• Модель: `{chat_state.model}`\n"
+        f"• Поиск: {search_icon} {search_status}\n"
+        f"• Роль: 👤 Базовая\n\n"
+        "Готов к новой теме!"
+    )
+
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+
+    keyboard = [
+        [
+            InlineKeyboardButton("⚙️ Настройки модели", callback_data="model_menu"),
+            InlineKeyboardButton("🎭 Выбрать роль", callback_data="open_roles")
+        ]
+    ]
+
+    await update.message.reply_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 @authorized_only
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
