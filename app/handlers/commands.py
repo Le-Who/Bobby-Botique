@@ -125,12 +125,42 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # context используется для получения аргументов команды
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
+
     if not context.args:
+        # UX Improvement: Show current status instead of clearing
+        current_prompt = chat_state.system_prompt
+        if current_prompt:
+            prompt_display = f"`{current_prompt}`"
+        else:
+            prompt_display = "_(не задана, используется стандартная)_"
+
+        help_text = (
+            f"⚙️ *Текущая системная инструкция:*\n{prompt_display}\n\n"
+            "📝 *Как изменить:*\n"
+            "`/setprompt Вы - опытный программист Python...`\n\n"
+            "🧹 *Как сбросить:*\n"
+            "`/setprompt clear`"
+        )
+        formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        return
+
+    # Check for clear command
+    command_arg = context.args[0].lower()
+    if command_arg in ('clear', 'reset') and len(context.args) == 1:
         chat_state.system_prompt = None
-    else:
-        chat_state.system_prompt = " ".join(context.args)
+        await db.update_user_chat(user_id, chat_state)
+        await update.message.reply_text("✅ Системная инструкция сброшена. Использую стандартное поведение.")
+        return
+
+    # Set new prompt
+    chat_state.system_prompt = " ".join(context.args)
     await db.update_user_chat(user_id, chat_state)
-    await update.message.reply_text("✅ Системная инструкция обновлена.")
+
+    # Show preview of what was set
+    preview = chat_state.system_prompt[:100] + "..." if len(chat_state.system_prompt) > 100 else chat_state.system_prompt
+    formatted_text, parse_mode = TelegramFormatter.format_text(f"✅ Системная инструкция обновлена:\n`{preview}`")
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 @authorized_only
 async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
