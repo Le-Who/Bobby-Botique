@@ -66,6 +66,69 @@ def get_start_menu_content(chat_state):
 
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
+def get_model_menu_content(chat_state, context):
+    current_model = chat_state.model
+
+    # Определяем, какой провайдер используется для текущей модели
+    from app.config import get_openrouter_keys
+    openrouter_available = bool(get_openrouter_keys())
+    is_current_openrouter = "/" in current_model if current_model else False
+
+    # Создаем единый список всех моделей для индексации
+    all_models = []
+    if settings.AVAILABLE_MODELS:
+        all_models.extend(settings.AVAILABLE_MODELS)
+    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
+        all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+
+    if not all_models:
+        return "❌ Нет доступных моделей. Проверьте настройки.", None, None
+
+    # Сохраняем маппинг моделей в context для использования в callback
+    if context and hasattr(context, 'user_data'):
+        # Ensure user_data exists if it's None (though ContextTypes usually ensures it's a dict-like)
+        if context.user_data is None:
+            context.user_data = {}
+        context.user_data['model_list'] = all_models
+
+    keyboard = []
+    model_index = 0
+
+    # Добавляем модели Gemini
+    if settings.AVAILABLE_MODELS:
+        for m in settings.AVAILABLE_MODELS:
+            is_selected = "✅ " if m == current_model and not is_current_openrouter else ""
+            # Используем индекс + хэш для валидации (ограничение Telegram: 64 байта)
+            model_hash = get_model_hash(m)
+            keyboard.append([InlineKeyboardButton(f"{is_selected}🤖 {m}", callback_data=f"model:{model_index}:{model_hash}")])
+            model_index += 1
+
+    # Добавляем разделитель, если есть оба провайдера
+    if settings.AVAILABLE_MODELS and openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
+        keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
+
+    # Добавляем модели OpenRouter, если доступны
+    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
+        for m in settings.OPENROUTER_AVAILABLE_MODELS:
+            is_selected = "✅ " if m == current_model and is_current_openrouter else ""
+            # Показываем короткое имя модели с иконкой провайдера
+            display_name = m.split("/")[-1] if "/" in m else m
+            provider_icon = "🌐"
+            # Используем индекс + хэш для валидации
+            model_hash = get_model_hash(m)
+            keyboard.append([InlineKeyboardButton(f"{is_selected}{provider_icon} {display_name}", callback_data=f"model:{model_index}:{model_hash}")])
+            model_index += 1
+
+    # Формируем текст с информацией о текущей модели
+    provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
+    text = f"*Выберите модель для разговора:*\n\n"
+    text += f"*Текущая модель:* `{current_model}`\n"
+    text += f"*Провайдер:* {provider_name}\n\n"
+    text += "Нажмите на модель для выбора."
+
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+
 @authorized_only
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
@@ -197,66 +260,13 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
-    current_model = chat_state.model
     
-    # Определяем, какой провайдер используется для текущей модели
-    from app.config import get_openrouter_keys
-    openrouter_available = bool(get_openrouter_keys())
-    is_current_openrouter = "/" in current_model if current_model else False
+    formatted_text, parse_mode, reply_markup = get_model_menu_content(chat_state, context)
     
-    # Создаем единый список всех моделей для индексации
-    all_models = []
-    if settings.AVAILABLE_MODELS:
-        all_models.extend(settings.AVAILABLE_MODELS)
-    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
-    
-    if not all_models:
-        await update.message.reply_text("❌ Нет доступных моделей. Проверьте настройки.")
-        return
-    
-    # Сохраняем маппинг моделей в context для использования в callback
-    if not hasattr(context, 'user_data'):
-        context.user_data = {}
-    context.user_data['model_list'] = all_models
-    
-    keyboard = []
-    model_index = 0
-    
-    # Добавляем модели Gemini
-    if settings.AVAILABLE_MODELS:
-        for m in settings.AVAILABLE_MODELS:
-            is_selected = "✅ " if m == current_model and not is_current_openrouter else ""
-            # Используем индекс + хэш для валидации (ограничение Telegram: 64 байта)
-            model_hash = get_model_hash(m)
-            keyboard.append([InlineKeyboardButton(f"{is_selected}🤖 {m}", callback_data=f"model:{model_index}:{model_hash}")])
-            model_index += 1
-    
-    # Добавляем разделитель, если есть оба провайдера
-    if settings.AVAILABLE_MODELS and openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
-    
-    # Добавляем модели OpenRouter, если доступны
-    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        for m in settings.OPENROUTER_AVAILABLE_MODELS:
-            is_selected = "✅ " if m == current_model and is_current_openrouter else ""
-            # Показываем короткое имя модели с иконкой провайдера
-            display_name = m.split("/")[-1] if "/" in m else m
-            provider_icon = "🌐"
-            # Используем индекс + хэш для валидации
-            model_hash = get_model_hash(m)
-            keyboard.append([InlineKeyboardButton(f"{is_selected}{provider_icon} {display_name}", callback_data=f"model:{model_index}:{model_hash}")])
-            model_index += 1
-    
-    # Формируем текст с информацией о текущей модели
-    provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
-    text = f"*Выберите модель для разговора:*\n\n"
-    text += f"*Текущая модель:* `{current_model}`\n"
-    text += f"*Провайдер:* {provider_name}\n\n"
-    text += "Нажмите на модель для выбора."
-    
-    formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
+    if reply_markup is None:
+         await update.message.reply_text(formatted_text)
+    else:
+         await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 @authorized_only
 async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
