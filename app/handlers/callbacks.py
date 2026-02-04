@@ -77,18 +77,16 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat_state.model = model_name
     await db.update_user_chat(user_id, chat_state)
     
-    # Определяем провайдер
+    # Обновляем меню с новой выбранной моделью
+    from app.handlers.commands import get_model_menu_content
+    formatted_text, parse_mode, reply_markup = get_model_menu_content(chat_state, context)
+
+    # Определяем имя для тоста
     is_openrouter = "/" in model_name
-    provider_name = "OpenRouter" if is_openrouter else "Google Gemini"
     display_name = model_name.split("/")[-1] if is_openrouter else model_name
     
-    text = f"✅ *Модель изменена*\n\n"
-    text += f"*Модель:* `{display_name}`\n"
-    text += f"*Провайдер:* {provider_name}\n"
-    text += f"*Полное имя:* `{model_name}`"
-    
-    formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    await query.edit_message_text(formatted_text, parse_mode=parse_mode)
+    await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+    await query.answer(f"✅ Модель изменена на {display_name}")
 
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -254,12 +252,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Получаем все документы пользователя
         documents = await get_user_documents(user_id)
         if not documents:
-            text = "📋 *Ваши документы*\n\nУ вас нет документов для удаления."
-            formatted_text, parse_mode = TelegramFormatter.format_text(text)
-            await query.edit_message_text(
-                formatted_text,
-                parse_mode=parse_mode
-            )
+            await query.answer("У вас нет документов для удаления.")
             return
         
         # Удаляем все документы
@@ -273,12 +266,11 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..state import clear_document_state
         clear_document_state(user_id)
         
-        text = f"🗑️ *Документы удалены*\n\nУдалено документов: `{deleted_count}`\n\nТеперь ваши сообщения будут обрабатываться в обычном режиме чата."
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode
-        )
+        # Обновляем меню
+        from app.handlers.commands import get_documents_menu_content
+        text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+        await query.answer(f"🗑️ Удалено {deleted_count} документов.")
         return
     
     elif action == "use_existing":
@@ -386,7 +378,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         document = await get_document_by_id(document_id, user_id)
         if not document:
-            await query.edit_message_text("❌ Документ не найден.")
+            await query.answer("❌ Документ не найден.")
             return
         
         success = await delete_user_document(document_id, user_id)
@@ -398,14 +390,44 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Если удалили выбранный документ, очищаем состояние
                 clear_document_state(user_id)
             
-            text = f"🗑️ *Документ удален*\n\nДокумент `{document['filename']}` был успешно удален."
-            formatted_text, parse_mode = TelegramFormatter.format_text(text)
-            await query.edit_message_text(
-                formatted_text,
-                parse_mode=parse_mode
-            )
+            # Возвращаемся к списку документов (он был родительским меню для select_document)
+            # В идеале нужно понять, откуда пришли, но здесь логичнее вернуться в список
+            # Однако, кнопка удаления была в списке выбора, так что мы просто обновляем список
+
+            # Здесь есть нюанс: кнопка удаления была в меню `select_document` (список кнопок).
+            # Если мы хотим обновить ЭТОТ же список (но без удаленного файла), нам нужно вызвать логику `select_document` снова.
+            # Но `select_document` - это не главное меню, а подменю.
+            # Попробуем обновить именно подменю выбора.
+
+            documents = await get_user_documents(user_id)
+            if not documents:
+                # Если документов не осталось, показываем главное меню документов
+                from app.handlers.commands import get_documents_menu_content
+                text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
+                await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            else:
+                # Иначе перестраиваем список выбора
+                keyboard = []
+                for doc in documents[:10]:
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            f"📄 {doc['filename'][:30]}...",
+                            callback_data=f"doc:select:{doc['id']}"
+                        ),
+                        InlineKeyboardButton(
+                            "🗑️",
+                            callback_data=f"doc:delete_document:{doc['id']}"
+                        )
+                    ])
+                keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
+
+                text = "📋 *Выберите документ для работы:*\n\nНажмите на документ, чтобы начать работу с ним."
+                formatted_text, parse_mode = TelegramFormatter.format_text(text)
+                await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
+
+            await query.answer(f"🗑️ Документ '{document['filename']}' удален.")
         else:
-            await query.edit_message_text("❌ Ошибка при удалении документа.")
+            await query.answer("❌ Ошибка при удалении документа.")
         return
 
 async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -520,7 +542,6 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
 
     chat_state = await db.get_user_chat(user_id)
@@ -531,6 +552,9 @@ async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_T
     formatted_text, parse_mode, reply_markup = get_start_menu_content(chat_state)
 
     await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+    status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
+    await query.answer(f"Поиск {status_text}")
 
 def register(application: Application):
    # Новые кнопки меню
@@ -570,52 +594,61 @@ def register(application: Application):
 
 async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
-   await query.answer()
    user_id = query.from_user.id
    chat_state = await db.get_user_chat(user_id)
    key = query.data.split(":", 1)[1]
+   role_title = ""
    
    # Проверяем, это кастомная роль пользователя
    if key.startswith("user_role:"):
        role_id = int(key.split(":")[1])
        role_data = await db.db_query("SELECT title, prompt FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
        if not role_data:
-           await query.edit_message_text("❌ Кастомная роль не найдена.")
+           await query.answer("❌ Кастомная роль не найдена.")
            return
        role = role_data[0]
        # Проверяем, что роль содержит корректный промпт
        if not role.get('prompt'):
-           await query.edit_message_text("❌ Кастомная роль содержит некорректный промпт.")
+           await query.answer("❌ Кастомная роль содержит некорректный промпт.")
            return
-       # Сохраняем только промпт роли (без базового системного промпта)
-       # compose_system_instruction будет вызван при использовании
+
        chat_state.system_prompt = role['prompt']
-       await db.update_user_chat(user_id, chat_state)
+       role_title = role['title']
        await role_conv_metrics.record_role_application(f"user_role:{role_id}")
-       await query.edit_message_text(f"✅ Кастомная роль '{role['title']}' применена.")
    else:
        # Предустановленная роль
        meta = prompts.DEFAULT_ROLES.get(key)
        if not meta:
-           await query.edit_message_text("❌ Роль не найдена.")
+           await query.answer("❌ Роль не найдена.")
            return
-       # Сохраняем только промпт роли (без базового системного промпта)
-       # compose_system_instruction будет вызван при использовании
+
        chat_state.system_prompt = meta.get("prompt")
-       await db.update_user_chat(user_id, chat_state)
+       role_title = meta.get("title", key)
        await role_conv_metrics.record_role_application(key)
-       await query.edit_message_text(f"✅ Роль '{meta.get('title', key)}' применена.")
+
+   # Сохраняем состояние
+   await db.update_user_chat(user_id, chat_state)
+
+   # Обновляем меню
+   from app.handlers.commands import get_roles_menu_content
+   text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state)
+   await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+   await query.answer(f"✅ Роль '{role_title}' применена.")
 
 async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
-   await query.answer()
    user_id = query.from_user.id
    chat_state = await db.get_user_chat(user_id)
    # Очищаем системный промпт (будет использован базовый)
    chat_state.system_prompt = None
    await db.update_user_chat(user_id, chat_state)
    await role_conv_metrics.record_role_clear()
-   await query.edit_message_text("🧹 Роль сброшена. Использую базовые правила форматирования.")
+
+   # Обновляем меню
+   from app.handlers.commands import get_roles_menu_content
+   text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state)
+   await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+   await query.answer("🧹 Роль сброшена.")
 
 async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
@@ -739,16 +772,33 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
 
 async def role_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
-   await query.answer()
    user_id = query.from_user.id
    if not await db.is_authorized(user_id):
+       await query.answer("❌ Нет доступа")
        return
    try:
        role_id = int(query.data.split(":")[1])
+       # Проверяем, не активна ли эта роль сейчас
+       chat_state = await db.get_user_chat(user_id)
+
+       # Получаем промпт удаляемой роли, чтобы проверить, активна ли она
+       role_data = await db.db_query("SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
+
        await db.db_query("DELETE FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
-       await query.edit_message_text("🗑️ Роль удалена.")
+
+       # Если удаляемая роль была активна, сбрасываем ее
+       if role_data and chat_state.system_prompt == role_data[0]['prompt']:
+           chat_state.system_prompt = None
+           await db.update_user_chat(user_id, chat_state)
+
+       # Обновляем меню
+       from app.handlers.commands import get_roles_menu_content
+       text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state)
+       await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+       await query.answer("🗑️ Роль удалена.")
    except Exception as e:
-       await query.edit_message_text(f"❌ Ошибка удаления роли: {e}")
+       logging.error(f"Error deleting role: {e}")
+       await query.answer("❌ Ошибка удаления роли.")
 
 async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
@@ -772,39 +822,13 @@ async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     page = int(query.data.split(":")[1])
     user_id = query.from_user.id
     
-    # Получаем беседы для страницы
-    limit = 5
-    offset = (page - 1) * limit
-    conversations = await db.get_user_conversations(user_id, limit, offset)
-    total_count = await db.get_conversation_count(user_id)
+    from app.handlers.commands import get_conversations_menu_content
+    text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, page)
     
-    if not conversations:
-        await query.edit_message_text("📝 У вас пока нет сохранённых бесед.")
-        return
-    
-    text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
-    
-    for conv in conversations:
-        role_info = f" | {conv['role_title']}" if conv['role_title'] else ""
-        created = conv['created_at'].strftime("%d.%m.%Y %H:%M") if conv['created_at'] else "Неизвестно"
-        text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
-        text += f"📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n"
-    
-    # Кнопки навигации
-    keyboard = []
-    if page > 1:
-        keyboard.append([InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page-1}")])
-    if len(conversations) == limit and offset + limit < total_count:
-        keyboard.append([InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page+1}")])
-    
-    # Кнопки действий
-    if conversations:
-        keyboard.append([InlineKeyboardButton("🔄 Переключиться", callback_data="conv_switch")])
-        keyboard.append([InlineKeyboardButton("✏️ Переименовать", callback_data="conv_rename")])
-        keyboard.append([InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    await query.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
+    if reply_markup is None:
+        await query.edit_message_text(text)
+    else:
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключение на беседу"""
@@ -837,7 +861,6 @@ async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключение на конкретную беседу"""
     query = update.callback_query
-    await query.answer()
     user_id = query.from_user.id
     
     conv_id = int(query.data.split(":")[1])
@@ -846,12 +869,16 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
         success = await db.switch_to_conversation(user_id, conv_id)
         if success:
             await role_conv_metrics.record_conversation_switched()
-            await query.edit_message_text(f"✅ Переключились на беседу ID: {conv_id}")
+            # Показываем список бесед с тостом
+            from app.handlers.commands import get_conversations_menu_content
+            text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, 1)
+            await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            await query.answer(f"✅ Переключились на беседу ID: {conv_id}")
         else:
-            await query.edit_message_text("❌ Ошибка при переключении на беседу.")
+            await query.answer("❌ Ошибка при переключении на беседу.")
     except Exception as e:
         logging.error(f"Error switching to conversation {conv_id}: {e}")
-        await query.edit_message_text("❌ Ошибка при переключении на беседу.")
+        await query.answer("❌ Ошибка при переключении на беседу.")
 
 async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переименование беседы"""
@@ -878,7 +905,6 @@ async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подтверждение удаления беседы"""
     query = update.callback_query
-    await query.answer()
     
     conv_id = int(query.data.split(":")[1])
     user_id = query.from_user.id
@@ -887,9 +913,15 @@ async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEF
     
     if success:
         await role_conv_metrics.record_conversation_deleted()
-        await query.edit_message_text(f"✅ Беседа {conv_id} удалена")
+
+        # Обновляем список
+        from app.handlers.commands import get_conversations_menu_content
+        text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, 1)
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+        await query.answer(f"✅ Беседа {conv_id} удалена")
     else:
-        await query.edit_message_text("❌ Ошибка при удалении беседы")
+        await query.answer("❌ Ошибка при удалении беседы")
 
 async def conv_delete_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена удаления беседы"""
