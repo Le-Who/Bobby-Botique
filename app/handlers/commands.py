@@ -208,7 +208,10 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
     keyboard = [
-        [InlineKeyboardButton("⚙️ Настройки модели", callback_data="model_menu")]
+        [
+            InlineKeyboardButton("⚙️ Настройки модели", callback_data="model_menu"),
+            InlineKeyboardButton("🎭 Выбрать роль", callback_data="open_roles")
+        ]
     ]
 
     await update.message.reply_text(
