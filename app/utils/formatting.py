@@ -1,5 +1,6 @@
 import re
 import logging
+import html
 from typing import Tuple, Optional
 
 def strip_markdown(text: str) -> str:
@@ -177,6 +178,9 @@ class TelegramFormatter:
     @classmethod
     def _markdown_to_html(cls, text: str) -> str:
         """Конвертирует Markdown в HTML."""
+        # Экранируем HTML теги в исходном тексте для безопасности
+        text = html.escape(text)
+
         # Код
         text = re.sub(r'`(.*?)`', r'<code>\1</code>', text)
         
