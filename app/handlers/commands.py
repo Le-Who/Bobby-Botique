@@ -425,100 +425,117 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_ids = [str(row['user_id']) for row in rows]
     await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(user_ids))
 
+async def get_metrics_content():
+    """Generates the metrics report text."""
+    # Получаем метрики производительности
+    metrics = await metrics_collector.get_metrics_summary()
+
+    # Получаем статус ключей Gemini
+    today_pacific = time_utils.get_pacific_date()
+    gemini_keys = await db.db_query("SELECT * FROM api_keys")
+
+    # Получаем статус кредитов Tavily
+    current_month = time_utils.get_current_month_str()
+    tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
+
+    # Формируем основной текст
+    text = (
+        "📊 *Полная сводка системы:*\n\n"
+        "*🚀 Производительность:*\n"
+        f"• Всего запросов: `{metrics['total_requests']}`\n"
+        f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
+        f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
+        f"• Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
+        f"• Поисковых запросов: `{metrics['search_queries']}`\n\n"
+    )
+
+    # Добавляем использование API и моделей
+    if metrics.get('api_calls'):
+        text += "*🔌 Использование API:*\n"
+        for api, count in metrics['api_calls'].items():
+            if isinstance(api, str) and isinstance(count, (int, float)):
+                text += f"• {api}: `{count}`\n"
+        text += "\n"
+
+    if metrics.get('model_usage'):
+        text += "*🤖 Использование моделей:*\n"
+        for model, count in metrics['model_usage'].items():
+            # Пропускаем записи, которые содержат имена файлов (это ошибки в логике)
+            if isinstance(model, str) and isinstance(count, (int, float)) and not any(char in model for char in ['/', '\\', '.pdf', '.docx', '.doc']):
+                text += f"• {model}: `{count}`\n"
+        text += "\n"
+
+    # Добавляем статус ключей Gemini
+    if gemini_keys:
+        text += "*🔑 Статус ключей Gemini (сегодня):*\n"
+        for key_row in gemini_keys:
+            display_name = format_key_for_display(key_row['api_key'])
+            usage_data = await db.db_query(
+                "SELECT model_name, request_count FROM key_usage WHERE key_hash = $1 AND usage_date = $2",
+                (key_row['key_hash'], today_pacific)
+            )
+            if not usage_data:
+                text += f"• `{display_name}`: не использовался\n"
+            else:
+                for usage in usage_data:
+                    model_name = usage['model_name']
+                    count = usage['request_count']
+                    limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
+                    text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
+        text += f"Сброс лимитов: *{time_utils.get_kyiv_reset_time()}* по Киеву\n\n"
+
+    # Добавляем статус кредитов Tavily
+    if tavily_keys:
+        text += "*💳 Кредиты Tavily (текущий месяц):*\n"
+        for key_row in tavily_keys:
+            display_name = format_key_for_display(key_row['api_key'])
+            usage = await db.db_query(
+                "SELECT credit_usage FROM tavily_key_usage WHERE key_hash = $1 AND usage_month = $2",
+                (key_row['key_hash'], current_month)
+            )
+            count = usage[0]['credit_usage'] if usage else 0
+            limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
+            text += f"• `{display_name}`: {count} / {limit}\n"
+        text += "Сброс лимитов: 1-го числа каждого месяца\n\n"
+
+    # Добавляем историю за последние дни
+    if metrics['daily_metrics']:
+        text += "*📈 История за последние дни:*\n"
+        for date_str, daily_data in list(metrics['daily_metrics'].items())[:5]:  # Последние 5 дней
+            requests = daily_data.get('requests', 0)
+            errors = daily_data.get('errors', 0)
+            text += f"• {date_str}: {requests} запросов, {errors} ошибок\n"
+        text += "\n"
+
+    # Добавляем последние ошибки
+    if metrics['recent_errors']:
+        text += "*⚠️ Последние ошибки:*\n"
+        for error in metrics['recent_errors'][:3]:  # Последние 3 ошибки
+            text += f"• {error['type']}: {error['message'][:40]}...\n"
+
+    # Add timestamp for live update feedback
+    from datetime import datetime
+    text += f"\n_Обновлено: {datetime.now().strftime('%H:%M:%S UTC')}_"
+
+    return text
+
 @admin_only
 async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
     """Показывает полную сводку метрик, статуса ключей и кредитов"""
     try:
-        # Получаем метрики производительности
-        metrics = await metrics_collector.get_metrics_summary()
-        
-        # Получаем статус ключей Gemini
-        today_pacific = time_utils.get_pacific_date()
-        gemini_keys = await db.db_query("SELECT * FROM api_keys")
-        
-        # Получаем статус кредитов Tavily
-        current_month = time_utils.get_current_month_str()
-        tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
-        
-        # Формируем основной текст
-        text = (
-            "📊 *Полная сводка системы:*\n\n"
-            "*🚀 Производительность:*\n"
-            f"• Всего запросов: `{metrics['total_requests']}`\n"
-            f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
-            f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
-            f"• Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
-            f"• Поисковых запросов: `{metrics['search_queries']}`\n\n"
-        )
-        
-        # Добавляем использование API и моделей
-        if metrics.get('api_calls'):
-            text += "*🔌 Использование API:*\n"
-            for api, count in metrics['api_calls'].items():
-                if isinstance(api, str) and isinstance(count, (int, float)):
-                    text += f"• {api}: `{count}`\n"
-            text += "\n"
-        
-        if metrics.get('model_usage'):
-            text += "*🤖 Использование моделей:*\n"
-            for model, count in metrics['model_usage'].items():
-                # Пропускаем записи, которые содержат имена файлов (это ошибки в логике)
-                if isinstance(model, str) and isinstance(count, (int, float)) and not any(char in model for char in ['/', '\\', '.pdf', '.docx', '.doc']):
-                    text += f"• {model}: `{count}`\n"
-            text += "\n"
-        
-        # Добавляем статус ключей Gemini
-        if gemini_keys:
-            text += "*🔑 Статус ключей Gemini (сегодня):*\n"
-            for key_row in gemini_keys:
-                display_name = format_key_for_display(key_row['api_key'])
-                usage_data = await db.db_query(
-                    "SELECT model_name, request_count FROM key_usage WHERE key_hash = $1 AND usage_date = $2", 
-                    (key_row['key_hash'], today_pacific)
-                )
-                if not usage_data:
-                    text += f"• `{display_name}`: не использовался\n"
-                else:
-                    for usage in usage_data:
-                        model_name = usage['model_name']
-                        count = usage['request_count']
-                        limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
-                        text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
-            text += f"Сброс лимитов: *{time_utils.get_kyiv_reset_time()}* по Киеву\n\n"
-        
-        # Добавляем статус кредитов Tavily
-        if tavily_keys:
-            text += "*💳 Кредиты Tavily (текущий месяц):*\n"
-            for key_row in tavily_keys:
-                display_name = format_key_for_display(key_row['api_key'])
-                usage = await db.db_query(
-                    "SELECT credit_usage FROM tavily_key_usage WHERE key_hash = $1 AND usage_month = $2", 
-                    (key_row['key_hash'], current_month)
-                )
-                count = usage[0]['credit_usage'] if usage else 0
-                limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
-                text += f"• `{display_name}`: {count} / {limit}\n"
-            text += "Сброс лимитов: 1-го числа каждого месяца\n\n"
-        
-        # Добавляем историю за последние дни
-        if metrics['daily_metrics']:
-            text += "*📈 История за последние дни:*\n"
-            for date_str, daily_data in list(metrics['daily_metrics'].items())[:5]:  # Последние 5 дней
-                requests = daily_data.get('requests', 0)
-                errors = daily_data.get('errors', 0)
-                text += f"• {date_str}: {requests} запросов, {errors} ошибок\n"
-            text += "\n"
-        
-        # Добавляем последние ошибки
-        if metrics['recent_errors']:
-            text += "*⚠️ Последние ошибки:*\n"
-            for error in metrics['recent_errors'][:3]:  # Последние 3 ошибки
-                text += f"• {error['type']}: {error['message'][:40]}...\n"
+        text = await get_metrics_content()
         
         # Используем TelegramFormatter для надежного форматирования
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        
+        keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_metrics")]]
+        
+        await update.message.reply_text(
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         
     except Exception as e:
         error_msg = f"❌ Ошибка получения метрик: {str(e)[:100]}"
