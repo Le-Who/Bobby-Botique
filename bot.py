@@ -7,7 +7,7 @@ import sys
 import threading
 
 from telegram import Update
-from telegram.ext import Application, CallbackQueryHandler
+from telegram.ext import Application, CallbackQueryHandler, TypeHandler
 from telegram.error import NetworkError, TimedOut, RetryAfter, Conflict
 from hypercorn.config import Config as HypercornConfig
 from hypercorn.asyncio import serve
@@ -17,6 +17,7 @@ from app.config import settings
 from app import database
 from app.handlers import commands, messages, callbacks
 from app.handlers.callbacks import new_topic_callback
+from app.handlers.middleware import rate_limit_middleware
 from app.metrics import metrics_collector
 from app.utils.logging_config import setup_detailed_logging
 
@@ -147,6 +148,9 @@ async def run_bot_with_retry():
             
             application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
             
+            # Register rate limit middleware with high priority (group -1)
+            application.add_handler(TypeHandler(Update, rate_limit_middleware), group=-1)
+
             commands.register(application)
             callbacks.register(application)
             messages.register(application)

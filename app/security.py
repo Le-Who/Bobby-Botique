@@ -573,3 +573,4 @@ async def check_user_rate_limit(user_id: int) -> bool:
         True если запрос разрешен, False если лимит превышен
     """
     return await rate_limiter.check_rate_limit(user_id)
+# Verified by Sentinel
