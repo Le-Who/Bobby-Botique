@@ -29,8 +29,9 @@ def escape_markdown_v2(text: str) -> str:
     It preserves existing valid Markdown syntax while escaping literal special characters.
     """
     # Characters that need escaping in Telegram MarkdownV2
-    # Note: `_` and `*` are handled by the regex logic, not this list.
-    escape_chars = r'\[\]()~`>#+-=|{}.!'
+    # Include ALL special characters to ensure safety.
+    # We include `_` and `*` here so they are caught by Group 5 if not matched by Groups 1-2.
+    escape_chars = r'\[\]()~`>#+-=|{}.!_*\\'
 
     # Regex to find either a valid Markdown entity OR a character that needs escaping.
     # Groups:
@@ -140,16 +141,11 @@ class TelegramFormatter:
     @classmethod
     def _prepare_markdown_v2(cls, text: str) -> str:
         """Подготавливает текст для MarkdownV2."""
-        # Заменяем ** на * для жирного текста
+        # Заменяем ** на * для жирного текста (Common Markdown -> Telegram MarkdownV2)
         text = re.sub(r'\*\*(.*?)\*\*', r'*\1*', text)
         
-        # Экранируем специальные символы
-        special_chars = r'\[\]()~`>#+-=|{}.!'
-        for char in special_chars:
-            if char in text:
-                text = cls._escape_char_safely(text, char)
-        
-        return text
+        # Используем надежную функцию экранирования
+        return escape_markdown_v2(text)
     
     @classmethod
     def _escape_char_safely(cls, text: str, char: str) -> str:
@@ -206,7 +202,8 @@ class TelegramFormatter:
                 return False
             
             # Проверяем, что нет неэкранированных специальных символов
-            special_chars = r'\[\]()~`>#+-=|{}.!'
+            # Добавляем _, *, \ в список проверяемых символов
+            special_chars = r'\[\]()~`>#+-=|{}.!_*\\'
             for char in special_chars:
                 if char in text:
                     # Проверяем, что символ экранирован или является частью валидного Markdown
@@ -246,6 +243,13 @@ class TelegramFormatter:
             if pos > 0 and text[pos-1] == '\\':
                 continue
             
+            # Если сам символ - обратный слеш, и он не экранирован (проверено выше),
+            # то он должен экранировать следующий символ
+            if char == '\\':
+                if pos < len(text) - 1:
+                    continue
+                return False
+
             # Проверяем, является ли символ частью валидного Markdown
             if not cls._is_part_of_valid_markdown(text, pos):
                 return False
@@ -269,32 +273,10 @@ class TelegramFormatter:
     @classmethod
     def _is_part_of_formatting(cls, text: str, pos: int) -> bool:
         """Проверяет, является ли позиция частью форматирования."""
-        if not text or pos < 0 or pos >= len(text):
-            return False
-            
-        char = text[pos]
-        
-        # Ищем парный символ
-        if char == '*':
-            # Ищем другой * в том же направлении
-            if pos > 0 and text[pos-1] == '*':
-                return True
-            if pos < len(text) - 1 and text[pos+1] == '*':
-                return True
-        elif char == '_':
-            # Ищем другой _ в том же направлении
-            if pos > 0 and text[pos-1] == '_':
-                return True
-            if pos < len(text) - 1 and text[pos+1] == '_':
-                return True
-        elif char == '`':
-            # Ищем другой ` в том же направлении
-            if pos > 0 and text[pos-1] == '`':
-                return True
-            if pos < len(text) - 1 and text[pos+1] == '`':
-                return True
-        
-        return False
+        # Поскольку текст предварительно обработан escape_markdown_v2,
+        # любые неэкранированные символы форматирования (*, _, `)
+        # являются частью валидной разметки (matched by Groups 1-3).
+        return True
     
     @classmethod
     def _is_part_of_link(cls, text: str, pos: int) -> bool:
