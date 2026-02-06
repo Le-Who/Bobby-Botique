@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
 from app import prompts
@@ -15,6 +16,7 @@ from app import prompts
 from app.metrics import role_conv_metrics
 from app.state import get_last_custom_role_prompt, set_generating_custom_role, set_last_custom_role_prompt
 from app.errors import build_roles_keyboard
+from app.utils.decorators import admin_only
 
 class DummyUpdate:
     """Helper class to mock an Update object for calling commands from callbacks."""
@@ -592,6 +594,9 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(conv_delete_confirm_callback, pattern="^conv_delete_confirm:"))
    application.add_handler(CallbackQueryHandler(conv_delete_cancel_callback, pattern="^conv_delete_cancel$"))
 
+   # Refresh metrics
+   application.add_handler(CallbackQueryHandler(refresh_metrics_callback, pattern="^refresh_metrics$"))
+
 async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
    user_id = query.from_user.id
@@ -929,3 +934,32 @@ async def conv_delete_cancel_callback(update: Update, context: ContextTypes.DEFA
     await query.answer()
     
     await query.edit_message_text("❌ Удаление отменено")
+
+@admin_only
+async def refresh_metrics_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Refreshes the metrics dashboard."""
+    query = update.callback_query
+
+    try:
+        from app.handlers.commands import get_metrics_content
+        text = await get_metrics_content()
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+
+        keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_metrics")]]
+
+        await query.edit_message_text(
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        await query.answer("🔄 Метрики обновлены")
+
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" in str(e):
+            await query.answer("✅ Данные актуальны", show_alert=False)
+        else:
+            logging.error(f"Error refreshing metrics: {e}")
+            await query.answer("❌ Ошибка обновления")
+    except Exception as e:
+        logging.error(f"Error in refresh metrics callback: {e}", exc_info=True)
+        await query.answer("❌ Внутренняя ошибка")

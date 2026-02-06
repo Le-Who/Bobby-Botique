@@ -12,3 +12,7 @@
 ## 2024-05-21 - [Preventing Accidental Data Loss in Command Interfaces]
 **Learning:** Users often explore CLI/bot commands by running them without arguments to see help/status. Commands that perform destructive actions (like clearing settings) when run without arguments are a major UX trap.
 **Action:** Always implement a "show status/help" behavior for no-argument invocations of configuration commands. Require explicit keywords (like `clear`, `reset`) for destructive actions.
+
+## 2025-02-18 - [Live Refresh Pattern]
+**Learning:** When implementing 'Refresh' buttons that update message content in-place, Telegram throws a `BadRequest: Message is not modified` error if the new content is identical to the old. This often happens with high-frequency refresh attempts.
+**Action:** Always wrap `edit_message_text` in a try/except block catching `BadRequest`. If the error message contains 'Message is not modified', suppress the error and provide a subtle toast (e.g., '✅ Data is up to date') to the user.
