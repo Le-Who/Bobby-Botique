@@ -16,3 +16,7 @@
 ## 2025-02-18 - [Live Refresh Pattern]
 **Learning:** When implementing 'Refresh' buttons that update message content in-place, Telegram throws a `BadRequest: Message is not modified` error if the new content is identical to the old. This often happens with high-frequency refresh attempts.
 **Action:** Always wrap `edit_message_text` in a try/except block catching `BadRequest`. If the error message contains 'Message is not modified', suppress the error and provide a subtle toast (e.g., '✅ Data is up to date') to the user.
+
+## 2025-02-18 - [Empty States Must Be Actionable]
+**Learning:** In menu-driven interfaces (like Telegram bots), providing a text-only "empty state" (e.g., "No documents found") creates a dead end for the user, forcing them to restart the flow.
+**Action:** When a list is empty, reuse the main menu generation logic (e.g., `get_documents_menu_content`) instead of a static message. This ensures that action buttons (like "Upload New") remain accessible even when the content list is empty.
