@@ -1,7 +1,7 @@
 import os
 import datetime
 import logging
-from flask import Flask
+from flask import Flask, render_template
 from app import database
 from app.config import settings
 
@@ -9,45 +9,54 @@ from app.config import settings
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
-def health_check():
-    """Health check endpoint для Render Free Tier"""
-    print("Health check request received from Render", flush=True)
-    logging.info("Health check request received from Render")
-    return "I am alive!", 200
-
-@flask_app.route('/status')
-def status_check():
-    """Расширенная проверка статуса для диагностики"""
+def dashboard():
+    """Main Dashboard Endpoint"""
     try:
-        print("Status check request received", flush=True)
-
-        # Проверяем базовые компоненты
-        status = {
+        # Collect Status Data
+        status_data = {
             "bot": "running",
             "database": "connected" if database.db_pool else "disconnected",
-            "timestamp": str(datetime.datetime.now()),
-            "uptime": "active",
-            "version": "2.0.0",
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "version": "2.1.0",
             "environment": os.getenv("ENVIRONMENT", "production")
         }
 
-        # Добавляем информацию о системе
+        # System Metrics
         import psutil
         try:
-            status["system"] = {
-                "cpu_percent": psutil.cpu_percent(interval=1),
+            status_data["system"] = {
+                "cpu_percent": psutil.cpu_percent(interval=None), # Non-blocking
                 "memory_percent": psutil.virtual_memory().percent,
                 "disk_percent": psutil.disk_usage('/').percent
             }
         except ImportError:
-            status["system"] = {"error": "psutil not available"}
+            status_data["system"] = {"cpu_percent": 0, "memory_percent": 0, "disk_percent": 0}
 
-        print("Status: %s", status, flush=True)
+        return render_template('status.html', status=status_data)
+    except Exception as e:
+        return f"Dashboard Error: {e}", 500
+
+@flask_app.route('/status') # Keep JSON API for automated monitoring
+def status_api():
+    """JSON Status API for external monitoring tools"""
+    try:
+        # Reusing logic for JSON response...
+        status = {
+            "bot": "running",
+            "database": "connected" if database.db_pool else "disconnected",
+            "timestamp": str(datetime.datetime.now()),
+            "system": {}
+        }
+        import psutil
+        try:
+             status["system"] = {
+                "cpu_percent": psutil.cpu_percent(interval=None),
+                "memory_percent": psutil.virtual_memory().percent,
+                "disk_percent": psutil.disk_usage('/').percent
+            }
+        except: pass
         return status, 200
     except Exception as e:
-        error_msg = "Status check error: %s" % e
-        print(error_msg, flush=True)
-        logging.error(error_msg)
         return {"error": str(e)}, 500
 
 

@@ -64,26 +64,39 @@ async def start_media_groups_cleanup():
     _cleanup_task = asyncio.create_task(cleanup_loop())
     logging.info("Media groups cleanup task started")
 
-async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает входящие сообщения"""
-    # Валидация входных данных
-    if not update or not update.effective_user:
-        logging.error("Invalid update object received")
-        return
-    
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    
-    # Валидация user_id
-    if not isinstance(user_id, int) or user_id <= 0:
-        logging.error("Invalid user_id: %s", user_id)
-        return
-    
-    # Проверяем, есть ли изображение и media_group_id
+async def _handle_role_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """Обрабатывает переименование роли. Возвращает True, если обработано."""
+    if context.user_data.get("rename_role_id") and update.message and update.message.text:
+        try:
+            new_title = update.message.text.strip()
+            role_id = int(context.user_data.get("rename_role_id"))
+            if 1 <= len(new_title) <= 100:
+                await db.db_query("UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3", (new_title, role_id, user_id))
+                context.user_data.pop("rename_role_id", None)
+                await update.message.reply_text(f"✅ Роль переименована в: {new_title}")
+                # Возврат в меню ролей
+                from app.handlers.commands import roles_command
+                class DummyUpdate:
+                    def __init__(self, msg, user):
+                        self.message = msg
+                        self.effective_user = user
+                await roles_command(DummyUpdate(update.message, update.effective_user), context)
+                return True
+            else:
+                await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")
+                return True
+        except Exception as e:
+            logging.error(f"Error renaming role: {e}")
+            await update.message.reply_text("❌ Не удалось переименовать роль. Попробуйте позже.")
+            context.user_data.pop("rename_role_id", None)
+            return True
+    return False
+
+async def _process_media_group_update(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int) -> bool:
+    """Обрабатывает обновление, если это часть медиа-группы. Возвращает True, если обработано."""
     is_photo = bool(update.message.photo)
     media_group_id = update.message.media_group_id if update.message else None
     
-    # Если это изображение с media_group_id, проверяем, действительно ли это группа
     if is_photo and media_group_id:
         logging.info(f"📸 Получено изображение с media_group_id {media_group_id} от пользователя {user_id}")
         
@@ -119,8 +132,51 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 MEDIA_GROUPS[media_group_id]['processing_scheduled'] = True
                 asyncio.create_task(delayed_process_media_group(media_group_id, context, 1.0))
         
-        return  # Выходим, не обрабатывая отдельно
+        return True
+    return False
+
+async def _handle_document_mode_interaction(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """Обрабатывает взаимодействие в режиме документов. Возвращает True, если обработано."""
+    from app.state import is_in_document_mode, get_selected_document_id
     
+    if is_in_document_mode(user_id):
+        document_id = get_selected_document_id(user_id)
+        logging.info("User %s is in document mode, document_id: %s", user_id, document_id)
+        if document_id:
+            await handle_document_question(update, context, document_id)
+        else:
+            await update.message.reply_text(
+                "📋 Вы находитесь в режиме работы с документами.\n\n"
+                "💡 *Доступные действия:*\n"
+                "• Загрузите новый документ\n"
+                "• Выберите документ из списка\n"
+                "• Используйте кнопки под сообщениями\n\n"
+                "🔄 *Для выхода из режима документов:*\n"
+                "• Нажмите кнопку '❌ Отменить работу с документами'\n"
+                "• Или отправьте команду /documents"
+            )
+        return True
+    return False
+
+async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает входящие сообщения"""
+    # Валидация входных данных
+    if not update or not update.effective_user:
+        logging.error("Invalid update object received")
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    # Валидация user_id
+    if not isinstance(user_id, int) or user_id <= 0:
+        logging.error("Invalid user_id: %s", user_id)
+        return
+    
+    # Обрабатываем медиа-группы
+    if await _process_media_group_update(update, context, user_id, chat_id):
+        return
+
     # Детальное логирование Telegram API запроса
     message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
     start_time = api_logger.log_telegram_request(
@@ -157,156 +213,16 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_document(update, context)
         return
     
-    # Переименование роли: если пользователь ввёл новое имя после выбора role_rename_pick
-    if context.user_data.get("rename_role_id") and update.message and update.message.text:
-        try:
-            new_title = update.message.text.strip()
-            role_id = int(context.user_data.get("rename_role_id"))
-            if 1 <= len(new_title) <= 100:
-                await db.db_query("UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3", (new_title, role_id, user_id))
-                context.user_data.pop("rename_role_id", None)
-                await update.message.reply_text(f"✅ Роль переименована в: {new_title}")
-                # Возврат в меню ролей
-                from app.handlers.commands import roles_command
-                class DummyUpdate:
-                    def __init__(self, msg, user):
-                        self.message = msg
-                        self.effective_user = user
-                await roles_command(DummyUpdate(update.message, update.effective_user), context)
-                return
-            else:
-                await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")
-                return
-        except Exception as e:
-            logging.error(f"Error renaming role: {e}")
-            await update.message.reply_text("❌ Не удалось переименовать роль. Попробуйте позже.")
-            context.user_data.pop("rename_role_id", None)
-            return
+    # Переименование роли
+    if await _handle_role_rename(update, context, user_id):
+        return
 
-    # Генерация кастомной роли: если ждём описания, генерируем роль и показываем превью
-    if is_awaiting_custom_role_input(user_id):
-        try:
-            # Проверяем кэш
-            cached_role = prompts.get_cached_custom_role(message_text)
-            if cached_role:
-                set_generated_role(user_id, cached_role)
-                # Превью роли из кэша
-                title = cached_role.get('title', 'Кастомная роль')
-                purpose = cached_role.get('purpose', '')
-                style = ", ".join(cached_role.get('style', [])[:3])
-                preview = (
-                    f"🆕 *Новая роль (из кэша):* {title}\n\n"
-                    f"🎯 Цель: {purpose}\n"
-                    f"🧭 Стиль: {style}\n\n"
-                    f"Применить сейчас или сохранить?"
-                )
-                kb = [
-                    [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
-                    [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
-                    [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
-                ]
-                formatted_text, parse_mode = TelegramFormatter.format_text(preview)
-                await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
-                return
-            
-            chat_state = await db.get_user_chat(user_id)
-            # Системная инструкция для генерации роли — PROMPT_ENGINEER_SYSTEM_PROMPT
-            system_instruction = prompts.PROMPT_ENGINEER_SYSTEM_PROMPT
-            history = [{'role': 'user', 'parts': [f"{message_text}"]}]
-            
-            # Используем универсальную функцию для получения ключа (поддерживает и Gemini, и OpenRouter)
-            model_for_role = chat_state.model or settings.DEFAULT_MODEL
-            key_data, model_used, resolution = await agent._resolve_ai_request(model_for_role)
-            if not key_data:
-                await update.message.reply_text("❌ Нет доступных ключей API для генерации роли.")
-                clear_custom_role_state(user_id)
-                return
-            
-            # Индикатор прогресса
-            progress_msg = await update.message.reply_text("🛠️ Генерирую роль…")
-            set_last_custom_role_prompt(user_id, message_text)
-            set_generating_custom_role(user_id, True)
-            
-            # Используем универсальную функцию для получения ответа (поддерживает и Gemini, и OpenRouter)
-            response_text, _ = await agent._get_ai_response(
-                key_data['api_key'], 
-                history, 
-                model_used, 
-                system_instruction=system_instruction, 
-                user_id=user_id, 
-                chat_id=chat_id
-            )
-            
-            # Инкрементируем использование ключа
-            await agent._increment_key_usage(key_data['key_hash'], model_used)
-            
-            # Логируем ответ модели для отладки
-            logging.info(f"Model response for role generation: {response_text[:500]}...")
-            
-            # Надёжный парсинг JSON (убираем code-fence, извлекаем объект)
-            role_obj = prompts.extract_json_object(response_text)
-            if not role_obj:
-                logging.error(f"Failed to parse role JSON. Response: {response_text}")
-                raise ValueError("Invalid JSON from model")
-            # Сохраняем в кэш
-            prompts.cache_custom_role(message_text, role_obj)
-            set_generated_role(user_id, role_obj)
-            # Превью роли
-            title = role_obj.get('title', 'Кастомная роль')
-            purpose = role_obj.get('purpose', '')
-            style = ", ".join(role_obj.get('style', [])[:3])
-            preview = (
-                f"🆕 *Новая роль:* {title}\n\n"
-                f"🎯 Цель: {purpose}\n"
-                f"🧭 Стиль: {style}\n\n"
-                f"Применить сейчас или сохранить?"
-            )
-            kb = [
-                [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
-                [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
-            ]
-            formatted_text, parse_mode = TelegramFormatter.format_text(preview)
-            await progress_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
-            set_generating_custom_role(user_id, False)
-            return
-        except Exception as e:
-            logging.error(f"Custom role generation failed: {e}")
-            # Закрываем состояние ожидания роли, чтобы обычные сообщения снова шли в чат
-            try:
-                clear_custom_role_state(user_id)
-            except Exception:
-                pass
-            # Кнопка повторной попытки
-            retry_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="role_custom_retry")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
-            ])
-            # Дружественный текст при 503
-            msg = "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд." if "503" in str(e) or "unavailable" in str(e).lower() else "❌ Не удалось сгенерировать роль. Попробуйте ещё раз."
-            await update.message.reply_text(msg, reply_markup=retry_kb)
-            set_generating_custom_role(user_id, False)
-            return
+    # Генерация кастомной роли
+    if await _handle_custom_role_generation(update, context, user_id, chat_id, message_text):
+        return
 
     # Проверяем, находится ли пользователь в режиме работы с документами
-    from app.state import is_in_document_mode, get_selected_document_id
-    
-    if is_in_document_mode(user_id):
-        document_id = get_selected_document_id(user_id)
-        logging.info("User %s is in document mode, document_id: %s", user_id, document_id)
-        if document_id:
-            await handle_document_question(update, context, document_id)
-        else:
-            await update.message.reply_text(
-                "📋 Вы находитесь в режиме работы с документами.\n\n"
-                "💡 *Доступные действия:*\n"
-                "• Загрузите новый документ\n"
-                "• Выберите документ из списка\n"
-                "• Используйте кнопки под сообщениями\n\n"
-                "🔄 *Для выхода из режима документов:*\n"
-                "• Нажмите кнопку '❌ Отменить работу с документами'\n"
-                "• Или отправьте команду /documents"
-            )
+    if await _handle_document_mode_interaction(update, context, user_id):
         return
     
     # Сохраняем последний пользовательский ввод для кнопки "🔁 Попробовать ещё раз"
