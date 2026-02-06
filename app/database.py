@@ -652,22 +652,35 @@ async def get_user_chat(user_id: int) -> ChatState:
     async with db_manager.pool.acquire() as conn:
         await set_user_context(user_id, is_admin(user_id), conn=conn)
         try:
-            chat_result = await db_query("SELECT * FROM chats WHERE user_id = $1", (user_id,), conn=conn)
-            user_result = await db_query("SELECT is_deep_dive, deep_dive_thread_id FROM users WHERE user_id = $1", (user_id,), conn=conn)
+            # Optimized: Combine users and chats query into one
+            query = """
+                SELECT
+                    c.history, c.model, c.token_count, c.search_enabled, c.system_prompt,
+                    u.is_deep_dive, u.deep_dive_thread_id
+                FROM users u
+                LEFT JOIN chats c ON u.user_id = c.user_id
+                WHERE u.user_id = $1
+            """
+            result = await db_query(query, (user_id,), conn=conn)
 
             chat_state = ChatState(history=[], model=settings.DEFAULT_MODEL, token_count=0, search_enabled=False, system_prompt=None, is_deep_dive=False, deep_dive_thread_id=None)
 
-            if chat_result:
-                row = chat_result[0]
-                chat_state.history = json.loads(row['history']) if row['history'] else []
+            if result:
+                row = result[0]
+                # Chat fields
+                if row['history']:
+                     chat_state.history = json.loads(row['history'])
+                else:
+                     chat_state.history = []
+
                 chat_state.model = row['model'] or settings.DEFAULT_MODEL
                 chat_state.token_count = row['token_count'] or 0
-                chat_state.search_enabled = bool(row['search_enabled'])
+                chat_state.search_enabled = bool(row['search_enabled']) if row['search_enabled'] is not None else False
                 chat_state.system_prompt = row['system_prompt'] or None
 
-            if user_result:
-                chat_state.is_deep_dive = user_result[0]['is_deep_dive'] or False
-                chat_state.deep_dive_thread_id = user_result[0].get('deep_dive_thread_id')
+                # User fields
+                chat_state.is_deep_dive = row['is_deep_dive'] or False
+                chat_state.deep_dive_thread_id = row.get('deep_dive_thread_id')
 
             return chat_state
         finally:
