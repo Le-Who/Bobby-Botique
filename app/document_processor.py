@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import httpx
-import PyPDF2
+import pypdf
 from docx import Document
 # PyMuPDF removed for free tier optimization
 
@@ -229,7 +229,7 @@ class DocumentProcessor:
     def _process_pdf_sync(temp_file_path: str, max_pages: int) -> Dict[str, Any]:
         """Synchronous part of PDF processing to run in executor"""
         with open(temp_file_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
+            pdf_reader = pypdf.PdfReader(file)
 
             if len(pdf_reader.pages) > max_pages:
                 return {"error": f"PDF too large. Maximum {max_pages} pages allowed"}

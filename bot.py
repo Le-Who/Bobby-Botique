@@ -25,7 +25,7 @@ from app.group_chat import initialize_group_chats
 
 # Import extracted modules
 from app.web import flask_app
-from app.utils.lock import process_lock
+# Lock import removed
 
 # Global shutdown event
 shutdown_event = asyncio.Event()
@@ -44,7 +44,7 @@ def signal_handler(signum, frame):
         def force_shutdown():
             time.sleep(30)
             logging.warning("Force shutdown after timeout")
-            process_lock.release()  # Освобождаем блокировку перед выходом
+            # Lock release removed
             os._exit(1)
         
         force_thread = threading.Thread(target=force_shutdown, daemon=True)
@@ -399,20 +399,14 @@ async def main():
         except Exception: pass
         logging.info("Shutdown complete")
 
-if __name__ == "__main__":
     print("=== BOT MAIN ENTRY POINT ===", flush=True)
     
     container_id = os.environ.get('HOSTNAME', 'unknown')
     print(f"Container ID: {container_id}", flush=True)
     print(f"Process ID: {os.getpid()}", flush=True)
     
-    print("Checking for existing bot instances...", flush=True)
-    if not process_lock.acquire():
-        print("ERROR: Another bot instance is already running or lock cannot be acquired. Exiting.", flush=True)
-        print(f"Lock file: {process_lock.lock_file}", flush=True)
-        sys.exit(1)
-    
-    print("Lock acquired successfully. Starting bot...", flush=True)
+    # Locking logic removed for Northflank deployment
+    print("Starting bot...", flush=True)
     
     try:
         asyncio.run(main())
@@ -426,6 +420,4 @@ if __name__ == "__main__":
         logging.critical(error_msg, exc_info=True)
         sys.exit(1)
     finally:
-        print("Shutting down bot and releasing lock...", flush=True)
-        process_lock.release()
-        print("Bot shutdown complete. Lock released.", flush=True)
+        print("Bot shutdown complete.", flush=True)

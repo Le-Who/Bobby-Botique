@@ -430,8 +430,10 @@ def load_settings() -> Settings:
         return settings_obj
     except (ValidationError, ValueError) as e:
         # Catch errors from both Pydantic and our manual functions.
-        print(f"FATAL: Could not load settings. Please check your environment variables. Error: {e}")
-        exit(1)
+        # Catch errors from both Pydantic and our manual functions.
+        error_msg = f"FATAL: Could not load settings. Please check your environment variables. Error: {e}"
+        print(error_msg)
+        raise ValueError(error_msg)
 
 # --- TIMEZONES ---
 # Кэшируем временные зоны для предотвращения запросов к pg_timezone_names
