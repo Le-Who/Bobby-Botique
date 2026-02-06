@@ -698,53 +698,56 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
             await clear_user_context(conn=conn)
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
-    await set_user_context(settings.ADMIN_ID, True)
-    try:
-        cached_key = None
+    # Optimistic cache check (no DB lock needed)
+    cached_key = None
+    async with db_manager._cache_lock:
+        if model_name in db_manager._active_keys_cache:
+            key_data = db_manager._active_keys_cache[model_name]
+            last_update = db_manager._cache_last_updated.get(model_name, 0)
 
-        # Check cache first (lock needed for safe access)
-        async with db_manager._cache_lock:
-            if model_name in db_manager._active_keys_cache:
-                key_data = db_manager._active_keys_cache[model_name]
-                last_update = db_manager._cache_last_updated.get(model_name, 0)
-                
-                if time.time() - last_update < db_manager._cache_ttl:
-                    cached_key = key_data
-                else:
-                    # Expired, clean up
-                    del db_manager._active_keys_cache[model_name]
-                    if model_name in db_manager._cache_last_updated:
-                        del db_manager._cache_last_updated[model_name]
-
-        # Validation logic outside the lock to allow concurrency
-        # This prevents blocking other threads while waiting for DB
-        if cached_key:
-            if await _is_key_available(cached_key['key_hash'], model_name):
-                return cached_key
+            if time.time() - last_update < db_manager._cache_ttl:
+                cached_key = key_data
             else:
-                # Cache was invalid/limit reached, invalidate it safely
-                async with db_manager._cache_lock:
-                    if model_name in db_manager._active_keys_cache:
-                        # Double check it hasn't been updated by another thread to a new valid key
-                        current_cached = db_manager._active_keys_cache[model_name]
-                        if current_cached['key_hash'] == cached_key['key_hash']:
-                            del db_manager._active_keys_cache[model_name]
-                            if model_name in db_manager._cache_last_updated:
-                                del db_manager._cache_last_updated[model_name]
-        
-        # Fetch new key if cache missed or was invalid
-        new_key = await _get_fresh_available_key(model_name)
-        
-        if new_key:
-            async with db_manager._cache_lock:
-                db_manager._active_keys_cache[model_name] = new_key
-                db_manager._cache_last_updated[model_name] = time.time()
-        
-        return new_key
-    finally:
-        await clear_user_context()
+                # Expired, clean up
+                del db_manager._active_keys_cache[model_name]
+                if model_name in db_manager._cache_last_updated:
+                    del db_manager._cache_last_updated[model_name]
 
-async def _is_key_available(key_hash: str, model_name: str) -> bool:
+    # If we need to validate or fetch, we need a connection context
+    if not db_manager.is_connected:
+        await reconnect_database()
+
+    async with db_manager.pool.acquire() as conn:
+        await set_user_context(settings.ADMIN_ID, True, conn=conn)
+        try:
+            # Validation logic
+            if cached_key:
+                if await _is_key_available(cached_key['key_hash'], model_name, conn=conn):
+                    return cached_key
+                else:
+                    # Cache was invalid/limit reached, invalidate it safely
+                    async with db_manager._cache_lock:
+                        if model_name in db_manager._active_keys_cache:
+                            # Double check it hasn't been updated by another thread
+                            current_cached = db_manager._active_keys_cache[model_name]
+                            if current_cached['key_hash'] == cached_key['key_hash']:
+                                del db_manager._active_keys_cache[model_name]
+                                if model_name in db_manager._cache_last_updated:
+                                    del db_manager._cache_last_updated[model_name]
+
+            # Fetch new key if cache missed or was invalid
+            new_key = await _get_fresh_available_key(model_name, conn=conn)
+
+            if new_key:
+                async with db_manager._cache_lock:
+                    db_manager._active_keys_cache[model_name] = new_key
+                    db_manager._cache_last_updated[model_name] = time.time()
+
+            return new_key
+        finally:
+            await clear_user_context(conn=conn)
+
+async def _is_key_available(key_hash: str, model_name: str, conn=None) -> bool:
     today_pacific: date = datetime.now(get_pacific_tz()).date()
     daily_limit = settings.DAILY_LIMITS.get(model_name)
     
@@ -757,18 +760,18 @@ async def _is_key_available(key_hash: str, model_name: str) -> bool:
         WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3
     """
     
-    result = await db_query(query, (key_hash, model_name, today_pacific))
+    result = await db_query(query, (key_hash, model_name, today_pacific), conn=conn)
     current_usage = result[0]['request_count'] if result else 0
     threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
     
     return current_usage < threshold
 
-async def _get_fresh_available_key(model_name: str) -> Optional[Dict[str, Any]]:
+async def _get_fresh_available_key(model_name: str, conn=None) -> Optional[Dict[str, Any]]:
     today_pacific: date = datetime.now(get_pacific_tz()).date()
     daily_limit = settings.DAILY_LIMITS.get(model_name)
     
     if not daily_limit:
-        keys = await db_query("SELECT * FROM api_keys LIMIT 1")
+        keys = await db_query("SELECT * FROM api_keys LIMIT 1", conn=conn)
         return keys[0] if keys else None
     
     query = """
@@ -779,7 +782,7 @@ async def _get_fresh_available_key(model_name: str) -> Optional[Dict[str, Any]]:
         ORDER BY COALESCE(ku.request_count, 0) ASC
     """
     
-    results = await db_query(query, (model_name, today_pacific))
+    results = await db_query(query, (model_name, today_pacific), conn=conn)
     
     if not results:
         return None
@@ -894,28 +897,32 @@ async def increment_tavily_key_usage(key_hash: str, cost: int):
     await db_query(query, (key_hash, current_month, cost, cost))
 
 async def get_available_openrouter_key(model_name: str) -> Optional[Dict[str, Any]]:
-    await set_user_context(settings.ADMIN_ID, True)
-    try:
-        today_pacific: date = datetime.now(get_pacific_tz()).date()
-        query = """
-            SELECT oak.key_hash, oak.api_key, COALESCE(oku.request_count, 0) as request_count
-            FROM openrouter_api_keys oak
-            LEFT JOIN openrouter_key_usage oku ON oak.key_hash = oku.key_hash 
-                AND oku.model_name = $1 AND oku.usage_date = $2
-            ORDER BY COALESCE(oku.request_count, 0) ASC
-            LIMIT 1
-        """
-        results = await db_query(query, (model_name, today_pacific))
+    if not db_manager.is_connected:
+        await reconnect_database()
         
-        if results:
-            return {
-                'key_hash': results[0]['key_hash'],
-                'api_key': results[0]['api_key']
-            }
-        
-        return None
-    finally:
-        await clear_user_context()
+    async with db_manager.pool.acquire() as conn:
+        await set_user_context(settings.ADMIN_ID, True, conn=conn)
+        try:
+            today_pacific: date = datetime.now(get_pacific_tz()).date()
+            query = """
+                SELECT oak.key_hash, oak.api_key, COALESCE(oku.request_count, 0) as request_count
+                FROM openrouter_api_keys oak
+                LEFT JOIN openrouter_key_usage oku ON oak.key_hash = oku.key_hash
+                    AND oku.model_name = $1 AND oku.usage_date = $2
+                ORDER BY COALESCE(oku.request_count, 0) ASC
+                LIMIT 1
+            """
+            results = await db_query(query, (model_name, today_pacific), conn=conn)
+
+            if results:
+                return {
+                    'key_hash': results[0]['key_hash'],
+                    'api_key': results[0]['api_key']
+                }
+
+            return None
+        finally:
+            await clear_user_context(conn=conn)
 
 async def increment_openrouter_key_usage(key_hash: str, model_name: str):
     today_pacific: date = datetime.now(get_pacific_tz()).date()
@@ -1017,17 +1024,33 @@ async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, A
     return results
 
 async def get_active_key_info(model_name: str) -> Optional[Dict[str, Any]]:
+    # 1. Get from cache without I/O
+    cached_key = None
+    cached_at = 0
     async with db_manager._cache_lock:
         if model_name in db_manager._active_keys_cache:
             cached_key = db_manager._active_keys_cache[model_name]
-            is_available = await _is_key_available(cached_key['key_hash'], model_name)
+            cached_at = db_manager._cache_last_updated.get(model_name, 0)
+
+    if not cached_key:
+        return None
+
+    # 2. Verify availability outside lock with proper context
+    if not db_manager.is_connected:
+        await reconnect_database()
+
+    async with db_manager.pool.acquire() as conn:
+        await set_user_context(settings.ADMIN_ID, True, conn=conn)
+        try:
+            is_available = await _is_key_available(cached_key['key_hash'], model_name, conn=conn)
             return {
                 'key_hash': cached_key['key_hash'],
                 'api_key_preview': cached_key['api_key'][:10] + '...',
                 'is_available': is_available,
-                'cached_at': db_manager._cache_last_updated.get(model_name, 0)
+                'cached_at': cached_at
             }
-    return None
+        finally:
+            await clear_user_context(conn=conn)
 
 async def force_update_tavily_keys():
     try:
