@@ -234,12 +234,32 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("У вас нет документов для удаления.")
             return
         
+        # UX Improvement: Ask for confirmation
+        keyboard = [
+            [InlineKeyboardButton("✅ Да, удалить все", callback_data="doc:clear_all_confirm")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="doc:list")]
+        ]
+
+        text = "⚠️ *Вы уверены?*\n\nЭто действие удалит **ВСЕ** ваши загруженные документы.\nЭто действие нельзя отменить."
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await query.edit_message_text(
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    elif action == "clear_all_confirm":
+        # Получаем все документы пользователя
+        documents = await get_user_documents(user_id)
+
         # Удаляем все документы
         deleted_count = 0
-        for doc in documents:
-            success = await delete_user_document(doc['id'], user_id)
-            if success:
-                deleted_count += 1
+        if documents:
+            for doc in documents:
+                success = await delete_user_document(doc['id'], user_id)
+                if success:
+                    deleted_count += 1
         
         # Очищаем состояние работы с документами
         from ..state import clear_document_state
