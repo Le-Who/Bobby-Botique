@@ -348,6 +348,12 @@ class DocumentProcessor:
     
     async def _process_word(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает Word документ"""
+        # Validate magic bytes for ZIP (all .docx files are ZIPs)
+        # PK\x03\x04
+        if not file_data.startswith(b'\x50\x4b\x03\x04'):
+            logging.warning(f"Invalid DOCX format for {filename}: Missing ZIP header")
+            return {"error": "Invalid Word document format. File must be a valid .docx file."}
+
         temp_file_path = None
         try:
             # Создаем временный файл (в отдельном потоке)
