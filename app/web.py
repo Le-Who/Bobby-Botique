@@ -1,14 +1,38 @@
 import os
+import hmac
 import datetime
 import logging
-from flask import Flask, render_template
+from functools import wraps
+from flask import Flask, render_template, request, abort
 from app import database
 from app.config import settings
 
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
 flask_app = Flask(__name__)
 
+def require_auth(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        token = request.headers.get('X-Auth-Token') or request.args.get('token')
+
+        # Determine the expected secret
+        expected_secret = os.environ.get('ADMIN_SECRET')
+        if not expected_secret and settings:
+            expected_secret = settings.TELEGRAM_BOT_TOKEN
+
+        if not expected_secret:
+             logging.error("No authentication secret configured for web endpoints.")
+             abort(500, description="Server misconfiguration: Authentication secret not set.")
+
+        # Use constant-time comparison to prevent timing attacks
+        if not token or not hmac.compare_digest(token, expected_secret):
+            abort(401, description="Unauthorized: Invalid or missing token.")
+
+        return f(*args, **kwargs)
+    return decorated_function
+
 @flask_app.route('/')
+@require_auth
 def dashboard():
     """Main Dashboard Endpoint"""
     try:
@@ -37,6 +61,7 @@ def dashboard():
         return f"Dashboard Error: {e}", 500
 
 @flask_app.route('/status') # Keep JSON API for automated monitoring
+@require_auth
 def status_api():
     """JSON Status API for external monitoring tools"""
     try:
@@ -130,6 +155,7 @@ def health_check_endpoint():
         }, 500
 
 @flask_app.route('/keys')
+@require_auth
 def keys_status():
     """Endpoint для просмотра статуса ключей Gemini API"""
     try:
@@ -173,6 +199,7 @@ def keys_status():
         }, 500
 
 @flask_app.route('/keys/<model_name>')
+@require_auth
 def model_keys_status(model_name):
     """Endpoint для просмотра статуса ключей конкретной модели"""
     try:
