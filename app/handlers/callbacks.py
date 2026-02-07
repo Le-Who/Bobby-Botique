@@ -569,14 +569,19 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
    application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
    application.add_handler(CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$"))
+   application.add_handler(CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$"))
    application.add_handler(CallbackQueryHandler(open_roles_callback, pattern="^open_roles$"))
-   application.add_handler(CallbackQueryHandler(role_delete_callback, pattern="^role_delete:"))
+   # New Role management
+   application.add_handler(CallbackQueryHandler(role_detail_callback, pattern="^role_detail:"))
+   application.add_handler(CallbackQueryHandler(role_view_prompt_callback, pattern="^role_view_prompt:"))
+   application.add_handler(CallbackQueryHandler(role_delete_ask_callback, pattern="^role_delete_ask:"))
+   application.add_handler(CallbackQueryHandler(role_delete_confirm_callback, pattern="^role_delete_confirm:"))
+   application.add_handler(CallbackQueryHandler(role_delete_cancel_callback, pattern="^role_delete_cancel:"))
+   
    application.add_handler(CallbackQueryHandler(role_rename_menu_callback, pattern="^role_rename_menu$"))
    application.add_handler(CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:"))
     
-   application.add_handler(CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:"))
-    
-    # Role Navigation (New)
+   # Role Navigation (New)
    application.add_handler(CallbackQueryHandler(role_nav_callback, pattern="^role_nav:"))
    application.add_handler(CallbackQueryHandler(role_page_callback, pattern="^role_page:"))
    application.add_handler(CallbackQueryHandler(lambda u,c: u.callback_query.answer(), pattern="^noop$"))
@@ -796,7 +801,36 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
    await progress_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
    set_generating_custom_role(user_id, False)
 
-async def role_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    role_id = query.data.split(":")[1]
+    
+    bg_text = (
+        "⚠️ *Удаление роли*\n\n"
+        "Вы уверены, что хотите удалить эту роль? Это действие нельзя отменить."
+    )
+    kb = [
+        [InlineKeyboardButton("🗑️ Да, удалить навсегда", callback_data=f"role_delete_confirm:{role_id}")],
+        [InlineKeyboardButton("❌ Отмена", callback_data=f"role_delete_cancel:{role_id}")]
+    ]
+    formatted, pm = TelegramFormatter.format_text(bg_text)
+    await query.edit_message_text(formatted, parse_mode=pm, reply_markup=InlineKeyboardMarkup(kb))
+
+async def role_delete_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    role_id = query.data.split(":")[1]
+    
+    # Возвращаемся в детали роли
+    from app.handlers.commands import get_roles_menu_content
+    user_id = query.from_user.id
+    chat_state = await db.get_user_chat(user_id)
+    
+    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="role_details", role_key=f"user_role:{role_id}")
+    await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+async def role_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     if not await db.is_authorized(user_id):
@@ -817,10 +851,8 @@ async def role_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             chat_state.system_prompt = None
             await db.update_user_chat(user_id, chat_state)
 
-        # Обновляем меню - остаемся в списке "Мои роли"
+        # Обновляем меню - переходим в список "Мои роли"
         from app.handlers.commands import get_roles_menu_content
-        # Пытаемся остаться на текущей странице, но так как мы не знаем текущую страницу из callback_data удаления сразу,
-        # просто возвращаемся на первую страницу моих ролей.
         text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="my_roles", page=0)
         
         try:
@@ -834,6 +866,53 @@ async def role_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         logging.error(f"Error deleting role: {e}")
         await query.answer("❌ Ошибка удаления роли")
+
+async def role_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    chat_state = await db.get_user_chat(user_id)
+    
+    role_key = query.data.split(":", 1)[1]
+    
+    from app.handlers.commands import get_roles_menu_content
+    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="role_details", role_key=role_key)
+    
+    try:
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise e
+
+async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    role_key = query.data.split(":", 1)[1]
+    user_id = query.from_user.id
+    
+    # Need to fetch role data again to get prompt
+    prompt = ""
+    # Code duplication avoidance: ideally extract "get_role_prompt(key, uid)" helper.
+    # For now, minimal inline logic is fine.
+    
+    if role_key.startswith("user_role:"):
+        try:
+            r_id = int(role_key.split(":")[1])
+            res = await db.db_query("SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2", (r_id, user_id))
+            if res:
+                prompt = res[0]['prompt']
+        except:
+            pass
+    elif role_key in prompts.DEFAULT_ROLES:
+        prompt = prompts.DEFAULT_ROLES[role_key].get('prompt', '')
+        
+    if prompt:
+        # Send as a new message so user can copy it easily
+        await query.message.reply_text(f"📝 *Полный промпт роли:*\n\n`{prompt}`", parse_mode="Markdown")
+    else:
+        await query.message.reply_text("❌ Не удалось найти промпт.")
 
 async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query

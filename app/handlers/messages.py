@@ -164,13 +164,11 @@ async def _handle_role_rename(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await db.db_query("UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3", (new_title, role_id, user_id))
                 context.user_data.pop("rename_role_id", None)
                 await update.message.reply_text(f"✅ Роль переименована в: {new_title}")
-                # Возврат в меню ролей
-                from app.handlers.commands import roles_command
-                class DummyUpdate:
-                    def __init__(self, msg, user):
-                        self.message = msg
-                        self.effective_user = user
-                await roles_command(DummyUpdate(update.message, update.effective_user), context)
+                # Возврат в детали роли
+                from app.handlers.commands import get_roles_menu_content
+                chat_state = await db.get_user_chat(user_id)
+                text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="role_details", role_key=f"user_role:{role_id}")
+                await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
                 return True
             else:
                 await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")

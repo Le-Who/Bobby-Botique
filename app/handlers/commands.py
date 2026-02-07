@@ -227,11 +227,12 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     formatted_text, parse_mode = TelegramFormatter.format_text(f"✅ Системная инструкция обновлена:\n`{preview}`")
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
-async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0):
+async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, role_key=None):
     """
     Генерирует контент для меню ролей в стиле "Smart Hub".
-    view_mode: 'hub' | 'my_roles' | 'system_roles'
+    view_mode: 'hub' | 'my_roles' | 'system_roles' | 'role_details'
     page: номер страницы для списков
+    role_key: ключ роли для просмотра деталей (id для кастомных, key для системных)
     """
     
     # 1. Определяем активную роль
@@ -302,6 +303,86 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0):
         return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
     # ==========================
+    # VIEW: ROLE DETAILS (Детали роли)
+    # ==========================
+    elif view_mode == "role_details":
+        if not role_key:
+            return "Ошибка: не указана роль", None, None
+
+        # Ищем данные роли
+        title = "Неизвестная роль"
+        prompt = ""
+        is_custom = False
+        role_id = None # Для кастомных
+
+        if role_key.startswith("user_role:"):
+            # Кастомная роль
+            try:
+                r_id = int(role_key.split(":")[1])
+                res = await db.db_query("SELECT id, title, prompt FROM user_roles WHERE id = $1 AND user_id = $2", (r_id, user_id))
+                if res:
+                    title = res[0]['title']
+                    prompt = res[0]['prompt']
+                    is_custom = True
+                    role_id = r_id
+                else:
+                    return "Роль не найдена или удалена.", None, None
+            except:
+                 return "Ошибка ключа роли", None, None
+        else:
+            # Системная роль
+            if role_key in prompts.DEFAULT_ROLES:
+                meta = prompts.DEFAULT_ROLES[role_key]
+                title = meta.get('title', role_key)
+                prompt = meta.get('prompt', '')
+            else:
+                return "Системная роль не найдена", None, None
+
+        is_active = (role_key == active_role_key)
+        status_icon = "✅" if is_active else "⚪️"
+        status_text = "АКТИВНА" if is_active else "Не активна"
+
+        preview_len = 150
+        prompt_preview = prompt[:preview_len] + "..." if len(prompt) > preview_len else prompt
+        
+        text = (
+            f"ℹ️ *Детали роли*\n\n"
+            f"🏷 *Название:* {title}\n"
+            f"🔋 *Статус:* {status_icon} {status_text}\n\n"
+            f"📝 *Промпт (отрывок):*\n_{prompt_preview}_\n"
+        )
+
+        keyboard = []
+        
+        # 1. Применить/Снять
+        if is_active:
+             keyboard.append([InlineKeyboardButton("🛑 Отключить эту роль", callback_data="role_clear")])
+        else:
+             keyboard.append([InlineKeyboardButton("✅ Применить роль", callback_data=f"role_apply:{role_key}")])
+
+        # 2. Действия над ролью
+        row_actions = []
+        row_actions.append(InlineKeyboardButton("👁️ Промпт", callback_data=f"role_view_prompt:{role_key}"))
+        
+        if is_custom:
+            row_actions.append(InlineKeyboardButton("✏️ Переим.", callback_data=f"role_rename_pick:{role_id}")) # Используем существующий механизм выбора
+            # Delete button leads to confirmation mode (handled in callback logic usually, but here we can keep it simple or redirect)
+            # For now, let's make delete button trigger a mode switch or a specific action
+            # The plan says "Confirm Delete state within detail view". 
+            # We can use a separate callback `role_delete_ask:<id>` to switch this view to confirmation mode.
+            row_actions.append(InlineKeyboardButton("🗑️ Удалить", callback_data=f"role_delete_ask:{role_id}"))
+        
+        keyboard.append(row_actions)
+        
+        # 3. Назад
+        # Определяем, куда возвращаться (в Мои или Системные)
+        back_view = "my_roles" if is_custom else "system_roles"
+        keyboard.append([InlineKeyboardButton("⬅️ Назад к списку", callback_data=f"role_nav:{back_view}")])
+
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+
+    # ==========================
     # VIEW: LISTS (Списки)
     # ==========================
     ITEMS_PER_PAGE = 6
@@ -320,8 +401,8 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0):
             is_active = "✅ " if key == active_role_key else ""
             items.append({
                 'text': f"{is_active}{r['title']}", 
-                'callback': f"role_apply:{key}",
-                'delete_callback': f"role_delete:{r['id']}" # Кастомные можно удалять
+                'callback': f"role_detail:{key}", # CHANGED: Link to details
+                'delete_callback': None # Removed direct delete
             })
             
     elif view_mode == "system_roles":
@@ -333,11 +414,11 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0):
             is_active = "✅ " if key == active_role_key else ""
             items.append({
                 'text': f"{is_active}{meta.get('title', key)}", 
-                'callback': f"role_apply:{key}",
-                'delete_callback': None # Системные нельзя удалять
+                'callback': f"role_detail:{key}", # CHANGED: Link to details
+                'delete_callback': None
             })
     else:
-        return "Ошибка режима", None, None
+        return f"Ошибка режима: {view_mode}", None, None
 
     # Пагинация
     total_items = len(items)
@@ -360,22 +441,13 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0):
 
     keyboard = []
     
-    # Рендерим элементы страницы
-    # Для кастомных ролей делаем 2 колонки: [Название] [Удалить]
-    # Для системных: одна широкая кнопка [Название]
+    # Рендерим элементы страницы - теперь всегда в 2 колонки для красоты, или 1?
+    # Так как мы убрали кнопку удаления, можно делать по 2 роли в ряд.
+    # Но названия могут быть длинными. Лучше 1 в ряд для стабильности.
     
     for item in current_items:
-        row = []
-        # Если есть delete_callback, значит нужны две кнопки в ряду
-        if item.get('delete_callback'):
-            # Кнопка применения (шире)
-            row.append(InlineKeyboardButton(item['text'], callback_data=item['callback']))
-            # Кнопка удаления (узкая)
-            row.append(InlineKeyboardButton("🗑️", callback_data=item['delete_callback']))
-        else:
-            # Одна широкая кнопка
-            row.append(InlineKeyboardButton(item['text'], callback_data=item['callback']))
-        keyboard.append(row)
+        # Одна широкая кнопка
+        keyboard.append([InlineKeyboardButton(item['text'], callback_data=item['callback'])])
         
     # Кнопки пагинации
     nav_row = []
