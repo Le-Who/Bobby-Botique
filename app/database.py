@@ -35,6 +35,11 @@ class DatabaseManager:
             cls._instance._cache_last_updated = {}
             cls._instance._cache_ttl = 300
             cls._instance._max_cache_size = 100
+
+            # Auth cache
+            cls._instance._user_auth_cache = {}
+            cls._instance._user_auth_last_updated = {}
+            cls._instance._auth_cache_ttl = 300 # 5 minutes
         return cls._instance
 
     @property
@@ -147,6 +152,8 @@ class DatabaseManager:
             try:
                 async with self._cache_lock:
                     current_time = time.time()
+
+                    # Cleanup keys cache
                     expired_keys = [k for k, v in self._cache_last_updated.items() if current_time - v > self._cache_ttl]
 
                     for key in expired_keys:
@@ -158,6 +165,13 @@ class DatabaseManager:
                         for key, _ in sorted_items[:len(self._active_keys_cache) - self._max_cache_size]:
                             del self._active_keys_cache[key]
                             del self._cache_last_updated[key]
+
+                    # Cleanup auth cache
+                    expired_auth = [k for k, v in self._user_auth_last_updated.items() if current_time - v > self._auth_cache_ttl]
+                    for key in expired_auth:
+                         if key in self._user_auth_cache:
+                             del self._user_auth_cache[key]
+                         del self._user_auth_last_updated[key]
 
                 await asyncio.sleep(30)
             except asyncio.CancelledError:
@@ -1149,18 +1163,46 @@ async def force_update_tavily_keys():
     except Exception:
         return False
 
+async def invalidate_user_auth_cache(user_id: int):
+    async with db_manager._cache_lock:
+        if user_id in db_manager._user_auth_cache:
+            del db_manager._user_auth_cache[user_id]
+        if user_id in db_manager._user_auth_last_updated:
+            del db_manager._user_auth_last_updated[user_id]
+
 def is_admin(user_id: int) -> bool:
     return user_id == settings.ADMIN_ID
 
 async def is_authorized(user_id: int) -> bool:
     if is_admin(user_id): return True
+
+    # Check cache
+    current_time = time.time()
+    async with db_manager._cache_lock:
+        if user_id in db_manager._user_auth_cache:
+             last_update = db_manager._user_auth_last_updated.get(user_id, 0)
+             if current_time - last_update < db_manager._auth_cache_ttl:
+                 return db_manager._user_auth_cache[user_id]
+             else:
+                 # Expired
+                 del db_manager._user_auth_cache[user_id]
+                 if user_id in db_manager._user_auth_last_updated:
+                     del db_manager._user_auth_last_updated[user_id]
+
     if not db_manager.is_connected: await reconnect_database()
     
     async with db_manager.pool.acquire() as conn:
         await set_user_context(user_id, False, conn=conn)
         try:
             result = await db_query("SELECT is_authorized FROM users WHERE user_id = $1", (user_id,), conn=conn)
-            return result and result[0]['is_authorized'] == 1
+            is_auth = result and result[0]['is_authorized'] == 1
+
+            # Update cache
+            async with db_manager._cache_lock:
+                db_manager._user_auth_cache[user_id] = is_auth
+                db_manager._user_auth_last_updated[user_id] = time.time()
+
+            return is_auth
         finally:
             await clear_user_context(conn=conn)
 
