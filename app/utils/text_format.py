@@ -79,6 +79,13 @@ def markdown_to_html(text: str) -> str:
         
         else:
             # --- Regular Text Processing ---
+            
+            # 0. Clean up MarkdownV2 style escaping (if any slipped through)
+            # Remove backslashes before non-special characters or punctuation that doesn't need it in HTML
+            # e.g. \. -> .   \( -> (   \) -> )   \- -> -   \= -> =
+            # We be careful not to break \\ (literal backslash) if it was intended, but usually it's better to clean.
+            segment = re.sub(r'\\([.\-()!=[\]{}|#+])', r'\1', segment)
+            
             # 1. Escape HTML characters (important to do first!)
             # This turns < into &lt;, etc.
             escaped_text = html.escape(segment)
