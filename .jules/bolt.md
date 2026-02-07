@@ -9,3 +9,7 @@
 ## 2024-05-25 - Blocking Word Processing
 **Learning:** `python-docx` operations are synchronous and CPU-bound. In `_process_word`, instantiating `Document(path)` and iterating over paragraphs blocked the event loop for ~0.6s even for small files.
 **Action:** Always offload `python-docx` or similar synchronous library calls to a thread using `asyncio.to_thread` or `loop.run_in_executor`. Extract the synchronous logic into a pure `_sync` static method.
+
+## 2025-02-19 - PDF Processing O(N^2) Bottleneck
+**Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
+**Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
