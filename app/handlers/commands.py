@@ -126,6 +126,8 @@ def get_model_menu_content(chat_state, context):
     text += f"*Провайдер:* {provider_name}\n\n"
     text += "Нажмите на модель для выбора."
 
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
+
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
@@ -290,6 +292,7 @@ async def get_roles_menu_content(user_id, chat_state):
     control_buttons.append(InlineKeyboardButton("✏️ Переименовать", callback_data="role_rename_menu"))
     two_col.append(control_buttons)
     two_col.append([InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
+    two_col.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
 
     text = "Выберите роль или создайте свою:"
     if active_role_key:

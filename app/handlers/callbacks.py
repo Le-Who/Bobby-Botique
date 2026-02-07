@@ -533,6 +533,7 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(new_chat_callback, pattern="^new_chat$"))
    application.add_handler(CallbackQueryHandler(model_menu_callback, pattern="^model_menu$"))
    application.add_handler(CallbackQueryHandler(help_callback, pattern="^help$"))
+   application.add_handler(CallbackQueryHandler(start_menu_callback, pattern="^start_menu$"))
 
    # Обрабатываем оба формата: model:0 (новый) и model_none (разделитель)
    application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model"))
@@ -565,6 +566,18 @@ def register(application: Application):
 
    # Refresh metrics
    application.add_handler(CallbackQueryHandler(refresh_metrics_callback, pattern="^refresh_metrics$"))
+
+async def start_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    chat_state = await db.get_user_chat(user_id)
+
+    from app.handlers.commands import get_start_menu_content
+    formatted_text, parse_mode, reply_markup = get_start_menu_content(chat_state)
+
+    await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
@@ -830,6 +843,8 @@ async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             callback_data=f"conv_switch_to:{conv['id']}"
         )])
     
+    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")])
+
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
 
 async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -900,9 +915,11 @@ async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEF
 async def conv_delete_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена удаления беседы"""
     query = update.callback_query
-    await query.answer()
     
-    await query.edit_message_text("❌ Удаление отменено")
+    from app.handlers.commands import get_conversations_menu_content
+    text, parse_mode, reply_markup = await get_conversations_menu_content(query.from_user.id, 1)
+    await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    await query.answer("❌ Удаление отменено")
 
 @admin_only
 async def refresh_metrics_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
