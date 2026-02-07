@@ -105,9 +105,17 @@ def markdown_to_html(text: str) -> str:
             
             # Italic: *text* (Only if not part of **)
             # This regex uses lookarounds to ensure we don't match inside **
-            # (?<!\*) means "not preceded by *"
-            # (?!\*) means "not followed by *"
             escaped_text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', escaped_text)
+
+            # Italic: _text_ (Standard Markdown)
+            # Match _text_ but not __text__ or snake_case_text
+            # Use negative lookbehind and lookahead to avoid matching inside __ or words
+            # This is tricky because snake_case is common. 
+            # We strictly enforce white space or boundary checks, or just accept that snake_case might break if we are aggressive.
+            # Safe heuristic: _text_ where _ is preceded/followed by non-word or space/start/end.
+            # But standard Markdown is: _text_ works anywhere if surrounded by whitespace or punctuation.
+            # Minimal safe version:
+            escaped_text = re.sub(r'(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)', r'<i>\1</i>', escaped_text)
             
             # Links: [text](url)
             # Since we already escaped HTML, the url might contain &amp; etc.

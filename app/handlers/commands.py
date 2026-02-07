@@ -21,22 +21,22 @@ def get_start_menu_content(chat_state):
     search_icon = "🟢" if chat_state.search_enabled else "🔴"
 
     start_text = (
-        "🤖 *Добро пожаловать в Gemini Bot!*\n\n"
+        "🤖 **Добро пожаловать в Gemini Bot!**\n\n"
         "Я ваш умный ассистент с возможностями:\n"
         "• 💬 Обычный чат с AI\n"
         "• 🔍 Веб-поиск и анализ\n"
         "• 🖼️ Поиск по изображениям\n"
         "• 📄 Обработка документов\n\n"
-        "*📊 Ваши настройки:*\n"
+        "**📊 Ваши настройки:**\n"
         f"• Модель: `{chat_state.model}`\n"
         f"• Поиск: {search_status}\n"
         f"• Инструкция: {prompt_status}\n\n"
-        "*🚀 Быстрый старт:*\n"
+        "**🚀 Быстрый старт:**\n"
         "• Просто напишите сообщение для чата\n"
         "• `? вопрос` — быстрый ответ\n"
         "• `?? вопрос` — глубокий анализ\n"
         "• Отправьте фото для анализа\n\n"
-        "*⚙️ Основные команды:*\n"
+        "**⚙️ Основные команды:**\n"
         "• `/help` — подробная справка\n"
         "• `/res` — режим поиска вкл/выкл\n"
         "• `/newchat` — новый чат\n"
@@ -45,7 +45,7 @@ def get_start_menu_content(chat_state):
         "• `/documents` — управление документами\n"
         "• `/metrics` — статистика системы\n"
         "• `/roles` — выбор ролей и создание своей\n\n"
-        "*💡 Совет:* Начните с простого вопроса!"
+        "**💡 Совет:** Начните с простого вопроса!"
     )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
@@ -121,9 +121,9 @@ def get_model_menu_content(chat_state, context):
 
     # Формируем текст с информацией о текущей модели
     provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
-    text = f"*Выберите модель для разговора:*\n\n"
-    text += f"*Текущая модель:* `{current_model}`\n"
-    text += f"*Провайдер:* {provider_name}\n\n"
+    text = f"**Выберите модель для разговора:**\n\n"
+    text += f"**Текущая модель:** `{current_model}`\n"
+    text += f"**Провайдер:** {provider_name}\n\n"
     text += "Нажмите на модель для выбора."
 
     keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
@@ -156,25 +156,25 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         help_text = (
-            "📚 *Подробная справка по Gemini Bot*\n\n"
-            "*💬 Обычный чат:*\n"
+            "📚 **Подробная справка по Gemini Bot**\n\n"
+            "**💬 Обычный чат:**\n"
             "Просто напишите сообщение для общения с AI\n\n"
-            "*🔍 Поиск и анализ:*\n"
+            "**🔍 Поиск и анализ:**\n"
             "• `? вопрос` — быстрый фактический ответ\n"
             "• `?? вопрос` — глубокое исследование с источниками\n"
             "• `??` + фото — поиск по изображению\n\n"
-            "*📄 Работа с документами:*\n"
+            "**📄 Работа с документами:**\n"
             "• Отправьте PDF или DOCX файл\n"
             "• Задавайте вопросы по содержимому\n"
             "• `/documents` — управление документами\n\n"
-            "*⚙️ Настройки:*\n"
+            "**⚙️ Настройки:**\n"
             "• `/model` — выбор AI модели\n"
             "• `/setprompt` — системная инструкция\n"
             "• `/res` — режим поиска вкл/выкл\n"
             "• `/newchat` — новый чат\n\n"
-            "*📊 Статистика:*\n"
+            "**📊 Статистика:**\n"
             "• `/metrics` — полная сводка (метрики, ключи, кредиты)\n\n"
-            "*🧩 Роли:*\n"
+            "**🧩 Роли:**\n"
             "• `/roles` — выбрать предустановленную роль или создать свою\n"
         )
         
@@ -200,10 +200,10 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             prompt_display = "_(не задана, используется стандартная)_"
 
         help_text = (
-            f"⚙️ *Текущая системная инструкция:*\n{prompt_display}\n\n"
-            "📝 *Как изменить:*\n"
+            f"⚙️ **Текущая системная инструкция:**\n{prompt_display}\n\n"
+            "📝 **Как изменить:**\n"
             "`/setprompt Вы - опытный программист Python...`\n\n"
-            "🧹 *Как сбросить:*\n"
+            "🧹 **Как сбросить:**\n"
             "`/setprompt clear`"
         )
         formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
@@ -274,11 +274,11 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, r
         custom_count = custom_count_res[0]['count'] if custom_count_res else 0
         
         text = (
-            f"🎭 *Управление ролями*\n\n"
+            f"🎭 **Управление ролями**\n\n"
             f"Ниже вы можете выбрать готовую роль или создать свою.\n"
             f"Роль определяет стиль общения и задачи бота.\n\n"
-            f"🔋 *Активная роль:*\n"
-            f"✨ *{active_role_title}*\n"
+            f"🔋 **Активная роль:**\n"
+            f"✨ **{active_role_title}**\n"
         )
         
         keyboard = []
@@ -346,10 +346,10 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, r
         prompt_preview = prompt[:preview_len] + "..." if len(prompt) > preview_len else prompt
         
         text = (
-            f"ℹ️ *Детали роли*\n\n"
-            f"🏷 *Название:* {title}\n"
-            f"🔋 *Статус:* {status_icon} {status_text}\n\n"
-            f"📝 *Промпт (отрывок):*\n_{prompt_preview}_\n"
+            f"ℹ️ **Детали роли**\n\n"
+            f"🏷 **Название:** {title}\n"
+            f"🔋 **Статус:** {status_icon} {status_text}\n\n"
+            f"📝 **Промпт (отрывок):**\n*{prompt_preview}*\n"
         )
 
         keyboard = []
@@ -391,7 +391,7 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, r
             "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC", 
             (user_id,)
         )
-        title_header = "📂 *Ваши личные роли*"
+        title_header = "📂 **Ваши личные роли**"
         empty_text = "У вас пока нет сохраненных ролей."
         
         # Формируем items для пагинатора
@@ -406,7 +406,7 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, r
             })
             
     elif view_mode == "system_roles":
-        title_header = "📚 *Каталог встроенных ролей*"
+        title_header = "📚 **Каталог встроенных ролей**"
         empty_text = "Список стандартных ролей пуст (странно!)."
         
         items = []
@@ -502,9 +502,9 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     search_status = "ВКЛ" if chat_state.search_enabled else "ВЫКЛ"
 
     text = (
-        "🧹 *Чат очищен!*\n"
+        "🧹 **Чат очищен!**\n"
         "История и контекст сброшены.\n\n"
-        "⚙️ *Текущие настройки:*\n"
+        "⚙️ **Текущие настройки:**\n"
         f"• Модель: `{chat_state.model}`\n"
         f"• Поиск: {search_icon} {search_status}\n"
         f"• Роль: 👤 Базовая\n\n"

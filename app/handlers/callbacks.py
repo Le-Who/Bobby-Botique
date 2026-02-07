@@ -199,7 +199,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")]
         ]
         
-        text = "📄 *Загрузите новый документ*\n\nОтправьте PDF или DOCX файл, и я обработаю его для вас."
+        text = "📄 **Загрузите новый документ**\n\nОтправьте PDF или DOCX файл, и я обработаю его для вас."
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
             formatted_text,
@@ -218,7 +218,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..state import clear_document_state
         clear_document_state(user_id)
         
-        text = "✅ *Режим работы с документами отключен*\n\nТеперь ваши сообщения будут обрабатываться в обычном режиме чата.\nЧтобы снова работать с документами, загрузите новый файл или используйте команду /documents."
+        text = "✅ **Режим работы с документами отключен**\n\nТеперь ваши сообщения будут обрабатываться в обычном режиме чата.\nЧтобы снова работать с документами, загрузите новый файл или используйте команду /documents."
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
             formatted_text,
@@ -239,7 +239,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("❌ Отмена", callback_data="doc:list")]
         ]
 
-        text = "⚠️ *Вы уверены?*\n\nЭто действие удалит **ВСЕ** ваши загруженные документы.\nЭто действие нельзя отменить."
+        text = "⚠️ **Вы уверены?**\n\nЭто действие удалит **ВСЕ** ваши загруженные документы.\nЭто действие нельзя отменить."
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
             formatted_text,
@@ -289,7 +289,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..state import set_document_mode
         set_document_mode(user_id, True, document_id)
         
-        text = f"✅ *Используется существующий документ*\n\n📄 *{document['filename']}*\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 *Просто напишите ваш вопрос* - система автоматически найдет ответ в документе.\n\n🔄 *Для выхода из режима документов:*\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
+        text = f"✅ **Используется существующий документ**\n\n📄 **{document['filename']}**\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n🔄 **Для выхода из режима документов:**\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
             formatted_text,
@@ -345,7 +345,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
         
-        text = "📋 *Выберите документ для работы:*\n\nНажмите на документ, чтобы начать работу с ним."
+        text = "📋 **Выберите документ для работы:**\n\nНажмите на документ, чтобы начать работу с ним."
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
             formatted_text,
@@ -367,7 +367,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..state import set_document_mode
         set_document_mode(user_id, True, document_id)
         
-        text = f"✅ *Выбран документ*\n\n📄 *{document['filename']}*\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 *Просто напишите ваш вопрос* - система автоматически найдет ответ в документе.\n\n🔄 *Для выхода из режима документов:*\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
+        text = f"✅ **Выбран документ**\n\n📄 **{document['filename']}**\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n🔄 **Для выхода из режима документов:**\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.edit_message_text(
             formatted_text,
