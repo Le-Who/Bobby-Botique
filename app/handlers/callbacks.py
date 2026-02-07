@@ -203,38 +203,9 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     elif action == "list":
-        
-        documents = await get_user_documents(user_id)
-        if not documents:
-            text = "📋 *Ваши документы*\n\nУ вас пока нет загруженных документов."
-            formatted_text, parse_mode = TelegramFormatter.format_text(text)
-            await query.edit_message_text(
-                formatted_text,
-                parse_mode=parse_mode
-            )
-            return
-        
-        # Формируем список документов
-        doc_list = "📋 *Ваши документы:*\n\n"
-        for i, doc in enumerate(documents[:10], 1):  # Показываем только первые 10
-            doc_list += f"{i}. *{doc['filename']}*\n"
-            doc_list += f"   📄 Страниц: {doc['pages']}\n"
-            doc_list += f"   📅 Загружен: {doc['created_at'][:10]}\n\n"
-        
-        if len(documents) > 10:
-            doc_list += f"... и еще {len(documents) - 10} документов\n\n"
-        
-        doc_list += "💡 Отправьте новый документ, чтобы начать работу с ним."
-        
-        # Создаем кнопки для управления
-        keyboard = [
-            [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
-            [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
-            [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
-        ]
-        
-        formatted_text, parse_mode = TelegramFormatter.format_text(doc_list)
-        await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
+        from app.handlers.commands import get_documents_menu_content
+        text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
         return
     
     elif action == "cancel":
@@ -316,12 +287,10 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Показываем меню выбора документа
         documents = await get_user_documents(user_id)
         if not documents:
-            text = "📋 *Ваши документы*\n\nУ вас пока нет загруженных документов."
-            formatted_text, parse_mode = TelegramFormatter.format_text(text)
-            await query.edit_message_text(
-                formatted_text,
-                parse_mode=parse_mode
-            )
+            # Если документов нет, показываем главное меню документов
+            from app.handlers.commands import get_documents_menu_content
+            text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
+            await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
             return
         
         # Создаем кнопки для каждого документа

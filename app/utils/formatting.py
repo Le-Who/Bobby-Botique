@@ -1,8 +1,24 @@
 import re
 import html
 import logging
-import html
 from typing import Tuple, Optional
+
+# Regex to find either a valid Markdown entity OR a character that needs escaping.
+# Groups:
+# 1: Bold (*...*)
+# 2: Italic (_..._)
+# 3: Inline code (`...`)
+# 4: Link ([...](...))
+# 5: A single character from escape_chars
+# Note: We include * and _ in special chars to escape them if they are not part of valid formatting
+MARKDOWN_SPECIAL_CHARS = r'_*[]()~`>#+-=|{}.!'
+MARKDOWN_REGEX = re.compile(
+    r'(\*.*?\*)|'          # Group 1: Bold (*text*)
+    r'(_.*?_)|'            # Group 2: Italic (_text_)
+    r'(`.*?`)|'            # Group 3: Inline code (`text`)
+    r'(\[.*?\]\(.*?\))|'   # Group 4: Link ([text](url))
+    r'([' + re.escape(MARKDOWN_SPECIAL_CHARS) + r'])' # Group 5: Special char
+)
 
 def strip_markdown(text: str) -> str:
     """Removes all Markdown formatting from the text."""
@@ -64,7 +80,7 @@ def escape_markdown_v2(text: str) -> str:
         # This should not be reached
         return ''
 
-    return markdown_or_special_char_regex.sub(replacer, text)
+    return MARKDOWN_REGEX.sub(replacer, text)
 
 class TelegramFormatter:
     """
@@ -112,11 +128,7 @@ class TelegramFormatter:
             # Подготавливаем текст для MarkdownV2
             formatted = cls._prepare_markdown_v2(text)
             
-            # Простая проверка валидности
-            if cls._is_safe_for_markdown_v2(formatted):
-                return formatted, True
-            
-            return text, False
+            return formatted, True
             
         except Exception as e:
             logging.debug(f"MarkdownV2 formatting failed: {e}")
