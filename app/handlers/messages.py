@@ -10,7 +10,7 @@ from app import database as db
 from app import state
 from app.group_chat import group_chat_manager, log_group_message
 from app.document_processor import process_uploaded_document
-from app.metrics import metrics_collector
+from app.metrics import metrics_collector, role_conv_metrics
 from app.utils.formatting import TelegramFormatter
 from app.utils.api_logger import api_logger
 from app import prompts
@@ -64,6 +64,34 @@ async def start_media_groups_cleanup():
     _cleanup_task = asyncio.create_task(cleanup_loop())
     logging.info("Media groups cleanup task started")
 
+
+async def _handle_conversation_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """Обрабатывает переименование беседы. Возвращает True, если обработано."""
+    rename_conv_id = context.user_data.get("rename_conv_id")
+    if rename_conv_id and update.message and update.message.text:
+        try:
+            new_title = update.message.text.strip()
+            if 1 <= len(new_title) <= 100:
+                await db.rename_conversation(user_id, rename_conv_id, new_title)
+                context.user_data.pop("rename_conv_id", None)
+                await role_conv_metrics.record_conversation_renamed()
+
+                # Показываем список бесед с обновленным названием
+                from app.handlers.commands import get_conversations_menu_content
+                text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, 1)
+
+                await update.message.reply_text(f"✅ Беседа переименована в: {new_title}")
+                await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+                return True
+            else:
+                await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")
+                return True
+        except Exception as e:
+            logging.error(f"Error renaming conversation: {e}")
+            await update.message.reply_text("❌ Не удалось переименовать беседу. Попробуйте позже.")
+            context.user_data.pop("rename_conv_id", None)
+            return True
+    return False
 
 async def _handle_custom_role_generation(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int, message_text: str) -> bool:
     """Обрабатывает генерацию кастомной роли. Возвращает True, если обработано."""
@@ -303,6 +331,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Переименование роли
     if await _handle_role_rename(update, context, user_id):
+        return
+
+    # Переименование беседы
+    if await _handle_conversation_rename(update, context, user_id):
         return
 
     # Генерация кастомной роли
