@@ -1071,6 +1071,7 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
         else:
             # Успешный ответ - добавляем в историю и показываем обычные кнопки
             buttons = [
+                [InlineKeyboardButton("🔄 Попробовать ещё раз", callback_data="retry_last")],
                 [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
                 [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic" if chat_state.is_deep_dive else "new_topic")]
             ]
