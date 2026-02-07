@@ -300,14 +300,20 @@ async def startup_health_check():
     return True
 
 async def main():
+    # Force flush stdout/stderr for immediate log visibility
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+    
     print("=== BOT MAIN FUNCTION START ===", flush=True)
+    print(f"Current Directory: {os.getcwd()}", flush=True)
+    print(f"Python Version: {sys.version}", flush=True)
     
     database_available = False
     memory_manager = None
     
     try:
         setup_detailed_logging()
-        logging.info("Bot starting up...")
+        logging.info("Bot starting up - Detailed logging enabled")
         
         try:
             await database.init_db()
