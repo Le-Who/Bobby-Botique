@@ -5,7 +5,7 @@ services:
   runtime: docker
   repo: https://github.com/Le-Who/gemaibotv2
   plan: free
-  healthCheckPath: /
+  healthCheckPath: /health
   envVars:
   - key: PORT
     value: "10000"

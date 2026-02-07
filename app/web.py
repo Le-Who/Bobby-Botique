@@ -13,7 +13,8 @@ flask_app = Flask(__name__)
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        token = request.headers.get('X-Auth-Token') or request.args.get('token')
+        # Security: Only allow token via header to prevent leakage in logs/history
+        token = request.headers.get('X-Auth-Token')
 
         # Determine the expected secret
         expected_secret = os.environ.get('ADMIN_SECRET')
@@ -26,7 +27,7 @@ def require_auth(f):
 
         # Use constant-time comparison to prevent timing attacks
         if not token or not hmac.compare_digest(token, expected_secret):
-            abort(401, description="Unauthorized: Invalid or missing token.")
+            abort(401, description="Unauthorized: Invalid or missing token. Use 'X-Auth-Token' header.")
 
         return f(*args, **kwargs)
     return decorated_function
