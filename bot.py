@@ -1,30 +1,57 @@
 import os
+import sys
+
+# DEBUG: Force unbuffered output immediately
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+print("DEBUG: bot.py started", flush=True)
+
 import logging
+print("DEBUG: logging imported", flush=True)
 import asyncio
+print("DEBUG: asyncio imported", flush=True)
 import signal
 import time
-import sys
 import threading
+
+print("DEBUG: standard libs imported", flush=True)
 
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler
 from telegram.error import NetworkError, TimedOut, RetryAfter, Conflict
+print("DEBUG: telegram modules imported", flush=True)
+
 from hypercorn.config import Config as HypercornConfig
 from hypercorn.asyncio import serve
+print("DEBUG: hypercorn imported", flush=True)
 
 # Import custom modules
+print("DEBUG: Importing app.config...", flush=True)
 from app.config import settings
+print(f"DEBUG: app.config imported. Settings is None? {settings is None}", flush=True)
+
+print("DEBUG: Importing app.database...", flush=True)
 from app import database
+print("DEBUG: app.database imported", flush=True)
+
+print("DEBUG: Importing app.handlers...", flush=True)
 from app.handlers import commands, messages, callbacks
 from app.handlers.callbacks import new_topic_callback
+print("DEBUG: app.handlers imported", flush=True)
+
 from app.metrics import metrics_collector
+print("DEBUG: metrics_collector imported", flush=True)
 from app.utils.logging_config import setup_detailed_logging
+print("DEBUG: logging_config imported", flush=True)
 
 from app.queue import start_task_queue, stop_task_queue
+print("DEBUG: queue imported", flush=True)
 from app.group_chat import initialize_group_chats
+print("DEBUG: group_chat imported", flush=True)
 
 # Import extracted modules
 from app.web import flask_app
+print("DEBUG: web imported", flush=True)
 # Lock import removed
 
 # Global shutdown event
