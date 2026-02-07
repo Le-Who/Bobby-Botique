@@ -78,6 +78,35 @@ def test_invalid_token(client):
         response = client.get(endpoint, headers=headers)
         assert response.status_code == 401
 
+def test_query_param_auth_accepted(client):
+    """Test that query parameter authentication is accepted (for backward compatibility)"""
+    endpoints = ['/', '/status', '/keys']
+    for endpoint in endpoints:
+        # Pass token in query string, NOT headers
+        response = client.get(f"{endpoint}?token=test_token")
+        # 200 or 500 means auth passed
+        assert response.status_code != 401
+
+def test_security_headers(client):
+    """Test that security headers are present in responses"""
+    # Test on a public endpoint
+    response = client.get('/health')
+    assert response.headers['X-Content-Type-Options'] == 'nosniff'
+    assert response.headers['X-Frame-Options'] == 'DENY'
+
+    csp = response.headers['Content-Security-Policy']
+    assert "default-src 'self'" in csp
+    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in csp
+    assert "font-src 'self' https://fonts.gstatic.com" in csp
+
+    assert response.headers['Referrer-Policy'] == 'strict-origin-when-cross-origin'
+
+    # Test on a protected endpoint (even if 401, headers should be there if after_request runs)
+    # Note: Flask after_request runs even on errors usually, unless handled by error handler that returns new response without them.
+    # But let's check authorized response too.
+    response_auth = client.get('/status', headers={'X-Auth-Token': 'test_token'})
+    assert response_auth.headers['X-Content-Type-Options'] == 'nosniff'
+
 def test_public_health_endpoint(client):
     """Test that /health is public"""
     response = client.get('/health')

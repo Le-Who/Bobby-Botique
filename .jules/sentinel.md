@@ -17,3 +17,13 @@
 **Vulnerability:** The `DocumentProcessor._process_word` method accepted any file with a `.docx` extension without verifying its content type, potentially allowing processing of renamed malicious files or invalid binaries.
 **Learning:** Relying solely on file extensions is insufficient for security. Libraries like `python-docx` might crash or behave unexpectedly with invalid input.
 **Prevention:** Validate file signatures (magic bytes) at the beginning of the processing pipeline. For DOCX (ZIP), check for `b'\x50\x4b\x03\x04'`.
+
+## 2025-05-25 - [Authentication] Insecure Query Parameter Auth (DEFERRED)
+**Vulnerability:** The `require_auth` decorator accepts tokens via query parameters (`?token=...`), exposing credentials in logs.
+**Constraint:** Removing this fallback breaks existing monitoring integrations that rely on URL-based auth.
+**Prevention:** In new projects, strictly enforce header-based auth. In legacy projects, plan a deprecation window before removal.
+
+## 2025-05-25 - [Defense in Depth] Missing Security Headers
+**Vulnerability:** The Flask application lacked standard security headers (CSP, X-Frame-Options), increasing risk of clickjacking and XSS.
+**Learning:** CSP implementation requires careful auditing of external resources (e.g., Google Fonts) and inline styles to avoid breaking the UI.
+**Prevention:** Use `after_request` to inject `Content-Security-Policy`, `X-Content-Type-Options`, and `X-Frame-Options`.

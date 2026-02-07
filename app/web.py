@@ -10,6 +10,21 @@ from app.config import settings
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
 flask_app = Flask(__name__)
 
+@flask_app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    # Allow Google Fonts and inline styles (used in status.html)
+    csp = (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com;"
+    )
+    response.headers['Content-Security-Policy'] = csp
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    return response
+
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
