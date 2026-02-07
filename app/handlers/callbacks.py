@@ -615,7 +615,10 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(conv_switch_callback, pattern="^conv_switch$"))
    application.add_handler(CallbackQueryHandler(conv_switch_to_callback, pattern="^conv_switch_to:"))
    application.add_handler(CallbackQueryHandler(conv_rename_callback, pattern="^conv_rename$"))
+   application.add_handler(CallbackQueryHandler(conv_rename_ask_callback, pattern="^conv_rename_ask:"))
+   application.add_handler(CallbackQueryHandler(conv_rename_cancel_callback, pattern="^conv_rename_cancel$"))
    application.add_handler(CallbackQueryHandler(conv_delete_callback, pattern="^conv_delete$"))
+   application.add_handler(CallbackQueryHandler(conv_delete_ask_callback, pattern="^conv_delete_ask:"))
    application.add_handler(CallbackQueryHandler(conv_delete_confirm_callback, pattern="^conv_delete_confirm:"))
    application.add_handler(CallbackQueryHandler(conv_delete_cancel_callback, pattern="^conv_delete_cancel$"))
 
@@ -990,35 +993,23 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 # CONVERSATION MANAGEMENT CALLBACKS
 # ============================================================================
 
-async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка пагинации списка бесед"""
-    query = update.callback_query
-    await query.answer()
+async def send_conversation_selection(query: telegram.CallbackQuery, user_id: int, action_prefix: str, title: str):
+    """
+    Helper to send a list of conversations for selection.
     
-    page = int(query.data.split(":")[1])
-    user_id = query.from_user.id
-    
-    from app.handlers.commands import get_conversations_menu_content
-    text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, page)
-    
-    if reply_markup is None:
-        await query.edit_message_text(text)
-    else:
-        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-
-async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переключение на беседу"""
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
+    Args:
+        query: The callback query object
+        user_id: The user ID
+        action_prefix: The prefix for the callback data (e.g. 'conv_switch_to', 'conv_delete_ask')
+        title: The title text to display
+    """
     # Получаем список бесед для выбора
     conversations = await db.get_user_conversations(user_id, 10, 0)
     if not conversations:
         await query.edit_message_text("📝 У вас нет сохранённых бесед.")
         return
     
-    text = "🔄 *Выберите беседу для переключения:*\n\n"
+    text = f"{title}\n\n"
     buttons = []
     
     for conv in conversations:
@@ -1029,12 +1020,39 @@ async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         
         buttons.append([InlineKeyboardButton(
             f"🆔 {conv['id']} | {conv['title'][:30]}{'...' if len(conv['title']) > 30 else ''}", 
-            callback_data=f"conv_switch_to:{conv['id']}"
+            callback_data=f"{action_prefix}:{conv['id']}"
         )])
     
     buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")])
 
     await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+
+async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка пагинации списка бесед"""
+    query = update.callback_query
+    await query.answer()
+
+    page = int(query.data.split(":")[1])
+    user_id = query.from_user.id
+
+    from app.handlers.commands import get_conversations_menu_content
+    text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, page)
+
+    if reply_markup is None:
+        await query.edit_message_text(text)
+    else:
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключение на беседу"""
+    query = update.callback_query
+    await query.answer()
+    await send_conversation_selection(
+        query,
+        query.from_user.id,
+        "conv_switch_to",
+        "🔄 *Выберите беседу для переключения:*"
+    )
 
 async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключение на конкретную беседу"""
@@ -1062,30 +1080,68 @@ async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     """Переименование беседы"""
     query = update.callback_query
     await query.answer()
-    
-    # UX: Add Back button
-    keyboard = [[InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")]]
-
-    await query.edit_message_text(
-        "✏️ Введите ID беседы и новое название:\n\n"
-        "Формат: /rename <ID> <новое название>\n"
-        "Пример: /rename 123 Моя новая беседа",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+    await send_conversation_selection(
+        query,
+        query.from_user.id,
+        "conv_rename_ask",
+        "✏️ *Выберите беседу для переименования:*"
     )
 
 async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Удаление беседы"""
     query = update.callback_query
     await query.answer()
+    await send_conversation_selection(
+        query,
+        query.from_user.id,
+        "conv_delete_ask",
+        "🗑️ *Выберите беседу для удаления:*"
+    )
+
+async def conv_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Спрашивает подтверждение удаления беседы"""
+    query = update.callback_query
+    await query.answer()
+
+    conv_id = int(query.data.split(":")[1])
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, удалить", callback_data=f"conv_delete_confirm:{conv_id}")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="conv_delete_cancel")]
+    ]
     
-    # UX: Add Back button
-    keyboard = [[InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")]]
+    await query.edit_message_text(
+        f"⚠️ Вы уверены, что хотите удалить беседу {conv_id}?\n\nЭто действие нельзя отменить!",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def conv_rename_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Спрашивает новое название беседы"""
+    query = update.callback_query
+    await query.answer()
+
+    conv_id = int(query.data.split(":")[1])
+    context.user_data['rename_conv_id'] = conv_id
+
+    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="conv_rename_cancel")]]
 
     await query.edit_message_text(
-        "🗑️ Введите ID беседы для удаления:\n\n"
-        "Используйте /conversations для просмотра списка бесед.\n"
-        "⚠️ Это действие нельзя отменить!",
+        f"✏️ Введите новое название для беседы {conv_id} (одной строкой):",
         reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def conv_rename_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена переименования"""
+    query = update.callback_query
+    await query.answer("❌ Переименование отменено")
+
+    context.user_data.pop('rename_conv_id', None)
+
+    await send_conversation_selection(
+        query,
+        query.from_user.id,
+        "conv_rename_ask",
+        "✏️ *Выберите беседу для переименования:*"
     )
 
 async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
