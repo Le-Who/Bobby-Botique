@@ -578,6 +578,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_to_add = int(context.args[0])
         await db.db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO UPDATE SET is_authorized = 1", (user_to_add,))
+        await db.invalidate_user_auth_cache(user_to_add)
         await update.message.reply_text(f"Пользователь {user_to_add} добавлен.")
     except (IndexError, ValueError):
         await update.message.reply_text("Использование: /adduser <user_id>")
@@ -591,6 +592,7 @@ async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Нельзя удалить администратора.")
             return
         await db.db_query("UPDATE users SET is_authorized = 0 WHERE user_id = $1", (user_to_del,))
+        await db.invalidate_user_auth_cache(user_to_del)
         await update.message.reply_text(f"Доступ для пользователя {user_to_del} отозван.")
     except (IndexError, ValueError):
         await update.message.reply_text("Использование: /deluser <user_id>")
