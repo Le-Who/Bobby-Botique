@@ -120,109 +120,62 @@ async def _cleanup_application(application):
         logging.warning(f"Cleanup error (application): {cleanup_error}")
 
 async def run_bot_with_retry():
-    """Запускает бота с автоматическими повторами при сетевых ошибках"""
-    max_retries = 5
-    base_delay = 1
-    application = None
-    
-    print(f"Starting bot with retry mechanism (max attempts: {max_retries})", flush=True)
-    logging.info(f"Starting bot with retry mechanism (max attempts: {max_retries})")
+    """Запускает бота с устойчивостью к ошибкам"""
+    logging.info("Starting bot...")
     
     version_info = Application.__version__ if hasattr(Application, '__version__') else 'Unknown'
     logging.info(f"Python-telegram-bot version: {version_info}")
     
-    while not shutdown_event.is_set():
-        logging.info("Bot startup attempt initiated")
-        
-        try:
-            from telegram.request import HTTPXRequest
-            
-            custom_request = HTTPXRequest(
-                connection_pool_size=8,
-                connect_timeout=10.0,
-                read_timeout=30.0,
-                write_timeout=30.0,
-                pool_timeout=30.0
-            )
-            
-            application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
-            
-            commands.register(application)
-            callbacks.register(application)
-            messages.register(application)
-            application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
-            
-            try:
-                await application.initialize()
-                logging.info("Application initialized successfully")
-            except Exception as init_error:
-                logging.error(f"Failed to initialize application: {init_error}")
-                raise
-            
-            try:
-                await application.start()
-                logging.info("Application started successfully")
-            except Exception as start_error:
-                logging.error(f"Failed to start application: {start_error}")
-                raise
-            
-            await application.updater.start_polling(
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
-                timeout=30,
-                read_timeout=30,
-                write_timeout=30,
-                connect_timeout=10,
-                pool_timeout=30,
-            )
-            
-            logging.info("Bot started successfully")
-            logging.info("Bot is now polling for updates...")
-            
-            while not shutdown_event.is_set():
-                await asyncio.sleep(1)
-            
-            logging.info("Shutting down bot gracefully...")
-            logging.info("Stopping updater...")
-            await application.updater.stop()
-            logging.info("Stopping application...")
-            await application.stop()
-            logging.info("Bot shutdown complete")
-            break
-                
-        except (NetworkError, TimedOut, RetryAfter) as e:
-            retry_count = 0
-            delay = min(base_delay * (2 ** retry_count), 60)
-            retry_count += 1
-            
-            logging.warning(f"Network error during bot operation: {e}")
-            logging.info(f"Retrying in {delay} seconds...")
-            
-            await _cleanup_application(application)
-            
-            if shutdown_event.is_set():
-                break
-            
-            await asyncio.sleep(delay)
-            
-        except Conflict as e:
-            logging.error(f"Telegram API conflict detected: {e}")
-            logging.critical("Another bot instance is running. This instance will exit.")
-            process_lock.release()
-            break
-            
-        except Exception as e:
-            logging.error(f"Unexpected error during bot operation: {e}")
-            await _cleanup_application(application)
-            
-            if shutdown_event.is_set():
-                break
-            
-            import traceback
-            logging.error(f"Bot error details: {traceback.format_exc()}")
-            await asyncio.sleep(30)
+    application = None
     
-    logging.info("Bot retry loop stopped due to shutdown signal")
+    try:
+        from telegram.request import HTTPXRequest
+        
+        custom_request = HTTPXRequest(
+            connection_pool_size=8,
+            connect_timeout=10.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=30.0
+        )
+        
+        application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
+        
+        commands.register(application)
+        callbacks.register(application)
+        messages.register(application)
+        application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
+        
+        await application.initialize()
+        await application.start()
+        
+        # Start polling with built-in resilience
+        await application.updater.start_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+            timeout=30,
+            read_timeout=30,
+            write_timeout=30,
+            connect_timeout=10,
+            pool_timeout=30,
+        )
+        
+        logging.info("Bot started successfully and polling")
+        
+        # Wait for shutdown event
+        await shutdown_event.wait()
+        
+        logging.info("Stopping bot...")
+        await application.updater.stop()
+        await application.stop()
+        logging.info("Bot stopped.")
+            
+    except Exception as e:
+        logging.critical(f"Critical bot error: {e}", exc_info=True)
+        if application:
+            await _cleanup_application(application)
+        # Propagate to trigger restart if needed, or exit
+        raise e
 
 async def bot_watchdog(bot_task: asyncio.Task):
     """Следит за состоянием бота и перезапускает его при необходимости"""
@@ -389,6 +342,16 @@ async def main():
         except Exception as e:
             logging.warning(f"Startup health check failed: {e}")
         
+        # Register signal handlers for graceful shutdown on Linux/Docker
+        if sys.platform != "win32":
+            try:
+                loop = asyncio.get_running_loop()
+                for sig in (signal.SIGINT, signal.SIGTERM):
+                    loop.add_signal_handler(sig, lambda: shutdown_event.set())
+            except NotImplementedError:
+                # Windows implementation of asyncio loop doesn't support add_signal_handler
+                logging.warning("Signal handlers not supported on this platform")
+
         logging.info("Starting main application loop...")
         await run_bot_and_server()
         

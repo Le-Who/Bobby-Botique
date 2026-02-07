@@ -66,7 +66,7 @@ class DatabaseManager:
             db_pool = self.pool
             
             if self.pool and not self.pool._closed:
-                asyncio.create_task(self.monitor_connection_pool())
+                self._monitor_task = asyncio.create_task(self.monitor_connection_pool())
                 logging.info("Database pool monitoring started")
                 return self.pool
         except Exception as e:
@@ -81,6 +81,15 @@ class DatabaseManager:
                 raise Exception(f"Database initialization failed: {e}")
 
     async def close(self):
+        # Cancel monitoring task
+        if hasattr(self, '_monitor_task') and self._monitor_task:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+            self._monitor_task = None
+
         if self.pool:
             await self.pool.close()
             logging.info("Database pool closed")
@@ -91,11 +100,8 @@ class DatabaseManager:
 
     async def reconnect(self):
         logging.info("Attempting to reconnect to database...")
-        if self.pool:
-            try:
-                await self.pool.close()
-            except Exception as e:
-                logging.warning(f"Error closing pool during reconnect: {e}")
+        # Close existing pool and task
+        await self.close()
         
         await self.create_pool()
         logging.info("Database reconnected successfully")
