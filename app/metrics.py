@@ -123,8 +123,6 @@ class MetricsCollector:
 
         # Phase 2: Save to DB (IO - No Lock)
         try:
-            await self._ensure_metrics_tables()
-            
             if snapshot_data:
                 # Обновляем или вставляем метрики за сегодня
                 # Using SET (upsert replacement) to handle updates correctly
@@ -165,19 +163,17 @@ class MetricsCollector:
             
             # Save new errors
             if errors_to_process:
-                for error in errors_to_process:
-                    if error.get('saved', False):
-                        continue
+                unsaved_errors = [e for e in errors_to_process if not e.get('saved', False)]
+                if unsaved_errors:
+                    params_list = [(e['type'], e['message']) for e in unsaved_errors]
 
-                    await db.db_query("""
+                    await db.db_execute_many("""
                         INSERT INTO error_logs (error_type, error_message)
                         VALUES ($1, $2)
-                    """, (error['type'], error['message']))
+                    """, params_list)
 
-                    # Update status - no need for lock here as we modify referenced object
-                    # from the deque which is thread-safe for this operation in CPython,
-                    # and we are the only writer to 'saved' flag.
-                    error['saved'] = True
+                    for error in unsaved_errors:
+                        error['saved'] = True
             
             self._last_save_time = time.time()
             logging.info(f"Metrics saved (bg): {snapshot_data['request_count']} reqs")

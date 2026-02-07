@@ -220,6 +220,63 @@ class DatabaseManager:
         
         raise last_exception or Exception("Database query failed")
 
+    async def execute_many(self, query_str: str, params_list: List[tuple], retries: int = 3, conn=None):
+        if not isinstance(query_str, str) or not query_str.strip():
+            raise ValueError("Query must be a non-empty string")
+
+        if not params_list:
+            return
+
+        if conn:
+            try:
+                await conn.executemany(query_str, params_list)
+                return
+            except Exception as e:
+                logging.error(f"Error in provided connection executemany: {e}")
+                raise e
+
+        last_exception = None
+        for attempt in range(retries + 1):
+            try:
+                if not self.pool or self.pool._closed:
+                    logging.warning("Database pool not initialized or closed – attempting reconnect...")
+                    await self.reconnect()
+                    if not self.pool or self.pool._closed:
+                        raise Exception("Database pool is closed")
+
+                async with self.pool.acquire() as connection:
+                    await asyncio.wait_for(
+                        connection.executemany(query_str, params_list),
+                        timeout=30.0
+                    )
+                    return
+
+            except asyncio.TimeoutError:
+                last_exception = Exception(f"Database executemany timeout: {query_str[:100]}...")
+                logging.warning(f"Database executemany timeout (attempt {attempt + 1})")
+
+            except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
+                last_exception = e
+                logging.warning(f"Database connection issue (attempt {attempt + 1}): {e}")
+                if attempt < retries:
+                    await asyncio.sleep(min(2 ** attempt, 10))
+                    try:
+                        await self.reconnect()
+                    except Exception:
+                        pass
+                    continue
+
+            except Exception as e:
+                last_exception = e
+                if "rate limit" in str(e).lower():
+                    raise
+                logging.error(f"Database executemany error (attempt {attempt + 1}): {e}")
+                if attempt == retries:
+                    break
+                await asyncio.sleep(min(2 ** attempt, 10))
+
+        raise last_exception or Exception("Database executemany failed")
+
 # Global instances
 db_manager = DatabaseManager()
 db_pool = None  # Backward compatibility
@@ -231,6 +288,9 @@ async def reconnect_database():
 
 async def db_query(query: str, params: tuple = (), retries: int = 3, conn=None):
     return await db_manager.query(query, params, retries, conn)
+
+async def db_execute_many(query: str, params_list: List[tuple], retries: int = 3, conn=None):
+    return await db_manager.execute_many(query, params_list, retries, conn)
 
 async def check_database_health():
     if not db_manager.pool:
