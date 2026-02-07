@@ -111,7 +111,7 @@ class Settings(BaseModel):
 
     # --- MODELS ---
     # Модели загружаются из env переменных, значения по умолчанию используются если не указаны
-    AVAILABLE_MODELS: List[str] = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
+    AVAILABLE_MODELS: List[str] = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3-flash-preview"]
     DEFAULT_MODEL: str = "gemini-flash-latest"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
     RESEARCH_MODEL: str = "gemini-2.5-flash"
@@ -163,6 +163,7 @@ class Settings(BaseModel):
         "gemini-flash-latest": 15,
         "gemini-2.5-flash-lite": 15,
         "gemini-flash-lite-latest": 15,
+        "gemini-3-flash-preview": 15,
     }
     ALERT_COOLDOWN_SECONDS: int = 3600
     MAX_DOCUMENTS_PER_USER: int = 5
@@ -358,7 +359,7 @@ def load_settings() -> Settings:
     """
     try:
         # Значения по умолчанию для моделей
-        default_gemini_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest"]
+        default_gemini_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3-flash-preview"]
         default_openrouter_models = [
             "tngtech/tng-r1t-chimera:free",
             "upstage/solar-pro-3:free",
