@@ -574,6 +574,13 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_rename_menu_callback, pattern="^role_rename_menu$"))
    application.add_handler(CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:"))
     
+   application.add_handler(CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:"))
+    
+    # Role Navigation (New)
+   application.add_handler(CallbackQueryHandler(role_nav_callback, pattern="^role_nav:"))
+   application.add_handler(CallbackQueryHandler(role_page_callback, pattern="^role_page:"))
+   application.add_handler(CallbackQueryHandler(lambda u,c: u.callback_query.answer(), pattern="^noop$"))
+
    # Conversation management callbacks
    application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
    application.add_handler(CallbackQueryHandler(conv_switch_callback, pattern="^conv_switch$"))
@@ -636,9 +643,17 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
    await db.update_user_chat(user_id, chat_state)
 
    # Обновляем меню
+   # Сохраняем состояние
+   await db.update_user_chat(user_id, chat_state)
+
+   # Обновляем меню - возвращаемся в Hub
    from app.handlers.commands import get_roles_menu_content
-   text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state)
-   await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+   text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="hub")
+   try:
+       await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+   except telegram.error.BadRequest as e:
+       if "Message is not modified" not in str(e):
+           raise e
    await query.answer(f"✅ Роль '{role_title}' применена.")
 
 async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -651,9 +666,14 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
    await role_conv_metrics.record_role_clear()
 
    # Обновляем меню
+   # Обновляем меню - возвращаемся в Hub
    from app.handlers.commands import get_roles_menu_content
-   text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state)
-   await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+   text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="hub")
+   try:
+       await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+   except telegram.error.BadRequest as e:
+       if "Message is not modified" not in str(e):
+           raise e
    await query.answer("🧹 Роль сброшена.")
 
 async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -797,7 +817,62 @@ async def role_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYP
            chat_state.system_prompt = None
            await db.update_user_chat(user_id, chat_state)
 
-       # Обновляем меню
+       # Обновляем меню - остаемся в списке "Мои роли"
+       from app.handlers.commands import get_roles_menu_content
+       # Пытаемся остаться на текущей странице, но так как мы не знаем текущую страницу из callback_data удаления сразу,
+       # просто возвращаемся на первую страницу моих ролей.
+       # (Можно было бы передавать page в callback удаления, но это усложнит логику)
+       text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="my_roles", page=0)
+       
+       try:
+            await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+       except telegram.error.BadRequest as e:
+            if "Message is not modified" not in str(e):
+                raise e
+
+       await query.answer("🗑️ Роль удалена.")
+       
+    except Exception as e:
+         logging.error(f"Error deleting role: {e}")
+         await query.answer("❌ Ошибка удаления роли")
+
+async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    chat_state = await db.get_user_chat(user_id)
+    
+    view_mode = query.data.split(":")[1]
+    
+    from app.handlers.commands import get_roles_menu_content
+    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode=view_mode)
+    
+    try:
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise e
+
+async def role_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    chat_state = await db.get_user_chat(user_id)
+    
+    parts = query.data.split(":")
+    view_mode = parts[1]
+    page = int(parts[2])
+    
+    from app.handlers.commands import get_roles_menu_content
+    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode=view_mode, page=page)
+    
+    try:
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise e
        from app.handlers.commands import get_roles_menu_content
        text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state)
        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)

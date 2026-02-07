@@ -227,81 +227,183 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     formatted_text, parse_mode = TelegramFormatter.format_text(f"✅ Системная инструкция обновлена:\n`{preview}`")
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
-async def get_roles_menu_content(user_id, chat_state):
-    # Загружаем кастомные роли пользователя (сначала пользовательские)
-    custom_roles = await db.db_query(
-        "SELECT id, title, prompt FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
-        (user_id,)
-    )
-
-    # Определяем активную роль
+async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0):
+    """
+    Генерирует контент для меню ролей в стиле "Smart Hub".
+    view_mode: 'hub' | 'my_roles' | 'system_roles'
+    page: номер страницы для списков
+    """
+    
+    # 1. Определяем активную роль
     current_prompt = chat_state.system_prompt
+    active_role_title = "👤 Базовая (без роли)"
     active_role_key = None
-
+    
+    # Пытаемся найти название активной роли
     if current_prompt:
-        # Проверяем стандартные роли
         for key, meta in prompts.DEFAULT_ROLES.items():
             if meta.get("prompt") == current_prompt:
+                active_role_title = f"{meta.get('title', key)}"
                 active_role_key = key
                 break
-
-        # Проверяем кастомные роли, если не нашли в стандартных
-        if not active_role_key and custom_roles:
+        
+        if not active_role_key:
+            # Ищем в кастомных
+            custom_roles = await db.db_query(
+                "SELECT id, title, prompt FROM user_roles WHERE user_id = $1",
+                (user_id,)
+            )
             for role in custom_roles:
                 if role.get("prompt") == current_prompt:
+                    active_role_title = f"🎭 {role['title']}"
                     active_role_key = f"user_role:{role['id']}"
                     break
+            
+            # Если всё ещё не нашли, но промпт есть
+            if not active_role_key:
+                active_role_title = "📝 Пользовательская инструкция"
+                active_role_key = "custom_prompt"
 
-    # Формируем список кнопок: кастомные сверху, затем стандартные
-    btn_rows = []
-    if custom_roles:
-        for role in custom_roles:
-            role_key = f"user_role:{role['id']}"
-            is_active = "✅ " if role_key == active_role_key else ""
-            title = f"{is_active}🎭 {role['title']}"
-            btn_rows.append([
-                InlineKeyboardButton(title, callback_data=f"role_apply:{role_key}"),
-                InlineKeyboardButton("🗑️", callback_data=f"role_delete:{role['id']}")
-            ])
+    # ==========================
+    # VIEW: HUB (Главная)
+    # ==========================
+    if view_mode == "hub":
+        # Получаем количество кастомных ролей для бейджика
+        custom_count_res = await db.db_query("SELECT COUNT(*) as count FROM user_roles WHERE user_id = $1", (user_id,))
+        custom_count = custom_count_res[0]['count'] if custom_count_res else 0
+        
+        text = (
+            f"🎭 *Управление ролями*\n\n"
+            f"Ниже вы можете выбрать готовую роль или создать свою.\n"
+            f"Роль определяет стиль общения и задачи бота.\n\n"
+            f"🔋 *Активная роль:*\n"
+            f"✨ *{active_role_title}*\n"
+        )
+        
+        keyboard = []
+        
+        # 1. Кнопка сброса (если роль активна)
+        if current_prompt:
+             keyboard.append([InlineKeyboardButton("🛑 Отключить роль", callback_data="role_clear")])
+        
+        # 2. Основные разделы навигации
+        keyboard.append([
+            InlineKeyboardButton(f"📂 Мои роли ({custom_count})", callback_data="role_nav:my"),
+            InlineKeyboardButton("📚 Каталог ролей", callback_data="role_nav:sys")
+        ])
+        
+        # 3. Быстрые действия
+        keyboard.append([InlineKeyboardButton("➕ Создать новую роль", callback_data="role_create")])
+        
+        # 4. Назад
+        keyboard.append([InlineKeyboardButton("⬅️ Назад в меню", callback_data="start_menu")])
+        
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
-    for key, meta in prompts.DEFAULT_ROLES.items():
-        is_active = "✅ " if key == active_role_key else ""
-        title = f"{is_active}{meta.get('title', key)}"
-        btn_rows.append([InlineKeyboardButton(title, callback_data=f"role_apply:{key}")])
+    # ==========================
+    # VIEW: LISTS (Списки)
+    # ==========================
+    ITEMS_PER_PAGE = 6
+    if view_mode == "my_roles":
+        roles = await db.db_query(
+            "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC", 
+            (user_id,)
+        )
+        title_header = "📂 *Ваши личные роли*"
+        empty_text = "У вас пока нет сохраненных ролей."
+        
+        # Формируем items для пагинатора
+        items = []
+        for r in roles:
+            key = f"user_role:{r['id']}"
+            is_active = "✅ " if key == active_role_key else ""
+            items.append({
+                'text': f"{is_active}{r['title']}", 
+                'callback': f"role_apply:{key}",
+                'delete_callback': f"role_delete:{r['id']}" # Кастомные можно удалять
+            })
+            
+    elif view_mode == "system_roles":
+        title_header = "📚 *Каталог встроенных ролей*"
+        empty_text = "Список стандартных ролей пуст (странно!)."
+        
+        items = []
+        for key, meta in prompts.DEFAULT_ROLES.items():
+            is_active = "✅ " if key == active_role_key else ""
+            items.append({
+                'text': f"{is_active}{meta.get('title', key)}", 
+                'callback': f"role_apply:{key}",
+                'delete_callback': None # Системные нельзя удалять
+            })
+    else:
+        return "Ошибка режима", None, None
 
-    # Разбиваем в две колонки равномерно
-    two_col = []
-    temp = []
-    for row in btn_rows:
-        if len(row) == 2 and row[1].text == "🗑️":
-            two_col.append(row)
+    # Пагинация
+    total_items = len(items)
+    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    
+    # Корректируем страницу если вышли за пределы
+    if page < 0: page = 0
+    if page >= total_pages and total_pages > 0: page = total_pages - 1
+    
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    current_items = items[start_idx:end_idx]
+    
+    text = (
+        f"{title_header}\n"
+        f"Страница {page + 1} из {max(1, total_pages)}\n\n"
+    )
+    if not items:
+        text += f"_{empty_text}_"
+
+    keyboard = []
+    
+    # Рендерим элементы страницы
+    # Для кастомных ролей делаем 2 колонки: [Название] [Удалить]
+    # Для системных: одна широкая кнопка [Название]
+    
+    for item in current_items:
+        row = []
+        # Если есть delete_callback, значит нужны две кнопки в ряду
+        if item.get('delete_callback'):
+            # Кнопка применения (шире)
+            row.append(InlineKeyboardButton(item['text'], callback_data=item['callback']))
+            # Кнопка удаления (узкая)
+            row.append(InlineKeyboardButton("🗑️", callback_data=item['delete_callback']))
         else:
-            temp.append(row[0])
-            if len(temp) == 2:
-                two_col.append(temp)
-                temp = []
-    if temp:
-        two_col.append(temp)
+            # Одна широкая кнопка
+            row.append(InlineKeyboardButton(item['text'], callback_data=item['callback']))
+        keyboard.append(row)
+        
+    # Кнопки пагинации
+    nav_row = []
+    if total_pages > 1:
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"role_page:{view_mode}:{page-1}"))
+        else:
+            nav_row.append(InlineKeyboardButton("⏺️", callback_data="noop")) # Placeholder
+            
+        nav_row.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+        
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton("➡️", callback_data=f"role_page:{view_mode}:{page+1}"))
+        else:
+            nav_row.append(InlineKeyboardButton("⏺️", callback_data="noop")) # Placeholder
+    
+    if nav_row:
+        keyboard.append(nav_row)
+        
+    # Кнопки управления (только для "Мои роли")
+    if view_mode == "my_roles":
+        keyboard.append([InlineKeyboardButton("➕ Создать", callback_data="role_create")])
 
-    # Добавляем кнопки управления
-    control_buttons = []
-    # Кнопка сброса активна только если есть активная роль
-    if current_prompt:
-        control_buttons.append(InlineKeyboardButton("🧹 Сбросить роль", callback_data="role_clear"))
-
-    control_buttons.append(InlineKeyboardButton("✏️ Переименовать", callback_data="role_rename_menu"))
-    two_col.append(control_buttons)
-    two_col.append([InlineKeyboardButton("➕ Создать свою роль", callback_data="role_create")])
-    two_col.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
-
-    text = "Выберите роль или создайте свою:"
-    if active_role_key:
-         text += "\n\n✅ *Есть активная роль*"
-    if custom_roles:
-        text += f"\n\n🎭 *Ваши кастомные роли:* {len(custom_roles)}"
+    # Кнопка Назад (в Хаб)
+    keyboard.append([InlineKeyboardButton("↩️ Назад в меню ролей", callback_data="role_nav:hub")])
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    return formatted_text, parse_mode, InlineKeyboardMarkup(two_col)
+    return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
 @authorized_only
 async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
