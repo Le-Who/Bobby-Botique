@@ -64,6 +64,96 @@ async def start_media_groups_cleanup():
     _cleanup_task = asyncio.create_task(cleanup_loop())
     logging.info("Media groups cleanup task started")
 
+
+async def _handle_custom_role_generation(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int, message_text: str) -> bool:
+    """Обрабатывает генерацию кастомной роли. Возвращает True, если обработано."""
+    if is_awaiting_custom_role_input(user_id):
+        # Если мы ждем ввода описания роли
+        logging.info(f"User {user_id} sent custom role description: {message_text}")
+        
+        # Получаем настройки и ключи
+        chat_state = await db.get_user_chat(user_id)
+        from app.config import settings
+        model_for_role = chat_state.model or settings.DEFAULT_MODEL
+        
+        # Используем универсальную функцию для получения ключа
+        key_data, model_used, resolution = await agent._resolve_ai_request(model_for_role)
+        
+        if not key_data:
+            await update.message.reply_text("❌ Нет доступных ключей API для генерации роли.")
+            clear_custom_role_state(user_id)
+            return True
+
+        progress_msg = await update.message.reply_text("🛠️ Генерирую роль…")
+        set_generating_custom_role(user_id, True)
+        
+        # Формируем запрос
+        history = [{'role': 'user', 'parts': [message_text]}]
+        
+        try:
+            # Используем универсальную функцию для получения ответа
+            response_text, _ = await agent._get_ai_response(
+                key_data['api_key'], 
+                history, 
+                model_used, 
+                system_instruction=prompts.PROMPT_ENGINEER_SYSTEM_PROMPT, 
+                user_id=user_id, 
+                chat_id=chat_id
+            )
+            
+            # Инкрементируем использование ключа
+            await agent._increment_key_usage(key_data['key_hash'], model_used)
+            
+            # Логируем ответ модели для отладки
+            logging.info(f"Model response for role generation: {response_text[:500]}...")
+            
+            role_obj = prompts.extract_json_object(response_text)
+            
+            if not role_obj:
+                # Обработка явной 503 ошибки из текста
+                if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
+                    await progress_msg.edit_text("🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.")
+                else:
+                    logging.error(f"Failed to parse role JSON. Response: {response_text}")
+                    await progress_msg.edit_text("❌ Не удалось сгенерировать роль. Попробуйте изменить описание.")
+                set_generating_custom_role(user_id, False)
+                return True
+
+            # Успешно сгенерировали
+            set_last_custom_role_prompt(user_id, message_text)
+            set_generated_role(user_id, role_obj)
+            
+            title = role_obj.get('title', 'Кастомная роль')
+            purpose = role_obj.get('purpose', '')
+            style = ", ".join(role_obj.get('style', [])[:3])
+            
+            preview = (
+                f"🆕 *Новая роль:* {title}\n\n"
+                f"🎯 Цель: {purpose}\n"
+                f"🧭 Стиль: {style}\n\n"
+                f"Применить сейчас или сохранить?"
+            )
+            
+            kb = [
+                [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
+                [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
+                [InlineKeyboardButton("🔄 Попробовать ещё раз", callback_data="role_custom_retry")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")]
+            ]
+            
+            formatted_text, parse_mode = TelegramFormatter.format_text(preview)
+            await progress_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(kb))
+            
+        except Exception as e:
+            logging.error(f"Error generating custom role: {e}", exc_info=True)
+            await progress_msg.edit_text("❌ Произошла ошибка при генерации роли.")
+            
+        finally:
+            set_generating_custom_role(user_id, False)
+            
+        return True
+    return False
+
 async def _handle_role_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     """Обрабатывает переименование роли. Возвращает True, если обработано."""
     if context.user_data.get("rename_role_id") and update.message and update.message.text:

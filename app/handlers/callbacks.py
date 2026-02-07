@@ -87,7 +87,13 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     is_openrouter = "/" in model_name
     display_name = model_name.split("/")[-1] if is_openrouter else model_name
     
-    await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+    try:
+        await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" in str(e):
+            pass
+        else:
+            raise e
     await query.answer(f"✅ Модель изменена на {display_name}")
 
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -190,7 +196,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "upload_new":
         keyboard = [
-            [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+            [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")]
         ]
         
         text = "📄 *Загрузите новый документ*\n\nОтправьте PDF или DOCX файл, и я обработаю его для вас."
@@ -290,7 +296,13 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Если документов нет, показываем главное меню документов
             from app.handlers.commands import get_documents_menu_content
             text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
-            await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            try:
+                await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            except telegram.error.BadRequest as e:
+                if "Message is not modified" in str(e):
+                    pass
+                else:
+                    raise e
             return
         
         # Создаем кнопки для каждого документа

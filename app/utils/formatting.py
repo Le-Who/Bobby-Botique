@@ -45,8 +45,6 @@ def escape_markdown_v2(text: str) -> str:
     It preserves existing valid Markdown syntax while escaping literal special characters.
     """
     # Characters that need escaping in Telegram MarkdownV2
-    # Include ALL special characters to ensure safety.
-    # We include `_` and `*` here so they are caught by Group 5 if not matched by Groups 1-2.
     escape_chars = r'\[\]()~`>#+-=|{}.!_*\\'
 
     # Regex to find either a valid Markdown entity OR a character that needs escaping.
@@ -56,31 +54,65 @@ def escape_markdown_v2(text: str) -> str:
     # 3: Inline code (`...`)
     # 4: Link ([...](...))
     # 5: A single character from escape_chars
-    # The order is important to match longer sequences first.
     markdown_or_special_char_regex = re.compile(
         r'(\*.*?\*)|'          # Group 1: Bold
         r'(_.*?_)|'            # Group 2: Italic
         r'(`.*?`)|'            # Group 3: Inline code
-        r'(\[.*?\]\(.*?\))|'    # Group 4: Link
+        r'(\[.*?\]\(.*?\))|'   # Group 4: Link
         r'([{}])'.format(re.escape(escape_chars)) # Group 5: One of the special chars
     )
 
     def replacer(match):
-        # If one of the valid markdown groups was found, return it unchanged.
-        if match.group(1):  # Bold
-            return match.group(1)
-        if match.group(2):  # Italic
-            return match.group(2)
-        if match.group(3):  # Inline code
-            return match.group(3)
-        if match.group(4):  # Link
-            return match.group(4)
+        # Helper to escape chars within a matched group
+        def escape_inner(s, chars_to_escape=escape_chars):
+            return re.sub(f'([{re.escape(chars_to_escape)}])', r'\\\1', s)
+
+        # If one of the valid markdown groups was found, we need to escape 
+        # specific characters INSIDE that group to be safe for V2, 
+        # while preserving the outer formatting.
+        
+        if match.group(1):  # Bold *text*
+            # Escape inner chars, but preserve outer *
+            inner = match.group(1)[1:-1]
+            # In V2 bold, we need to escape backticks and slashes mainly, 
+            # but also other special chars can be tricky. 
+            # Actually simplest is to escape everything EXCEPT the outer markers?
+            # Telegram V2 is strict. 
+            # Strategy: escape everything inside that is special.
+            return '*' + escape_inner(inner) + '*'
+            
+        if match.group(2):  # Italic _text_
+            inner = match.group(2)[1:-1]
+            return '_' + escape_inner(inner) + '_'
+            
+        if match.group(3):  # Inline code `text`
+            # Inline code is special: backticks inside need escaping (which breaks it usually),
+            # but mostly backslashes. 
+            # Telegram says: '`' and '\' must be escaped inside code.
+            # But usually we don't want to touch code blocks too much.
+            return match.group(3) # Leave code blocks alone usually works best if they are simple
+            
+        if match.group(4):  # Link [text](url)
+            # complex. Group 4 has [text](url).
+            # We need to parse it. 
+            full_link = match.group(4)
+            # Find the split between ](
+            # This simple regex might fail on nested brackets but for now assume simple links.
+            split_idx = full_link.rfind('](')
+            if split_idx != -1:
+                text_part = full_link[1:split_idx]
+                url_part = full_link[split_idx+2:-1]
+                # Escape text part
+                escaped_text = escape_inner(text_part, escape_chars.replace(']', '').replace('[', '')) # Should be safe?
+                return f'[{escaped_text}]({url_part})'
+            return full_link
+
         if match.group(5):  # A special character that needs escaping
             return '\\' + match.group(5)
-        # This should not be reached
+
         return ''
 
-    return MARKDOWN_REGEX.sub(replacer, text)
+    return markdown_or_special_char_regex.sub(replacer, text)
 
 class TelegramFormatter:
     """

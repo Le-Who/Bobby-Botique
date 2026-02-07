@@ -17,8 +17,21 @@ import threading
 print("DEBUG: standard libs imported", flush=True)
 
 from telegram import Update
-from telegram.ext import Application, CallbackQueryHandler
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 from telegram.error import NetworkError, TimedOut, RetryAfter, Conflict
+
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a telegram message to notify the user."""
+    logging.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+    
+    # Send message to user if possible
+    if isinstance(update, Update) and update.effective_message:
+        try:
+           # Avoid infinite loops if error happens during sending error message
+           text = "❌ Произошла непредвиденная ошибка. Попробуйте позже."
+           await update.effective_message.reply_text(text)
+        except Exception:
+            pass
 print("DEBUG: telegram modules imported", flush=True)
 
 from hypercorn.config import Config as HypercornConfig
@@ -172,6 +185,9 @@ async def run_bot_with_retry():
         callbacks.register(application)
         messages.register(application)
         application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
+        
+        # Register global error handler
+        application.add_error_handler(global_error_handler)
         
         await application.initialize()
         await application.start()
