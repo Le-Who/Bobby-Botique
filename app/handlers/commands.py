@@ -468,12 +468,26 @@ async def get_metrics_content():
     # Добавляем статус ключей Gemini
     if gemini_keys:
         text += "*🔑 Статус ключей Gemini (сегодня):*\n"
+
+        # Batch fetch usage for all keys
+        all_usage = await db.db_query(
+            "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",
+            (today_pacific,)
+        )
+
+        # Group by key_hash
+        usage_map = {}
+        if all_usage:
+            for row in all_usage:
+                k = row['key_hash']
+                if k not in usage_map:
+                    usage_map[k] = []
+                usage_map[k].append(row)
+
         for key_row in gemini_keys:
             display_name = format_key_for_display(key_row['api_key'])
-            usage_data = await db.db_query(
-                "SELECT model_name, request_count FROM key_usage WHERE key_hash = $1 AND usage_date = $2",
-                (key_row['key_hash'], today_pacific)
-            )
+            usage_data = usage_map.get(key_row['key_hash'], [])
+
             if not usage_data:
                 text += f"• `{display_name}`: не использовался\n"
             else:
@@ -487,13 +501,22 @@ async def get_metrics_content():
     # Добавляем статус кредитов Tavily
     if tavily_keys:
         text += "*💳 Кредиты Tavily (текущий месяц):*\n"
+
+        # Batch fetch usage for all keys
+        all_tavily_usage = await db.db_query(
+            "SELECT key_hash, credit_usage FROM tavily_key_usage WHERE usage_month = $1",
+            (current_month,)
+        )
+
+        # Map key_hash to usage
+        tavily_usage_map = {}
+        if all_tavily_usage:
+            for row in all_tavily_usage:
+                tavily_usage_map[row['key_hash']] = row['credit_usage']
+
         for key_row in tavily_keys:
             display_name = format_key_for_display(key_row['api_key'])
-            usage = await db.db_query(
-                "SELECT credit_usage FROM tavily_key_usage WHERE key_hash = $1 AND usage_month = $2",
-                (key_row['key_hash'], current_month)
-            )
-            count = usage[0]['credit_usage'] if usage else 0
+            count = tavily_usage_map.get(key_row['key_hash'], 0)
             limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
             text += f"• `{display_name}`: {count} / {limit}\n"
         text += "Сброс лимитов: 1-го числа каждого месяца\n\n"
