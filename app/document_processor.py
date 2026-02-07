@@ -41,7 +41,8 @@ class DocumentProcessor:
             temp_file.write(file_data)
             return temp_file.name
 
-    def _calculate_file_hash(self, file_data: bytes) -> str:
+    @staticmethod
+    def _calculate_file_hash_sync(file_data: bytes) -> str:
         """Вычисляет SHA-256 хэш файла"""
         return hashlib.sha256(file_data).hexdigest()
     
@@ -131,7 +132,9 @@ class DocumentProcessor:
                 logging.info(f"Document limit exceeded for user {user_id}, removed oldest document")
             
             # Вычисляем хэш файла и проверяем дубликаты
-            file_hash = self._calculate_file_hash(file_data)
+            # Offload hash calculation to executor to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+            file_hash = await loop.run_in_executor(None, self._calculate_file_hash_sync, file_data)
             duplicate = await self._check_duplicate_file(user_id, file_hash, filename)
             
             if duplicate:
@@ -179,7 +182,9 @@ class DocumentProcessor:
                 return {"error": f"Unsupported file format: {file_ext}"}
             
             # Вычисляем хэш файла (но не проверяем дубликаты)
-            file_hash = self._calculate_file_hash(file_data)
+            # Offload hash calculation to executor to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+            file_hash = await loop.run_in_executor(None, self._calculate_file_hash_sync, file_data)
             
             # Обрабатываем документ
             if file_ext == '.pdf':
