@@ -476,12 +476,19 @@ async def role_rename_menu_callback(update: Update, context: ContextTypes.DEFAUL
         return
     roles = await db.db_query("SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC", (user_id,))
     if not roles:
-        await query.edit_message_text("У вас пока нет кастомных ролей.")
+        # UX: Add back button even for empty state
+        await query.edit_message_text(
+            "У вас пока нет кастомных ролей.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="open_roles")]])
+        )
         return
     buttons = []
     for r in roles:
         buttons.append([InlineKeyboardButton(f"✏️ {r['title']}", callback_data=f"role_rename_pick:{r['id']}")])
-    await query.message.reply_text("Выберите роль для переименования:", reply_markup=InlineKeyboardMarkup(buttons))
+
+    # UX: Add Back button and use edit_message_text
+    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="open_roles")])
+    await query.edit_message_text("Выберите роль для переименования:", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -874,10 +881,14 @@ async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
+    # UX: Add Back button
+    keyboard = [[InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")]]
+
     await query.edit_message_text(
         "✏️ Введите ID беседы и новое название:\n\n"
         "Формат: /rename <ID> <новое название>\n"
-        "Пример: /rename 123 Моя новая беседа"
+        "Пример: /rename 123 Моя новая беседа",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -885,10 +896,14 @@ async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
+    # UX: Add Back button
+    keyboard = [[InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")]]
+
     await query.edit_message_text(
         "🗑️ Введите ID беседы для удаления:\n\n"
         "Используйте /conversations для просмотра списка бесед.\n"
-        "⚠️ Это действие нельзя отменить!"
+        "⚠️ Это действие нельзя отменить!",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
