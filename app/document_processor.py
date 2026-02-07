@@ -235,18 +235,23 @@ class DocumentProcessor:
                 return {"error": f"PDF too large. Maximum {max_pages} pages allowed"}
 
             text_content = []
+            current_length = 0
 
             for page_num, page in enumerate(pdf_reader.pages):
                 try:
                     text = page.extract_text()
                     if text.strip():
-                        text_content.append(f"--- Page {page_num + 1} ---\n{text}")
+                        chunk = f"--- Page {page_num + 1} ---\n{text}"
+                        text_content.append(chunk)
+                        current_length += len(chunk)
                 except Exception as page_error:
                     logging.warning(f"Error extracting text from page {page_num + 1}: {page_error}")
-                    text_content.append(f"--- Page {page_num + 1} ---\n[Error extracting text from this page]")
+                    chunk = f"--- Page {page_num + 1} ---\n[Error extracting text from this page]"
+                    text_content.append(chunk)
+                    current_length += len(chunk)
 
                 # Проверяем лимит токенов
-                if len('\n'.join(text_content)) > 100000:
+                if current_length > 100000:
                     text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
                     break
 
