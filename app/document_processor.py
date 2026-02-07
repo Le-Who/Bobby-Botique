@@ -3,8 +3,9 @@ import os
 import hashlib
 import tempfile
 import asyncio
+import io
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 import httpx
 import pypdf
@@ -201,40 +202,38 @@ class DocumentProcessor:
     
     async def _process_pdf(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает PDF документ"""
-        temp_file_path = None
         try:
             # Проверяем, что файл является корректным PDF до создания временного файла
             if not file_data.startswith(b'%PDF'):
                 logging.warning(f"Invalid PDF format for {filename}")
                 return {"error": "Invalid PDF file format"}
 
-            # Создаем временный файл для обработки (в отдельном потоке)
-            temp_file_path = await asyncio.to_thread(self._write_temp_file_sync, file_data, '.pdf')
-            
-            logging.info(f"Processing PDF {filename} with PyMuPDF")
+            logging.info(f"Processing PDF {filename} with PyPDF2")
             
             # PyMuPDF removed for free tier optimization, using PyPDF2 directly
-            # Fallback на PyPDF2
             return await self._process_pdf_with_pypdf2(file_data, filename, user_id, file_hash)
             
         except Exception as e:
             logging.error(f"Error processing PDF {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
-        finally:
-            # Удаляем временный файл если он был создан
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.unlink(temp_file_path)
-                except Exception as e:
-                    logging.warning(f"Error deleting temp file {temp_file_path}: {e}")
 
     
     @staticmethod
-    def _process_pdf_sync(temp_file_path: str, max_pages: int) -> Dict[str, Any]:
+    def _process_pdf_sync(input_data: Union[str, io.BytesIO], max_pages: int) -> Dict[str, Any]:
         """Synchronous part of PDF processing to run in executor"""
-        with open(temp_file_path, 'rb') as file:
-            pdf_reader = pypdf.PdfReader(file)
+        pdf_file = None
+        should_close = False
+
+        try:
+            if isinstance(input_data, str):
+                pdf_file = open(input_data, 'rb')
+                should_close = True
+                stream = pdf_file
+            else:
+                stream = input_data
+
+            pdf_reader = pypdf.PdfReader(stream)
 
             if len(pdf_reader.pages) > max_pages:
                 return {"error": f"PDF too large. Maximum {max_pages} pages allowed"}
@@ -267,21 +266,24 @@ class DocumentProcessor:
                 "pages": len(pdf_reader.pages),
                 "content": full_text
             }
+        except Exception as e:
+            return {"error": str(e)}
+        finally:
+            if should_close and pdf_file:
+                pdf_file.close()
 
     async def _process_pdf_with_pypdf2(self, file_data: bytes, filename: str, user_id: int, file_hash: str) -> Dict[str, Any]:
         """Обрабатывает PDF документ с использованием PyPDF2 (fallback)"""
-        temp_file_path = None
         try:
-            # Создаем временный файл для обработки (в отдельном потоке)
-            temp_file_path = await asyncio.to_thread(self._write_temp_file_sync, file_data, '.pdf')
+            # Use io.BytesIO to avoid writing to disk
+            stream = io.BytesIO(file_data)
             
-            # Используем PyPDF2 как fallback - keep file open during processing
             # Run CPU-bound task in executor
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 self._process_pdf_sync,
-                temp_file_path,
+                stream,
                 self.max_pages
             )
 
@@ -307,19 +309,12 @@ class DocumentProcessor:
             logging.error(f"Error processing PDF with PyPDF2 {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
             return {"error": f"Error processing PDF with PyPDF2: {str(e)}"}
-        finally:
-            # Удаляем временный файл
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.unlink(temp_file_path)
-                except Exception as cleanup_error:
-                    logging.warning(f"Error cleaning up temp file {temp_file_path}: {cleanup_error}")
 
     @staticmethod
-    def _process_word_sync(temp_file_path: str) -> Dict[str, Any]:
+    def _process_word_sync(input_data: Union[str, io.BytesIO]) -> Dict[str, Any]:
         """Synchronous part of Word processing to run in executor"""
         try:
-            doc = Document(temp_file_path)
+            doc = Document(input_data)
 
             text_content = []
             paragraph_count = 0
@@ -364,17 +359,16 @@ class DocumentProcessor:
             logging.warning(f"Invalid DOCX format for {filename}: Missing ZIP header")
             return {"error": "Invalid Word document format. File must be a valid .docx file."}
 
-        temp_file_path = None
         try:
-            # Создаем временный файл (в отдельном потоке)
-            temp_file_path = await asyncio.to_thread(self._write_temp_file_sync, file_data, '.docx')
+            # Use io.BytesIO to avoid writing to disk
+            stream = io.BytesIO(file_data)
             
             # Offload CPU-bound task to executor
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
                 self._process_word_sync,
-                temp_file_path
+                stream
             )
 
             if "error" in result:
@@ -394,13 +388,6 @@ class DocumentProcessor:
             logging.error(f"Error processing Word document {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
-        finally:
-            # Удаляем временный файл
-            if temp_file_path and os.path.exists(temp_file_path):
-                try:
-                    os.unlink(temp_file_path)
-                except Exception as e:
-                    logging.warning(f"Error deleting temp file {temp_file_path}: {e}")
     
     async def _save_document_content(self, user_id: int, filename: str, content: str, pages: int, file_hash: str):
         """Сохраняет содержимое документа в базу данных"""
