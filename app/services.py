@@ -7,6 +7,9 @@ from typing import Dict, Any, List, Optional
 from PIL import Image
 import asyncio
 import time
+import io
+import math
+import base64
 
 from app.config import settings
 from app import database
@@ -71,22 +74,37 @@ async def get_gemini_response(api_key: str, history: list, model_name: str, syst
 
 async def _save_image_as_bytes(image: Image.Image, timeout: float = 5.0, max_size_mb: int = 10) -> Optional[bytes]:
     """Сохраняет изображение как bytes с timeout и сжатием."""
-    import io, math
-    try:
-        # Проверяем размер в памяти
-        img_bytes_approx = len(image.tobytes())
-        if img_bytes_approx > max_size_mb * 1024 * 1024:
-             # Уменьшаем
-            ratio = math.sqrt((max_size_mb * 1024 * 1024) / img_bytes_approx)
-            new_size = tuple(int(dim * ratio) for dim in image.size)
-            image = image.resize(new_size, Image.Resampling.LANCZOS)
+    def _process_and_save():
+        try:
+            # Local reference to image to avoid modifying the original if passed by reference (though PIL images are objects)
+            # Actually, resize returns a new copy.
+            img_to_process = image
 
-        def _save():
+            # Use tobytes() which decompresses the image if needed, can be slow
+            # Check size in memory (uncompressed usually)
+            # len(image.tobytes()) gives uncompressed size (e.g. W*H*3)
+            # This is CPU bound decompressing if it's lazy loaded
+            img_bytes_approx = len(img_to_process.tobytes())
+
+            if img_bytes_approx > max_size_mb * 1024 * 1024:
+                 # Уменьшаем
+                ratio = math.sqrt((max_size_mb * 1024 * 1024) / img_bytes_approx)
+                new_size = tuple(int(dim * ratio) for dim in img_to_process.size)
+                img_to_process = img_to_process.resize(new_size, Image.Resampling.LANCZOS)
+
             buf = io.BytesIO()
-            image.save(buf, format='JPEG', quality=85, optimize=True)
-            return buf.getvalue()
+            # Convert to RGB if necessary (e.g. RGBA to JPEG)
+            if img_to_process.mode in ('RGBA', 'P'):
+                img_to_process = img_to_process.convert('RGB')
 
-        return await asyncio.wait_for(asyncio.to_thread(_save), timeout=timeout)
+            img_to_process.save(buf, format='JPEG', quality=85, optimize=True)
+            return buf.getvalue()
+        except Exception as e:
+             logging.error(f"Error in image processing thread: {e}")
+             return None
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_process_and_save), timeout=timeout)
     except Exception as e:
         logging.error(f"Image processing error: {e}")
         return None
@@ -613,18 +631,17 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
             content_parts = []
             for part in parts:
                 if isinstance(part, Image.Image):
-                    # Конвертируем изображение в base64
-                    import io
-                    import base64
-                    img_byte_arr = io.BytesIO()
-                    part.save(img_byte_arr, format='JPEG')
-                    img_base64 = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
-                    content_parts.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{img_base64}"
-                        }
-                    })
+                    # Use offloaded processing
+                    img_bytes = await _save_image_as_bytes(part)
+                    if img_bytes:
+                        # base64 encoding
+                        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+                        content_parts.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{img_base64}"
+                            }
+                        })
                 else:
                     # Текстовый контент
                     text_content = str(part)
