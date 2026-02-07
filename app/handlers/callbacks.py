@@ -797,41 +797,40 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
    set_generating_custom_role(user_id, False)
 
 async def role_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-   query = update.callback_query
-   user_id = query.from_user.id
-   if not await db.is_authorized(user_id):
-       await query.answer("❌ Нет доступа")
-       return
-   try:
-       role_id = int(query.data.split(":")[1])
-       # Проверяем, не активна ли эта роль сейчас
-       chat_state = await db.get_user_chat(user_id)
+    query = update.callback_query
+    user_id = query.from_user.id
+    if not await db.is_authorized(user_id):
+        await query.answer("❌ Нет доступа")
+        return
+    try:
+        role_id = int(query.data.split(":")[1])
+        # Проверяем, не активна ли эта роль сейчас
+        chat_state = await db.get_user_chat(user_id)
 
-       # Получаем промпт удаляемой роли, чтобы проверить, активна ли она
-       role_data = await db.db_query("SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
+        # Получаем промпт удаляемой роли, чтобы проверить, активна ли она
+        role_data = await db.db_query("SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
 
-       await db.db_query("DELETE FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
+        await db.db_query("DELETE FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
 
-       # Если удаляемая роль была активна, сбрасываем ее
-       if role_data and chat_state.system_prompt == role_data[0]['prompt']:
-           chat_state.system_prompt = None
-           await db.update_user_chat(user_id, chat_state)
+        # Если удаляемая роль была активна, сбрасываем ее
+        if role_data and chat_state.system_prompt == role_data[0]['prompt']:
+            chat_state.system_prompt = None
+            await db.update_user_chat(user_id, chat_state)
 
-       # Обновляем меню - остаемся в списке "Мои роли"
-       from app.handlers.commands import get_roles_menu_content
-       # Пытаемся остаться на текущей странице, но так как мы не знаем текущую страницу из callback_data удаления сразу,
-       # просто возвращаемся на первую страницу моих ролей.
-       # (Можно было бы передавать page в callback удаления, но это усложнит логику)
-       text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="my_roles", page=0)
-       
-       try:
+        # Обновляем меню - остаемся в списке "Мои роли"
+        from app.handlers.commands import get_roles_menu_content
+        # Пытаемся остаться на текущей странице, но так как мы не знаем текущую страницу из callback_data удаления сразу,
+        # просто возвращаемся на первую страницу моих ролей.
+        text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="my_roles", page=0)
+        
+        try:
             await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-       except telegram.error.BadRequest as e:
+        except telegram.error.BadRequest as e:
             if "Message is not modified" not in str(e):
                 raise e
 
         await query.answer("🗑️ Роль удалена.")
-
+        
     except Exception as e:
         logging.error(f"Error deleting role: {e}")
         await query.answer("❌ Ошибка удаления роли")
