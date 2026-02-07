@@ -209,6 +209,7 @@ class CircuitBreaker:
         async with self._lock:
             await self._set_state(CircuitState.OPEN)
             self._failure_count = self.config.failure_threshold
+            self._last_failure_time = time.time()
     
     async def force_close(self) -> None:
         """Forces circuit breaker to closed state."""
