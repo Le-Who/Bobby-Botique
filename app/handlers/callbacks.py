@@ -830,11 +830,11 @@ async def role_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             if "Message is not modified" not in str(e):
                 raise e
 
-       await query.answer("🗑️ Роль удалена.")
-       
+        await query.answer("🗑️ Роль удалена.")
+
     except Exception as e:
-         logging.error(f"Error deleting role: {e}")
-         await query.answer("❌ Ошибка удаления роли")
+        logging.error(f"Error deleting role: {e}")
+        await query.answer("❌ Ошибка удаления роли")
 
 async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -873,13 +873,6 @@ async def role_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except telegram.error.BadRequest as e:
         if "Message is not modified" not in str(e):
             raise e
-       from app.handlers.commands import get_roles_menu_content
-       text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state)
-       await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-       await query.answer("🗑️ Роль удалена.")
-   except Exception as e:
-       logging.error(f"Error deleting role: {e}")
-       await query.answer("❌ Ошибка удаления роли.")
 
 async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    query = update.callback_query
