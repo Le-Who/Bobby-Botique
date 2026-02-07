@@ -36,15 +36,27 @@ class MemoryManager:
         self._cleanup_cooldown = 300  # 5 minutes between cleanups
         self._running = False
         
-        self._start_monitoring()
+        try:
+            asyncio.get_running_loop()
+            self._start_monitoring()
+        except RuntimeError:
+            logging.debug("No running event loop found, memory monitoring not started automatically.")
     
     def _start_monitoring(self):
         """Starts memory monitoring task."""
         if self._monitoring_task and not self._monitoring_task.done():
             return
         
-        self._running = True
-        self._monitoring_task = asyncio.create_task(self._monitor_memory())
+        try:
+            self._running = True
+            self._monitoring_task = asyncio.create_task(self._monitor_memory())
+        except RuntimeError as e:
+            self._running = False
+            logging.error(f"Failed to start memory monitoring: {e}")
+
+    def start(self):
+        """Manually starts memory monitoring."""
+        self._start_monitoring()
     
     async def _monitor_memory(self):
         """Continuous memory monitoring loop."""
@@ -147,8 +159,15 @@ class MemoryManager:
             
             self._last_cleanup = time.time()
             
+            return {'status': 'cleanup_completed', 'timestamp': time.time()}
+
         except Exception as e:
             logging.error("Emergency cleanup error: %s", e)
+            return {'status': 'error', 'error': str(e)}
+
+    async def force_cleanup(self):
+        """Forces memory cleanup (alias for emergency cleanup)."""
+        return await self._emergency_cleanup()
     
     async def _suggested_cleanup(self):
         """Performs suggested memory cleanup."""
@@ -239,6 +258,10 @@ class MemoryManager:
         self._cleanup_callbacks.clear()
         self._memory_history.clear()
         logging.info("Memory manager stopped")
+
+    async def shutdown(self):
+        """Shuts down the memory manager (alias for stop)."""
+        await self.stop()
     
     def __del__(self):
         """Cleanup on destruction."""
