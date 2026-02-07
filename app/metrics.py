@@ -33,6 +33,19 @@ class MetricsCollector:
         self._lock = asyncio.Lock()
         self._last_save_time = time.time()
         self._save_interval = 300  # Сохраняем каждые 5 минут
+        self._bg_task: Optional[asyncio.Task] = None
+
+    async def _background_saver(self):
+        """Фоновая задача для периодического сохранения метрик"""
+        logging.info("Metrics background saver started")
+        try:
+            while True:
+                await asyncio.sleep(self._save_interval)
+                await self._save_metrics_to_db()
+        except asyncio.CancelledError:
+            logging.info("Metrics background saver cancelled")
+        except Exception as e:
+            logging.error(f"Metrics background saver error: {e}")
     
     async def _ensure_metrics_tables(self):
         """Создает таблицы для метрик, если они не существуют"""
@@ -73,11 +86,29 @@ class MetricsCollector:
     async def _save_metrics_to_db(self):
         """Сохраняет текущие метрики в базу данных"""
         try:
-            await self._ensure_metrics_tables()
-            
             today = date.today()
             today_str = today.isoformat()
-            daily_metrics = self.daily_metrics.get(today_str, PerformanceMetrics())
+
+            # 1. Snapshot data under lock (fast)
+            async with self._lock:
+                current_metrics = self.daily_metrics.get(today_str, PerformanceMetrics())
+
+                snapshot = {
+                    'request_count': current_metrics.request_count,
+                    'total_response_time': current_metrics.total_response_time,
+                    'error_count': current_metrics.error_count,
+                    'search_queries': current_metrics.search_queries,
+                    'cache_hits': current_metrics.cache_hits,
+                    'cache_misses': current_metrics.cache_misses,
+                    'api_calls': current_metrics.api_calls.copy(),
+                    'model_usage': current_metrics.model_usage.copy()
+                }
+
+                # Snapshot unsaved errors
+                unsaved_errors = [error for error in self.error_log if not error.get('saved', False)]
+
+            # 2. Save snapshot to DB (no lock, I/O bound)
+            await self._ensure_metrics_tables()
             
             # Обновляем или вставляем метрики за сегодня
             await db.db_query("""
@@ -95,29 +126,32 @@ class MetricsCollector:
                     model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || $17::jsonb,
                     updated_at = CURRENT_TIMESTAMP
             """, (
-                today, daily_metrics.request_count, daily_metrics.total_response_time, 
-                daily_metrics.error_count, daily_metrics.search_queries, daily_metrics.cache_hits, 
-                daily_metrics.cache_misses, json.dumps(daily_metrics.api_calls), 
-                json.dumps(daily_metrics.model_usage),
+                today, snapshot['request_count'], snapshot['total_response_time'],
+                snapshot['error_count'], snapshot['search_queries'], snapshot['cache_hits'],
+                snapshot['cache_misses'], json.dumps(snapshot['api_calls']),
+                json.dumps(snapshot['model_usage']),
                 # Значения для UPDATE
-                daily_metrics.request_count, daily_metrics.total_response_time, 
-                daily_metrics.error_count, daily_metrics.search_queries, daily_metrics.cache_hits, 
-                daily_metrics.cache_misses, json.dumps(daily_metrics.api_calls), 
-                json.dumps(daily_metrics.model_usage)
+                snapshot['request_count'], snapshot['total_response_time'],
+                snapshot['error_count'], snapshot['search_queries'], snapshot['cache_hits'],
+                snapshot['cache_misses'], json.dumps(snapshot['api_calls']),
+                json.dumps(snapshot['model_usage'])
             ))
             
-            # Сохраняем новые ошибки (только те, которые еще не были сохранены)
-            new_errors = [error for error in self.error_log if not error.get('saved', False)]
-            if new_errors:
-                for error in new_errors:
-                    await db.db_query("""
-                        INSERT INTO error_logs (error_type, error_message)
-                        VALUES ($1, $2)
-                    """, (error['type'], error['message']))
-                    error['saved'] = True  # Помечаем как сохраненную
+            # Сохраняем новые ошибки
+            if unsaved_errors:
+                for error in unsaved_errors:
+                    try:
+                        await db.db_query("""
+                            INSERT INTO error_logs (error_type, error_message)
+                            VALUES ($1, $2)
+                        """, (error['type'], error['message']))
+                        # Mark as saved (thread-safe enough as only this task sets it to True)
+                        error['saved'] = True
+                    except Exception as e:
+                        logging.error(f"Failed to save error log: {e}")
             
             self._last_save_time = time.time()
-            logging.info(f"Metrics saved to database: {daily_metrics.request_count} requests, {daily_metrics.error_count} errors")
+            logging.info(f"Metrics saved to database: {snapshot['request_count']} requests, {snapshot['error_count']} errors")
             
         except Exception as e:
             logging.error(f"Error saving metrics to database: {e}")
@@ -254,9 +288,7 @@ class MetricsCollector:
             if not success:
                 self.daily_metrics[today].error_count += 1
             
-            # Периодически сохраняем в БД
-            if time.time() - self._last_save_time > self._save_interval:
-                await self._save_metrics_to_db()
+            # Note: DB saving is now handled by _background_saver task
     
     async def record_api_call(self, api_name: str, model: str = None):
         """Записывает вызов API"""
@@ -385,9 +417,21 @@ class MetricsCollector:
     async def initialize(self):
         """Инициализирует систему метрик"""
         await self._load_metrics_from_db()
+        # Start background saver
+        if not self._bg_task:
+            self._bg_task = asyncio.create_task(self._background_saver())
     
     async def cleanup(self):
         """Очищает ресурсы и сохраняет метрики"""
+        # Cancel background task
+        if self._bg_task:
+            self._bg_task.cancel()
+            try:
+                await self._bg_task
+            except asyncio.CancelledError:
+                pass
+            self._bg_task = None
+
         try:
             # Проверяем, что база данных доступна перед сохранением
             if db.db_pool and not db.db_pool._closed:

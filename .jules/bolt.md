@@ -13,3 +13,7 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+
+## 2025-02-19 - [Non-Blocking Metrics Collection]
+**Learning:** asyncio.Lock contention during periodic I/O tasks (like saving metrics) can block concurrent tasks if the lock is held across the I/O operation.
+**Action:** Decouple periodic I/O from the request path by using a background asyncio task. Use the lock *only* to create an in-memory snapshot of the data, then perform the I/O operation using the snapshot without holding the lock.
