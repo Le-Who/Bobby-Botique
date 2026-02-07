@@ -261,7 +261,14 @@ async def run_bot_and_server():
     monitoring_task = asyncio.create_task(basic_monitoring())
     bot_task = asyncio.create_task(run_bot_with_retry())
     watchdog_task = asyncio.create_task(bot_watchdog(bot_task))
-    server_task = asyncio.create_task(serve(flask_app, hypercorn_config))
+    
+    server_task = None
+    if settings.ENABLE_WEB_SERVER:
+        server_task = asyncio.create_task(serve(flask_app, hypercorn_config))
+        logging.info(f"Web server started on port {settings.PORT}")
+    else:
+        logging.info("Web server is DISABLED by configuration")
+        
     shutdown_task = asyncio.create_task(_wait_for_shutdown())
     
     try:
@@ -273,12 +280,16 @@ async def run_bot_and_server():
             process_lock.release()
     finally:
         logging.info("Starting graceful shutdown...")
-        for task in [monitoring_task, bot_task, watchdog_task, server_task, shutdown_task]:
+        tasks_to_cancel = [monitoring_task, bot_task, watchdog_task, shutdown_task]
+        if server_task:
+            tasks_to_cancel.append(server_task)
+            
+        for task in tasks_to_cancel:
             if not task.done():
                 task.cancel()
         
         await asyncio.gather(
-            monitoring_task, bot_task, watchdog_task, server_task, shutdown_task,
+            *tasks_to_cancel,
             return_exceptions=True
         )
         

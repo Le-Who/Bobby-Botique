@@ -103,6 +103,7 @@ class Settings(BaseModel):
     DATABASE_URL: str
     ADMIN_ID: int
     PORT: int
+    ENABLE_WEB_SERVER: bool = True  # Default to True for cloud deployments
 
     # --- CHAT ---
     CHAT_TOKEN_LIMIT: int = 384000
@@ -389,6 +390,7 @@ def load_settings() -> Settings:
             "DATABASE_URL": os.getenv("DATABASE_URL"),
             "ADMIN_ID": os.getenv("ADMIN_ID"),
             "PORT": os.getenv("PORT", "10000"), # Provide a default for PORT
+            "ENABLE_WEB_SERVER": os.getenv("ENABLE_WEB_SERVER", "true").lower() == "true",
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
