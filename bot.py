@@ -406,6 +406,7 @@ async def main():
         except Exception: pass
         logging.info("Shutdown complete")
 
+if __name__ == "__main__":
     print("=== BOT MAIN ENTRY POINT ===", flush=True)
     
     container_id = os.environ.get('HOSTNAME', 'unknown')
