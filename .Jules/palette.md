@@ -9,3 +9,7 @@
 ## 2025-05-29 - [Confirm Destructive Actions]
 **Learning:** Destructive actions like "Clear All Documents" executed immediately on a single click can lead to significant user frustration and data loss. Users expect a safety net.
 **Action:** Implement a two-step confirmation process for all bulk delete or irreversible actions, replacing the button with a clear "Confirm/Cancel" choice.
+
+## 2025-05-30 - [Live Dashboard with Accessibility]
+**Learning:** Static dashboards are deceptive; users assume they are broken if data doesn't update. Additionally, visual-only progress bars (divs with width) are invisible to screen readers.
+**Action:** Use `role="progressbar"` with ARIA attributes for all meter-like visualizations, and implement simple polling (e.g., JS fetch) to make monitoring dashboards "live" without page reloads.

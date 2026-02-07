@@ -20,26 +20,26 @@
         <h2 class="animate-up">System Health</h2>
         <div class="grid">
             <div class="glass-card animate-up delay-1">
-                <div class="metric-label">CPU Usage</div>
-                <div class="metric-value">{{ status.system.cpu_percent }}%</div>
-                <div class="progress-bar-bg">
-                    <div class="progress-bar-fill" style="width: {{ status.system.cpu_percent }}%"></div>
+                <div class="metric-label" id="cpu-label">CPU Usage</div>
+                <div class="metric-value" id="cpu-val">{{ status.system.cpu_percent }}%</div>
+                <div class="progress-bar-bg" id="cpu-bg" role="progressbar" aria-labelledby="cpu-label" aria-valuenow="{{ status.system.cpu_percent }}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar-fill" id="cpu-bar" style="width: {{ status.system.cpu_percent }}%"></div>
                 </div>
             </div>
 
             <div class="glass-card animate-up delay-2">
-                <div class="metric-label">Memory</div>
-                <div class="metric-value">{{ status.system.memory_percent }}%</div>
-                <div class="progress-bar-bg">
-                    <div class="progress-bar-fill" style="width: {{ status.system.memory_percent }}%"></div>
+                <div class="metric-label" id="memory-label">Memory</div>
+                <div class="metric-value" id="memory-val">{{ status.system.memory_percent }}%</div>
+                <div class="progress-bar-bg" id="memory-bg" role="progressbar" aria-labelledby="memory-label" aria-valuenow="{{ status.system.memory_percent }}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar-fill" id="memory-bar" style="width: {{ status.system.memory_percent }}%"></div>
                 </div>
             </div>
 
             <div class="glass-card animate-up delay-3">
-                <div class="metric-label">Disk Storage</div>
-                <div class="metric-value">{{ status.system.disk_percent }}%</div>
-                <div class="progress-bar-bg">
-                    <div class="progress-bar-fill" style="width: {{ status.system.disk_percent }}%"></div>
+                <div class="metric-label" id="disk-label">Disk Storage</div>
+                <div class="metric-value" id="disk-val">{{ status.system.disk_percent }}%</div>
+                <div class="progress-bar-bg" id="disk-bg" role="progressbar" aria-labelledby="disk-label" aria-valuenow="{{ status.system.disk_percent }}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar-fill" id="disk-bar" style="width: {{ status.system.disk_percent }}%"></div>
                 </div>
             </div>
         </div>
@@ -50,30 +50,30 @@
             <div class="glass-card animate-up delay-2">
                 <div class="metric-label">Telegram Bot</div>
                 <div style="font-size: 1.5rem; margin-top: 0.5rem;">
-                    <span class="status-indicator status-{{ status.bot }}"></span>
-                    {{ status.bot|title }}
+                    <span id="bot-status" class="status-indicator status-{{ status.bot }}"></span>
+                    <span id="bot-status-text" style="text-transform: capitalize;">{{ status.bot }}</span>
                 </div>
             </div>
 
             <div class="glass-card animate-up delay-3">
                 <div class="metric-label">Database (PostgreSQL)</div>
                 <div style="font-size: 1.5rem; margin-top: 0.5rem;">
-                    <span class="status-indicator status-{{ status.database }}"></span>
-                    {{ status.database|title }}
+                    <span id="db-status" class="status-indicator status-{{ status.database }}"></span>
+                    <span id="db-status-text" style="text-transform: capitalize;">{{ status.database }}</span>
                 </div>
             </div>
 
             <div class="glass-card animate-up delay-3">
                 <div class="metric-label">Environment</div>
                 <div style="font-size: 1.5rem; margin-top: 0.5rem;">
-                    {{ status.environment|title }}
+                    <span style="text-transform: capitalize;">{{ status.environment }}</span>
                 </div>
             </div>
         </div>
         
         <div class="glass-card animate-up delay-3" style="text-align: center; margin-top: 2rem;">
             <div class="metric-label">Last Updated</div>
-            <div style="color: var(--accent-color); margin-top: 0.5rem;">{{ status.timestamp }}</div>
+            <div id="last-updated" style="color: var(--accent-color); margin-top: 0.5rem;">{{ status.timestamp }}</div>
             <div style="margin-top: 1rem; font-size: 0.9rem; color: #64748b;">
                 v{{ status.version }}
             </div>
@@ -83,5 +83,65 @@
             &copy; 2026 GeminiBot v2. All systems operational.
         </footer>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const token = new URLSearchParams(window.location.search).get('token');
+            if (!token) return; // No token, no live updates
+
+            function updateDashboard() {
+                fetch(`/status?token=${token}`)
+                    .then(response => {
+                        if (!response.ok) throw new Error('Network response was not ok');
+                        return response.json();
+                    })
+                    .then(data => {
+                        // Update CPU
+                        if (data.system && data.system.cpu_percent !== undefined) {
+                            document.getElementById('cpu-val').textContent = data.system.cpu_percent + '%';
+                            document.getElementById('cpu-bar').style.width = data.system.cpu_percent + '%';
+                            document.getElementById('cpu-bg').setAttribute('aria-valuenow', data.system.cpu_percent);
+                        }
+
+                        // Update Memory
+                        if (data.system && data.system.memory_percent !== undefined) {
+                            document.getElementById('memory-val').textContent = data.system.memory_percent + '%';
+                            document.getElementById('memory-bar').style.width = data.system.memory_percent + '%';
+                            document.getElementById('memory-bg').setAttribute('aria-valuenow', data.system.memory_percent);
+                        }
+
+                        // Update Disk
+                        if (data.system && data.system.disk_percent !== undefined) {
+                            document.getElementById('disk-val').textContent = data.system.disk_percent + '%';
+                            document.getElementById('disk-bar').style.width = data.system.disk_percent + '%';
+                            document.getElementById('disk-bg').setAttribute('aria-valuenow', data.system.disk_percent);
+                        }
+
+                        // Update Bot Status
+                        if (data.bot) {
+                            const botStatus = document.getElementById('bot-status');
+                            botStatus.className = 'status-indicator status-' + data.bot;
+                            document.getElementById('bot-status-text').textContent = data.bot;
+                        }
+
+                        // Update DB Status
+                        if (data.database) {
+                            const dbStatus = document.getElementById('db-status');
+                            dbStatus.className = 'status-indicator status-' + data.database;
+                            document.getElementById('db-status-text').textContent = data.database;
+                        }
+
+                        // Update Timestamp
+                        if (data.timestamp) {
+                            document.getElementById('last-updated').textContent = data.timestamp;
+                        }
+                    })
+                    .catch(error => console.error('Error fetching status:', error));
+            }
+
+            // Update every 5 seconds
+            setInterval(updateDashboard, 5000);
+        });
+    </script>
 </body>
 </html>
