@@ -288,8 +288,8 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0):
         
         # 2. Основные разделы навигации
         keyboard.append([
-            InlineKeyboardButton(f"📂 Мои роли ({custom_count})", callback_data="role_nav:my"),
-            InlineKeyboardButton("📚 Каталог ролей", callback_data="role_nav:sys")
+            InlineKeyboardButton(f"📂 Мои роли ({custom_count})", callback_data="role_nav:my_roles"),
+            InlineKeyboardButton("📚 Каталог ролей", callback_data="role_nav:system_roles")
         ])
         
         # 3. Быстрые действия
