@@ -17,6 +17,7 @@ from app.metrics import role_conv_metrics
 from app.state import get_last_custom_role_prompt, set_generating_custom_role, set_last_custom_role_prompt
 from app.errors import build_roles_keyboard
 from app.utils.decorators import admin_only
+from app.handlers import menus
 
 class DummyUpdate:
     """Helper class to mock an Update object for calling commands from callbacks."""
@@ -80,8 +81,7 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await db.update_user_chat(user_id, chat_state)
     
     # Обновляем меню с новой выбранной моделью
-    from app.handlers.commands import get_model_menu_content
-    formatted_text, parse_mode, reply_markup = get_model_menu_content(chat_state, context)
+    formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(chat_state, context)
 
     # Определяем имя для тоста
     is_openrouter = "/" in model_name
@@ -209,8 +209,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     elif action == "list":
-        from app.handlers.commands import get_documents_menu_content
-        text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
+        text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
         return
     
@@ -253,8 +252,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         documents = await get_user_documents(user_id)
         if not documents:
             await query.answer("У вас нет документов для удаления.")
-            from app.handlers.commands import get_documents_menu_content
-            text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
+            text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
             await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
             return
 
@@ -270,8 +268,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         clear_document_state(user_id)
         
         # Обновляем меню
-        from app.handlers.commands import get_documents_menu_content
-        text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
+        text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
         await query.answer(f"🗑️ Удалено {deleted_count} документов.")
         return
@@ -318,8 +315,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         documents = await get_user_documents(user_id)
         if not documents:
             # Если документов нет, показываем главное меню документов
-            from app.handlers.commands import get_documents_menu_content
-            text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
+            text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
             try:
                 await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
             except telegram.error.BadRequest as e:
@@ -409,8 +405,7 @@ async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             documents = await get_user_documents(user_id)
             if not documents:
                 # Если документов не осталось, показываем главное меню документов
-                from app.handlers.commands import get_documents_menu_content
-                text, parse_mode, reply_markup = await get_documents_menu_content(user_id)
+                text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
                 await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
             else:
                 # Иначе перестраиваем список выбора
@@ -562,8 +557,7 @@ async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_T
     chat_state.search_enabled = not chat_state.search_enabled
     await db.update_user_chat(user_id, chat_state)
 
-    from app.handlers.commands import get_start_menu_content
-    formatted_text, parse_mode, reply_markup = get_start_menu_content(chat_state)
+    formatted_text, parse_mode, reply_markup = menus.get_start_menu_content(chat_state)
 
     await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
@@ -632,8 +626,7 @@ async def start_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = query.from_user.id
     chat_state = await db.get_user_chat(user_id)
 
-    from app.handlers.commands import get_start_menu_content
-    formatted_text, parse_mode, reply_markup = get_start_menu_content(chat_state)
+    formatted_text, parse_mode, reply_markup = menus.get_start_menu_content(chat_state)
 
     await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
@@ -679,8 +672,7 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
    await db.update_user_chat(user_id, chat_state)
 
    # Обновляем меню - возвращаемся в Hub
-   from app.handlers.commands import get_roles_menu_content
-   text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="hub")
+   text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="hub")
    try:
        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
    except telegram.error.BadRequest as e:
@@ -699,8 +691,7 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
    # Обновляем меню
    # Обновляем меню - возвращаемся в Hub
-   from app.handlers.commands import get_roles_menu_content
-   text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="hub")
+   text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="hub")
    try:
        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
    except telegram.error.BadRequest as e:
@@ -850,11 +841,10 @@ async def role_delete_cancel_callback(update: Update, context: ContextTypes.DEFA
     role_id = query.data.split(":")[1]
     
     # Возвращаемся в детали роли
-    from app.handlers.commands import get_roles_menu_content
     user_id = query.from_user.id
     chat_state = await db.get_user_chat(user_id)
     
-    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="role_details", role_key=f"user_role:{role_id}")
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="role_details", role_key=f"user_role:{role_id}")
     await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 async def role_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -879,8 +869,7 @@ async def role_delete_confirm_callback(update: Update, context: ContextTypes.DEF
             await db.update_user_chat(user_id, chat_state)
 
         # Обновляем меню - переходим в список "Мои роли"
-        from app.handlers.commands import get_roles_menu_content
-        text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="my_roles", page=0)
+        text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="my_roles", page=0)
         
         try:
             await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -903,8 +892,7 @@ async def role_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     role_key = query.data.split(":", 1)[1]
     
-    from app.handlers.commands import get_roles_menu_content
-    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="role_details", role_key=role_key)
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="role_details", role_key=role_key)
     
     try:
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -950,8 +938,7 @@ async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     view_mode = query.data.split(":")[1]
     
-    from app.handlers.commands import get_roles_menu_content
-    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode=view_mode)
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode=view_mode)
     
     try:
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -970,8 +957,7 @@ async def role_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     view_mode = parts[1]
     page = int(parts[2])
     
-    from app.handlers.commands import get_roles_menu_content
-    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode=view_mode, page=page)
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode=view_mode, page=page)
     
     try:
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -1035,8 +1021,7 @@ async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     page = int(query.data.split(":")[1])
     user_id = query.from_user.id
 
-    from app.handlers.commands import get_conversations_menu_content
-    text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, page)
+    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, page)
 
     if reply_markup is None:
         await query.edit_message_text(text)
@@ -1066,8 +1051,7 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
         if success:
             await role_conv_metrics.record_conversation_switched()
             # Показываем список бесед с тостом
-            from app.handlers.commands import get_conversations_menu_content
-            text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, 1)
+            text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
             await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
             await query.answer(f"✅ Переключились на беседу ID: {conv_id}")
         else:
@@ -1157,8 +1141,7 @@ async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEF
         await role_conv_metrics.record_conversation_deleted()
 
         # Обновляем список
-        from app.handlers.commands import get_conversations_menu_content
-        text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, 1)
+        text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
 
         await query.answer(f"✅ Беседа {conv_id} удалена")
@@ -1169,8 +1152,7 @@ async def conv_delete_cancel_callback(update: Update, context: ContextTypes.DEFA
     """Отмена удаления беседы"""
     query = update.callback_query
     
-    from app.handlers.commands import get_conversations_menu_content
-    text, parse_mode, reply_markup = await get_conversations_menu_content(query.from_user.id, 1)
+    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(query.from_user.id, 1)
     await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     await query.answer("❌ Удаление отменено")
 
@@ -1180,8 +1162,7 @@ async def refresh_metrics_callback(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
 
     try:
-        from app.handlers.commands import get_metrics_content
-        text = await get_metrics_content()
+        text = await menus.get_metrics_content()
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
         keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_metrics")]]
