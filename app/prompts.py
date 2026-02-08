@@ -139,10 +139,15 @@ def estimate_tokens(text: str) -> int:
         return 0
     return len(str(text)) // 4
 
-def should_summarize_context(history: list, current_tokens: int = 0) -> tuple[bool, str]:
+def should_summarize_context(history: list, current_tokens: int = 0, known_history_tokens: Optional[int] = None) -> tuple[bool, str]:
     """
     Определяет, нужно ли суммаризировать контекст
     
+    Args:
+        history: История сообщений
+        current_tokens: Количество токенов в текущем сообщении (которое добавляется)
+        known_history_tokens: Известное количество токенов в истории (оптимизация)
+
     Returns:
         (should_summarize, reason)
     """
@@ -150,14 +155,19 @@ def should_summarize_context(history: list, current_tokens: int = 0) -> tuple[bo
         return False, ""
     
     # Подсчитываем токены в истории
-    total_tokens = current_tokens
-    message_count = len(history)
+    if known_history_tokens is not None and known_history_tokens > 0:
+        # Используем известное значение (оптимизация O(1))
+        total_tokens = known_history_tokens + current_tokens
+    else:
+        # Считаем вручную (O(N))
+        total_tokens = current_tokens
+        for msg in history:
+            if isinstance(msg, dict) and 'parts' in msg:
+                for part in msg['parts']:
+                    if isinstance(part, str):
+                        total_tokens += estimate_tokens(part)
     
-    for msg in history:
-        if isinstance(msg, dict) and 'parts' in msg:
-            for part in msg['parts']:
-                if isinstance(part, str):
-                    total_tokens += estimate_tokens(part)
+    message_count = len(history)
     
     # Проверяем жёсткие лимиты
     if total_tokens > HARD_TOKEN_LIMIT:
@@ -175,7 +185,7 @@ def should_summarize_context(history: list, current_tokens: int = 0) -> tuple[bo
     
     return False, ""
 
-def prepare_context_with_limits(history: list, current_message: str = "", summary: str = None) -> tuple[list, str]:
+def prepare_context_with_limits(history: list, current_message: str = "", summary: str = None, known_history_tokens: Optional[int] = None) -> tuple[list, str]:
     """
     Подготавливает контекст с учётом лимитов токенов
     
@@ -183,6 +193,7 @@ def prepare_context_with_limits(history: list, current_message: str = "", summar
         history: История диалога
         current_message: Текущее сообщение пользователя
         summary: Существующая суммаризация (если есть)
+        known_history_tokens: Известное количество токенов в истории (оптимизация)
     
     Returns:
         (prepared_history, new_summary)
@@ -191,7 +202,7 @@ def prepare_context_with_limits(history: list, current_message: str = "", summar
         return [], summary or ""
     
     current_tokens = estimate_tokens(current_message)
-    should_sum, reason = should_summarize_context(history, current_tokens)
+    should_sum, reason = should_summarize_context(history, current_tokens, known_history_tokens)
     
     if not should_sum:
         # Лимиты не превышены, возвращаем историю как есть

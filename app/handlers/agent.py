@@ -1023,7 +1023,8 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     prepared_history, new_summary = prompts.prepare_context_with_limits(
         chat_state.history, 
         user_message, 
-        summary
+        summary,
+        known_history_tokens=chat_state.token_count
     )
     
     # Строим финальный контекст
