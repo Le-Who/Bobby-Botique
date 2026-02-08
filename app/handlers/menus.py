@@ -61,12 +61,50 @@ def get_start_menu_content(chat_state):
 
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
+def _generate_model_buttons(models, current_model, start_index, is_openrouter=False):
+    """
+    Генерирует список кнопок для выбора модели.
+
+    Args:
+        models (list): Список моделей.
+        current_model (str): Текущая выбранная модель.
+        start_index (int): Начальный индекс для callback_data.
+        is_openrouter (bool): Флаг, указывающий на использование OpenRouter.
+
+    Returns:
+        tuple: (список строк кнопок, следующий индекс)
+    """
+    rows = []
+    current_index = start_index
+
+    for m in models:
+        # Проверяем, выбрана ли модель
+        is_selected = (m == current_model)
+        selected_mark = "✅ " if is_selected else ""
+
+        # Определяем отображение
+        if is_openrouter:
+            display_name = m.split("/")[-1] if "/" in m else m
+            icon = "🌐"
+        else:
+            display_name = m
+            icon = "🤖"
+
+        # Формируем кнопку
+        model_hash = get_model_hash(m)
+        text = f"{selected_mark}{icon} {display_name}"
+        callback_data = f"model:{current_index}:{model_hash}"
+
+        rows.append([InlineKeyboardButton(text, callback_data=callback_data)])
+        current_index += 1
+
+    return rows, current_index
+
 def get_model_menu_content(chat_state, context):
     current_model = chat_state.model
 
     # Определяем, какой провайдер используется для текущей модели
     openrouter_available = bool(get_openrouter_keys())
-    is_current_openrouter = "/" in current_model if current_model else False
 
     # Создаем единый список всех моделей для индексации
     all_models = []
@@ -90,12 +128,13 @@ def get_model_menu_content(chat_state, context):
 
     # Добавляем модели Gemini
     if settings.AVAILABLE_MODELS:
-        for m in settings.AVAILABLE_MODELS:
-            is_selected = "✅ " if m == current_model and not is_current_openrouter else ""
-            # Используем индекс + хэш для валидации (ограничение Telegram: 64 байта)
-            model_hash = get_model_hash(m)
-            keyboard.append([InlineKeyboardButton(f"{is_selected}🤖 {m}", callback_data=f"model:{model_index}:{model_hash}")])
-            model_index += 1
+        buttons, model_index = _generate_model_buttons(
+            settings.AVAILABLE_MODELS,
+            current_model,
+            model_index,
+            is_openrouter=False
+        )
+        keyboard.extend(buttons)
 
     # Добавляем разделитель, если есть оба провайдера
     if settings.AVAILABLE_MODELS and openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
@@ -103,17 +142,16 @@ def get_model_menu_content(chat_state, context):
 
     # Добавляем модели OpenRouter, если доступны
     if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        for m in settings.OPENROUTER_AVAILABLE_MODELS:
-            is_selected = "✅ " if m == current_model and is_current_openrouter else ""
-            # Показываем короткое имя модели с иконкой провайдера
-            display_name = m.split("/")[-1] if "/" in m else m
-            provider_icon = "🌐"
-            # Используем индекс + хэш для валидации
-            model_hash = get_model_hash(m)
-            keyboard.append([InlineKeyboardButton(f"{is_selected}{provider_icon} {display_name}", callback_data=f"model:{model_index}:{model_hash}")])
-            model_index += 1
+        buttons, model_index = _generate_model_buttons(
+            settings.OPENROUTER_AVAILABLE_MODELS,
+            current_model,
+            model_index,
+            is_openrouter=True
+        )
+        keyboard.extend(buttons)
 
     # Формируем текст с информацией о текущей модели
+    is_current_openrouter = "/" in current_model if current_model else False
     provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
     text = f"**Выберите модель для разговора:**\n\n"
     text += f"**Текущая модель:** `{current_model}`\n"
