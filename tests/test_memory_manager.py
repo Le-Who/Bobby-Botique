@@ -216,15 +216,7 @@ class TestMemoryManager:
              assert isinstance(stats, dict)
 
         # Test cleanup_memory (force_cleanup)
-        # Note: This is expected to fail until we fix the bug
-        try:
-            await cleanup_memory()
-        except AttributeError:
-             pytest.fail("cleanup_memory() raised AttributeError - missing force_cleanup method?")
+        await cleanup_memory()
 
         # Test shutdown_memory_manager
-        # Note: This is expected to fail until we fix the bug
-        try:
-            await shutdown_memory_manager()
-        except AttributeError:
-             pytest.fail("shutdown_memory_manager() raised AttributeError - missing shutdown method?")
+        await shutdown_memory_manager()
