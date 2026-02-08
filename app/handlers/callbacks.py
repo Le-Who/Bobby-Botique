@@ -18,6 +18,8 @@ from app.state import get_last_custom_role_prompt, set_generating_custom_role, s
 from app.errors import build_roles_keyboard
 from app.utils.decorators import admin_only
 from app.handlers import menus
+from app.document_processor import get_user_documents, delete_user_document, get_document_by_id
+from app.state import clear_document_state, set_document_mode, get_selected_document_id
 
 class DummyUpdate:
     """Helper class to mock an Update object for calling commands from callbacks."""
@@ -183,254 +185,254 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     asyncio.create_task(task_wrapper())
 
+async def _handle_document_upload_new(query, context, user_id):
+    keyboard = [
+        [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")]
+    ]
+    
+    text = "📄 **Загрузите новый документ**\n\nОтправьте PDF или DOCX файл, и я обработаю его для вас."
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await query.edit_message_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def _handle_document_list(query, context, user_id):
+    text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
+    await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+async def _handle_document_cancel(query, context, user_id):
+    clear_document_state(user_id)
+    
+    text = "✅ **Режим работы с документами отключен**\n\nТеперь ваши сообщения будут обрабатываться в обычном режиме чата.\nЧтобы снова работать с документами, загрузите новый файл или используйте команду /documents."
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await query.edit_message_text(
+        formatted_text,
+        parse_mode=parse_mode
+    )
+
+async def _handle_document_clear_all(query, context, user_id):
+    # Получаем все документы пользователя
+    documents = await get_user_documents(user_id)
+    if not documents:
+        await query.answer("У вас нет документов для удаления.")
+        return
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, удалить все", callback_data="doc:clear_all_confirm")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="doc:list")]
+    ]
+
+    text = "⚠️ **Вы уверены?**\n\nЭто действие удалит **ВСЕ** ваши загруженные документы.\nЭто действие нельзя отменить."
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await query.edit_message_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def _handle_document_clear_all_confirm(query, context, user_id):
+    # Получаем все документы пользователя
+    documents = await get_user_documents(user_id)
+    if not documents:
+        await query.answer("У вас нет документов для удаления.")
+        text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+        return
+
+    # Удаляем все документы
+    deleted_count = 0
+    for doc in documents:
+        success = await delete_user_document(doc['id'], user_id)
+        if success:
+            deleted_count += 1
+    
+    # Очищаем состояние работы с документами
+    clear_document_state(user_id)
+    
+    # Обновляем меню
+    text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
+    await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    await query.answer(f"🗑️ Удалено {deleted_count} документов.")
+
+async def _handle_document_use_existing(query, context, user_id):
+    # Используем существующий документ
+    document_id = int(query.data.split(':')[2])
+
+    document = await get_document_by_id(document_id, user_id)
+    if not document:
+        await query.edit_message_text("❌ Документ не найден.")
+        return
+
+    # Устанавливаем состояние работы с документами
+    set_document_mode(user_id, True, document_id)
+
+    text = f"✅ **Используется существующий документ**\n\n📄 **{document['filename']}**\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n🔄 **Для выхода из режима документов:**\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await query.edit_message_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+        ])
+    )
+
+async def _handle_document_force_upload(query, context, user_id):
+    text = "📄 *Загрузите файл как новый документ*\n\nОтправьте файл еще раз, и он будет сохранен как новый документ."
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await query.edit_message_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+        ])
+    )
+
+async def _handle_document_select_document(query, context, user_id):
+    # Показываем меню выбора документа
+    documents = await get_user_documents(user_id)
+    if not documents:
+        # Если документов нет, показываем главное меню документов
+        text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
+        try:
+            await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+        except telegram.error.BadRequest as e:
+            if "Message is not modified" in str(e):
+                pass
+            else:
+                raise e
+        return
+    
+    # Создаем кнопки для каждого документа
+    keyboard = []
+    for doc in documents[:10]:  # Максимум 10 документов
+        keyboard.append([
+            InlineKeyboardButton(
+                f"📄 {doc['filename'][:30]}...",
+                callback_data=f"doc:select:{doc['id']}"
+            ),
+            InlineKeyboardButton(
+                "🗑️",
+                callback_data=f"doc:delete_document:{doc['id']}"
+            )
+        ])
+    
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
+    
+    text = "📋 **Выберите документ для работы:**\n\nНажмите на документ, чтобы начать работу с ним."
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await query.edit_message_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def _handle_document_select(query, context, user_id):
+    # Выбираем конкретный документ
+    document_id = int(query.data.split(':')[2])
+
+    document = await get_document_by_id(document_id, user_id)
+    if not document:
+        await query.edit_message_text("❌ Документ не найден.")
+        return
+    
+    # Устанавливаем состояние работы с документами
+    set_document_mode(user_id, True, document_id)
+
+    text = f"✅ **Выбран документ**\n\n📄 **{document['filename']}**\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n🔄 **Для выхода из режима документов:**\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await query.edit_message_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Назад к списку", callback_data="doc:select_document")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
+        ])
+    )
+
+async def _handle_document_delete_document(query, context, user_id):
+    # Удаляем конкретный документ
+    document_id = int(query.data.split(':')[2])
+
+    document = await get_document_by_id(document_id, user_id)
+    if not document:
+        await query.answer("❌ Документ не найден.")
+        return
+    
+    success = await delete_user_document(document_id, user_id)
+    if success:
+        # Проверяем, был ли это выбранный документ
+        selected_doc_id = get_selected_document_id(user_id)
+        if selected_doc_id == document_id:
+            # Если удалили выбранный документ, очищаем состояние
+            clear_document_state(user_id)
+        
+        # Возвращаемся к списку документов (он был родительским меню для select_document)
+        # В идеале нужно понять, откуда пришли, но здесь логичнее вернуться в список
+        # Однако, кнопка удаления была в списке выбора, так что мы просто обновляем список
+
+        # Здесь есть нюанс: кнопка удаления была в меню `select_document` (список кнопок).
+        # Если мы хотим обновить ЭТОТ же список (но без удаленного файла), нам нужно вызвать логику `select_document` снова.
+        # Но `select_document` - это не главное меню, а подменю.
+        # Попробуем обновить именно подменю выбора.
+
+        documents = await get_user_documents(user_id)
+        if not documents:
+            # Если документов не осталось, показываем главное меню документов
+            text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
+            await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+        else:
+            # Иначе перестраиваем список выбора
+            keyboard = []
+            for doc in documents[:10]:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"📄 {doc['filename'][:30]}...",
+                        callback_data=f"doc:select:{doc['id']}"
+                    ),
+                    InlineKeyboardButton(
+                        "🗑️",
+                        callback_data=f"doc:delete_document:{doc['id']}"
+                    )
+                ])
+            keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
+
+            text = "📋 *Выберите документ для работы:*\n\nНажмите на документ, чтобы начать работу с ним."
+            formatted_text, parse_mode = TelegramFormatter.format_text(text)
+            await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
+
+        await query.answer(f"🗑️ Документ '{document['filename']}' удален.")
+    else:
+        await query.answer("❌ Ошибка при удалении документа.")
+
 async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает callback-кнопки для управления документами"""
     query = update.callback_query
     await query.answer()
-    
+
     action = query.data.split(':')[1]
     user_id = query.from_user.id
-    
-    # Импортируем функции здесь, чтобы избежать проблем с областью видимости
-    from ..document_processor import get_user_documents, delete_user_document, get_document_by_id
 
-    if action == "upload_new":
-        keyboard = [
-            [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")]
-        ]
-        
-        text = "📄 **Загрузите новый документ**\n\nОтправьте PDF или DOCX файл, и я обработаю его для вас."
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
-    
-    elif action == "list":
-        text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
-        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-        return
-    
-    elif action == "cancel":
-        from ..state import clear_document_state
-        clear_document_state(user_id)
-        
-        text = "✅ **Режим работы с документами отключен**\n\nТеперь ваши сообщения будут обрабатываться в обычном режиме чата.\nЧтобы снова работать с документами, загрузите новый файл или используйте команду /documents."
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode
-        )
-        return
-    
-    elif action == "clear_all":
-        
-        # Получаем все документы пользователя
-        documents = await get_user_documents(user_id)
-        if not documents:
-            await query.answer("У вас нет документов для удаления.")
-            return
-        
-        keyboard = [
-            [InlineKeyboardButton("✅ Да, удалить все", callback_data="doc:clear_all_confirm")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="doc:list")]
-        ]
+    handlers = {
+        "upload_new": _handle_document_upload_new,
+        "list": _handle_document_list,
+        "cancel": _handle_document_cancel,
+        "clear_all": _handle_document_clear_all,
+        "clear_all_confirm": _handle_document_clear_all_confirm,
+        "use_existing": _handle_document_use_existing,
+        "force_upload": _handle_document_force_upload,
+        "select_document": _handle_document_select_document,
+        "select": _handle_document_select,
+        "delete_document": _handle_document_delete_document,
+    }
 
-        text = "⚠️ **Вы уверены?**\n\nЭто действие удалит **ВСЕ** ваши загруженные документы.\nЭто действие нельзя отменить."
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
-
-    elif action == "clear_all_confirm":
-        # Получаем все документы пользователя
-        documents = await get_user_documents(user_id)
-        if not documents:
-            await query.answer("У вас нет документов для удаления.")
-            text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
-            await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-            return
-
-        # Удаляем все документы
-        deleted_count = 0
-        for doc in documents:
-            success = await delete_user_document(doc['id'], user_id)
-            if success:
-                deleted_count += 1
-        
-        # Очищаем состояние работы с документами
-        from ..state import clear_document_state
-        clear_document_state(user_id)
-        
-        # Обновляем меню
-        text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
-        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-        await query.answer(f"🗑️ Удалено {deleted_count} документов.")
-        return
-    
-    elif action == "use_existing":
-        # Используем существующий документ
-        document_id = int(query.data.split(':')[2])
-        
-        document = await get_document_by_id(document_id, user_id)
-        if not document:
-            await query.edit_message_text("❌ Документ не найден.")
-            return
-        
-        # Устанавливаем состояние работы с документами
-        from ..state import set_document_mode
-        set_document_mode(user_id, True, document_id)
-        
-        text = f"✅ **Используется существующий документ**\n\n📄 **{document['filename']}**\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n🔄 **Для выхода из режима документов:**\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
-            ])
-        )
-        return
-    
-    elif action == "force_upload":
-        text = "📄 *Загрузите файл как новый документ*\n\nОтправьте файл еще раз, и он будет сохранен как новый документ."
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
-            ])
-        )
-        return
-    
-    elif action == "select_document":
-        # Показываем меню выбора документа
-        documents = await get_user_documents(user_id)
-        if not documents:
-            # Если документов нет, показываем главное меню документов
-            text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
-            try:
-                await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-            except telegram.error.BadRequest as e:
-                if "Message is not modified" in str(e):
-                    pass
-                else:
-                    raise e
-            return
-        
-        # Создаем кнопки для каждого документа
-        keyboard = []
-        for doc in documents[:10]:  # Максимум 10 документов
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"📄 {doc['filename'][:30]}...", 
-                    callback_data=f"doc:select:{doc['id']}"
-                ),
-                InlineKeyboardButton(
-                    "🗑️", 
-                    callback_data=f"doc:delete_document:{doc['id']}"
-                )
-            ])
-        
-        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
-        
-        text = "📋 **Выберите документ для работы:**\n\nНажмите на документ, чтобы начать работу с ним."
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
-    
-    elif action == "select":
-        # Выбираем конкретный документ
-        document_id = int(query.data.split(':')[2])
-        
-        document = await get_document_by_id(document_id, user_id)
-        if not document:
-            await query.edit_message_text("❌ Документ не найден.")
-            return
-        
-        # Устанавливаем состояние работы с документами
-        from ..state import set_document_mode
-        set_document_mode(user_id, True, document_id)
-        
-        text = f"✅ **Выбран документ**\n\n📄 **{document['filename']}**\n📊 Страниц: {document['pages']}\n📅 Загружен: {document['created_at'][:10]}\n\nТеперь вы можете задавать вопросы по этому документу.\n\n💡 **Просто напишите ваш вопрос** - система автоматически найдет ответ в документе.\n\n🔄 **Для выхода из режима документов:**\n• Нажмите кнопку '❌ Отмена' ниже\n• Или отправьте команду /documents"
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Назад к списку", callback_data="doc:select_document")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
-            ])
-        )
-        return
-    
-    elif action == "delete_document":
-        # Удаляем конкретный документ
-        document_id = int(query.data.split(':')[2])
-        
-        document = await get_document_by_id(document_id, user_id)
-        if not document:
-            await query.answer("❌ Документ не найден.")
-            return
-        
-        success = await delete_user_document(document_id, user_id)
-        if success:
-            # Проверяем, был ли это выбранный документ
-            from ..state import get_selected_document_id, clear_document_state
-            selected_doc_id = get_selected_document_id(user_id)
-            if selected_doc_id == document_id:
-                # Если удалили выбранный документ, очищаем состояние
-                clear_document_state(user_id)
-            
-            # Возвращаемся к списку документов (он был родительским меню для select_document)
-            # В идеале нужно понять, откуда пришли, но здесь логичнее вернуться в список
-            # Однако, кнопка удаления была в списке выбора, так что мы просто обновляем список
-
-            # Здесь есть нюанс: кнопка удаления была в меню `select_document` (список кнопок).
-            # Если мы хотим обновить ЭТОТ же список (но без удаленного файла), нам нужно вызвать логику `select_document` снова.
-            # Но `select_document` - это не главное меню, а подменю.
-            # Попробуем обновить именно подменю выбора.
-
-            documents = await get_user_documents(user_id)
-            if not documents:
-                # Если документов не осталось, показываем главное меню документов
-                text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
-                await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
-            else:
-                # Иначе перестраиваем список выбора
-                keyboard = []
-                for doc in documents[:10]:
-                    keyboard.append([
-                        InlineKeyboardButton(
-                            f"📄 {doc['filename'][:30]}...",
-                            callback_data=f"doc:select:{doc['id']}"
-                        ),
-                        InlineKeyboardButton(
-                            "🗑️",
-                            callback_data=f"doc:delete_document:{doc['id']}"
-                        )
-                    ])
-                keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
-
-                text = "📋 *Выберите документ для работы:*\n\nНажмите на документ, чтобы начать работу с ним."
-                formatted_text, parse_mode = TelegramFormatter.format_text(text)
-                await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
-
-            await query.answer(f"🗑️ Документ '{document['filename']}' удален.")
-        else:
-            await query.answer("❌ Ошибка при удалении документа.")
-        return
+    handler = handlers.get(action)
+    if handler:
+        await handler(query, context, user_id)
+    else:
+        logging.warning(f"Unknown document action: {action}")
 
 async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
    """Handles callbacks from deep dive mode buttons."""
