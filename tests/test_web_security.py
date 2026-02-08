@@ -30,6 +30,7 @@ sys.modules['app.database'] = mock_db
 def mock_settings():
     with patch('app.config.settings') as mock:
         mock.TELEGRAM_BOT_TOKEN = "test_token"
+        mock.ADMIN_SECRET = "test_admin_secret"
         mock.ADMIN_ID = 123
         mock.DAILY_LIMITS = {}
         mock.PORT = 5000
@@ -63,7 +64,7 @@ def test_unauthorized_access(client):
 def test_authorized_access(client):
     """Test that authorized access with correct token works"""
     endpoints = ['/', '/status', '/keys', '/keys/gemini-2.5-flash']
-    headers = {'X-Auth-Token': 'test_token'}
+    headers = {'X-Auth-Token': 'test_admin_secret'}
 
     for endpoint in endpoints:
         response = client.get(endpoint, headers=headers)

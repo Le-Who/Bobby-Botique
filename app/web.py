@@ -17,9 +17,9 @@ def require_auth(f):
         token = request.headers.get('X-Auth-Token')
 
         # Determine the expected secret
-        expected_secret = os.environ.get('ADMIN_SECRET')
-        if not expected_secret and settings:
-            expected_secret = settings.TELEGRAM_BOT_TOKEN
+        # SECURITY: Only ADMIN_SECRET is allowed for web dashboard authentication.
+        # Fallback to TELEGRAM_BOT_TOKEN has been removed to improve security.
+        expected_secret = settings.ADMIN_SECRET if settings else os.environ.get('ADMIN_SECRET')
 
         if not expected_secret:
              logging.error("No authentication secret configured for web endpoints.")

@@ -96,7 +96,7 @@ While primarily a Telegram bot, the project includes a web frontend for administ
     *   `/`: Visual dashboard showing generic system status (CPU, RAM, Uptime).
     *   `/health`: JSON endpoint for docker healthchecks.
     *   `/keys`: **(Secured)** Detailed view of API key usage, active keys, and remaining quotas per model.
-*   **Security**: Protected by a shared secret (`ADMIN_SECRET` or Bot Token) to prevent unauthorized access to sensitive metrics.
+*   **Security**: Protected by a shared secret (`ADMIN_SECRET`) to prevent unauthorized access to sensitive metrics. Fallback to Bot Token has been removed for enhanced security.
 
 ---
 
