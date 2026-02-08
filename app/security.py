@@ -226,11 +226,6 @@ class InputSanitizer:
             # Not an IP address, continue
             pass
 
-        # Legacy regex check (kept for backward compatibility)
-        ip_pattern = r'^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
-        if re.match(ip_pattern, hostname):
-            raise InputSanitizationError("IP addresses not allowed in URLs")
-        
         return url
     
     def sanitize_query(self, query: str) -> str:
