@@ -6,8 +6,7 @@ from app.utils.formatting import TelegramFormatter, format_key_for_display
 from app import database as db
 from app.config import settings, get_model_hash, get_openrouter_keys
 from app import prompts
-from app.metrics import metrics_collector
-from app.utils import time as time_utils
+from app.metrics import get_system_status_data
 from app.document_processor import get_user_documents
 
 def get_start_menu_content(chat_state):
@@ -415,16 +414,11 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, r
 
 async def get_metrics_content():
     """Generates the metrics report text."""
-    # Получаем метрики производительности
-    metrics = await metrics_collector.get_metrics_summary()
-
-    # Получаем статус ключей Gemini
-    today_pacific = time_utils.get_pacific_date()
-    gemini_keys = await db.db_query("SELECT * FROM api_keys")
-
-    # Получаем статус кредитов Tavily
-    current_month = time_utils.get_current_month_str()
-    tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
+    # Получаем все данные
+    data = await get_system_status_data()
+    metrics = data['metrics_summary']
+    gemini_data = data['gemini']
+    tavily_data = data['tavily']
 
     # Формируем основной текст
     text = (
@@ -454,25 +448,12 @@ async def get_metrics_content():
         text += "\n"
 
     # Добавляем статус ключей Gemini
-    if gemini_keys:
+    if gemini_data['keys']:
         text += "*🔑 Статус ключей Gemini (сегодня):*\n"
 
-        # Batch fetch usage for all keys
-        all_usage = await db.db_query(
-            "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",
-            (today_pacific,)
-        )
+        usage_map = gemini_data['usage_map']
 
-        # Group by key_hash
-        usage_map = {}
-        if all_usage:
-            for row in all_usage:
-                k = row['key_hash']
-                if k not in usage_map:
-                    usage_map[k] = []
-                usage_map[k].append(row)
-
-        for key_row in gemini_keys:
+        for key_row in gemini_data['keys']:
             display_name = format_key_for_display(key_row['api_key'])
             usage_data = usage_map.get(key_row['key_hash'], [])
 
@@ -484,25 +465,15 @@ async def get_metrics_content():
                     count = usage['request_count']
                     limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
                     text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
-        text += f"Сброс лимитов: *{time_utils.get_kyiv_reset_time()}* по Киеву\n\n"
+        text += f"Сброс лимитов: *{gemini_data['reset_time']}* по Киеву\n\n"
 
     # Добавляем статус кредитов Tavily
-    if tavily_keys:
+    if tavily_data['keys']:
         text += "*💳 Кредиты Tavily (текущий месяц):*\n"
 
-        # Batch fetch usage for all keys
-        all_tavily_usage = await db.db_query(
-            "SELECT key_hash, credit_usage FROM tavily_key_usage WHERE usage_month = $1",
-            (current_month,)
-        )
+        tavily_usage_map = tavily_data['usage_map']
 
-        # Map key_hash to usage
-        tavily_usage_map = {}
-        if all_tavily_usage:
-            for row in all_tavily_usage:
-                tavily_usage_map[row['key_hash']] = row['credit_usage']
-
-        for key_row in tavily_keys:
+        for key_row in tavily_data['keys']:
             display_name = format_key_for_display(key_row['api_key'])
             count = tavily_usage_map.get(key_row['key_hash'], 0)
             limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
