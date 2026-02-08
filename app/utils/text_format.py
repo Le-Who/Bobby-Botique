@@ -171,7 +171,9 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> List[str
             if cut_point == candidates[0]: # </pre>
                 cut_point += 6 # len('</pre>')
             elif cut_point == candidates[1]: # \n\n
-                cut_point += 1 # Include one newline?
+                cut_point += 2 # Include both newlines
+            elif cut_point == candidates[2]: # \n
+                cut_point += 1 # Include the newline
             
         else:
             # Force split at space
