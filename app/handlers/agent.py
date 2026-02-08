@@ -604,13 +604,15 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
     
     final_context_list = []
     if selected_urls and search_results:
+        # Создаем словарь для быстрого поиска по URL (O(1) вместо O(N*M))
+        results_map = {res.get('url'): res for res in search_results if res.get('url')}
         for url in selected_urls:
-            for res in search_results:
-                if res.get('url') == url:
-                    # Возвращаем старый формат для совместимости с Gemini API
-                    # но с улучшенной структурой для AI
-                    source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
-                    final_context_list.append(source_info)
+            res = results_map.get(url)
+            if res:
+                # Возвращаем старый формат для совместимости с Gemini API
+                # но с улучшенной структурой для AI
+                source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
+                final_context_list.append(source_info)
     
     full_context = "\n\n---\n\n".join(final_context_list) if final_context_list else ""
 
