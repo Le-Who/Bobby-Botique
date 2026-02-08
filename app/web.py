@@ -17,9 +17,10 @@ def require_auth(f):
         token = request.headers.get('X-Auth-Token')
 
         # Determine the expected secret
+        # Security: Strictly use ADMIN_SECRET, do not fallback to TELEGRAM_BOT_TOKEN
         expected_secret = os.environ.get('ADMIN_SECRET')
         if not expected_secret and settings:
-            expected_secret = settings.TELEGRAM_BOT_TOKEN
+            expected_secret = getattr(settings, 'ADMIN_SECRET', None)
 
         if not expected_secret:
              logging.error("No authentication secret configured for web endpoints.")

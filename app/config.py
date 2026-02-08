@@ -111,6 +111,7 @@ class Settings(BaseModel):
     OPENROUTER_API_KEYS: List[str] = []  # Опционально, по умолчанию пустой список
     DATABASE_URL: str
     ADMIN_ID: int
+    ADMIN_SECRET: Optional[str] = None  # Secret for web dashboard
     PORT: int
     ENABLE_WEB_SERVER: bool = True  # Default to True for cloud deployments
 
@@ -264,6 +265,7 @@ def load_settings() -> Settings:
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
             "DATABASE_URL": os.getenv("DATABASE_URL"),
             "ADMIN_ID": _load_int_env("ADMIN_ID"),
+            "ADMIN_SECRET": os.getenv("ADMIN_SECRET"),
             "PORT": os.getenv("PORT", "10000"), # Provide a default for PORT
             "ENABLE_WEB_SERVER": os.getenv("ENABLE_WEB_SERVER", "true").lower() == "true",
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
