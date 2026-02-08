@@ -803,28 +803,17 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
                 if model_name in db_manager._cache_last_updated:
                     del db_manager._cache_last_updated[model_name]
 
-    # If we need to validate or fetch, we need a connection context
+    # Optimization: Trust the cache if valid. Invalidation is handled by increment_gemini_key_usage.
+    if cached_key:
+        return cached_key
+
+    # If we need to fetch, we need a connection context
     if not db_manager.is_connected:
         await reconnect_database()
 
     async with db_manager.pool.acquire() as conn:
         await set_user_context(settings.ADMIN_ID, True, conn=conn)
         try:
-            # Validation logic
-            if cached_key:
-                if await _is_key_available(cached_key['key_hash'], model_name, conn=conn):
-                    return cached_key
-                else:
-                    # Cache was invalid/limit reached, invalidate it safely
-                    async with db_manager._cache_lock:
-                        if model_name in db_manager._active_keys_cache:
-                            # Double check it hasn't been updated by another thread
-                            current_cached = db_manager._active_keys_cache[model_name]
-                            if current_cached['key_hash'] == cached_key['key_hash']:
-                                del db_manager._active_keys_cache[model_name]
-                                if model_name in db_manager._cache_last_updated:
-                                    del db_manager._cache_last_updated[model_name]
-
             # Fetch new key if cache missed or was invalid
             new_key = await _get_fresh_available_key(model_name, conn=conn)
 
@@ -931,22 +920,19 @@ async def get_current_active_gemini_key(model_name: str) -> Optional[Dict[str, A
 async def increment_gemini_key_usage(key_hash: str, model_name: str):
     today_pacific: date = datetime.now(get_pacific_tz()).date()
     
+    # Optimization: Use RETURNING to avoid extra SELECT
     query = """
         INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, $3, 1)
         ON CONFLICT (key_hash, model_name, usage_date)
-        DO UPDATE SET request_count = key_usage.request_count + 1;
+        DO UPDATE SET request_count = key_usage.request_count + 1
+        RETURNING request_count;
     """
-    await db_query(query, (key_hash, model_name, today_pacific))
+    result = await db_query(query, (key_hash, model_name, today_pacific))
+    current_usage = result[0]['request_count'] if result else 0
     
     daily_limit = settings.DAILY_LIMITS.get(model_name)
     if daily_limit:
         threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
-        usage_query = """
-            SELECT request_count FROM key_usage 
-            WHERE key_hash = $1 AND model_name = $2 AND usage_date = $3
-        """
-        result = await db_query(usage_query, (key_hash, model_name, today_pacific))
-        current_usage = result[0]['request_count'] if result else 0
         
         if current_usage >= threshold:
             await invalidate_key_cache(model_name)
