@@ -1,6 +1,7 @@
 import re
 import html
 from typing import List, Tuple
+from urllib.parse import urlparse
 
 # Constants
 MAX_MESSAGE_LENGTH = 4096
@@ -120,11 +121,46 @@ def markdown_to_html(text: str) -> str:
             # Since we already escaped HTML, the url might contain &amp; etc.
             # We match strict []() pattern.
             link_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
-            escaped_text = re.sub(link_pattern, r'<a href="\2">\1</a>', escaped_text)
+            escaped_text = re.sub(link_pattern, _replace_link, escaped_text)
             
             html_parts.append(escaped_text)
             
     return "".join(html_parts)
+
+def _replace_link(match: re.Match) -> str:
+    """
+    Helper to replace markdown links with HTML links safely.
+    Validates URL scheme to prevent XSS (e.g. javascript:).
+    """
+    text = match.group(1)
+    url = match.group(2)
+
+    # Clean URL (it might contain HTML entities like &amp;)
+    clean_url = html.unescape(url).strip()
+
+    try:
+        # Check scheme
+        # urlparse handles 'javascript:alert(1)' as scheme='javascript'
+        parsed = urlparse(clean_url)
+        scheme = parsed.scheme.lower()
+
+        # Whitelist of allowed schemes
+        # http/https for web
+        # mailto for emails
+        # tel for phone numbers
+        # tg for telegram deep links
+        if scheme in ('http', 'https', 'mailto', 'tel', 'tg'):
+            # Return the original URL (retaining entities if any, or maybe better to use clean_url?)
+            # Since we are putting it into HTML attribute, it should be escaped?
+            # url comes from html.escape(segment), so it IS escaped.
+            # e.g. "http://example.com?a=1&b=2" -> "http://example.com?a=1&amp;b=2"
+            return f'<a href="{url}">{text}</a>'
+
+    except Exception:
+        pass
+
+    # If invalid scheme or parsing error, return just the text (strip link)
+    return text
 
 def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> List[str]:
     """
