@@ -9,6 +9,7 @@ import json
 
 from app.config import settings
 from app import database as db
+from app.utils import time as time_utils
 
 @dataclass
 class PerformanceMetrics:
@@ -608,3 +609,57 @@ class RoleConversationMetricsCollector:
 
 # Глобальный экземпляр сборщика метрик ролей и бесед
 role_conv_metrics = RoleConversationMetricsCollector()
+
+async def get_system_status_data() -> Dict[str, Any]:
+    """
+    Агрегирует все системные метрики, включая производительность,
+    использование API ключей и кредитов.
+    """
+    # 1. Метрики производительности
+    metrics = await metrics_collector.get_metrics_summary()
+
+    # 2. Статус ключей Gemini
+    today_pacific = time_utils.get_pacific_date()
+    gemini_keys = await db.db_query("SELECT * FROM api_keys")
+
+    # Получаем использование ключей Gemini за сегодня
+    gemini_usage_map = {}
+    if gemini_keys:
+        all_usage = await db.db_query(
+            "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",
+            (today_pacific,)
+        )
+        if all_usage:
+            for row in all_usage:
+                k = row['key_hash']
+                if k not in gemini_usage_map:
+                    gemini_usage_map[k] = []
+                gemini_usage_map[k].append(row)
+
+    # 3. Статус кредитов Tavily
+    current_month = time_utils.get_current_month_str()
+    tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
+
+    # Получаем использование ключей Tavily за месяц
+    tavily_usage_map = {}
+    if tavily_keys:
+        all_tavily_usage = await db.db_query(
+            "SELECT key_hash, credit_usage FROM tavily_key_usage WHERE usage_month = $1",
+            (current_month,)
+        )
+        if all_tavily_usage:
+            for row in all_tavily_usage:
+                tavily_usage_map[row['key_hash']] = row['credit_usage']
+
+    return {
+        'metrics_summary': metrics,
+        'gemini': {
+            'keys': gemini_keys,
+            'usage_map': gemini_usage_map,
+            'reset_time': time_utils.get_kyiv_reset_time()
+        },
+        'tavily': {
+            'keys': tavily_keys,
+            'usage_map': tavily_usage_map
+        }
+    }
