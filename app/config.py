@@ -101,7 +101,7 @@ class Settings(BaseModel):
     TAVILY_API_KEYS: List[str]
     OPENROUTER_API_KEYS: List[str] = []  # Опционально, по умолчанию пустой список
     DATABASE_URL: str
-    ADMIN_ID: List[str]
+    ADMIN_ID: str
     PORT: int
     ENABLE_WEB_SERVER: bool = True  # Default to True for cloud deployments
 
