@@ -20,6 +20,7 @@ from app.utils.decorators import admin_only
 from app.handlers import menus
 from app.document_processor import get_user_documents, delete_user_document, get_document_by_id
 from app.state import clear_document_state, set_document_mode, get_selected_document_id
+from app.utils.keyboards import build_keyboard, back_button, cancel_button, confirm_cancel_row
 
 class DummyUpdate:
     """Helper class to mock an Update object for calling commands from callbacks."""
@@ -186,16 +187,12 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(task_wrapper())
 
 async def _handle_document_upload_new(query, context, user_id):
-    keyboard = [
-        [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")]
-    ]
-    
     text = "📄 **Загрузите новый документ**\n\nОтправьте PDF или DOCX файл, и я обработаю его для вас."
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     await query.edit_message_text(
         formatted_text,
         parse_mode=parse_mode,
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=build_keyboard(back_button("doc:list"))
     )
 
 async def _handle_document_list(query, context, user_id):
@@ -219,17 +216,14 @@ async def _handle_document_clear_all(query, context, user_id):
         await query.answer("У вас нет документов для удаления.")
         return
     
-    keyboard = [
-        [InlineKeyboardButton("✅ Да, удалить все", callback_data="doc:clear_all_confirm")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="doc:list")]
-    ]
-
     text = "⚠️ **Вы уверены?**\n\nЭто действие удалит **ВСЕ** ваши загруженные документы.\nЭто действие нельзя отменить."
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     await query.edit_message_text(
         formatted_text,
         parse_mode=parse_mode,
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        reply_markup=build_keyboard(
+            confirm_cancel_row("doc:clear_all_confirm", "doc:list", "✅ Да, удалить все", "❌ Отмена")
+        )
     )
 
 async def _handle_document_clear_all_confirm(query, context, user_id):
@@ -273,9 +267,7 @@ async def _handle_document_use_existing(query, context, user_id):
     await query.edit_message_text(
         formatted_text,
         parse_mode=parse_mode,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
-        ])
+        reply_markup=build_keyboard(cancel_button("doc:cancel"))
     )
 
 async def _handle_document_force_upload(query, context, user_id):
@@ -284,10 +276,10 @@ async def _handle_document_force_upload(query, context, user_id):
     await query.edit_message_text(
         formatted_text,
         parse_mode=parse_mode,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Назад", callback_data="doc:list")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
-        ])
+        reply_markup=build_keyboard(
+            back_button("doc:list"),
+            cancel_button("doc:cancel")
+        )
     )
 
 async def _handle_document_select_document(query, context, user_id):
@@ -346,10 +338,10 @@ async def _handle_document_select(query, context, user_id):
     await query.edit_message_text(
         formatted_text,
         parse_mode=parse_mode,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Назад к списку", callback_data="doc:select_document")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")]
-        ])
+        reply_markup=build_keyboard(
+            back_button("doc:select_document", "⬅️ Назад к списку"),
+            cancel_button("doc:cancel")
+        )
     )
 
 async def _handle_document_delete_document(query, context, user_id):
