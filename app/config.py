@@ -507,12 +507,6 @@ class ConfigManager:
 config_manager = ConfigManager()
 
 
-# Backward compatibility
-def get_settings_compat() -> Settings:
-    """Returns current settings (backward compatibility)."""
-    return get_settings()
-
-
 # Convenience functions for common settings
 def get_bot_token() -> str:
     """Returns bot token."""
