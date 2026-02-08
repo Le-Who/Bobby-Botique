@@ -41,8 +41,3 @@ class TelegramFormatter:
         
         # Always use HTML as it is more robust
         return new_format_text(text, parse_mode='HTML')
-
-# Deprecated functions kept for compatibility if needed (though redundant now)
-def escape_markdown_v2(text: str) -> str:
-    logging.warning("escape_markdown_v2 is deprecated and should not be used. It returns text as-is.")
-    return text
