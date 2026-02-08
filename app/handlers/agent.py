@@ -102,64 +102,88 @@ async def _resolve_ai_request(preferred_model: str, use_openrouter: bool = None,
     # Иначе используем Gemini
     return await _resolve_gemini_request(preferred_model, excluded_key_hashes)
 
-async def _resolve_gemini_request(preferred_model: str, excluded_key_hashes: set = None):
+async def _resolve_key_generic(
+    preferred_model: str,
+    get_key_func,
+    fallback_priority: List[str],
+    excluded_key_hashes: set = None,
+    invalidate_cache_func=None,
+    provider_name: str = "Unknown"
+):
     """
-    Получает ключ Gemini для модели.
-    
-    Args:
-        preferred_model: Предпочитаемая модель
-        excluded_key_hashes: Множество хэшей ключей, которые нужно исключить (для ротации)
-    
-    Returns:
-        Tuple (key_data, model_used, resolution_status)
+    Generic function to resolve API key with fallback and retry logic.
     """
     if excluded_key_hashes is None:
         excluded_key_hashes = set()
     
-    # Инвалидируем кэш, если есть исключенные ключи (чтобы получить новый ключ)
-    if excluded_key_hashes:
-        await db.invalidate_key_cache(preferred_model)
+    # Invalidate cache if there are excluded keys (only if invalidation function is provided)
+    if excluded_key_hashes and invalidate_cache_func:
+        await invalidate_cache_func(preferred_model)
+
+    max_attempts = 5
     
-    # Пробуем получить ключ, игнорируя исключенные
-    max_attempts = 5  # Максимум попыток для одной модели
+    # Try preferred model
     for attempt in range(max_attempts):
-        key = await db.get_available_gemini_key(preferred_model)
+        key = await get_key_func(preferred_model)
         if key and key['key_hash'] not in excluded_key_hashes:
             return key, preferred_model, None
         
-        # Если ключ исключен, инвалидируем кэш и пробуем снова
+        # If key is excluded, invalidate cache (if func provided) and retry
         if key and key['key_hash'] in excluded_key_hashes:
-            await db.invalidate_key_cache(preferred_model)
+            if invalidate_cache_func:
+                await invalidate_cache_func(preferred_model)
             continue
         
-        # Если ключ не найден, выходим из цикла
+        # If no key found, break loop to try fallbacks
         break
 
     logging.warning(f"All keys for preferred model {preferred_model} are exhausted or excluded. Attempting fallback.")
     
-    fallback_priority = [settings.RESEARCH_MODEL, settings.DEFAULT_MODEL, settings.QNA_MODEL]
+    # Try fallback models
     for fallback_model in fallback_priority:
         if fallback_model == preferred_model:
             continue
-        
-        # Инвалидируем кэш для fallback модели
-        if excluded_key_hashes:
-            await db.invalidate_key_cache(fallback_model)
-        
+
+        # Invalidate cache for fallback model if there are excluded keys
+        if excluded_key_hashes and invalidate_cache_func:
+            await invalidate_cache_func(fallback_model)
+
         for attempt in range(max_attempts):
-            key = await db.get_available_gemini_key(fallback_model)
+            key = await get_key_func(fallback_model)
             if key and key['key_hash'] not in excluded_key_hashes:
                 logging.info(f"Found available fallback key for model {fallback_model}.")
                 return key, fallback_model, "confirm_fallback"
             
             if key and key['key_hash'] in excluded_key_hashes:
-                await db.invalidate_key_cache(fallback_model)
+                if invalidate_cache_func:
+                    await invalidate_cache_func(fallback_model)
                 continue
             
             break
             
-    logging.error("All Gemini API keys for all models are exhausted or excluded.")
+    logging.error(f"All {provider_name} API keys for all models are exhausted or excluded.")
     return None, None, "all_exhausted"
+
+async def _resolve_gemini_request(preferred_model: str, excluded_key_hashes: set = None):
+    """
+    Получает ключ Gemini для модели.
+
+    Args:
+        preferred_model: Предпочитаемая модель
+        excluded_key_hashes: Множество хэшей ключей, которые нужно исключить (для ротации)
+
+    Returns:
+        Tuple (key_data, model_used, resolution_status)
+    """
+    fallback_priority = [settings.RESEARCH_MODEL, settings.DEFAULT_MODEL, settings.QNA_MODEL]
+    return await _resolve_key_generic(
+        preferred_model,
+        db.get_available_gemini_key,
+        fallback_priority,
+        excluded_key_hashes,
+        db.invalidate_key_cache,
+        provider_name="Gemini"
+    )
 
 async def _resolve_openrouter_request(preferred_model: str, excluded_key_hashes: set = None):
     """
@@ -173,9 +197,6 @@ async def _resolve_openrouter_request(preferred_model: str, excluded_key_hashes:
     Returns:
         Tuple (key_data, model_used, resolution_status)
     """
-    if excluded_key_hashes is None:
-        excluded_key_hashes = set()
-    
     # Маппинг моделей Gemini на OpenRouter
     model_mapping = {
         settings.DEFAULT_MODEL: settings.OPENROUTER_DEFAULT_MODEL,
@@ -191,45 +212,20 @@ async def _resolve_openrouter_request(preferred_model: str, excluded_key_hashes:
         # Маппим модель Gemini на OpenRouter
         openrouter_model = model_mapping.get(preferred_model, settings.OPENROUTER_DEFAULT_MODEL)
     
-    # Пробуем получить ключ, игнорируя исключенные
-    max_attempts = 5
-    for attempt in range(max_attempts):
-        key = await db.get_available_openrouter_key(openrouter_model)
-        if key and key['key_hash'] not in excluded_key_hashes:
-            return key, openrouter_model, None
-        
-        # Если ключ исключен, пробуем снова (OpenRouter не использует кэш)
-        if key and key['key_hash'] in excluded_key_hashes:
-            continue
-        
-        # Если ключ не найден, выходим из цикла
-        break
-    
-    logging.warning(f"All OpenRouter keys for model {openrouter_model} are exhausted or excluded. Attempting fallback.")
-    
-    # Пробуем fallback модели
     fallback_priority = [
         settings.OPENROUTER_RESEARCH_MODEL,
         settings.OPENROUTER_DEFAULT_MODEL,
         settings.OPENROUTER_QNA_MODEL
     ]
-    for fallback_model in fallback_priority:
-        if fallback_model == openrouter_model:
-            continue
-        
-        for attempt in range(max_attempts):
-            key = await db.get_available_openrouter_key(fallback_model)
-            if key and key['key_hash'] not in excluded_key_hashes:
-                logging.info(f"Found available fallback OpenRouter key for model {fallback_model}.")
-                return key, fallback_model, "confirm_fallback"
-            
-            if key and key['key_hash'] in excluded_key_hashes:
-                continue
-            
-            break
     
-    logging.error("All OpenRouter API keys are exhausted or excluded.")
-    return None, None, "all_exhausted"
+    return await _resolve_key_generic(
+        openrouter_model,
+        db.get_available_openrouter_key,
+        fallback_priority,
+        excluded_key_hashes,
+        invalidate_cache_func=None,
+        provider_name="OpenRouter"
+    )
 
 async def _get_ai_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, use_openrouter: bool = None):
     """
