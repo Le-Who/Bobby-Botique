@@ -1152,9 +1152,13 @@ async def force_update_tavily_keys():
         if not settings or not settings.TAVILY_API_KEYS:
             return False
         await db_query("DELETE FROM tavily_api_keys")
+        keys_data = []
         for key in settings.TAVILY_API_KEYS:
             key_hash = hashlib.sha256(key.encode()).hexdigest()
-            await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2)", (key_hash, key))
+            keys_data.append((key_hash, key))
+
+        if keys_data:
+            await db_execute_many("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2)", keys_data)
         await db_query("DELETE FROM tavily_key_usage")
         async with db_manager._cache_lock:
             db_manager._active_keys_cache.clear()
