@@ -2,12 +2,11 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, Application
 
-from app.config import settings, get_model_hash
+from app.config import settings
 from google import genai
 from app import database as db
-from app.utils.formatting import format_key_for_display, TelegramFormatter
+from app.utils.formatting import TelegramFormatter
 from app.utils import time as time_utils
-from app.metrics import metrics_collector
 from app.cache import get_cache_stats
 from app.queue import task_queue
 from app.group_chat import group_chat_manager

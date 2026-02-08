@@ -4,6 +4,26 @@ from telegram import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.error import BadRequest
 from app.utils.text_format import format_text, split_text_safe, strip_formatting
 
+
+def _get_deep_dive_keyboard(is_last_part: bool) -> InlineKeyboardMarkup:
+    """Get keyboard for deep dive mode responses."""
+    buttons = [
+        [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")]
+    ]
+    if is_last_part:
+        buttons.append([InlineKeyboardButton("👇 Копнуть глубже", callback_data="deepdive:deeper_dive")])
+    buttons.append([InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def _get_default_response_keyboard() -> InlineKeyboardMarkup:
+    """Get default keyboard for AI responses."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+        [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
+    ])
+
+
 async def send_long_message(message: Message, text: str, is_deep_dive: bool = False, reply_markup=None, preserve_formatting: bool = True):
     """
     Отправляет длинное сообщение, разбивая его на части, если необходимо.
@@ -38,32 +58,16 @@ async def send_long_message(message: Message, text: str, is_deep_dive: bool = Fa
         if not part or not part.strip():
             continue
 
-        # Determine the keyboard logic (legacy preserved)
-        current_reply_markup = None
+        # Determine the keyboard
         is_last_part = (i == len(parts) - 1)
+        current_reply_markup = None
         
         if reply_markup is not None:
-             current_reply_markup = reply_markup if is_last_part else None
+            current_reply_markup = reply_markup if is_last_part else None
         elif is_deep_dive:
-            if is_last_part:
-                keyboard = [
-                    [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
-                    [InlineKeyboardButton("👇 Копнуть глубже", callback_data="deepdive:deeper_dive")],
-                    [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
-                ]
-                current_reply_markup = InlineKeyboardMarkup(keyboard)
-            else:
-                keyboard = [
-                     [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
-                     [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
-                ]
-                current_reply_markup = InlineKeyboardMarkup(keyboard)
+            current_reply_markup = _get_deep_dive_keyboard(is_last_part)
         else:
-            keyboard = [
-                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
-                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")]
-            ]
-            current_reply_markup = InlineKeyboardMarkup(keyboard)
+            current_reply_markup = _get_default_response_keyboard()
 
         # Sending logic
         try:

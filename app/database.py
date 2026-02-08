@@ -2,13 +2,10 @@ import logging
 import json
 import hashlib
 import asyncio
-import re
 from datetime import datetime, date
-import pytz
 from app.config import UTC_TZ, settings
 from app.utils.time import get_pacific_tz
 import asyncpg
-from asyncpg.pool import Pool
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import time

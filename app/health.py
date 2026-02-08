@@ -6,11 +6,10 @@ Provides comprehensive health monitoring and status reporting.
 import asyncio
 import logging
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from dataclasses import dataclass
 
 from app.cache import redis_client
-from app.exceptions import RedisConnectionError
 
 @dataclass
 class HealthStatus:

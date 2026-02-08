@@ -1,7 +1,6 @@
 import re
 import html
-import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 # Constants
 MAX_MESSAGE_LENGTH = 4096

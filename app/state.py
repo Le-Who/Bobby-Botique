@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import defaultdict
-from typing import Dict, Set, Optional
+from typing import Dict, Optional
 
 # Комплексное состояние пользователя
 class UserState:

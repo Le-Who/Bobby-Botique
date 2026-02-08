@@ -1,9 +1,8 @@
 import logging
 import asyncio
-from datetime import datetime, date
-from typing import Dict, List, Optional, Set
+from datetime import datetime
+from typing import Dict, List, Set
 from dataclasses import dataclass
-from collections import defaultdict
 
 from app.config import settings
 from app import database as db

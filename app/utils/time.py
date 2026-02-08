@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, date
-import pytz
 from app.config import PACIFIC_TZ, KYIV_TZ, UTC_TZ
 
 # Safe timezone imports to prevent circular imports

@@ -5,14 +5,13 @@ import os
 import asyncio
 import time
 from typing import Dict, Any, Optional, Union
-from functools import lru_cache
 import threading
 
 from redis import Redis
 from redis.exceptions import ConnectionError, TimeoutError, RedisError
 
 from app.metrics import metrics_collector
-from app.exceptions import RedisConnectionError, CacheKeyError
+from app.exceptions import RedisConnectionError
 
 # Initialize Redis client with Upstash.com optimized configuration
 redis_url = os.getenv("REDIS_URL")

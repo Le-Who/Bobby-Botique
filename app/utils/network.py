@@ -4,7 +4,7 @@ Network utilities for handling connection errors, timeouts, and retries.
 import logging
 import asyncio
 import httpx
-from typing import Optional, Callable, Any
+from typing import Callable, Any
 from functools import wraps
 
 class NetworkErrorHandler:

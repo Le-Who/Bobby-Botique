@@ -9,10 +9,10 @@ import logging
 import time
 import asyncio
 import ipaddress
-from typing import Any, Dict, List, Optional, Union
-from urllib.parse import urlparse, urljoin
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 from collections import defaultdict
-from app.exceptions import InputSanitizationError, SecurityError
+from app.exceptions import InputSanitizationError
 
 
 class InputSanitizer:

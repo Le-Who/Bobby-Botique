@@ -8,15 +8,13 @@ from telegram.ext import ContextTypes, MessageHandler, filters, Application
 from app.config import settings
 from app import database as db
 from app import state
-from app.group_chat import group_chat_manager, log_group_message
 from app.document_processor import process_uploaded_document
 from app.metrics import metrics_collector, role_conv_metrics
 from app.utils.formatting import TelegramFormatter
 from app.utils.api_logger import api_logger
 from app import prompts
-from app.services import get_gemini_response
 from app.handlers import agent
-from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state, set_last_custom_role_prompt, get_last_custom_role_prompt, set_generating_custom_role
+from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state, set_last_custom_role_prompt, set_generating_custom_role
 from app.security import check_user_rate_limit
 from app.handlers import menus
 

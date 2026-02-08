@@ -2,12 +2,10 @@ import logging
 import asyncio
 from typing import Dict, Any, List, Optional, Set
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import defaultdict
 
-from app.config import settings
 from app import database as db
-from app.metrics import metrics_collector
 
 @dataclass
 class GroupChat:

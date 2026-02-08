@@ -9,15 +9,11 @@ This module provides:
 """
 import logging
 import asyncio
-import time
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, List, Dict, Any, Union
+from typing import Optional, Tuple, List, Dict, Any
 from dataclasses import dataclass
 
-from app.config import settings
-from app.metrics import metrics_collector
-from app.utils.api_logger import api_logger
-from app.errors import APIError, user_friendly_error, is_retryable_error
+from app.errors import user_friendly_error
 
 
 @dataclass
@@ -205,11 +201,9 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
     """
     # Import here to avoid circular imports
     if is_openrouter_model(model_name):
-        from app.services import get_openrouter_response
         # For now, wrap existing function. Full implementation would create OpenRouterProvider
         return _LegacyOpenRouterWrapper(api_key)
     else:
-        from app.services import get_gemini_response
         return _LegacyGeminiWrapper(api_key)
 
 

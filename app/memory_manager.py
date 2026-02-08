@@ -11,7 +11,6 @@ import psutil
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import weakref
 
 
 @dataclass

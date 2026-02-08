@@ -928,7 +928,7 @@ _Основные сервисы:_
         
         if response_text:
             # Проверяем, является ли ответ ошибкой
-            from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
+            from app.errors import build_retry_and_roles_keyboard
             
             # Используем универсальную функцию обработки ошибок
             if await handle_ai_response_error(response_text, placeholder_message):
@@ -1058,7 +1058,7 @@ async def _handle_regular_chat(placeholder_message: Message, user_id: int, user_
     
     if response_text:
         # Проверяем, является ли ответ ошибкой
-        from app.errors import is_error_message, is_retryable_error, build_retry_and_roles_keyboard
+        from app.errors import build_retry_and_roles_keyboard
         
         # Используем универсальную функцию обработки ошибок
         async def cleanup_on_error():

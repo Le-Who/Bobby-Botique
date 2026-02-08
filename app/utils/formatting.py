@@ -1,4 +1,3 @@
-import logging
 from typing import Tuple, Optional
 from app.utils.text_format import format_text as new_format_text, strip_formatting as new_strip_formatting
 

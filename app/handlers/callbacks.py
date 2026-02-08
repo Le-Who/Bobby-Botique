@@ -12,10 +12,8 @@ from app import state
 from app.utils.formatting import TelegramFormatter
 from app.state import begin_custom_role_creation
 from app.state import get_generated_role, clear_custom_role_state
-from app import prompts
 from app.metrics import role_conv_metrics
 from app.state import get_last_custom_role_prompt, set_generating_custom_role, set_last_custom_role_prompt
-from app.errors import build_roles_keyboard
 from app.utils.decorators import admin_only
 from app.handlers import menus
 from app.document_processor import get_user_documents, delete_user_document, get_document_by_id

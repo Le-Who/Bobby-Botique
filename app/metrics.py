@@ -2,12 +2,11 @@ import time
 import logging
 import asyncio
 from datetime import datetime, date
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
 import json
 
-from app.config import settings
 from app import database as db
 from app.utils import time as time_utils
 

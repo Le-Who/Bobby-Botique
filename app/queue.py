@@ -1,16 +1,12 @@
 import asyncio
 import logging
-import json
-import time
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Callable, Coroutine, List
-from dataclasses import dataclass, asdict
+from typing import Dict, Any, Optional, Callable, List
+from dataclasses import dataclass
 from enum import Enum
 import uuid
 
-from app.config import settings
 from app import database as db
-from app.metrics import metrics_collector
 
 class TaskStatus(Enum):
     PENDING = "pending"
@@ -59,7 +55,6 @@ class TaskQueue:
     
     def _init_task_handlers(self):
         """Инициализирует обработчики для разных типов задач"""
-        from .handlers import agent
         
         self._task_handlers = {
             'document_processing': self._handle_document_processing,

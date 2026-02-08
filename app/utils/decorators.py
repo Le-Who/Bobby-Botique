@@ -3,7 +3,6 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 from app import database as db
-from app.config import settings
 
 def authorized_only(func):
     """Decorator to check if the user is authorized."""
