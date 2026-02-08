@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, Application
 
@@ -606,16 +607,30 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def get_metrics_content():
     """Generates the metrics report text."""
-    # Получаем метрики производительности
-    metrics = await metrics_collector.get_metrics_summary()
-
-    # Получаем статус ключей Gemini
+    # Получаем даты для запросов
     today_pacific = time_utils.get_pacific_date()
-    gemini_keys = await db.db_query("SELECT * FROM api_keys")
-
-    # Получаем статус кредитов Tavily
     current_month = time_utils.get_current_month_str()
-    tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
+
+    # Запускаем все запросы параллельно
+    results = await asyncio.gather(
+        metrics_collector.get_metrics_summary(),
+        db.db_query("SELECT * FROM api_keys"),
+        db.db_query("SELECT * FROM tavily_api_keys"),
+        db.db_query(
+            "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",
+            (today_pacific,)
+        ),
+        db.db_query(
+            "SELECT key_hash, credit_usage FROM tavily_key_usage WHERE usage_month = $1",
+            (current_month,)
+        )
+    )
+
+    metrics = results[0]
+    gemini_keys = results[1]
+    tavily_keys = results[2]
+    all_usage = results[3]
+    all_tavily_usage = results[4]
 
     # Формируем основной текст
     text = (
@@ -648,12 +663,6 @@ async def get_metrics_content():
     if gemini_keys:
         text += "*🔑 Статус ключей Gemini (сегодня):*\n"
 
-        # Batch fetch usage for all keys
-        all_usage = await db.db_query(
-            "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",
-            (today_pacific,)
-        )
-
         # Group by key_hash
         usage_map = {}
         if all_usage:
@@ -680,12 +689,6 @@ async def get_metrics_content():
     # Добавляем статус кредитов Tavily
     if tavily_keys:
         text += "*💳 Кредиты Tavily (текущий месяц):*\n"
-
-        # Batch fetch usage for all keys
-        all_tavily_usage = await db.db_query(
-            "SELECT key_hash, credit_usage FROM tavily_key_usage WHERE usage_month = $1",
-            (current_month,)
-        )
 
         # Map key_hash to usage
         tavily_usage_map = {}
