@@ -81,31 +81,24 @@ class DocumentProcessor:
     async def _cleanup_oldest_documents(self, user_id: int, keep_count: int = 4) -> int:
         """Удаляет старые документы пользователя, оставляя указанное количество"""
         try:
-            # Получаем ID старых документов для удаления
+            # Оптимизировано: удаляем старые документы одним запросом с подзапросом
             result = await database.db_query("""
-                SELECT id FROM user_documents
-                WHERE user_id = $1
-                ORDER BY created_at ASC
-                OFFSET $2
+                DELETE FROM user_documents
+                WHERE id IN (
+                    SELECT id FROM user_documents
+                    WHERE user_id = $1
+                    ORDER BY created_at ASC
+                    OFFSET $2
+                )
+                RETURNING id
             """, (user_id, keep_count))
             
             if not result:
                 return 0
-            
-            # Удаляем старые документы
-            old_doc_ids = [row['id'] for row in result]
-            if old_doc_ids:
-                placeholders = ','.join([f'${i+1}' for i in range(len(old_doc_ids))])
-                await database.db_query(f"""
-                    DELETE FROM user_documents
-                    WHERE id IN ({placeholders})
-                """, old_doc_ids)
                 
-                deleted_count = len(old_doc_ids)
-                logging.info(f"Cleaned up {deleted_count} oldest documents for user {user_id}")
-                return deleted_count
-            
-            return 0
+            deleted_count = len(result)
+            logging.info(f"Cleaned up {deleted_count} oldest documents for user {user_id}")
+            return deleted_count
             
         except Exception as e:
             logging.error(f"Error cleaning up oldest documents: {e}")
