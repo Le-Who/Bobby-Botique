@@ -22,7 +22,7 @@
             <div class="glass-card animate-up delay-1">
                 <div class="metric-label">CPU Usage</div>
                 <div class="metric-value">{{ status.system.cpu_percent }}%</div>
-                <div class="progress-bar-bg">
+                <div class="progress-bar-bg" role="progressbar" aria-label="CPU Usage" aria-valuenow="{{ status.system.cpu_percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: {{ status.system.cpu_percent }}%"></div>
                 </div>
             </div>
@@ -30,7 +30,7 @@
             <div class="glass-card animate-up delay-2">
                 <div class="metric-label">Memory</div>
                 <div class="metric-value">{{ status.system.memory_percent }}%</div>
-                <div class="progress-bar-bg">
+                <div class="progress-bar-bg" role="progressbar" aria-label="Memory Usage" aria-valuenow="{{ status.system.memory_percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: {{ status.system.memory_percent }}%"></div>
                 </div>
             </div>
@@ -38,7 +38,7 @@
             <div class="glass-card animate-up delay-3">
                 <div class="metric-label">Disk Storage</div>
                 <div class="metric-value">{{ status.system.disk_percent }}%</div>
-                <div class="progress-bar-bg">
+                <div class="progress-bar-bg" role="progressbar" aria-label="Disk Usage" aria-valuenow="{{ status.system.disk_percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: {{ status.system.disk_percent }}%"></div>
                 </div>
             </div>
