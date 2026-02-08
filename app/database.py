@@ -466,17 +466,17 @@ async def _run_migrations():
 async def _insert_initial_data():
     await db_query("INSERT INTO users (user_id, is_authorized) VALUES ($1, 1) ON CONFLICT (user_id) DO NOTHING", (settings.ADMIN_ID,))
 
-    for key in settings.GEMINI_API_KEYS:
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        await db_query("INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+    gemini_data = [(hashlib.sha256(key.encode()).hexdigest(), key) for key in settings.GEMINI_API_KEYS]
+    if gemini_data:
+        await db_execute_many("INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", gemini_data)
 
-    for key in settings.TAVILY_API_KEYS:
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        await db_query("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+    tavily_data = [(hashlib.sha256(key.encode()).hexdigest(), key) for key in settings.TAVILY_API_KEYS]
+    if tavily_data:
+        await db_execute_many("INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", tavily_data)
 
-    for key in settings.OPENROUTER_API_KEYS:
-        key_hash = hashlib.sha256(key.encode()).hexdigest()
-        await db_query("INSERT INTO openrouter_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", (key_hash, key))
+    openrouter_data = [(hashlib.sha256(key.encode()).hexdigest(), key) for key in settings.OPENROUTER_API_KEYS]
+    if openrouter_data:
+        await db_execute_many("INSERT INTO openrouter_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING", openrouter_data)
 
     await db_query("CREATE INDEX IF NOT EXISTS idx_chats_user_id ON chats(user_id)")
     await db_query("CREATE INDEX IF NOT EXISTS idx_conversation_messages_conv_id ON conversation_messages(conversation_id)")
