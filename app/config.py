@@ -8,6 +8,15 @@ import hashlib
 from typing import List, Dict, Callable, Any, Optional
 from pydantic import BaseModel, ValidationError
 
+def _load_int_env(env_var_name: str, required: bool = True):
+    raw = os.getenv(env_var_name)
+    if raw is None or raw == "":
+        if required:
+            raise ValueError(f"Required environment variable '{env_var_name}' is not set.")
+        return None
+    cleaned = raw.strip().strip('"').strip("'").strip()
+    return int(cleaned)
+
 def _load_and_clean_keys(env_var_name: str, required: bool = True) -> List[str]:
     """
     Manually loads a comma-separated string from env, cleans it, and returns a list.
@@ -101,7 +110,7 @@ class Settings(BaseModel):
     TAVILY_API_KEYS: List[str]
     OPENROUTER_API_KEYS: List[str] = []  # Опционально, по умолчанию пустой список
     DATABASE_URL: str
-    ADMIN_ID: str
+    ADMIN_ID: int
     PORT: int
     ENABLE_WEB_SERVER: bool = True  # Default to True for cloud deployments
 
@@ -254,7 +263,7 @@ def load_settings() -> Settings:
         raw_settings = {
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
             "DATABASE_URL": os.getenv("DATABASE_URL"),
-            "ADMIN_ID": os.getenv("ADMIN_ID"),
+            "ADMIN_ID": _load_int_env("ADMIN_ID"),
             "PORT": os.getenv("PORT", "10000"), # Provide a default for PORT
             "ENABLE_WEB_SERVER": os.getenv("ENABLE_WEB_SERVER", "true").lower() == "true",
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
@@ -516,8 +525,7 @@ def get_database_url() -> str:
 
 
 def get_admin_id() -> int:
-    """Returns admin ID."""
-    return config_manager.get_setting('ADMIN_ID')
+    return int(config_manager.get_setting("ADMIN_ID"))
 
 
 def get_gemini_keys() -> List[str]:
