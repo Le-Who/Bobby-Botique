@@ -101,7 +101,7 @@ class Settings(BaseModel):
     TAVILY_API_KEYS: List[str]
     OPENROUTER_API_KEYS: List[str] = []  # Опционально, по умолчанию пустой список
     DATABASE_URL: str
-    ADMIN_ID: int
+    ADMIN_ID: List[str]
     PORT: int
     ENABLE_WEB_SERVER: bool = True  # Default to True for cloud deployments
 
@@ -120,33 +120,11 @@ class Settings(BaseModel):
     # --- OPENROUTER MODELS ---
     # Модели загружаются из env переменных, значения по умолчанию используются если не указаны
     OPENROUTER_AVAILABLE_MODELS: List[str] = [
-        "tngtech/tng-r1t-chimera:free",
-        "upstage/solar-pro-3:free",
-        "tngtech/deepseek-r1t-chimera:free",
-        "nvidia/nemotron-3-nano-30b-a3b:free",
-        "qwen/qwen3-4b:free",
-        "qwen/qwen-2.5-vl-7b-instruct:free",
-        "alibaba/tongyi-deepresearch-30b-a3b:free",
-        "nvidia/nemotron-nano-9b-v2:free",
-        "mistralai/mistral-small-3.1-24b-instruct:free",
-        "nvidia/nemotron-nano-12b-v2-vl:free",
-        "mistralai/devstral-2512:free",
-        "deepseek/deepseek-r1-0528:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
-        "z-ai/glm-4.5-air:free",
-        "qwen/qwen3-coder:free",
-        "openai/gpt-oss-120b:free",
-        "nex-agi/deepseek-v3.1-nex-n1:free",
-        "google/gemma-3-27b-it:free",
-        "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
-        "allenai/olmo-3.1-32b-think:free",
-        "tngtech/deepseek-r1t2-chimera:free",
-        "arcee-ai/trinity-mini:free"
     ]
-    OPENROUTER_DEFAULT_MODEL: str = "upstage/solar-pro-3:free"
-    OPENROUTER_QNA_MODEL: str = "upstage/solar-pro-3:free"
-    OPENROUTER_RESEARCH_MODEL: str = "upstage/solar-pro-3:free"
-    OPENROUTER_URL_SELECTION_MODEL: str = "upstage/solar-pro-3:free"
+    OPENROUTER_DEFAULT_MODEL: str = "stepfun/step-3.5-flash:free"
+    OPENROUTER_QNA_MODEL: str = "stepfun/step-3.5-flash:free"
+    OPENROUTER_RESEARCH_MODEL: str = "stepfun/step-3.5-flash:free"
+    OPENROUTER_URL_SELECTION_MODEL: str = "stepfun/step-3.5-flash:free"
     
     # --- API PROVIDER SELECTION ---
     USE_OPENROUTER: bool = False  # По умолчанию используем Gemini, можно переключить на OpenRouter
@@ -270,28 +248,6 @@ def load_settings() -> Settings:
         # Значения по умолчанию для моделей
         default_gemini_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-flash-latest", "gemini-flash-lite-latest", "gemini-3-flash-preview"]
         default_openrouter_models = [
-            "tngtech/tng-r1t-chimera:free",
-            "upstage/solar-pro-3:free",
-            "tngtech/deepseek-r1t-chimera:free",
-            "nvidia/nemotron-3-nano-30b-a3b:free",
-            "qwen/qwen3-4b:free",
-            "qwen/qwen-2.5-vl-7b-instruct:free",
-            "alibaba/tongyi-deepresearch-30b-a3b:free",
-            "nvidia/nemotron-nano-9b-v2:free",
-            "mistralai/mistral-small-3.1-24b-instruct:free",
-            "nvidia/nemotron-nano-12b-v2-vl:free",
-            "mistralai/devstral-2512:free",
-            "deepseek/deepseek-r1-0528:free",
-            "meta-llama/llama-3.3-70b-instruct:free",
-            "z-ai/glm-4.5-air:free",
-            "qwen/qwen3-coder:free",
-            "openai/gpt-oss-120b:free",
-            "nex-agi/deepseek-v3.1-nex-n1:free",
-            "google/gemma-3-27b-it:free",
-            "cognitivecomputations/dolphin-mistral-24b-venice-edition:free",
-            "allenai/olmo-3.1-32b-think:free",
-            "tngtech/deepseek-r1t2-chimera:free",
-            "arcee-ai/trinity-mini:free"
         ]
         
         # Manually load all values from the environment.
@@ -311,10 +267,10 @@ def load_settings() -> Settings:
             "QNA_MODEL": os.getenv("QNA_MODEL", "gemini-2.5-flash-lite"),
             "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-2.5-pro"),
             "URL_SELECTION_MODEL": os.getenv("URL_SELECTION_MODEL", "gemini-flash-latest"),
-            "OPENROUTER_DEFAULT_MODEL": os.getenv("OPENROUTER_DEFAULT_MODEL", "upstage/solar-pro-3:free"),
-            "OPENROUTER_QNA_MODEL": os.getenv("OPENROUTER_QNA_MODEL", "upstage/solar-pro-3:free"),
-            "OPENROUTER_RESEARCH_MODEL": os.getenv("OPENROUTER_RESEARCH_MODEL", "upstage/solar-pro-3:free"),
-            "OPENROUTER_URL_SELECTION_MODEL": os.getenv("OPENROUTER_URL_SELECTION_MODEL", "upstage/solar-pro-3:free"),
+            "OPENROUTER_DEFAULT_MODEL": os.getenv("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
+            "OPENROUTER_QNA_MODEL": os.getenv("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
+            "OPENROUTER_RESEARCH_MODEL": os.getenv("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),
+            "OPENROUTER_URL_SELECTION_MODEL": os.getenv("OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"),
             "DAILY_LIMITS": _load_daily_limits(),
         }
         
