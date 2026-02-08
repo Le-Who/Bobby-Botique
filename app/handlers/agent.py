@@ -539,7 +539,8 @@ async def _handle_research_agent(placeholder_message: Message, user_id: int, use
         
         selection_prompt = prompts.URL_SELECTION_PROMPT.format(
             user_message=safe_user_message,
-            search_results_json=json.dumps(safe_search_results, indent=2, ensure_ascii=False)
+            # Optimized: Removed indent=2 to save tokens and improve performance
+            search_results_json=json.dumps(safe_search_results, ensure_ascii=False)
         )
         
         # Создаем parts для API: промпт
