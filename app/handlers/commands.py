@@ -14,122 +14,7 @@ from app.group_chat import group_chat_manager
 from app import prompts
 from app.metrics import role_conv_metrics
 from app.utils.decorators import authorized_only, admin_only
-
-def get_start_menu_content(chat_state):
-    search_status = "🟢 ВКЛЮЧЕН" if chat_state.search_enabled else "🔴 ВЫКЛЮЧЕН"
-    prompt_status = f"`{chat_state.system_prompt[:50]}...`" if chat_state.system_prompt else "Не задана"
-    search_icon = "🟢" if chat_state.search_enabled else "🔴"
-
-    start_text = (
-        "🤖 **Добро пожаловать в Gemini Bot!**\n\n"
-        "Я ваш умный ассистент с возможностями:\n"
-        "• 💬 Обычный чат с AI\n"
-        "• 🔍 Веб-поиск и анализ\n"
-        "• 🖼️ Поиск по изображениям\n"
-        "• 📄 Обработка документов\n\n"
-        "**📊 Ваши настройки:**\n"
-        f"• Модель: `{chat_state.model}`\n"
-        f"• Поиск: {search_status}\n"
-        f"• Инструкция: {prompt_status}\n\n"
-        "**🚀 Быстрый старт:**\n"
-        "• Просто напишите сообщение для чата\n"
-        "• `? вопрос` — быстрый ответ\n"
-        "• `?? вопрос` — глубокий анализ\n"
-        "• Отправьте фото для анализа\n\n"
-        "**⚙️ Основные команды:**\n"
-        "• `/help` — подробная справка\n"
-        "• `/res` — режим поиска вкл/выкл\n"
-        "• `/newchat` — новый чат\n"
-        "• `/model` — выбрать модель\n"
-        "• `/setprompt` — задать инструкцию\n"
-        "• `/documents` — управление документами\n"
-        "• `/metrics` — статистика системы\n"
-        "• `/roles` — выбор ролей и создание своей\n\n"
-        "**💡 Совет:** Начните с простого вопроса!"
-    )
-
-    formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
-
-    keyboard = [
-        [
-            InlineKeyboardButton("🆕 Новый чат", callback_data="new_chat"),
-            InlineKeyboardButton("⚙️ Модели", callback_data="model_menu")
-        ],
-        [
-            InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
-            InlineKeyboardButton("📚 Справка", callback_data="help")
-        ],
-        [
-            InlineKeyboardButton(f"🌐 Поиск: {search_icon}", callback_data="toggle_search")
-        ]
-    ]
-
-    return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
-
-def get_model_menu_content(chat_state, context):
-    current_model = chat_state.model
-
-    # Определяем, какой провайдер используется для текущей модели
-    from app.config import get_openrouter_keys
-    openrouter_available = bool(get_openrouter_keys())
-    is_current_openrouter = "/" in current_model if current_model else False
-
-    # Создаем единый список всех моделей для индексации
-    all_models = []
-    if settings.AVAILABLE_MODELS:
-        all_models.extend(settings.AVAILABLE_MODELS)
-    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
-
-    if not all_models:
-        return "❌ Нет доступных моделей. Проверьте настройки.", None, None
-
-    # Сохраняем маппинг моделей в context для использования в callback
-    if context and hasattr(context, 'user_data'):
-        # Ensure user_data exists if it's None (though ContextTypes usually ensures it's a dict-like)
-        if context.user_data is None:
-            context.user_data = {}
-        context.user_data['model_list'] = all_models
-
-    keyboard = []
-    model_index = 0
-
-    # Добавляем модели Gemini
-    if settings.AVAILABLE_MODELS:
-        for m in settings.AVAILABLE_MODELS:
-            is_selected = "✅ " if m == current_model and not is_current_openrouter else ""
-            # Используем индекс + хэш для валидации (ограничение Telegram: 64 байта)
-            model_hash = get_model_hash(m)
-            keyboard.append([InlineKeyboardButton(f"{is_selected}🤖 {m}", callback_data=f"model:{model_index}:{model_hash}")])
-            model_index += 1
-
-    # Добавляем разделитель, если есть оба провайдера
-    if settings.AVAILABLE_MODELS and openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
-
-    # Добавляем модели OpenRouter, если доступны
-    if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        for m in settings.OPENROUTER_AVAILABLE_MODELS:
-            is_selected = "✅ " if m == current_model and is_current_openrouter else ""
-            # Показываем короткое имя модели с иконкой провайдера
-            display_name = m.split("/")[-1] if "/" in m else m
-            provider_icon = "🌐"
-            # Используем индекс + хэш для валидации
-            model_hash = get_model_hash(m)
-            keyboard.append([InlineKeyboardButton(f"{is_selected}{provider_icon} {display_name}", callback_data=f"model:{model_index}:{model_hash}")])
-            model_index += 1
-
-    # Формируем текст с информацией о текущей модели
-    provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
-    text = f"**Выберите модель для разговора:**\n\n"
-    text += f"**Текущая модель:** `{current_model}`\n"
-    text += f"**Провайдер:** {provider_name}\n\n"
-    text += "Нажмите на модель для выбора."
-
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
-
-    formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+from app.handlers import menus
 
 @authorized_only
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -139,7 +24,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         chat_state = await db.get_user_chat(user_id)
-        formatted_text, parse_mode, reply_markup = get_start_menu_content(chat_state)
+        formatted_text, parse_mode, reply_markup = menus.get_start_menu_content(chat_state)
         
         await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
         logging.info(f"Start command completed successfully for user {user_id}")
@@ -227,263 +112,13 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     formatted_text, parse_mode = TelegramFormatter.format_text(f"✅ Системная инструкция обновлена:\n`{preview}`")
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
-async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, role_key=None):
-    """
-    Генерирует контент для меню ролей в стиле "Smart Hub".
-    view_mode: 'hub' | 'my_roles' | 'system_roles' | 'role_details'
-    page: номер страницы для списков
-    role_key: ключ роли для просмотра деталей (id для кастомных, key для системных)
-    """
-    
-    # 1. Определяем активную роль
-    current_prompt = chat_state.system_prompt
-    active_role_title = "👤 Базовая (без роли)"
-    active_role_key = None
-    
-    # Пытаемся найти название активной роли
-    if current_prompt:
-        for key, meta in prompts.DEFAULT_ROLES.items():
-            if meta.get("prompt") == current_prompt:
-                active_role_title = f"{meta.get('title', key)}"
-                active_role_key = key
-                break
-        
-        if not active_role_key:
-            # Ищем в кастомных
-            custom_roles = await db.db_query(
-                "SELECT id, title, prompt FROM user_roles WHERE user_id = $1",
-                (user_id,)
-            )
-            for role in custom_roles:
-                if role.get("prompt") == current_prompt:
-                    active_role_title = f"🎭 {role['title']}"
-                    active_role_key = f"user_role:{role['id']}"
-                    break
-            
-            # Если всё ещё не нашли, но промпт есть
-            if not active_role_key:
-                active_role_title = "📝 Пользовательская инструкция"
-                active_role_key = "custom_prompt"
-
-    # ==========================
-    # VIEW: HUB (Главная)
-    # ==========================
-    if view_mode == "hub":
-        # Получаем количество кастомных ролей для бейджика
-        custom_count_res = await db.db_query("SELECT COUNT(*) as count FROM user_roles WHERE user_id = $1", (user_id,))
-        custom_count = custom_count_res[0]['count'] if custom_count_res else 0
-        
-        text = (
-            f"🎭 **Управление ролями**\n\n"
-            f"Ниже вы можете выбрать готовую роль или создать свою.\n"
-            f"Роль определяет стиль общения и задачи бота.\n\n"
-            f"🔋 **Активная роль:**\n"
-            f"✨ **{active_role_title}**\n"
-        )
-        
-        keyboard = []
-        
-        # 1. Кнопка сброса (если роль активна)
-        if current_prompt:
-             keyboard.append([InlineKeyboardButton("🛑 Отключить роль", callback_data="role_clear")])
-        
-        # 2. Основные разделы навигации
-        keyboard.append([
-            InlineKeyboardButton(f"📂 Мои роли ({custom_count})", callback_data="role_nav:my_roles"),
-            InlineKeyboardButton("📚 Каталог ролей", callback_data="role_nav:system_roles")
-        ])
-        
-        # 3. Быстрые действия
-        keyboard.append([InlineKeyboardButton("➕ Создать новую роль", callback_data="role_create")])
-        
-        # 4. Назад
-        keyboard.append([InlineKeyboardButton("⬅️ Назад в меню", callback_data="start_menu")])
-        
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
-
-    # ==========================
-    # VIEW: ROLE DETAILS (Детали роли)
-    # ==========================
-    elif view_mode == "role_details":
-        if not role_key:
-            return "Ошибка: не указана роль", None, None
-
-        # Ищем данные роли
-        title = "Неизвестная роль"
-        prompt = ""
-        is_custom = False
-        role_id = None # Для кастомных
-
-        if role_key.startswith("user_role:"):
-            # Кастомная роль
-            try:
-                r_id = int(role_key.split(":")[1])
-                res = await db.db_query("SELECT id, title, prompt FROM user_roles WHERE id = $1 AND user_id = $2", (r_id, user_id))
-                if res:
-                    title = res[0]['title']
-                    prompt = res[0]['prompt']
-                    is_custom = True
-                    role_id = r_id
-                else:
-                    return "Роль не найдена или удалена.", None, None
-            except:
-                 return "Ошибка ключа роли", None, None
-        else:
-            # Системная роль
-            if role_key in prompts.DEFAULT_ROLES:
-                meta = prompts.DEFAULT_ROLES[role_key]
-                title = meta.get('title', role_key)
-                prompt = meta.get('prompt', '')
-            else:
-                return "Системная роль не найдена", None, None
-
-        is_active = (role_key == active_role_key)
-        status_icon = "✅" if is_active else "⚪️"
-        status_text = "АКТИВНА" if is_active else "Не активна"
-
-        preview_len = 150
-        prompt_preview = prompt[:preview_len] + "..." if len(prompt) > preview_len else prompt
-        
-        text = (
-            f"ℹ️ **Детали роли**\n\n"
-            f"🏷 **Название:** {title}\n"
-            f"🔋 **Статус:** {status_icon} {status_text}\n\n"
-            f"📝 **Промпт (отрывок):**\n*{prompt_preview}*\n"
-        )
-
-        keyboard = []
-        
-        # 1. Применить/Снять
-        if is_active:
-             keyboard.append([InlineKeyboardButton("🛑 Отключить эту роль", callback_data="role_clear")])
-        else:
-             keyboard.append([InlineKeyboardButton("✅ Применить роль", callback_data=f"role_apply:{role_key}")])
-
-        # 2. Действия над ролью
-        row_actions = []
-        row_actions.append(InlineKeyboardButton("👁️ Промпт", callback_data=f"role_view_prompt:{role_key}"))
-        
-        if is_custom:
-            row_actions.append(InlineKeyboardButton("✏️ Переим.", callback_data=f"role_rename_pick:{role_id}")) # Используем существующий механизм выбора
-            # Delete button leads to confirmation mode (handled in callback logic usually, but here we can keep it simple or redirect)
-            # For now, let's make delete button trigger a mode switch or a specific action
-            # The plan says "Confirm Delete state within detail view". 
-            # We can use a separate callback `role_delete_ask:<id>` to switch this view to confirmation mode.
-            row_actions.append(InlineKeyboardButton("🗑️ Удалить", callback_data=f"role_delete_ask:{role_id}"))
-        
-        keyboard.append(row_actions)
-        
-        # 3. Назад
-        # Определяем, куда возвращаться (в Мои или Системные)
-        back_view = "my_roles" if is_custom else "system_roles"
-        keyboard.append([InlineKeyboardButton("⬅️ Назад к списку", callback_data=f"role_nav:{back_view}")])
-
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
-
-    # ==========================
-    # VIEW: LISTS (Списки)
-    # ==========================
-    ITEMS_PER_PAGE = 6
-    if view_mode == "my_roles":
-        roles = await db.db_query(
-            "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC", 
-            (user_id,)
-        )
-        title_header = "📂 **Ваши личные роли**"
-        empty_text = "У вас пока нет сохраненных ролей."
-        
-        # Формируем items для пагинатора
-        items = []
-        for r in roles:
-            key = f"user_role:{r['id']}"
-            is_active = "✅ " if key == active_role_key else ""
-            items.append({
-                'text': f"{is_active}{r['title']}", 
-                'callback': f"role_detail:{key}", # CHANGED: Link to details
-                'delete_callback': None # Removed direct delete
-            })
-            
-    elif view_mode == "system_roles":
-        title_header = "📚 **Каталог встроенных ролей**"
-        empty_text = "Список стандартных ролей пуст (странно!)."
-        
-        items = []
-        for key, meta in prompts.DEFAULT_ROLES.items():
-            is_active = "✅ " if key == active_role_key else ""
-            items.append({
-                'text': f"{is_active}{meta.get('title', key)}", 
-                'callback': f"role_detail:{key}", # CHANGED: Link to details
-                'delete_callback': None
-            })
-    else:
-        return f"Ошибка режима: {view_mode}", None, None
-
-    # Пагинация
-    total_items = len(items)
-    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-    
-    # Корректируем страницу если вышли за пределы
-    if page < 0: page = 0
-    if page >= total_pages and total_pages > 0: page = total_pages - 1
-    
-    start_idx = page * ITEMS_PER_PAGE
-    end_idx = start_idx + ITEMS_PER_PAGE
-    current_items = items[start_idx:end_idx]
-    
-    text = (
-        f"{title_header}\n"
-        f"Страница {page + 1} из {max(1, total_pages)}\n\n"
-    )
-    if not items:
-        text += f"_{empty_text}_"
-
-    keyboard = []
-    
-    # Рендерим элементы страницы - теперь всегда в 2 колонки для красоты, или 1?
-    # Так как мы убрали кнопку удаления, можно делать по 2 роли в ряд.
-    # Но названия могут быть длинными. Лучше 1 в ряд для стабильности.
-    
-    for item in current_items:
-        # Одна широкая кнопка
-        keyboard.append([InlineKeyboardButton(item['text'], callback_data=item['callback'])])
-        
-    # Кнопки пагинации
-    nav_row = []
-    if total_pages > 1:
-        if page > 0:
-            nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"role_page:{view_mode}:{page-1}"))
-        else:
-            nav_row.append(InlineKeyboardButton("⏺️", callback_data="noop")) # Placeholder
-            
-        nav_row.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
-        
-        if page < total_pages - 1:
-            nav_row.append(InlineKeyboardButton("➡️", callback_data=f"role_page:{view_mode}:{page+1}"))
-        else:
-            nav_row.append(InlineKeyboardButton("⏺️", callback_data="noop")) # Placeholder
-    
-    if nav_row:
-        keyboard.append(nav_row)
-        
-    # Кнопки управления (только для "Мои роли")
-    if view_mode == "my_roles":
-        keyboard.append([InlineKeyboardButton("➕ Создать", callback_data="role_create")])
-
-    # Кнопка Назад (в Хаб)
-    keyboard.append([InlineKeyboardButton("↩️ Назад в меню ролей", callback_data="role_nav:hub")])
-
-    formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
-
 @authorized_only
 async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
 
-    text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state)
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state)
     await update.message.reply_text(text, reply_markup=reply_markup)
 
 
@@ -532,7 +167,7 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
     
-    formatted_text, parse_mode, reply_markup = get_model_menu_content(chat_state, context)
+    formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(chat_state, context)
     
     if reply_markup is None:
          await update.message.reply_text(formatted_text)
@@ -604,129 +239,12 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_ids = [str(row['user_id']) for row in rows]
     await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(user_ids))
 
-async def get_metrics_content():
-    """Generates the metrics report text."""
-    # Получаем метрики производительности
-    metrics = await metrics_collector.get_metrics_summary()
-
-    # Получаем статус ключей Gemini
-    today_pacific = time_utils.get_pacific_date()
-    gemini_keys = await db.db_query("SELECT * FROM api_keys")
-
-    # Получаем статус кредитов Tavily
-    current_month = time_utils.get_current_month_str()
-    tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
-
-    # Формируем основной текст
-    text = (
-        "📊 *Полная сводка системы:*\n\n"
-        "*🚀 Производительность:*\n"
-        f"• Всего запросов: `{metrics['total_requests']}`\n"
-        f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
-        f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
-        f"• Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
-        f"• Поисковых запросов: `{metrics['search_queries']}`\n\n"
-    )
-
-    # Добавляем использование API и моделей
-    if metrics.get('api_calls'):
-        text += "*🔌 Использование API:*\n"
-        for api, count in metrics['api_calls'].items():
-            if isinstance(api, str) and isinstance(count, (int, float)):
-                text += f"• {api}: `{count}`\n"
-        text += "\n"
-
-    if metrics.get('model_usage'):
-        text += "*🤖 Использование моделей:*\n"
-        for model, count in metrics['model_usage'].items():
-            # Пропускаем записи, которые содержат имена файлов (это ошибки в логике)
-            if isinstance(model, str) and isinstance(count, (int, float)) and not any(char in model for char in ['/', '\\', '.pdf', '.docx', '.doc']):
-                text += f"• {model}: `{count}`\n"
-        text += "\n"
-
-    # Добавляем статус ключей Gemini
-    if gemini_keys:
-        text += "*🔑 Статус ключей Gemini (сегодня):*\n"
-
-        # Batch fetch usage for all keys
-        all_usage = await db.db_query(
-            "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",
-            (today_pacific,)
-        )
-
-        # Group by key_hash
-        usage_map = {}
-        if all_usage:
-            for row in all_usage:
-                k = row['key_hash']
-                if k not in usage_map:
-                    usage_map[k] = []
-                usage_map[k].append(row)
-
-        for key_row in gemini_keys:
-            display_name = format_key_for_display(key_row['api_key'])
-            usage_data = usage_map.get(key_row['key_hash'], [])
-
-            if not usage_data:
-                text += f"• `{display_name}`: не использовался\n"
-            else:
-                for usage in usage_data:
-                    model_name = usage['model_name']
-                    count = usage['request_count']
-                    limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
-                    text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
-        text += f"Сброс лимитов: *{time_utils.get_kyiv_reset_time()}* по Киеву\n\n"
-
-    # Добавляем статус кредитов Tavily
-    if tavily_keys:
-        text += "*💳 Кредиты Tavily (текущий месяц):*\n"
-
-        # Batch fetch usage for all keys
-        all_tavily_usage = await db.db_query(
-            "SELECT key_hash, credit_usage FROM tavily_key_usage WHERE usage_month = $1",
-            (current_month,)
-        )
-
-        # Map key_hash to usage
-        tavily_usage_map = {}
-        if all_tavily_usage:
-            for row in all_tavily_usage:
-                tavily_usage_map[row['key_hash']] = row['credit_usage']
-
-        for key_row in tavily_keys:
-            display_name = format_key_for_display(key_row['api_key'])
-            count = tavily_usage_map.get(key_row['key_hash'], 0)
-            limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
-            text += f"• `{display_name}`: {count} / {limit}\n"
-        text += "Сброс лимитов: 1-го числа каждого месяца\n\n"
-
-    # Добавляем историю за последние дни
-    if metrics['daily_metrics']:
-        text += "*📈 История за последние дни:*\n"
-        for date_str, daily_data in list(metrics['daily_metrics'].items())[:5]:  # Последние 5 дней
-            requests = daily_data.get('requests', 0)
-            errors = daily_data.get('errors', 0)
-            text += f"• {date_str}: {requests} запросов, {errors} ошибок\n"
-        text += "\n"
-
-    # Добавляем последние ошибки
-    if metrics['recent_errors']:
-        text += "*⚠️ Последние ошибки:*\n"
-        for error in metrics['recent_errors'][:3]:  # Последние 3 ошибки
-            text += f"• {error['type']}: {error['message'][:40]}...\n"
-
-    # Add timestamp for live update feedback
-    from datetime import datetime
-    text += f"\n_Обновлено: {datetime.now().strftime('%H:%M:%S UTC')}_"
-
-    return text
-
 @admin_only
 async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
     """Показывает полную сводку метрик, статуса ключей и кредитов"""
     try:
-        text = await get_metrics_content()
+        text = await menus.get_metrics_content()
         
         # Используем TelegramFormatter для надежного форматирования
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
@@ -767,49 +285,6 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(error_msg)
         logging.error(f"Error in cache_stats command for user {update.effective_user.id}: {e}", exc_info=True)
 
-async def get_documents_menu_content(user_id):
-    from app.document_processor import get_user_documents
-    documents = await get_user_documents(user_id)
-
-    if not documents:
-        text = (
-            "📋 *Ваши документы*\n\n"
-            "У вас пока нет загруженных документов.\n\n"
-            "💡 *Как загрузить документ:*\n"
-            "• Отправьте PDF или DOCX файл\n"
-            "• Максимальный размер: 50MB\n"
-            "• После загрузки вы сможете задавать вопросы по содержимому\n\n"
-            "📋 *Политика хранения:*\n"
-            "• Максимум документов: 5\n"
-            "• Срок хранения: 3 дня"
-        )
-    else:
-        text = "📋 *Ваши документы:*\n\n"
-        for i, doc in enumerate(documents[:10], 1):
-            text += f"{i}. *{doc['filename']}*\n"
-            text += f"   📄 Страниц: {doc['pages']}\n"
-            text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
-            text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
-        if len(documents) > 10:
-            text += f"... и еще {len(documents) - 10} документов\n\n"
-        text += (
-            "💡 *Действия:*\n"
-            "• Отправьте новый документ для загрузки\n"
-            "• Задайте вопрос по последнему документу\n"
-            "• Используйте кнопки под сообщениями для управления\n\n"
-            "📋 *Политика хранения:*\n"
-            "• Максимум документов: 5\n"
-            "• Срок хранения: 3 дня"
-        )
-
-    keyboard = [
-        [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
-        [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
-        [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
-    ]
-    formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
-
 @authorized_only
 async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
@@ -820,7 +295,7 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_document_state(update.effective_user.id)
     
     try:
-        formatted_text, parse_mode, reply_markup = await get_documents_menu_content(update.effective_user.id)
+        formatted_text, parse_mode, reply_markup = await menus.get_documents_menu_content(update.effective_user.id)
         await update.message.reply_text(
             formatted_text,
             parse_mode=parse_mode,
@@ -1139,43 +614,6 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
     else:
         await update.message.reply_text("❌ Ошибка при сохранении беседы")
 
-async def get_conversations_menu_content(user_id, page=1):
-    limit = 5
-    offset = (page - 1) * limit
-    
-    conversations = await db.get_user_conversations(user_id, limit, offset)
-    total_count = await db.get_conversation_count(user_id)
-    
-    if not conversations:
-        return "📝 У вас пока нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.", None, None
-    
-    text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
-    
-    for conv in conversations:
-        role_info = f" | {conv['role_title']}" if conv['role_title'] else ""
-        created = conv['created_at'].strftime("%d.%m.%Y %H:%M") if conv['created_at'] else "Неизвестно"
-        text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
-        text += f"📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n"
-    
-    # Кнопки навигации
-    keyboard = []
-    nav_row = []
-    if page > 1:
-        nav_row.append(InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page-1}"))
-    if len(conversations) == limit and offset + limit < total_count:
-        nav_row.append(InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page+1}"))
-
-    if nav_row:
-        keyboard.append(nav_row)
-    
-    # Кнопки действий
-    if conversations:
-        keyboard.append([InlineKeyboardButton("🔄 Переключиться", callback_data="conv_switch")])
-        keyboard.append([InlineKeyboardButton("✏️ Переименовать", callback_data="conv_rename")])
-        keyboard.append([InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")])
-    
-    return text, 'Markdown', InlineKeyboardMarkup(keyboard)
-
 @authorized_only
 async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для получения аргументов команды
@@ -1187,7 +625,7 @@ async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TY
     if context.args and context.args[0].isdigit():
         page = int(context.args[0])
 
-    text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, page)
+    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, page)
 
     if reply_markup is None:
         await update.message.reply_text(text)

@@ -18,6 +18,7 @@ from app.services import get_gemini_response
 from app.handlers import agent
 from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state, set_last_custom_role_prompt, get_last_custom_role_prompt, set_generating_custom_role
 from app.security import check_user_rate_limit
+from app.handlers import menus
 
 # Глобальный словарь для хранения групп изображений
 MEDIA_GROUPS = {}
@@ -77,8 +78,7 @@ async def _handle_conversation_rename(update: Update, context: ContextTypes.DEFA
                 await role_conv_metrics.record_conversation_renamed()
 
                 # Показываем список бесед с обновленным названием
-                from app.handlers.commands import get_conversations_menu_content
-                text, parse_mode, reply_markup = await get_conversations_menu_content(user_id, 1)
+                text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
 
                 await update.message.reply_text(f"✅ Беседа переименована в: {new_title}")
                 await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -193,9 +193,8 @@ async def _handle_role_rename(update: Update, context: ContextTypes.DEFAULT_TYPE
                 context.user_data.pop("rename_role_id", None)
                 await update.message.reply_text(f"✅ Роль переименована в: {new_title}")
                 # Возврат в детали роли
-                from app.handlers.commands import get_roles_menu_content
                 chat_state = await db.get_user_chat(user_id)
-                text, parse_mode, reply_markup = await get_roles_menu_content(user_id, chat_state, view_mode="role_details", role_key=f"user_role:{role_id}")
+                text, parse_mode, reply_markup = await menus.get_roles_menu_content(user_id, chat_state, view_mode="role_details", role_key=f"user_role:{role_id}")
                 await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
                 return True
             else:
