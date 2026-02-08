@@ -80,17 +80,34 @@ def markdown_to_html(text: str) -> str:
         else:
             # --- Regular Text Processing ---
             
-            # 0. Clean up MarkdownV2 style escaping (if any slipped through)
+            # 0. Handle escaped characters
+            # Replace \\ with a placeholder to avoid escaping issues
+            segment = segment.replace('\\\\', '\u0000')
+
+            # 1. Clean up MarkdownV2 style escaping (if any slipped through)
             # Remove backslashes before non-special characters or punctuation that doesn't need it in HTML
-            # e.g. \. -> .   \( -> (   \) -> )   \- -> -   \= -> =
-            # We be careful not to break \\ (literal backslash) if it was intended, but usually it's better to clean.
-            segment = re.sub(r'\\([.\-()!=[\]{}|#+])', r'\1', segment)
+            # e.g. \. -> .   \- -> -   \= -> =
+            # We exclude formatting characters like * _ ` [ ] ( ) which are handled separately
+            segment = re.sub(r'\\([.\-!={}#+|])', r'\1', segment)
             
-            # 1. Escape HTML characters (important to do first!)
+            # 2. Escape HTML characters (important to do first!)
             # This turns < into &lt;, etc.
             escaped_text = html.escape(segment)
+
+            # 3. Handle escaped formatting characters (after HTML escaping to preserve backslashes)
+            # Convert to HTML entities to prevent regex matching
+            escaped_text = escaped_text.replace('\\*', '&#42;')
+            escaped_text = escaped_text.replace('\\_', '&#95;')
+            escaped_text = escaped_text.replace('\\`', '&#96;')
+            escaped_text = escaped_text.replace('\\[', '&#91;')
+            escaped_text = escaped_text.replace('\\]', '&#93;')
+            escaped_text = escaped_text.replace('\\(', '&#40;')
+            escaped_text = escaped_text.replace('\\)', '&#41;')
+
+            # Restore backslash placeholder
+            escaped_text = escaped_text.replace('\u0000', '\\')
             
-            # 2. Process Inline formatting
+            # 4. Process Inline formatting
             # Order matters slightly, but usually regexes are distinct enough.
             
             # Inline Code: `code`
@@ -119,8 +136,8 @@ def markdown_to_html(text: str) -> str:
             
             # Links: [text](url)
             # Since we already escaped HTML, the url might contain &amp; etc.
-            # We match strict []() pattern.
-            link_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
+            # We match []() pattern, allowing one level of nested parenthesis in URL
+            link_pattern = r'\[([^\]]+)\]\(((?:[^()]|\([^()]*\))+)\)'
             escaped_text = re.sub(link_pattern, r'<a href="\2">\1</a>', escaped_text)
             
             html_parts.append(escaped_text)
