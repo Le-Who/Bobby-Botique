@@ -10,6 +10,22 @@ from app.config import settings
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
 flask_app = Flask(__name__)
 
+@flask_app.after_request
+def _secure_headers(response):
+    """Add security headers to all responses."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    # CSP: Allow fonts from Google, styles inline (for progress bars), images from self/data.
+    # Script-src is 'none' as we don't use JS.
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'none'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:;"
+    )
+    return response
+
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -59,7 +75,8 @@ def dashboard():
 
         return render_template('status.html', status=status_data)
     except Exception as e:
-        return f"Dashboard Error: {e}", 500
+        logging.error(f"Dashboard error: {e}", exc_info=True)
+        return "Internal Server Error", 500
 
 @flask_app.route('/status') # Keep JSON API for automated monitoring
 @require_auth
@@ -83,7 +100,8 @@ def status_api():
         except: pass
         return status, 200
     except Exception as e:
-        return {"error": str(e)}, 500
+        logging.error(f"Status API error: {e}", exc_info=True)
+        return {"error": "Internal Server Error"}, 500
 
 
 @flask_app.route('/health')
@@ -131,8 +149,7 @@ def health_check_endpoint():
         health_status = {
             "status": overall_status,
             "timestamp": str(datetime.datetime.now()),
-            "container_id": os.environ.get('HOSTNAME', 'unknown'),
-            "process_id": os.getpid(),
+            # Removed sensitive info (container_id, process_id)
             "services": {
                 "bot": bot_status,
                 "database": database_status,
@@ -149,9 +166,10 @@ def health_check_endpoint():
             return health_status, 503  # 503 для unhealthy
 
     except Exception as e:
+        logging.error(f"Health check error: {e}", exc_info=True)
         return {
             "status": "unhealthy",
-            "error": str(e),
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
 
@@ -194,8 +212,9 @@ def keys_status():
             loop.close()
 
     except Exception as e:
+        logging.error(f"Keys status error: {e}", exc_info=True)
         return {
-            "error": f"Failed to get keys status: {str(e)}",
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
 
@@ -232,7 +251,8 @@ def model_keys_status(model_name):
             loop.close()
 
     except Exception as e:
+        logging.error(f"Model keys status error: {e}", exc_info=True)
         return {
-            "error": f"Failed to get model keys status: {str(e)}",
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
