@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="60">
     <title>GeminiBot v2 | System Status</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,25 +21,25 @@
         <h2 class="animate-up">System Health</h2>
         <div class="grid">
             <div class="glass-card animate-up delay-1">
-                <div class="metric-label">CPU Usage</div>
+                <div class="metric-label" id="cpu-label">CPU Usage</div>
                 <div class="metric-value">{{ status.system.cpu_percent }}%</div>
-                <div class="progress-bar-bg">
+                <div class="progress-bar-bg" role="progressbar" aria-labelledby="cpu-label" aria-valuenow="{{ status.system.cpu_percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: {{ status.system.cpu_percent }}%"></div>
                 </div>
             </div>
 
             <div class="glass-card animate-up delay-2">
-                <div class="metric-label">Memory</div>
+                <div class="metric-label" id="memory-label">Memory</div>
                 <div class="metric-value">{{ status.system.memory_percent }}%</div>
-                <div class="progress-bar-bg">
+                <div class="progress-bar-bg" role="progressbar" aria-labelledby="memory-label" aria-valuenow="{{ status.system.memory_percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: {{ status.system.memory_percent }}%"></div>
                 </div>
             </div>
 
             <div class="glass-card animate-up delay-3">
-                <div class="metric-label">Disk Storage</div>
+                <div class="metric-label" id="disk-label">Disk Storage</div>
                 <div class="metric-value">{{ status.system.disk_percent }}%</div>
-                <div class="progress-bar-bg">
+                <div class="progress-bar-bg" role="progressbar" aria-labelledby="disk-label" aria-valuenow="{{ status.system.disk_percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: {{ status.system.disk_percent }}%"></div>
                 </div>
             </div>
@@ -72,7 +73,7 @@
         </div>
         
         <div class="glass-card animate-up delay-3" style="text-align: center; margin-top: 2rem;">
-            <div class="metric-label">Last Updated</div>
+            <div class="metric-label">Last Updated (Auto-refresh 60s)</div>
             <div style="color: var(--accent-color); margin-top: 0.5rem;">{{ status.timestamp }}</div>
             <div style="margin-top: 1rem; font-size: 0.9rem; color: #64748b;">
                 v{{ status.version }}
