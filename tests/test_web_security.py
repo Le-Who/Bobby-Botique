@@ -18,6 +18,13 @@ sys.modules['telegram.error'] = MagicMock()
 sys.modules['hypercorn.config'] = MagicMock()
 sys.modules['hypercorn.asyncio'] = MagicMock()
 
+# Mock psutil with return values
+mock_psutil = MagicMock()
+mock_psutil.cpu_percent.return_value = 10.0
+mock_psutil.virtual_memory.return_value.percent = 20.0
+mock_psutil.disk_usage.return_value.percent = 30.0
+sys.modules['psutil'] = mock_psutil
+
 # Mock app.database
 mock_db = MagicMock()
 mock_db.db_pool = None
@@ -82,3 +89,23 @@ def test_public_health_endpoint(client):
     """Test that /health is public"""
     response = client.get('/health')
     assert response.status_code != 401
+
+def test_health_endpoint_no_info_leak(client):
+    """Test that /health does NOT leak container_id and process_id"""
+    response = client.get('/health')
+    # Can be 200 (healthy/degraded) or 503 (unhealthy) depending on mocks
+    assert response.status_code in [200, 503]
+    data = response.json
+
+    assert 'container_id' not in data, "container_id should not be exposed"
+    assert 'process_id' not in data, "process_id should not be exposed"
+
+def test_security_headers_present(client):
+    """Test that security headers are present on all responses"""
+    response = client.get('/health')
+    headers = response.headers
+
+    assert headers.get('X-Content-Type-Options') == 'nosniff'
+    assert headers.get('X-Frame-Options') == 'DENY'
+    # Allow inline styles for progress bars and Google Fonts
+    assert headers.get('Content-Security-Policy') == "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"

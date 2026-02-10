@@ -32,6 +32,14 @@ def require_auth(f):
         return f(*args, **kwargs)
     return decorated_function
 
+@flask_app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    # Allow inline styles for progress bars and Google Fonts
+    response.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
+    return response
+
 @flask_app.route('/')
 @require_auth
 def dashboard():
@@ -59,7 +67,8 @@ def dashboard():
 
         return render_template('status.html', status=status_data)
     except Exception as e:
-        return f"Dashboard Error: {e}", 500
+        logging.error(f"Dashboard Error: {e}", exc_info=True)
+        return "Internal Server Error", 500
 
 @flask_app.route('/status') # Keep JSON API for automated monitoring
 @require_auth
@@ -83,7 +92,8 @@ def status_api():
         except: pass
         return status, 200
     except Exception as e:
-        return {"error": str(e)}, 500
+        logging.error(f"Status API Error: {e}", exc_info=True)
+        return {"error": "Internal Server Error"}, 500
 
 
 @flask_app.route('/health')
@@ -131,8 +141,6 @@ def health_check_endpoint():
         health_status = {
             "status": overall_status,
             "timestamp": str(datetime.datetime.now()),
-            "container_id": os.environ.get('HOSTNAME', 'unknown'),
-            "process_id": os.getpid(),
             "services": {
                 "bot": bot_status,
                 "database": database_status,
@@ -149,9 +157,10 @@ def health_check_endpoint():
             return health_status, 503  # 503 для unhealthy
 
     except Exception as e:
+        logging.error(f"Health Check Error: {e}", exc_info=True)
         return {
             "status": "unhealthy",
-            "error": str(e),
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
 
