@@ -17,6 +17,7 @@ from app.metrics import metrics_collector
 from app.cache import get_cached_search_result, cache_search_result
 from app.utils.network import NetworkErrorHandler
 from app.utils.api_logger import api_logger
+from app.utils.image import estimate_image_size_in_bytes
 
 # Используем улучшенную конфигурацию HTTP клиента
 http_client = NetworkErrorHandler.create_robust_http_client()
@@ -80,11 +81,8 @@ async def _save_image_as_bytes(image: Image.Image, timeout: float = 5.0, max_siz
             # Actually, resize returns a new copy.
             img_to_process = image
 
-            # Use tobytes() which decompresses the image if needed, can be slow
-            # Check size in memory (uncompressed usually)
-            # len(image.tobytes()) gives uncompressed size (e.g. W*H*3)
-            # This is CPU bound decompressing if it's lazy loaded
-            img_bytes_approx = len(img_to_process.tobytes())
+            # Use optimized estimation instead of tobytes() which forces full decompression
+            img_bytes_approx = estimate_image_size_in_bytes(img_to_process)
 
             if img_bytes_approx > max_size_mb * 1024 * 1024:
                  # Уменьшаем
