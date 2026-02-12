@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Callable, List
+from typing import Dict, Any, Optional, Callable, List, Coroutine
 from dataclasses import dataclass
 from enum import Enum
 import uuid
@@ -49,6 +49,8 @@ class TaskQueue:
         self.running = False
         self._lock = asyncio.Lock()
         self._task_handlers: Dict[str, Callable] = {}
+        self._cleanup_task: Optional[asyncio.Task] = None
+        self._metrics_scheduler_task: Optional[asyncio.Task] = None
         
         # Инициализируем обработчики задач
         self._init_task_handlers()
@@ -75,10 +77,18 @@ class TaskQueue:
             self.workers.append(worker)
         
         # Запускаем задачу очистки старых задач
-        asyncio.create_task(self._cleanup_old_tasks())
+        self._cleanup_task = self._start_background_task(
+            self._cleanup_task,
+            self._cleanup_old_tasks,
+            "task queue cleanup",
+        )
         
         # Запускаем автоматическую очистку метрик (каждые 24 часа)
-        asyncio.create_task(self._schedule_metrics_cleanup())
+        self._metrics_scheduler_task = self._start_background_task(
+            self._metrics_scheduler_task,
+            self._schedule_metrics_cleanup,
+            "metrics cleanup scheduler",
+        )
     
     async def stop(self):
         """Останавливает очередь задач"""
@@ -95,8 +105,39 @@ class TaskQueue:
         # Ждем завершения всех воркеров
         await asyncio.gather(*self.workers, return_exceptions=True)
         self.workers.clear()
+
+        # Отменяем служебные задачи
+        await self._cancel_background_task("_cleanup_task")
+        await self._cancel_background_task("_metrics_scheduler_task")
         
         logging.info("Task queue stopped")
+
+    def _start_background_task(
+        self,
+        task_ref: Optional[asyncio.Task],
+        coro_factory: Callable[[], Coroutine[Any, Any, Any]],
+        task_name: str,
+    ) -> asyncio.Task:
+        """Запускает фоновую задачу с защитой от повторного старта."""
+        if task_ref and not task_ref.done():
+            logging.debug("Background task '%s' already running", task_name)
+            return task_ref
+
+        return asyncio.create_task(coro_factory())
+
+    async def _cancel_background_task(self, attr_name: str):
+        """Отменяет и ожидает завершение фоновой задачи по имени атрибута."""
+        task = getattr(self, attr_name, None)
+        if not task:
+            return
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        setattr(self, attr_name, None)
     
     async def add_task(self, user_id: int, task_type: str, data: Dict[str, Any], 
                       priority: TaskPriority = TaskPriority.NORMAL) -> str:
