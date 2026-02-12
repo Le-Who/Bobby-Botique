@@ -19,6 +19,7 @@ from app.handlers import menus
 from app.document_processor import get_user_documents, delete_user_document, get_document_by_id
 from app.state import clear_document_state, set_document_mode, get_selected_document_id
 from app.utils.keyboards import build_keyboard, back_button, cancel_button, confirm_cancel_row
+from app.request_context import set_request_id
 
 # Лимитер для тяжёлых callback-веток (complex/fallback/deepdive и т.п.)
 _HEAVY_CALLBACK_LIMIT = max(1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_CALLBACKS", 4)))
@@ -103,6 +104,7 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     await query.answer()
     
     action = query.data.split(':')[1]
@@ -154,6 +156,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     await query.answer()
 
     _, action, model_override = query.data.split(':')
