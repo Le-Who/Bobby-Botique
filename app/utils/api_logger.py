@@ -7,6 +7,8 @@ from functools import wraps
 from datetime import datetime
 import asyncio
 
+from app.request_context import get_request_id
+
 class APILogger:
     """
     Детальное логирование для всех API запросов (Telegram, Gemini, Tavily)
@@ -40,6 +42,7 @@ class APILogger:
             "api": api_name,
             "endpoint": endpoint,
             "method": method,
+            "request_id": get_request_id(),
             "user_id": user_id,
             "chat_id": chat_id,
             "request_data": self._sanitize_data(request_data),
@@ -67,6 +70,7 @@ class APILogger:
             "api": api_name,
             "endpoint": endpoint,
             "duration_ms": round(duration * 1000, 2),
+            "request_id": get_request_id(),
             "status_code": status_code,
             "success": success,
             "user_id": user_id,
@@ -99,6 +103,7 @@ class APILogger:
                 "model": model,
                 "prompt_length": prompt_length,
                 "has_images": has_images,
+                "request_id": get_request_id(),
                 "user_id": user_id,
                 "chat_id": chat_id,
                 "status": "STARTED"
@@ -136,6 +141,7 @@ class APILogger:
                 "api": "gemini",
                 "model": model,
                 "duration_ms": round(duration * 1000, 2),
+                "request_id": get_request_id(),
                 "response_length": response_length,
                 "token_count": token_count,
                 "success": success,
@@ -270,6 +276,7 @@ class APILogger:
         error_data = {
             "timestamp": datetime.now().isoformat(),
             "api": api_name,
+            "request_id": get_request_id(),
             "error_type": type(error).__name__,
             "error_message": str(error),
             "traceback": traceback.format_exc(),

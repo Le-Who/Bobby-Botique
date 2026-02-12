@@ -18,6 +18,7 @@ from app.state import is_awaiting_custom_role_input, set_generated_role, clear_c
 from app.security import check_user_rate_limit
 from app.handlers import menus
 from app.request_context import set_request_id
+from app.tracing import bind_request_span
 
 # Глобальный лимитер для тяжёлых AI-задач, чтобы избежать перегрузки event loop/провайдеров
 _HEAVY_REQUEST_LIMIT = max(1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_REQUESTS", 4)))
@@ -285,32 +286,35 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    set_request_id(f"tgmsg-{chat_id}-{getattr(update, 'update_id', 'na')}")
-    
-    # Валидация user_id
-    if not isinstance(user_id, int) or user_id <= 0:
-        logging.error("Invalid user_id: %s", user_id)
-        return
-    
-    # Обрабатываем медиа-группы
-    if await _process_media_group_update(update, context, user_id, chat_id):
-        return
+    request_id = set_request_id(f"tgmsg-{chat_id}-{getattr(update, 'update_id', 'na')}")
 
-    # Детальное логирование Telegram API запроса
-    message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
-    start_time = api_logger.log_telegram_request(
-        method="handle_message",
-        chat_id=chat_id,
-        user_id=user_id,
-        message_type=message_type
-    )
+    # Correlation contract: request_id is propagated as trace_id baseline.
+    with bind_request_span(request_id, span_name="telegram-message"):
+        # Валидация user_id
+        if not isinstance(user_id, int) or user_id <= 0:
+            logging.error("Invalid user_id: %s", user_id)
+            return
+
+        # Обрабатываем медиа-группы
+        if await _process_media_group_update(update, context, user_id, chat_id):
+            return
+
+        # Детальное логирование Telegram API запроса
+        message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
+        start_time = api_logger.log_telegram_request(
+            method="handle_message",
+            chat_id=chat_id,
+            user_id=user_id,
+            message_type=message_type
+        )
+        
+        # Валидация текста сообщения
+        message_text = update.message.text if update.message and update.message.text else 'No text'
+        if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
+            logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
+            await update.message.reply_text("❌ Сообщение слишком длинное. Максимум 4096 символов.")
+            return
     
-    # Валидация текста сообщения
-    message_text = update.message.text if update.message and update.message.text else 'No text'
-    if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
-        logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
-        await update.message.reply_text("❌ Сообщение слишком длинное. Максимум 4096 символов.")
-        return
     
     logging.info("Received message from user %s: %s", user_id, message_text[:100])
     

@@ -8,9 +8,27 @@ from functools import wraps
 from flask import Flask, render_template, request, abort
 from app import database
 from app.config import settings
+from app.request_context import set_request_id
+from app.tracing import bind_request_span
 
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
 flask_app = Flask(__name__)
+
+
+@flask_app.before_request
+def bind_request_context():
+    request_id = request.headers.get('X-Request-ID') or f"web-{int(datetime.datetime.now().timestamp() * 1000)}"
+    set_request_id(request_id)
+    # Contract: request_id is the primary correlation id and trace_id baseline.
+    request._trace_span = bind_request_span(request_id, span_name="web-request")
+    request._trace_span.__enter__()
+
+
+@flask_app.teardown_request
+def clear_request_context(_exception):
+    span_ctx = getattr(request, '_trace_span', None)
+    if span_ctx:
+        span_ctx.__exit__(None, None, None)
 
 def require_auth(f):
     def validate_auth():

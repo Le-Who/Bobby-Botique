@@ -101,9 +101,9 @@ class TestMetricsOptimization(unittest.TestCase):
             self.assertIn("INSERT INTO error_logs", query)
             self.assertEqual(len(params_list), 3)
             # The order depends on deque iteration which is FIFO
-            self.assertEqual(params_list[0], ("TestError1", "Message 1"))
-            self.assertEqual(params_list[1], ("TestError2", "Message 2"))
-            self.assertEqual(params_list[2], ("TestError3", "Message 3"))
+            self.assertEqual(params_list[0], ("TestError1", "Message 1", None))
+            self.assertEqual(params_list[1], ("TestError2", "Message 2", None))
+            self.assertEqual(params_list[2], ("TestError3", "Message 3", None))
 
             # Verify errors are marked as saved
             for error in self.collector.error_log:
