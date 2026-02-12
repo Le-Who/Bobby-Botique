@@ -18,6 +18,10 @@ from app.state import is_awaiting_custom_role_input, set_generated_role, clear_c
 from app.security import check_user_rate_limit
 from app.handlers import menus
 
+# Глобальный лимитер для тяжёлых AI-задач, чтобы избежать перегрузки event loop/провайдеров
+_HEAVY_REQUEST_LIMIT = max(1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_REQUESTS", 4)))
+_HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore(_HEAVY_REQUEST_LIMIT)
+
 # Глобальный словарь для хранения групп изображений
 MEDIA_GROUPS = {}
 MEDIA_GROUPS_TTL = {}  # TTL для автоматической очистки старых групп
@@ -363,18 +367,19 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Обычная обработка сообщений
     async def task_wrapper():
         try:
-            async with state.get_user_lock(user_id):
-                logging.info("Starting task processing for user %s", user_id)
-                
-                # Восстанавливаем обработку через agent
-                try:
-                    from app.handlers.agent import process_long_request
-                    await process_long_request(placeholder_message, update, context)
-                except ImportError:
-                    # Fallback если agent недоступен
-                    await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
+            async with _HEAVY_REQUEST_SEMAPHORE:
+                async with state.get_user_lock(user_id):
+                    logging.info("Starting task processing for user %s", user_id)
                     
-                logging.info("Completed task processing for user %s", user_id)
+                    # Восстанавливаем обработку через agent
+                    try:
+                        from app.handlers.agent import process_long_request
+                        await process_long_request(placeholder_message, update, context)
+                    except ImportError:
+                        # Fallback если agent недоступен
+                        await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
+                        
+                    logging.info("Completed task processing for user %s", user_id)
                 
                 # Логируем успешный ответ Telegram API
                 api_logger.log_telegram_response(
@@ -488,17 +493,18 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
         return
     
     try:
-        async with state.get_user_lock(user_id):
-            # Создаем мок Update для совместимости с существующим кодом
-            mock_update = type('MockUpdate', (), {
-                'message': messages[0],  # Используем первое сообщение как основное
-                'effective_user': messages[0].from_user,
-                'effective_chat': messages[0].chat
-            })()
-            
-            # Обрабатываем группу через agent
-            from app.handlers.agent import process_media_group_request
-            await process_media_group_request(placeholder_message, mock_update, context, messages, caption)
+        async with _HEAVY_REQUEST_SEMAPHORE:
+            async with state.get_user_lock(user_id):
+                # Создаем мок Update для совместимости с существующим кодом
+                mock_update = type('MockUpdate', (), {
+                    'message': messages[0],  # Используем первое сообщение как основное
+                    'effective_user': messages[0].from_user,
+                    'effective_chat': messages[0].chat
+                })()
+                
+                # Обрабатываем группу через agent
+                from app.handlers.agent import process_media_group_request
+                await process_media_group_request(placeholder_message, mock_update, context, messages, caption)
             
     except Exception as e:
         logging.error(f"Error processing media group {media_group_id}: {e}", exc_info=True)

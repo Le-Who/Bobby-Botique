@@ -179,7 +179,7 @@ async def run_bot_with_retry():
             pool_timeout=30.0
         )
         
-        application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).build()
+        application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).request(custom_request).concurrent_updates(True).build()
         
         commands.register(application)
         callbacks.register(application)
