@@ -290,16 +290,49 @@ async def run_bot_and_server():
         )
         
         logging.info("Shutting down services...")
-        try: await stop_task_queue()
-        except Exception: pass
-        
-        try: await metrics_collector.cleanup()
-        except Exception: pass
-        
-        try: await database.db_manager.close()
-        except Exception: pass
+        await _cleanup_with_retry(
+            "task queue",
+            stop_task_queue,
+            retries=3,
+            base_delay=0.5,
+        )
+
+        await _cleanup_with_retry(
+            "metrics collector",
+            metrics_collector.cleanup,
+            retries=3,
+            base_delay=0.5,
+        )
+
+        await _cleanup_with_retry(
+            "database manager",
+            database.db_manager.close,
+            retries=3,
+            base_delay=0.5,
+        )
         
         logging.info("Shutdown complete.")
+
+
+async def _cleanup_with_retry(resource_name, cleanup_coro, retries=1, base_delay=0.25):
+    """Safely cleanup a resource with bounded retry/backoff and without breaking shutdown."""
+    for attempt in range(1, retries + 1):
+        try:
+            await cleanup_coro()
+            logging.info(f"Cleanup successful for {resource_name} (attempt {attempt}/{retries})")
+            return
+        except Exception as e:
+            if attempt < retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                logging.warning(
+                    f"Cleanup failed for {resource_name} (attempt {attempt}/{retries}): {e}. "
+                    f"Retrying in {delay:.2f}s"
+                )
+                await asyncio.sleep(delay)
+            else:
+                logging.warning(
+                    f"Cleanup failed for {resource_name} after {retries} attempts: {e}"
+                )
 
 async def _wait_for_shutdown():
     await shutdown_event.wait()
@@ -411,15 +444,31 @@ async def main():
     finally:
         logging.info("Shutting down services...")
         if memory_manager:
-            try: await memory_manager.stop()
-            except Exception: pass
+            await _cleanup_with_retry(
+                "memory manager",
+                memory_manager.stop,
+                retries=2,
+                base_delay=0.25,
+            )
         if database_available:
-            try: await stop_task_queue()
-            except Exception: pass
-            try: await metrics_collector.cleanup()
-            except Exception: pass
-        try: await database.db_manager.close()
-        except Exception: pass
+            await _cleanup_with_retry(
+                "task queue",
+                stop_task_queue,
+                retries=3,
+                base_delay=0.5,
+            )
+            await _cleanup_with_retry(
+                "metrics collector",
+                metrics_collector.cleanup,
+                retries=3,
+                base_delay=0.5,
+            )
+        await _cleanup_with_retry(
+            "database manager",
+            database.db_manager.close,
+            retries=3,
+            base_delay=0.5,
+        )
         logging.info("Shutdown complete")
 
 if __name__ == "__main__":
