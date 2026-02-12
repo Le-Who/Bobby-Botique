@@ -17,6 +17,7 @@ from app.handlers import agent
 from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state, set_last_custom_role_prompt, set_generating_custom_role
 from app.security import check_user_rate_limit
 from app.handlers import menus
+from app.request_context import set_request_id
 
 # Глобальный лимитер для тяжёлых AI-задач, чтобы избежать перегрузки event loop/провайдеров
 _HEAVY_REQUEST_LIMIT = max(1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_REQUESTS", 4)))
@@ -284,6 +285,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+    set_request_id(f"tgmsg-{chat_id}-{getattr(update, 'update_id', 'na')}")
     
     # Валидация user_id
     if not isinstance(user_id, int) or user_id <= 0:

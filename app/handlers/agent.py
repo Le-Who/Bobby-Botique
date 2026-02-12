@@ -14,6 +14,7 @@ from app.utils.messaging import send_long_message
 from app import prompts
 from app.metrics import metrics_collector
 from app.utils.formatting import escape_format_chars
+from app.agent_use_cases import AgentRequestUseCase
 
 async def handle_ai_response_error(response_text: str, placeholder_message: Message, on_error_callback=None) -> bool:
     """
@@ -61,46 +62,12 @@ async def handle_ai_response_error(response_text: str, placeholder_message: Mess
     
     return True
 
+_agent_use_case = AgentRequestUseCase()
+
+
 async def _resolve_ai_request(preferred_model: str, use_openrouter: bool = None, excluded_key_hashes: set = None):
-    """
-    Универсальная функция для получения ключа и модели для AI запроса.
-    Поддерживает как Gemini, так и OpenRouter.
-    
-    Автоматически определяет провайдер на основе имени модели:
-    - Если модель содержит "/" (например, "openai/gpt-4o"), используется OpenRouter
-    - Иначе используется Gemini
-    
-    Args:
-        preferred_model: Предпочитаемая модель
-        use_openrouter: Использовать OpenRouter (None = автоматическое определение по модели)
-        excluded_key_hashes: Множество хэшей ключей, которые нужно исключить (для ротации)
-        
-    Returns:
-        Tuple (key_data, model_used, resolution_status)
-    """
-    if excluded_key_hashes is None:
-        excluded_key_hashes = set()
-    
-    # Автоматическое определение провайдера по имени модели
-    if use_openrouter is None:
-        # Если модель содержит "/", это модель OpenRouter
-        if "/" in preferred_model:
-            use_openrouter = True
-        else:
-            # Проверяем глобальную настройку, если модель не указывает провайдер
-            use_openrouter = get_use_openrouter()
-    
-    # Если OpenRouter не настроен, но выбрана модель OpenRouter, возвращаем ошибку
-    if use_openrouter and not get_openrouter_keys():
-        logging.warning(f"OpenRouter model {preferred_model} selected but no keys available")
-        return None, None, "no_keys"
-    
-    # Если модель OpenRouter, используем OpenRouter
-    if use_openrouter or "/" in preferred_model:
-        return await _resolve_openrouter_request(preferred_model, excluded_key_hashes)
-    
-    # Иначе используем Gemini
-    return await _resolve_gemini_request(preferred_model, excluded_key_hashes)
+    return await _agent_use_case.resolve_ai_request(preferred_model, use_openrouter, excluded_key_hashes)
+
 
 async def _resolve_key_generic(
     preferred_model: str,
@@ -110,152 +77,27 @@ async def _resolve_key_generic(
     invalidate_cache_func=None,
     provider_name: str = "Unknown"
 ):
-    """
-    Generic function to resolve API key with fallback and retry logic.
-    """
-    if excluded_key_hashes is None:
-        excluded_key_hashes = set()
-    
-    # Invalidate cache if there are excluded keys (only if invalidation function is provided)
-    if excluded_key_hashes and invalidate_cache_func:
-        await invalidate_cache_func(preferred_model)
+    return await _agent_use_case._resolve_key_generic(
+        preferred_model,
+        get_key_func,
+        fallback_priority,
+        excluded_key_hashes,
+        invalidate_cache_func,
+        provider_name,
+    )
 
-    max_attempts = 5
-    
-    # Try preferred model
-    for attempt in range(max_attempts):
-        key = await get_key_func(preferred_model)
-        if key and key['key_hash'] not in excluded_key_hashes:
-            return key, preferred_model, None
-        
-        # If key is excluded, invalidate cache (if func provided) and retry
-        if key and key['key_hash'] in excluded_key_hashes:
-            if invalidate_cache_func:
-                await invalidate_cache_func(preferred_model)
-            continue
-        
-        # If no key found, break loop to try fallbacks
-        break
-
-    logging.warning(f"All keys for preferred model {preferred_model} are exhausted or excluded. Attempting fallback.")
-    
-    # Try fallback models
-    for fallback_model in fallback_priority:
-        if fallback_model == preferred_model:
-            continue
-
-        # Invalidate cache for fallback model if there are excluded keys
-        if excluded_key_hashes and invalidate_cache_func:
-            await invalidate_cache_func(fallback_model)
-
-        for attempt in range(max_attempts):
-            key = await get_key_func(fallback_model)
-            if key and key['key_hash'] not in excluded_key_hashes:
-                logging.info(f"Found available fallback key for model {fallback_model}.")
-                return key, fallback_model, "confirm_fallback"
-            
-            if key and key['key_hash'] in excluded_key_hashes:
-                if invalidate_cache_func:
-                    await invalidate_cache_func(fallback_model)
-                continue
-            
-            break
-            
-    logging.error(f"All {provider_name} API keys for all models are exhausted or excluded.")
-    return None, None, "all_exhausted"
 
 async def _resolve_gemini_request(preferred_model: str, excluded_key_hashes: set = None):
-    """
-    Получает ключ Gemini для модели.
+    return await _agent_use_case._resolve_gemini_request(preferred_model, excluded_key_hashes)
 
-    Args:
-        preferred_model: Предпочитаемая модель
-        excluded_key_hashes: Множество хэшей ключей, которые нужно исключить (для ротации)
-
-    Returns:
-        Tuple (key_data, model_used, resolution_status)
-    """
-    fallback_priority = [settings.RESEARCH_MODEL, settings.DEFAULT_MODEL, settings.QNA_MODEL]
-    return await _resolve_key_generic(
-        preferred_model,
-        db.get_available_gemini_key,
-        fallback_priority,
-        excluded_key_hashes,
-        db.invalidate_key_cache,
-        provider_name="Gemini"
-    )
 
 async def _resolve_openrouter_request(preferred_model: str, excluded_key_hashes: set = None):
-    """
-    Получает ключ OpenRouter для модели.
-    Маппит модели Gemini на модели OpenRouter, если нужно.
-    
-    Args:
-        preferred_model: Предпочитаемая модель
-        excluded_key_hashes: Множество хэшей ключей, которые нужно исключить (для ротации)
-    
-    Returns:
-        Tuple (key_data, model_used, resolution_status)
-    """
-    # Маппинг моделей Gemini на OpenRouter
-    model_mapping = {
-        settings.DEFAULT_MODEL: settings.OPENROUTER_DEFAULT_MODEL,
-        settings.QNA_MODEL: settings.OPENROUTER_QNA_MODEL,
-        settings.RESEARCH_MODEL: settings.OPENROUTER_RESEARCH_MODEL,
-        settings.URL_SELECTION_MODEL: settings.OPENROUTER_URL_SELECTION_MODEL,
-    }
-    
-    # Если модель уже в формате OpenRouter, используем её
-    if "/" in preferred_model:
-        openrouter_model = preferred_model
-    else:
-        # Маппим модель Gemini на OpenRouter
-        openrouter_model = model_mapping.get(preferred_model, settings.OPENROUTER_DEFAULT_MODEL)
-    
-    fallback_priority = [
-        settings.OPENROUTER_RESEARCH_MODEL,
-        settings.OPENROUTER_DEFAULT_MODEL,
-        settings.OPENROUTER_QNA_MODEL
-    ]
-    
-    return await _resolve_key_generic(
-        openrouter_model,
-        db.get_available_openrouter_key,
-        fallback_priority,
-        excluded_key_hashes,
-        invalidate_cache_func=None,
-        provider_name="OpenRouter"
-    )
+    return await _agent_use_case._resolve_openrouter_request(preferred_model, excluded_key_hashes)
+
 
 async def _get_ai_response(api_key: str, history: list, model_name: str, system_instruction: str = None, user_id: int = None, chat_id: int = None, use_openrouter: bool = None):
-    """
-    Универсальная функция для получения ответа от AI.
-    Выбирает между Gemini и OpenRouter на основе имени модели или настроек.
-    
-    Автоматически определяет провайдер:
-    - Если модель содержит "/" (например, "openai/gpt-4o"), используется OpenRouter
-    - Иначе используется Gemini
-    """
-    # Автоматическое определение провайдера по имени модели
-    if use_openrouter is None:
-        # Если модель содержит "/", это модель OpenRouter
-        if "/" in model_name:
-            use_openrouter = True
-        else:
-            # Проверяем глобальную настройку, если модель не указывает провайдер
-            use_openrouter = get_use_openrouter()
-    
-    # Если OpenRouter не настроен, но выбрана модель OpenRouter, возвращаем ошибку
-    if use_openrouter and not get_openrouter_keys():
-        return "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.", None
-    
-    # Используем соответствующий провайдер
-    if use_openrouter:
-        logging.info(f"🔍 _get_ai_response: routing to OpenRouter, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
-        return await services.get_openrouter_response(api_key, history, model_name, system_instruction, user_id, chat_id)
-    else:
-        logging.info(f"🔍 _get_ai_response: routing to Gemini, model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}")
-        return await services.get_gemini_response(api_key, history, model_name, system_instruction, user_id, chat_id)
+    return await _agent_use_case.get_ai_response(api_key, history, model_name, system_instruction, user_id, chat_id, use_openrouter)
+
 
 async def _get_ai_response_with_key_rotation(
     preferred_model: str,
@@ -266,98 +108,20 @@ async def _get_ai_response_with_key_rotation(
     use_openrouter: bool = None,
     max_key_retries: int = 3
 ):
-    """
-    Получает ответ от AI с автоматической ротацией ключей при ошибках, связанных с ключом.
-    
-    Если ключ выдает ошибку, связанную с ключом (quota exceeded, invalid key, etc.),
-    автоматически пробует другой ключ. Максимум max_key_retries попыток.
-    
-    Args:
-        preferred_model: Предпочитаемая модель
-        history: История сообщений
-        system_instruction: Системная инструкция
-        user_id: ID пользователя
-        chat_id: ID чата
-        use_openrouter: Использовать OpenRouter (None = автоматическое определение)
-        max_key_retries: Максимальное количество попыток с разными ключами
-        
-    Returns:
-        Tuple (response_text, token_count) или (error_message, None)
-    """
-    from app.errors import is_error_message, is_key_related_error
-    
-    failed_keys = set()  # Временная пометка проблемных ключей для этого запроса
-    
-    for attempt in range(max_key_retries):
-        # Получаем ключ, исключая проблемные
-        key_data, model_used, resolution = await _resolve_ai_request(
-            preferred_model,
-            use_openrouter=use_openrouter,
-            excluded_key_hashes=failed_keys
-        )
-        
-        if not key_data:
-            if resolution == "all_exhausted":
-                is_openrouter = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
-                provider_name = "OpenRouter" if is_openrouter else "Gemini"
-                return f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже.", None
-            elif resolution == "no_keys":
-                return "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.", None
-            else:
-                return "🚫 Не удалось получить доступный ключ API. Попробуйте позже.", None
-        
-        # Пробуем запрос
-        response_text, token_count = await _get_ai_response(
-            key_data['api_key'],
-            history,
-            model_used,
-            system_instruction,
-            user_id,
-            chat_id,
-            use_openrouter
-        )
-        
-        # Проверяем, является ли ответ ошибкой, связанной с ключом
-        if response_text and is_error_message(response_text) and is_key_related_error(response_text):
-            # Ошибка связана с ключом - помечаем как проблемный и пробуем следующий
-            failed_keys.add(key_data['key_hash'])
-            logging.warning(
-                f"Key {key_data['key_hash'][:8]}... failed with key-related error (attempt {attempt + 1}/{max_key_retries}). "
-                f"Error: {response_text[:100]}..."
-            )
-            continue  # Пробуем следующий ключ
-        
-        # Успех или ошибка, не связанная с ключом (503, timeout, etc.) - возвращаем как есть
-        if response_text and not is_error_message(response_text):
-            # Успешный ответ - инкрементируем использование ключа
-            await _increment_key_usage(key_data['key_hash'], model_used, use_openrouter)
-        
-        return response_text, token_count
-    
-    # Все ключи не сработали
-    logging.error(f"All {max_key_retries} key attempts failed for model {preferred_model}")
-    is_openrouter = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
-    provider_name = "OpenRouter" if is_openrouter else "Gemini"
-    return f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.", None
+    return await _agent_use_case.get_ai_response_with_key_rotation(
+        preferred_model,
+        history,
+        system_instruction,
+        user_id,
+        chat_id,
+        use_openrouter,
+        max_key_retries,
+    )
+
 
 async def _increment_key_usage(key_hash: str, model_name: str, use_openrouter: bool = None):
-    """
-    Универсальная функция для инкремента использования ключа.
-    Автоматически определяет провайдер на основе имени модели.
-    """
-    # Автоматическое определение провайдера по имени модели
-    if use_openrouter is None:
-        # Если модель содержит "/", это модель OpenRouter
-        if "/" in model_name:
-            use_openrouter = True
-        else:
-            # Проверяем глобальную настройку, если модель не указывает провайдер
-            use_openrouter = get_use_openrouter()
-    
-    if use_openrouter:
-        await db.increment_openrouter_key_usage(key_hash, model_name)
-    else:
-        await db.increment_gemini_key_usage(key_hash, model_name)
+    await _agent_use_case.increment_key_usage(key_hash, model_name, use_openrouter)
+
 
 async def _handle_qna_search(placeholder_message: Message, user_message: str, chat_state: db.ChatState, search_query: str = None):
     # Если передан search_query, используем его для поиска, а user_message для локализации

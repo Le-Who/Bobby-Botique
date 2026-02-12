@@ -12,6 +12,8 @@ import sys
 import json
 from typing import Optional, Any
 
+from app.request_context import get_request_id
+
 
 # =============================================================================
 # FORMATTERS
@@ -46,6 +48,8 @@ class JSONFormatter(logging.Formatter):
             log_entry['chat_id'] = record.chat_id
         if hasattr(record, 'extra_context'):
             log_entry['context'] = record.extra_context
+        if hasattr(record, 'request_id'):
+            log_entry['request_id'] = record.request_id
             
         # Add exception info
         if record.exc_info:
@@ -54,9 +58,17 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_entry, ensure_ascii=False)
 
 
+
+
+class RequestContextFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        request_id = get_request_id()
+        if not hasattr(record, 'request_id'):
+            record.request_id = request_id or '-'
+        return True
 # Default formatter for development
 DEFAULT_FORMATTER = logging.Formatter(
-    '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    '%(asctime)s - %(name)s - %(levelname)s - [request_id=%(request_id)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
@@ -138,6 +150,7 @@ def _setup_logger(
     if not logger.handlers:
         handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(level)
+        handler.addFilter(RequestContextFilter())
         handler.setFormatter(_get_formatter(enable_structured_logging))
         logger.addHandler(handler)
     
@@ -176,6 +189,7 @@ def setup_detailed_logging(
     # Handler for stdout (required for Render)
     stdout_handler = logging.StreamHandler(sys.stdout)
     stdout_handler.setLevel(numeric_level)
+    stdout_handler.addFilter(RequestContextFilter())
     stdout_handler.setFormatter(formatter)
     root_logger.addHandler(stdout_handler)
     
@@ -184,6 +198,7 @@ def setup_detailed_logging(
         try:
             file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
             file_handler.setLevel(numeric_level)
+            file_handler.addFilter(RequestContextFilter())
             file_handler.setFormatter(formatter)
             root_logger.addHandler(file_handler)
         except Exception as e:
