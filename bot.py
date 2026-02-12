@@ -246,6 +246,18 @@ async def bot_watchdog(bot_task: asyncio.Task):
     
     logging.info("Bot watchdog stopped due to shutdown signal")
 
+def _handle_polling_conflict(error: Exception) -> None:
+    """Логирует конфликт long polling без побочных эффектов."""
+    is_conflict_error = isinstance(error, Conflict) or (
+        "Conflict" in str(error)
+        or "terminated by other getUpdates request" in str(error)
+    )
+
+    if is_conflict_error:
+        logging.warning(
+            "Telegram polling conflict detected: another bot instance might be running."
+        )
+
 async def run_bot_and_server():
     """Основная логика: запускает бота и веб-сервер параллельно."""
     hypercorn_config = HypercornConfig()
@@ -271,9 +283,8 @@ async def run_bot_and_server():
         await shutdown_task
         logging.info("Shutdown signal received, initiating graceful shutdown...")
     except Exception as e:
-        logging.error(f"Critical error in main loop: {e}")
-        if "Conflict" in str(e) or "terminated by other getUpdates request" in str(e):
-            process_lock.release()
+        logging.error(f"Critical error in main loop: {e}", exc_info=True)
+        _handle_polling_conflict(e)
     finally:
         logging.info("Starting graceful shutdown...")
         tasks_to_cancel = [monitoring_task, bot_task, watchdog_task, shutdown_task]
