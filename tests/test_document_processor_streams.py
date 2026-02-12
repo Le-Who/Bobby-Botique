@@ -128,3 +128,32 @@ async def test_write_temp_file_sync_not_called(document_processor):
     docx_bytes = create_docx_bytes()
     await document_processor._process_word(docx_bytes, "test.docx", 123, "hash")
     document_processor._write_temp_file_sync.assert_not_called()
+
+def create_large_docx_bytes(num_paragraphs=1000):
+    doc = Document()
+    for i in range(num_paragraphs):
+        doc.add_paragraph(f"Paragraph {i} with some text. " * 5)
+
+    output = io.BytesIO()
+    doc.save(output)
+    return output.getvalue()
+
+@pytest.mark.asyncio
+async def test_word_document_truncation(document_processor):
+    # Create a large document that should exceed the limit
+    # 2000 paragraphs * ~30 chars * 5 = ~300k chars
+    docx_bytes = create_large_docx_bytes(num_paragraphs=2000)
+    filename = "large.docx"
+    user_id = 123
+    file_hash = "fakehash"
+
+    # Call _process_word
+    result = await document_processor._process_word(docx_bytes, filename, user_id, file_hash)
+
+    assert result["success"] is True
+
+    # Check if we have the truncation marker
+    content = result["content"]
+
+    assert "Document truncated" in content
+    assert len(content) < 150000
