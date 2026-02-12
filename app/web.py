@@ -40,7 +40,7 @@ def dashboard():
         # Collect Status Data
         status_data = {
             "bot": "running",
-            "database": "connected" if database.db_pool else "disconnected",
+            "database": "connected" if database.is_database_connected() else "disconnected",
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "version": "2.1.0",
             "environment": os.getenv("ENVIRONMENT", "production")
@@ -69,7 +69,7 @@ def status_api():
         # Reusing logic for JSON response...
         status = {
             "bot": "running",
-            "database": "connected" if database.db_pool else "disconnected",
+            "database": "connected" if database.is_database_connected() else "disconnected",
             "timestamp": str(datetime.datetime.now()),
             "system": {}
         }
@@ -92,7 +92,7 @@ def health_check_endpoint():
     try:
         # Проверяем основные компоненты
         bot_status = "running"
-        database_status = "connected" if database.db_pool and not database.db_pool._closed else "disconnected"
+        database_status = "connected" if database.is_database_connected() else "disconnected"
 
         # Проверяем Redis статус
         try:
