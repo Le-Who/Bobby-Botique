@@ -9,6 +9,7 @@ import json
 
 from app import database as db
 from app.utils import time as time_utils
+from app.request_context import get_request_id
 
 @dataclass
 class PerformanceMetrics:
@@ -29,6 +30,7 @@ class MetricsCollector:
         self.metrics = PerformanceMetrics()
         self.response_times = deque(maxlen=1000)  # Храним последние 1000 запросов
         self.error_log = deque(maxlen=100)  # Храним последние 100 ошибок
+        self.api_event_log = deque(maxlen=200)  # Храним последние API события
         self.daily_metrics: Dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
         self._lock = asyncio.Lock()
         self._last_save_time = time.time()
@@ -63,8 +65,13 @@ class MetricsCollector:
                     id SERIAL PRIMARY KEY,
                     error_type TEXT NOT NULL,
                     error_message TEXT NOT NULL,
+                    request_id TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
+            """)
+            await db.db_query("""
+                ALTER TABLE error_logs
+                ADD COLUMN IF NOT EXISTS request_id TEXT
             """)
             
             logging.info("Metrics tables ensured")
@@ -165,11 +172,11 @@ class MetricsCollector:
             if errors_to_process:
                 unsaved_errors = [e for e in errors_to_process if not e.get('saved', False)]
                 if unsaved_errors:
-                    params_list = [(e['type'], e['message']) for e in unsaved_errors]
+                    params_list = [(e['type'], e['message'], e.get('request_id')) for e in unsaved_errors]
 
                     await db.db_execute_many("""
-                        INSERT INTO error_logs (error_type, error_message)
-                        VALUES ($1, $2)
+                        INSERT INTO error_logs (error_type, error_message, request_id)
+                        VALUES ($1, $2, $3)
                     """, params_list)
 
                     for error in unsaved_errors:
@@ -278,7 +285,7 @@ class MetricsCollector:
             
             # Загружаем последние ошибки
             error_result = await db.db_query("""
-                SELECT error_type, error_message, created_at
+                SELECT error_type, error_message, request_id, created_at
                 FROM error_logs
                 ORDER BY created_at DESC
                 LIMIT 100
@@ -290,6 +297,7 @@ class MetricsCollector:
                     'timestamp': row['created_at'].isoformat(),
                     'type': row['error_type'],
                     'message': row['error_message'],
+                    'request_id': row.get('request_id'),
                     'saved': True # Loaded from DB, so it is saved
                 })
             
@@ -317,12 +325,20 @@ class MetricsCollector:
             
             # Background task handles saving now
     
-    async def record_api_call(self, api_name: str, model: str = None):
+    async def record_api_call(self, api_name: str, model: str = None, request_id: str = None):
         """Записывает вызов API"""
         async with self._lock:
+            current_request_id = request_id or get_request_id()
             self.metrics.api_calls[api_name] = self.metrics.api_calls.get(api_name, 0) + 1
             if model:
                 self.metrics.model_usage[model] = self.metrics.model_usage.get(model, 0) + 1
+
+            self.api_event_log.append({
+                'timestamp': datetime.now().isoformat(),
+                'api': api_name,
+                'model': model,
+                'request_id': current_request_id
+            })
             
             today = date.today().isoformat()
             self.daily_metrics[today].api_calls[api_name] = self.daily_metrics[today].api_calls.get(api_name, 0) + 1
@@ -350,14 +366,16 @@ class MetricsCollector:
             today = date.today().isoformat()
             self.daily_metrics[today].cache_misses += 1
     
-    async def record_error(self, error_type: str, error_message: str):
+    async def record_error(self, error_type: str, error_message: str, request_id: str = None):
         """Записывает ошибку"""
         async with self._lock:
+            current_request_id = request_id or get_request_id()
             # Добавляем в локальный лог
             self.error_log.append({
                 'timestamp': datetime.now().isoformat(),
                 'type': error_type,
                 'message': error_message,
+                'request_id': current_request_id,
                 'saved': False  # Флаг для отслеживания сохранения
             })
             # We don't save immediately anymore to avoid blocking. Background task will pick it up.
@@ -398,6 +416,7 @@ class MetricsCollector:
                 'model_usage': dict(self.metrics.model_usage),
                 'search_queries': self.metrics.search_queries,
                 'recent_errors': recent_errors,
+                'recent_api_events': list(self.api_event_log)[-20:],
                 'daily_metrics': {
                     date: {
                         'requests': metrics.request_count,
