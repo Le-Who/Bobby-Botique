@@ -41,7 +41,7 @@ class DatabaseManager:
 
     @property
     def is_connected(self):
-        return self.pool and not self.pool._closed
+        return bool(self.pool and not self.pool._closed)
 
     async def create_pool(self):
         """Создает пул соединений с базой данных"""
@@ -94,11 +94,12 @@ class DatabaseManager:
 
         if self.pool:
             await self.pool.close()
+            self.pool = None
             logging.info("Database pool closed")
 
             # Sync global variable
             global db_pool
-            db_pool = self.pool
+            db_pool = None
 
     async def reconnect(self):
         logging.info("Attempting to reconnect to database...")
@@ -314,6 +315,11 @@ async def check_database_health():
             return True
     except Exception:
         return False
+
+
+def is_database_connected() -> bool:
+    """Synchronous database connectivity check for web/status endpoints."""
+    return bool(db_pool and not db_pool._closed)
 
 async def ensure_database_connection():
     if not await check_database_health():
