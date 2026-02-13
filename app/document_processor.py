@@ -13,6 +13,8 @@ from docx import Document
 
 from app.config import settings
 from app import database
+
+MAX_DOCUMENT_TEXT_LENGTH = 100000
 from app.utils.network import NetworkErrorHandler
 from app.metrics import metrics_collector
 
@@ -247,7 +249,7 @@ class DocumentProcessor:
                     current_length += len(chunk)
 
                 # Проверяем лимит токенов
-                if current_length > 100000:
+                if current_length > MAX_DOCUMENT_TEXT_LENGTH:
                     text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
                     break
 
@@ -310,25 +312,50 @@ class DocumentProcessor:
 
             text_content = []
             paragraph_count = 0
+            current_length = 0
 
             # Извлекаем текст из параграфов
             for para in doc.paragraphs:
                 if para.text.strip():
                     text_content.append(para.text)
+                    current_length += len(para.text)
                     paragraph_count += 1
+
+                if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                    text_content.append("\n--- Document truncated ---")
+                    break
 
             # Извлекаем текст из таблиц
             table_count = 0
-            for table in doc.tables:
-                table_count += 1
-                text_content.append(f"\n--- Table {table_count} ---")
-                for row in table.rows:
-                    row_text = []
-                    for cell in row.cells:
-                        if cell.text.strip():
-                            row_text.append(cell.text.strip())
-                    if row_text:
-                        text_content.append(" | ".join(row_text))
+            if current_length <= MAX_DOCUMENT_TEXT_LENGTH:
+                for table in doc.tables:
+                    table_count += 1
+
+                    table_header = f"\n--- Table {table_count} ---"
+                    # Only add header if it fits (roughly) or if we are just starting
+                    text_content.append(table_header)
+                    current_length += len(table_header)
+
+                    if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                        text_content.append("\n--- Document truncated ---")
+                        break
+
+                    for row in table.rows:
+                        row_text = []
+                        for cell in row.cells:
+                            if cell.text.strip():
+                                row_text.append(cell.text.strip())
+                        if row_text:
+                            row_line = " | ".join(row_text)
+                            text_content.append(row_line)
+                            current_length += len(row_line)
+
+                        if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                            break
+
+                    if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                         text_content.append("\n--- Document truncated ---")
+                         break
 
             full_text = '\n\n'.join(text_content)
 
