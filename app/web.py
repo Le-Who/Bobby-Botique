@@ -90,7 +90,9 @@ def dashboard():
 
         return render_template('status.html', status=status_data)
     except Exception as e:
-        return f"Dashboard Error: {e}", 500
+        # Security: Log error server-side, do not leak details to client
+        logging.error("Dashboard error", exc_info=True)
+        return "Internal Server Error", 500
 
 @flask_app.route('/status') # Keep JSON API for automated monitoring
 @require_auth
@@ -114,7 +116,9 @@ def status_api():
         except: pass
         return status, 200
     except Exception as e:
-        return {"error": str(e)}, 500
+        # Security: Log error server-side, do not leak details to client
+        logging.error("Status API error", exc_info=True)
+        return {"error": "Internal Server Error"}, 500
 
 
 @flask_app.route('/health')
@@ -171,9 +175,11 @@ async def health_check_endpoint():
             return health_status, 503  # 503 для unhealthy
 
     except Exception as e:
+        # Security: Log error server-side, do not leak details to client
+        logging.error("Health check error", exc_info=True)
         return {
             "status": "unhealthy",
-            "error": str(e),
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
 
@@ -207,8 +213,10 @@ async def keys_status():
         return keys_status, 200
 
     except Exception as e:
+        # Security: Log error server-side, do not leak details to client
+        logging.error("Keys status error", exc_info=True)
         return {
-            "error": f"Failed to get keys status: {str(e)}",
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
 
@@ -236,7 +244,9 @@ async def model_keys_status(model_name):
         return model_status, 200
 
     except Exception as e:
+        # Security: Log error server-side, do not leak details to client
+        logging.error("Model keys status error", exc_info=True)
         return {
-            "error": f"Failed to get model keys status: {str(e)}",
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
