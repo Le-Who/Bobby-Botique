@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="60">
     <title>GeminiBot v2 | System Status</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,7 +23,7 @@
             <div class="glass-card animate-up delay-1">
                 <div class="metric-label">CPU Usage</div>
                 <div class="metric-value">{{ status.system.cpu_percent }}%</div>
-                <div class="progress-bar-bg">
+                <div class="progress-bar-bg" role="progressbar" aria-label="CPU Usage" aria-valuenow="{{ status.system.cpu_percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: {{ status.system.cpu_percent }}%"></div>
                 </div>
             </div>
@@ -30,7 +31,7 @@
             <div class="glass-card animate-up delay-2">
                 <div class="metric-label">Memory</div>
                 <div class="metric-value">{{ status.system.memory_percent }}%</div>
-                <div class="progress-bar-bg">
+                <div class="progress-bar-bg" role="progressbar" aria-label="Memory" aria-valuenow="{{ status.system.memory_percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: {{ status.system.memory_percent }}%"></div>
                 </div>
             </div>
@@ -38,7 +39,7 @@
             <div class="glass-card animate-up delay-3">
                 <div class="metric-label">Disk Storage</div>
                 <div class="metric-value">{{ status.system.disk_percent }}%</div>
-                <div class="progress-bar-bg">
+                <div class="progress-bar-bg" role="progressbar" aria-label="Disk Storage" aria-valuenow="{{ status.system.disk_percent }}" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar-fill" style="width: {{ status.system.disk_percent }}%"></div>
                 </div>
             </div>
@@ -50,7 +51,7 @@
             <div class="glass-card animate-up delay-2">
                 <div class="metric-label">Telegram Bot</div>
                 <div style="font-size: 1.5rem; margin-top: 0.5rem;">
-                    <span class="status-indicator status-{{ status.bot }}"></span>
+                    <span class="status-indicator status-{{ status.bot }}" aria-hidden="true"></span>
                     {{ status.bot|title }}
                 </div>
             </div>
@@ -58,7 +59,7 @@
             <div class="glass-card animate-up delay-3">
                 <div class="metric-label">Database (PostgreSQL)</div>
                 <div style="font-size: 1.5rem; margin-top: 0.5rem;">
-                    <span class="status-indicator status-{{ status.database }}"></span>
+                    <span class="status-indicator status-{{ status.database }}" aria-hidden="true"></span>
                     {{ status.database|title }}
                 </div>
             </div>
