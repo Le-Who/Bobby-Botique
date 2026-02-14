@@ -16,6 +16,9 @@ from app import database
 from app.utils.network import NetworkErrorHandler
 from app.metrics import metrics_collector
 
+# Constants
+MAX_DOCUMENT_TEXT_LENGTH = 100000
+
 # Проверяем поддержку документов
 try:
     # PyMuPDF removed for free tier optimization
@@ -247,7 +250,7 @@ class DocumentProcessor:
                     current_length += len(chunk)
 
                 # Проверяем лимит токенов
-                if current_length > 100000:
+                if current_length > MAX_DOCUMENT_TEXT_LENGTH:
                     text_content.append(f"\n--- Document truncated at page {page_num + 1} ---")
                     break
 
@@ -310,25 +313,42 @@ class DocumentProcessor:
 
             text_content = []
             paragraph_count = 0
+            current_length = 0
 
             # Извлекаем текст из параграфов
             for para in doc.paragraphs:
                 if para.text.strip():
-                    text_content.append(para.text)
+                    text = para.text
+                    text_content.append(text)
                     paragraph_count += 1
+                    current_length += len(text)
 
-            # Извлекаем текст из таблиц
+                    if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                        text_content.append("\n--- Document truncated (limit reached) ---")
+                        break
+
+            # Извлекаем текст из таблиц, если лимит еще не достигнут
             table_count = 0
-            for table in doc.tables:
-                table_count += 1
-                text_content.append(f"\n--- Table {table_count} ---")
-                for row in table.rows:
-                    row_text = []
-                    for cell in row.cells:
-                        if cell.text.strip():
-                            row_text.append(cell.text.strip())
-                    if row_text:
-                        text_content.append(" | ".join(row_text))
+            if current_length <= MAX_DOCUMENT_TEXT_LENGTH:
+                for table in doc.tables:
+                    table_count += 1
+                    header = f"\n--- Table {table_count} ---"
+                    text_content.append(header)
+                    current_length += len(header)
+
+                    for row in table.rows:
+                        row_text = []
+                        for cell in row.cells:
+                            if cell.text.strip():
+                                row_text.append(cell.text.strip())
+                        if row_text:
+                            line = " | ".join(row_text)
+                            text_content.append(line)
+                            current_length += len(line)
+
+                    if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                        text_content.append("\n--- Document truncated (limit reached) ---")
+                        break
 
             full_text = '\n\n'.join(text_content)
 
