@@ -30,6 +30,14 @@ def clear_request_context(_exception):
     if span_ctx:
         span_ctx.__exit__(None, None, None)
 
+@flask_app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';"
+    return response
+
 def require_auth(f):
     def validate_auth():
         # Security: Only allow token via header to prevent leakage in logs/history
@@ -90,7 +98,8 @@ def dashboard():
 
         return render_template('status.html', status=status_data)
     except Exception as e:
-        return f"Dashboard Error: {e}", 500
+        logging.error(f"Dashboard Error: {e}", exc_info=True)
+        return "Internal Server Error", 500
 
 @flask_app.route('/status') # Keep JSON API for automated monitoring
 @require_auth
@@ -114,7 +123,8 @@ def status_api():
         except: pass
         return status, 200
     except Exception as e:
-        return {"error": str(e)}, 500
+        logging.error(f"Status API Error: {e}", exc_info=True)
+        return {"error": "Internal Server Error"}, 500
 
 
 @flask_app.route('/health')
@@ -153,8 +163,6 @@ async def health_check_endpoint():
         health_status = {
             "status": overall_status,
             "timestamp": str(datetime.datetime.now()),
-            "container_id": os.environ.get('HOSTNAME', 'unknown'),
-            "process_id": os.getpid(),
             "services": {
                 "bot": bot_status,
                 "database": database_status,
@@ -171,9 +179,10 @@ async def health_check_endpoint():
             return health_status, 503  # 503 для unhealthy
 
     except Exception as e:
+        logging.error(f"Health Check Error: {e}", exc_info=True)
         return {
             "status": "unhealthy",
-            "error": str(e),
+            "error": "Internal Health Check Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
 
@@ -207,8 +216,9 @@ async def keys_status():
         return keys_status, 200
 
     except Exception as e:
+        logging.error(f"Keys Status Error: {e}", exc_info=True)
         return {
-            "error": f"Failed to get keys status: {str(e)}",
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
 
@@ -236,7 +246,8 @@ async def model_keys_status(model_name):
         return model_status, 200
 
     except Exception as e:
+        logging.error(f"Model Keys Status Error: {e}", exc_info=True)
         return {
-            "error": f"Failed to get model keys status: {str(e)}",
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
