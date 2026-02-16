@@ -9,3 +9,7 @@
 ## 2025-05-29 - [Confirm Destructive Actions]
 **Learning:** Destructive actions like "Clear All Documents" executed immediately on a single click can lead to significant user frustration and data loss. Users expect a safety net.
 **Action:** Implement a two-step confirmation process for all bulk delete or irreversible actions, replacing the button with a clear "Confirm/Cancel" choice.
+
+## 2025-06-02 - [Accessible Progress Bars]
+**Learning:** Custom progress bars implemented with divs are invisible to screen readers without ARIA roles. While visual users see a filled bar, screen reader users miss critical system status information.
+**Action:** Always add `role="progressbar"`, `aria-valuenow`, `aria-valuemin="0"`, `aria-valuemax="100"`, and `aria-labelledby` to custom progress components. Hide purely decorative status indicators with `aria-hidden="true"`.
