@@ -82,3 +82,43 @@ def test_public_health_endpoint(client):
     """Test that /health is public"""
     response = client.get('/health')
     assert response.status_code != 401
+
+def test_health_endpoint_leakage(client):
+    """Test if /health endpoint leaks sensitive info"""
+    response = client.get('/health')
+    assert response.status_code == 200
+    data = response.json
+
+    # Check for leakage (should NOT be present)
+    assert 'container_id' not in data
+    assert 'process_id' not in data
+
+def test_security_headers_present(client):
+    """Test if security headers are present"""
+    response = client.get('/health')
+    headers = response.headers
+
+    # Check for presence of headers
+    security_headers = {
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+    }
+
+    for header, value in security_headers.items():
+        assert header in headers
+        assert headers[header] == value
+
+    assert 'Content-Security-Policy' in headers
+    assert "default-src 'self'" in headers['Content-Security-Policy']
+    assert "script-src 'none'" in headers['Content-Security-Policy']
+
+def test_error_handling_sanitized(client):
+    """Test if errors are sanitized"""
+    # We trigger an error in dashboard which uses require_auth
+    with patch('app.web.render_template', side_effect=Exception("Database Connection Failed: sensitive details")):
+         response = client.get('/', headers={'X-Auth-Token': 'test_token'})
+         # The response should NOT contain the exception message
+         # It should contain "Internal Server Error"
+         assert "Database Connection Failed" not in response.data.decode()
+         assert "Internal Server Error" in response.data.decode()
