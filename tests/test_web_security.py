@@ -82,3 +82,30 @@ def test_public_health_endpoint(client):
     """Test that /health is public"""
     response = client.get('/health')
     assert response.status_code != 401
+
+def test_security_headers_present(client):
+    """Verify that security headers are present."""
+    response = client.get('/health')
+
+    assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+    assert response.headers.get('X-Frame-Options') == 'DENY'
+    assert response.headers.get('Referrer-Policy') == 'strict-origin-when-cross-origin'
+
+    csp = response.headers.get('Content-Security-Policy')
+    assert "default-src 'self'" in csp
+    assert "script-src 'none'" in csp
+    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in csp
+
+def test_error_leakage_prevented(client):
+    """Verify that exceptions do NOT leak internal details."""
+    secret_message = "SecretDatabaseConnectionString"
+    headers = {'X-Auth-Token': 'test_token'}
+
+    # We need to patch render_template in app.web
+    with patch('app.web.render_template', side_effect=Exception(secret_message)):
+        response = client.get('/', headers=headers)
+        assert response.status_code == 500
+
+        response_text = response.get_data(as_text=True)
+        assert secret_message not in response_text
+        assert "Internal Server Error" in response_text
