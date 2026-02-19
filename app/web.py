@@ -29,6 +29,32 @@ def _secure_headers(response):
     )
     return response
 
+@flask_app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+
+    # Content Security Policy (CSP)
+    # Strict policy:
+    # - No scripts allowed (script-src 'none') as the dashboard is pure HTML/CSS
+    # - Styles allowed from self, inline (needed for progress bars), and Google Fonts
+    # - Fonts allowed from self and Google Fonts
+    # - Images allowed from self and data URIs
+    # - No frames allowed
+    csp = (
+        "default-src 'self'; "
+        "script-src 'none'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none';"
+    )
+    response.headers['Content-Security-Policy'] = csp
+    return response
+
 def require_auth(f):
     def validate_auth():
         # Security: Only allow token via header to prevent leakage in logs/history
