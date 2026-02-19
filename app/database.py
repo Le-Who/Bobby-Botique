@@ -1307,11 +1307,30 @@ async def get_user_conversations(user_id: int, limit: int = 10, offset: int = 0)
 
 async def get_conversation_messages(conversation_id: int, user_id: int) -> list:
     try:
-        conv_check = await db_query("SELECT id FROM conversations WHERE id = $1 AND user_id = $2", (conversation_id, user_id))
-        if not conv_check: return None
-        result = await db_query("SELECT role, content, created_at FROM conversation_messages WHERE conversation_id = $1 ORDER BY created_at ASC", (conversation_id,))
-        return [{'role': row['role'], 'content': row['content'], 'created_at': row['created_at']} for row in result]
-    except Exception:
+        # Optimized: Single query with LEFT JOIN to fetch conversation and messages
+        query = """
+            SELECT c.id, m.role, m.content, m.created_at
+            FROM conversations c
+            LEFT JOIN conversation_messages m ON c.id = m.conversation_id
+            WHERE c.id = $1 AND c.user_id = $2
+            ORDER BY m.created_at ASC
+        """
+        result = await db_query(query, (conversation_id, user_id))
+
+        if not result:
+            return None  # Conversation not found or unauthorized
+
+        messages = []
+        for row in result:
+            if row['role'] is not None:
+                messages.append({
+                    'role': row['role'],
+                    'content': row['content'],
+                    'created_at': row['created_at']
+                })
+        return messages
+    except Exception as e:
+        logging.error(f"Error getting conversation messages: {e}")
         return None
 
 async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:

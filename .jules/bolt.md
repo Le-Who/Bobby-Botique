@@ -13,3 +13,7 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+
+## 2025-02-20 - Conversation Messages N+1 Query
+**Learning:** `get_conversation_messages` performed two separate database queries: one to verify conversation existence/ownership and another to fetch messages. This introduced unnecessary network latency.
+**Action:** Combined these into a single query using `LEFT JOIN`. The presence of a result row confirms conversation existence, and empty message columns (NULLs) indicate an empty conversation, while no rows indicate "not found". This reduces DB round-trips by 50% for this frequent operation.
