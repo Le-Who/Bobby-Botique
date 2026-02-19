@@ -201,34 +201,15 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
     if not role_key:
         return "Ошибка: не указана роль", None, None
 
-    # Ищем данные роли
-    title = "Неизвестная роль"
-    prompt = ""
-    is_custom = False
-    role_id = None # Для кастомных
+    # Ищем данные роли через хелпер
+    role_data = await db.get_role_data(role_key, user_id)
+    if not role_data:
+        return "Роль не найдена или удалена.", None, None
 
-    if role_key.startswith("user_role:"):
-        # Кастомная роль
-        try:
-            r_id = int(role_key.split(":")[1])
-            res = await db.db_query("SELECT id, title, prompt FROM user_roles WHERE id = $1 AND user_id = $2", (r_id, user_id))
-            if res:
-                title = res[0]['title']
-                prompt = res[0]['prompt']
-                is_custom = True
-                role_id = r_id
-            else:
-                return "Роль не найдена или удалена.", None, None
-        except:
-             return "Ошибка ключа роли", None, None
-    else:
-        # Системная роль
-        if role_key in prompts.DEFAULT_ROLES:
-            meta = prompts.DEFAULT_ROLES[role_key]
-            title = meta.get('title', role_key)
-            prompt = meta.get('prompt', '')
-        else:
-            return "Системная роль не найдена", None, None
+    title = role_data['title']
+    prompt = role_data['prompt']
+    is_custom = role_data['is_custom']
+    role_id = role_data['id']
 
     is_active = (role_key == active_role_key)
     status_icon = "✅" if is_active else "⚪️"

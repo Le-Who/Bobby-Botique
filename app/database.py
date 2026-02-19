@@ -1230,6 +1230,46 @@ async def is_authorized(user_id: int) -> bool:
         finally:
             await clear_user_context(conn=conn)
 
+async def get_role_data(role_key: str, user_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает данные роли (название, промпт) по ключу.
+    Поддерживает системные роли (из prompts.py) и пользовательские (из БД).
+    """
+    from app import prompts
+
+    if not role_key:
+        return None
+
+    if role_key.startswith("user_role:"):
+        try:
+            # Извлекаем ID из ключа "user_role:ID"
+            role_id = int(role_key.split(":")[1])
+            res = await db_query(
+                "SELECT id, title, prompt FROM user_roles WHERE id = $1 AND user_id = $2",
+                (role_id, user_id)
+            )
+            if res:
+                return {
+                    'id': res[0]['id'],
+                    'title': res[0]['title'],
+                    'prompt': res[0]['prompt'],
+                    'is_custom': True,
+                    'key': role_key
+                }
+        except (ValueError, IndexError, Exception):
+            pass
+    elif role_key in prompts.DEFAULT_ROLES:
+        meta = prompts.DEFAULT_ROLES[role_key]
+        return {
+            'id': None,
+            'title': meta.get('title', role_key),
+            'prompt': meta.get('prompt', ''),
+            'is_custom': False,
+            'key': role_key
+        }
+
+    return None
+
 async def save_conversation(user_id: int, title: str, role_type: str = None, role_id: int = None) -> int:
     try:
         chat_state = await get_user_chat(user_id)
