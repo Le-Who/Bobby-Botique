@@ -254,16 +254,29 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
 async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     """Генерирует контент для списков ролей (мои роли, системные роли)."""
     ITEMS_PER_PAGE = 6
+    items = []
+    total_items = 0
+    current_items = []
+
     if view_mode == "my_roles":
+        # Optimized: Pagination at SQL level
+        count_res = await db.db_query("SELECT COUNT(*) as count FROM user_roles WHERE user_id = $1", (user_id,))
+        total_items = count_res[0]['count'] if count_res else 0
+
+        total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        if page < 0: page = 0
+        if page >= total_pages and total_pages > 0: page = total_pages - 1
+
+        offset = page * ITEMS_PER_PAGE
+
         roles = await db.db_query(
-            "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
-            (user_id,)
+            "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+            (user_id, ITEMS_PER_PAGE, offset)
         )
         title_header = "📂 **Ваши личные роли**"
         empty_text = "У вас пока нет сохраненных ролей."
 
-        # Формируем items для пагинатора
-        items = []
+        # Формируем items (только для текущей страницы)
         for r in roles:
             key = f"user_role:{r['id']}"
             is_active = "✅ " if key == active_role_key else ""
@@ -272,6 +285,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
                 'callback': f"role_detail:{key}",
                 'delete_callback': None
             })
+        current_items = items
 
     elif view_mode == "system_roles":
         title_header = "📚 **Каталог встроенных ролей**"
@@ -285,26 +299,24 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
                 'callback': f"role_detail:{key}",
                 'delete_callback': None
             })
+
+        total_items = len(items)
+        total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        if page < 0: page = 0
+        if page >= total_pages and total_pages > 0: page = total_pages - 1
+
+        start_idx = page * ITEMS_PER_PAGE
+        end_idx = start_idx + ITEMS_PER_PAGE
+        current_items = items[start_idx:end_idx]
+
     else:
         return f"Ошибка режима: {view_mode}", None, None
-
-    # Пагинация
-    total_items = len(items)
-    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-
-    # Корректируем страницу если вышли за пределы
-    if page < 0: page = 0
-    if page >= total_pages and total_pages > 0: page = total_pages - 1
-
-    start_idx = page * ITEMS_PER_PAGE
-    end_idx = start_idx + ITEMS_PER_PAGE
-    current_items = items[start_idx:end_idx]
 
     text = (
         f"{title_header}\n"
         f"Страница {page + 1} из {max(1, total_pages)}\n\n"
     )
-    if not items:
+    if total_items == 0:
         text += f"_{empty_text}_"
 
     keyboard = []
