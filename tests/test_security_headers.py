@@ -61,6 +61,32 @@ def test_security_headers_present(client):
     assert csp is not None
     assert "default-src 'self'" in csp
     assert "script-src 'none'" in csp
+# Import app.web after mocking
+from app.web import flask_app
+
+@pytest.fixture
+def client():
+    flask_app.config['TESTING'] = True
+    with flask_app.test_client() as client:
+        yield client
+
+def test_security_headers_present(client):
+    """Test that all security headers are present in the response"""
+    response = client.get('/health')
+
+    assert response.status_code == 200
+
+    # Check for security headers
+    assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+    assert response.headers.get('X-Frame-Options') == 'DENY'
+    assert response.headers.get('Referrer-Policy') == 'strict-origin-when-cross-origin'
+
+    # Check Content-Security-Policy
+    csp = response.headers.get('Content-Security-Policy')
+    assert csp is not None
+    assert "default-src 'self'" in csp
+    assert "script-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp
     assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in csp
     assert "font-src 'self' https://fonts.gstatic.com" in csp
 
@@ -82,3 +108,11 @@ def test_security_headers_on_auth_failure(client):
     headers = response.headers
     assert headers.get('X-Content-Type-Options') == 'nosniff'
     assert headers.get('X-Frame-Options') == 'DENY'
+    """Test that security headers are present even on error pages"""
+    # Force an error by accessing a non-existent route or causing an exception
+    # Since we are testing headers, a 404 is a good candidate
+    response = client.get('/non-existent-route')
+
+    assert response.status_code == 404
+    assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+    assert response.headers.get('X-Frame-Options') == 'DENY'
