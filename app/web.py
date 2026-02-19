@@ -66,6 +66,16 @@ def add_security_headers(response):
     return response
 
 
+@flask_app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    # CSP: Allow fonts and inline styles (for progress bars), no scripts
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
+    return response
+
 def require_auth(f):
     def validate_auth():
         # Security: Only allow token via header to prevent leakage in logs/history
@@ -134,8 +144,7 @@ def dashboard():
 
         return render_template('status.html', status=status_data)
     except Exception as e:
-        # Security: Log error server-side, do not leak details to client
-        logging.error("Dashboard error", exc_info=True)
+        logging.error(f"Dashboard error: {e}", exc_info=True)
         return "Internal Server Error", 500
 
 @flask_app.route('/status') # Keep JSON API for automated monitoring
@@ -160,8 +169,7 @@ def status_api():
         except: pass
         return status, 200
     except Exception as e:
-        # Security: Log error server-side, do not leak details to client
-        logging.error("Status API error", exc_info=True)
+        logging.error(f"Status API error: {e}", exc_info=True)
         return {"error": "Internal Server Error"}, 500
 
 
@@ -201,7 +209,8 @@ async def health_check_endpoint():
         health_status = {
             "status": overall_status,
             "timestamp": str(datetime.datetime.now()),
-            # Security: Removed sensitive info (container_id, process_id)
+            # Remove sensitive info leak
+            "service": "gemaibotv2",
             "services": {
                 "bot": bot_status,
                 "database": database_status,
@@ -218,8 +227,7 @@ async def health_check_endpoint():
             return health_status, 503  # 503 для unhealthy
 
     except Exception as e:
-        # Security: Log error server-side, do not leak details to client
-        logging.error("Health check error", exc_info=True)
+        logging.error(f"Health check error: {e}", exc_info=True)
         return {
             "status": "unhealthy",
             "error": "Internal Server Error",
@@ -256,8 +264,7 @@ async def keys_status():
         return keys_status, 200
 
     except Exception as e:
-        # Security: Log error server-side, do not leak details to client
-        logging.error("Keys status error", exc_info=True)
+        logging.error(f"Keys status error: {e}", exc_info=True)
         return {
             "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
@@ -287,8 +294,7 @@ async def model_keys_status(model_name):
         return model_status, 200
 
     except Exception as e:
-        # Security: Log error server-side, do not leak details to client
-        logging.error("Model keys status error", exc_info=True)
+        logging.error(f"Model keys status error: {e}", exc_info=True)
         return {
             "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())

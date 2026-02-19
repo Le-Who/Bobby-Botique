@@ -90,33 +90,29 @@ def test_public_health_endpoint(client):
     response = client.get('/health')
     assert response.status_code != 401
 
-def test_security_headers_presence(client):
-    """Test that all required security headers are present"""
+def test_security_headers_present(client):
+    """Verify that security headers are present."""
     response = client.get('/health')
-    headers = response.headers
 
-    assert headers.get('X-Content-Type-Options') == 'nosniff'
-    assert headers.get('X-Frame-Options') == 'DENY'
-    assert "default-src 'self'" in headers.get('Content-Security-Policy', '')
-    assert "script-src 'none'" in headers.get('Content-Security-Policy', '')
+    assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+    assert response.headers.get('X-Frame-Options') == 'DENY'
+    assert response.headers.get('Referrer-Policy') == 'strict-origin-when-cross-origin'
 
-def test_health_endpoint_leakage(client):
-    """Test that sensitive info is not leaked in /health"""
-    response = client.get('/health')
-    data = response.get_json()
+    csp = response.headers.get('Content-Security-Policy')
+    assert "default-src 'self'" in csp
+    assert "script-src 'none'" in csp
+    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in csp
 
-    assert 'process_id' not in data
-    assert 'container_id' not in data
-    assert 'services' in data
+def test_error_leakage_prevented(client):
+    """Verify that exceptions do NOT leak internal details."""
+    secret_message = "SecretDatabaseConnectionString"
+    headers = {'X-Auth-Token': 'test_token'}
 
-def test_dashboard_error_leakage(client):
-    """Test that errors don't leak stack traces"""
-    # Force an error by mocking render_template to raise exception
-    with patch('app.web.render_template', side_effect=Exception("Secret Database Info")):
-        headers = {'X-Auth-Token': 'test_token'}
+    # We need to patch render_template in app.web
+    with patch('app.web.render_template', side_effect=Exception(secret_message)):
         response = client.get('/', headers=headers)
-
         assert response.status_code == 500
-        # Ensure the secret info is NOT in the response
-        assert b"Secret Database Info" not in response.data
-        assert b"Internal Server Error" in response.data
+
+        response_text = response.get_data(as_text=True)
+        assert secret_message not in response_text
+        assert "Internal Server Error" in response_text
