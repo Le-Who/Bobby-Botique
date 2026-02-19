@@ -55,6 +55,17 @@ def add_security_headers(response):
     response.headers['Content-Security-Policy'] = csp
     return response
 
+
+@flask_app.after_request
+def add_security_headers(response):
+    """Add security headers to every response."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;"
+    return response
+
+
 def require_auth(f):
     def validate_auth():
         # Security: Only allow token via header to prevent leakage in logs/history
