@@ -16,20 +16,6 @@ flask_app = Flask(__name__)
 
 # Security: Add security headers to all responses
 @flask_app.after_request
-def _secure_headers(response):
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    # Strict CSP: No scripts, styles only from self/google fonts, fonts from google
-    response.headers['Content-Security-Policy'] = (
-        "default-src 'self'; "
-        "script-src 'none'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data:;"
-    )
-    return response
-
-@flask_app.after_request
 def add_security_headers(response):
     """Add security headers to all responses."""
     response.headers['X-Content-Type-Options'] = 'nosniff'
@@ -53,27 +39,6 @@ def add_security_headers(response):
         "frame-ancestors 'none';"
     )
     response.headers['Content-Security-Policy'] = csp
-    return response
-
-
-@flask_app.after_request
-def add_security_headers(response):
-    """Add security headers to every response."""
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;"
-    return response
-
-
-@flask_app.after_request
-def add_security_headers(response):
-    """Add security headers to all responses."""
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-    # CSP: Allow fonts and inline styles (for progress bars), no scripts
-    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
     return response
 
 def require_auth(f):
@@ -108,14 +73,6 @@ def require_auth(f):
         return f(*args, **kwargs)
 
     return decorated_function
-
-@flask_app.after_request
-def add_security_headers(response):
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    # Allow inline styles for progress bars and Google Fonts
-    response.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
-    return response
 
 @flask_app.route('/')
 @require_auth
