@@ -5,7 +5,6 @@ import asyncio
 import io
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
-from datetime import datetime
 import httpx
 import pypdf
 from docx import Document
@@ -649,33 +648,3 @@ async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
 async def get_document_by_id(document_id: int, user_id: int) -> Optional[Dict[str, Any]]:
     """Получает документ по ID"""
     return await document_processor.get_document_by_id(document_id, user_id) 
-
-async def schedule_document_cleanup():
-    """Планировщик автоматической очистки документов"""
-    
-    while True:
-        try:
-            # Ждем до следующего дня в 3:00 утра
-            now = datetime.now()
-            next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
-            if next_run <= now:
-                next_run = next_run.replace(day=next_run.day + 1)
-            
-            wait_seconds = (next_run - now).total_seconds()
-            logging.info(f"Next document cleanup scheduled for {next_run}")
-            
-            await asyncio.sleep(wait_seconds)
-            
-            # Выполняем очистку
-            deleted_count = await document_processor.cleanup_old_documents(3)
-            if deleted_count > 0:
-                logging.info(f"Automatic cleanup: deleted {deleted_count} old documents (older than 3 days)")
-            
-        except Exception as e:
-            logging.error(f"Error in scheduled document cleanup: {e}")
-            await asyncio.sleep(3600)  # Ждем час при ошибке
-
-# Запускаем планировщик при старте приложения
-def start_cleanup_scheduler():
-    """Запускает планировщик очистки документов"""
-    asyncio.create_task(schedule_document_cleanup()) 
