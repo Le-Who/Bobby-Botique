@@ -215,47 +215,26 @@ class MetricsCollector:
                 self.metrics.cache_hits = row['total_cache_hits']
                 self.metrics.cache_misses = row['total_cache_misses']
             
-            # Отдельно загружаем и объединяем JSONB поля
-            jsonb_result = await db.db_query("""
-                SELECT api_calls, model_usage
-                FROM metrics
+            # Optimized: Aggregate JSONB fields in SQL (O(1) Python processing)
+            # Aggregate api_calls
+            api_calls_result = await db.db_query("""
+                SELECT key, SUM(value::numeric) as total
+                FROM metrics, jsonb_each_text(api_calls)
                 WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
-                AND (api_calls IS NOT NULL OR model_usage IS NOT NULL)
+                GROUP BY key
             """)
             
-            # Объединяем JSONB данные
-            combined_api_calls = {}
-            combined_model_usage = {}
+            self.metrics.api_calls = {row['key']: int(row['total']) for row in api_calls_result}
             
-            for row in jsonb_result:
-                # Обрабатываем api_calls
-                if row['api_calls']:
-                    if isinstance(row['api_calls'], dict):
-                        for key, value in row['api_calls'].items():
-                            combined_api_calls[key] = combined_api_calls.get(key, 0) + value
-                    elif isinstance(row['api_calls'], str):
-                        try:
-                            api_calls_dict = json.loads(row['api_calls'])
-                            for key, value in api_calls_dict.items():
-                                combined_api_calls[key] = combined_api_calls.get(key, 0) + value
-                        except:
-                            pass
-                
-                # Обрабатываем model_usage
-                if row['model_usage']:
-                    if isinstance(row['model_usage'], dict):
-                        for key, value in row['model_usage'].items():
-                            combined_model_usage[key] = combined_model_usage.get(key, 0) + value
-                    elif isinstance(row['model_usage'], str):
-                        try:
-                            model_usage_dict = json.loads(row['model_usage'])
-                            for key, value in model_usage_dict.items():
-                                combined_model_usage[key] = combined_model_usage.get(key, 0) + value
-                        except:
-                            pass
+            # Aggregate model_usage
+            model_usage_result = await db.db_query("""
+                SELECT key, SUM(value::numeric) as total
+                FROM metrics, jsonb_each_text(model_usage)
+                WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY key
+            """)
             
-            self.metrics.api_calls = combined_api_calls
-            self.metrics.model_usage = combined_model_usage
+            self.metrics.model_usage = {row['key']: int(row['total']) for row in model_usage_result}
             
             # Загружаем дневные метрики за последние 7 дней
             daily_result = await db.db_query("""

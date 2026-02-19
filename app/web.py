@@ -14,21 +14,57 @@ from app.tracing import bind_request_span
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
 flask_app = Flask(__name__)
 
+# Security: Add security headers to all responses
+@flask_app.after_request
+def _secure_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    # Strict CSP: No scripts, styles only from self/google fonts, fonts from google
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'none'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:;"
+    )
+    return response
 
-@flask_app.before_request
-def bind_request_context():
-    request_id = request.headers.get('X-Request-ID') or f"web-{int(datetime.datetime.now().timestamp() * 1000)}"
-    set_request_id(request_id)
-    # Contract: request_id is the primary correlation id and trace_id baseline.
-    request._trace_span = bind_request_span(request_id, span_name="web-request")
-    request._trace_span.__enter__()
+@flask_app.after_request
+def add_security_headers(response):
+    """Add security headers to all responses."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+
+    # Content Security Policy (CSP)
+    # Strict policy:
+    # - No scripts allowed (script-src 'none') as the dashboard is pure HTML/CSS
+    # - Styles allowed from self, inline (needed for progress bars), and Google Fonts
+    # - Fonts allowed from self and Google Fonts
+    # - Images allowed from self and data URIs
+    # - No frames allowed
+    csp = (
+        "default-src 'self'; "
+        "script-src 'none'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none';"
+    )
+    response.headers['Content-Security-Policy'] = csp
+    return response
 
 
-@flask_app.teardown_request
-def clear_request_context(_exception):
-    span_ctx = getattr(request, '_trace_span', None)
-    if span_ctx:
-        span_ctx.__exit__(None, None, None)
+@flask_app.after_request
+def add_security_headers(response):
+    """Add security headers to every response."""
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;"
+    return response
+
 
 @flask_app.after_request
 def add_security_headers(response):
@@ -72,6 +108,14 @@ def require_auth(f):
         return f(*args, **kwargs)
 
     return decorated_function
+
+@flask_app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    # Allow inline styles for progress bars and Google Fonts
+    response.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
+    return response
 
 @flask_app.route('/')
 @require_auth
