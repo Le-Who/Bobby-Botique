@@ -1307,9 +1307,22 @@ async def get_user_conversations(user_id: int, limit: int = 10, offset: int = 0)
 
 async def get_conversation_messages(conversation_id: int, user_id: int) -> list:
     try:
-        conv_check = await db_query("SELECT id FROM conversations WHERE id = $1 AND user_id = $2", (conversation_id, user_id))
-        if not conv_check: return None
-        result = await db_query("SELECT role, content, created_at FROM conversation_messages WHERE conversation_id = $1 ORDER BY created_at ASC", (conversation_id,))
+        query = """
+            SELECT cm.role, cm.content, cm.created_at
+            FROM conversations c
+            LEFT JOIN conversation_messages cm ON c.id = cm.conversation_id
+            WHERE c.id = $1 AND c.user_id = $2
+            ORDER BY cm.created_at ASC
+        """
+        result = await db_query(query, (conversation_id, user_id))
+
+        if not result:
+            return None
+
+        # If the conversation exists but has no messages, the left join returns one row with NULLs
+        if result[0]['role'] is None:
+            return []
+
         return [{'role': row['role'], 'content': row['content'], 'created_at': row['created_at']} for row in result]
     except Exception:
         return None
