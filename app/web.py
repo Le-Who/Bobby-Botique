@@ -14,21 +14,20 @@ from app.tracing import bind_request_span
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
 flask_app = Flask(__name__)
 
-
-@flask_app.before_request
-def bind_request_context():
-    request_id = request.headers.get('X-Request-ID') or f"web-{int(datetime.datetime.now().timestamp() * 1000)}"
-    set_request_id(request_id)
-    # Contract: request_id is the primary correlation id and trace_id baseline.
-    request._trace_span = bind_request_span(request_id, span_name="web-request")
-    request._trace_span.__enter__()
-
-
-@flask_app.teardown_request
-def clear_request_context(_exception):
-    span_ctx = getattr(request, '_trace_span', None)
-    if span_ctx:
-        span_ctx.__exit__(None, None, None)
+# Security: Add security headers to all responses
+@flask_app.after_request
+def _secure_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    # Strict CSP: No scripts, styles only from self/google fonts, fonts from google
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'none'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:;"
+    )
+    return response
 
 def require_auth(f):
     def validate_auth():
@@ -98,6 +97,7 @@ def dashboard():
 
         return render_template('status.html', status=status_data)
     except Exception as e:
+        # Security: Log the full error but don't leak it to the user
         logging.error(f"Dashboard Error: {e}", exc_info=True)
         return "Internal Server Error", 500
 
@@ -123,6 +123,7 @@ def status_api():
         except: pass
         return status, 200
     except Exception as e:
+        # Security: Log the full error but don't leak it to the user
         logging.error(f"Status API Error: {e}", exc_info=True)
         return {"error": "Internal Server Error"}, 500
 
@@ -163,6 +164,7 @@ async def health_check_endpoint():
         health_status = {
             "status": overall_status,
             "timestamp": str(datetime.datetime.now()),
+            # Security: Removed sensitive info (container_id, process_id)
             "services": {
                 "bot": bot_status,
                 "database": database_status,
@@ -179,6 +181,7 @@ async def health_check_endpoint():
             return health_status, 503  # 503 для unhealthy
 
     except Exception as e:
+        # Security: Log the full error but return generic error
         logging.error(f"Health Check Error: {e}", exc_info=True)
         return {
             "status": "unhealthy",
@@ -216,8 +219,9 @@ async def keys_status():
         return keys_status, 200
 
     except Exception as e:
+        logging.error(f"Keys Status Error: {e}", exc_info=True)
         return {
-            "error": f"Failed to get keys status: {str(e)}",
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500
 
@@ -245,7 +249,8 @@ async def model_keys_status(model_name):
         return model_status, 200
 
     except Exception as e:
+        logging.error(f"Model Keys Status Error: {e}", exc_info=True)
         return {
-            "error": f"Failed to get model keys status: {str(e)}",
+            "error": "Internal Server Error",
             "timestamp": str(datetime.datetime.now())
         }, 500

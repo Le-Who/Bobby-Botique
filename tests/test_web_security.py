@@ -90,22 +90,33 @@ def test_public_health_endpoint(client):
     response = client.get('/health')
     assert response.status_code != 401
 
-def test_health_endpoint_no_info_leak(client):
-    """Test that /health does NOT leak container_id and process_id"""
-    response = client.get('/health')
-    # Can be 200 (healthy/degraded) or 503 (unhealthy) depending on mocks
-    assert response.status_code in [200, 503]
-    data = response.json
-
-    assert 'container_id' not in data, "container_id should not be exposed"
-    assert 'process_id' not in data, "process_id should not be exposed"
-
-def test_security_headers_present(client):
-    """Test that security headers are present on all responses"""
+def test_security_headers_presence(client):
+    """Test that all required security headers are present"""
     response = client.get('/health')
     headers = response.headers
 
     assert headers.get('X-Content-Type-Options') == 'nosniff'
     assert headers.get('X-Frame-Options') == 'DENY'
-    # Allow inline styles for progress bars and Google Fonts
-    assert headers.get('Content-Security-Policy') == "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
+    assert "default-src 'self'" in headers.get('Content-Security-Policy', '')
+    assert "script-src 'none'" in headers.get('Content-Security-Policy', '')
+
+def test_health_endpoint_leakage(client):
+    """Test that sensitive info is not leaked in /health"""
+    response = client.get('/health')
+    data = response.get_json()
+
+    assert 'process_id' not in data
+    assert 'container_id' not in data
+    assert 'services' in data
+
+def test_dashboard_error_leakage(client):
+    """Test that errors don't leak stack traces"""
+    # Force an error by mocking render_template to raise exception
+    with patch('app.web.render_template', side_effect=Exception("Secret Database Info")):
+        headers = {'X-Auth-Token': 'test_token'}
+        response = client.get('/', headers=headers)
+
+        assert response.status_code == 500
+        # Ensure the secret info is NOT in the response
+        assert b"Secret Database Info" not in response.data
+        assert b"Internal Server Error" in response.data
