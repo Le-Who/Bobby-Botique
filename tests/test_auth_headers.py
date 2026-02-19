@@ -16,6 +16,7 @@ sys.modules['telegram.ext'] = MagicMock()
 sys.modules['telegram.error'] = MagicMock()
 sys.modules['hypercorn.config'] = MagicMock()
 sys.modules['hypercorn.asyncio'] = MagicMock()
+sys.modules['pytz'] = MagicMock()
 
 # Mock app.database
 mock_db = MagicMock()
