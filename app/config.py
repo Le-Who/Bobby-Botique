@@ -106,6 +106,7 @@ class Settings(BaseModel):
     """
     # --- CORE ---
     TELEGRAM_BOT_TOKEN: str
+    ADMIN_SECRET: Optional[str] = None
     GEMINI_API_KEYS: List[str]
     TAVILY_API_KEYS: List[str]
     OPENROUTER_API_KEYS: List[str] = []  # Опционально, по умолчанию пустой список
@@ -262,6 +263,7 @@ def load_settings() -> Settings:
         # Manually load all values from the environment.
         raw_settings = {
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
+            "ADMIN_SECRET": os.getenv("ADMIN_SECRET"),
             "DATABASE_URL": os.getenv("DATABASE_URL"),
             "ADMIN_ID": _load_int_env("ADMIN_ID"),
             "PORT": os.getenv("PORT", "10000"), # Provide a default for PORT

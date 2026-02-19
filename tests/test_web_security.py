@@ -17,6 +17,7 @@ sys.modules['telegram.ext'] = MagicMock()
 sys.modules['telegram.error'] = MagicMock()
 sys.modules['hypercorn.config'] = MagicMock()
 sys.modules['hypercorn.asyncio'] = MagicMock()
+sys.modules['pytz'] = MagicMock()
 
 # Mock psutil with return values
 mock_psutil = MagicMock()
@@ -36,7 +37,8 @@ sys.modules['app.database'] = mock_db
 @pytest.fixture
 def mock_settings():
     with patch('app.config.settings') as mock:
-        mock.TELEGRAM_BOT_TOKEN = "test_token"
+        mock.TELEGRAM_BOT_TOKEN = "bot_token"
+        mock.ADMIN_SECRET = "test_token"
         mock.ADMIN_ID = 123
         mock.DAILY_LIMITS = {}
         mock.PORT = 5000
