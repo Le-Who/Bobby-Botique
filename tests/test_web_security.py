@@ -18,6 +18,13 @@ sys.modules['telegram.error'] = MagicMock()
 sys.modules['hypercorn.config'] = MagicMock()
 sys.modules['hypercorn.asyncio'] = MagicMock()
 
+# Mock psutil with return values
+mock_psutil = MagicMock()
+mock_psutil.cpu_percent.return_value = 10.0
+mock_psutil.virtual_memory.return_value.percent = 20.0
+mock_psutil.disk_usage.return_value.percent = 30.0
+sys.modules['psutil'] = mock_psutil
+
 # Mock app.database
 mock_db = MagicMock()
 mock_db.db_pool = None

@@ -8,12 +8,12 @@ This module provides:
 - Common validation, retry logic, and error handling
 """
 import logging
-import asyncio
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple, List, Dict, Any
 from dataclasses import dataclass
 
 from app.errors import user_friendly_error
+from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
 
 @dataclass
@@ -77,36 +77,30 @@ class BaseAIProvider(ABC):
         # Validate inputs
         self._validate_inputs(history, model_name, user_id, chat_id)
         
-        # Retry loop for transient errors
+        policy = ResiliencePolicy(max_retries=max_retries, timeout_s=timeout)
         last_error = None
-        for attempt in range(max_retries):
-            try:
-                return await self._execute_request(
-                    history=history,
-                    model_name=model_name,
-                    system_instruction=system_instruction,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    timeout=timeout
-                )
-            except Exception as e:
-                last_error = e
-                error_text = str(e).lower()
-                
-                # Check if retryable
-                if self._is_transient_error(error_text) and attempt < max_retries - 1:
-                    wait_time = min(2 ** (attempt + 1), 10)
-                    logging.warning(
-                        f"{self.provider_name} API transient error (attempt {attempt + 1}/{max_retries}). "
-                        f"Retrying in {wait_time}s..."
-                    )
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    # Non-retryable or exhausted retries
-                    break
-        
-        # Return error response
+
+        async def _operation() -> AIResponse:
+            return await self._execute_request(
+                history=history,
+                model_name=model_name,
+                system_instruction=system_instruction,
+                user_id=user_id,
+                chat_id=chat_id,
+                timeout=timeout,
+            )
+
+        try:
+            response, _ = await run_with_resilience(
+                _operation,
+                policy,
+                circuit_name=f"ai_provider:{self.provider_name}",
+                is_retryable=lambda e: self._is_transient_error(str(e)),
+            )
+            return response
+        except Exception as e:
+            last_error = e
+
         error_msg = user_friendly_error(last_error) if last_error else "Unknown error"
         return AIResponse(
             text=error_msg,

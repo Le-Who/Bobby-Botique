@@ -19,6 +19,11 @@ from app.handlers import menus
 from app.document_processor import get_user_documents, delete_user_document, get_document_by_id
 from app.state import clear_document_state, set_document_mode, get_selected_document_id
 from app.utils.keyboards import build_keyboard, back_button, cancel_button, confirm_cancel_row
+from app.request_context import set_request_id
+
+# Лимитер для тяжёлых callback-веток (complex/fallback/deepdive и т.п.)
+_HEAVY_CALLBACK_LIMIT = max(1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_CALLBACKS", 4)))
+_HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore(_HEAVY_CALLBACK_LIMIT)
 
 class DummyUpdate:
     """Helper class to mock an Update object for calling commands from callbacks."""
@@ -99,6 +104,7 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     await query.answer()
     
     action = query.data.split(':')[1]
@@ -120,7 +126,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
         return
 
     user_id = original_message.from_user.id
-    user_lock = state.USER_LOCKS[user_id]
+    user_lock = state.get_user_lock(user_id)
 
     if user_lock.locked():
         return
@@ -141,14 +147,16 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     # 3. Если задача определена, запускаем ее в фоне под блокировкой.
     if task_to_run:
         async def task_wrapper():
-            async with user_lock:
-                await task_to_run
+            async with _HEAVY_CALLBACK_SEMAPHORE:
+                async with user_lock:
+                    await task_to_run
         
         asyncio.create_task(task_wrapper())
 
 
 async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     await query.answer()
 
     _, action, model_override = query.data.split(':')
@@ -170,17 +178,18 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     user_id = original_message.from_user.id
-    user_lock = state.USER_LOCKS[user_id]
+    user_lock = state.get_user_lock(user_id)
 
     if user_lock.locked():
         return
 
     async def task_wrapper():
-        async with user_lock:
-            if action == "confirm":
-                chat_state = await db.get_user_chat(user_id)
-                user_message = original_message.text
-                await agent._handle_regular_chat(placeholder_message, user_id, user_message, chat_state, model_override=model_override)
+        async with _HEAVY_CALLBACK_SEMAPHORE:
+            async with user_lock:
+                if action == "confirm":
+                    chat_state = await db.get_user_chat(user_id)
+                    user_message = original_message.text
+                    await agent._handle_regular_chat(placeholder_message, user_id, user_message, chat_state, model_override=model_override)
 
     asyncio.create_task(task_wrapper())
 
@@ -556,16 +565,29 @@ async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_T
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
     await query.answer(f"Поиск {status_text}")
 
+def _add_fast_callback(application: Application, callback, pattern: str):
+   """Register lightweight UI callbacks in non-blocking mode."""
+   application.add_handler(CallbackQueryHandler(callback, pattern=pattern, block=False), group=-1)
+
+
 def register(application: Application):
-   # Новые кнопки меню
-   application.add_handler(CallbackQueryHandler(toggle_search_callback, pattern="^toggle_search$"))
-   application.add_handler(CallbackQueryHandler(new_chat_callback, pattern="^new_chat$"))
-   application.add_handler(CallbackQueryHandler(model_menu_callback, pattern="^model_menu$"))
-   application.add_handler(CallbackQueryHandler(help_callback, pattern="^help$"))
-   application.add_handler(CallbackQueryHandler(start_menu_callback, pattern="^start_menu$"))
+   # Быстрый канал для UI-настроек: callback выполняется без блокировки update loop.
+   _add_fast_callback(application, toggle_search_callback, "^toggle_search$")
+   _add_fast_callback(application, new_chat_callback, "^new_chat$")
+   _add_fast_callback(application, model_menu_callback, "^model_menu$")
+   _add_fast_callback(application, help_callback, "^help$")
+   _add_fast_callback(application, start_menu_callback, "^start_menu$")
+   _add_fast_callback(application, model_button_callback, "^model")
+   _add_fast_callback(application, open_roles_callback, "^open_roles$")
+   _add_fast_callback(application, role_apply_callback, "^role_apply:")
+   _add_fast_callback(application, role_clear_callback, "^role_clear$")
+   _add_fast_callback(application, role_nav_callback, "^role_nav:")
+   _add_fast_callback(application, role_page_callback, "^role_page:")
+   _add_fast_callback(application, conv_page_callback, "^conv_page:")
+   _add_fast_callback(application, conv_switch_callback, "^conv_switch$")
+   _add_fast_callback(application, conv_switch_to_callback, "^conv_switch_to:")
 
    # Обрабатываем оба формата: model:0 (новый) и model_none (разделитель)
-   application.add_handler(CallbackQueryHandler(model_button_callback, pattern="^model"))
    application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
    application.add_handler(CallbackQueryHandler(fallback_callback, pattern="^fallback:"))
    application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
@@ -573,14 +595,10 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))
    application.add_handler(CallbackQueryHandler(retry_last_callback, pattern="^retry_last$"))
    # Роль: apply/clear/create
-   application.add_handler(CallbackQueryHandler(role_apply_callback, pattern="^role_apply:"))
-   application.add_handler(CallbackQueryHandler(role_clear_callback, pattern="^role_clear$"))
    application.add_handler(CallbackQueryHandler(role_create_callback, pattern="^role_create$"))
    application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
    application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
    application.add_handler(CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$"))
-   application.add_handler(CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$"))
-   application.add_handler(CallbackQueryHandler(open_roles_callback, pattern="^open_roles$"))
    # New Role management
    application.add_handler(CallbackQueryHandler(role_detail_callback, pattern="^role_detail:"))
    application.add_handler(CallbackQueryHandler(role_view_prompt_callback, pattern="^role_view_prompt:"))
@@ -592,14 +610,9 @@ def register(application: Application):
    application.add_handler(CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:"))
     
    # Role Navigation (New)
-   application.add_handler(CallbackQueryHandler(role_nav_callback, pattern="^role_nav:"))
-   application.add_handler(CallbackQueryHandler(role_page_callback, pattern="^role_page:"))
    application.add_handler(CallbackQueryHandler(lambda u,c: u.callback_query.answer(), pattern="^noop$"))
 
    # Conversation management callbacks
-   application.add_handler(CallbackQueryHandler(conv_page_callback, pattern="^conv_page:"))
-   application.add_handler(CallbackQueryHandler(conv_switch_callback, pattern="^conv_switch$"))
-   application.add_handler(CallbackQueryHandler(conv_switch_to_callback, pattern="^conv_switch_to:"))
    application.add_handler(CallbackQueryHandler(conv_rename_callback, pattern="^conv_rename$"))
    application.add_handler(CallbackQueryHandler(conv_rename_ask_callback, pattern="^conv_rename_ask:"))
    application.add_handler(CallbackQueryHandler(conv_rename_cancel_callback, pattern="^conv_rename_cancel$"))

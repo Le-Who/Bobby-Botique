@@ -23,26 +23,41 @@ class UserState:
 # Хранилище состояний пользователей
 USER_STATES: Dict[int, UserState] = defaultdict(UserState)
 
-# Хранилище блокировок пользователей (для обратной совместимости)
-USER_LOCKS: Dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+class _UserLocksProxy:
+    """Совместимость со старым доступом state.USER_LOCKS[user_id]."""
+
+    def __getitem__(self, user_id: int) -> asyncio.Lock:
+        return get_user_state(user_id).lock
+
+
+# Legacy alias for compatibility with old imports.
+# IMPORTANT: this must remain the single source of truth from USER_STATES
+# (do not introduce an independent lock storage again).
+USER_LOCKS = _UserLocksProxy()
+
 
 def get_user_state(user_id: int) -> UserState:
     """Получает комплексное состояние пользователя"""
     return USER_STATES[user_id]
 
+
 def get_user_lock(user_id: int) -> asyncio.Lock:
     """Получает блокировку для пользователя"""
     return get_user_state(user_id).lock
 
+
 def get_user_locks(user_id: int) -> asyncio.Lock:
     """Получает блокировку для пользователя (для обратной совместимости)"""
-    return USER_LOCKS[user_id]
+    return get_user_state(user_id).lock
+
 
 def set_document_mode(user_id: int, enabled: bool, document_id: Optional[int] = None):
     """Устанавливает режим работы с документами для пользователя"""
     state = get_user_state(user_id)
     state.document_mode = enabled
     state.selected_document_id = document_id if enabled else None
+
 
 def clear_document_state(user_id: int):
     """Очищает состояние работы с документами для пользователя"""
@@ -51,6 +66,7 @@ def clear_document_state(user_id: int):
     state.selected_document_id = None
     state.last_document_message_id = None
 
+
 def begin_custom_role_creation(user_id: int):
     state = get_user_state(user_id)
     state.awaiting_custom_role_input = True
@@ -58,10 +74,12 @@ def begin_custom_role_creation(user_id: int):
     state.last_custom_role_prompt = None
     state.generating_custom_role = False
 
+
 def set_generated_role(user_id: int, role: dict):
     state = get_user_state(user_id)
     state.generated_role = role
     state.awaiting_custom_role_input = False
+
 
 def clear_custom_role_state(user_id: int):
     state = get_user_state(user_id)
@@ -70,26 +88,33 @@ def clear_custom_role_state(user_id: int):
     state.last_custom_role_prompt = None
     state.generating_custom_role = False
 
+
 def set_last_custom_role_prompt(user_id: int, prompt: str):
     state = get_user_state(user_id)
     state.last_custom_role_prompt = prompt
 
+
 def get_last_custom_role_prompt(user_id: int) -> Optional[str]:
     return get_user_state(user_id).last_custom_role_prompt
+
 
 def set_generating_custom_role(user_id: int, value: bool):
     state = get_user_state(user_id)
     state.generating_custom_role = value
 
+
 def is_awaiting_custom_role_input(user_id: int) -> bool:
     return get_user_state(user_id).awaiting_custom_role_input
+
 
 def get_generated_role(user_id: int) -> Optional[dict]:
     return get_user_state(user_id).generated_role
 
+
 def is_in_document_mode(user_id: int) -> bool:
     """Проверяет, находится ли пользователь в режиме работы с документами"""
     return get_user_state(user_id).document_mode
+
 
 def get_selected_document_id(user_id: int) -> Optional[int]:
     """Получает ID выбранного документа пользователя"""

@@ -187,23 +187,22 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> List[str
         
         # Check tag balance
         # If open tags > close tags, we need to close them in this chunk and open in next
-        # Implementation of tag balancing is complex. 
-        # For this version, we assume splits at </pre> or \n are mostly safe.
-        # If we split inside <pre>, formatting breaks.
-        # IMPROVEMENT: Basic tag stack check
+        # Optimized: store full match in stack to avoid re-searching with regex
         
         open_tags = []
         # Find all tags in chunk
         tag_iter = re.finditer(r'<(/?)(\w+)[^>]*>', chunk)
         for match in tag_iter:
             is_close = match.group(1) == '/'
-            tag = match.group(2)
-            if tag in ['br', 'img', 'hr']: continue # Void tags
+            tag_name = match.group(2)
+            full_match = match.group(0)
+
+            if tag_name in ['br', 'img', 'hr']: continue # Void tags
             
             if not is_close:
-                open_tags.append(tag)
+                open_tags.append((tag_name, full_match))
             else:
-                if open_tags and open_tags[-1] == tag:
+                if open_tags and open_tags[-1][0] == tag_name:
                     open_tags.pop()
                     
         # If open_tags is not empty, append closing tags to chunk
@@ -211,22 +210,9 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> List[str
         closing_str = ""
         opening_str = ""
         
-        for tag in reversed(open_tags):
-            closing_str += f"</{tag}>"
-            opening_str = f"<{tag}>" + opening_str # Simple reconstruction (loses attributes like class="language-python")
-            # To fix losing attributes, we would need to store the full tag structure.
-            # For <pre><code class="..."> this is critical.
-            
-            # Simple fix for code blocks:
-            if tag == 'code' or tag == 'pre':
-                 # Find the original opening tag to copy attributes?
-                 # This regex finds the last opening tag of this type
-                 last_open = re.search(f'<{tag}[^>]*>', chunk) # This finds FIRST, we need LAST.
-                 # Using rfind logic on string is risky.
-                 # Let's rely on re.findall
-                 all_opens = re.findall(f'(<{tag}[^>]*>)', chunk)
-                 if all_opens:
-                     opening_str = all_opens[-1] + opening_str.replace(f"<{tag}>", "") # Replace generic with specific
+        for tag_name, full_match in reversed(open_tags):
+            closing_str += f"</{tag_name}>"
+            opening_str = full_match + opening_str
         
         chunk += closing_str
         if remaining:

@@ -1,11 +1,15 @@
 import os
 import hmac
+import asyncio
+import inspect
 import datetime
 import logging
 from functools import wraps
 from flask import Flask, render_template, request, abort
 from app import database
 from app.config import settings
+from app.request_context import set_request_id
+from app.tracing import bind_request_span
 
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
 flask_app = Flask(__name__)
@@ -26,8 +30,7 @@ def _secure_headers(response):
     return response
 
 def require_auth(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
+    def validate_auth():
         # Security: Only allow token via header to prevent leakage in logs/history
         token = request.headers.get('X-Auth-Token')
 
@@ -37,15 +40,35 @@ def require_auth(f):
             expected_secret = settings.TELEGRAM_BOT_TOKEN
 
         if not expected_secret:
-             logging.error("No authentication secret configured for web endpoints.")
-             abort(500, description="Server misconfiguration: Authentication secret not set.")
+            logging.error("No authentication secret configured for web endpoints.")
+            abort(500, description="Server misconfiguration: Authentication secret not set.")
 
         # Use constant-time comparison to prevent timing attacks
         if not token or not hmac.compare_digest(token, expected_secret):
             abort(401, description="Unauthorized: Invalid or missing token. Use 'X-Auth-Token' header.")
 
+    if inspect.iscoroutinefunction(f):
+        @wraps(f)
+        async def decorated_function(*args, **kwargs):
+            validate_auth()
+            return await f(*args, **kwargs)
+
+        return decorated_function
+
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        validate_auth()
         return f(*args, **kwargs)
+
     return decorated_function
+
+@flask_app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    # Allow inline styles for progress bars and Google Fonts
+    response.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com"
+    return response
 
 @flask_app.route('/')
 @require_auth
@@ -55,7 +78,7 @@ def dashboard():
         # Collect Status Data
         status_data = {
             "bot": "running",
-            "database": "connected" if database.db_pool else "disconnected",
+            "database": "connected" if database.is_database_connected() else "disconnected",
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "version": "2.1.0",
             "environment": os.getenv("ENVIRONMENT", "production")
@@ -86,7 +109,7 @@ def status_api():
         # Reusing logic for JSON response...
         status = {
             "bot": "running",
-            "database": "connected" if database.db_pool else "disconnected",
+            "database": "connected" if database.is_database_connected() else "disconnected",
             "timestamp": str(datetime.datetime.now()),
             "system": {}
         }
@@ -106,34 +129,25 @@ def status_api():
 
 
 @flask_app.route('/health')
-def health_check_endpoint():
+async def health_check_endpoint():
     """Health check endpoint для мониторинга"""
     try:
         # Проверяем основные компоненты
         bot_status = "running"
-        database_status = "connected" if database.db_pool and not database.db_pool._closed else "disconnected"
+        database_status = "connected" if database.is_database_connected() else "disconnected"
 
         # Проверяем Redis статус
         try:
             from app.cache import redis_client
             if redis_client:
-                # Используем asyncio.to_thread для безопасной проверки Redis
-                import asyncio
                 try:
-                    # Создаем временный event loop для проверки Redis
-                    temp_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(temp_loop)
-                    temp_loop.run_until_complete(asyncio.wait_for(
+                    await asyncio.wait_for(
                         asyncio.to_thread(redis_client.ping),
                         timeout=3.0
-                    ))
-                    temp_loop.close()
+                    )
                     redis_status = "connected"
                 except Exception:
                     redis_status = "disconnected"
-                finally:
-                    if temp_loop and not temp_loop.is_closed():
-                        temp_loop.close()
             else:
                 redis_status = "not_configured"
         except Exception:
@@ -177,41 +191,32 @@ def health_check_endpoint():
 
 @flask_app.route('/keys')
 @require_auth
-def keys_status():
+async def keys_status():
     """Endpoint для просмотра статуса ключей Gemini API"""
     try:
-        import asyncio
         from app import database
 
-        # Создаем новый event loop для асинхронных операций
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Получаем статистику ключей
+        key_stats = await database.get_gemini_key_usage_stats()
 
-        try:
-            # Получаем статистику ключей
-            key_stats = loop.run_until_complete(database.get_gemini_key_usage_stats())
+        # Получаем информацию об активных ключах
+        active_keys = {}
+        for model in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]:
+            active_info = await database.get_active_key_info(model)
+            if active_info:
+                active_keys[model] = active_info
 
-            # Получаем информацию об активных ключах
-            active_keys = {}
-            for model in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]:
-                active_info = loop.run_until_complete(database.get_active_key_info(model))
-                if active_info:
-                    active_keys[model] = active_info
-
-            keys_status = {
-                "timestamp": str(datetime.datetime.now()),
-                "active_keys": active_keys,
-                "key_usage_stats": key_stats,
-                "cache_info": {
-                    "cache_ttl_seconds": 300,
-                    "models_cached": list(active_keys.keys())
-                }
+        keys_status = {
+            "timestamp": str(datetime.datetime.now()),
+            "active_keys": active_keys,
+            "key_usage_stats": key_stats,
+            "cache_info": {
+                "cache_ttl_seconds": 300,
+                "models_cached": list(active_keys.keys())
             }
+        }
 
-            return keys_status, 200
-
-        finally:
-            loop.close()
+        return keys_status, 200
 
     except Exception as e:
         logging.error(f"Keys Status Error: {e}", exc_info=True)
@@ -222,35 +227,26 @@ def keys_status():
 
 @flask_app.route('/keys/<model_name>')
 @require_auth
-def model_keys_status(model_name):
+async def model_keys_status(model_name):
     """Endpoint для просмотра статуса ключей конкретной модели"""
     try:
-        import asyncio
         from app import database
 
-        # Создаем новый event loop для асинхронных операций
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Получаем статистику ключей для конкретной модели
+        key_stats = await database.get_gemini_key_usage_stats(model_name)
 
-        try:
-            # Получаем статистику ключей для конкретной модели
-            key_stats = loop.run_until_complete(database.get_gemini_key_usage_stats(model_name))
+        # Получаем информацию об активном ключе
+        active_info = await database.get_active_key_info(model_name)
 
-            # Получаем информацию об активном ключе
-            active_info = loop.run_until_complete(database.get_active_key_info(model_name))
+        model_status = {
+            "model": model_name,
+            "timestamp": str(datetime.datetime.now()),
+            "active_key": active_info,
+            "all_keys": key_stats,
+            "daily_limit": settings.DAILY_LIMITS.get(model_name, "unlimited")
+        }
 
-            model_status = {
-                "model": model_name,
-                "timestamp": str(datetime.datetime.now()),
-                "active_key": active_info,
-                "all_keys": key_stats,
-                "daily_limit": settings.DAILY_LIMITS.get(model_name, "unlimited")
-            }
-
-            return model_status, 200
-
-        finally:
-            loop.close()
+        return model_status, 200
 
     except Exception as e:
         logging.error(f"Model Keys Status Error: {e}", exc_info=True)

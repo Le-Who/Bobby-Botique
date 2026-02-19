@@ -15,6 +15,7 @@ from app.config import settings
 from app import database
 from app.metrics import metrics_collector
 from app.cache import get_cached_search_result, cache_search_result
+from app.request_context import get_request_id
 from app.utils.network import NetworkErrorHandler
 from app.utils.api_logger import api_logger
 
@@ -136,7 +137,13 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
             chat_id=chat_id
         )
         
-        client = genai.Client(api_key=api_key)
+        request_id = get_request_id()
+        client_kwargs = {"api_key": api_key}
+        if request_id:
+            # google-genai SDK supports custom transport headers via http_options.
+            client_kwargs["http_options"] = types.HttpOptions(headers={"X-Request-ID": request_id})
+
+        client = genai.Client(**client_kwargs)
         
         # Преобразуем историю в формат types.Content
         contents = []
@@ -395,7 +402,12 @@ async def _execute_gemini_request(api_key: str, history: list, model_name: str, 
 async def _tavily_api_call(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Internal function for making Tavily API calls with retry logic."""
     try:
-        response = await http_client.post("https://api.tavily.com/search", json=payload)
+        headers = {}
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
+
+        response = await http_client.post("https://api.tavily.com/search", json=payload, headers=headers or None)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -679,6 +691,9 @@ async def _execute_openrouter_request(api_key: str, history: list, model_name: s
             "HTTP-Referer": "https://github.com/your-repo",  # Опционально, для аналитики
             "X-Title": "GeminiBot v2"  # Опционально, для аналитики
         }
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
         
         payload = {
             "model": model_name,

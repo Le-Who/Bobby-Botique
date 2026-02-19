@@ -17,6 +17,12 @@ from app.handlers import agent
 from app.state import is_awaiting_custom_role_input, set_generated_role, clear_custom_role_state, set_last_custom_role_prompt, set_generating_custom_role
 from app.security import check_user_rate_limit
 from app.handlers import menus
+from app.request_context import set_request_id
+from app.tracing import bind_request_span
+
+# Глобальный лимитер для тяжёлых AI-задач, чтобы избежать перегрузки event loop/провайдеров
+_HEAVY_REQUEST_LIMIT = max(1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_REQUESTS", 4)))
+_HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore(_HEAVY_REQUEST_LIMIT)
 
 # Глобальный словарь для хранения групп изображений
 MEDIA_GROUPS = {}
@@ -280,31 +286,35 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
-    
-    # Валидация user_id
-    if not isinstance(user_id, int) or user_id <= 0:
-        logging.error("Invalid user_id: %s", user_id)
-        return
-    
-    # Обрабатываем медиа-группы
-    if await _process_media_group_update(update, context, user_id, chat_id):
-        return
+    request_id = set_request_id(f"tgmsg-{chat_id}-{getattr(update, 'update_id', 'na')}")
 
-    # Детальное логирование Telegram API запроса
-    message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
-    start_time = api_logger.log_telegram_request(
-        method="handle_message",
-        chat_id=chat_id,
-        user_id=user_id,
-        message_type=message_type
-    )
+    # Correlation contract: request_id is propagated as trace_id baseline.
+    with bind_request_span(request_id, span_name="telegram-message"):
+        # Валидация user_id
+        if not isinstance(user_id, int) or user_id <= 0:
+            logging.error("Invalid user_id: %s", user_id)
+            return
+
+        # Обрабатываем медиа-группы
+        if await _process_media_group_update(update, context, user_id, chat_id):
+            return
+
+        # Детальное логирование Telegram API запроса
+        message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
+        start_time = api_logger.log_telegram_request(
+            method="handle_message",
+            chat_id=chat_id,
+            user_id=user_id,
+            message_type=message_type
+        )
+        
+        # Валидация текста сообщения
+        message_text = update.message.text if update.message and update.message.text else 'No text'
+        if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
+            logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
+            await update.message.reply_text("❌ Сообщение слишком длинное. Максимум 4096 символов.")
+            return
     
-    # Валидация текста сообщения
-    message_text = update.message.text if update.message and update.message.text else 'No text'
-    if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
-        logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
-        await update.message.reply_text("❌ Сообщение слишком длинное. Максимум 4096 символов.")
-        return
     
     logging.info("Received message from user %s: %s", user_id, message_text[:100])
     
@@ -363,18 +373,19 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Обычная обработка сообщений
     async def task_wrapper():
         try:
-            async with state.get_user_lock(user_id):
-                logging.info("Starting task processing for user %s", user_id)
-                
-                # Восстанавливаем обработку через agent
-                try:
-                    from app.handlers.agent import process_long_request
-                    await process_long_request(placeholder_message, update, context)
-                except ImportError:
-                    # Fallback если agent недоступен
-                    await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
+            async with _HEAVY_REQUEST_SEMAPHORE:
+                async with state.get_user_lock(user_id):
+                    logging.info("Starting task processing for user %s", user_id)
                     
-                logging.info("Completed task processing for user %s", user_id)
+                    # Восстанавливаем обработку через agent
+                    try:
+                        from app.handlers.agent import process_long_request
+                        await process_long_request(placeholder_message, update, context)
+                    except ImportError:
+                        # Fallback если agent недоступен
+                        await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
+                        
+                    logging.info("Completed task processing for user %s", user_id)
                 
                 # Логируем успешный ответ Telegram API
                 api_logger.log_telegram_response(
@@ -488,17 +499,18 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
         return
     
     try:
-        async with state.get_user_lock(user_id):
-            # Создаем мок Update для совместимости с существующим кодом
-            mock_update = type('MockUpdate', (), {
-                'message': messages[0],  # Используем первое сообщение как основное
-                'effective_user': messages[0].from_user,
-                'effective_chat': messages[0].chat
-            })()
-            
-            # Обрабатываем группу через agent
-            from app.handlers.agent import process_media_group_request
-            await process_media_group_request(placeholder_message, mock_update, context, messages, caption)
+        async with _HEAVY_REQUEST_SEMAPHORE:
+            async with state.get_user_lock(user_id):
+                # Создаем мок Update для совместимости с существующим кодом
+                mock_update = type('MockUpdate', (), {
+                    'message': messages[0],  # Используем первое сообщение как основное
+                    'effective_user': messages[0].from_user,
+                    'effective_chat': messages[0].chat
+                })()
+                
+                # Обрабатываем группу через agent
+                from app.handlers.agent import process_media_group_request
+                await process_media_group_request(placeholder_message, mock_update, context, messages, caption)
             
     except Exception as e:
         logging.error(f"Error processing media group {media_group_id}: {e}", exc_info=True)

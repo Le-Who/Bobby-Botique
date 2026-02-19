@@ -37,11 +37,13 @@ class DatabaseManager:
             cls._instance._user_auth_cache = {}
             cls._instance._user_auth_last_updated = {}
             cls._instance._auth_cache_ttl = 300 # 5 minutes
+            cls._instance._monitor_task = None
+            cls._instance._cleanup_cache_task = None
         return cls._instance
 
     @property
     def is_connected(self):
-        return self.pool and not self.pool._closed
+        return bool(self.pool and not self.pool._closed)
 
     async def create_pool(self):
         """Создает пул соединений с базой данных"""
@@ -68,7 +70,11 @@ class DatabaseManager:
             db_pool = self.pool
             
             if self.pool and not self.pool._closed:
-                self._monitor_task = asyncio.create_task(self.monitor_connection_pool())
+                self._monitor_task = self._start_background_task(
+                    self._monitor_task,
+                    self.monitor_connection_pool,
+                    "database pool monitor",
+                )
                 logging.info("Database pool monitoring started")
                 return self.pool
         except Exception as e:
@@ -83,22 +89,18 @@ class DatabaseManager:
                 raise Exception(f"Database initialization failed: {e}")
 
     async def close(self):
-        # Cancel monitoring task
-        if hasattr(self, '_monitor_task') and self._monitor_task:
-            self._monitor_task.cancel()
-            try:
-                await self._monitor_task
-            except asyncio.CancelledError:
-                pass
-            self._monitor_task = None
+        # Cancel background tasks
+        await self._cancel_background_task("_monitor_task")
+        await self._cancel_background_task("_cleanup_cache_task")
 
         if self.pool:
             await self.pool.close()
+            self.pool = None
             logging.info("Database pool closed")
 
             # Sync global variable
             global db_pool
-            db_pool = self.pool
+            db_pool = None
 
     async def reconnect(self):
         logging.info("Attempting to reconnect to database...")
@@ -108,6 +110,36 @@ class DatabaseManager:
         await self.create_pool()
         logging.info("Database reconnected successfully")
         return True
+
+    def _start_background_task(self, task_ref, coro_factory, task_name: str):
+        """Запускает фоновую задачу с защитой от повторного старта."""
+        if task_ref and not task_ref.done():
+            logging.debug("Background task '%s' already running", task_name)
+            return task_ref
+
+        return asyncio.create_task(coro_factory())
+
+    async def _cancel_background_task(self, attr_name: str):
+        """Отменяет и ожидает завершение фоновой задачи по имени атрибута."""
+        task = getattr(self, attr_name, None)
+        if not task:
+            return
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        setattr(self, attr_name, None)
+
+    async def start_cleanup_task(self):
+        """Запускает задачу очистки кэша, если она еще не запущена."""
+        self._cleanup_cache_task = self._start_background_task(
+            self._cleanup_cache_task,
+            self.cleanup_expired_cache,
+            "database cache cleanup",
+        )
 
     async def monitor_connection_pool(self):
         while True:
@@ -315,6 +347,11 @@ async def check_database_health():
     except Exception:
         return False
 
+
+def is_database_connected() -> bool:
+    """Synchronous database connectivity check for web/status endpoints."""
+    return bool(db_pool and not db_pool._closed)
+
 async def ensure_database_connection():
     if not await check_database_health():
         try:
@@ -346,7 +383,7 @@ async def init_db():
     await _init_schema()
     
     # Start cache cleanup
-    asyncio.create_task(db_manager.cleanup_expired_cache())
+    await db_manager.start_cleanup_task()
 
 async def _init_schema():
     await db_query("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)")
