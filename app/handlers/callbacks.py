@@ -642,32 +642,22 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
    key = query.data.split(":", 1)[1]
    role_title = ""
    
-   # Проверяем, это кастомная роль пользователя
-   if key.startswith("user_role:"):
-       role_id = int(key.split(":")[1])
-       role_data = await db.db_query("SELECT title, prompt FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
-       if not role_data:
-           await query.answer("❌ Кастомная роль не найдена.")
-           return
-       role = role_data[0]
-       # Проверяем, что роль содержит корректный промпт
-       if not role.get('prompt'):
-           await query.answer("❌ Кастомная роль содержит некорректный промпт.")
-           return
+   # Получаем данные роли через хелпер
+   role_data = await db.get_role_data(key, user_id)
 
-       chat_state.system_prompt = role['prompt']
-       role_title = role['title']
-       await role_conv_metrics.record_role_application(f"user_role:{role_id}")
-   else:
-       # Предустановленная роль
-       meta = prompts.DEFAULT_ROLES.get(key)
-       if not meta:
-           await query.answer("❌ Роль не найдена.")
-           return
+   if not role_data:
+       await query.answer("❌ Роль не найдена.")
+       return
 
-       chat_state.system_prompt = meta.get("prompt")
-       role_title = meta.get("title", key)
-       await role_conv_metrics.record_role_application(key)
+   if not role_data.get('prompt'):
+       await query.answer("❌ Выбранная роль содержит некорректный промпт.")
+       return
+
+   chat_state.system_prompt = role_data['prompt']
+   role_title = role_data['title']
+
+   # Записываем метрику (используем key для консистентности)
+   await role_conv_metrics.record_role_application(role_data['key'])
 
    # Сохраняем состояние
    await db.update_user_chat(user_id, chat_state)
@@ -912,21 +902,9 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
     role_key = query.data.split(":", 1)[1]
     user_id = query.from_user.id
     
-    # Need to fetch role data again to get prompt
-    prompt = ""
-    # Code duplication avoidance: ideally extract "get_role_prompt(key, uid)" helper.
-    # For now, minimal inline logic is fine.
-    
-    if role_key.startswith("user_role:"):
-        try:
-            r_id = int(role_key.split(":")[1])
-            res = await db.db_query("SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2", (r_id, user_id))
-            if res:
-                prompt = res[0]['prompt']
-        except:
-            pass
-    elif role_key in prompts.DEFAULT_ROLES:
-        prompt = prompts.DEFAULT_ROLES[role_key].get('prompt', '')
+    # Fetch role data using helper
+    role_data = await db.get_role_data(role_key, user_id)
+    prompt = role_data.get('prompt') if role_data else ""
         
     if prompt:
         # Send as a new message so user can copy it easily
