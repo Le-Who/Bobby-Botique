@@ -1,6 +1,7 @@
 
 import pytest
 import sys
+import os
 from unittest.mock import MagicMock, patch
 
 # Mock dependencies globally before any import
@@ -23,15 +24,11 @@ sys.modules['app.database'] = mock_db
 
 @pytest.fixture
 def client():
-    # Mock settings before importing web
-    with patch('app.config.settings') as mock_settings:
-        mock_settings.TELEGRAM_BOT_TOKEN = "test_token"
-        mock_settings.ADMIN_ID = 123
+    # Set ADMIN_SECRET in environment for require_auth
+    with patch.dict(os.environ, {"ADMIN_SECRET": "test_secret_token", "TELEGRAM_BOT_TOKEN": "test_bot_token"}):
+        # We need to ensure app.web picks up any necessary config (though require_auth checks os.environ dynamically)
 
-        # We need to reload or import app.web here to ensure patches are picked up
-        if 'app.web' in sys.modules:
-            del sys.modules['app.web']
-
+        # Import app.web (if not already imported, or rely on dynamic check)
         from app.web import flask_app
         flask_app.config['TESTING'] = True
 
@@ -45,30 +42,6 @@ def client():
 
             with flask_app.test_client() as client:
                 yield client
-
-def test_security_headers_present(client):
-    """Test that security headers are present in responses"""
-    # Test public endpoint
-    response = client.get('/health')
-    assert response.status_code == 200
-
-    headers = response.headers
-    assert headers.get('X-Content-Type-Options') == 'nosniff'
-    assert headers.get('X-Frame-Options') == 'DENY'
-    assert headers.get('Referrer-Policy') == 'strict-origin-when-cross-origin'
-
-    csp = headers.get('Content-Security-Policy')
-    assert csp is not None
-    assert "default-src 'self'" in csp
-    assert "script-src 'none'" in csp
-# Import app.web after mocking
-from app.web import flask_app
-
-@pytest.fixture
-def client():
-    flask_app.config['TESTING'] = True
-    with flask_app.test_client() as client:
-        yield client
 
 def test_security_headers_present(client):
     """Test that all security headers are present in the response"""
@@ -89,10 +62,11 @@ def test_security_headers_present(client):
     assert "frame-ancestors 'none'" in csp
     assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in csp
     assert "font-src 'self' https://fonts.gstatic.com" in csp
+    assert "connect-src 'self'" in csp
 
 def test_security_headers_on_error(client):
     """Test that security headers are present even on error responses"""
-    # Force an error by mocking something to raise exception, or just use 404
+    # Force an error by accessing a non-existent route
     response = client.get('/non-existent-endpoint')
     assert response.status_code == 404
 
@@ -102,17 +76,10 @@ def test_security_headers_on_error(client):
 
 def test_security_headers_on_auth_failure(client):
     """Test that security headers are present on 401"""
+    # Access a protected route without a token
     response = client.get('/')
     assert response.status_code == 401
 
     headers = response.headers
     assert headers.get('X-Content-Type-Options') == 'nosniff'
     assert headers.get('X-Frame-Options') == 'DENY'
-    """Test that security headers are present even on error pages"""
-    # Force an error by accessing a non-existent route or causing an exception
-    # Since we are testing headers, a 404 is a good candidate
-    response = client.get('/non-existent-route')
-
-    assert response.status_code == 404
-    assert response.headers.get('X-Content-Type-Options') == 'nosniff'
-    assert response.headers.get('X-Frame-Options') == 'DENY'
