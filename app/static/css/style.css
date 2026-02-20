@@ -124,6 +124,16 @@ h1 {
     transition: width 1s ease-in-out;
 }
 
+.progress-bar-fill.danger {
+    background: #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+}
+
+.progress-bar-fill.warning {
+    background: #f59e0b;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+}
+
 /* Animations */
 @keyframes fadeInDown {
     from { opacity: 0; transform: translateY(-20px); }
@@ -149,4 +159,13 @@ footer {
     color: #64748b;
     margin-top: 3rem;
     padding-bottom: 2rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
 }
