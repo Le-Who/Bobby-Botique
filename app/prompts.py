@@ -237,28 +237,67 @@ def create_conversation_summary(messages: list) -> str:
     if not messages:
         return ""
     
-    # Собираем текст из сообщений
-    conversation_text = ""
+    # Оптимизация: Собираем текст в список и ограничиваем длину на лету
+    # вместо конкатенации строк в цикле (O(N^2)) и построения огромной строки перед обрезкой.
+    chunks = []
+    current_length = 0
+    limit = 2000
+
     for msg in messages:
+        if current_length >= limit:
+            break
+
         if isinstance(msg, dict) and 'role' in msg and 'parts' in msg:
             role = msg['role']
             parts = msg['parts']
             
+            # Формируем префикс роли
             if role == 'user':
-                conversation_text += "Пользователь: "
+                prefix = "Пользователь: "
             elif role == 'model':
-                conversation_text += "Ассистент: "
+                prefix = "Ассистент: "
             else:
-                conversation_text += f"{role}: "
+                prefix = f"{role}: "
+
+            # Проверяем, влезет ли префикс
+            available = limit - current_length
+            if len(prefix) > available:
+                chunks.append(prefix[:available])
+                current_length += available
+                break
+
+            chunks.append(prefix)
+            current_length += len(prefix)
             
             for part in parts:
                 if isinstance(part, str):
-                    conversation_text += part + " "
-            conversation_text += "\n"
+                    available = limit - current_length
+                    if available <= 0:
+                        break
+
+                    # Проверяем, влезет ли часть + пробел
+                    # part + " "
+                    needed = len(part) + 1
+
+                    if needed > available:
+                        # Если не влезает целиком, добавляем сколько влезет (без пробела в конце, если обрезаем)
+                        chunks.append(part[:available])
+                        current_length += available
+                        break
+                    else:
+                        chunks.append(part)
+                        chunks.append(" ")
+                        current_length += needed
+
+            if current_length < limit:
+                chunks.append("\n")
+                current_length += 1
+
+    conversation_text = "".join(chunks)
     
-    # Если суммаризация слишком длинная, обрезаем её
-    if len(conversation_text) > 2000:
-        conversation_text = conversation_text[:2000] + "..."
+    # Если достигли лимита, добавляем многоточие
+    if current_length >= limit:
+        conversation_text += "..."
     
     return f"Предыдущий контекст беседы:\n{conversation_text}"
 
