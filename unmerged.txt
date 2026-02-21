@@ -1,8 +1,0 @@
-app/document_processor.py
-app/handlers/agent.py
-app/metrics.py
-app/queue.py
-app/services.py
-app/utils/text_format.py
-app/web.py
-bot.py

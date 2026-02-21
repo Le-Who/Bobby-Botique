@@ -89,7 +89,7 @@ print("DEBUG: web imported", flush=True)
 shutdown_event = asyncio.Event()
 
 
-def signal_handler(signum, frame):
+def signal_handler(signum, _frame):
     """Обработчик сигналов для корректного завершения"""
     logging.info(f"Received signal {signum}, initiating graceful shutdown...")
 

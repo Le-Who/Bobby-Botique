@@ -507,7 +507,7 @@ class MetricsMiddleware:
         self.start_time = time.time()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, _exc_tb):
         response_time = time.time() - self.start_time
         success = exc_type is None
 
