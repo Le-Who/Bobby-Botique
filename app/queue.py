@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Callable, List
+from typing import Dict, Any, Optional, Callable, List, Coroutine
 from dataclasses import dataclass
 from enum import Enum
 import uuid
@@ -56,7 +56,8 @@ class TaskQueue:
         self.running = False
         self._lock = asyncio.Lock()
         self._task_handlers: Dict[str, Callable] = {}
-
+        self._cleanup_task: Optional[asyncio.Task] = None
+        self._metrics_scheduler_task: Optional[asyncio.Task] = None
         # Инициализируем обработчики задач
         self._init_task_handlers()
 
@@ -82,10 +83,18 @@ class TaskQueue:
             self.workers.append(worker)
 
         # Запускаем задачу очистки старых задач
-        asyncio.create_task(self._cleanup_old_tasks())
+        self._cleanup_task = self._start_background_task(
+            self._cleanup_task,
+            self._cleanup_old_tasks,
+            "task queue cleanup",
+        )
 
         # Запускаем автоматическую очистку метрик (каждые 24 часа)
-        asyncio.create_task(self._schedule_metrics_cleanup())
+        self._metrics_scheduler_task = self._start_background_task(
+            self._metrics_scheduler_task,
+            self._schedule_metrics_cleanup,
+            "metrics cleanup scheduler",
+        )
 
     async def stop(self):
         """Останавливает очередь задач"""
@@ -94,16 +103,45 @@ class TaskQueue:
 
         self.running = False
         logging.info("Stopping task queue...")
-
-        # Отменяем все воркеры
-        for worker in self.workers:
-            worker.cancel()
-
+        # Добавляем сигналы завершения для каждого воркера
+        for _ in range(self.max_workers):
+            await self.queue.put((float("-inf"), None))
         # Ждем завершения всех воркеров
         await asyncio.gather(*self.workers, return_exceptions=True)
         self.workers.clear()
 
+        # Отменяем служебные задачи
+        await self._cancel_background_task("_cleanup_task")
+        await self._cancel_background_task("_metrics_scheduler_task")
+
         logging.info("Task queue stopped")
+
+    def _start_background_task(
+        self,
+        task_ref: Optional[asyncio.Task],
+        coro_factory: Callable[[], Coroutine[Any, Any, Any]],
+        task_name: str,
+    ) -> asyncio.Task:
+        """Запускает фоновую задачу с защитой от повторного старта."""
+        if task_ref and not task_ref.done():
+            logging.debug("Background task '%s' already running", task_name)
+            return task_ref
+
+        return asyncio.create_task(coro_factory())
+
+    async def _cancel_background_task(self, attr_name: str):
+        """Отменяет и ожидает завершение фоновой задачи по имени атрибута."""
+        task = getattr(self, attr_name, None)
+        if not task:
+            return
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        setattr(self, attr_name, None)
 
     async def add_task(
         self,
@@ -167,55 +205,58 @@ class TaskQueue:
     async def _worker(self, worker_name: str):
         """Воркер для обработки задач"""
         logging.info(f"Worker {worker_name} started")
-
-        while self.running:
+        while True:
             try:
                 # Получаем задачу из очереди
-                priority, task_id = await asyncio.wait_for(
-                    self.queue.get(), timeout=1.0
-                )
+                priority, task_id = await self.queue.get()
 
-                async with self._lock:
-                    task = self.tasks.get(task_id)
-                    if not task or task.status == TaskStatus.CANCELLED:
-                        continue
-
-                    task.status = TaskStatus.RUNNING
-                    task.started_at = datetime.now()
-
-                logging.info(f"Worker {worker_name} processing task {task_id}")
-
-                # Выполняем задачу
                 try:
-                    result = await self._execute_task(task)
+                    # Проверяем сигнал завершения
+                    if task_id is None:
+                        break
 
                     async with self._lock:
-                        task.status = TaskStatus.COMPLETED
-                        task.completed_at = datetime.now()
-                        task.result = result
+                        task = self.tasks.get(task_id)
+                        if not task or task.status == TaskStatus.CANCELLED:
+                            continue
 
-                    logging.info(f"Task {task_id} completed successfully")
+                        task.status = TaskStatus.RUNNING
+                        task.started_at = datetime.now()
 
-                except Exception as e:
-                    logging.error(f"Task {task_id} failed: {e}")
+                    logging.info(f"Worker {worker_name} processing task {task_id}")
 
-                    async with self._lock:
-                        task.error = str(e)
-                        task.retry_count += 1
+                    # Выполняем задачу
+                    try:
+                        result = await self._execute_task(task)
 
-                        if task.retry_count < task.max_retries:
-                            task.status = TaskStatus.PENDING
-                            # Повторно добавляем в очередь с более низким приоритетом
-                            await self.queue.put((-task.priority.value + 1, task_id))
-                        else:
-                            task.status = TaskStatus.FAILED
+                        async with self._lock:
+                            task.status = TaskStatus.COMPLETED
                             task.completed_at = datetime.now()
+                            task.result = result
 
+                        logging.info(f"Task {task_id} completed successfully")
+
+                    except Exception as e:
+                        logging.error(f"Task {task_id} failed: {e}")
+
+                        async with self._lock:
+                            task.error = str(e)
+                            task.retry_count += 1
+
+                            if task.retry_count < task.max_retries:
+                                task.status = TaskStatus.PENDING
+                                # Повторно добавляем в очередь с более низким приоритетом
+                                await self.queue.put(
+                                    (-task.priority.value + 1, task_id)
+                                )
+                            else:
+                                task.status = TaskStatus.FAILED
+                                task.completed_at = datetime.now()
                 finally:
                     self.queue.task_done()
 
-            except asyncio.TimeoutError:
-                continue
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logging.error(f"Worker {worker_name} error: {e}")
                 await asyncio.sleep(1)

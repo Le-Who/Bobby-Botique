@@ -4,24 +4,28 @@ import time
 from typing import List
 from PIL import Image
 
+
 # Mock classes to simulate Telegram objects
 class MockFile:
     async def download_as_bytearray(self):
         await asyncio.sleep(0.2)  # Simulate download latency
         # Return a small valid image to satisfy Image.open
-        img = Image.new('RGB', (10, 10), color = 'red')
+        img = Image.new("RGB", (10, 10), color="red")
         img_byte_arr = io.BytesIO()
-        img.save(img_byte_arr, format='PNG')
+        img.save(img_byte_arr, format="PNG")
         return img_byte_arr.getvalue()
+
 
 class MockPhotoSize:
     async def get_file(self):
         await asyncio.sleep(0.05)  # Simulate API call latency
         return MockFile()
 
+
 class MockMessage:
     def __init__(self):
         self.photo = [MockPhotoSize()]
+
 
 async def sequential_download(messages: List[MockMessage]):
     images = []
@@ -34,10 +38,11 @@ async def sequential_download(messages: List[MockMessage]):
             images.append(img)
             # logging.info(f"📸 Загружено изображение {i+1}/{len(messages)}")
         except Exception as e:
-            print(f"Error loading image {i+1}: {e}")
+            print(f"Error loading image {i + 1}: {e}")
             continue
     end_time = time.time()
     return end_time - start_time
+
 
 async def concurrent_download(messages: List[MockMessage]):
     images = []
@@ -49,7 +54,9 @@ async def concurrent_download(messages: List[MockMessage]):
         return Image.open(io.BytesIO(photo_data))
 
     try:
-        results = await asyncio.gather(*(process_message(msg) for msg in messages), return_exceptions=True)
+        results = await asyncio.gather(
+            *(process_message(msg) for msg in messages), return_exceptions=True
+        )
         for res in results:
             if isinstance(res, Exception):
                 print(f"Error loading image: {res}")
@@ -60,6 +67,7 @@ async def concurrent_download(messages: List[MockMessage]):
 
     end_time = time.time()
     return end_time - start_time
+
 
 async def main():
     num_messages = 5
@@ -75,6 +83,7 @@ async def main():
 
     improvement = (sequential_time - concurrent_time) / sequential_time * 100
     print(f"Improvement: {improvement:.2f}%")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

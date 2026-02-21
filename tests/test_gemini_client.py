@@ -1,6 +1,7 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from app.gemini_client import GeminiClient
+
 
 class TestGeminiClient(unittest.TestCase):
     def setUp(self):
@@ -37,11 +38,14 @@ class TestGeminiClient(unittest.TestCase):
         with self.assertRaises(Exception) as context:
             self.client._rotate_key(model_name)
 
-        self.assertIn(f"No available API keys for model {model_name}", str(context.exception))
+        self.assertIn(
+            f"No available API keys for model {model_name}", str(context.exception)
+        )
 
         # Assertions
         self.client._find_available_key.assert_called_once_with(model_name)
         self.client._set_current_key.assert_not_called()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

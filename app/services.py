@@ -15,8 +15,10 @@ from app.config import settings
 from app import database
 from app.metrics import metrics_collector
 from app.cache import get_cached_search_result, cache_search_result
+from app.request_context import get_request_id
 from app.utils.network import NetworkErrorHandler
 from app.utils.api_logger import api_logger
+from app.utils.image import estimate_image_size_in_bytes
 
 # Используем улучшенную конфигурацию HTTP клиента
 http_client = NetworkErrorHandler.create_robust_http_client()
@@ -101,11 +103,8 @@ async def _save_image_as_bytes(
             # Actually, resize returns a new copy.
             img_to_process = image
 
-            # Use tobytes() which decompresses the image if needed, can be slow
-            # Check size in memory (uncompressed usually)
-            # len(image.tobytes()) gives uncompressed size (e.g. W*H*3)
-            # This is CPU bound decompressing if it's lazy loaded
-            img_bytes_approx = len(img_to_process.tobytes())
+            # Use optimized estimation instead of tobytes() which forces full decompression
+            img_bytes_approx = estimate_image_size_in_bytes(img_to_process)
 
             if img_bytes_approx > max_size_mb * 1024 * 1024:
                 # Уменьшаем
@@ -178,9 +177,15 @@ async def _execute_gemini_request(
             user_id=user_id,
             chat_id=chat_id,
         )
+        request_id = get_request_id()
+        client_kwargs = {"api_key": api_key}
+        if request_id:
+            # google-genai SDK supports custom transport headers via http_options.
+            client_kwargs["http_options"] = types.HttpOptions(
+                headers={"X-Request-ID": request_id}
+            )
 
-        client = genai.Client(api_key=api_key)
-
+        client = genai.Client(**client_kwargs)
         # Преобразуем историю в формат types.Content
         contents = []
         try:
@@ -465,7 +470,14 @@ async def _execute_gemini_request(
 async def _tavily_api_call(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Internal function for making Tavily API calls with retry logic."""
     try:
-        response = await http_client.post("https://api.tavily.com/search", json=payload)
+        headers = {}
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
+
+        response = await http_client.post(
+            "https://api.tavily.com/search", json=payload, headers=headers or None
+        )
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -801,9 +813,11 @@ async def _execute_openrouter_request(
             "HTTP-Referer": "https://github.com/your-repo",  # Опционально, для аналитики
             "X-Title": "GeminiBot v2",  # Опционально, для аналитики
         }
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
 
         payload = {"model": model_name, "messages": messages}
-
         # Логируем структуру сообщений для отладки
         has_system = len(messages) > 0 and messages[0].get("role") == "system"
         if has_system:

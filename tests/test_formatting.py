@@ -1,5 +1,11 @@
 import unittest
-from app.utils.formatting import TelegramFormatter, strip_markdown, format_key_for_display, escape_format_chars
+from app.utils.formatting import (
+    TelegramFormatter,
+    strip_markdown,
+    format_key_for_display,
+    escape_format_chars,
+)
+
 
 class TestFormatting(unittest.TestCase):
     def test_format_text_basic(self):
@@ -32,7 +38,7 @@ class TestFormatting(unittest.TestCase):
         formatted, mode = TelegramFormatter.format_text(text)
         # The output order of attributes or quotes might vary, but let's assume standard behavior
         self.assertIn('href="http://example.com"', formatted)
-        self.assertIn('>here</a>', formatted)
+        self.assertIn(">here</a>", formatted)
         self.assertEqual(mode, "HTML")
 
     def test_format_text_code_block(self):
@@ -68,5 +74,6 @@ class TestFormatting(unittest.TestCase):
 
         self.assertEqual(escape_format_chars(None), None)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

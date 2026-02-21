@@ -1,5 +1,3 @@
-import pytest
-
 def test_optimization_logic():
     # This is a unit test for the logic I'm implementing
     selected_urls = ["url1", "url2", "url3"]
@@ -10,12 +8,14 @@ def test_optimization_logic():
     ]
 
     # What the optimized logic does:
-    results_map = {res.get('url'): res for res in search_results if res.get('url')}
+    results_map = {res.get("url"): res for res in search_results if res.get("url")}
     final_context_list = []
     for url in selected_urls:
         res = results_map.get(url)
         if res:
-            source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
+            source_info = (
+                f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
+            )
             final_context_list.append(source_info)
 
     assert len(final_context_list) == 2
@@ -23,6 +23,7 @@ def test_optimization_logic():
     assert "Содержание:\ncontent1" in final_context_list[0]
     assert "Источник: url3" in final_context_list[1]
     assert "Содержание:\ncontent3" in final_context_list[1]
+
 
 def test_optimization_logic_with_duplicates():
     # Test that it handles duplicate selected URLs correctly (repeats them)
@@ -32,18 +33,21 @@ def test_optimization_logic_with_duplicates():
         {"url": "url2", "content": "content2"},
     ]
 
-    results_map = {res.get('url'): res for res in search_results if res.get('url')}
+    results_map = {res.get("url"): res for res in search_results if res.get("url")}
     final_context_list = []
     for url in selected_urls:
         res = results_map.get(url)
         if res:
-            source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
+            source_info = (
+                f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
+            )
             final_context_list.append(source_info)
 
     assert len(final_context_list) == 3
     assert final_context_list[0] == final_context_list[1]
     assert "url1" in final_context_list[0]
     assert "url2" in final_context_list[2]
+
 
 def test_optimization_logic_with_duplicate_results():
     # Test that it handles duplicate search results by taking the last one (O(1) map behavior)
@@ -53,12 +57,14 @@ def test_optimization_logic_with_duplicate_results():
         {"url": "url1", "content": "content1_last"},
     ]
 
-    results_map = {res.get('url'): res for res in search_results if res.get('url')}
+    results_map = {res.get("url"): res for res in search_results if res.get("url")}
     final_context_list = []
     for url in selected_urls:
         res = results_map.get(url)
         if res:
-            source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
+            source_info = (
+                f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
+            )
             final_context_list.append(source_info)
 
     assert len(final_context_list) == 1

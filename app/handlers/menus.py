@@ -8,9 +8,14 @@ from app import prompts
 from app.metrics import get_system_status_data
 from app.document_processor import get_user_documents
 
+
 def get_start_menu_content(chat_state):
     search_status = "🟢 ВКЛЮЧЕН" if chat_state.search_enabled else "🔴 ВЫКЛЮЧЕН"
-    prompt_status = f"`{chat_state.system_prompt[:50]}...`" if chat_state.system_prompt else "Не задана"
+    prompt_status = (
+        f"`{chat_state.system_prompt[:50]}...`"
+        if chat_state.system_prompt
+        else "Не задана"
+    )
     search_icon = "🟢" if chat_state.search_enabled else "🔴"
 
     start_text = (
@@ -46,18 +51,21 @@ def get_start_menu_content(chat_state):
     keyboard = [
         [
             InlineKeyboardButton("🆕 Новый чат", callback_data="new_chat"),
-            InlineKeyboardButton("⚙️ Модели", callback_data="model_menu")
+            InlineKeyboardButton("⚙️ Модели", callback_data="model_menu"),
         ],
         [
             InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
-            InlineKeyboardButton("📚 Справка", callback_data="help")
+            InlineKeyboardButton("📚 Справка", callback_data="help"),
         ],
         [
-            InlineKeyboardButton(f"🌐 Поиск: {search_icon}", callback_data="toggle_search")
-        ]
+            InlineKeyboardButton(
+                f"🌐 Поиск: {search_icon}", callback_data="toggle_search"
+            )
+        ],
     ]
 
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+
 
 def _generate_model_buttons(models, current_model, start_index, is_openrouter=False):
     """
@@ -77,7 +85,7 @@ def _generate_model_buttons(models, current_model, start_index, is_openrouter=Fa
 
     for m in models:
         # Проверяем, выбрана ли модель
-        is_selected = (m == current_model)
+        is_selected = m == current_model
         selected_mark = "✅ " if is_selected else ""
 
         # Определяем отображение
@@ -98,6 +106,7 @@ def _generate_model_buttons(models, current_model, start_index, is_openrouter=Fa
 
     return rows, current_index
 
+
 def get_model_menu_content(chat_state, context):
     current_model = chat_state.model
 
@@ -115,11 +124,11 @@ def get_model_menu_content(chat_state, context):
         return "❌ Нет доступных моделей. Проверьте настройки.", None, None
 
     # Сохраняем маппинг моделей в context для использования в callback
-    if context and hasattr(context, 'user_data'):
+    if context and hasattr(context, "user_data"):
         # Ensure user_data exists if it's None (though ContextTypes usually ensures it's a dict-like)
         if context.user_data is None:
             context.user_data = {}
-        context.user_data['model_list'] = all_models
+        context.user_data["model_list"] = all_models
 
     keyboard = []
     model_index = 0
@@ -127,16 +136,19 @@ def get_model_menu_content(chat_state, context):
     # Добавляем модели Gemini
     if settings.AVAILABLE_MODELS:
         buttons, model_index = _generate_model_buttons(
-            settings.AVAILABLE_MODELS,
-            current_model,
-            model_index,
-            is_openrouter=False
+            settings.AVAILABLE_MODELS, current_model, model_index, is_openrouter=False
         )
         keyboard.extend(buttons)
 
     # Добавляем разделитель, если есть оба провайдера
-    if settings.AVAILABLE_MODELS and openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
+    if (
+        settings.AVAILABLE_MODELS
+        and openrouter_available
+        and settings.OPENROUTER_AVAILABLE_MODELS
+    ):
+        keyboard.append(
+            [InlineKeyboardButton("─────────────", callback_data="model_none")]
+        )
 
     # Добавляем модели OpenRouter, если доступны
     if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
@@ -144,7 +156,7 @@ def get_model_menu_content(chat_state, context):
             settings.OPENROUTER_AVAILABLE_MODELS,
             current_model,
             model_index,
-            is_openrouter=True
+            is_openrouter=True,
         )
         keyboard.extend(buttons)
 
@@ -161,11 +173,14 @@ def get_model_menu_content(chat_state, context):
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
+
 async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
     """Генерирует контент для главной страницы меню ролей (Hub)."""
     # Получаем количество кастомных ролей для бейджика
-    custom_count_res = await db.db_query("SELECT COUNT(*) as count FROM user_roles WHERE user_id = $1", (user_id,))
-    custom_count = custom_count_res[0]['count'] if custom_count_res else 0
+    custom_count_res = await db.db_query(
+        "SELECT COUNT(*) as count FROM user_roles WHERE user_id = $1", (user_id,)
+    )
+    custom_count = custom_count_res[0]["count"] if custom_count_res else 0
 
     text = (
         f"🎭 **Управление ролями**\n\n"
@@ -179,63 +194,59 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
 
     # 1. Кнопка сброса (если роль активна)
     if current_prompt:
-         keyboard.append([InlineKeyboardButton("🛑 Отключить роль", callback_data="role_clear")])
+        keyboard.append(
+            [InlineKeyboardButton("🛑 Отключить роль", callback_data="role_clear")]
+        )
 
     # 2. Основные разделы навигации
-    keyboard.append([
-        InlineKeyboardButton(f"📂 Мои роли ({custom_count})", callback_data="role_nav:my_roles"),
-        InlineKeyboardButton("📚 Каталог ролей", callback_data="role_nav:system_roles")
-    ])
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                f"📂 Мои роли ({custom_count})", callback_data="role_nav:my_roles"
+            ),
+            InlineKeyboardButton(
+                "📚 Каталог ролей", callback_data="role_nav:system_roles"
+            ),
+        ]
+    )
 
     # 3. Быстрые действия
-    keyboard.append([InlineKeyboardButton("➕ Создать новую роль", callback_data="role_create")])
+    keyboard.append(
+        [InlineKeyboardButton("➕ Создать новую роль", callback_data="role_create")]
+    )
 
     # 4. Назад
-    keyboard.append([InlineKeyboardButton("⬅️ Назад в меню", callback_data="start_menu")])
+    keyboard.append(
+        [InlineKeyboardButton("⬅️ Назад в меню", callback_data="start_menu")]
+    )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+
 
 async def _get_roles_details_content(user_id, role_key, active_role_key):
     """Генерирует контент для просмотра деталей роли."""
     if not role_key:
         return "Ошибка: не указана роль", None, None
 
-    # Ищем данные роли
-    title = "Неизвестная роль"
-    prompt = ""
-    is_custom = False
-    role_id = None # Для кастомных
+    # Ищем данные роли через хелпер
+    role_data = await db.get_role_data(role_key, user_id)
+    if not role_data:
+        return "Роль не найдена или удалена.", None, None
 
-    if role_key.startswith("user_role:"):
-        # Кастомная роль
-        try:
-            r_id = int(role_key.split(":")[1])
-            res = await db.db_query("SELECT id, title, prompt FROM user_roles WHERE id = $1 AND user_id = $2", (r_id, user_id))
-            if res:
-                title = res[0]['title']
-                prompt = res[0]['prompt']
-                is_custom = True
-                role_id = r_id
-            else:
-                return "Роль не найдена или удалена.", None, None
-        except:
-             return "Ошибка ключа роли", None, None
-    else:
-        # Системная роль
-        if role_key in prompts.DEFAULT_ROLES:
-            meta = prompts.DEFAULT_ROLES[role_key]
-            title = meta.get('title', role_key)
-            prompt = meta.get('prompt', '')
-        else:
-            return "Системная роль не найдена", None, None
+    title = role_data["title"]
+    prompt = role_data["prompt"]
+    is_custom = role_data["is_custom"]
+    role_id = role_data["id"]
 
-    is_active = (role_key == active_role_key)
+    is_active = role_key == active_role_key
     status_icon = "✅" if is_active else "⚪️"
     status_text = "АКТИВНА" if is_active else "Не активна"
 
     preview_len = 150
-    prompt_preview = prompt[:preview_len] + "..." if len(prompt) > preview_len else prompt
+    prompt_preview = (
+        prompt[:preview_len] + "..." if len(prompt) > preview_len else prompt
+    )
 
     text = (
         f"ℹ️ **Детали роли**\n\n"
@@ -248,27 +259,52 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
 
     # 1. Применить/Снять
     if is_active:
-         keyboard.append([InlineKeyboardButton("🛑 Отключить эту роль", callback_data="role_clear")])
+        keyboard.append(
+            [InlineKeyboardButton("🛑 Отключить эту роль", callback_data="role_clear")]
+        )
     else:
-         keyboard.append([InlineKeyboardButton("✅ Применить роль", callback_data=f"role_apply:{role_key}")])
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "✅ Применить роль", callback_data=f"role_apply:{role_key}"
+                )
+            ]
+        )
 
     # 2. Действия над ролью
     row_actions = []
-    row_actions.append(InlineKeyboardButton("👁️ Промпт", callback_data=f"role_view_prompt:{role_key}"))
+    row_actions.append(
+        InlineKeyboardButton("👁️ Промпт", callback_data=f"role_view_prompt:{role_key}")
+    )
 
     if is_custom:
-        row_actions.append(InlineKeyboardButton("✏️ Переим.", callback_data=f"role_rename_pick:{role_id}"))
-        row_actions.append(InlineKeyboardButton("🗑️ Удалить", callback_data=f"role_delete_ask:{role_id}"))
+        row_actions.append(
+            InlineKeyboardButton(
+                "✏️ Переим.", callback_data=f"role_rename_pick:{role_id}"
+            )
+        )
+        row_actions.append(
+            InlineKeyboardButton(
+                "🗑️ Удалить", callback_data=f"role_delete_ask:{role_id}"
+            )
+        )
 
     keyboard.append(row_actions)
 
     # 3. Назад
     # Определяем, куда возвращаться (в Мои или Системные)
     back_view = "my_roles" if is_custom else "system_roles"
-    keyboard.append([InlineKeyboardButton("⬅️ Назад к списку", callback_data=f"role_nav:{back_view}")])
+    keyboard.append(
+        [
+            InlineKeyboardButton(
+                "⬅️ Назад к списку", callback_data=f"role_nav:{back_view}"
+            )
+        ]
+    )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+
 
 async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     """Генерирует контент для списков ролей (мои роли, системные роли)."""
@@ -276,7 +312,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     if view_mode == "my_roles":
         roles = await db.db_query(
             "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
-            (user_id,)
+            (user_id,),
         )
         title_header = "📂 **Ваши личные роли**"
         empty_text = "У вас пока нет сохраненных ролей."
@@ -286,11 +322,13 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
         for r in roles:
             key = f"user_role:{r['id']}"
             is_active = "✅ " if key == active_role_key else ""
-            items.append({
-                'text': f"{is_active}{r['title']}",
-                'callback': f"role_detail:{key}",
-                'delete_callback': None
-            })
+            items.append(
+                {
+                    "text": f"{is_active}{r['title']}",
+                    "callback": f"role_detail:{key}",
+                    "delete_callback": None,
+                }
+            )
 
     elif view_mode == "system_roles":
         title_header = "📚 **Каталог встроенных ролей**"
@@ -299,11 +337,13 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
         items = []
         for key, meta in prompts.DEFAULT_ROLES.items():
             is_active = "✅ " if key == active_role_key else ""
-            items.append({
-                'text': f"{is_active}{meta.get('title', key)}",
-                'callback': f"role_detail:{key}",
-                'delete_callback': None
-            })
+            items.append(
+                {
+                    "text": f"{is_active}{meta.get('title', key)}",
+                    "callback": f"role_detail:{key}",
+                    "delete_callback": None,
+                }
+            )
     else:
         return f"Ошибка режима: {view_mode}", None, None
 
@@ -312,17 +352,16 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
 
     # Корректируем страницу если вышли за пределы
-    if page < 0: page = 0
-    if page >= total_pages and total_pages > 0: page = total_pages - 1
+    if page < 0:
+        page = 0
+    if page >= total_pages and total_pages > 0:
+        page = total_pages - 1
 
     start_idx = page * ITEMS_PER_PAGE
     end_idx = start_idx + ITEMS_PER_PAGE
     current_items = items[start_idx:end_idx]
 
-    text = (
-        f"{title_header}\n"
-        f"Страница {page + 1} из {max(1, total_pages)}\n\n"
-    )
+    text = f"{title_header}\nСтраница {page + 1} из {max(1, total_pages)}\n\n"
     if not items:
         text += f"_{empty_text}_"
 
@@ -330,37 +369,60 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
 
     for item in current_items:
         # Одна широкая кнопка
-        keyboard.append([InlineKeyboardButton(item['text'], callback_data=item['callback'])])
+        keyboard.append(
+            [InlineKeyboardButton(item["text"], callback_data=item["callback"])]
+        )
 
     # Кнопки пагинации
     nav_row = []
     if total_pages > 1:
         if page > 0:
-            nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"role_page:{view_mode}:{page-1}"))
+            nav_row.append(
+                InlineKeyboardButton(
+                    "⬅️", callback_data=f"role_page:{view_mode}:{page - 1}"
+                )
+            )
         else:
-            nav_row.append(InlineKeyboardButton("⏺️", callback_data="noop")) # Placeholder
+            nav_row.append(
+                InlineKeyboardButton("⏺️", callback_data="noop")
+            )  # Placeholder
 
-        nav_row.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+        nav_row.append(
+            InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop")
+        )
 
         if page < total_pages - 1:
-            nav_row.append(InlineKeyboardButton("➡️", callback_data=f"role_page:{view_mode}:{page+1}"))
+            nav_row.append(
+                InlineKeyboardButton(
+                    "➡️", callback_data=f"role_page:{view_mode}:{page + 1}"
+                )
+            )
         else:
-            nav_row.append(InlineKeyboardButton("⏺️", callback_data="noop")) # Placeholder
+            nav_row.append(
+                InlineKeyboardButton("⏺️", callback_data="noop")
+            )  # Placeholder
 
     if nav_row:
         keyboard.append(nav_row)
 
     # Кнопки управления (только для "Мои роли")
     if view_mode == "my_roles":
-        keyboard.append([InlineKeyboardButton("➕ Создать", callback_data="role_create")])
+        keyboard.append(
+            [InlineKeyboardButton("➕ Создать", callback_data="role_create")]
+        )
 
     # Кнопка Назад (в Хаб)
-    keyboard.append([InlineKeyboardButton("↩️ Назад в меню ролей", callback_data="role_nav:hub")])
+    keyboard.append(
+        [InlineKeyboardButton("↩️ Назад в меню ролей", callback_data="role_nav:hub")]
+    )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
-async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, role_key=None):
+
+async def get_roles_menu_content(
+    user_id, chat_state, view_mode="hub", page=0, role_key=None
+):
     """
     Генерирует контент для меню ролей в стиле "Smart Hub".
     view_mode: 'hub' | 'my_roles' | 'system_roles' | 'role_details'
@@ -385,7 +447,7 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, r
             # Ищем в кастомных
             custom_roles = await db.db_query(
                 "SELECT id, title, prompt FROM user_roles WHERE user_id = $1",
-                (user_id,)
+                (user_id,),
             )
             for role in custom_roles:
                 if role.get("prompt") == current_prompt:
@@ -413,13 +475,14 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, r
     else:
         return f"Ошибка режима: {view_mode}", None, None
 
+
 async def get_metrics_content():
     """Generates the metrics report text."""
     # Получаем все данные
     data = await get_system_status_data()
-    metrics = data['metrics_summary']
-    gemini_data = data['gemini']
-    tavily_data = data['tavily']
+    metrics = data["metrics_summary"]
+    gemini_data = data["gemini"]
+    tavily_data = data["tavily"]
 
     # Формируем основной текст
     text = (
@@ -433,73 +496,82 @@ async def get_metrics_content():
     )
 
     # Добавляем использование API и моделей
-    if metrics.get('api_calls'):
+    if metrics.get("api_calls"):
         text += "*🔌 Использование API:*\n"
-        for api, count in metrics['api_calls'].items():
+        for api, count in metrics["api_calls"].items():
             if isinstance(api, str) and isinstance(count, (int, float)):
                 text += f"• {api}: `{count}`\n"
         text += "\n"
 
-    if metrics.get('model_usage'):
+    if metrics.get("model_usage"):
         text += "*🤖 Использование моделей:*\n"
-        for model, count in metrics['model_usage'].items():
+        for model, count in metrics["model_usage"].items():
             # Пропускаем записи, которые содержат имена файлов (это ошибки в логике)
-            if isinstance(model, str) and isinstance(count, (int, float)) and not any(char in model for char in ['/', '\\', '.pdf', '.docx', '.doc']):
+            if (
+                isinstance(model, str)
+                and isinstance(count, (int, float))
+                and not any(
+                    char in model for char in ["/", "\\", ".pdf", ".docx", ".doc"]
+                )
+            ):
                 text += f"• {model}: `{count}`\n"
         text += "\n"
 
     # Добавляем статус ключей Gemini
-    if gemini_data['keys']:
+    if gemini_data["keys"]:
         text += "*🔑 Статус ключей Gemini (сегодня):*\n"
 
-        usage_map = gemini_data['usage_map']
+        usage_map = gemini_data["usage_map"]
 
-        for key_row in gemini_data['keys']:
-            display_name = format_key_for_display(key_row['api_key'])
-            usage_data = usage_map.get(key_row['key_hash'], [])
+        for key_row in gemini_data["keys"]:
+            display_name = format_key_for_display(key_row["api_key"])
+            usage_data = usage_map.get(key_row["key_hash"], [])
 
             if not usage_data:
                 text += f"• `{display_name}`: не использовался\n"
             else:
                 for usage in usage_data:
-                    model_name = usage['model_name']
-                    count = usage['request_count']
-                    limit = settings.DAILY_LIMITS.get(model_name, 'N/A')
+                    model_name = usage["model_name"]
+                    count = usage["request_count"]
+                    limit = settings.DAILY_LIMITS.get(model_name, "N/A")
                     text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
         text += f"Сброс лимитов: *{gemini_data['reset_time']}* по Киеву\n\n"
 
     # Добавляем статус кредитов Tavily
-    if tavily_data['keys']:
+    if tavily_data["keys"]:
         text += "*💳 Кредиты Tavily (текущий месяц):*\n"
 
-        tavily_usage_map = tavily_data['usage_map']
+        tavily_usage_map = tavily_data["usage_map"]
 
-        for key_row in tavily_data['keys']:
-            display_name = format_key_for_display(key_row['api_key'])
-            count = tavily_usage_map.get(key_row['key_hash'], 0)
+        for key_row in tavily_data["keys"]:
+            display_name = format_key_for_display(key_row["api_key"])
+            count = tavily_usage_map.get(key_row["key_hash"], 0)
             limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
             text += f"• `{display_name}`: {count} / {limit}\n"
         text += "Сброс лимитов: 1-го числа каждого месяца\n\n"
 
     # Добавляем историю за последние дни
-    if metrics['daily_metrics']:
+    if metrics["daily_metrics"]:
         text += "*📈 История за последние дни:*\n"
-        for date_str, daily_data in list(metrics['daily_metrics'].items())[:5]:  # Последние 5 дней
-            requests = daily_data.get('requests', 0)
-            errors = daily_data.get('errors', 0)
+        for date_str, daily_data in list(metrics["daily_metrics"].items())[
+            :5
+        ]:  # Последние 5 дней
+            requests = daily_data.get("requests", 0)
+            errors = daily_data.get("errors", 0)
             text += f"• {date_str}: {requests} запросов, {errors} ошибок\n"
         text += "\n"
 
     # Добавляем последние ошибки
-    if metrics['recent_errors']:
+    if metrics["recent_errors"]:
         text += "*⚠️ Последние ошибки:*\n"
-        for error in metrics['recent_errors'][:3]:  # Последние 3 ошибки
+        for error in metrics["recent_errors"][:3]:  # Последние 3 ошибки
             text += f"• {error['type']}: {error['message'][:40]}...\n"
 
     # Add timestamp for live update feedback
     text += f"\n_Обновлено: {datetime.now().strftime('%H:%M:%S UTC')}_"
 
     return text
+
 
 async def get_documents_menu_content(user_id):
     documents = await get_user_documents(user_id)
@@ -536,12 +608,25 @@ async def get_documents_menu_content(user_id):
         )
 
     keyboard = [
-        [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
-        [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
-        [InlineKeyboardButton("🗑️ Очистить все документы", callback_data="doc:clear_all")]
+        [
+            InlineKeyboardButton(
+                "📄 Загрузить новый документ", callback_data="doc:upload_new"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📋 Выбрать документ", callback_data="doc:select_document"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🗑️ Очистить все документы", callback_data="doc:clear_all"
+            )
+        ],
     ]
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+
 
 async def get_conversations_menu_content(user_id, page=1):
     limit = 5
@@ -551,13 +636,21 @@ async def get_conversations_menu_content(user_id, page=1):
     total_count = await db.get_conversation_count(user_id)
 
     if not conversations:
-        return "📝 У вас пока нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.", None, None
+        return (
+            "📝 У вас пока нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.",
+            None,
+            None,
+        )
 
     text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
 
     for conv in conversations:
-        role_info = f" | {conv['role_title']}" if conv['role_title'] else ""
-        created = conv['created_at'].strftime("%d.%m.%Y %H:%M") if conv['created_at'] else "Неизвестно"
+        role_info = f" | {conv['role_title']}" if conv["role_title"] else ""
+        created = (
+            conv["created_at"].strftime("%d.%m.%Y %H:%M")
+            if conv["created_at"]
+            else "Неизвестно"
+        )
         text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
         text += f"📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n"
 
@@ -565,17 +658,27 @@ async def get_conversations_menu_content(user_id, page=1):
     keyboard = []
     nav_row = []
     if page > 1:
-        nav_row.append(InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page-1}"))
+        nav_row.append(
+            InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page - 1}")
+        )
     if len(conversations) == limit and offset + limit < total_count:
-        nav_row.append(InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page+1}"))
+        nav_row.append(
+            InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page + 1}")
+        )
 
     if nav_row:
         keyboard.append(nav_row)
 
     # Кнопки действий
     if conversations:
-        keyboard.append([InlineKeyboardButton("🔄 Переключиться", callback_data="conv_switch")])
-        keyboard.append([InlineKeyboardButton("✏️ Переименовать", callback_data="conv_rename")])
-        keyboard.append([InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")])
+        keyboard.append(
+            [InlineKeyboardButton("🔄 Переключиться", callback_data="conv_switch")]
+        )
+        keyboard.append(
+            [InlineKeyboardButton("✏️ Переименовать", callback_data="conv_rename")]
+        )
+        keyboard.append(
+            [InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")]
+        )
 
-    return text, 'Markdown', InlineKeyboardMarkup(keyboard)
+    return text, "Markdown", InlineKeyboardMarkup(keyboard)

@@ -5,7 +5,6 @@ import asyncio
 import io
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
-from datetime import datetime
 import httpx
 import pypdf
 from docx import Document
@@ -15,6 +14,9 @@ from app.config import settings
 from app import database
 from app.utils.network import NetworkErrorHandler
 from app.metrics import metrics_collector
+
+# Maximum characters to extract from a document to prevent OOM and performance issues
+MAX_DOCUMENT_TEXT_LENGTH = 100000
 
 # Проверяем поддержку документов
 try:
@@ -278,7 +280,7 @@ class DocumentProcessor:
                     current_length += len(chunk)
 
                 # Проверяем лимит токенов
-                if current_length > 100000:
+                if current_length > MAX_DOCUMENT_TEXT_LENGTH:
                     text_content.append(
                         f"\n--- Document truncated at page {page_num + 1} ---"
                     )
@@ -350,25 +352,50 @@ class DocumentProcessor:
 
             text_content = []
             paragraph_count = 0
+            current_length = 0
 
             # Извлекаем текст из параграфов
             for para in doc.paragraphs:
                 if para.text.strip():
-                    text_content.append(para.text)
+                    text = para.text
+                    text_content.append(text)
                     paragraph_count += 1
+                    current_length += len(text)
 
-            # Извлекаем текст из таблиц
-            table_count = 0
-            for table in doc.tables:
-                table_count += 1
-                text_content.append(f"\n--- Table {table_count} ---")
-                for row in table.rows:
-                    row_text = []
-                    for cell in row.cells:
-                        if cell.text.strip():
-                            row_text.append(cell.text.strip())
-                    if row_text:
-                        text_content.append(" | ".join(row_text))
+                    if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                        text_content.append(
+                            f"\n--- Document truncated at {MAX_DOCUMENT_TEXT_LENGTH} chars ---"
+                        )
+                        break
+
+            # Only process tables if we haven't hit the limit
+            if current_length <= MAX_DOCUMENT_TEXT_LENGTH:
+                # Извлекаем текст из таблиц
+                table_count = 0
+                for table in doc.tables:
+                    table_count += 1
+                    text_content.append(f"\n--- Table {table_count} ---")
+                    # Approximate length increment for table header
+                    current_length += len(text_content[-1])
+
+                    for row in table.rows:
+                        row_text = []
+                        for cell in row.cells:
+                            if cell.text.strip():
+                                row_text.append(cell.text.strip())
+                        if row_text:
+                            line = " | ".join(row_text)
+                            text_content.append(line)
+                            current_length += len(line)
+
+                            if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                                break
+
+                    if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                        text_content.append(
+                            f"\n--- Document truncated at {MAX_DOCUMENT_TEXT_LENGTH} chars ---"
+                        )
+                        break
 
             full_text = "\n\n".join(text_content)
 
@@ -376,7 +403,7 @@ class DocumentProcessor:
                 "success": True,
                 "pages": 1,
                 "paragraphs": paragraph_count,
-                "tables": table_count,
+                "tables": len(doc.tables),
                 "text_length": len(full_text),
                 "content": full_text,
             }
@@ -748,37 +775,3 @@ async def get_document_by_id(
 ) -> Optional[Dict[str, Any]]:
     """Получает документ по ID"""
     return await document_processor.get_document_by_id(document_id, user_id)
-
-
-async def schedule_document_cleanup():
-    """Планировщик автоматической очистки документов"""
-
-    while True:
-        try:
-            # Ждем до следующего дня в 3:00 утра
-            now = datetime.now()
-            next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
-            if next_run <= now:
-                next_run = next_run.replace(day=next_run.day + 1)
-
-            wait_seconds = (next_run - now).total_seconds()
-            logging.info(f"Next document cleanup scheduled for {next_run}")
-
-            await asyncio.sleep(wait_seconds)
-
-            # Выполняем очистку
-            deleted_count = await document_processor.cleanup_old_documents(3)
-            if deleted_count > 0:
-                logging.info(
-                    f"Automatic cleanup: deleted {deleted_count} old documents (older than 3 days)"
-                )
-
-        except Exception as e:
-            logging.error(f"Error in scheduled document cleanup: {e}")
-            await asyncio.sleep(3600)  # Ждем час при ошибке
-
-
-# Запускаем планировщик при старте приложения
-def start_cleanup_scheduler():
-    """Запускает планировщик очистки документов"""
-    asyncio.create_task(schedule_document_cleanup())

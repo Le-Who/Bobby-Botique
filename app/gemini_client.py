@@ -1,5 +1,6 @@
 from typing import Optional
 
+
 class GeminiClient:
     def _find_available_key(self, model_name: str) -> Optional[str]:
         # Stub implementation
@@ -15,6 +16,8 @@ class GeminiClient:
 
         if not available_key:
             # Если для этой модели нет ключей, возможно они есть для других (но тут мы застряли)
-            raise Exception(f"No available API keys for model {model_name}. All keys are either in cooldown or at limit.")
+            raise Exception(
+                f"No available API keys for model {model_name}. All keys are either in cooldown or at limit."
+            )
 
         self._set_current_key()

@@ -1,11 +1,10 @@
+# ruff: noqa: E402
 import asyncio
 import time
 import sys
-import hashlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from dataclasses import dataclass, field
-from typing import List, Any
-import os
+from typing import List
 
 # Mock sys.modules for missing dependencies
 sys.modules["pytz"] = MagicMock()
@@ -25,6 +24,7 @@ sys.modules["app.config"] = mock_config
 mock_config.UTC_TZ = "UTC"
 mock_config.settings = MagicMock()
 
+
 @dataclass
 class MockSettings:
     TAVILY_API_KEYS: List[str] = field(default_factory=list)
@@ -34,6 +34,7 @@ class MockSettings:
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     TAVILY_MONTHLY_CREDIT_LIMIT: int = 1000
     TAVILY_LIMIT_THRESHOLD_PERCENT: float = 0.97
+
 
 # Create keys
 NUM_KEYS = 1000
@@ -46,12 +47,15 @@ mock_config.get_settings.return_value = mock_settings_obj
 # Now import app.database
 import app.database
 
+
 # Mock the database functions
 class BenchmarkStats:
     query_count = 0
     execute_many_count = 0
 
+
 stats = BenchmarkStats()
+
 
 async def mock_db_query(query, params=(), retries=3, conn=None):
     stats.query_count += 1
@@ -59,11 +63,13 @@ async def mock_db_query(query, params=(), retries=3, conn=None):
     await asyncio.sleep(0.001)
     return []
 
+
 async def mock_db_execute_many(query, params_list, retries=3, conn=None):
     stats.execute_many_count += 1
     # Simulate network latency
     await asyncio.sleep(0.005)
     return
+
 
 # Patch the functions in app.database module
 app.database.db_query = mock_db_query
@@ -91,18 +97,20 @@ async def run_benchmark():
     except Exception as e:
         print(f"Error during benchmark: {e}")
         import traceback
+
         traceback.print_exc()
         success = False
 
     end_time = time.time()
     duration = end_time - start_time
 
-    print(f"Benchmark completed.")
+    print("Benchmark completed.")
     print(f"Success: {success}")
     print(f"Total time: {duration:.4f} seconds")
     print(f"db_query calls: {stats.query_count}")
     print(f"db_execute_many calls: {stats.execute_many_count}")
     print(f"Total DB interactions: {stats.query_count + stats.execute_many_count}")
+
 
 if __name__ == "__main__":
     asyncio.run(run_benchmark())

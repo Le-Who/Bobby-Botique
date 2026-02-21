@@ -1,19 +1,23 @@
 import pytest
 import re
-from app.utils.text_format import split_text_safe, MAX_MESSAGE_LENGTH
+from app.utils.text_format import split_text_safe
+
 
 @pytest.fixture
 def mock_max_length():
     return 20
 
+
 def strip_tags(text):
-    return re.sub(r'<[^>]+>', '', text)
+    return re.sub(r"<[^>]+>", "", text)
+
 
 def test_split_text_safe_no_split():
     text = "Hello world"
     chunks = split_text_safe(text)
     assert len(chunks) == 1
     assert chunks[0] == text
+
 
 def test_split_text_safe_simple_split(mock_max_length):
     # Text longer than mock_max_length
@@ -33,6 +37,7 @@ def test_split_text_safe_simple_split(mock_max_length):
         # For plain text, it should respect max_length
         assert len(chunk) <= mock_max_length
 
+
 def test_split_text_safe_newlines(mock_max_length):
     text = "Line 1\nLine 2\nLine 3\nLine 4"
     chunks = split_text_safe(text, max_length=mock_max_length)
@@ -46,6 +51,7 @@ def test_split_text_safe_newlines(mock_max_length):
     # Verify full content
     reconstructed = "".join(chunks)
     assert reconstructed == text
+
 
 def test_split_text_safe_tag_balance(mock_max_length):
     text = "<b>Hello world this is a long bold text</b>"
@@ -63,6 +69,7 @@ def test_split_text_safe_tag_balance(mock_max_length):
     # The original text has content "Hello world this is a long bold text"
     original_content = strip_tags(text)
     assert full_content.replace(" ", "") == original_content.replace(" ", "")
+
 
 def test_split_text_safe_nested_tags(mock_max_length):
     text = "<b><i>Nested tags test here</i></b>"
@@ -82,6 +89,7 @@ def test_split_text_safe_nested_tags(mock_max_length):
     full_content = "".join([strip_tags(c) for c in chunks])
     assert full_content.replace(" ", "") == strip_tags(text).replace(" ", "")
 
+
 @pytest.mark.xfail(reason="Bug in split_text_safe splits inside tag attributes")
 def test_split_text_safe_code_block():
     # Code block splitting
@@ -96,16 +104,18 @@ def test_split_text_safe_code_block():
     assert len(chunks) > 1
 
     # Check if tags are preserved in first chunk
-    assert chunks[0].startswith('<pre><code')
+    assert chunks[0].startswith("<pre><code")
     # It should close tags
-    assert '</code></pre>' in chunks[0] or ('</pre>' in chunks[0] and '</code>' in chunks[0])
+    assert "</code></pre>" in chunks[0] or (
+        "</pre>" in chunks[0] and "</code>" in chunks[0]
+    )
 
     # Check subsequent chunks have context (reopened tags)
     # The implementation attempts to reconstruct tags.
     # We expect some form of reconstruction.
     found_reopen = False
     for chunk in chunks[1:]:
-        if '<pre>' in chunk or '<code>' in chunk or '<code' in chunk:
+        if "<pre>" in chunk or "<code>" in chunk or "<code" in chunk:
             found_reopen = True
             break
     assert found_reopen, "Subsequent chunks should reopen code block tags"
@@ -114,6 +124,7 @@ def test_split_text_safe_code_block():
     content = "".join([strip_tags(c) for c in chunks])
     assert "def foo" in content
     assert "return" in content
+
 
 def test_split_text_safe_hard_split():
     text = "A" * 50

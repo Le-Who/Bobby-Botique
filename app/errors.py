@@ -8,6 +8,7 @@ This module provides:
 - handle_api_errors async context manager for standardized handling
 - Keyboard builders for error recovery UI
 """
+
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional, Callable, Any, Union
@@ -29,6 +30,7 @@ NETWORK_ERROR = "🌐 Ошибка сети. Проверьте подключе
 # =============================================================================
 # ERROR CLASSIFICATION FUNCTIONS (must be defined before APIError class)
 # =============================================================================
+
 
 def user_friendly_error(raw_error: Union[Exception, str]) -> str:
     """Возвращает короткое дружелюбное сообщение для пользователя."""
@@ -68,23 +70,26 @@ def is_retryable_error(text: str) -> bool:
         "unavailable",
         "overloaded",
         "timeout",
-        "timed out"
+        "timed out",
     ]
     text_lower = text.lower()
-    return any(pattern.lower() in text_lower or text.startswith(pattern) for pattern in retryable_patterns)
+    return any(
+        pattern.lower() in text_lower or text.startswith(pattern)
+        for pattern in retryable_patterns
+    )
 
 
 def is_key_related_error(text: str) -> bool:
     """
     Определяет, является ли ошибка связанной с ключом API.
     Такие ошибки требуют попытки с другим ключом.
-    
+
     Ошибки, связанные с ключом:
     - Quota Exceeded (🚫) - ключ валиден, но исчерпан лимит
     - Invalid API Key - ключ невалиден
     - Authentication Error - проблема с авторизацией
     - Rate Limit (⏱️) - ключ валиден, но превышен лимит запросов/сек
-    
+
     Ошибки, НЕ связанные с ключом (не требуют смены ключа):
     - 503 Service Unavailable (🔄) - проблема сервера
     - Timeout (⏰) - проблема сети/сервера
@@ -92,9 +97,9 @@ def is_key_related_error(text: str) -> bool:
     """
     if not text:
         return False
-    
+
     text_lower = text.lower()
-    
+
     # Ошибки, связанные с ключом - пробуем другой ключ
     key_related_patterns = [
         "🚫",  # Quota/лимит
@@ -112,9 +117,9 @@ def is_key_related_error(text: str) -> bool:
         "rate_limit",
         "достигнут лимит",
         "превышен лимит",
-        "лимит запросов"
+        "лимит запросов",
     ]
-    
+
     # Ошибки, НЕ связанные с ключом - не меняем ключ
     not_key_related_patterns = [
         "⏰",  # Timeout
@@ -127,37 +132,51 @@ def is_key_related_error(text: str) -> bool:
         "перегружен",
         "некорректный запрос",
         "invalid request",
-        "malformed"
+        "malformed",
     ]
-    
+
     # Сначала проверяем на ошибки, НЕ связанные с ключом (приоритет выше)
-    if any(pattern.lower() in text_lower or text.startswith(pattern) for pattern in not_key_related_patterns):
+    if any(
+        pattern.lower() in text_lower or text.startswith(pattern)
+        for pattern in not_key_related_patterns
+    ):
         return False
-    
+
     # Проверяем на ошибки, связанные с ключом
-    return any(pattern.lower() in text_lower or text.startswith(pattern) for pattern in key_related_patterns)
+    return any(
+        pattern.lower() in text_lower or text.startswith(pattern)
+        for pattern in key_related_patterns
+    )
 
 
 # =============================================================================
 # KEYBOARD BUILDERS
 # =============================================================================
 
+
 def build_retry_and_roles_keyboard(include_roles: bool = True) -> InlineKeyboardMarkup:
     """Builds keyboard with retry button and optional roles button."""
-    buttons = [[InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="retry_last")]]
+    buttons = [
+        [InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="retry_last")]
+    ]
     if include_roles:
-        buttons.append([InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")])
+        buttons.append(
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
+        )
     return InlineKeyboardMarkup(buttons)
 
 
 def build_roles_keyboard() -> InlineKeyboardMarkup:
     """Builds keyboard with only roles button."""
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]])
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+    )
 
 
 # =============================================================================
 # LOGGING HELPERS
 # =============================================================================
+
 
 def log_and_format_error(context: str, err: Exception) -> str:
     """Logs error with context and returns user-friendly message."""
@@ -169,36 +188,39 @@ def log_and_format_error(context: str, err: Exception) -> str:
 # APIError EXCEPTION CLASS
 # =============================================================================
 
+
 class APIError(Exception):
     """
     Base exception for API-related errors with user-friendly messages.
-    
+
     Attributes:
         raw_error: Original error text or exception
         retryable: Whether the error can be resolved by retrying
         key_related: Whether the error requires trying a different API key
         user_message: User-friendly error message
-    
+
     Usage:
         raise APIError("Quota exceeded", retryable=False, key_related=True)
-        
+
         # Or from existing exception:
         except SomeException as e:
             raise APIError.from_exception(e)
     """
-    
+
     def __init__(
         self,
         raw_error: Union[str, Exception],
         retryable: bool = False,
-        key_related: bool = False
+        key_related: bool = False,
     ):
-        self.raw_error = str(raw_error) if isinstance(raw_error, Exception) else raw_error
+        self.raw_error = (
+            str(raw_error) if isinstance(raw_error, Exception) else raw_error
+        )
         self.retryable = retryable
         self.key_related = key_related
         self.user_message = user_friendly_error(self.raw_error)
         super().__init__(self.user_message)
-    
+
     @classmethod
     def from_exception(cls, exc: Exception) -> "APIError":
         """Create APIError from any exception, auto-detecting error type."""
@@ -206,7 +228,7 @@ class APIError(Exception):
         return cls(
             raw_error=raw,
             retryable=is_retryable_error(raw),
-            key_related=is_key_related_error(raw)
+            key_related=is_key_related_error(raw),
         )
 
 
@@ -214,28 +236,29 @@ class APIError(Exception):
 # ASYNC CONTEXT MANAGER FOR UNIFIED ERROR HANDLING
 # =============================================================================
 
+
 @asynccontextmanager
 async def handle_api_errors(
     placeholder_message: Message,
     context: str = "API request",
     on_error: Optional[Callable[[Exception], Any]] = None,
     show_retry_button: bool = True,
-    reraise: bool = False
+    reraise: bool = False,
 ):
     """
     Async context manager for unified API error handling.
-    
+
     Automatically:
     - Logs the error with context
     - Displays user-friendly message in the placeholder
     - Shows appropriate retry/roles keyboard
     - Calls optional error callback
-    
+
     Usage:
         async with handle_api_errors(message, "Gemini request"):
             response = await get_ai_response(...)
             await message.edit_text(response)
-    
+
     Args:
         placeholder_message: Telegram message to edit with error
         context: Description of the operation for logging
@@ -248,31 +271,31 @@ async def handle_api_errors(
     except Exception as e:
         error_text = str(e)
         user_msg = user_friendly_error(e)
-        
+
         # Log the error with context
         logging.error(f"{context}: {e}", exc_info=True)
-        
+
         # Determine keyboard
         keyboard = None
         if show_retry_button and is_retryable_error(error_text):
             keyboard = build_retry_and_roles_keyboard(include_roles=True)
         elif show_retry_button:
             keyboard = build_roles_keyboard()
-        
+
         # Update the message
         try:
             await placeholder_message.edit_text(user_msg, reply_markup=keyboard)
         except Exception as edit_error:
             logging.warning(f"Failed to edit message with error: {edit_error}")
-        
+
         # Run callback if provided
         if on_error:
             try:
                 result = on_error(e)
-                if hasattr(result, '__await__'):
+                if hasattr(result, "__await__"):
                     await result
             except Exception as callback_error:
                 logging.warning(f"Error callback failed: {callback_error}")
-        
+
         if reraise:
             raise

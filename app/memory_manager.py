@@ -348,7 +348,7 @@ class AutoCleanupResource:
         if self._cleanup_registered:
             try:
                 memory_manager.remove_cleanup_callback(self._cleanup)
-            except:
+            except Exception:
                 pass
 
 

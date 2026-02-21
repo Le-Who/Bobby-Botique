@@ -1,15 +1,15 @@
 import unittest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, date
+from unittest.mock import patch
+from datetime import datetime
 from app.utils.time import get_kyiv_reset_time, get_pacific_tz
 
-class TestTimeUtils(unittest.TestCase):
 
+class TestTimeUtils(unittest.TestCase):
     def setUp(self):
         # We need the real datetime class for combine and min
         self.real_datetime = datetime
 
-    @patch('app.utils.time.datetime')
+    @patch("app.utils.time.datetime")
     def test_get_kyiv_reset_time_standard(self, mock_datetime):
         """Test reset time calculation during standard time difference (10 hours)."""
         # Configure mock to behave like datetime class where needed
@@ -31,7 +31,7 @@ class TestTimeUtils(unittest.TestCase):
         # Assert: 10:00 27.10.2023
         self.assertEqual(result, "10:00 27.10.2023")
 
-    @patch('app.utils.time.datetime')
+    @patch("app.utils.time.datetime")
     def test_get_kyiv_reset_time_dst_mismatch(self, mock_datetime):
         """Test reset time calculation during mismatched DST (late October, 9 hours diff)."""
         # Europe switches back to standard time last Sunday of Oct (Oct 29, 2023).
@@ -56,7 +56,7 @@ class TestTimeUtils(unittest.TestCase):
         # Assert: 09:00 31.10.2023
         self.assertEqual(result, "09:00 31.10.2023")
 
-    @patch('app.utils.time.datetime')
+    @patch("app.utils.time.datetime")
     def test_get_kyiv_reset_time_year_rollover(self, mock_datetime):
         """Test reset time calculation across year boundary."""
         # Dec 31, 2023.
@@ -79,5 +79,6 @@ class TestTimeUtils(unittest.TestCase):
         # Assert: 10:00 01.01.2024
         self.assertEqual(result, "10:00 01.01.2024")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

@@ -1,12 +1,17 @@
 import pytest
-import asyncio
-import time
 from unittest.mock import MagicMock, patch, AsyncMock
 from app.memory_manager import (
-    MemoryManager, MemoryThreshold, AutoCleanupResource, DocumentCache,
-    memory_manager, cleanup_memory, shutdown_memory_manager,
-    get_memory_stats, add_memory_cleanup_callback, remove_memory_cleanup_callback
+    MemoryManager,
+    MemoryThreshold,
+    AutoCleanupResource,
+    DocumentCache,
+    cleanup_memory,
+    shutdown_memory_manager,
+    get_memory_stats,
+    add_memory_cleanup_callback,
+    remove_memory_cleanup_callback,
 )
+
 
 # Mock psutil
 @pytest.fixture
@@ -25,8 +30,8 @@ def mock_psutil():
         mock.virtual_memory.return_value = virtual_memory
         yield mock
 
-class TestMemoryManager:
 
+class TestMemoryManager:
     @pytest.fixture(autouse=True)
     async def setup_teardown(self):
         # Create a fresh instance for each test to avoid side effects
@@ -46,12 +51,14 @@ class TestMemoryManager:
 
     @pytest.mark.asyncio
     async def test_custom_thresholds(self):
-        thresholds = MemoryThreshold(warning_percent=80.0, critical_percent=90.0, cleanup_percent=50.0)
+        thresholds = MemoryThreshold(
+            warning_percent=80.0, critical_percent=90.0, cleanup_percent=50.0
+        )
         manager = MemoryManager(thresholds)
         assert manager.thresholds.warning_percent == 80.0
         assert manager.thresholds.critical_percent == 90.0
         assert manager.thresholds.cleanup_percent == 50.0
-        await manager.stop() # Ensure it stops
+        await manager.stop()  # Ensure it stops
 
     def test_cleanup_callbacks(self):
         callback = MagicMock()
@@ -63,14 +70,14 @@ class TestMemoryManager:
 
     def test_get_memory_stats(self, mock_psutil):
         stats = self.manager.get_memory_stats()
-        assert stats['current_usage_mb'] == 100.0
-        assert stats['current_usage_percent'] == 50.0
-        assert stats['available_mb'] == 500.0
-        assert stats['total_mb'] == 1000.0
-        assert stats['cpu_percent'] == 10.0
-        assert 'history_size' in stats
-        assert 'last_cleanup' in stats
-        assert 'thresholds' in stats
+        assert stats["current_usage_mb"] == 100.0
+        assert stats["current_usage_percent"] == 50.0
+        assert stats["available_mb"] == 500.0
+        assert stats["total_mb"] == 1000.0
+        assert stats["cpu_percent"] == 10.0
+        assert "history_size" in stats
+        assert "last_cleanup" in stats
+        assert "thresholds" in stats
 
     @pytest.mark.asyncio
     async def test_check_memory_usage_low(self, mock_psutil):
@@ -211,9 +218,11 @@ class TestMemoryManager:
         assert cb not in self.manager._cleanup_callbacks
 
         # Test get_stats
-        with patch("app.memory_manager.psutil"): # mock psutil again for this call if needed, or rely on errors being handled
-             stats = get_memory_stats()
-             assert isinstance(stats, dict)
+        with patch(
+            "app.memory_manager.psutil"
+        ):  # mock psutil again for this call if needed, or rely on errors being handled
+            stats = get_memory_stats()
+            assert isinstance(stats, dict)
 
         # Test cleanup_memory (force_cleanup)
         await cleanup_memory()

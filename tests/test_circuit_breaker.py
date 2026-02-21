@@ -1,8 +1,13 @@
 import pytest
 import asyncio
-import time
-from unittest.mock import Mock, patch, AsyncMock
-from app.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitState, CircuitBreakerOpenError
+from unittest.mock import AsyncMock
+from app.circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerConfig,
+    CircuitState,
+    CircuitBreakerOpenError,
+)
+
 
 @pytest.fixture
 def config():
@@ -10,14 +15,16 @@ def config():
         failure_threshold=2,
         recovery_timeout=0.1,  # Short timeout for testing
         monitor_interval=0.1,
-        expected_exception=ValueError
+        expected_exception=ValueError,
     )
+
 
 @pytest.fixture
 async def cb(config):
     cb = CircuitBreaker("test_cb", config)
     yield cb
     await cb.shutdown()
+
 
 @pytest.mark.asyncio
 async def test_initial_state(cb):
@@ -26,6 +33,7 @@ async def test_initial_state(cb):
     assert stats["failure_count"] == 0
     assert stats["total_requests"] == 0
     assert stats["state"] == "closed"
+
 
 @pytest.mark.asyncio
 async def test_successful_call(cb):
@@ -39,6 +47,7 @@ async def test_successful_call(cb):
     assert cb._total_requests == 1
     assert cb._failure_count == 0
 
+
 @pytest.mark.asyncio
 async def test_failure_counting(cb):
     # Setup mock to fail with expected exception
@@ -49,6 +58,7 @@ async def test_failure_counting(cb):
 
     assert cb._failure_count == 1
     assert cb.get_state() == CircuitState.CLOSED
+
 
 @pytest.mark.asyncio
 async def test_circuit_opens_on_threshold(cb):
@@ -67,6 +77,7 @@ async def test_circuit_opens_on_threshold(cb):
     assert cb.get_state() == CircuitState.OPEN
     assert cb._failure_count == 2
 
+
 @pytest.mark.asyncio
 async def test_open_circuit_rejects_calls(cb):
     # Force open state
@@ -79,6 +90,7 @@ async def test_open_circuit_rejects_calls(cb):
     assert "is OPEN" in str(excinfo.value)
     mock_func.assert_not_called()
 
+
 @pytest.mark.asyncio
 async def test_unexpected_exception_ignored(cb):
     # Exception not in expected_exception (ValueError)
@@ -90,6 +102,7 @@ async def test_unexpected_exception_ignored(cb):
     # Should not count as failure
     assert cb._failure_count == 0
     assert cb.get_state() == CircuitState.CLOSED
+
 
 @pytest.mark.asyncio
 async def test_recovery_flow_success(cb):
@@ -107,6 +120,7 @@ async def test_recovery_flow_success(cb):
     assert result == "recovered"
     assert cb.get_state() == CircuitState.CLOSED
     assert cb._failure_count == 0
+
 
 @pytest.mark.asyncio
 async def test_recovery_flow_failure(cb):
@@ -127,6 +141,7 @@ async def test_recovery_flow_failure(cb):
     # Failure count increases
     assert cb._failure_count > 0
 
+
 @pytest.mark.asyncio
 async def test_manual_control(cb):
     await cb.force_open()
@@ -139,6 +154,7 @@ async def test_manual_control(cb):
     await cb.reset()
     assert cb.get_state() == CircuitState.CLOSED
     assert cb._total_requests == 0
+
 
 @pytest.mark.asyncio
 async def test_monitoring_task(cb):

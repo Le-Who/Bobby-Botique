@@ -4,11 +4,10 @@ import sys
 from unittest.mock import MagicMock, patch, AsyncMock
 from typing import List
 from dataclasses import dataclass, field
-import importlib
 
 # Ensure app.config is loaded before patching
 try:
-    import app.config
+    pass
 except ImportError:
     pass
 
@@ -21,6 +20,7 @@ if "asyncpg" not in sys.modules:
 if "pytz" not in sys.modules:
     sys.modules["pytz"] = MagicMock()
 
+
 @dataclass
 class MockSettings:
     TAVILY_API_KEYS: List[str] = field(default_factory=list)
@@ -31,13 +31,12 @@ class MockSettings:
     TAVILY_MONTHLY_CREDIT_LIMIT: int = 1000
     TAVILY_LIMIT_THRESHOLD_PERCENT: float = 0.97
 
+
 @pytest.mark.asyncio
 async def test_force_update_tavily_keys():
     # Setup
     test_keys = ["key1", "key2", "key3"]
-    expected_data = [
-        (hashlib.sha256(k.encode()).hexdigest(), k) for k in test_keys
-    ]
+    expected_data = [(hashlib.sha256(k.encode()).hexdigest(), k) for k in test_keys]
 
     mock_settings = MockSettings(TAVILY_API_KEYS=test_keys)
 
@@ -71,10 +70,15 @@ async def test_force_update_tavily_keys():
         import app.database
 
         # Now patch the functions inside app.database
-        with patch.object(app.database, "db_query", new_callable=AsyncMock) as mock_db_query, \
-             patch.object(app.database, "db_execute_many", new_callable=AsyncMock) as mock_db_execute_many, \
-             patch.object(app.database, "db_manager") as mock_db_manager:
-
+        with (
+            patch.object(
+                app.database, "db_query", new_callable=AsyncMock
+            ) as mock_db_query,
+            patch.object(
+                app.database, "db_execute_many", new_callable=AsyncMock
+            ) as mock_db_execute_many,
+            patch.object(app.database, "db_manager") as mock_db_manager,
+        ):
             # Mock the cache lock
             mock_lock = AsyncMock()
             mock_lock.__aenter__.return_value = None
@@ -100,10 +104,14 @@ async def test_force_update_tavily_keys():
             call_args = mock_db_execute_many.call_args
             query, data = call_args[0]
 
-            assert query == "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2)"
+            assert (
+                query
+                == "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2)"
+            )
             assert len(data) == 3
             # Sort data to compare if order is not guaranteed (it is guaranteed in list comprehension though)
             assert data == expected_data
+
 
 @pytest.mark.asyncio
 async def test_force_update_tavily_keys_empty():
@@ -111,10 +119,14 @@ async def test_force_update_tavily_keys_empty():
 
     with patch("app.config.get_settings", return_value=mock_settings):
         import app.database
-        with patch.object(app.database, "db_query", new_callable=AsyncMock) as mock_db_query, \
-             patch.object(app.database, "db_execute_many", new_callable=AsyncMock) as mock_db_execute_many, \
-             patch.object(app.database, "db_manager") as mock_db_manager:
 
+        with (
+            patch.object(
+                app.database, "db_query", new_callable=AsyncMock
+            ) as mock_db_query,
+            patch.object(app.database, "db_execute_many", new_callable=AsyncMock),
+            patch.object(app.database, "db_manager") as mock_db_manager,
+        ):
             mock_db_manager._cache_lock = AsyncMock()
             mock_db_manager._cache_lock.__aenter__.return_value = None
             mock_db_manager._cache_lock.__aexit__.return_value = None
