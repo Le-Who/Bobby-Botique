@@ -118,3 +118,13 @@ def test_error_leakage_prevented(client):
         response_text = response.get_data(as_text=True)
         assert secret_message not in response_text
         assert "Internal Server Error" in response_text
+
+def test_security_headers_on_error(client):
+    """Test that security headers are present even on error responses."""
+    # Force 404
+    response = client.get('/non-existent-endpoint')
+    assert response.status_code == 404
+
+    assert response.headers.get('X-Content-Type-Options') == 'nosniff'
+    assert response.headers.get('X-Frame-Options') == 'DENY'
+    assert response.headers.get('Content-Security-Policy') is not None
