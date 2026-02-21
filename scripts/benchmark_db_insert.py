@@ -3,7 +3,6 @@ import asyncio
 import time
 import os
 import asyncpg
-import json
 import logging
 
 # Setup logging
@@ -16,7 +15,7 @@ async def benchmark():
         print("DATABASE_URL not set. Skipping benchmark.")
         return
 
-    print(f"Connecting to DB...")
+    print("Connecting to DB...")
     # Disable statement cache for PgBouncer compatibility
     pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5, statement_cache_size=0)
 

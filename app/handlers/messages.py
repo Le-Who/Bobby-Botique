@@ -422,7 +422,7 @@ async def delayed_process_media_group(media_group_id: str, context: ContextTypes
                 await process_media_group(media_group_id, context)
             else:
                 # Если это одиночное изображение, обрабатываем через стандартный путь
-                logging.info(f"📸 Одиночное изображение, перенаправляю в стандартную обработку")
+                logging.info("📸 Одиночное изображение, перенаправляю в стандартную обработку")
                 await process_single_image_from_group(media_group_id, context)
         finally:
             # Очищаем группу после обработки
@@ -472,7 +472,7 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
     
     group_data = MEDIA_GROUPS[media_group_id]
     user_id = group_data['user_id']
-    chat_id = group_data['chat_id']
+    group_data['chat_id']
     messages = group_data['messages']
     caption = group_data['caption']
     placeholder_message = group_data['placeholder_message']

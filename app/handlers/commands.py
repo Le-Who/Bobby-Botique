@@ -470,7 +470,6 @@ async def register_group_command(update: Update, context: ContextTypes.DEFAULT_T
 async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
     """Показывает статистику группы"""
-    user_id = update.effective_user.id
     
     chat = update.effective_chat
     if chat.type == 'private':
@@ -681,7 +680,6 @@ async def rename_conversation_command(update: Update, context: ContextTypes.DEFA
 async def delete_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для получения аргументов команды
     """Удалить беседу"""
-    user_id = update.effective_user.id
     
     args = context.args
     if not args or not args[0].isdigit():
@@ -765,15 +763,15 @@ async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TY
         
         # Формируем отчет
         report = "✅ *Конфигурация перезагружена*\n\n"
-        report += f"🔑 *API ключи:*\n"
+        report += "🔑 *API ключи:*\n"
         report += f"• Gemini: `{len(new_settings.GEMINI_API_KEYS)}` ключей\n"
         report += f"• Tavily: `{len(new_settings.TAVILY_API_KEYS)}` ключей\n"
         report += f"• OpenRouter: `{len(new_settings.OPENROUTER_API_KEYS)}` ключей\n\n"
-        report += f"🤖 *Модели:*\n"
+        report += "🤖 *Модели:*\n"
         report += f"• Gemini: `{len(new_settings.AVAILABLE_MODELS)}` моделей\n"
         report += f"• OpenRouter: `{len(new_settings.OPENROUTER_AVAILABLE_MODELS)}` моделей\n"
         report += f"• По умолчанию: `{new_settings.DEFAULT_MODEL}`\n\n"
-        report += f"⚙️ *Настройки:*\n"
+        report += "⚙️ *Настройки:*\n"
         report += f"• PORT: `{new_settings.PORT}`\n"
         report += f"• ADMIN_ID: `{new_settings.ADMIN_ID}`\n"
         report += f"• Лимитов моделей: `{len(new_settings.DAILY_LIMITS)}`\n\n"

@@ -13,12 +13,13 @@ The project is built with a **monolithic asyncio architecture**, integrating a h
 ---
 
 ## 📑 Table of Contents
+
 - [🎯 Project Goals](#-project-goals)
 - [🏗 Architecture Overview](#-architecture-overview)
 - [🧠 Backend Capabilities](#-backend-capabilities)
-    - [Core Logic & Agentic Workflow](#core-logic--agentic-workflow)
-    - [AI Provider Routing & Key Rotation](#ai-provider-routing--key-rotation)
-    - [Document Processing](#document-processing)
+  - [Core Logic & Agentic Workflow](#core-logic--agentic-workflow)
+  - [AI Provider Routing & Key Rotation](#ai-provider-routing--key-rotation)
+  - [Document Processing](#document-processing)
 - [🖥 Frontend (Monitoring Dashboard)](#-frontend-monitoring-dashboard)
 - [🛠 Technical Stack](#-technical-stack)
 - [🚀 Deployment & Infrastructure](#-deployment--infrastructure)
@@ -40,50 +41,60 @@ The project is built with a **monolithic asyncio architecture**, integrating a h
 The system runs as a single containerized application performing two parallel asyncio tasks:
 
 1.  **Telegram Bot (`bot.py`)**:
-    *   Uses `python-telegram-bot` for long-polling.
-    *   Manages user interactions, message queues, and AI responses.
-    *   Handles "Agentic" workflows (Research, Q&A).
+    - Uses `python-telegram-bot` for long-polling.
+    - Manages user interactions, message queues, and AI responses.
+    - Handles "Agentic" workflows (Research, Q&A).
 2.  **Web Server (`app/web.py`)**:
-    *   A lightweight Flask + Hypercorn server.
-    *   Exposes Health Check endpoints for cloud platforms (Render/Northflank).
-    *   Serves a secure Monitoring Dashboard.
+    - A lightweight Flask + Hypercorn server.
+    - Exposes Health Check endpoints for cloud platforms (Render/Northflank).
+    - Serves a secure Monitoring Dashboard.
 
 **Data Persistence**:
-*   **PostgreSQL**: Stores user preferences, chat history (short-term & long-term), and API key usage statistics.
-*   **Redis** (Optional): Used for high-speed caching and temporary state management.
+
+- **PostgreSQL**: Stores user preferences, chat history (short-term & long-term), and API key usage statistics.
+- **Redis** (Optional): Used for high-speed caching and temporary state management.
 
 ---
 
 ## 🧠 Backend Capabilities
 
 ### Core Logic & Agentic Workflow
+
 Located in `app/handlers/agent.py`, the intelligent core enables:
 
-*   **Deep Dive Research**:
-    1.  Analyzes user query.
-    2.  Uses **Tavily API** to search the web.
-    3.  **URL Selection Agent**: Uses AI to score and select the most relevant sources.
-    4.  **Content Scraper**: Fetches content from selected URLs.
-    5.  **Synthesis Agent**: Generates a comprehensive answer with citations based on the scraped context (up to 30k+ tokens).
-*   **Context-Aware Chat**:
-    *   Maintains conversation history in PostgreSQL.
-    *   Injects system instructions and user preferences into every prompt.
-    *   Supports "New Topic" to reset context while keeping long-term memory.
-*   **Group Chat Mode**: Specialized handlers for admin-only or reply-only interactions in groups.
+- **Deep Dive Research**:
+  1.  Analyzes user query.
+  2.  Uses **Tavily API** to search the web.
+  3.  **URL Selection Agent**: Uses AI to score and select the most relevant sources.
+  4.  **Content Scraper**: Fetches content from selected URLs.
+  5.  **Synthesis Agent**: Generates a comprehensive answer with citations based on the scraped context (up to 30k+ tokens).
+- **Context-Aware Chat**:
+  - Maintains conversation history in PostgreSQL.
+  - Injects system instructions and user preferences into every prompt.
+  - Supports "New Topic" to reset context while keeping long-term memory.
+- **Group Chat Mode**: Specialized handlers for admin-only or reply-only interactions in groups.
 
 ### AI Provider Routing & Key Rotation
+
 The bot implements a sophisticated "Smart Router" for AI requests:
 
-*   **Multi-Provider Support**: Seamlessly switches between **Google Gemini** (Flash, Pro) and **OpenRouter** (GPT-4, Claude 3, etc.).
-*   **Key Rotation System**:
-    *   Rotates through a pool of API keys to avoid rate limits.
-    *   Tracks usage stats (requests/tokens) per key.
-    *   **Auto-Fallback**: If a key fails (Quota Exceeded) or a provider is down, it automatically tries the next key or switches to a backup model (e.g., Gemini Pro -> Gemini Flash -> OpenRouter).
+- **Multi-Provider Support**: Seamlessly switches between **Google Gemini** (Flash, Pro) and **OpenRouter** (GPT-4, Claude 3, etc.).
+- **Key Rotation System**:
+  - Rotates through a pool of API keys to avoid rate limits.
+  - Tracks usage stats (requests/tokens) per key.
+  - **Auto-Fallback**: If a key fails (Quota Exceeded) or a provider is down, it automatically tries the next key or switches to a backup model (e.g., Gemini Pro -> Gemini Flash -> OpenRouter).
 
 ### Document Processing
-*   **Formats**: Supports PDF (`pypdf`), DOCX (`python-docx`), and txt/md.
-*   **Multimodal Analysis**: Can "see" images via Gemini's vision capabilities.
-*   **RAG-lite**: Uploaded documents are parsed, truncated to fits context limits (~30k chars), and injected into the conversation for Q&A.
+
+- **Formats**: Supports PDF (`pypdf`), DOCX (`python-docx`), and txt/md.
+- **Multimodal Analysis**: Can "see" images via Gemini's vision capabilities.
+- **RAG-lite**: Uploaded documents are parsed, truncated to fits context limits (~30k chars), and injected into the conversation for Q&A.
+
+### Performance Optimizations
+
+- **Async Event Loop Non-Blocking**: Offloads CPU-bound array processing, base64 operations, JSON serializations, and GC passes to `asyncio.to_thread` preventing Telegram webhook stutters.
+- **Memory Swapping**: Uses `SpooledTemporaryFile` instead of RAM buffers for analyzing bulky DOCX/PDF documents, dynamically writing to disk limits are exceeded to avoid OOM crashes.
+- **Bounded Job Queues**: Implements `maxsize` limits and priority fallbacks on the async background task queue to maintain server resilience against load spikes.
 
 ---
 
@@ -91,27 +102,27 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 
 While primarily a Telegram bot, the project includes a web frontend for administration and monitoring.
 
-*   **Technology**: Flask, Jinja2 Templates (`app/templates`), Vanilla CSS (`app/static`).
-*   **Endpoints**:
-    *   `/`: Visual dashboard showing generic system status (CPU, RAM, Uptime).
-    *   `/health`: JSON endpoint for docker healthchecks.
-    *   `/keys`: **(Secured)** Detailed view of API key usage, active keys, and remaining quotas per model.
-*   **Security**: Protected by a shared secret (`ADMIN_SECRET` or Bot Token) to prevent unauthorized access to sensitive metrics.
+- **Technology**: Flask, Jinja2 Templates (`app/templates`), Vanilla CSS (`app/static`).
+- **Endpoints**:
+  - `/`: Visual dashboard showing generic system status (CPU, RAM, Uptime).
+  - `/health`: JSON endpoint for docker healthchecks.
+  - `/keys`: **(Secured)** Detailed view of API key usage, active keys, and remaining quotas per model.
+- **Security**: Protected by a shared secret (`ADMIN_SECRET` or Bot Token) to prevent unauthorized access to sensitive metrics.
 
 ---
 
 ## 🛠 Technical Stack
 
-| Category | Technology | Purpose |
-| :--- | :--- | :--- |
-| **Language** | Python 3.11+ | Core runtime |
-| **Bot Framework** | `python-telegram-bot` (v20+) | Async Telegram API wrapper |
-| **Web Server** | Flask + Hypercorn | Async-compatible web server |
-| **Database** | `asyncpg` (PostgreSQL) | High-performance async DB driver |
-| **AI SDKs** | `google-genai`, OpenAI (compat) | Interaction with LLMs |
-| **Search** | `tavily-python` | AI-optimized web search |
-| **Doc Processing** | `pypdf`, `python-docx` | Text extraction from files |
-| **Container** | Docker | Standardization and deployment |
+| Category           | Technology                      | Purpose                          |
+| :----------------- | :------------------------------ | :------------------------------- |
+| **Language**       | Python 3.11+                    | Core runtime                     |
+| **Bot Framework**  | `python-telegram-bot` (v20+)    | Async Telegram API wrapper       |
+| **Web Server**     | Flask + Hypercorn               | Async-compatible web server      |
+| **Database**       | `asyncpg` (PostgreSQL)          | High-performance async DB driver |
+| **AI SDKs**        | `google-genai`, OpenAI (compat) | Interaction with LLMs            |
+| **Search**         | `tavily-python`                 | AI-optimized web search          |
+| **Doc Processing** | `pypdf`, `python-docx`          | Text extraction from files       |
+| **Container**      | Docker                          | Standardization and deployment   |
 
 ---
 
@@ -120,21 +131,25 @@ While primarily a Telegram bot, the project includes a web frontend for administ
 The project is "Cloud Native" ready, specifically optimized for PaaS providers like **Northflank** and **Render**.
 
 ### Docker
-*   **Base Image**: `python:3.11-slim` (Lightweight, secure).
-*   **Security**: Runs as a non-root `app` user.
-*   **Entrypoint**: Custom `start.sh` script to handle environment setup.
-*   **Healthcheck**: Built-in curl command pinging `localhost:10000/status`.
+
+- **Base Image**: `python:3.11-slim` (Lightweight, secure).
+- **Security**: Runs as a non-root `app` user.
+- **Entrypoint**: Custom `start.sh` script to handle environment setup.
+- **Healthcheck**: Built-in curl command pinging `localhost:10000/status`.
 
 ### Services (`docker-compose.yml`)
-*   **telegram-gemini-bot**: The main application service.
-*   Configured with `restart: unless-stopped` for resilience.
-*   Mounts `./data` for persistent storage (if not using a managed DB).
+
+- **telegram-gemini-bot**: The main application service.
+- Configured with `restart: unless-stopped` for resilience.
+- Mounts `./data` for persistent storage (if not using a managed DB).
 
 ### Signal Handling
+
 Implements graceful shutdown handling (SIGINT/SIGTERM) to ensure:
-*   Database connections are closed properly.
-*   Pending Telegram updates are dropped or processed.
-*   Web server unbinds ports immediately.
+
+- Database connections are closed properly.
+- Pending Telegram updates are dropped or processed.
+- Web server unbinds ports immediately.
 
 ---
 
@@ -143,6 +158,7 @@ Implements graceful shutdown handling (SIGINT/SIGTERM) to ensure:
 Configuration is managed via environment variables (supports `.env` file).
 
 ### Essential
+
 ```bash
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
 DATABASE_URL=postgresql://user:pass@host:5432/dbname
@@ -150,6 +166,7 @@ ADMIN_ID=123456789
 ```
 
 ### AI Providers
+
 ```bash
 # Comma-separated keys for rotation
 GEMINI_API_KEYS=AIzaSy...,AIzaSy...
@@ -158,9 +175,9 @@ TAVILY_API_KEY=tvly-xxxx
 ```
 
 ### System
+
 ```bash
 PORT=10000              # Web server port
 ENABLE_WEB_SERVER=true  # Enable/Disable dashboard
 LOG_LEVEL=INFO          # DEBUG/INFO/WARNING
 ```
-

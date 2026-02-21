@@ -151,7 +151,7 @@ def get_model_menu_content(chat_state, context):
     # Формируем текст с информацией о текущей модели
     is_current_openrouter = "/" in current_model if current_model else False
     provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
-    text = f"**Выберите модель для разговора:**\n\n"
+    text = "**Выберите модель для разговора:**\n\n"
     text += f"**Текущая модель:** `{current_model}`\n"
     text += f"**Провайдер:** {provider_name}\n\n"
     text += "Нажмите на модель для выбора."

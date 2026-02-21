@@ -10,29 +10,38 @@ from app.config import settings
 # --- WEB SERVER FOR RENDER HEALTH CHECK ---
 flask_app = Flask(__name__)
 
+
 def require_auth(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         # Security: Only allow token via header to prevent leakage in logs/history
-        token = request.headers.get('X-Auth-Token')
+        token = request.headers.get("X-Auth-Token")
 
         # Determine the expected secret
-        expected_secret = os.environ.get('ADMIN_SECRET')
+        expected_secret = os.environ.get("ADMIN_SECRET")
         if not expected_secret and settings:
             expected_secret = settings.TELEGRAM_BOT_TOKEN
 
         if not expected_secret:
-             logging.error("No authentication secret configured for web endpoints.")
-             abort(500, description="Server misconfiguration: Authentication secret not set.")
+            logging.error("No authentication secret configured for web endpoints.")
+            abort(
+                500,
+                description="Server misconfiguration: Authentication secret not set.",
+            )
 
         # Use constant-time comparison to prevent timing attacks
         if not token or not hmac.compare_digest(token, expected_secret):
-            abort(401, description="Unauthorized: Invalid or missing token. Use 'X-Auth-Token' header.")
+            abort(
+                401,
+                description="Unauthorized: Invalid or missing token. Use 'X-Auth-Token' header.",
+            )
 
         return f(*args, **kwargs)
+
     return decorated_function
 
-@flask_app.route('/')
+
+@flask_app.route("/")
 @require_auth
 def dashboard():
     """Main Dashboard Endpoint"""
@@ -43,25 +52,31 @@ def dashboard():
             "database": "connected" if database.db_pool else "disconnected",
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "version": "2.1.0",
-            "environment": os.getenv("ENVIRONMENT", "production")
+            "environment": os.getenv("ENVIRONMENT", "production"),
         }
 
         # System Metrics
         import psutil
+
         try:
             status_data["system"] = {
-                "cpu_percent": psutil.cpu_percent(interval=None), # Non-blocking
+                "cpu_percent": psutil.cpu_percent(interval=None),  # Non-blocking
                 "memory_percent": psutil.virtual_memory().percent,
-                "disk_percent": psutil.disk_usage('/').percent
+                "disk_percent": psutil.disk_usage("/").percent,
             }
         except ImportError:
-            status_data["system"] = {"cpu_percent": 0, "memory_percent": 0, "disk_percent": 0}
+            status_data["system"] = {
+                "cpu_percent": 0,
+                "memory_percent": 0,
+                "disk_percent": 0,
+            }
 
-        return render_template('status.html', status=status_data)
+        return render_template("status.html", status=status_data)
     except Exception as e:
         return f"Dashboard Error: {e}", 500
 
-@flask_app.route('/status') # Keep JSON API for automated monitoring
+
+@flask_app.route("/status")  # Keep JSON API for automated monitoring
 @require_auth
 def status_api():
     """JSON Status API for external monitoring tools"""
@@ -71,43 +86,52 @@ def status_api():
             "bot": "running",
             "database": "connected" if database.db_pool else "disconnected",
             "timestamp": str(datetime.datetime.now()),
-            "system": {}
+            "system": {},
         }
         import psutil
+
         try:
-             status["system"] = {
+            status["system"] = {
                 "cpu_percent": psutil.cpu_percent(interval=None),
                 "memory_percent": psutil.virtual_memory().percent,
-                "disk_percent": psutil.disk_usage('/').percent
+                "disk_percent": psutil.disk_usage("/").percent,
             }
-        except: pass
+        except Exception:
+            pass
         return status, 200
     except Exception as e:
         return {"error": str(e)}, 500
 
 
-@flask_app.route('/health')
+@flask_app.route("/health")
 def health_check_endpoint():
     """Health check endpoint для мониторинга"""
     try:
         # Проверяем основные компоненты
         bot_status = "running"
-        database_status = "connected" if database.db_pool and not database.db_pool._closed else "disconnected"
+        database_status = (
+            "connected"
+            if database.db_pool and not database.db_pool._closed
+            else "disconnected"
+        )
 
         # Проверяем Redis статус
         try:
             from app.cache import redis_client
+
             if redis_client:
                 # Используем asyncio.to_thread для безопасной проверки Redis
                 import asyncio
+
                 try:
                     # Создаем временный event loop для проверки Redis
                     temp_loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(temp_loop)
-                    temp_loop.run_until_complete(asyncio.wait_for(
-                        asyncio.to_thread(redis_client.ping),
-                        timeout=3.0
-                    ))
+                    temp_loop.run_until_complete(
+                        asyncio.wait_for(
+                            asyncio.to_thread(redis_client.ping), timeout=3.0
+                        )
+                    )
                     temp_loop.close()
                     redis_status = "connected"
                 except Exception:
@@ -131,13 +155,13 @@ def health_check_endpoint():
         health_status = {
             "status": overall_status,
             "timestamp": str(datetime.datetime.now()),
-            "container_id": os.environ.get('HOSTNAME', 'unknown'),
+            "container_id": os.environ.get("HOSTNAME", "unknown"),
             "process_id": os.getpid(),
             "services": {
                 "bot": bot_status,
                 "database": database_status,
-                "redis": redis_status
-            }
+                "redis": redis_status,
+            },
         }
 
         # Возвращаем соответствующий HTTP код
@@ -152,10 +176,11 @@ def health_check_endpoint():
         return {
             "status": "unhealthy",
             "error": str(e),
-            "timestamp": str(datetime.datetime.now())
+            "timestamp": str(datetime.datetime.now()),
         }, 500
 
-@flask_app.route('/keys')
+
+@flask_app.route("/keys")
 @require_auth
 def keys_status():
     """Endpoint для просмотра статуса ключей Gemini API"""
@@ -173,8 +198,14 @@ def keys_status():
 
             # Получаем информацию об активных ключах
             active_keys = {}
-            for model in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]:
-                active_info = loop.run_until_complete(database.get_active_key_info(model))
+            for model in [
+                "gemini-2.5-flash",
+                "gemini-2.5-pro",
+                "gemini-2.5-flash-lite",
+            ]:
+                active_info = loop.run_until_complete(
+                    database.get_active_key_info(model)
+                )
                 if active_info:
                     active_keys[model] = active_info
 
@@ -184,8 +215,8 @@ def keys_status():
                 "key_usage_stats": key_stats,
                 "cache_info": {
                     "cache_ttl_seconds": 300,
-                    "models_cached": list(active_keys.keys())
-                }
+                    "models_cached": list(active_keys.keys()),
+                },
             }
 
             return keys_status, 200
@@ -196,10 +227,11 @@ def keys_status():
     except Exception as e:
         return {
             "error": f"Failed to get keys status: {str(e)}",
-            "timestamp": str(datetime.datetime.now())
+            "timestamp": str(datetime.datetime.now()),
         }, 500
 
-@flask_app.route('/keys/<model_name>')
+
+@flask_app.route("/keys/<model_name>")
 @require_auth
 def model_keys_status(model_name):
     """Endpoint для просмотра статуса ключей конкретной модели"""
@@ -213,17 +245,21 @@ def model_keys_status(model_name):
 
         try:
             # Получаем статистику ключей для конкретной модели
-            key_stats = loop.run_until_complete(database.get_gemini_key_usage_stats(model_name))
+            key_stats = loop.run_until_complete(
+                database.get_gemini_key_usage_stats(model_name)
+            )
 
             # Получаем информацию об активном ключе
-            active_info = loop.run_until_complete(database.get_active_key_info(model_name))
+            active_info = loop.run_until_complete(
+                database.get_active_key_info(model_name)
+            )
 
             model_status = {
                 "model": model_name,
                 "timestamp": str(datetime.datetime.now()),
                 "active_key": active_info,
                 "all_keys": key_stats,
-                "daily_limit": settings.DAILY_LIMITS.get(model_name, "unlimited")
+                "daily_limit": settings.DAILY_LIMITS.get(model_name, "unlimited"),
             }
 
             return model_status, 200
@@ -234,5 +270,5 @@ def model_keys_status(model_name):
     except Exception as e:
         return {
             "error": f"Failed to get model keys status: {str(e)}",
-            "timestamp": str(datetime.datetime.now())
+            "timestamp": str(datetime.datetime.now()),
         }, 500

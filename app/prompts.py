@@ -62,35 +62,40 @@ _base_prompt_cache: Optional[str] = None
 _prompt_cache: Dict[str, str] = {}
 _MAX_CACHE_SIZE = 100  # Максимальное количество кэшированных комбинаций
 
-def compose_system_instruction(role_prompt: Optional[str], use_compact: bool = True) -> str:
+
+def compose_system_instruction(
+    role_prompt: Optional[str], use_compact: bool = True
+) -> str:
     """Собирает системную инструкцию: форматирование по умолчанию + опциональная роль.
     Роль не перезаписывает правила форматирования (`settings.DEFAULT_SYSTEM_PROMPT`).
-    
+
     Оптимизировано с кэшированием для уменьшения времени формирования промпта.
-    
+
     Args:
         role_prompt: Опциональный промпт роли
         use_compact: Если True и есть роль, использует компактную версию базового промпта
                     для экономии токенов. По умолчанию True.
-    
+
     Returns:
         Сформированный системный промпт
     """
     global _base_prompt_cache, _prompt_cache
-    
+
     # Если роли нет, используем полный базовый промпт
     if not role_prompt:
         if _base_prompt_cache is None:
             _base_prompt_cache = settings.DEFAULT_SYSTEM_PROMPT.strip()
         return _base_prompt_cache
-    
+
     # Нормализуем промпт роли для использования в качестве ключа кэша
     normalized_role = role_prompt.strip()
-    
+
     # Выбираем базовый промпт: компактный для ролей (экономия токенов) или полный
     if use_compact:
         # Используем компактную версию для экономии токенов при наличии роли
-        base_prompt = getattr(settings, 'COMPACT_SYSTEM_PROMPT', settings.DEFAULT_SYSTEM_PROMPT).strip()
+        base_prompt = getattr(
+            settings, "COMPACT_SYSTEM_PROMPT", settings.DEFAULT_SYSTEM_PROMPT
+        ).strip()
         cache_key = f"compact:{normalized_role}"
     else:
         # Используем полную версию
@@ -98,30 +103,32 @@ def compose_system_instruction(role_prompt: Optional[str], use_compact: bool = T
             _base_prompt_cache = settings.DEFAULT_SYSTEM_PROMPT.strip()
         base_prompt = _base_prompt_cache
         cache_key = f"full:{normalized_role}"
-    
+
     # Проверяем кэш для комбинации базовый + роль
     if cache_key in _prompt_cache:
         return _prompt_cache[cache_key]
-    
+
     # Формируем новый промпт
     composed = base_prompt + "\n\n# ДОПОЛНИТЕЛЬНАЯ РОЛЬ\n" + normalized_role
-    
+
     # Ограничиваем размер кэша (FIFO)
     if len(_prompt_cache) >= _MAX_CACHE_SIZE:
         # Удаляем самую старую запись (первый ключ)
         oldest_key = next(iter(_prompt_cache))
         del _prompt_cache[oldest_key]
-    
+
     # Сохраняем в кэш
     _prompt_cache[cache_key] = composed
-    
+
     return composed
+
 
 def clear_prompt_cache():
     """Очищает кэш промптов. Полезно для тестирования или при изменении настроек."""
     global _base_prompt_cache, _prompt_cache
     _base_prompt_cache = None
     _prompt_cache.clear()
+
 
 # ============================================================================
 # CONTEXT MANAGEMENT WITH TOKEN LIMITS
@@ -130,8 +137,9 @@ def clear_prompt_cache():
 # Лимиты токенов для контекста (учитывая 1M токенов у Gemini 2.5 Pro)
 SOFT_TOKEN_LIMIT = 300000  # Мягкий лимит - начинаем суммаризацию
 HARD_TOKEN_LIMIT = 800000  # Жёсткий лимит - принудительная суммаризация
-MAX_MESSAGES_SOFT = 50     # Максимум сообщений до мягкой суммаризации
-MAX_MESSAGES_HARD = 100    # Максимум сообщений до жёсткой суммаризации
+MAX_MESSAGES_SOFT = 50  # Максимум сообщений до мягкой суммаризации
+MAX_MESSAGES_HARD = 100  # Максимум сообщений до жёсткой суммаризации
+
 
 def estimate_tokens(text: str) -> int:
     """Примерная оценка количества токенов в тексте (1 токен ≈ 4 символа)"""
@@ -139,170 +147,204 @@ def estimate_tokens(text: str) -> int:
         return 0
     return len(str(text)) // 4
 
-def should_summarize_context(history: list, current_tokens: int = 0) -> tuple[bool, str]:
+
+def should_summarize_context(
+    history: list, current_tokens: int = 0
+) -> tuple[bool, str]:
     """
     Определяет, нужно ли суммаризировать контекст
-    
+
     Returns:
         (should_summarize, reason)
     """
     if not history:
         return False, ""
-    
+
     # Подсчитываем токены в истории
     total_tokens = current_tokens
     message_count = len(history)
-    
+
     for msg in history:
-        if isinstance(msg, dict) and 'parts' in msg:
-            for part in msg['parts']:
+        if isinstance(msg, dict) and "parts" in msg:
+            for part in msg["parts"]:
                 if isinstance(part, str):
                     total_tokens += estimate_tokens(part)
-    
+
     # Проверяем жёсткие лимиты
     if total_tokens > HARD_TOKEN_LIMIT:
-        return True, f"Превышен жёсткий лимит токенов: {total_tokens} > {HARD_TOKEN_LIMIT}"
-    
+        return (
+            True,
+            f"Превышен жёсткий лимит токенов: {total_tokens} > {HARD_TOKEN_LIMIT}",
+        )
+
     if message_count > MAX_MESSAGES_HARD:
-        return True, f"Превышен жёсткий лимит сообщений: {message_count} > {MAX_MESSAGES_HARD}"
-    
+        return (
+            True,
+            f"Превышен жёсткий лимит сообщений: {message_count} > {MAX_MESSAGES_HARD}",
+        )
+
     # Проверяем мягкие лимиты
     if total_tokens > SOFT_TOKEN_LIMIT:
-        return True, f"Превышен мягкий лимит токенов: {total_tokens} > {SOFT_TOKEN_LIMIT}"
-    
+        return (
+            True,
+            f"Превышен мягкий лимит токенов: {total_tokens} > {SOFT_TOKEN_LIMIT}",
+        )
+
     if message_count > MAX_MESSAGES_SOFT:
-        return True, f"Превышен мягкий лимит сообщений: {message_count} > {MAX_MESSAGES_SOFT}"
-    
+        return (
+            True,
+            f"Превышен мягкий лимит сообщений: {message_count} > {MAX_MESSAGES_SOFT}",
+        )
+
     return False, ""
 
-def prepare_context_with_limits(history: list, current_message: str = "", summary: str = None) -> tuple[list, str]:
+
+def prepare_context_with_limits(
+    history: list, current_message: str = "", summary: str = None
+) -> tuple[list, str]:
     """
     Подготавливает контекст с учётом лимитов токенов
-    
+
     Args:
         history: История диалога
         current_message: Текущее сообщение пользователя
         summary: Существующая суммаризация (если есть)
-    
+
     Returns:
         (prepared_history, new_summary)
     """
     if not history:
         return [], summary or ""
-    
+
     current_tokens = estimate_tokens(current_message)
     should_sum, reason = should_summarize_context(history, current_tokens)
-    
+
     if not should_sum:
         # Лимиты не превышены, возвращаем историю как есть
         return history, summary or ""
-    
+
     logging.info(f"Контекст требует суммаризации: {reason}")
-    
+
     # Если есть готовая суммаризация, используем её
     if summary:
         # Оставляем только последние 10-15 сообщений + суммаризацию
         recent_messages = history[-15:] if len(history) > 15 else history
         return recent_messages, summary
-    
+
     # Создаём суммаризацию из старых сообщений
     # Берём первые 70% сообщений для суммаризации, оставляем последние 30%
     split_point = max(1, int(len(history) * 0.7))
     old_messages = history[:split_point]
     recent_messages = history[split_point:]
-    
+
     # Создаём суммаризацию из старых сообщений
     summary_text = create_conversation_summary(old_messages)
-    
+
     # Записываем метрики суммаризации (неблокирующе)
     try:
         from app.metrics import role_conv_metrics
-        tokens_saved = sum(estimate_tokens(str(part)) for msg in old_messages for part in msg.get('parts', []) if isinstance(part, str))
-        asyncio.create_task(role_conv_metrics.record_summarization(reason, tokens_saved, len(summary_text)))
+
+        tokens_saved = sum(
+            estimate_tokens(str(part))
+            for msg in old_messages
+            for part in msg.get("parts", [])
+            if isinstance(part, str)
+        )
+        asyncio.create_task(
+            role_conv_metrics.record_summarization(
+                reason, tokens_saved, len(summary_text)
+            )
+        )
     except Exception as e:
         logging.warning(f"Failed to record summarization metrics: {e}")
-    
+
     return recent_messages, summary_text
+
 
 def create_conversation_summary(messages: list) -> str:
     """
     Создаёт суммаризацию диалога из списка сообщений
-    
+
     Args:
         messages: Список сообщений для суммаризации
-    
+
     Returns:
         Текст суммаризации
     """
     if not messages:
         return ""
-    
+
     # Собираем текст из сообщений
     conversation_text = ""
     for msg in messages:
-        if isinstance(msg, dict) and 'role' in msg and 'parts' in msg:
-            role = msg['role']
-            parts = msg['parts']
-            
-            if role == 'user':
+        if isinstance(msg, dict) and "role" in msg and "parts" in msg:
+            role = msg["role"]
+            parts = msg["parts"]
+
+            if role == "user":
                 conversation_text += "Пользователь: "
-            elif role == 'model':
+            elif role == "model":
                 conversation_text += "Ассистент: "
             else:
                 conversation_text += f"{role}: "
-            
+
             for part in parts:
                 if isinstance(part, str):
                     conversation_text += part + " "
             conversation_text += "\n"
-    
+
     # Если суммаризация слишком длинная, обрезаем её
     if len(conversation_text) > 2000:
         conversation_text = conversation_text[:2000] + "..."
-    
+
     return f"Предыдущий контекст беседы:\n{conversation_text}"
 
-def build_context_with_summary(history: list, summary: str = None, current_message: str = "") -> list:
+
+def build_context_with_summary(
+    history: list, summary: str = None, current_message: str = ""
+) -> list:
     """
     Строит финальный контекст с суммаризацией
-    
+
     Args:
         history: Подготовленная история (уже обрезанная)
         summary: Суммаризация старых сообщений
         current_message: Текущее сообщение пользователя
-    
+
     Returns:
         Готовый контекст для отправки в модель
     """
     context = []
-    
+
     # Добавляем суммаризацию в начало, если есть
     if summary:
-        context.append({
-            'role': 'user',
-            'parts': [f"[Суммаризация предыдущего контекста]\n{summary}"]
-        })
-    
+        context.append(
+            {
+                "role": "user",
+                "parts": [f"[Суммаризация предыдущего контекста]\n{summary}"],
+            }
+        )
+
     # Добавляем историю
     context.extend(history)
-    
+
     # Добавляем текущее сообщение, если есть
     if current_message:
-        context.append({
-            'role': 'user',
-            'parts': [current_message]
-        })
-    
+        context.append({"role": "user", "parts": [current_message]})
+
     return context
+
 
 # ============================================================================
 # CUSTOM ROLE CACHE
 # ============================================================================
 _custom_role_cache = {}  # Простой кэш в памяти
 
+
 def get_cached_custom_role(prompt: str) -> Optional[dict]:
     """Получить кастомную роль из кэша по промпту"""
     return _custom_role_cache.get(prompt)
+
 
 def cache_custom_role(prompt: str, role: dict):
     """Сохранить кастомную роль в кэш"""
@@ -312,6 +354,7 @@ def cache_custom_role(prompt: str, role: dict):
         # Удаляем самые старые записи
         oldest_key = next(iter(_custom_role_cache))
         del _custom_role_cache[oldest_key]
+
 
 # ============================================================================
 # HELPERS
@@ -331,9 +374,9 @@ def extract_json_object(text: str) -> Optional[dict]:
 
     # Снимаем внешний code-fence
     if cleaned.startswith("```"):
-        lines = cleaned.split('\\n')
+        lines = cleaned.split("\\n")
         if len(lines) > 1:
-            cleaned = '\\n'.join(lines[1:])
+            cleaned = "\\n".join(lines[1:])
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
@@ -342,7 +385,7 @@ def extract_json_object(text: str) -> Optional[dict]:
     lower = cleaned.lstrip()
     for prefix in ("json\\n", "json\\r\\n", "json ", "JSON\\n", "JSON\\r\\n", "JSON "):
         if lower.startswith(prefix):
-            cleaned = cleaned[len(cleaned) - len(lower) + len(prefix):].lstrip()
+            cleaned = cleaned[len(cleaned) - len(lower) + len(prefix) :].lstrip()
             break
 
     import json
@@ -350,7 +393,7 @@ def extract_json_object(text: str) -> Optional[dict]:
     # Проходим по всем возможным вхождениям '{' и пытаемся собрать сбалансированный объект
     n = len(cleaned)
     for i in range(n):
-        if cleaned[i] != '{':
+        if cleaned[i] != "{":
             continue
         depth = 0
         in_string = False
@@ -360,32 +403,33 @@ def extract_json_object(text: str) -> Optional[dict]:
             if in_string:
                 if escape:
                     escape = False
-                elif ch == '\\\\':
+                elif ch == "\\\\":
                     escape = True
                 elif ch == '"':
                     in_string = False
             else:
                 if ch == '"':
                     in_string = True
-                elif ch == '{':
+                elif ch == "{":
                     depth += 1
-                elif ch == '}':
+                elif ch == "}":
                     depth -= 1
                     if depth == 0:
-                        candidate = cleaned[i:j+1]
+                        candidate = cleaned[i : j + 1]
                         try:
                             obj = json.loads(candidate)
                         except Exception:
                             break  # текущий блок некорректен, пробуем следующий i
                         if isinstance(obj, dict):
                             # Приводим поле system_prompt -> prompt при необходимости
-                            if 'prompt' not in obj and 'system_prompt' in obj:
-                                obj['prompt'] = obj.get('system_prompt')
+                            if "prompt" not in obj and "system_prompt" in obj:
+                                obj["prompt"] = obj.get("system_prompt")
                             # Проверяем обязательные поля
-                            if all(k in obj for k in ('title', 'purpose', 'prompt')):
+                            if all(k in obj for k in ("title", "purpose", "prompt")):
                                 return obj
                         break
     return None
+
 
 # ============================================================================
 # PROMPT-ENGINEER SYSTEM PROMPT (для генерации кастомных ролей)
@@ -400,7 +444,7 @@ PROMPT_ENGINEER_SYSTEM_PROMPT = (
 # ============================================================================
 # QNA LOCALIZATION PROMPT
 # ============================================================================
-QNA_LOCALIZATION_PROMPT = """# РОЛЬ И ЗАДАЧА
+QNA_LOCALIZATION_PROMPT = r"""# РОЛЬ И ЗАДАЧА
 Ты — эксперт по локализации и форматированию контента для Telegram. Твоя задача — адаптировать найденную информацию под язык пользователя с использованием стандартного Markdown.
 
 # КОНТЕКСТ
@@ -556,7 +600,7 @@ https://example1.com, https://example2.com, https://example3.com
 # ============================================================================
 # SYNTHESIS PROMPT
 # ============================================================================
-SYNTHESIS_PROMPT = """# РОЛЬ И ЗАДАЧА
+SYNTHESIS_PROMPT = r"""# РОЛЬ И ЗАДАЧА
 Ты — эксперт-исследователь ИИ. Твоя цель — предоставить исчерпывающий, хорошо структурированный и легко читаемый ответ, основанный исключительно на предоставленном контексте.
 
 # КОНТЕКСТ
