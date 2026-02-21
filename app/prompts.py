@@ -238,27 +238,42 @@ def create_conversation_summary(messages: list) -> str:
         return ""
     
     # Собираем текст из сообщений
-    conversation_text = ""
+    conversation_parts = []
+    current_length = 0
+    limit = 2000
+
     for msg in messages:
         if isinstance(msg, dict) and 'role' in msg and 'parts' in msg:
             role = msg['role']
             parts = msg['parts']
             
+            msg_parts = []
             if role == 'user':
-                conversation_text += "Пользователь: "
+                msg_parts.append("Пользователь: ")
             elif role == 'model':
-                conversation_text += "Ассистент: "
+                msg_parts.append("Ассистент: ")
             else:
-                conversation_text += f"{role}: "
+                msg_parts.append(f"{role}: ")
             
             for part in parts:
                 if isinstance(part, str):
-                    conversation_text += part + " "
-            conversation_text += "\n"
+                    msg_parts.append(part)
+                    msg_parts.append(" ")
+            msg_parts.append("\n")
+
+            msg_str = "".join(msg_parts)
+            conversation_parts.append(msg_str)
+            current_length += len(msg_str)
+
+            # Оптимизация: прерываем, если превысили лимит
+            if current_length > limit:
+                break
+
+    conversation_text = "".join(conversation_parts)
     
     # Если суммаризация слишком длинная, обрезаем её
-    if len(conversation_text) > 2000:
-        conversation_text = conversation_text[:2000] + "..."
+    if len(conversation_text) > limit:
+        conversation_text = conversation_text[:limit] + "..."
     
     return f"Предыдущий контекст беседы:\n{conversation_text}"
 
