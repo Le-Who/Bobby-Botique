@@ -96,6 +96,14 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 
 - **Non-Blocking Document I/O**: Asynchronous file processing and streaming chunked hashing algorithms completely avoid Event Loop blocking and prevent RAM starvation (OOM) on memory-constrained 256-512MB hosting environments.
 - **Batched Metrics DB Inserts**: Background batching via `asyncio.Queue` of monitoring metrics into PostgreSQL, replacing expensive synchronous tracking and dictionary iterations.
+- **Hybrid Database Schema** (PostgreSQL/Supabase)
+  - `users`, `api_keys`, `conversations`, `model_configuration` tables
+  - `active_chat_messages` table for O(1) history insert performance
+  - Database-side JSON ETL handling to bypass Python GIL limits
+  - Prepared statements for high-throughput concurrency
+  - RLS Denormalization indexing (`owner_user_id`) to optimize security policies
+- **In-Memory Caching** (TTLCache / Redis)
+  - Key status, user authorization, and dynamic AI model limits are aggressively cached to reduce DB I/O.
 - **Scoped DB Transactions**: Optimized database pooling (`max_size=10`) with `asyncio.Semaphore` and scope-limited transactions to prevent connection starvation without hitting provider DB connection limits.
 - **Micro-GC Pauses**: Fine-tuned `gc.collect(1)` macro-invocations preventing full stop-the-world application pauses during heavy traffic spikes.
 - _(Planned)_ **Database Architecture V3**: Migration from Monolithic JSON TEXT arrays to normalized JSONB/Relational models, removal of block AST caching constraints, and RLS constraint denormalization to eliminate high-concurrency CPU limits.
