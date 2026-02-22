@@ -5,14 +5,12 @@ import asyncio
 import io
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
-import httpx
 import pypdf
 from docx import Document
 # PyMuPDF removed for free tier optimization
 
 from app.config import settings
 from app import database
-from app.utils.network import NetworkErrorHandler
 from app.metrics import metrics_collector
 
 # Maximum characters to extract from a document to prevent OOM and performance issues
@@ -844,49 +842,6 @@ async def get_document_content(document_id: int, user_id: int) -> Optional[str]:
 async def delete_user_document(document_id: int, user_id: int) -> bool:
     """Удаляет документ пользователя"""
     return await document_processor.delete_document(document_id, user_id)
-
-
-async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
-    """Internal function for uploading file to x0.at with retry logic."""
-    timeout_config = httpx.Timeout(
-        connect=10.0,  # 10 секунд на подключение
-        read=60.0,  # 60 секунд на чтение (для загрузки файлов)
-        write=60.0,  # 60 секунд на запись (для загрузки файлов)
-        pool=30.0,  # 30 секунд на получение соединения из пула
-    )
-
-    async with httpx.AsyncClient(timeout=timeout_config) as client:
-        files = {"file": (filename, file_data)}
-        response = await client.post("https://x0.at/", files=files)
-
-        if response.status_code == 200:
-            url = response.text.strip()
-            if url.startswith("http"):
-                logging.info(f"File {filename} uploaded to x0.at: {url}")
-                return url
-            else:
-                logging.error(f"Invalid response from x0.at: {response.text}")
-                return None
-        else:
-            logging.error(
-                f"Failed to upload to x0.at: {response.status_code} - {response.text}"
-            )
-            return None
-
-
-async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
-    """Загружает файл на внешний сервис x0.at и возвращает URL с автоматическими повторами"""
-    try:
-        return await NetworkErrorHandler.retry_with_backoff(
-            _upload_file_to_x0_at,
-            max_retries=3,
-            base_delay=2.0,
-            file_data=file_data,
-            filename=filename,
-        )
-    except Exception as e:
-        logging.error(f"Error uploading to x0.at after retries: {e}")
-        return None
 
 
 async def get_document_by_id(
