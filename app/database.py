@@ -483,6 +483,72 @@ async def _init_schema():
         )
     """)
 
+    # --- Optimization Tables (from migration 005) ---
+
+    # 1. Model Configuration
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS model_configuration (
+            model_name TEXT PRIMARY KEY,
+            daily_limit INTEGER,
+            provider TEXT
+        )
+    """)
+    # Pre-populate known models (safe upsert)
+    await db_query("""
+        INSERT INTO model_configuration (model_name, daily_limit, provider)
+        VALUES
+            ('gemini-2.5-flash', 250, 'Google'),
+            ('gemini-2.5-pro', 100, 'Google'),
+            ('gemini-2.5-flash-lite', 1000, 'Google')
+        ON CONFLICT (model_name) DO UPDATE SET daily_limit = EXCLUDED.daily_limit, provider = EXCLUDED.provider
+    """)
+
+    # 2. Active Chat Messages (O(1) History Performance)
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS active_chat_messages (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db_query("CREATE INDEX IF NOT EXISTS idx_active_chat_messages_user_id ON active_chat_messages(user_id)")
+
+    # 3. RLS Performance Optimization (owner_user_id)
+    await db_query("ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS owner_user_id BIGINT")
+    await db_query("CREATE INDEX IF NOT EXISTS idx_conversation_messages_owner ON conversation_messages(owner_user_id)")
+
+    # 4. Stored Procedure for efficient archiving
+    # Note: PROCEDURE requires Postgres 11+
+    try:
+        await db_query("""
+            CREATE OR REPLACE PROCEDURE save_chat_to_conversation(
+                p_user_id BIGINT,
+                p_conv_id INTEGER
+            )
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                INSERT INTO conversation_messages (conversation_id, role, content, owner_user_id)
+                SELECT p_conv_id, role, content, p_user_id
+                FROM active_chat_messages
+                WHERE user_id = p_user_id
+                  AND role IN ('user', 'assistant')
+                  AND content NOT ILIKE '/%'
+                  AND content NOT ILIKE '%🖼️ обрабатываю изображение%'
+                  AND content NOT ILIKE '%🤔 думаю%'
+                  AND content NOT ILIKE '%📄 обрабатываю документ%'
+                  AND content NOT ILIKE '%✅ новый чат создан%'
+                  AND content NOT ILIKE '%опишите, какую роль хотите создать%'
+                  AND content NOT ILIKE '%не удалось сгенерировать роль%'
+                  AND content NOT ILIKE '%сервер перегружен%';
+            END;
+            $$;
+        """)
+    except Exception as e:
+        logging.warning(f"Failed to create stored procedure (Postgres version issue?): {e}")
+
     await setup_row_level_security()
     await _run_migrations()
     await _insert_initial_data()
