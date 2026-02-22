@@ -42,46 +42,6 @@ class MetricsCollector:
         self._save_interval = 300  # Сохраняем каждые 5 минут
         self._bg_save_task = None
 
-    async def _ensure_metrics_tables(self):
-        """Создает таблицы для метрик, если они не существуют"""
-        try:
-            # Таблица для общих метрик
-            await db.db_query("""
-                CREATE TABLE IF NOT EXISTS metrics (
-                    id SERIAL PRIMARY KEY,
-                    metric_date DATE NOT NULL,
-                    request_count INTEGER DEFAULT 0,
-                    total_response_time REAL DEFAULT 0.0,
-                    error_count INTEGER DEFAULT 0,
-                    search_queries INTEGER DEFAULT 0,
-                    cache_hits INTEGER DEFAULT 0,
-                    cache_misses INTEGER DEFAULT 0,
-                    api_calls JSONB DEFAULT '{}',
-                    model_usage JSONB DEFAULT '{}',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(metric_date)
-                )
-            """)
-
-            # Таблица для ошибок
-            await db.db_query("""
-                CREATE TABLE IF NOT EXISTS error_logs (
-                    id SERIAL PRIMARY KEY,
-                    error_type TEXT NOT NULL,
-                    error_message TEXT NOT NULL,
-                    request_id TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            await db.db_query("""
-                ALTER TABLE error_logs
-                ADD COLUMN IF NOT EXISTS request_id TEXT
-            """)
-            logging.info("Metrics tables ensured")
-        except Exception as e:
-            logging.error(f"Error creating metrics tables: {e}")
-
     async def _event_processor(self):
         """Background task to process events and periodically save metrics"""
         logging.info("Metrics background event processor started")
@@ -295,8 +255,6 @@ class MetricsCollector:
     async def _load_metrics_from_db(self):
         """Загружает метрики из базы данных"""
         try:
-            await self._ensure_metrics_tables()
-
             # Загружаем общие метрики (без JSONB полей в основном запросе)
             result = await db.db_query("""
                 SELECT 
