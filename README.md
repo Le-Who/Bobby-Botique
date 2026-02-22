@@ -24,6 +24,8 @@ The project is built with a **monolithic asyncio architecture**, integrating a h
 - [🛠 Technical Stack](#-technical-stack)
 - [🚀 Deployment & Infrastructure](#-deployment--infrastructure)
 - [⚙️ Configuration](#%EF%B8%8F-configuration)
+- [🧪 Testing](#-testing)
+- [📝 Changelog](#-changelog)
 
 ---
 
@@ -90,11 +92,15 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 - **Multimodal Analysis**: Can "see" images via Gemini's vision capabilities.
 - **RAG-lite**: Uploaded documents are parsed, truncated to fits context limits (~30k chars), and injected into the conversation for Q&A.
 
-### Performance Optimizations
+### Performance Optimizations (v2.1+)
 
-- **Async Event Loop Non-Blocking**: Offloads CPU-bound array processing, base64 operations, JSON serializations, and GC passes to `asyncio.to_thread` preventing Telegram webhook stutters.
-- **Memory Swapping**: Uses `SpooledTemporaryFile` instead of RAM buffers for analyzing bulky DOCX/PDF documents, dynamically writing to disk limits are exceeded to avoid OOM crashes.
-- **Bounded Job Queues**: Implements `maxsize` limits and priority fallbacks on the async background task queue to maintain server resilience against load spikes.
+- **Non-Blocking Document I/O**: Asynchronous file processing and streaming chunked hashing algorithms completely avoid Event Loop blocking and prevent RAM starvation (OOM) on memory-constrained 256-512MB hosting environments.
+- **Batched Metrics DB Inserts**: Background batching via `asyncio.Queue` of monitoring metrics into PostgreSQL, replacing expensive synchronous tracking and dictionary iterations.
+- **Scoped DB Transactions**: Optimized database pooling (`max_size=10`) with `asyncio.Semaphore` and scope-limited transactions to prevent connection starvation without hitting provider DB connection limits.
+- **GIL-Free Image Processing**: Progressive image down-scaling and offloading Pillow JPEG compression into an isolated `ProcessPoolExecutor`.
+- **TTLCache & Lazy Eviction**: O(1) in-memory lookups utilizing `cachetools` and lazy cache eviction for web search and states, bypassing CPU-blocking dictionary iteration loops.
+- **Micro-GC Pauses**: Fine-tuned `gc.collect(1)` macro-invocations preventing full stop-the-world application pauses during heavy traffic spikes.
+- **Robust TCP Pooling**: Scaled (yet strictly constrained) HTTPX connection pools (50 concurrent external HTTP connections) with Circuit Breaker tracking for external AI Providers to defend against socket exhaustion.
 
 ---
 
@@ -181,3 +187,44 @@ PORT=10000              # Web server port
 ENABLE_WEB_SERVER=true  # Enable/Disable dashboard
 LOG_LEVEL=INFO          # DEBUG/INFO/WARNING
 ```
+
+---
+
+## 🧪 Testing
+
+The project has a comprehensive test suite covering unit, integration, and performance validation.
+
+### Running Tests
+
+```bash
+# Full suite
+python -m pytest tests/
+
+# Single file
+python -m pytest tests/test_keyboards.py --tb=short
+
+# Verbose with traceback
+python -m pytest tests/ -v --tb=long
+```
+
+### Suite Structure (194 tests)
+
+| Category           | Files                                                                                       | What They Cover                                      |
+| :----------------- | :------------------------------------------------------------------------------------------ | :--------------------------------------------------- |
+| **Core Logic**     | `test_ai_provider`, `test_agent_optimization`, `test_errors`                                | AI routing, fallback chains, error handling          |
+| **Handlers**       | `test_callbacks`, `test_menus`, `test_io_handlers`                                          | Telegram callback dispatch, menu rendering, file I/O |
+| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`       | Tavily key management, query optimization, cleanup   |
+| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                      | Circuit breaker, TTL cache, race conditions          |
+| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security` | Header enforcement, auth bypass prevention           |
+| **Metrics**        | `test_metrics_integration`, `test_system_status`                                            | Batched metric saves, system status data             |
+| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                  | Text formatting, keyboard builders, timezone math    |
+
+### Mock Isolation Rule
+
+> **Critical**: Never assign `sys.modules["X"] = MagicMock()` at module top-level in test files. Always use `setup_module()` / `teardown_module()` with save/restore. See [CHANGELOG.md](CHANGELOG.md) §2.2.0 for detailed anti-pattern reference.
+
+---
+
+## 📝 Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.

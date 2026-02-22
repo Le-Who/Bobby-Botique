@@ -3,7 +3,7 @@ import sys
 import importlib
 from unittest.mock import MagicMock, AsyncMock, patch
 
-# Mock dependencies globally before any import
+# Define keys but do not override them yet
 _mock_keys = [
     "asyncpg",
     "asyncpg.pool",
@@ -20,20 +20,28 @@ _mock_keys = [
     "psutil",
     "app.database",
 ]
-_original_modules = {k: sys.modules[k] for k in _mock_keys if k in sys.modules}
+_original_modules = {}
 
-sys.modules["asyncpg"] = MagicMock()
-sys.modules["asyncpg.pool"] = MagicMock()
-sys.modules["google.genai"] = MagicMock()
-sys.modules["google.genai.errors"] = MagicMock()
-sys.modules["redis"] = MagicMock()
-sys.modules["redis.exceptions"] = MagicMock()
-sys.modules["telegram"] = MagicMock()
-sys.modules["telegram.ext"] = MagicMock()
-sys.modules["telegram.error"] = MagicMock()
-sys.modules["hypercorn.config"] = MagicMock()
-sys.modules["hypercorn.asyncio"] = MagicMock()
-sys.modules["pytz"] = MagicMock()
+
+def setup_module(module):
+    global _original_modules
+    for k in _mock_keys:
+        if k in sys.modules:
+            _original_modules[k] = sys.modules[k]
+        sys.modules[k] = MagicMock()
+
+    # Specialized mocks
+    mock_psutil = MagicMock()
+    mock_psutil.cpu_percent.return_value = 10.0
+    mock_psutil.virtual_memory.return_value.percent = 20.0
+    mock_psutil.disk_usage.return_value.percent = 30.0
+    sys.modules["psutil"] = mock_psutil
+
+    mock_db = MagicMock()
+    mock_db.db_pool = None
+    mock_db.get_gemini_key_usage_stats = AsyncMock(return_value=[])
+    mock_db.get_active_key_info = AsyncMock(return_value={})
+    sys.modules["app.database"] = mock_db
 
 
 def teardown_module(module):
@@ -41,21 +49,6 @@ def teardown_module(module):
         if k in sys.modules:
             del sys.modules[k]
     sys.modules.update(_original_modules)
-
-
-# Mock psutil with return values
-mock_psutil = MagicMock()
-mock_psutil.cpu_percent.return_value = 10.0
-mock_psutil.virtual_memory.return_value.percent = 20.0
-mock_psutil.disk_usage.return_value.percent = 30.0
-sys.modules["psutil"] = mock_psutil
-
-# Mock app.database
-mock_db = MagicMock()
-mock_db.db_pool = None
-mock_db.get_gemini_key_usage_stats = AsyncMock(return_value=[])
-mock_db.get_active_key_info = AsyncMock(return_value={})
-sys.modules["app.database"] = mock_db
 
 
 # Mock app.config settings

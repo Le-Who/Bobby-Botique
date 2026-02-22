@@ -7,11 +7,20 @@ import pytest
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Import the module under test
-import app.database
+
+def get_database():
+    import importlib
+    import app.database
+
+    if "app.database" not in sys.modules or isinstance(
+        sys.modules["app.database"], type(patch)
+    ):
+        importlib.reload(app)
+    from app import database
+
+    return database
 
 
-@pytest.mark.asyncio
 async def test_get_conversation_messages_optimization():
     # Setup Mock
     mock_db_query = AsyncMock()
@@ -48,9 +57,10 @@ async def test_get_conversation_messages_optimization():
     mock_db_query.side_effect = side_effect
 
     # Patch the function in the module
-    with patch("app.database.db_query", mock_db_query):
+    database = get_database()
+    with patch.object(database, "db_query", mock_db_query):
         # 1. Valid Conversation with Messages
-        messages = await app.database.get_conversation_messages(123, 1)
+        messages = await database.get_conversation_messages(123, 1)
         assert messages is not None
         assert len(messages) == 2
         assert messages[0]["role"] == "user"
@@ -58,7 +68,7 @@ async def test_get_conversation_messages_optimization():
         mock_db_query.reset_mock()
 
         # 2. Valid Conversation, Empty (Should return [])
-        messages = await app.database.get_conversation_messages(456, 1)
+        messages = await database.get_conversation_messages(456, 1)
         assert messages is not None
         assert isinstance(messages, list)
         assert len(messages) == 0
@@ -66,7 +76,7 @@ async def test_get_conversation_messages_optimization():
         mock_db_query.reset_mock()
 
         # 3. Invalid Conversation (Should return None)
-        messages = await app.database.get_conversation_messages(999, 1)
+        messages = await database.get_conversation_messages(999, 1)
         assert messages is None
         assert mock_db_query.call_count == 1
 

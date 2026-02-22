@@ -3,26 +3,44 @@ import sys
 import asyncio
 from unittest.mock import MagicMock, AsyncMock
 
-# Mock all dependencies
-sys.modules["telegram"] = MagicMock()
-sys.modules["telegram.ext"] = MagicMock()
-sys.modules["app.database"] = MagicMock()
-sys.modules["app.config"] = MagicMock()
-sys.modules["app.state"] = MagicMock()
-sys.modules["app.metrics"] = MagicMock()
-sys.modules["app.handlers.agent"] = MagicMock()
-sys.modules["app.handlers.menus"] = MagicMock()
-sys.modules["app.document_processor"] = MagicMock()
-sys.modules["app.prompts"] = MagicMock()
-sys.modules["app.utils.formatting"] = MagicMock()
-sys.modules["app.utils.decorators"] = MagicMock()
-sys.modules["app.errors"] = MagicMock()
+# Mock all dependencies (executed only during module execution, not collection)
+_mock_keys = [
+    "telegram",
+    "telegram.ext",
+    "app.database",
+    "app.config",
+    "app.state",
+    "app.metrics",
+    "app.handlers.agent",
+    "app.handlers.menus",
+    "app.document_processor",
+    "app.prompts",
+    "app.utils.formatting",
+    "app.utils.decorators",
+    "app.errors",
+]
 
-# Now import
-from app.handlers import callbacks
+_original_modules = {}
+
+
+def setup_module(module):
+    global _original_modules
+    for k in _mock_keys:
+        if k in sys.modules:
+            _original_modules[k] = sys.modules[k]
+        sys.modules[k] = MagicMock()
+
+
+def teardown_module(module):
+    for k in _mock_keys:
+        if k in sys.modules:
+            del sys.modules[k]
+    sys.modules.update(_original_modules)
 
 
 async def async_test_document_callback_structure():
+    from app.handlers import callbacks
+
     """Verify that document_callback exists and can be called."""
     assert hasattr(callbacks, "document_callback")
 

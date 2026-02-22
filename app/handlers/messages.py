@@ -771,12 +771,30 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     processing_msg = await update.message.reply_text("📄 Обрабатываю документ...")
 
     try:
-        # Скачиваем файл
-        file = await document.get_file()
-        file_data = await file.download_as_bytearray()
+        # Скачиваем файл во временный файл на диске вместо ОЗУ
+        import tempfile
+        import os
 
-        # Обрабатываем документ
-        result = await process_uploaded_document(file_data, document.file_name, user_id)
+        file = await document.get_file()
+
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=f".{file_ext}")
+        os.close(tmp_fd)
+
+        try:
+            await file.download_to_drive(custom_path=tmp_path)
+
+            # Обрабатываем документ с диска
+            result = await process_uploaded_document(
+                tmp_path, document.file_name, user_id, is_path=True
+            )
+        finally:
+            if os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except Exception as cleanup_error:
+                    logging.warning(
+                        f"Failed to cleanup temp doc file {tmp_path}: {cleanup_error}"
+                    )
 
         if result.get("error"):
             if result.get("error") == "duplicate":

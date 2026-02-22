@@ -29,16 +29,14 @@ class DatabaseManager:
         if cls._instance is None:
             cls._instance = super(DatabaseManager, cls).__new__(cls)
             cls._instance.pool = None
-            cls._instance._active_keys_cache = {}
-            cls._instance._cache_lock = asyncio.Lock()
-            cls._instance._cache_last_updated = {}
-            cls._instance._cache_ttl = 300
-            cls._instance._max_cache_size = 100
 
-            # Auth cache
-            cls._instance._user_auth_cache = {}
-            cls._instance._user_auth_last_updated = {}
-            cls._instance._auth_cache_ttl = 300  # 5 minutes
+            from cachetools import TTLCache
+
+            # TTL Caches to avoid manual background cleanup
+            cls._instance._active_keys_cache = TTLCache(maxsize=100, ttl=300)
+            cls._instance._user_auth_cache = TTLCache(maxsize=1000, ttl=300)
+
+            cls._instance._cache_lock = asyncio.Lock()
             cls._instance._monitor_task = None
             cls._instance._cleanup_cache_task = None
         return cls._instance
@@ -52,8 +50,8 @@ class DatabaseManager:
         try:
             self.pool = await asyncpg.create_pool(
                 dsn=settings.DATABASE_URL,
-                min_size=5,
-                max_size=20,
+                min_size=2,
+                max_size=10,
                 command_timeout=30,
                 statement_cache_size=0,
                 max_cached_statement_lifetime=300,
@@ -140,12 +138,8 @@ class DatabaseManager:
         setattr(self, attr_name, None)
 
     async def start_cleanup_task(self):
-        """Запускает задачу очистки кэша, если она еще не запущена."""
-        self._cleanup_cache_task = self._start_background_task(
-            self._cleanup_cache_task,
-            self.cleanup_expired_cache,
-            "database cache cleanup",
-        )
+        """Deprecated: TTLCache handles eviction automatically."""
+        pass
 
     async def monitor_connection_pool(self):
         while True:
@@ -196,49 +190,8 @@ class DatabaseManager:
                 await asyncio.sleep(60)
 
     async def cleanup_expired_cache(self):
-        while True:
-            try:
-                async with self._cache_lock:
-                    current_time = time.time()
-
-                    # Cleanup keys cache
-                    expired_keys = [
-                        k
-                        for k, v in self._cache_last_updated.items()
-                        if current_time - v > self._cache_ttl
-                    ]
-
-                    for key in expired_keys:
-                        del self._active_keys_cache[key]
-                        del self._cache_last_updated[key]
-
-                    if len(self._active_keys_cache) > self._max_cache_size:
-                        sorted_items = sorted(
-                            self._cache_last_updated.items(), key=lambda x: x[1]
-                        )
-                        for key, _ in sorted_items[
-                            : len(self._active_keys_cache) - self._max_cache_size
-                        ]:
-                            del self._active_keys_cache[key]
-                            del self._cache_last_updated[key]
-
-                    # Cleanup auth cache
-                    expired_auth = [
-                        k
-                        for k, v in self._user_auth_last_updated.items()
-                        if current_time - v > self._auth_cache_ttl
-                    ]
-                    for key in expired_auth:
-                        if key in self._user_auth_cache:
-                            del self._user_auth_cache[key]
-                        del self._user_auth_last_updated[key]
-
-                await asyncio.sleep(30)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logging.error(f"Cache cleanup error: {e}")
-                await asyncio.sleep(60)
+        """Deprecated: TTLCache handles eviction automatically."""
+        pass
 
     async def query(
         self, query_str: str, params: tuple = (), retries: int = 3, conn=None
@@ -665,6 +618,14 @@ VALID_TABLES = {
 async def setup_row_level_security():
     """Настраивает Row Level Security для всех таблиц"""
     try:
+        # Быстрая проверка, настроены ли уже политики (чтобы не гонять ALTER TABLE при каждом рестарте)
+        existing = await db_query(
+            "SELECT 1 FROM pg_policies WHERE tablename = 'users' AND policyname = 'users_policy'"
+        )
+        if existing:
+            logging.info("RLS already configured, skipping setup.")
+            return
+
         for table in VALID_TABLES:
             try:
                 await db_query(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
@@ -1022,16 +983,7 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     cached_key = None
     async with db_manager._cache_lock:
         if model_name in db_manager._active_keys_cache:
-            key_data = db_manager._active_keys_cache[model_name]
-            last_update = db_manager._cache_last_updated.get(model_name, 0)
-
-            if time.time() - last_update < db_manager._cache_ttl:
-                cached_key = key_data
-            else:
-                # Expired, clean up
-                del db_manager._active_keys_cache[model_name]
-                if model_name in db_manager._cache_last_updated:
-                    del db_manager._cache_last_updated[model_name]
+            cached_key = db_manager._active_keys_cache[model_name]
 
     # Optimization: Trust the cache if valid. Invalidation is handled by increment_gemini_key_usage.
     if cached_key:
@@ -1050,7 +1002,6 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
             if new_key:
                 async with db_manager._cache_lock:
                     db_manager._active_keys_cache[model_name] = new_key
-                    db_manager._cache_last_updated[model_name] = time.time()
 
             return new_key
         finally:
@@ -1114,11 +1065,8 @@ async def invalidate_key_cache(model_name: str = None):
         if model_name:
             if model_name in db_manager._active_keys_cache:
                 del db_manager._active_keys_cache[model_name]
-            if model_name in db_manager._cache_last_updated:
-                del db_manager._cache_last_updated[model_name]
         else:
             db_manager._active_keys_cache.clear()
-            db_manager._cache_last_updated.clear()
 
 
 async def get_current_active_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
@@ -1357,11 +1305,10 @@ async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, A
 async def get_active_key_info(model_name: str) -> Optional[Dict[str, Any]]:
     # 1. Get from cache without I/O
     cached_key = None
-    cached_at = 0
+    cached_at = time.time()  # approximate since we don't track explicitly anymore
     async with db_manager._cache_lock:
         if model_name in db_manager._active_keys_cache:
             cached_key = db_manager._active_keys_cache[model_name]
-            cached_at = db_manager._cache_last_updated.get(model_name, 0)
 
     if not cached_key:
         return None
@@ -1407,7 +1354,6 @@ async def force_update_tavily_keys():
         await db_query("DELETE FROM tavily_key_usage")
         async with db_manager._cache_lock:
             db_manager._active_keys_cache.clear()
-            db_manager._cache_last_updated.clear()
         return True
     except Exception:
         return False
@@ -1417,8 +1363,6 @@ async def invalidate_user_auth_cache(user_id: int):
     async with db_manager._cache_lock:
         if user_id in db_manager._user_auth_cache:
             del db_manager._user_auth_cache[user_id]
-        if user_id in db_manager._user_auth_last_updated:
-            del db_manager._user_auth_last_updated[user_id]
 
 
 def is_admin(user_id: int) -> bool:
@@ -1430,17 +1374,9 @@ async def is_authorized(user_id: int) -> bool:
         return True
 
     # Check cache
-    current_time = time.time()
     async with db_manager._cache_lock:
         if user_id in db_manager._user_auth_cache:
-            last_update = db_manager._user_auth_last_updated.get(user_id, 0)
-            if current_time - last_update < db_manager._auth_cache_ttl:
-                return db_manager._user_auth_cache[user_id]
-            else:
-                # Expired
-                del db_manager._user_auth_cache[user_id]
-                if user_id in db_manager._user_auth_last_updated:
-                    del db_manager._user_auth_last_updated[user_id]
+            return db_manager._user_auth_cache[user_id]
 
     if not db_manager.is_connected:
         await reconnect_database()
@@ -1458,7 +1394,6 @@ async def is_authorized(user_id: int) -> bool:
             # Update cache
             async with db_manager._cache_lock:
                 db_manager._user_auth_cache[user_id] = is_auth
-                db_manager._user_auth_last_updated[user_id] = time.time()
 
             return is_auth
         finally:

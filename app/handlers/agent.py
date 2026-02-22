@@ -1158,7 +1158,7 @@ async def _handle_photo(
     try:
         photo_file = await original_message.photo[-1].get_file()
         photo_data = await photo_file.download_as_bytearray()
-        img = Image.open(io.BytesIO(photo_data))
+        img = bytes(photo_data)
         prompt = original_message.caption or "Опиши это изображение."
 
         # Добавляем инструкции по форматированию к промпту для изображений
@@ -1511,7 +1511,7 @@ async def _download_images_concurrently(
         try:
             photo_file = await message.photo[-1].get_file()
             photo_data = await photo_file.download_as_bytearray()
-            img = Image.open(io.BytesIO(photo_data))
+            img = bytes(photo_data)
 
             # Format log message
             count = len(messages)

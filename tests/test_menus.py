@@ -112,10 +112,21 @@ _mocked_module_keys = [
     "redis",
 ]
 
-# Save original modules before mocking
-_original_modules = {k: sys.modules[k] for k in _mocked_module_keys if k in sys.modules}
 
-MockInlineKeyboardButton, MockInlineKeyboardMarkup = setup_mocks()
+# Save original modules before mocking
+def setup_module(module):
+    global MockInlineKeyboardButton, MockInlineKeyboardMarkup, _original_modules
+    import importlib
+
+    _original_modules = {}
+    for k in _mocked_module_keys:
+        if k in sys.modules:
+            _original_modules[k] = sys.modules[k]
+
+    MockInlineKeyboardButton, MockInlineKeyboardMarkup = setup_mocks()
+
+    if "app.handlers.menus" in sys.modules:
+        importlib.reload(sys.modules["app.handlers.menus"])
 
 
 def teardown_module(module):
@@ -124,6 +135,10 @@ def teardown_module(module):
         if k in sys.modules:
             del sys.modules[k]
     sys.modules.update(_original_modules)
+
+    # Remove the poisoned module so subsequent tests import cleanly
+    if "app.handlers.menus" in sys.modules:
+        del sys.modules["app.handlers.menus"]
 
 
 # ==============================================================================
@@ -261,8 +276,12 @@ def extract_button_texts(keyboard: List[List[Any]]) -> List[str]:
 # UNIT TESTS - Using mocks (fast, isolated)
 # ==============================================================================
 
+
 # Import after mocks are set up
-from app.handlers.menus import get_start_menu_content, get_model_menu_content
+def get_menu_methods():
+    from app.handlers.menus import get_start_menu_content, get_model_menu_content
+
+    return get_start_menu_content, get_model_menu_content
 
 
 @pytest.mark.unit
@@ -274,6 +293,7 @@ def test_start_menu_content_search_on_prompt_set():
         system_prompt="You are a helpful assistant.",
     )
 
+    get_start_menu_content, _ = get_menu_methods()
     response = get_start_menu_content(chat_state)
     verify_response_structure(response, "HTML")
     text, parse_mode, reply_markup = response
@@ -304,6 +324,7 @@ def test_start_menu_content_search_off_prompt_unset():
     """Test start menu content when search is disabled and system prompt is not set."""
     chat_state = ChatState(model="gpt-4", search_enabled=False, system_prompt=None)
 
+    get_start_menu_content, _ = get_menu_methods()
     response = get_start_menu_content(chat_state)
     verify_response_structure(response, "HTML")
     text, _, reply_markup = response
@@ -333,6 +354,7 @@ def test_start_menu_buttons_structure():
         model="test-model", search_enabled=True, system_prompt="test"
     )
 
+    get_start_menu_content, _ = get_menu_methods()
     response = get_start_menu_content(chat_state)
     verify_response_structure(response, "HTML")
     _, _, reply_markup = response
@@ -368,6 +390,7 @@ def test_get_model_menu_content_gemini_only(
 
     chat_state = ChatState(model="gemini-pro")
 
+    _, get_model_menu_content = get_menu_methods()
     response = get_model_menu_content(chat_state, mock_context)
     verify_response_structure(response)
     text, _, reply_markup = response
@@ -407,6 +430,7 @@ def test_get_model_menu_content_openrouter_only(
 
     chat_state = ChatState(model="openai/gpt-4")
 
+    _, get_model_menu_content = get_menu_methods()
     response = get_model_menu_content(chat_state, mock_context)
     verify_response_structure(response)
     text, _, reply_markup = response
@@ -434,6 +458,7 @@ def test_get_model_menu_content_mixed(mock_get_keys, mock_settings_obj, mock_con
 
     chat_state = ChatState(model="gemini-flash")
 
+    _, get_model_menu_content = get_menu_methods()
     response = get_model_menu_content(chat_state, mock_context)
     verify_response_structure(response)
     text, _, reply_markup = response
@@ -462,6 +487,7 @@ def test_get_model_menu_content_no_models(
 
     chat_state = ChatState(model="nonexistent-model")
 
+    _, get_model_menu_content = get_menu_methods()
     response = get_model_menu_content(chat_state, mock_context)
     verify_response_structure(
         response, expected_parse_mode=None, allow_none_markup=True
@@ -490,6 +516,7 @@ def test_context_update(mock_get_keys, mock_settings_obj, mock_context):
 
     chat_state = ChatState(model="gemini-1")
 
+    _, get_model_menu_content = get_menu_methods()
     get_model_menu_content(chat_state, mock_context)
 
     # Verify context was updated
@@ -519,6 +546,7 @@ def test_start_menu_edge_cases(model, search_enabled, prompt):
         model=model, search_enabled=search_enabled, system_prompt=prompt
     )
 
+    get_start_menu_content, _ = get_menu_methods()
     response = get_start_menu_content(chat_state)
     verify_response_structure(response)
     text, _, reply_markup = response
@@ -541,6 +569,7 @@ def test_model_menu_nonexistent_selected_model(
 
     chat_state = ChatState(model="nonexistent-model")
 
+    _, get_model_menu_content = get_menu_methods()
     response = get_model_menu_content(chat_state, mock_context)
     verify_response_structure(response)
 

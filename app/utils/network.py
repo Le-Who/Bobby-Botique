@@ -74,9 +74,9 @@ class NetworkErrorHandler:
         connect_timeout: float = 10.0,
         read_timeout: float = 30.0,
         write_timeout: float = 30.0,
-        pool_timeout: float = 30.0,
+        pool_timeout: float = 60.0,
         max_keepalive_connections: int = 20,
-        max_connections: int = 100,
+        max_connections: int = 50,
         keepalive_expiry: float = 30.0,
     ) -> httpx.AsyncClient:
         """

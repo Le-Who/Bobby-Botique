@@ -37,7 +37,7 @@ class MetricsCollector:
         self.daily_metrics: Dict[str, PerformanceMetrics] = defaultdict(
             PerformanceMetrics
         )
-        self._lock = asyncio.Lock()
+        self._events_queue = asyncio.Queue()
         self._last_save_time = time.time()
         self._save_interval = 300  # Сохраняем каждые 5 минут
         self._bg_save_task = None
@@ -82,59 +82,144 @@ class MetricsCollector:
         except Exception as e:
             logging.error(f"Error creating metrics tables: {e}")
 
-    async def _background_saver(self):
-        """Background task to periodically save metrics"""
-        logging.info("Metrics background saver started")
+    async def _event_processor(self):
+        """Background task to process events and periodically save metrics"""
+        logging.info("Metrics background event processor started")
+        last_save = time.time()
         while True:
             try:
-                await asyncio.sleep(self._save_interval)
-                await self._save_metrics_to_db()
+                timeout = max(0.1, self._save_interval - (time.time() - last_save))
+                try:
+                    event = await asyncio.wait_for(
+                        self._events_queue.get(), timeout=timeout
+                    )
+                    self._process_event(event)
+                    self._events_queue.task_done()
+                except asyncio.TimeoutError:
+                    pass
+
+                now = time.time()
+                if now - last_save >= self._save_interval:
+                    if db.db_pool and not db.db_pool._closed:
+                        await self._save_metrics_to_db()
+                    last_save = now
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error(f"Error in metrics background saver: {e}")
-                await asyncio.sleep(60)  # Wait a bit before retrying on error
+                logging.error(f"Error in metrics event processor: {e}")
+                await asyncio.sleep(5)
+
+    def _process_event(self, event: Dict[str, Any]):
+        """Обрабатывает одно событие метрики и обновляет локальные словари без блокировок"""
+        today = date.today().isoformat()
+        event_type = event.get("type")
+
+        if event_type == "request":
+            response_time = event["response_time"]
+            success = event["success"]
+
+            self.metrics.request_count += 1
+            self.metrics.total_response_time += response_time
+            self.response_times.append(response_time)
+
+            if not success:
+                self.metrics.error_count += 1
+                self.daily_metrics[today].error_count += 1
+
+            self.daily_metrics[today].request_count += 1
+            self.daily_metrics[today].total_response_time += response_time
+
+        elif event_type == "api_call":
+            api_name = event["api_name"]
+            model = event["model"]
+
+            self.metrics.api_calls[api_name] = (
+                self.metrics.api_calls.get(api_name, 0) + 1
+            )
+            self.daily_metrics[today].api_calls[api_name] = (
+                self.daily_metrics[today].api_calls.get(api_name, 0) + 1
+            )
+
+            if model:
+                self.metrics.model_usage[model] = (
+                    self.metrics.model_usage.get(model, 0) + 1
+                )
+                self.daily_metrics[today].model_usage[model] = (
+                    self.daily_metrics[today].model_usage.get(model, 0) + 1
+                )
+
+            self.api_event_log.append(
+                {
+                    "timestamp": event["timestamp"],
+                    "api": api_name,
+                    "model": model,
+                    "request_id": event["request_id"],
+                }
+            )
+
+        elif event_type == "search_query":
+            self.metrics.search_queries += 1
+            self.daily_metrics[today].search_queries += 1
+
+        elif event_type == "cache_hit":
+            self.metrics.cache_hits += 1
+            self.daily_metrics[today].cache_hits += 1
+
+        elif event_type == "cache_miss":
+            self.metrics.cache_misses += 1
+            self.daily_metrics[today].cache_misses += 1
+
+        elif event_type == "error":
+            self.error_log.append(
+                {
+                    "timestamp": event["timestamp"],
+                    "type": event["error_type"],
+                    "message": event["error_message"],
+                    "request_id": event["request_id"],
+                    "saved": False,
+                }
+            )
 
     async def _save_metrics_to_db(self):
         """Сохраняет текущие метрики в базу данных (Non-blocking)"""
         # Phase 1: Snapshot data under lock (Fast)
         snapshot_data = None
 
-        async with self._lock:
-            try:
-                today = date.today()
-                today_str = today.isoformat()
+        # Phase 1: Snapshot data
+        try:
+            today = date.today()
+            today_str = today.isoformat()
 
-                # Snapshot daily metrics
-                daily = self.daily_metrics.get(today_str, PerformanceMetrics())
+            # Snapshot daily metrics
+            daily = self.daily_metrics.get(today_str, PerformanceMetrics())
 
-                # Deep copy dicts to avoid concurrent modification issues during JSON serialization
-                api_calls_copy = daily.api_calls.copy()
-                model_usage_copy = daily.model_usage.copy()
+            # Deep copy dicts to avoid concurrent modification issues during JSON serialization
+            api_calls_copy = dict(daily.api_calls)
+            model_usage_copy = dict(daily.model_usage)
 
-                snapshot_data = {
-                    "date": today,
-                    "request_count": daily.request_count,
-                    "total_response_time": daily.total_response_time,
-                    "error_count": daily.error_count,
-                    "search_queries": daily.search_queries,
-                    "cache_hits": daily.cache_hits,
-                    "cache_misses": daily.cache_misses,
-                    "api_calls": api_calls_copy,
-                    "model_usage": model_usage_copy,
-                }
+            snapshot_data = {
+                "date": today,
+                "request_count": daily.request_count,
+                "total_response_time": daily.total_response_time,
+                "error_count": daily.error_count,
+                "search_queries": daily.search_queries,
+                "cache_hits": daily.cache_hits,
+                "cache_misses": daily.cache_misses,
+                "api_calls": api_calls_copy,
+                "model_usage": model_usage_copy,
+            }
 
-                # Snapshot unsaved errors
-                unsaved_indices = [
-                    i
-                    for i, error in enumerate(self.error_log)
-                    if not error.get("saved", False)
-                ]
-                errors_to_process = [self.error_log[i] for i in unsaved_indices]
+            # Snapshot unsaved errors
+            unsaved_indices = [
+                i
+                for i, error in enumerate(self.error_log)
+                if not error.get("saved", False)
+            ]
+            errors_to_process = [self.error_log[i] for i in unsaved_indices]
 
-            except Exception as e:
-                logging.error(f"Error creating metrics snapshot: {e}")
-                return
+        except Exception as e:
+            logging.error(f"Error creating metrics snapshot: {e}")
+            return
 
         # Phase 2: Save to DB (IO - No Lock)
         try:
@@ -319,92 +404,51 @@ class MetricsCollector:
         self, _request_type: str, response_time: float, success: bool = True
     ):
         """Записывает метрики запроса (Fast in-memory update)"""
-        async with self._lock:
-            self.metrics.request_count += 1
-            self.metrics.total_response_time += response_time
-            self.response_times.append(response_time)
-
-            if not success:
-                self.metrics.error_count += 1
-
-            # Записываем в дневные метрики
-            today = date.today().isoformat()
-            self.daily_metrics[today].request_count += 1
-            self.daily_metrics[today].total_response_time += response_time
-            if not success:
-                self.daily_metrics[today].error_count += 1
-
-            # Background task handles saving now
+        self._events_queue.put_nowait(
+            {"type": "request", "response_time": response_time, "success": success}
+        )
 
     async def record_api_call(
         self, api_name: str, model: str = None, request_id: str = None
     ):
         """Записывает вызов API"""
-        async with self._lock:
-            current_request_id = request_id or get_request_id()
-            self.metrics.api_calls[api_name] = (
-                self.metrics.api_calls.get(api_name, 0) + 1
-            )
-            if model:
-                self.metrics.model_usage[model] = (
-                    self.metrics.model_usage.get(model, 0) + 1
-                )
-
-            self.api_event_log.append(
-                {
-                    "timestamp": datetime.now().isoformat(),
-                    "api": api_name,
-                    "model": model,
-                    "request_id": current_request_id,
-                }
-            )
-            today = date.today().isoformat()
-            self.daily_metrics[today].api_calls[api_name] = (
-                self.daily_metrics[today].api_calls.get(api_name, 0) + 1
-            )
-            if model:
-                self.daily_metrics[today].model_usage[model] = (
-                    self.daily_metrics[today].model_usage.get(model, 0) + 1
-                )
+        current_request_id = request_id or get_request_id()
+        self._events_queue.put_nowait(
+            {
+                "type": "api_call",
+                "api_name": api_name,
+                "model": model,
+                "request_id": current_request_id,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
     async def record_search_query(self):
         """Записывает поисковый запрос"""
-        async with self._lock:
-            self.metrics.search_queries += 1
-            today = date.today().isoformat()
-            self.daily_metrics[today].search_queries += 1
+        self._events_queue.put_nowait({"type": "search_query"})
 
     async def record_cache_hit(self):
         """Записывает попадание в кэш"""
-        async with self._lock:
-            self.metrics.cache_hits += 1
-            today = date.today().isoformat()
-            self.daily_metrics[today].cache_hits += 1
+        self._events_queue.put_nowait({"type": "cache_hit"})
 
     async def record_cache_miss(self):
         """Записывает промах кэша"""
-        async with self._lock:
-            self.metrics.cache_misses += 1
-            today = date.today().isoformat()
-            self.daily_metrics[today].cache_misses += 1
+        self._events_queue.put_nowait({"type": "cache_miss"})
 
     async def record_error(
         self, error_type: str, error_message: str, request_id: str = None
     ):
         """Записывает ошибку"""
-        async with self._lock:
-            current_request_id = request_id or get_request_id()
-            # Добавляем в локальный лог
-            self.error_log.append(
-                {
-                    "timestamp": datetime.now().isoformat(),
-                    "type": error_type,
-                    "message": error_message,
-                    "request_id": current_request_id,
-                    "saved": False,  # Флаг для отслеживания сохранения
-                }
-            )
-            # We don't save immediately anymore to avoid blocking. Background task will pick it up.
+        current_request_id = request_id or get_request_id()
+        self._events_queue.put_nowait(
+            {
+                "type": "error",
+                "error_type": error_type,
+                "error_message": error_message,
+                "request_id": current_request_id,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
 
     def get_average_response_time(self) -> float:
         """Возвращает среднее время ответа"""
@@ -427,47 +471,43 @@ class MetricsCollector:
 
     async def get_metrics_summary(self) -> Dict[str, Any]:
         """Возвращает сводку метрик"""
-        async with self._lock:
-            # Note: We do NOT force save here anymore to avoid blocking this read call if DB is slow.
-            # Metrics returned are in-memory (latest).
+        recent_errors = list(self.error_log)[-10:]
 
-            recent_errors = list(self.error_log)[-10:]
+        summary = {
+            "total_requests": self.metrics.request_count,
+            "average_response_time": self.get_average_response_time(),
+            "error_rate": self.get_error_rate(),
+            "cache_hit_rate": self.get_cache_hit_rate(),
+            "api_calls": dict(self.metrics.api_calls),
+            "model_usage": dict(self.metrics.model_usage),
+            "search_queries": self.metrics.search_queries,
+            "recent_errors": recent_errors,
+            "recent_api_events": list(self.api_event_log)[-20:],
+            "daily_metrics": {
+                date: {
+                    "requests": metrics.request_count,
+                    "errors": metrics.error_count,
+                    "avg_response_time": metrics.total_response_time
+                    / metrics.request_count
+                    if metrics.request_count > 0
+                    else 0,
+                }
+                for date, metrics in self.daily_metrics.items()
+            },
+        }
 
-            summary = {
-                "total_requests": self.metrics.request_count,
-                "average_response_time": self.get_average_response_time(),
-                "error_rate": self.get_error_rate(),
-                "cache_hit_rate": self.get_cache_hit_rate(),
-                "api_calls": dict(self.metrics.api_calls),
-                "model_usage": dict(self.metrics.model_usage),
-                "search_queries": self.metrics.search_queries,
-                "recent_errors": recent_errors,
-                "recent_api_events": list(self.api_event_log)[-20:],
-                "daily_metrics": {
-                    date: {
-                        "requests": metrics.request_count,
-                        "errors": metrics.error_count,
-                        "avg_response_time": metrics.total_response_time
-                        / metrics.request_count
-                        if metrics.request_count > 0
-                        else 0,
-                    }
-                    for date, metrics in self.daily_metrics.items()
-                },
-            }
-
-            logging.info(
-                f"Metrics summary: {summary['total_requests']} requests, {summary['error_rate']:.1f}% errors"
-            )
-            return summary
+        logging.info(
+            f"Metrics summary: {summary['total_requests']} requests, {summary['error_rate']:.1f}% errors"
+        )
+        return summary
 
     async def initialize(self):
         """Инициализирует систему метрик"""
         await self._load_metrics_from_db()
-        # Start background saver
+        # Start background processor
         if not self._bg_save_task:
-            self._bg_save_task = asyncio.create_task(self._background_saver())
-            logging.info("Metrics background task started")
+            self._bg_save_task = asyncio.create_task(self._event_processor())
+            logging.info("Metrics event processor task started")
 
     async def cleanup(self):
         """Очищает ресурсы и сохраняет метрики"""

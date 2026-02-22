@@ -139,11 +139,12 @@ class MemoryManager:
         logging.warning("Performing emergency memory cleanup")
 
         try:
-            # Force garbage collection in a separate thread to prevent Event Loop blocking
-            def _run_gc():
-                return gc.collect()
+            # Split garbage collection across generations with yields to avoid GIL locking
+            collected = 0
+            for gen in range(3):
+                collected += gc.collect(gen)
+                await asyncio.sleep(0.05)  # Yield to event loop
 
-            collected = await asyncio.to_thread(_run_gc)
             if collected > 0:
                 logging.info(
                     "Emergency garbage collection collected %d objects", collected
@@ -181,11 +182,12 @@ class MemoryManager:
         logging.info("Performing suggested memory cleanup")
 
         try:
-            # Run garbage collection in thread
-            def _run_gc():
-                return gc.collect()
+            # Split garbage collection across generations with yields
+            collected = 0
+            for gen in range(2):  # Only 0 and 1 for suggested cleanup
+                collected += gc.collect(gen)
+                await asyncio.sleep(0.05)
 
-            collected = await asyncio.to_thread(_run_gc)
             if collected > 0:
                 logging.info("Garbage collection collected %d objects", collected)
 
@@ -211,11 +213,10 @@ class MemoryManager:
         logging.debug("Performing preventive memory cleanup")
 
         try:
-            # Light garbage collection in thread
-            def _run_gc():
-                return gc.collect(0)  # Only collect youngest generation
+            # Light garbage collection directly (gen 0 is very fast), no thread needed
+            collected = gc.collect(0)
+            await asyncio.sleep(0.01)
 
-            collected = await asyncio.to_thread(_run_gc)
             if collected > 0:
                 logging.debug(
                     "Preventive garbage collection collected %d objects", collected

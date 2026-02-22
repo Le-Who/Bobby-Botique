@@ -10,20 +10,25 @@ sys.path.append(os.getcwd())
 
 class TestSystemStatus(unittest.TestCase):
     def setUp(self):
-        # We need to ensure clean imports because of the singleton nature of some modules
         import sys
         import importlib
 
-        # Mock dependencies that cause import errors in this environment
-        sys.modules["app.config"] = MagicMock()
-        sys.modules["app.database"] = MagicMock()
+        self.mock_config = MagicMock()
+        self.mock_database = MagicMock()
+        self.mock_time_utils = MagicMock()
+        self.mock_utils = MagicMock()
+        self.mock_utils.time = self.mock_time_utils
 
-        # app.utils.time also imports pytz, so mock it
-        mock_time_utils = MagicMock()
-        sys.modules["app.utils.time"] = mock_time_utils
-        # Ensure parent package exists
-        sys.modules["app.utils"] = MagicMock()
-        sys.modules["app.utils"].time = mock_time_utils
+        self.patcher = patch.dict(
+            "sys.modules",
+            {
+                "app.config": self.mock_config,
+                "app.database": self.mock_database,
+                "app.utils.time": self.mock_time_utils,
+                "app.utils": self.mock_utils,
+            },
+        )
+        self.patcher.start()
 
         # Reload relevant modules to ensure clean state and usage of mocks
         if "app.metrics" in sys.modules:
@@ -38,8 +43,8 @@ class TestSystemStatus(unittest.TestCase):
 
     def tearDown(self):
         self.loop.close()
+        self.patcher.stop()
 
-    @patch("app.database.db_query", new_callable=AsyncMock)
     @patch("app.metrics.metrics_collector.get_metrics_summary", new_callable=AsyncMock)
     @patch("app.utils.time.get_pacific_date")
     @patch("app.utils.time.get_current_month_str")
@@ -50,7 +55,6 @@ class TestSystemStatus(unittest.TestCase):
         mock_current_month,
         mock_pacific_date,
         mock_get_metrics,
-        mock_db_query,
     ):
         # Setup mocks
         mock_pacific_date.return_value = "2023-10-27"
@@ -79,12 +83,16 @@ class TestSystemStatus(unittest.TestCase):
                 return mock_tavily_usage
             return []
 
-        mock_db_query.side_effect = db_side_effect
+        mock_db_query = AsyncMock(side_effect=db_side_effect)
 
-        # Run function
-        result = self.loop.run_until_complete(
-            self.metrics_module.get_system_status_data()
-        )
+        # Patch db on the reloaded metrics module directly
+        with patch.object(self.metrics_module, "db") as mock_db:
+            mock_db.db_query = mock_db_query
+
+            # Run function
+            result = self.loop.run_until_complete(
+                self.metrics_module.get_system_status_data()
+            )
 
         # Assertions
         self.assertEqual(result["metrics_summary"], mock_metrics_summary)

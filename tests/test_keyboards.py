@@ -23,6 +23,28 @@ from app.utils.keyboards import (
 )
 
 
+def setup_module(module):
+    import sys
+    import importlib
+    from unittest.mock import MagicMock
+
+    # Reload telegram to flush mocks
+    if "telegram" in sys.modules and isinstance(sys.modules["telegram"], MagicMock):
+        del sys.modules["telegram"]
+    if "telegram.ext" in sys.modules and isinstance(
+        sys.modules["telegram.ext"], MagicMock
+    ):
+        del sys.modules["telegram.ext"]
+
+    import telegram
+
+    if "app.utils.keyboards" in sys.modules:
+        reloaded = importlib.reload(sys.modules["app.utils.keyboards"])
+        for attr in dir(reloaded):
+            if not attr.startswith("_"):
+                setattr(module, attr, getattr(reloaded, attr))
+
+
 class TestButtonBuilders:
     """Tests for individual button builder functions."""
 

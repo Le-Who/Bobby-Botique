@@ -324,43 +324,32 @@ class MultiLayerCache:
     """Multi-layer caching system: Memory -> Redis -> Database"""
 
     def __init__(self):
-        self.memory_cache = {}
-        self.memory_cache_ttl = {}
-        self.memory_cache_max_size = 1000  # Maximum items in memory cache
+        from cachetools import TTLCache
+
+        # Separate TTLCaches for exact expiration tracking based on search type constraints
+        self.qna_cache = TTLCache(maxsize=500, ttl=7200)
+        self.search_cache = TTLCache(maxsize=500, ttl=1800)
+        self.default_cache = TTLCache(maxsize=200, ttl=3600)
+
+    def _get_cache(self, search_type: str):
+        if search_type == "qna":
+            return self.qna_cache
+        elif search_type == "search":
+            return self.search_cache
+        else:
+            return self.default_cache
 
     def _cleanup_memory_cache(self):
-        """Cleans up expired items from memory cache"""
-        current_time = time.time()
-        expired_keys = [
-            key
-            for key, expiry in self.memory_cache_ttl.items()
-            if current_time > expiry
-        ]
-        for key in expired_keys:
-            del self.memory_cache[key]
-            del self.memory_cache_ttl[key]
-
-        # If still too many items, remove oldest
-        if len(self.memory_cache) > self.memory_cache_max_size:
-            items_to_remove = len(self.memory_cache) - self.memory_cache_max_size
-            oldest_keys = sorted(self.memory_cache_ttl.items(), key=lambda x: x[1])[
-                :items_to_remove
-            ]
-            for key, _ in oldest_keys:
-                del self.memory_cache[key]
-                del self.memory_cache_ttl[key]
+        """Deprecated: TTLCache handles eviction automatically"""
+        pass
 
     async def get(self, key: str, search_type: str) -> Optional[Dict[str, Any]]:
         """Gets value from multi-layer cache"""
+        cache_dict = self._get_cache(search_type)
         # Try memory cache first
-        if key in self.memory_cache:
-            if time.time() < self.memory_cache_ttl.get(key, 0):
-                logging.info("Memory cache hit for key: %s", key)
-                return self.memory_cache[key]
-            else:
-                # Expired, remove from memory
-                del self.memory_cache[key]
-                del self.memory_cache_ttl[key]
+        if key in cache_dict:
+            logging.info("Memory cache hit for key: %s", key)
+            return cache_dict[key]
 
         # Try Redis cache
         if redis_client:
@@ -377,10 +366,7 @@ class MultiLayerCache:
 
                     if result:
                         # Store in memory cache for faster access
-                        ttl = _get_ttl(search_type)
-                        self.memory_cache[key] = result
-                        self.memory_cache_ttl[key] = time.time() + ttl
-                        self._cleanup_memory_cache()
+                        cache_dict[key] = result
 
                         await metrics_collector.record_cache_hit()
                         logging.info("Redis cache hit for key: %s", key)
@@ -401,9 +387,8 @@ class MultiLayerCache:
         ttl = _get_ttl(search_type)
 
         # Store in memory cache
-        self.memory_cache[key] = value
-        self.memory_cache_ttl[key] = time.time() + ttl
-        self._cleanup_memory_cache()
+        cache_dict = self._get_cache(search_type)
+        cache_dict[key] = value
 
         # Store in Redis cache
         if redis_client:
@@ -426,13 +411,20 @@ class MultiLayerCache:
 
     def get_memory_stats(self) -> Dict[str, Any]:
         """Returns memory cache statistics"""
-        self._cleanup_memory_cache()
+        memory_items = (
+            len(self.qna_cache) + len(self.search_cache) + len(self.default_cache)
+        )
+        memory_max_size = (
+            self.qna_cache.maxsize
+            + self.search_cache.maxsize
+            + self.default_cache.maxsize
+        )
         return {
-            "memory_items": len(self.memory_cache),
-            "memory_max_size": self.memory_cache_max_size,
-            "memory_utilization": len(self.memory_cache)
-            / self.memory_cache_max_size
-            * 100,
+            "memory_items": memory_items,
+            "memory_max_size": memory_max_size,
+            "memory_utilization": memory_items / memory_max_size * 100
+            if memory_max_size
+            else 0,
         }
 
 

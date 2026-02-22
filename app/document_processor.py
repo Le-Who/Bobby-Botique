@@ -47,9 +47,16 @@ class DocumentProcessor:
             return temp_file.name
 
     @staticmethod
-    def _calculate_file_hash_sync(file_data: bytes) -> str:
-        """Вычисляет SHA-256 хэш файла"""
-        return hashlib.sha256(file_data).hexdigest()
+    def _calculate_file_hash_sync(file_path_or_data: Union[str, bytes]) -> str:
+        """Вычисляет SHA-256 хэш файла (потоково, если это путь)"""
+        if isinstance(file_path_or_data, bytes):
+            return hashlib.sha256(file_path_or_data).hexdigest()
+
+        h = hashlib.sha256()
+        with open(file_path_or_data, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                h.update(chunk)
+        return h.hexdigest()
 
     async def _check_duplicate_file(
         self, user_id: int, file_hash: str, filename: str
@@ -116,15 +123,22 @@ class DocumentProcessor:
             return 0
 
     async def process_document(
-        self, file_data: bytes, filename: str, user_id: int
+        self, file_data, filename: str, user_id: int, is_path: bool = False
     ) -> Dict[str, Any]:
-        """Обрабатывает документ и возвращает извлеченный текст"""
+        """Обрабатывает документ и возвращает извлеченный текст. file_data может быть путем (str) или bytes"""
         if not DOCUMENT_SUPPORT:
             return {"error": "Document processing is not available"}
 
         try:
             # Проверяем размер файла
-            if len(file_data) > self.max_file_size:
+            if is_path:
+                import os
+
+                file_size = os.path.getsize(file_data)
+            else:
+                file_size = len(file_data)
+
+            if file_size > self.max_file_size:
                 return {
                     "error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"
                 }
@@ -168,9 +182,23 @@ class DocumentProcessor:
 
             # Обрабатываем документ
             if file_ext == ".pdf":
-                return await self._process_pdf(file_data, filename, user_id, file_hash)
+                if is_path:
+                    return await self._process_pdf_with_pypdf2_path(
+                        file_data, filename, user_id, file_hash
+                    )
+                else:
+                    return await self._process_pdf(
+                        file_data, filename, user_id, file_hash
+                    )
             elif file_ext in [".docx", ".doc"]:
-                return await self._process_word(file_data, filename, user_id, file_hash)
+                if is_path:
+                    return await self._process_word_path(
+                        file_data, filename, user_id, file_hash
+                    )
+                else:
+                    return await self._process_word(
+                        file_data, filename, user_id, file_hash
+                    )
             else:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
@@ -180,7 +208,7 @@ class DocumentProcessor:
             return {"error": f"Error processing document: {str(e)}"}
 
     async def process_document_force(
-        self, file_data: bytes, filename: str, user_id: int
+        self, file_data, filename: str, user_id: int, is_path: bool = False
     ) -> Dict[str, Any]:
         """Обрабатывает документ принудительно (игнорируя дубликаты)"""
         if not DOCUMENT_SUPPORT:
@@ -188,7 +216,14 @@ class DocumentProcessor:
 
         try:
             # Проверяем размер файла
-            if len(file_data) > self.max_file_size:
+            if is_path:
+                import os
+
+                file_size = os.path.getsize(file_data)
+            else:
+                file_size = len(file_data)
+
+            if file_size > self.max_file_size:
                 return {
                     "error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"
                 }
@@ -207,9 +242,23 @@ class DocumentProcessor:
 
             # Обрабатываем документ
             if file_ext == ".pdf":
-                return await self._process_pdf(file_data, filename, user_id, file_hash)
+                if is_path:
+                    return await self._process_pdf_with_pypdf2_path(
+                        file_data, filename, user_id, file_hash
+                    )
+                else:
+                    return await self._process_pdf(
+                        file_data, filename, user_id, file_hash
+                    )
             elif file_ext in [".docx", ".doc"]:
-                return await self._process_word(file_data, filename, user_id, file_hash)
+                if is_path:
+                    return await self._process_word_path(
+                        file_data, filename, user_id, file_hash
+                    )
+                else:
+                    return await self._process_word(
+                        file_data, filename, user_id, file_hash
+                    )
             else:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
@@ -344,6 +393,42 @@ class DocumentProcessor:
             await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
             return {"error": f"Error processing PDF with PyPDF2: {str(e)}"}
 
+    async def _process_pdf_with_pypdf2_path(
+        self, file_path: str, filename: str, user_id: int, file_hash: str
+    ) -> Dict[str, Any]:
+        """Обрабатывает PDF документ по пути к файлу с использованием PyPDF2"""
+        try:
+            # Run CPU-bound task in executor
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, self._process_pdf_sync, file_path, self.max_pages
+            )
+
+            if "error" in result:
+                return result
+
+            full_text = result["content"]
+            pages_count = result["pages"]
+
+            # Сохраняем в базу данных
+            await self._save_document_content(
+                user_id, filename, full_text, pages_count, file_hash
+            )
+
+            return {
+                "success": True,
+                "filename": filename,
+                "pages": pages_count,
+                "text_length": len(full_text),
+                "content": full_text,
+                "method": "PyPDF2",
+            }
+
+        except Exception as e:
+            logging.error(f"Error processing PDF path {filename}: {e}", exc_info=True)
+            await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
+            return {"error": f"Error processing PDF: {str(e)}"}
+
     @staticmethod
     def _process_word_sync(input_data: Union[str, io.BytesIO]) -> Dict[str, Any]:
         """Synchronous part of Word processing to run in executor"""
@@ -455,6 +540,36 @@ class DocumentProcessor:
             logging.error(
                 f"Error processing Word document {filename}: {e}", exc_info=True
             )
+            await metrics_collector.record_error("word_processing", str(e))
+            return {"error": f"Error processing Word document: {str(e)}"}
+
+    async def _process_word_path(
+        self, file_path: str, filename: str, user_id: int, file_hash: str
+    ) -> Dict[str, Any]:
+        """Обрабатывает Word документ по пути к файлу"""
+        try:
+            # Offload CPU-bound task to executor
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, self._process_word_sync, file_path
+            )
+
+            if "error" in result:
+                logging.error(
+                    f"Error processing Word document {filename}: {result['error']}"
+                )
+                return {"error": f"Error processing Word document: {result['error']}"}
+
+            full_text = result["content"]
+
+            await self._save_document_content(
+                user_id, filename, full_text, 1, file_hash
+            )
+            result["filename"] = filename
+            return result
+
+        except Exception as e:
+            logging.error(f"Error processing Word document path {filename}: {e}")
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
 
@@ -699,17 +814,21 @@ document_processor = DocumentProcessor()
 
 
 async def process_uploaded_document(
-    file_data: bytes, filename: str, user_id: int
+    file_data, filename: str, user_id: int, is_path: bool = False
 ) -> Dict[str, Any]:
     """Обрабатывает загруженный документ"""
-    return await document_processor.process_document(file_data, filename, user_id)
+    return await document_processor.process_document(
+        file_data, filename, user_id, is_path
+    )
 
 
 async def process_uploaded_document_force(
-    file_data: bytes, filename: str, user_id: int
+    file_data, filename: str, user_id: int, is_path: bool = False
 ) -> Dict[str, Any]:
     """Обрабатывает загруженный документ принудительно (игнорируя дубликаты)"""
-    return await document_processor.process_document_force(file_data, filename, user_id)
+    return await document_processor.process_document_force(
+        file_data, filename, user_id, is_path
+    )
 
 
 async def get_user_documents(user_id: int) -> List[Dict[str, Any]]:

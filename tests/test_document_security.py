@@ -12,14 +12,29 @@ os.environ["GEMINI_API_KEYS"] = "key1"
 os.environ["TAVILY_API_KEYS"] = "key1"
 os.environ["PORT"] = "10000"
 
-# Mock database
-sys.modules["app.database"] = MagicMock()
+_mock_keys = ["app.database"]
+_original_modules = {}
 
-from app.document_processor import DocumentProcessor
+
+def setup_module(module):
+    global _original_modules
+    for k in _mock_keys:
+        if k in sys.modules:
+            _original_modules[k] = sys.modules[k]
+        sys.modules[k] = MagicMock()
+
+
+def teardown_module(module):
+    for k in _mock_keys:
+        if k in sys.modules:
+            del sys.modules[k]
+    sys.modules.update(_original_modules)
 
 
 @pytest.mark.asyncio
 async def test_docx_magic_bytes_validation():
+    from app.document_processor import DocumentProcessor
+
     processor = DocumentProcessor()
 
     # Mock internal methods

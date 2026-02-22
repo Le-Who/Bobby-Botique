@@ -2,7 +2,7 @@ import pytest
 import sys
 from unittest.mock import MagicMock, patch
 
-# Mock dependencies globally before any import
+# Define keys but do not override them yet
 _mock_keys = [
     "asyncpg",
     "asyncpg.pool",
@@ -17,19 +17,19 @@ _mock_keys = [
     "hypercorn.asyncio",
     "app.database",
 ]
-_original_modules = {k: sys.modules[k] for k in _mock_keys if k in sys.modules}
+_original_modules = {}
 
-sys.modules["asyncpg"] = MagicMock()
-sys.modules["asyncpg.pool"] = MagicMock()
-sys.modules["google.genai"] = MagicMock()
-sys.modules["google.genai.errors"] = MagicMock()
-sys.modules["redis"] = MagicMock()
-sys.modules["redis.exceptions"] = MagicMock()
-sys.modules["telegram"] = MagicMock()
-sys.modules["telegram.ext"] = MagicMock()
-sys.modules["telegram.error"] = MagicMock()
-sys.modules["hypercorn.config"] = MagicMock()
-sys.modules["hypercorn.asyncio"] = MagicMock()
+
+def setup_module(module):
+    global _original_modules
+    for k in _mock_keys:
+        if k in sys.modules:
+            _original_modules[k] = sys.modules[k]
+        sys.modules[k] = MagicMock()
+
+    mock_db = MagicMock()
+    mock_db.db_pool = None
+    sys.modules["app.database"] = mock_db
 
 
 def teardown_module(module):
@@ -37,12 +37,6 @@ def teardown_module(module):
         if k in sys.modules:
             del sys.modules[k]
     sys.modules.update(_original_modules)
-
-
-# Mock app.database
-mock_db = MagicMock()
-mock_db.db_pool = None
-sys.modules["app.database"] = mock_db
 
 
 @pytest.fixture
@@ -62,10 +56,12 @@ def client():
         flask_app.config["TESTING"] = True
 
         # Mock psutil for endpoints that use it
+        # Mock database health check to prevent 503 from dead DB pool
         with (
             patch("psutil.cpu_percent", return_value=10),
             patch("psutil.virtual_memory") as mock_vm,
             patch("psutil.disk_usage") as mock_du,
+            patch("app.web.database.is_database_connected", return_value=True),
         ):
             mock_vm.return_value.percent = 20
             mock_du.return_value.percent = 30

@@ -11,14 +11,8 @@ try:
 except ImportError:
     pass
 
-# Mock dependencies that might be missing in the test environment
-# We do this before importing app.database
-if "asyncpg" not in sys.modules:
-    sys.modules["asyncpg"] = MagicMock()
-    sys.modules["asyncpg.pool"] = MagicMock()
 
-if "pytz" not in sys.modules:
-    sys.modules["pytz"] = MagicMock()
+# Removed manual sys.modules intervention which broke downstream module evaluations
 
 
 @dataclass
@@ -67,17 +61,15 @@ async def test_force_update_tavily_keys():
 
     with patch("app.config.get_settings", return_value=mock_settings):
         # We need to ensure app.database is imported
-        import app.database
+        from app import database
 
         # Now patch the functions inside app.database
         with (
+            patch.object(database, "db_query", new_callable=AsyncMock) as mock_db_query,
             patch.object(
-                app.database, "db_query", new_callable=AsyncMock
-            ) as mock_db_query,
-            patch.object(
-                app.database, "db_execute_many", new_callable=AsyncMock
+                database, "db_execute_many", new_callable=AsyncMock
             ) as mock_db_execute_many,
-            patch.object(app.database, "db_manager") as mock_db_manager,
+            patch.object(database, "db_manager") as mock_db_manager,
         ):
             # Mock the cache lock
             mock_lock = AsyncMock()
@@ -88,7 +80,7 @@ async def test_force_update_tavily_keys():
             mock_db_manager._cache_last_updated = {}
 
             # Execute
-            result = await app.database.force_update_tavily_keys()
+            result = await database.force_update_tavily_keys()
 
             # Verify
             assert result is True
@@ -118,20 +110,18 @@ async def test_force_update_tavily_keys_empty():
     mock_settings = MockSettings(TAVILY_API_KEYS=[])
 
     with patch("app.config.get_settings", return_value=mock_settings):
-        import app.database
+        from app import database
 
         with (
-            patch.object(
-                app.database, "db_query", new_callable=AsyncMock
-            ) as mock_db_query,
-            patch.object(app.database, "db_execute_many", new_callable=AsyncMock),
-            patch.object(app.database, "db_manager") as mock_db_manager,
+            patch.object(database, "db_query", new_callable=AsyncMock) as mock_db_query,
+            patch.object(database, "db_execute_many", new_callable=AsyncMock),
+            patch.object(database, "db_manager") as mock_db_manager,
         ):
             mock_db_manager._cache_lock = AsyncMock()
             mock_db_manager._cache_lock.__aenter__.return_value = None
             mock_db_manager._cache_lock.__aexit__.return_value = None
 
-            result = await app.database.force_update_tavily_keys()
+            result = await database.force_update_tavily_keys()
 
             assert result is False
             assert mock_db_query.call_count == 0

@@ -3,26 +3,45 @@ import sys
 import importlib
 from unittest.mock import MagicMock, patch
 
-# Mock dependencies globally before any import (copied from test_web_security.py)
-sys.modules["asyncpg"] = MagicMock()
-sys.modules["asyncpg.pool"] = MagicMock()
-sys.modules["google.genai"] = MagicMock()
-sys.modules["google.genai.errors"] = MagicMock()
-sys.modules["redis"] = MagicMock()
-sys.modules["redis.exceptions"] = MagicMock()
-sys.modules["telegram"] = MagicMock()
-sys.modules["telegram.ext"] = MagicMock()
-sys.modules["telegram.error"] = MagicMock()
-sys.modules["hypercorn.config"] = MagicMock()
-sys.modules["hypercorn.asyncio"] = MagicMock()
-sys.modules["pytz"] = MagicMock()
+# Store mocked keys to clean up later
+_mock_keys = [
+    "asyncpg",
+    "asyncpg.pool",
+    "google.genai",
+    "google.genai.errors",
+    "redis",
+    "redis.exceptions",
+    "telegram",
+    "telegram.ext",
+    "telegram.error",
+    "hypercorn.config",
+    "hypercorn.asyncio",
+    "pytz",
+    "app.database",
+]
+_original_modules = {}
 
-# Mock app.database
-mock_db = MagicMock()
-mock_db.db_pool = None
-mock_db.get_gemini_key_usage_stats = MagicMock(return_value=[])
-mock_db.get_active_key_info = MagicMock(return_value={})
-sys.modules["app.database"] = mock_db
+
+def setup_module(module):
+    global _original_modules
+    for k in _mock_keys:
+        if k in sys.modules:
+            _original_modules[k] = sys.modules[k]
+        sys.modules[k] = MagicMock()
+
+    mock_db = MagicMock()
+    mock_db.db_pool = None
+    mock_db.get_gemini_key_usage_stats = MagicMock(return_value=[])
+    mock_db.get_active_key_info = MagicMock(return_value={})
+    sys.modules["app.database"] = mock_db
+
+
+def teardown_module(module):
+    for k in _mock_keys:
+        if k in sys.modules:
+            del sys.modules[k]
+    sys.modules.update(_original_modules)
+
 
 # Ensure app.config is imported
 

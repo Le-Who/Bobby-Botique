@@ -202,11 +202,11 @@ async def run_bot_with_retry():
         from telegram.request import HTTPXRequest
 
         custom_request = HTTPXRequest(
-            connection_pool_size=8,
+            connection_pool_size=50,
             connect_timeout=10.0,
             read_timeout=30.0,
             write_timeout=30.0,
-            pool_timeout=30.0,
+            pool_timeout=60.0,
         )
         application = (
             Application.builder()
@@ -236,7 +236,7 @@ async def run_bot_with_retry():
             read_timeout=30,
             write_timeout=30,
             connect_timeout=10,
-            pool_timeout=30,
+            pool_timeout=60,
         )
 
         logging.info("Bot started successfully and polling")
