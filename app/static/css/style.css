@@ -146,7 +146,24 @@ h1 {
 
 footer {
     text-align: center;
-    color: #64748b;
+    color: #94a3b8;
     margin-top: 3rem;
     padding-bottom: 2rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    .glass-card:hover {
+        transform: none;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.36);
+        border-color: var(--glass-border);
+    }
 }
