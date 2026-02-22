@@ -449,12 +449,6 @@ async def _init_schema():
     """)
 
     await db_query(
-        "CREATE INDEX IF NOT EXISTS idx_conversations_user_updated ON conversations(user_id, updated_at DESC)"
-    )
-    await db_query(
-        "CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON conversation_messages(conversation_id, created_at)"
-    )
-    await db_query(
         "CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)"
     )
     await db_query(
@@ -585,9 +579,6 @@ async def _insert_initial_data():
         "CREATE INDEX IF NOT EXISTS idx_conversation_messages_conv_id ON conversation_messages(conversation_id)"
     )
     await db_query(
-        "CREATE INDEX IF NOT EXISTS idx_conversations_user_created ON conversations(user_id, created_at DESC)"
-    )
-    await db_query(
         "CREATE INDEX IF NOT EXISTS idx_key_usage_model_date ON key_usage(model_name, usage_date)"
     )
 
@@ -649,24 +640,15 @@ async def create_rls_policies(table_name: str):
                     SELECT 1 FROM pg_policies 
                     WHERE tablename = 'users' AND policyname = 'users_policy'
                 """)
-                if not existing_policy:
-                    await db_query("""
                         CREATE POLICY users_policy ON users
                         FOR ALL USING (
-                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
-                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
+                            (select current_setting('app.is_admin', true)) = 'true'
                         );
                     """)
             except Exception as e:
                 logging.error(f"Failed to create users_policy: {e}")
                 raise e
-
-            try:
-                await db_query(
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_users_user_id_rls ON users(user_id)"
-                )
-            except Exception:
-                pass
 
         elif table_name == "chats":
             try:
@@ -674,24 +656,15 @@ async def create_rls_policies(table_name: str):
                     SELECT 1 FROM pg_policies 
                     WHERE tablename = 'chats' AND policyname = 'chats_policy'
                 """)
-                if not existing_policy:
-                    await db_query("""
                         CREATE POLICY chats_policy ON chats
                         FOR ALL USING (
-                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
-                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
+                            (select current_setting('app.is_admin', true)) = 'true'
                         );
                     """)
             except Exception as e:
                 logging.error(f"Failed to create chats_policy: {e}")
                 raise e
-
-            try:
-                await db_query(
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_chats_user_id_rls ON chats(user_id)"
-                )
-            except Exception:
-                pass
 
         elif table_name == "user_documents":
             try:
@@ -699,24 +672,15 @@ async def create_rls_policies(table_name: str):
                     SELECT 1 FROM pg_policies 
                     WHERE tablename = 'user_documents' AND policyname = 'user_documents_policy'
                 """)
-                if not existing_policy:
-                    await db_query("""
                         CREATE POLICY user_documents_policy ON user_documents
                         FOR ALL USING (
-                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
-                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
+                            (select current_setting('app.is_admin', true)) = 'true'
                         );
                     """)
             except Exception as e:
                 logging.error(f"Failed to create user_documents_policy: {e}")
                 raise e
-
-            try:
-                await db_query(
-                    "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_documents_user_id_rls ON user_documents(user_id)"
-                )
-            except Exception:
-                pass
 
         elif table_name == "roles":
             try:
@@ -731,12 +695,13 @@ async def create_rls_policies(table_name: str):
                     """)
                 existing_write = await db_query("""
                     SELECT 1 FROM pg_policies 
-                    WHERE tablename = 'roles' AND policyname = 'roles_write_policy'
+                    WHERE tablename = 'roles' AND policyname = 'roles_update_policy'
                 """)
                 if not existing_write:
                     await db_query("""
-                        CREATE POLICY roles_write_policy ON roles
-                        FOR ALL USING ((SELECT current_setting('app.is_admin', true)::boolean = true));
+                        CREATE POLICY roles_insert_policy ON roles FOR INSERT WITH CHECK ((select current_setting('app.is_admin', true)) = 'true');
+                        CREATE POLICY roles_update_policy ON roles FOR UPDATE USING ((select current_setting('app.is_admin', true)) = 'true');
+                        CREATE POLICY roles_delete_policy ON roles FOR DELETE USING ((select current_setting('app.is_admin', true)) = 'true');
                     """)
             except Exception as e:
                 logging.error(f"Failed to create roles policies: {e}")
@@ -752,8 +717,8 @@ async def create_rls_policies(table_name: str):
                     await db_query("""
                         CREATE POLICY user_roles_policy ON user_roles
                         FOR ALL USING (
-                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
-                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
+                            (select current_setting('app.is_admin', true)) = 'true'
                         );
                     """)
             except Exception as e:
@@ -770,8 +735,8 @@ async def create_rls_policies(table_name: str):
                     await db_query("""
                         CREATE POLICY conversations_policy ON conversations
                         FOR ALL USING (
-                            user_id = (SELECT current_setting('app.user_id', true)::bigint) OR 
-                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
+                            (select current_setting('app.is_admin', true)) = 'true'
                         );
                     """)
             except Exception as e:
@@ -788,11 +753,11 @@ async def create_rls_policies(table_name: str):
                     await db_query("""
                         CREATE POLICY conversation_messages_policy ON conversation_messages
                         FOR ALL USING (
-                            (SELECT current_setting('app.is_admin', true)::boolean = true)
+                            (select current_setting('app.is_admin', true)) = 'true'
                             OR EXISTS (
                                 SELECT 1 FROM conversations c 
                                 WHERE c.id = conversation_messages.conversation_id
-                                  AND c.user_id = (SELECT current_setting('app.user_id', true)::bigint)
+                                  AND c.user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
                             )
                         );
                     """)
@@ -814,11 +779,11 @@ async def create_rls_policies(table_name: str):
                     await db_query(f"""
                         CREATE POLICY {table_name}_policy ON {table_name}
                         FOR ALL USING (
-                            (SELECT current_setting('app.is_admin', true)::boolean = true) OR
+                            (select current_setting('app.is_admin', true)) = 'true' OR
                             EXISTS (
                                 SELECT 1 FROM group_members gm 
                                 WHERE gm.chat_id = {table_name}.chat_id 
-                                AND gm.user_id = (SELECT current_setting('app.user_id', true)::bigint)
+                                AND gm.user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
                             )
                         );
                     """)
@@ -828,8 +793,11 @@ async def create_rls_policies(table_name: str):
 
         elif table_name in [
             "api_keys",
+            "key_usage",
             "tavily_api_keys",
+            "tavily_key_usage",
             "openrouter_api_keys",
+            "openrouter_key_usage",
             "metrics",
             "error_logs",
         ]:
@@ -845,7 +813,7 @@ async def create_rls_policies(table_name: str):
                 if not existing_policy:
                     await db_query(f"""
                         CREATE POLICY {table_name}_policy ON {table_name}
-                        FOR ALL USING ((SELECT current_setting('app.is_admin', true)::boolean = true));
+                        FOR ALL USING ((select current_setting('app.is_admin', true)) = 'true');
                     """)
             except Exception as e:
                 logging.error(f"Failed to create {table_name}_policy: {e}")
