@@ -20,6 +20,7 @@ class ChatState:
     system_prompt: Optional[str]
     is_deep_dive: bool = False
     deep_dive_thread_id: Optional[str] = None
+    _original_length: int = 0
 
 
 class DatabaseManager:
@@ -35,6 +36,8 @@ class DatabaseManager:
             # TTL Caches to avoid manual background cleanup
             cls._instance._active_keys_cache = TTLCache(maxsize=100, ttl=300)
             cls._instance._user_auth_cache = TTLCache(maxsize=1000, ttl=300)
+            cls._instance._model_config_cache = TTLCache(maxsize=50, ttl=3600)
+            cls._instance._active_chats_cache = TTLCache(maxsize=1000, ttl=900)
 
             cls._instance._cache_lock = asyncio.Lock()
             cls._instance._monitor_task = None
@@ -53,7 +56,6 @@ class DatabaseManager:
                 min_size=2,
                 max_size=10,
                 command_timeout=30,
-                statement_cache_size=0,
                 max_cached_statement_lifetime=300,
                 max_cacheable_statement_size=15000,
                 server_settings={
@@ -640,6 +642,8 @@ async def create_rls_policies(table_name: str):
                     SELECT 1 FROM pg_policies 
                     WHERE tablename = 'users' AND policyname = 'users_policy'
                 """)
+                if not existing_policy:
+                    await db_query("""
                         CREATE POLICY users_policy ON users
                         FOR ALL USING (
                             user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
@@ -656,6 +660,8 @@ async def create_rls_policies(table_name: str):
                     SELECT 1 FROM pg_policies 
                     WHERE tablename = 'chats' AND policyname = 'chats_policy'
                 """)
+                if not existing_policy:
+                    await db_query("""
                         CREATE POLICY chats_policy ON chats
                         FOR ALL USING (
                             user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
@@ -672,6 +678,8 @@ async def create_rls_policies(table_name: str):
                     SELECT 1 FROM pg_policies 
                     WHERE tablename = 'user_documents' AND policyname = 'user_documents_policy'
                 """)
+                if not existing_policy:
+                    await db_query("""
                         CREATE POLICY user_documents_policy ON user_documents
                         FOR ALL USING (
                             user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
@@ -754,11 +762,7 @@ async def create_rls_policies(table_name: str):
                         CREATE POLICY conversation_messages_policy ON conversation_messages
                         FOR ALL USING (
                             (select current_setting('app.is_admin', true)) = 'true'
-                            OR EXISTS (
-                                SELECT 1 FROM conversations c 
-                                WHERE c.id = conversation_messages.conversation_id
-                                  AND c.user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
-                            )
+                            OR owner_user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
                         );
                     """)
             except Exception as e:
@@ -800,6 +804,7 @@ async def create_rls_policies(table_name: str):
             "openrouter_key_usage",
             "metrics",
             "error_logs",
+            "model_configuration",
         ]:
             try:
                 existing_policy = await db_query(
@@ -853,6 +858,13 @@ async def clear_user_context(conn=None):
 
 
 async def get_user_chat(user_id: int) -> ChatState:
+    async with db_manager._cache_lock:
+        if (
+            hasattr(db_manager, "_active_chats_cache")
+            and user_id in db_manager._active_chats_cache
+        ):
+            return db_manager._active_chats_cache[user_id]
+
     if not db_manager.is_connected:
         await reconnect_database()
 
@@ -862,7 +874,7 @@ async def get_user_chat(user_id: int) -> ChatState:
             # Optimized: Combine users and chats query into one
             query = """
                 SELECT
-                    c.history, c.model, c.token_count, c.search_enabled, c.system_prompt,
+                    c.model, c.token_count, c.search_enabled, c.system_prompt,
                     u.is_deep_dive, u.deep_dive_thread_id
                 FROM users u
                 LEFT JOIN chats c ON u.user_id = c.user_id
@@ -878,16 +890,11 @@ async def get_user_chat(user_id: int) -> ChatState:
                 system_prompt=None,
                 is_deep_dive=False,
                 deep_dive_thread_id=None,
+                _original_length=0,
             )
 
             if result:
                 row = result[0]
-                # Chat fields
-                if row["history"]:
-                    chat_state.history = json.loads(row["history"])
-                else:
-                    chat_state.history = []
-
                 chat_state.model = row["model"] or settings.DEFAULT_MODEL
                 chat_state.token_count = row["token_count"] or 0
                 chat_state.search_enabled = (
@@ -896,10 +903,29 @@ async def get_user_chat(user_id: int) -> ChatState:
                     else False
                 )
                 chat_state.system_prompt = row["system_prompt"] or None
-
-                # User fields
                 chat_state.is_deep_dive = row["is_deep_dive"] or False
                 chat_state.deep_dive_thread_id = row.get("deep_dive_thread_id")
+
+            # Load history efficiently
+            history_query = "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC"
+            history_result = await db_query(history_query, (user_id,), conn=conn)
+            if history_result:
+                for msg in history_result:
+                    try:
+                        content = (
+                            json.loads(msg["content"])
+                            if msg["content"].startswith("[")
+                            else msg["content"]
+                        )
+                    except:
+                        content = msg["content"]
+                    chat_state.history.append({"role": msg["role"], "content": content})
+
+            chat_state._original_length = len(chat_state.history)
+
+            async with db_manager._cache_lock:
+                if hasattr(db_manager, "_active_chats_cache"):
+                    db_manager._active_chats_cache[user_id] = chat_state
 
             return chat_state
         finally:
@@ -907,6 +933,10 @@ async def get_user_chat(user_id: int) -> ChatState:
 
 
 async def update_user_chat(user_id: int, chat_state: ChatState):
+    async with db_manager._cache_lock:
+        if hasattr(db_manager, "_active_chats_cache"):
+            db_manager._active_chats_cache[user_id] = chat_state
+
     if not db_manager.is_connected:
         await reconnect_database()
 
@@ -914,20 +944,60 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
         await set_user_context(user_id, is_admin(user_id), conn=conn)
 
         try:
-            history_json = json.dumps(chat_state.history)
+            current_length = len(chat_state.history)
+
+            if current_length < chat_state._original_length:
+                # Truncated or cleared
+                await db_query(
+                    "DELETE FROM active_chat_messages WHERE user_id = $1",
+                    (user_id,),
+                    conn=conn,
+                )
+                if current_length > 0:
+                    insert_data = []
+                    for msg in chat_state.history:
+                        content_str = (
+                            json.dumps(msg["content"])
+                            if isinstance(msg["content"], list)
+                            else str(msg.get("content", ""))
+                        )
+                        insert_data.append((user_id, msg["role"], content_str))
+                    await db_execute_many(
+                        "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
+                        insert_data,
+                        conn=conn,
+                    )
+            elif current_length > chat_state._original_length:
+                # Appended new messages
+                new_items = chat_state.history[chat_state._original_length :]
+                insert_data = []
+                for msg in new_items:
+                    content_str = (
+                        json.dumps(msg["content"])
+                        if isinstance(msg["content"], list)
+                        else str(msg.get("content", ""))
+                    )
+                    insert_data.append((user_id, msg["role"], content_str))
+                await db_execute_many(
+                    "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
+                    insert_data,
+                    conn=conn,
+                )
+
+            chat_state._original_length = current_length
+
             chat_query = """
             INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            VALUES ($1, '[]', $2, $3, $4, $5)
             ON CONFLICT (user_id)
             DO UPDATE SET
-                history = EXCLUDED.history, model = EXCLUDED.model, token_count = EXCLUDED.token_count,
+                model = EXCLUDED.model, token_count = EXCLUDED.token_count,
                 search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt;
             """
             await db_query(
                 chat_query,
                 (
                     user_id,
-                    history_json,
                     chat_state.model,
                     chat_state.token_count,
                     int(chat_state.search_enabled),
@@ -944,6 +1014,30 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
             )
         finally:
             await clear_user_context(conn=conn)
+
+
+async def get_model_daily_limit(model_name: str) -> Optional[int]:
+    async with db_manager._cache_lock:
+        if (
+            hasattr(db_manager, "_model_config_cache")
+            and model_name in db_manager._model_config_cache
+        ):
+            return db_manager._model_config_cache[model_name]
+
+    try:
+        res = await db_query(
+            "SELECT daily_limit FROM model_configuration WHERE model_name = $1",
+            (model_name,),
+        )
+        limit = res[0]["daily_limit"] if res else None
+
+        async with db_manager._cache_lock:
+            if hasattr(db_manager, "_model_config_cache"):
+                db_manager._model_config_cache[model_name] = limit
+        return limit
+    except Exception as e:
+        logging.warning(f"Failed to fetch limit for {model_name}: {e}")
+        return None
 
 
 async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
@@ -978,7 +1072,7 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
 
 async def _is_key_available(key_hash: str, model_name: str, conn=None) -> bool:
     today_pacific: date = datetime.now(get_pacific_tz()).date()
-    daily_limit = settings.DAILY_LIMITS.get(model_name)
+    daily_limit = await get_model_daily_limit(model_name)
 
     if not daily_limit:
         return True
@@ -1000,7 +1094,7 @@ async def _get_fresh_available_key(
     model_name: str, conn=None
 ) -> Optional[Dict[str, Any]]:
     today_pacific: date = datetime.now(get_pacific_tz()).date()
-    daily_limit = settings.DAILY_LIMITS.get(model_name)
+    daily_limit = await get_model_daily_limit(model_name)
 
     if not daily_limit:
         keys = await db_query("SELECT * FROM api_keys LIMIT 1", conn=conn)
@@ -1039,7 +1133,7 @@ async def invalidate_key_cache(model_name: str = None):
 
 async def get_current_active_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
     today_pacific: date = datetime.now(get_pacific_tz()).date()
-    daily_limit = settings.DAILY_LIMITS.get(model_name)
+    daily_limit = await get_model_daily_limit(model_name)
 
     if not daily_limit:
         keys = await db_query("SELECT * FROM api_keys LIMIT 1")
@@ -1077,7 +1171,7 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str):
     result = await db_query(query, (key_hash, model_name, today_pacific))
     current_usage = result[0]["request_count"] if result else 0
 
-    daily_limit = settings.DAILY_LIMITS.get(model_name)
+    daily_limit = await get_model_daily_limit(model_name)
     if daily_limit:
         threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
 
@@ -1212,25 +1306,25 @@ async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, A
                 ak.key_hash,
                 LEFT(ak.api_key, 10) || '...' as api_key_preview,
                 COALESCE(ku.request_count, 0) as request_count,
-                $2 as daily_limit,
+                mc.daily_limit,
                 CASE 
-                    WHEN $2 IS NULL THEN 0
-                    ELSE (COALESCE(ku.request_count, 0)::float / $2 * 100)
+                    WHEN mc.daily_limit IS NULL THEN 0
+                    ELSE (COALESCE(ku.request_count, 0)::float / mc.daily_limit * 100)
                 END as usage_percent,
                 CASE 
-                    WHEN $2 IS NULL THEN true
-                    ELSE COALESCE(ku.request_count, 0) < ($2 * $3)
+                    WHEN mc.daily_limit IS NULL THEN true
+                    ELSE COALESCE(ku.request_count, 0) < (mc.daily_limit * $2)
                 END as is_available
             FROM api_keys ak
+            LEFT JOIN model_configuration mc ON mc.model_name = $1
             LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash 
-                AND ku.model_name = $1 AND ku.usage_date = $4
+                AND ku.model_name = $1 AND ku.usage_date = $3
             ORDER BY COALESCE(ku.request_count, 0) ASC
         """
         results = await db_query(
             query,
             (
                 model_name,
-                settings.DAILY_LIMITS.get(model_name),
                 settings.LIMIT_THRESHOLD_PERCENT,
                 today_pacific,
             ),
@@ -1242,26 +1336,19 @@ async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, A
                 LEFT(ak.api_key, 10) || '...' as api_key_preview,
                 ku.model_name,
                 COALESCE(ku.request_count, 0) as request_count,
+                mc.daily_limit,
                 CASE 
-                    WHEN ku.model_name = 'gemini-2.5-flash' THEN 250
-                    WHEN ku.model_name = 'gemini-2.5-pro' THEN 100
-                    WHEN ku.model_name = 'gemini-2.5-flash-lite' THEN 1000
-                    ELSE NULL
-                END as daily_limit,
-                CASE 
-                    WHEN ku.model_name = 'gemini-2.5-flash' THEN (COALESCE(ku.request_count, 0)::float / 250 * 100)
-                    WHEN ku.model_name = 'gemini-2.5-pro' THEN (COALESCE(ku.request_count, 0)::float / 100 * 100)
-                    WHEN ku.model_name = 'gemini-2.5-flash-lite' THEN (COALESCE(ku.request_count, 0)::float / 1000 * 100)
-                    ELSE 0
+                    WHEN mc.daily_limit IS NULL THEN 0
+                    ELSE (COALESCE(ku.request_count, 0)::float / mc.daily_limit * 100)
                 END as usage_percent,
                 CASE 
-                    WHEN ku.model_name = 'gemini-2.5-flash' THEN COALESCE(ku.request_count, 0) < (250 * $1)
-                    WHEN ku.model_name = 'gemini-2.5-pro' THEN COALESCE(ku.request_count, 0) < (100 * $1)
-                    WHEN ku.model_name = 'gemini-2.5-flash-lite' THEN COALESCE(ku.request_count, 0) < (1000 * $1)
-                    ELSE true
+                    WHEN mc.daily_limit IS NULL THEN true
+                    ELSE COALESCE(ku.request_count, 0) < (mc.daily_limit * $1)
                 END as is_available
             FROM api_keys ak
             LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash AND ku.usage_date = $2
+            LEFT JOIN model_configuration mc ON mc.model_name = ku.model_name
+            WHERE ku.model_name IS NOT NULL
             ORDER BY ku.model_name, COALESCE(ku.request_count, 0) ASC
         """
         results = await db_query(
@@ -1424,53 +1511,12 @@ async def save_conversation(
         conv_id = result[0]["id"] if result else None
         if conv_id and chat_state.history:
             try:
-                if isinstance(chat_state.history, list):
-                    history_data = {"messages": chat_state.history}
-                else:
-                    history_data = json.loads(chat_state.history)
-
-                roles_to_insert = []
-                contents_to_insert = []
-
-                for msg in history_data.get("messages", []):
-                    if isinstance(msg, dict):
-                        role = msg.get("role", "user")
-                        content = msg.get("content", "")
-                        if isinstance(content, list):
-                            content = " ".join(str(part) for part in content)
-                        text_lower = (content or "").strip()
-                        if role not in ("user", "assistant"):
-                            continue
-                        if text_lower.startswith("/"):
-                            continue
-                        if any(
-                            prefix in text_lower
-                            for prefix in (
-                                "🖼️ обрабатываю изображение",
-                                "🤔 думаю",
-                                "📄 обрабатываю документ",
-                                "✅ новый чат создан",
-                                "опишите, какую роль хотите создать",
-                                "не удалось сгенерировать роль",
-                                "сервер перегружен",
-                            )
-                        ):
-                            continue
-                    else:
-                        role = "user"
-                        content = str(msg)
-                    roles_to_insert.append(role)
-                    contents_to_insert.append(content)
-
-                if roles_to_insert:
-                    await db_query(
-                        """INSERT INTO conversation_messages (conversation_id, role, content, created_at)
-                           SELECT $1, u.role, u.content, CURRENT_TIMESTAMP
-                           FROM unnest($2::text[], $3::text[]) AS u(role, content)""",
-                        (conv_id, roles_to_insert, contents_to_insert),
-                    )
+                # Fast O(1) bulk insert inside PostgreSQL without blocking Python Event Loop
+                await db_query(
+                    "CALL save_chat_to_conversation($1, $2)", (user_id, conv_id)
+                )
             except Exception as e:
-                logging.error(f"Error saving conversation messages: {e}")
+                logging.error(f"Error saving conversation messages via Procedure: {e}")
         return conv_id
     except Exception as e:
         logging.error(f"Error in save_conversation: {e}")
@@ -1556,16 +1602,27 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
         if messages is None:
             return False
 
-        history_data = {
-            "messages": messages,
-            "conversation_id": conversation_id,
-            "summary": summary,
-        }
-        history_json = json.dumps(history_data, ensure_ascii=False)
+        await db_query(
+            "DELETE FROM active_chat_messages WHERE user_id = $1", (user_id,)
+        )
+        if messages:
+            insert_data = [
+                (user_id, msg["role"], str(msg.get("content", ""))) for msg in messages
+            ]
+            await db_execute_many(
+                "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
+                insert_data,
+            )
+
+        async with db_manager._cache_lock:
+            if (
+                hasattr(db_manager, "_active_chats_cache")
+                and user_id in db_manager._active_chats_cache
+            ):
+                del db_manager._active_chats_cache[user_id]
 
         await db_query(
-            "UPDATE chats SET history = $1, token_count = 0 WHERE user_id = $2",
-            (history_json, user_id),
+            "UPDATE chats SET token_count = 0 WHERE user_id = $1", (user_id,)
         )
 
         if role_type and role_id:

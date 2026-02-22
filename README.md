@@ -97,9 +97,8 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 - **Non-Blocking Document I/O**: Asynchronous file processing and streaming chunked hashing algorithms completely avoid Event Loop blocking and prevent RAM starvation (OOM) on memory-constrained 256-512MB hosting environments.
 - **Batched Metrics DB Inserts**: Background batching via `asyncio.Queue` of monitoring metrics into PostgreSQL, replacing expensive synchronous tracking and dictionary iterations.
 - **Scoped DB Transactions**: Optimized database pooling (`max_size=10`) with `asyncio.Semaphore` and scope-limited transactions to prevent connection starvation without hitting provider DB connection limits.
-- **GIL-Free Image Processing**: Progressive image down-scaling and offloading Pillow JPEG compression into an isolated `ProcessPoolExecutor`.
-- **TTLCache & Lazy Eviction**: O(1) in-memory lookups utilizing `cachetools` and lazy cache eviction for web search and states, bypassing CPU-blocking dictionary iteration loops.
 - **Micro-GC Pauses**: Fine-tuned `gc.collect(1)` macro-invocations preventing full stop-the-world application pauses during heavy traffic spikes.
+- _(Planned)_ **Database Architecture V3**: Migration from Monolithic JSON TEXT arrays to normalized JSONB/Relational models, removal of block AST caching constraints, and RLS constraint denormalization to eliminate high-concurrency CPU limits.
 - **Robust TCP Pooling**: Scaled (yet strictly constrained) HTTPX connection pools (50 concurrent external HTTP connections) with Circuit Breaker tracking for external AI Providers to defend against socket exhaustion.
 
 ---
