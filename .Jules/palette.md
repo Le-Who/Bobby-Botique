@@ -9,3 +9,7 @@
 ## 2025-05-29 - [Confirm Destructive Actions]
 **Learning:** Destructive actions like "Clear All Documents" executed immediately on a single click can lead to significant user frustration and data loss. Users expect a safety net.
 **Action:** Implement a two-step confirmation process for all bulk delete or irreversible actions, replacing the button with a clear "Confirm/Cancel" choice.
+
+## 2026-02-23 - [Motion Sensitivity in Glassmorphism]
+**Learning:** The custom glassmorphism design relies heavily on entrance animations (`animate-up`, `fadeInDown`) which can trigger motion sickness for sensitive users, especially on auto-refreshing pages like dashboards.
+**Action:** Always include a `@media (prefers-reduced-motion: reduce)` block in custom CSS to disable or shorten animations for users who have requested it.
