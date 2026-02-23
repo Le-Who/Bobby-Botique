@@ -5,7 +5,6 @@ import asyncio
 import io
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
-import httpx
 import pypdf
 from docx import Document
 # PyMuPDF removed for free tier optimization
@@ -179,66 +178,6 @@ class DocumentProcessor:
                     "message": f"Файл '{filename}' уже был загружен ранее как '{duplicate['filename']}' ({date_str})",
                     "duplicate_info": duplicate,
                 }
-
-            # Обрабатываем документ
-            if file_ext == ".pdf":
-                if is_path:
-                    return await self._process_pdf_with_pypdf2_path(
-                        file_data, filename, user_id, file_hash
-                    )
-                else:
-                    return await self._process_pdf(
-                        file_data, filename, user_id, file_hash
-                    )
-            elif file_ext in [".docx", ".doc"]:
-                if is_path:
-                    return await self._process_word_path(
-                        file_data, filename, user_id, file_hash
-                    )
-                else:
-                    return await self._process_word(
-                        file_data, filename, user_id, file_hash
-                    )
-            else:
-                return {"error": f"Unsupported file format: {file_ext}"}
-
-        except Exception as e:
-            logging.error(f"Error processing document {filename}: {e}")
-            await metrics_collector.record_error("document_processing", str(e))
-            return {"error": f"Error processing document: {str(e)}"}
-
-    async def process_document_force(
-        self, file_data, filename: str, user_id: int, is_path: bool = False
-    ) -> Dict[str, Any]:
-        """Обрабатывает документ принудительно (игнорируя дубликаты)"""
-        if not DOCUMENT_SUPPORT:
-            return {"error": "Document processing is not available"}
-
-        try:
-            # Проверяем размер файла
-            if is_path:
-                import os
-
-                file_size = os.path.getsize(file_data)
-            else:
-                file_size = len(file_data)
-
-            if file_size > self.max_file_size:
-                return {
-                    "error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"
-                }
-
-            # Определяем тип файла
-            file_ext = Path(filename).suffix.lower()
-            if file_ext not in self.supported_formats:
-                return {"error": f"Unsupported file format: {file_ext}"}
-
-            # Вычисляем хэш файла (но не проверяем дубликаты)
-            # Offload hash calculation to executor to avoid blocking event loop
-            loop = asyncio.get_running_loop()
-            file_hash = await loop.run_in_executor(
-                None, self._calculate_file_hash_sync, file_data
-            )
 
             # Обрабатываем документ
             if file_ext == ".pdf":
@@ -822,15 +761,6 @@ async def process_uploaded_document(
     )
 
 
-async def process_uploaded_document_force(
-    file_data, filename: str, user_id: int, is_path: bool = False
-) -> Dict[str, Any]:
-    """Обрабатывает загруженный документ принудительно (игнорируя дубликаты)"""
-    return await document_processor.process_document_force(
-        file_data, filename, user_id, is_path
-    )
-
-
 async def get_user_documents(user_id: int) -> List[Dict[str, Any]]:
     """Получает документы пользователя"""
     return await document_processor.get_user_documents(user_id)
@@ -844,49 +774,6 @@ async def get_document_content(document_id: int, user_id: int) -> Optional[str]:
 async def delete_user_document(document_id: int, user_id: int) -> bool:
     """Удаляет документ пользователя"""
     return await document_processor.delete_document(document_id, user_id)
-
-
-async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
-    """Internal function for uploading file to x0.at with retry logic."""
-    timeout_config = httpx.Timeout(
-        connect=10.0,  # 10 секунд на подключение
-        read=60.0,  # 60 секунд на чтение (для загрузки файлов)
-        write=60.0,  # 60 секунд на запись (для загрузки файлов)
-        pool=30.0,  # 30 секунд на получение соединения из пула
-    )
-
-    async with httpx.AsyncClient(timeout=timeout_config) as client:
-        files = {"file": (filename, file_data)}
-        response = await client.post("https://x0.at/", files=files)
-
-        if response.status_code == 200:
-            url = response.text.strip()
-            if url.startswith("http"):
-                logging.info(f"File {filename} uploaded to x0.at: {url}")
-                return url
-            else:
-                logging.error(f"Invalid response from x0.at: {response.text}")
-                return None
-        else:
-            logging.error(
-                f"Failed to upload to x0.at: {response.status_code} - {response.text}"
-            )
-            return None
-
-
-async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
-    """Загружает файл на внешний сервис x0.at и возвращает URL с автоматическими повторами"""
-    try:
-        return await NetworkErrorHandler.retry_with_backoff(
-            _upload_file_to_x0_at,
-            max_retries=3,
-            base_delay=2.0,
-            file_data=file_data,
-            filename=filename,
-        )
-    except Exception as e:
-        logging.error(f"Error uploading to x0.at after retries: {e}")
-        return None
 
 
 async def get_document_by_id(

@@ -11,6 +11,8 @@ from app import state
 from app.document_processor import process_uploaded_document
 from app.metrics import metrics_collector, role_conv_metrics
 from app.utils.formatting import TelegramFormatter
+from app.security import validate_file_upload
+from app.exceptions import InputSanitizationError
 from app.utils.api_logger import api_logger
 from app import prompts
 from app.handlers import agent
@@ -748,11 +750,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     document = update.message.document
 
-    # Проверяем размер файла (максимум 50MB)
-    if document.file_size > 50 * 1024 * 1024:
-        await update.message.reply_text(
-            "❌ Файл слишком большой. Максимальный размер: 50MB"
+    # Проверяем валидность файла
+    try:
+        # Используем валидацию из security модуля
+        # Если mime_type не определен (None), передаем application/octet-stream,
+        # чтобы валидатор мог проверить расширение и mime_type корректно
+        validate_file_upload(
+            document.file_name,
+            document.file_size,
+            document.mime_type or "application/octet-stream",
         )
+    except InputSanitizationError as e:
+        await update.message.reply_text(f"❌ Ошибка валидации файла: {e}")
         return
 
     # Проверяем тип файла
