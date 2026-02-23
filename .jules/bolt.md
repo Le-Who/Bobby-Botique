@@ -13,3 +13,7 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+
+## 2025-02-26 - Metrics Calculation with Binary Data
+**Learning:** Converting large `bytes` objects (like images) to strings using `str()` inside a metrics calculation loop (`sum(len(str(part))...)`) is extremely expensive and synchronous. For a 5MB image, this took ~0.2s blocking the event loop, vs 0.00s when using `len(bytes)`.
+**Action:** When calculating size metrics for mixed content (text + binary), always check the type first (`isinstance(p, (bytes, bytearray))`) and use `len()` directly for binary data, avoiding `str()` conversion.

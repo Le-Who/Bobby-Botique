@@ -163,8 +163,16 @@ async def _execute_gemini_request(
         await metrics_collector.record_api_call("gemini", model_name)
 
         try:
+            # Optimized metrics calculation to avoid converting large binary objects to strings
+            def _get_part_length(p):
+                if isinstance(p, (bytes, bytearray)):
+                    return len(p)
+                if hasattr(p, "size"):  # PIL Image or similar
+                    return 0  # Images don't contribute to text length in this metric
+                return len(str(p))
+
             prompt_length = sum(
-                len(str(part))
+                _get_part_length(part)
                 for item in history
                 for part in (item.get("parts", []) or [])
                 if part is not None
@@ -728,25 +736,6 @@ async def _execute_openrouter_request(
 
     try:
         await metrics_collector.record_api_call("openrouter", model_name)
-
-        # Детальное логирование OpenRouter API запроса
-        try:
-            sum(
-                len(str(part))
-                for item in history
-                for part in (item.get("parts", []) or [])
-                if part is not None
-            )
-            any(
-                isinstance(part, (bytes, bytearray, Image.Image))
-                for item in history
-                for part in (item.get("parts", []) or [])
-                if part is not None
-            )
-        except Exception as e:
-            logging.warning(
-                f"Error calculating prompt metrics: {e}, using fallback values"
-            )
 
         # Используем тот же api_logger, но с типом "openrouter"
         start_time = time.time()
