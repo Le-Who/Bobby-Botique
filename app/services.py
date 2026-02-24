@@ -109,20 +109,28 @@ async def get_gemini_response(
         except Exception as e:
             error_message = str(e).lower()
 
-            if (
+            is_retryable = (
                 "503" in str(e)
                 or "unavailable" in error_message
                 or "overloaded" in error_message
-            ) and attempt < max_retries - 1:
-                # Экспоненциальная задержка с максимумом 10 секунд
-                wait_time = min(2 ** (attempt + 1), 10)
-                logging.warning(
-                    f"Gemini API overloaded (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time} seconds..."
-                )
-                await asyncio.sleep(wait_time)
-                continue
+            )
+
+            if is_retryable:
+                if attempt < max_retries - 1:
+                    # Экспоненциальная задержка с максимумом 10 секунд
+                    wait_time = min(2 ** (attempt + 1), 10)
+                    logging.warning(
+                        f"Gemini API overloaded (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time} seconds..."
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    logging.error(f"Max retries exceeded for Gemini API: {e}")
+                    # Fallthrough to return the error message below
+                    continue
             else:
-                raise
+                # For non-retryable errors, return the error message
+                return f"❌ Ошибка вызова API: {e}", None
 
     # Этот код не должен выполняться, но на всякий случай
     return "❌ Превышено максимальное количество попыток. Попробуйте позже.", None
@@ -311,34 +319,15 @@ async def _execute_gemini_request(
                 )
 
         # Выполняем запрос с timeout
-        try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    client.models.generate_content,
-                    model=model_name,
-                    contents=contents,
-                    config=config,
-                ),
-                timeout=120.0,  # 120 секунд timeout (увеличено для медленных моделей)
-            )
-        except Exception as e:
-            error_msg = f"Failed to generate content from Gemini API: {e}"
-            logging.error(error_msg)
-            await metrics_collector.record_error("gemini_generation_failed", error_msg)
-
-            # Логируем ошибку
-            if start_time is not None:
-                api_logger.log_gemini_response(
-                    start_time=start_time,
-                    model=model_name,
-                    response_length=0,
-                    success=False,
-                    error_message=error_msg,
-                    user_id=user_id,
-                    chat_id=chat_id,
-                )
-
-            return f"❌ Ошибка генерации ответа: {error_msg}", None
+        response = await asyncio.wait_for(
+            asyncio.to_thread(
+                client.models.generate_content,
+                model=model_name,
+                contents=contents,
+                config=config,
+            ),
+            timeout=120.0,  # 120 секунд timeout (увеличено для медленных моделей)
+        )
 
         # Подсчет токенов с timeout
         try:
@@ -459,10 +448,8 @@ async def _execute_gemini_request(
             or "overloaded" in error_message
         ):
             await metrics_collector.record_error("gemini_overloaded", str(e))
-            return (
-                "🔄 Сервер Gemini перегружен. Попробуйте еще раз через несколько секунд.",
-                None,
-            )
+            # Raise exception to trigger retry mechanism in get_gemini_response
+            raise
         elif "invalid" in error_message or "malformed" in error_message:
             await metrics_collector.record_error("gemini_invalid_request", str(e))
             return "❌ Некорректный запрос к API. Проверьте параметры.", None
