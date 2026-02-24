@@ -207,3 +207,36 @@ def test_markdown_to_html_nested():
     text = "**_bold italic_**"
     result, _ = format_text(text)
     assert result == "<b><i>bold italic</i></b>"
+
+
+def test_markdown_to_html_xss_prevention():
+    # Test valid schemes
+    assert format_text("[link](http://example.com)")[0] == '<a href="http://example.com">link</a>'
+    assert format_text("[link](https://example.com)")[0] == '<a href="https://example.com">link</a>'
+    assert format_text("[link](tg://user?id=123)")[0] == '<a href="tg://user?id=123">link</a>'
+    assert format_text("[link](mailto:user@example.com)")[0] == '<a href="mailto:user@example.com">link</a>'
+
+    # Test dangerous schemes - should be stripped to plain text
+    # Note: simple regex doesn't handle nested parens, so trailing ')' might remain in text
+    # This is acceptable for security (link is removed)
+    assert "click me" in format_text("[click me](javascript:alert(1))")[0]
+    assert "<a" not in format_text("[click me](javascript:alert(1))")[0]
+
+    assert "click me" in format_text("[click me](vbscript:alert(1))")[0]
+    assert "<a" not in format_text("[click me](vbscript:alert(1))")[0]
+
+    assert "click me" in format_text("[click me](data:text/html,<script>alert(1)</script>)")[0]
+    assert "<a" not in format_text("[click me](data:text/html,<script>alert(1)</script>)")[0]
+
+    assert format_text("[click me](file:///etc/passwd)")[0] == "click me"
+
+    # Test relative URLs (scheme empty) -> should be disallowed by our logic (scheme empty not in list)
+    # "[link](/foo/bar)" -> parsed.scheme is "" -> not in allowed -> "link"
+    assert format_text("[link](/foo/bar)")[0] == "link"
+
+    # Test weird capitalization
+    assert format_text("[link](HTTP://example.com)")[0] == '<a href="HTTP://example.com">link</a>'
+
+    res = format_text("[link](JaVaScRiPt:alert(1))")[0]
+    assert "link" in res
+    assert "<a" not in res

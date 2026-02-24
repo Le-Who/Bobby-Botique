@@ -1,6 +1,7 @@
 import re
 import html
 from typing import List, Tuple
+from urllib.parse import urlparse
 
 # Constants
 MAX_MESSAGE_LENGTH = 4096
@@ -132,7 +133,26 @@ def markdown_to_html(text: str) -> str:
             # Since we already escaped HTML, the url might contain &amp; etc.
             # We match strict []() pattern.
             link_pattern = r"\[([^\]]+)\]\(([^)]+)\)"
-            escaped_text = re.sub(link_pattern, r'<a href="\2">\1</a>', escaped_text)
+
+            def replace_link(match):
+                text = match.group(1)
+                url = match.group(2)
+
+                # Sanitize URL scheme
+                try:
+                    parsed = urlparse(url)
+                    # Allow http, https, tg, mailto
+                    # Also check if scheme is empty (relative URLs) - typically we want absolute
+                    # but maybe relative is okay? For telegram bot, probably relative is useless/bad.
+                    # We strictly allow specific schemes.
+                    if parsed.scheme.lower() not in ('http', 'https', 'tg', 'mailto'):
+                        return text  # Return just the text if URL is unsafe
+
+                    return f'<a href="{url}">{text}</a>'
+                except Exception:
+                     return text
+
+            escaped_text = re.sub(link_pattern, replace_link, escaped_text)
 
             html_parts.append(escaped_text)
 
