@@ -476,7 +476,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message and update.message.text:
             get_user_state(user_id).last_sent_message_text = update.message.text
     except Exception:
-        pass
+        logging.exception("Error saving last sent message text")
 
     # Проверяем, есть ли изображение (одиночное)
     is_photo = bool(update.message.photo)
