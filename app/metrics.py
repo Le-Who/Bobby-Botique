@@ -170,12 +170,9 @@ class MetricsCollector:
             }
 
             # Snapshot unsaved errors
-            unsaved_indices = [
-                i
-                for i, error in enumerate(self.error_log)
-                if not error.get("saved", False)
+            errors_to_process = [
+                error for error in self.error_log if not error.get("saved", False)
             ]
-            errors_to_process = [self.error_log[i] for i in unsaved_indices]
 
         except Exception as e:
             logging.error(f"Error creating metrics snapshot: {e}")
