@@ -1,6 +1,7 @@
 import pytest
 import re
-from app.utils.text_format import split_text_safe
+import html
+from app.utils.text_format import split_text_safe, format_text
 
 
 @pytest.fixture
@@ -133,3 +134,76 @@ def test_split_text_safe_hard_split():
     assert len(chunks[0]) == 20
     assert len(chunks[1]) == 20
     assert len(chunks[2]) == 10
+
+# --- New tests for format_text ---
+
+def test_format_text_basic():
+    text = "Hello world"
+    result, mode = format_text(text)
+    assert result == "Hello world"
+    assert mode == "HTML"
+
+
+def test_format_text_empty():
+    result, mode = format_text("")
+    assert result == ""
+    assert mode == "HTML"
+
+
+def test_format_text_non_html():
+    text = "Hello world"
+    result, mode = format_text(text, parse_mode="Markdown")
+    assert result == text
+    assert mode == "Markdown"
+
+
+def test_markdown_to_html_formatting():
+    # Bold
+    assert format_text("**bold**")[0] == "<b>bold</b>"
+    # Italic
+    assert format_text("__italic__")[0] == "<i>italic</i>"
+    assert format_text("*italic*")[0] == "<i>italic</i>"
+    assert format_text("_italic_")[0] == "<i>italic</i>"
+    # Inline code
+    assert format_text("`code`")[0] == "<code>code</code>"
+    # Link
+    assert format_text("[link](http://example.com)")[0] == '<a href="http://example.com">link</a>'
+
+
+def test_markdown_to_html_escaping():
+    text = "<script>alert('xss')</script>"
+    # html.escape escapes single quotes by default
+    expected = "&lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt;"
+    assert format_text(text)[0] == expected
+
+
+def test_markdown_to_html_code_block():
+    code = 'def foo():\n    return "bar"'
+    text = f"```python\n{code}\n```"
+    result, _ = format_text(text)
+    assert '<pre><code class="language-python">' in result
+    assert html.escape(code) in result
+    assert "</code></pre>" in result
+
+
+def test_markdown_to_html_code_block_no_lang():
+    code = "plain text code block"
+    text = f"```\n{code}\n```"
+    result, _ = format_text(text)
+    assert "<pre>" in result
+    assert html.escape(code) in result
+    assert "</pre>" in result
+
+
+def test_markdown_to_html_mixed():
+    text = "Hello **bold** and `code`"
+    result, _ = format_text(text)
+    assert result == "Hello <b>bold</b> and <code>code</code>"
+
+
+def test_markdown_to_html_nested():
+    # Testing known behavior: bold first, then italic
+    # **_bold italic_** -> <b>_bold italic_</b> -> <b><i>bold italic</i></b>
+    text = "**_bold italic_**"
+    result, _ = format_text(text)
+    assert result == "<b><i>bold italic</i></b>"
