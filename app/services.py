@@ -165,6 +165,8 @@ async def _execute_gemini_request(
         try:
             prompt_length = sum(
                 len(str(part))
+                if not isinstance(part, (bytes, bytearray, Image.Image))
+                else 0
                 for item in history
                 for part in (item.get("parts", []) or [])
                 if part is not None
@@ -728,25 +730,6 @@ async def _execute_openrouter_request(
 
     try:
         await metrics_collector.record_api_call("openrouter", model_name)
-
-        # Детальное логирование OpenRouter API запроса
-        try:
-            sum(
-                len(str(part))
-                for item in history
-                for part in (item.get("parts", []) or [])
-                if part is not None
-            )
-            any(
-                isinstance(part, (bytes, bytearray, Image.Image))
-                for item in history
-                for part in (item.get("parts", []) or [])
-                if part is not None
-            )
-        except Exception as e:
-            logging.warning(
-                f"Error calculating prompt metrics: {e}, using fallback values"
-            )
 
         # Используем тот же api_logger, но с типом "openrouter"
         start_time = time.time()
