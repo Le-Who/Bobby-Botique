@@ -14,6 +14,7 @@ from app import prompts
 from app.metrics import role_conv_metrics
 from app.utils.decorators import authorized_only, admin_only
 from app.handlers import menus
+from app.request_context import set_request_id
 
 
 @authorized_only
@@ -147,6 +148,9 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # context используется для совместимости с другими командами
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    set_request_id(f"tgcmd-newchat-{chat_id}-{getattr(update, 'update_id', 'na')}")
+
     chat_state = await db.get_user_chat(user_id)
     chat_state.history = []
     chat_state.token_count = 0
