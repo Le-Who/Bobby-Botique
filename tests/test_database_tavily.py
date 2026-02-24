@@ -49,12 +49,6 @@ async def test_force_update_tavily_keys():
 
     # Patch get_settings.
     # Note: We patch where it is imported IF it was imported using 'from ... import ...'
-    # app.database does:
-    #   from app.config import UTC_TZ, settings
-    #   ...
-    #   def force_update_tavily_keys():
-    #       from app.config import get_settings
-
     # So we should patch "app.config.get_settings"
 
     # We also need to patch db_query and db_execute_many in app.database
