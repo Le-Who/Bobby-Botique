@@ -692,6 +692,20 @@ class DocumentProcessor:
             logging.error(f"Error deleting document: {e}")
             return False
 
+    async def delete_all_user_documents(self, user_id: int) -> int:
+        """Удаляет все документы пользователя"""
+        try:
+            # Возвращает количество удаленных записей
+            result = await database.db_query(
+                "DELETE FROM user_documents WHERE user_id = $1 RETURNING id",
+                (user_id,),
+            )
+            return len(result) if result else 0
+
+        except Exception as e:
+            logging.error(f"Error deleting all documents: {e}")
+            return 0
+
     async def cleanup_old_documents(self, days_old: int = 3) -> int:
         """Очищает документы старше указанного количества дней"""
         try:
@@ -844,6 +858,11 @@ async def get_document_content(document_id: int, user_id: int) -> Optional[str]:
 async def delete_user_document(document_id: int, user_id: int) -> bool:
     """Удаляет документ пользователя"""
     return await document_processor.delete_document(document_id, user_id)
+
+
+async def delete_all_user_documents(user_id: int) -> int:
+    """Удаляет все документы пользователя"""
+    return await document_processor.delete_all_user_documents(user_id)
 
 
 async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
