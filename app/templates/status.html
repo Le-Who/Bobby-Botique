@@ -25,7 +25,8 @@
                 <div class="metric-label" id="cpu-label">CPU Usage</div>
                 <div class="metric-value">{{ status.system.cpu_percent }}%</div>
                 <div class="progress-bar-bg" role="progressbar" aria-valuenow="{{ status.system.cpu_percent }}" aria-valuemin="0" aria-valuemax="100" aria-label="CPU Usage" aria-labelledby="cpu-label">
-                    <div class="progress-bar-fill" style="width: {{ status.system.cpu_percent }}%"></div>
+                    {% set cpu_color = '#ef4444' if status.system.cpu_percent > 90 else '#f59e0b' if status.system.cpu_percent > 75 else '' %}
+                    <div class="progress-bar-fill" style="width: {{ status.system.cpu_percent }}%; {{ 'background: ' + cpu_color if cpu_color }}"></div>
                 </div>
             </div>
 
@@ -33,7 +34,8 @@
                 <div class="metric-label" id="memory-label">Memory</div>
                 <div class="metric-value">{{ status.system.memory_percent }}%</div>
                 <div class="progress-bar-bg" role="progressbar" aria-valuenow="{{ status.system.memory_percent }}" aria-valuemin="0" aria-valuemax="100" aria-label="Memory Usage" aria-labelledby="memory-label">
-                    <div class="progress-bar-fill" style="width: {{ status.system.memory_percent }}%"></div>
+                    {% set mem_color = '#ef4444' if status.system.memory_percent > 90 else '#f59e0b' if status.system.memory_percent > 75 else '' %}
+                    <div class="progress-bar-fill" style="width: {{ status.system.memory_percent }}%; {{ 'background: ' + mem_color if mem_color }}"></div>
                 </div>
             </div>
 
@@ -41,7 +43,8 @@
                 <div class="metric-label" id="disk-label">Disk Storage</div>
                 <div class="metric-value">{{ status.system.disk_percent }}%</div>
                 <div class="progress-bar-bg" role="progressbar" aria-valuenow="{{ status.system.disk_percent }}" aria-valuemin="0" aria-valuemax="100" aria-label="Disk Storage" aria-labelledby="disk-label">
-                    <div class="progress-bar-fill" style="width: {{ status.system.disk_percent }}%"></div>
+                    {% set disk_color = '#ef4444' if status.system.disk_percent > 90 else '#f59e0b' if status.system.disk_percent > 75 else '' %}
+                    <div class="progress-bar-fill" style="width: {{ status.system.disk_percent }}%; {{ 'background: ' + disk_color if disk_color }}"></div>
                 </div>
             </div>
         </div>
