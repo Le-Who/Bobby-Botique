@@ -25,13 +25,22 @@ class GroupChat:
 class GroupChatManager:
     """Менеджер групповых чатов"""
 
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(GroupChatManager, cls).__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        self.active_groups: Dict[int, GroupChat] = {}
-        self.group_settings: Dict[int, Dict[str, Any]] = {}
-        self.user_groups: Dict[int, Set[int]] = defaultdict(
-            set
-        )  # user_id -> set of chat_ids
-        self._lock = asyncio.Lock()
+        if not hasattr(self, "initialized"):
+            self.active_groups: Dict[int, GroupChat] = {}
+            self.group_settings: Dict[int, Dict[str, Any]] = {}
+            self.user_groups: Dict[int, Set[int]] = defaultdict(
+                set
+            )  # user_id -> set of chat_ids
+            self._lock = asyncio.Lock()
+            self.initialized = True
 
     async def initialize(self):
         """Инициализирует менеджер групповых чатов"""
@@ -350,7 +359,7 @@ async def register_new_group(chat_id: int, title: str, admin_user_id: int) -> bo
 
 async def add_group_member(chat_id: int, user_id: int) -> bool:
     """Добавляет участника в группу"""
-    return await group_chat_manager.add_member(chat_id, user_id)
+    return await group_chat_manager.add_member_to_group(chat_id, user_id)
 
 
 async def is_group_member(chat_id: int, user_id: int) -> bool:
