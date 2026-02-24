@@ -24,6 +24,7 @@ from app.document_processor import (
     get_user_documents,
     delete_user_document,
     get_document_by_id,
+    delete_all_user_documents,
 )
 from app.state import clear_document_state, set_document_mode, get_selected_document_id
 from app.utils.keyboards import (
@@ -278,22 +279,16 @@ async def _handle_document_clear_all(query, context, user_id):
 
 
 async def _handle_document_clear_all_confirm(query, context, user_id):
-    # Получаем все документы пользователя
-    documents = await get_user_documents(user_id)
-    if not documents:
+    # Удаляем все документы одной оптимизированной операцией
+    deleted_count = await delete_all_user_documents(user_id)
+
+    if deleted_count == 0:
         await query.answer("У вас нет документов для удаления.")
         text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
         await query.edit_message_text(
             text, parse_mode=parse_mode, reply_markup=reply_markup
         )
         return
-
-    # Удаляем все документы
-    deleted_count = 0
-    for doc in documents:
-        success = await delete_user_document(doc["id"], user_id)
-        if success:
-            deleted_count += 1
 
     # Очищаем состояние работы с документами
     clear_document_state(user_id)
