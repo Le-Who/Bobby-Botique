@@ -586,26 +586,71 @@ async def _insert_initial_data():
 
 
 # RLS Helper functions
-VALID_TABLES = {
-    "users",
-    "chats",
-    "roles",
-    "user_roles",
-    "conversations",
-    "conversation_messages",
-    "user_documents",
-    "api_keys",
-    "key_usage",
-    "tavily_api_keys",
-    "tavily_key_usage",
-    "openrouter_api_keys",
-    "openrouter_key_usage",
-    "group_chats",
-    "group_members",
-    "group_messages",
-    "metrics",
-    "error_logs",
+RLS_POLICY_USER = """
+CREATE POLICY {policy_name} ON {table_name}
+FOR ALL USING (
+    user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR
+    (select current_setting('app.is_admin', true)) = 'true'
+);
+"""
+
+RLS_POLICY_ADMIN = """
+CREATE POLICY {policy_name} ON {table_name}
+FOR ALL USING ((select current_setting('app.is_admin', true)) = 'true');
+"""
+
+RLS_POLICY_GROUP = """
+CREATE POLICY {policy_name} ON {table_name}
+FOR ALL USING (
+    (select current_setting('app.is_admin', true)) = 'true' OR
+    EXISTS (
+        SELECT 1 FROM group_members gm
+        WHERE gm.chat_id = {table_name}.chat_id
+        AND gm.user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
+    )
+);
+"""
+
+RLS_POLICY_CONVERSATION_MESSAGES = """
+CREATE POLICY {policy_name} ON {table_name}
+FOR ALL USING (
+    (select current_setting('app.is_admin', true)) = 'true'
+    OR owner_user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
+);
+"""
+
+RLS_CONFIG = {
+    "users": [{"name": "users_policy", "template": RLS_POLICY_USER}],
+    "chats": [{"name": "chats_policy", "template": RLS_POLICY_USER}],
+    "user_documents": [{"name": "user_documents_policy", "template": RLS_POLICY_USER}],
+    "user_roles": [{"name": "user_roles_policy", "template": RLS_POLICY_USER}],
+    "conversations": [{"name": "conversations_policy", "template": RLS_POLICY_USER}],
+
+    "roles": [
+        {"name": "roles_read_policy", "sql": "CREATE POLICY roles_read_policy ON roles FOR SELECT USING (true);"},
+        {"name": "roles_insert_policy", "sql": "CREATE POLICY roles_insert_policy ON roles FOR INSERT WITH CHECK ((select current_setting('app.is_admin', true)) = 'true');"},
+        {"name": "roles_update_policy", "sql": "CREATE POLICY roles_update_policy ON roles FOR UPDATE USING ((select current_setting('app.is_admin', true)) = 'true');"},
+        {"name": "roles_delete_policy", "sql": "CREATE POLICY roles_delete_policy ON roles FOR DELETE USING ((select current_setting('app.is_admin', true)) = 'true');"},
+    ],
+
+    "conversation_messages": [{"name": "conversation_messages_policy", "template": RLS_POLICY_CONVERSATION_MESSAGES}],
+
+    "group_chats": [{"name": "group_chats_policy", "template": RLS_POLICY_GROUP}],
+    "group_members": [{"name": "group_members_policy", "template": RLS_POLICY_GROUP}],
+    "group_messages": [{"name": "group_messages_policy", "template": RLS_POLICY_GROUP}],
+
+    "api_keys": [{"name": "api_keys_policy", "template": RLS_POLICY_ADMIN}],
+    "key_usage": [{"name": "key_usage_policy", "template": RLS_POLICY_ADMIN}],
+    "tavily_api_keys": [{"name": "tavily_api_keys_policy", "template": RLS_POLICY_ADMIN}],
+    "tavily_key_usage": [{"name": "tavily_key_usage_policy", "template": RLS_POLICY_ADMIN}],
+    "openrouter_api_keys": [{"name": "openrouter_api_keys_policy", "template": RLS_POLICY_ADMIN}],
+    "openrouter_key_usage": [{"name": "openrouter_key_usage_policy", "template": RLS_POLICY_ADMIN}],
+    "metrics": [{"name": "metrics_policy", "template": RLS_POLICY_ADMIN}],
+    "error_logs": [{"name": "error_logs_policy", "template": RLS_POLICY_ADMIN}],
+    "model_configuration": [{"name": "model_configuration_policy", "template": RLS_POLICY_ADMIN}],
 }
+
+VALID_TABLES = set(RLS_CONFIG.keys())
 
 
 async def setup_row_level_security():
@@ -636,192 +681,39 @@ async def create_rls_policies(table_name: str):
         return
 
     try:
-        if table_name == "users":
-            try:
-                existing_policy = await db_query("""
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = 'users' AND policyname = 'users_policy'
-                """)
-                if not existing_policy:
-                    await db_query("""
-                        CREATE POLICY users_policy ON users
-                        FOR ALL USING (
-                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
-                            (select current_setting('app.is_admin', true)) = 'true'
-                        );
-                    """)
-            except Exception as e:
-                logging.error(f"Failed to create users_policy: {e}")
-                raise e
+        policies = RLS_CONFIG.get(table_name)
+        if not policies:
+            logging.warning(f"No RLS configuration found for table: {table_name}")
+            return
 
-        elif table_name == "chats":
-            try:
-                existing_policy = await db_query("""
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = 'chats' AND policyname = 'chats_policy'
-                """)
-                if not existing_policy:
-                    await db_query("""
-                        CREATE POLICY chats_policy ON chats
-                        FOR ALL USING (
-                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
-                            (select current_setting('app.is_admin', true)) = 'true'
-                        );
-                    """)
-            except Exception as e:
-                logging.error(f"Failed to create chats_policy: {e}")
-                raise e
+        for policy_cfg in policies:
+            policy_name = policy_cfg["name"]
 
-        elif table_name == "user_documents":
             try:
-                existing_policy = await db_query("""
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = 'user_documents' AND policyname = 'user_documents_policy'
-                """)
-                if not existing_policy:
-                    await db_query("""
-                        CREATE POLICY user_documents_policy ON user_documents
-                        FOR ALL USING (
-                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
-                            (select current_setting('app.is_admin', true)) = 'true'
-                        );
-                    """)
-            except Exception as e:
-                logging.error(f"Failed to create user_documents_policy: {e}")
-                raise e
-
-        elif table_name == "roles":
-            try:
-                existing_policy = await db_query("""
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = 'roles' AND policyname = 'roles_read_policy'
-                """)
-                if not existing_policy:
-                    await db_query("""
-                        CREATE POLICY roles_read_policy ON roles
-                        FOR SELECT USING (true);
-                    """)
-                existing_write = await db_query("""
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = 'roles' AND policyname = 'roles_update_policy'
-                """)
-                if not existing_write:
-                    await db_query("""
-                        CREATE POLICY roles_insert_policy ON roles FOR INSERT WITH CHECK ((select current_setting('app.is_admin', true)) = 'true');
-                        CREATE POLICY roles_update_policy ON roles FOR UPDATE USING ((select current_setting('app.is_admin', true)) = 'true');
-                        CREATE POLICY roles_delete_policy ON roles FOR DELETE USING ((select current_setting('app.is_admin', true)) = 'true');
-                    """)
-            except Exception as e:
-                logging.error(f"Failed to create roles policies: {e}")
-                raise e
-
-        elif table_name == "user_roles":
-            try:
-                existing_policy = await db_query("""
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = 'user_roles' AND policyname = 'user_roles_policy'
-                """)
-                if not existing_policy:
-                    await db_query("""
-                        CREATE POLICY user_roles_policy ON user_roles
-                        FOR ALL USING (
-                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
-                            (select current_setting('app.is_admin', true)) = 'true'
-                        );
-                    """)
-            except Exception as e:
-                logging.error(f"Failed to create user_roles policy: {e}")
-                raise e
-
-        elif table_name == "conversations":
-            try:
-                existing_policy = await db_query("""
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = 'conversations' AND policyname = 'conversations_policy'
-                """)
-                if not existing_policy:
-                    await db_query("""
-                        CREATE POLICY conversations_policy ON conversations
-                        FOR ALL USING (
-                            user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR 
-                            (select current_setting('app.is_admin', true)) = 'true'
-                        );
-                    """)
-            except Exception as e:
-                logging.error(f"Failed to create conversations policy: {e}")
-                raise e
-
-        elif table_name == "conversation_messages":
-            try:
-                existing_policy = await db_query("""
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = 'conversation_messages' AND policyname = 'conversation_messages_policy'
-                """)
-                if not existing_policy:
-                    await db_query("""
-                        CREATE POLICY conversation_messages_policy ON conversation_messages
-                        FOR ALL USING (
-                            (select current_setting('app.is_admin', true)) = 'true'
-                            OR owner_user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
-                        );
-                    """)
-            except Exception as e:
-                logging.error(f"Failed to create conversation_messages policy: {e}")
-                raise e
-
-        elif table_name in ["group_chats", "group_members", "group_messages"]:
-            try:
+                # Check if policy exists
                 existing_policy = await db_query(
-                    """
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = $1 AND policyname = $2
-                """,
-                    (table_name, f"{table_name}_policy"),
+                    "SELECT 1 FROM pg_policies WHERE tablename = $1 AND policyname = $2",
+                    (table_name, policy_name),
                 )
 
                 if not existing_policy:
-                    await db_query(f"""
-                        CREATE POLICY {table_name}_policy ON {table_name}
-                        FOR ALL USING (
-                            (select current_setting('app.is_admin', true)) = 'true' OR
-                            EXISTS (
-                                SELECT 1 FROM group_members gm 
-                                WHERE gm.chat_id = {table_name}.chat_id 
-                                AND gm.user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
-                            )
-                        );
-                    """)
-            except Exception as e:
-                logging.error(f"Failed to create {table_name}_policy: {e}")
-                raise e
+                    # Construct SQL
+                    if "sql" in policy_cfg:
+                        sql = policy_cfg["sql"]
+                    elif "template" in policy_cfg:
+                        sql = policy_cfg["template"].format(
+                            policy_name=policy_name, table_name=table_name
+                        )
+                    else:
+                        logging.error(f"Missing SQL or template for policy {policy_name}")
+                        continue
 
-        elif table_name in [
-            "api_keys",
-            "key_usage",
-            "tavily_api_keys",
-            "tavily_key_usage",
-            "openrouter_api_keys",
-            "openrouter_key_usage",
-            "metrics",
-            "error_logs",
-            "model_configuration",
-        ]:
-            try:
-                existing_policy = await db_query(
-                    """
-                    SELECT 1 FROM pg_policies 
-                    WHERE tablename = $1 AND policyname = $2
-                """,
-                    (table_name, f"{table_name}_policy"),
+                    await db_query(sql)
+
+            except Exception as e:
+                logging.error(
+                    f"Failed to create policy {policy_name} for table {table_name}: {e}"
                 )
-
-                if not existing_policy:
-                    await db_query(f"""
-                        CREATE POLICY {table_name}_policy ON {table_name}
-                        FOR ALL USING ((select current_setting('app.is_admin', true)) = 'true');
-                    """)
-            except Exception as e:
-                logging.error(f"Failed to create {table_name}_policy: {e}")
                 raise e
 
     except Exception as e:
