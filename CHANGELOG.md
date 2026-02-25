@@ -5,6 +5,31 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.1] – 2026-02-26 – Technical Audit Fixes
+
+### 🔴 Critical Fixes
+
+- **CRIT-01**: Fixed unreachable `except (APIError, httpx.HTTPError)` in `GeminiProvider._execute_request` — `APIError` was already caught by the preceding handler. Now correctly `except httpx.HTTPError`.
+- **CRIT-02**: Removed duplicate `asyncpg.InterfaceError` from second except clause in both `DatabaseManager.query()` and `execute_many()`. `InterfaceError` was caught by the first clause (connection handler) and could never reach the second (rate-limit handler).
+
+### 🟠 High-Severity Fixes
+
+- **SEC-05**: `set_user_context()` now re-raises on failure instead of silently swallowing it. Prevents queries from running with stale RLS context (potential cross-user data leak).
+- **SEC-01**: Added `_SAFE_IDENTIFIER_RE` regex validation for SQL table names in `setup_row_level_security()` before f-string interpolation.
+- **BUG-05**: Added `log_openrouter_response()` to `APILogger`. OpenRouter `_log_failure` now logs under correct `openrouter` API name instead of misleading `gemini`.
+
+### 🟡 Medium Fixes
+
+- **BUG-01/02**: Removed unreachable `elif parts is None` dead code branches in `_build_contents` and `_build_messages`.
+- Added `import re` to `database.py` (needed for new regex validation).
+- Restored `GeminiProvider._log_failure` accidentally deleted during refactor.
+
+### 🧪 Tests
+
+- **401 passed**, 1 skipped, 0 failures — full green suite after all fixes.
+
+---
+
 ## [2.6.0] – 2026-02-25 – Sprint 6–7: Audit & Refactoring
 
 ### 🔒 Security Audit (12 fixes)

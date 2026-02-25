@@ -8,7 +8,7 @@
 
 **GemAI Bot v2** is an advanced, asynchronous Telegram bot designed to serve as a comprehensive AI assistant. It orchestrates multiple AI providers (Google Gemini, OpenRouter), performs real-time web research, maintains long-term memory, and analyzes complex documents.
 
-The project is built with a **monolithic asyncio architecture**, integrating a high-performance Telegram bot with a lightweight Flask-based monitoring dashboard.
+The project is built with a **monolithic asyncio architecture**, integrating a high-performance Telegram bot with a lightweight Quart-based monitoring dashboard.
 
 ---
 
@@ -47,9 +47,9 @@ The system runs as a single containerized application performing two parallel as
     - Manages user interactions, message queues, and AI responses.
     - Handles "Agentic" workflows (Research, Q&A).
 2.  **Web Server (`app/web.py`)**:
-    - A lightweight Flask + Hypercorn server.
-    - Exposes Health Check endpoints for cloud platforms (Render/Northflank).
-    - Serves a secure Monitoring Dashboard.
+    - A lightweight Quart + Hypercorn server (fully async-native).
+    - Exposes Health Check endpoints for cloud platforms (Northflank).
+    - Serves a secure Monitoring Dashboard with cookie-session auth.
 
 **Data Persistence**:
 
@@ -125,7 +125,7 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 
 While primarily a Telegram bot, the project includes a web frontend for administration and monitoring.
 
-- **Technology**: Flask, Jinja2 Templates (`app/templates`), Vanilla CSS (`app/static`).
+- **Technology**: Quart (async Flask-compatible), Jinja2 Templates (`app/templates`), Vanilla CSS (`app/static`).
 - **Endpoints**:
   - `/`: Visual dashboard showing generic system status (CPU, RAM, Uptime).
   - `/health`: JSON endpoint for docker healthchecks.
@@ -140,7 +140,7 @@ While primarily a Telegram bot, the project includes a web frontend for administ
 | :----------------- | :------------------------------ | :------------------------------- |
 | **Language**       | Python 3.14+                    | Core runtime                     |
 | **Bot Framework**  | `python-telegram-bot` (v22+)    | Async Telegram API wrapper       |
-| **Web Server**     | Flask + Hypercorn               | Async-compatible web server      |
+| **Web Server**     | Quart + Hypercorn               | Async-native web server          |
 | **Database**       | `asyncpg` (PostgreSQL)          | High-performance async DB driver |
 | **AI SDKs**        | `google-genai`, OpenAI (compat) | Interaction with LLMs            |
 | **Search**         | `tavily-python`                 | AI-optimized web search          |
@@ -193,17 +193,45 @@ ADMIN_ID=123456789
 ```bash
 # Comma-separated keys for rotation
 GEMINI_API_KEYS=AIzaSy...,AIzaSy...
-OPENROUTER_API_KEYS=sk-or-v1-...,sk-or-v1-...
-TAVILY_API_KEY=tvly-xxxx
+TAVILY_API_KEYS=tvly-xxxx
+OPENROUTER_API_KEYS=sk-or-v1-...,sk-or-v1-...  # Optional
 ```
 
 ### System
 
 ```bash
-PORT=10000              # Web server port
-ENABLE_WEB_SERVER=true  # Enable/Disable dashboard
-LOG_LEVEL=INFO          # DEBUG/INFO/WARNING
+PORT=10000              # Web server port (default: 10000)
+ENABLE_WEB_SERVER=true  # Enable/Disable dashboard (default: true)
+ADMIN_SECRET=...        # Secret for dashboard login & API key encryption
+REDIS_URL=redis://...   # Optional — enables Redis caching layer
 ```
+
+### Complete Environment Variable Reference
+
+| Variable                         | Required | Default                       | Description                                                 |
+| -------------------------------- | -------- | ----------------------------- | ----------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`             | ✅       | —                             | Telegram Bot API token                                      |
+| `DATABASE_URL`                   | ✅       | —                             | PostgreSQL connection string                                |
+| `ADMIN_ID`                       | ✅       | —                             | Telegram user ID of the admin                               |
+| `GEMINI_API_KEYS`                | ✅       | —                             | Comma-separated Google Gemini API keys                      |
+| `TAVILY_API_KEYS`                | ✅       | —                             | Comma-separated Tavily search API keys                      |
+| `OPENROUTER_API_KEYS`            | ❌       | `[]`                          | Comma-separated OpenRouter API keys                         |
+| `ADMIN_SECRET`                   | ❌       | `None`                        | Dashboard login secret & API key encryption key             |
+| `PORT`                           | ❌       | `10000`                       | Web server listening port                                   |
+| `ENABLE_WEB_SERVER`              | ❌       | `true`                        | Enable/disable the monitoring dashboard                     |
+| `REDIS_URL`                      | ❌       | `None`                        | Redis connection URL (enables multi-layer cache)            |
+| `DEFAULT_MODEL`                  | ❌       | `gemini-flash-latest`         | Default Gemini model for chat                               |
+| `QNA_MODEL`                      | ❌       | `gemini-2.5-flash-lite`       | Model for Q&A tasks                                         |
+| `RESEARCH_MODEL`                 | ❌       | `gemini-2.5-pro`              | Model for deep research                                     |
+| `URL_SELECTION_MODEL`            | ❌       | `gemini-flash-latest`         | Model for URL relevance scoring                             |
+| `GEMINI_AVAILABLE_MODELS`        | ❌       | 5 default models              | Comma-separated list of available Gemini models             |
+| `OPENROUTER_DEFAULT_MODEL`       | ❌       | `stepfun/step-3.5-flash:free` | Default OpenRouter model                                    |
+| `OPENROUTER_QNA_MODEL`           | ❌       | `stepfun/step-3.5-flash:free` | OpenRouter Q&A model                                        |
+| `OPENROUTER_RESEARCH_MODEL`      | ❌       | `stepfun/step-3.5-flash:free` | OpenRouter research model                                   |
+| `OPENROUTER_URL_SELECTION_MODEL` | ❌       | `stepfun/step-3.5-flash:free` | OpenRouter URL selection model                              |
+| `OPENROUTER_AVAILABLE_MODELS`    | ❌       | `[]`                          | Comma-separated available OpenRouter models                 |
+| `DAILY_LIMITS`                   | ❌       | See `config.py`               | JSON or `model:limit,...` format for per-model daily limits |
+| `USE_OPENROUTER`                 | ❌       | `false`                       | Force OpenRouter as default provider                        |
 
 ---
 
@@ -227,7 +255,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (318 tests)
+### Suite Structure (401 tests)
 
 | Category           | Files                                                                                       | What They Cover                                     |
 | :----------------- | :------------------------------------------------------------------------------------------ | :-------------------------------------------------- |
