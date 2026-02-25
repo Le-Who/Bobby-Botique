@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 import json
 import traceback
@@ -18,6 +19,11 @@ class APILogger:
     def __init__(self):
         self.logger = logging.getLogger("api_logger")
         self.logger.setLevel(logging.INFO)
+        self._pretty = os.environ.get("LOG_PRETTY", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
         # Create форматтер for детального логирования
         formatter = logging.Formatter(
@@ -29,6 +35,12 @@ class APILogger:
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+
+    def _format_log(self, data: dict) -> str:
+        """Format log payload — pretty-printed in dev, compact in prod."""
+        if self._pretty:
+            return json.dumps(data, ensure_ascii=False, indent=2, default=str)
+        return json.dumps(data, ensure_ascii=False, default=str)
 
     def log_api_request(
         self,
@@ -53,7 +65,7 @@ class APILogger:
         }
 
         self.logger.info(
-            f"🚀 API REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}"
+            f"🚀 API REQUEST STARTED: {self._format_log(log_data)}"
         )
         return time.time()
 
@@ -89,11 +101,11 @@ class APILogger:
 
         if success:
             self.logger.info(
-                f"✅ API REQUEST COMPLETED: {json.dumps(log_data, ensure_ascii=False)}"
+                f"✅ API REQUEST COMPLETED: {self._format_log(log_data)}"
             )
         else:
             self.logger.error(
-                f"❌ API REQUEST FAILED: {json.dumps(log_data, ensure_ascii=False)}"
+                f"❌ API REQUEST FAILED: {self._format_log(log_data)}"
             )
 
         return duration
@@ -123,7 +135,7 @@ class APILogger:
             }
 
             self.logger.info(
-                f"🤖 GEMINI REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}"
+                f"🤖 GEMINI REQUEST STARTED: {self._format_log(log_data)}"
             )
             return start_time
 
@@ -172,11 +184,11 @@ class APILogger:
 
             if success:
                 self.logger.info(
-                    f"✅ GEMINI RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}"
+                    f"✅ GEMINI RESPONSE COMPLETED: {self._format_log(log_data)}"
                 )
             else:
                 self.logger.error(
-                    f"❌ GEMINI RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}"
+                    f"❌ GEMINI RESPONSE FAILED: {self._format_log(log_data)}"
                 )
 
             return duration
@@ -224,11 +236,11 @@ class APILogger:
 
             if success:
                 self.logger.info(
-                    f"✅ OPENROUTER RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}"
+                    f"✅ OPENROUTER RESPONSE COMPLETED: {self._format_log(log_data)}"
                 )
             else:
                 self.logger.error(
-                    f"❌ OPENROUTER RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}"
+                    f"❌ OPENROUTER RESPONSE FAILED: {self._format_log(log_data)}"
                 )
 
             return duration
@@ -259,7 +271,7 @@ class APILogger:
         }
 
         self.logger.info(
-            f"🔍 TAVILY REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}"
+            f"🔍 TAVILY REQUEST STARTED: {self._format_log(log_data)}"
         )
         return start_time
 
@@ -291,11 +303,11 @@ class APILogger:
 
         if success:
             self.logger.info(
-                f"✅ TAVILY RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}"
+                f"✅ TAVILY RESPONSE COMPLETED: {self._format_log(log_data)}"
             )
         else:
             self.logger.error(
-                f"❌ TAVILY RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}"
+                f"❌ TAVILY RESPONSE FAILED: {self._format_log(log_data)}"
             )
 
         return duration
@@ -321,7 +333,7 @@ class APILogger:
         }
 
         self.logger.info(
-            f"📱 TELEGRAM REQUEST STARTED: {json.dumps(log_data, ensure_ascii=False)}"
+            f"📱 TELEGRAM REQUEST STARTED: {self._format_log(log_data)}"
         )
         return start_time
 
@@ -351,11 +363,11 @@ class APILogger:
 
         if success:
             self.logger.info(
-                f"✅ TELEGRAM RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}"
+                f"✅ TELEGRAM RESPONSE COMPLETED: {self._format_log(log_data)}"
             )
         else:
             self.logger.error(
-                f"❌ TELEGRAM RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}"
+                f"❌ TELEGRAM RESPONSE FAILED: {self._format_log(log_data)}"
             )
 
         return duration
@@ -382,7 +394,7 @@ class APILogger:
             "status": "ERROR",
         }
 
-        self.logger.error(f"💥 API ERROR: {json.dumps(error_data, ensure_ascii=False)}")
+        self.logger.error(f"💥 API ERROR: {self._format_log(error_data)}")
 
     def _sanitize_data(
         self, data: Optional[Dict[str, Any]]

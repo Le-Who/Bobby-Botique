@@ -26,3 +26,6 @@ Pillow>=9.5.0,<13.0.0
 
 # External APIs
 tavily-python>=0.3.0,<1.0.0
+
+# Logging (pretty console output)
+rich>=13.0.0,<14.0.0
