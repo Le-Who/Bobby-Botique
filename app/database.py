@@ -442,6 +442,32 @@ async def _init_schema():
     await db_query(
         "CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))"
     )
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS metrics (
+            id SERIAL PRIMARY KEY,
+            metric_date DATE NOT NULL,
+            request_count INTEGER DEFAULT 0,
+            total_response_time REAL DEFAULT 0.0,
+            error_count INTEGER DEFAULT 0,
+            search_queries INTEGER DEFAULT 0,
+            cache_hits INTEGER DEFAULT 0,
+            cache_misses INTEGER DEFAULT 0,
+            api_calls JSONB DEFAULT '{}',
+            model_usage JSONB DEFAULT '{}',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(metric_date)
+        )
+    """)
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS error_logs (
+            id SERIAL PRIMARY KEY,
+            error_type TEXT NOT NULL,
+            error_message TEXT NOT NULL,
+            request_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     await db_query(
         "CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)"
     )
@@ -521,6 +547,13 @@ async def _run_migrations():
 
         if "deep_dive_thread_id" not in {c["column_name"] for c in users_columns}:
             await db_query("ALTER TABLE users ADD COLUMN deep_dive_thread_id TEXT;")
+
+        # Error Logs Migration
+        error_logs_columns = await db_query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='error_logs'"
+        )
+        if "request_id" not in {c["column_name"] for c in error_logs_columns}:
+            await db_query("ALTER TABLE error_logs ADD COLUMN request_id TEXT;")
 
     except asyncpg.PostgresError as e:
         logging.warning(f"Migration warning: {e}")
