@@ -84,10 +84,20 @@ def safe_decrypt(value: str) -> str:
     """
     if is_encrypted(value):
         try:
-            return decrypt_api_key(value)
+            decrypted = decrypt_api_key(value)
+            logging.debug(
+                "Key decrypted OK: encrypted_prefix=%s... -> decrypted_prefix=%s..., len=%d",
+                value[:12], decrypted[:8], len(decrypted),
+            )
+            return decrypted
         except (ValueError, Exception) as e:
-            logging.warning("Failed to decrypt key, using as-is: %s", e)
+            logging.error(
+                "CRITICAL: Failed to decrypt key (prefix=%s..., len=%d): %s  — "
+                "returning encrypted ciphertext as API key, which WILL be rejected!",
+                value[:12], len(value), e,
+            )
             return value
+    logging.debug("Key not encrypted (prefix=%s..., len=%d), using as-is", value[:8], len(value))
     return value
 
 

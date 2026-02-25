@@ -299,7 +299,7 @@ def is_error_message(text: str) -> bool:
     """Определяет, является ли сообщение ошибкой по наличию эмодзи ошибок."""
     if not text:
         return False
-    error_indicators = ["⏰", "❌", "🔄", "🚫", "⏱️", "💳", "🌐"]
+    error_indicators = ["⏰", "❌", "🔄", "🚫", "⏱️", "💳", "🌐", "🔑"]
     return any(text.startswith(indicator) for indicator in error_indicators)
 
 
@@ -343,6 +343,7 @@ def is_key_related_error(text: str) -> bool:
     key_related_patterns = [
         "🚫",  # Quota/лимит
         "⏱️",  # Rate limit
+        "🔑",  # Invalid API key
         "quota",
         "quota exceeded",
         "limit",

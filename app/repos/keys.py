@@ -99,9 +99,11 @@ class DailyKeyManager:
 
         if not daily_limit:
             keys = await db_query(
-                f"SELECT * FROM {self.keys_table} LIMIT 1", conn=conn
+                f"SELECT key_hash, api_key FROM {self.keys_table} LIMIT 1", conn=conn
             )
-            return keys[0] if keys else None
+            if keys:
+                return {"key_hash": keys[0]["key_hash"], "api_key": safe_decrypt(keys[0]["api_key"])}
+            return None
 
         query = f"""
             SELECT ak.key_hash, ak.api_key,

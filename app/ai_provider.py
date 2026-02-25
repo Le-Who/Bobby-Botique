@@ -369,6 +369,9 @@ class GeminiProvider(BaseAIProvider):
             elif "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower:
                 await metrics_collector.record_error("gemini_overloaded", str(e))
                 raise  # Trigger retry in BaseAIProvider
+            elif "api key" in err_lower or "api_key_invalid" in err_lower:
+                await metrics_collector.record_error("gemini_invalid_key", str(e))
+                text = "🔑 Неверный API ключ."
             elif "invalid" in err_lower or "malformed" in err_lower:
                 await metrics_collector.record_error("gemini_invalid_request", str(e))
                 text = "❌ Некорректный запрос к API. Проверьте параметры."
