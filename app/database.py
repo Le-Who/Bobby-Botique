@@ -55,8 +55,7 @@ class DatabaseManager:
                 min_size=2,
                 max_size=10,
                 command_timeout=30,
-                max_cached_statement_lifetime=300,
-                max_cacheable_statement_size=15000,
+                statement_cache_size=0,  # Required for PgBouncer transaction mode
                 server_settings={
                     "application_name": "gemaibotv2",
                     "tcp_keepalives_idle": "30",
@@ -612,29 +611,52 @@ RLS_CONFIG = {
     "user_documents": [{"name": "user_documents_policy", "template": RLS_POLICY_USER}],
     "user_roles": [{"name": "user_roles_policy", "template": RLS_POLICY_USER}],
     "conversations": [{"name": "conversations_policy", "template": RLS_POLICY_USER}],
-
     "roles": [
-        {"name": "roles_read_policy", "sql": "CREATE POLICY roles_read_policy ON roles FOR SELECT USING (true);"},
-        {"name": "roles_insert_policy", "sql": "CREATE POLICY roles_insert_policy ON roles FOR INSERT WITH CHECK ((select current_setting('app.is_admin', true)) = 'true');"},
-        {"name": "roles_update_policy", "sql": "CREATE POLICY roles_update_policy ON roles FOR UPDATE USING ((select current_setting('app.is_admin', true)) = 'true');"},
-        {"name": "roles_delete_policy", "sql": "CREATE POLICY roles_delete_policy ON roles FOR DELETE USING ((select current_setting('app.is_admin', true)) = 'true');"},
+        {
+            "name": "roles_read_policy",
+            "sql": "CREATE POLICY roles_read_policy ON roles FOR SELECT USING (true);",
+        },
+        {
+            "name": "roles_insert_policy",
+            "sql": "CREATE POLICY roles_insert_policy ON roles FOR INSERT WITH CHECK ((select current_setting('app.is_admin', true)) = 'true');",
+        },
+        {
+            "name": "roles_update_policy",
+            "sql": "CREATE POLICY roles_update_policy ON roles FOR UPDATE USING ((select current_setting('app.is_admin', true)) = 'true');",
+        },
+        {
+            "name": "roles_delete_policy",
+            "sql": "CREATE POLICY roles_delete_policy ON roles FOR DELETE USING ((select current_setting('app.is_admin', true)) = 'true');",
+        },
     ],
-
-    "conversation_messages": [{"name": "conversation_messages_policy", "template": RLS_POLICY_CONVERSATION_MESSAGES}],
-
+    "conversation_messages": [
+        {
+            "name": "conversation_messages_policy",
+            "template": RLS_POLICY_CONVERSATION_MESSAGES,
+        }
+    ],
     "group_chats": [{"name": "group_chats_policy", "template": RLS_POLICY_GROUP}],
     "group_members": [{"name": "group_members_policy", "template": RLS_POLICY_GROUP}],
     "group_messages": [{"name": "group_messages_policy", "template": RLS_POLICY_GROUP}],
-
     "api_keys": [{"name": "api_keys_policy", "template": RLS_POLICY_ADMIN}],
     "key_usage": [{"name": "key_usage_policy", "template": RLS_POLICY_ADMIN}],
-    "tavily_api_keys": [{"name": "tavily_api_keys_policy", "template": RLS_POLICY_ADMIN}],
-    "tavily_key_usage": [{"name": "tavily_key_usage_policy", "template": RLS_POLICY_ADMIN}],
-    "openrouter_api_keys": [{"name": "openrouter_api_keys_policy", "template": RLS_POLICY_ADMIN}],
-    "openrouter_key_usage": [{"name": "openrouter_key_usage_policy", "template": RLS_POLICY_ADMIN}],
+    "tavily_api_keys": [
+        {"name": "tavily_api_keys_policy", "template": RLS_POLICY_ADMIN}
+    ],
+    "tavily_key_usage": [
+        {"name": "tavily_key_usage_policy", "template": RLS_POLICY_ADMIN}
+    ],
+    "openrouter_api_keys": [
+        {"name": "openrouter_api_keys_policy", "template": RLS_POLICY_ADMIN}
+    ],
+    "openrouter_key_usage": [
+        {"name": "openrouter_key_usage_policy", "template": RLS_POLICY_ADMIN}
+    ],
     "metrics": [{"name": "metrics_policy", "template": RLS_POLICY_ADMIN}],
     "error_logs": [{"name": "error_logs_policy", "template": RLS_POLICY_ADMIN}],
-    "model_configuration": [{"name": "model_configuration_policy", "template": RLS_POLICY_ADMIN}],
+    "model_configuration": [
+        {"name": "model_configuration_policy", "template": RLS_POLICY_ADMIN}
+    ],
 }
 
 VALID_TABLES = set(RLS_CONFIG.keys())
@@ -692,7 +714,9 @@ async def create_rls_policies(table_name: str):
                             policy_name=policy_name, table_name=table_name
                         )
                     else:
-                        logging.error(f"Missing SQL or template for policy {policy_name}")
+                        logging.error(
+                            f"Missing SQL or template for policy {policy_name}"
+                        )
                         continue
 
                     await db_query(sql)
