@@ -41,7 +41,6 @@ class DatabaseManager:
 
             cls._instance._cache_lock = asyncio.Lock()
             cls._instance._monitor_task = None
-            cls._instance._cleanup_cache_task = None
         return cls._instance
 
     @property
@@ -97,7 +96,6 @@ class DatabaseManager:
     async def close(self):
         # Cancel background tasks
         await self._cancel_background_task("_monitor_task")
-        await self._cancel_background_task("_cleanup_cache_task")
 
         if self.pool:
             await self.pool.close()
@@ -138,10 +136,6 @@ class DatabaseManager:
             pass
 
         setattr(self, attr_name, None)
-
-    async def start_cleanup_task(self):
-        """Deprecated: TTLCache handles eviction automatically."""
-        pass
 
     async def monitor_connection_pool(self):
         while True:
@@ -190,10 +184,6 @@ class DatabaseManager:
             except Exception as e:
                 logging.warning("Connection pool monitoring error: %s", e)
                 await asyncio.sleep(60)
-
-    async def cleanup_expired_cache(self):
-        """Deprecated: TTLCache handles eviction automatically."""
-        pass
 
     async def query(
         self, query_str: str, params: tuple = (), retries: int = 3, conn=None
@@ -393,9 +383,6 @@ async def init_db():
 
     # Initialize Schema
     await _init_schema()
-
-    # Start cache cleanup
-    await db_manager.start_cleanup_task()
 
 
 async def _init_schema():
