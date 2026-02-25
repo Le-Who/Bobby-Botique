@@ -80,7 +80,7 @@ from app.group_chat import initialize_group_chats
 print("DEBUG: group_chat imported", flush=True)
 
 # Import extracted modules
-from app.web import flask_app
+from app.web import flask_app, set_main_loop
 
 print("DEBUG: web imported", flush=True)
 # Lock import removed
@@ -436,6 +436,9 @@ async def main():
     sys.stderr.reconfigure(line_buffering=True)
 
     print("=== BOT MAIN FUNCTION START ===", flush=True)
+
+    # Capture the main event loop for Flask/Hypercorn worker threads
+    set_main_loop(asyncio.get_running_loop())
     print(f"Current Directory: {os.getcwd()}", flush=True)
     print(f"Python Version: {sys.version}", flush=True)
 

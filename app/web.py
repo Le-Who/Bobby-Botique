@@ -207,19 +207,40 @@ def health_check_endpoint():
 # =============================================================================
 
 
+# Reference to the main asyncio event loop (set during startup in bot.py).
+# Needed because Flask routes run in Hypercorn's worker threads which have
+# no event loop; we schedule async work back onto the main loop.
+_main_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Store the main event loop so _run_async can schedule onto it."""
+    global _main_loop
+    _main_loop = loop
+
+
 def _run_async(coro):
-    """Run an async coroutine from sync Flask context."""
+    """Run an async coroutine from sync Flask context.
+
+    Hypercorn serves Flask WSGI handlers inside worker threads that do NOT
+    have their own event loop.  The asyncpg connection pool (and its internal
+    Futures) is bound to the main event loop, so we must schedule the
+    coroutine there — never create a second loop.
+    """
+    # Fast path: if the main loop reference was captured at startup, use it.
+    if _main_loop is not None and _main_loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(coro, _main_loop)
+        return future.result(timeout=15)
+
+    # Fallback: no Hypercorn (e.g. unit tests, local `flask run`).
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = None
 
     if loop and loop.is_running():
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result(timeout=10)
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result(timeout=15)
     else:
         return asyncio.run(coro)
 
@@ -323,7 +344,7 @@ def api_errors():
     try:
         from app.metrics import metrics_collector
 
-        summary = metrics_collector.get_metrics_summary()
+        summary = _run_async(metrics_collector.get_metrics_summary())
         return jsonify(
             {
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
@@ -346,8 +367,8 @@ def api_cache():
     try:
         from app.cache import get_cache_stats, get_multi_layer_cache_stats
 
-        redis_stats = get_cache_stats()
-        ml_stats = get_multi_layer_cache_stats()
+        redis_stats = _run_async(get_cache_stats())
+        ml_stats = _run_async(get_multi_layer_cache_stats())
 
         return jsonify(
             {
@@ -368,7 +389,7 @@ def api_queue():
     try:
         from app.queue import task_queue
 
-        stats = task_queue.get_queue_stats()
+        stats = _run_async(task_queue.get_queue_stats())
         return jsonify(
             {
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
