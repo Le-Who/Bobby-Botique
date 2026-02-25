@@ -1,6 +1,6 @@
 # GemAI Bot v2 – Technical Documentation
 
-![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
+![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)
 ![Telegram](https://img.shields.io/badge/Telegram-Bot-blue.svg)
 ![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-orange.svg)
 ![OpenRouter](https://img.shields.io/badge/AI-OpenRouter-purple.svg)
@@ -128,8 +128,8 @@ While primarily a Telegram bot, the project includes a web frontend for administ
 
 | Category           | Technology                      | Purpose                          |
 | :----------------- | :------------------------------ | :------------------------------- |
-| **Language**       | Python 3.11+                    | Core runtime                     |
-| **Bot Framework**  | `python-telegram-bot` (v20+)    | Async Telegram API wrapper       |
+| **Language**       | Python 3.14+                    | Core runtime                     |
+| **Bot Framework**  | `python-telegram-bot` (v22+)    | Async Telegram API wrapper       |
 | **Web Server**     | Flask + Hypercorn               | Async-compatible web server      |
 | **Database**       | `asyncpg` (PostgreSQL)          | High-performance async DB driver |
 | **AI SDKs**        | `google-genai`, OpenAI (compat) | Interaction with LLMs            |
