@@ -145,7 +145,7 @@ The project is "Cloud Native" ready, specifically optimized for PaaS providers l
 
 ### Docker
 
-- **Base Image**: `python:3.11-slim` (Lightweight, secure).
+- **Base Image**: `python:3.14-slim` (Lightweight, secure, fast).
 - **Security**: Runs as a non-root `app` user.
 - **Entrypoint**: Custom `start.sh` script to handle environment setup.
 - **Healthcheck**: Built-in curl command pinging `localhost:10000/status`.
@@ -204,6 +204,9 @@ The project has a comprehensive test suite covering unit, integration, and perfo
 ### Running Tests
 
 ```bash
+# Setup (install dev dependencies)
+pip install -r requirements-dev.txt
+
 # Full suite
 python -m pytest tests/
 
@@ -214,7 +217,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (194 tests)
+### Suite Structure (258 tests)
 
 | Category           | Files                                                                                       | What They Cover                                      |
 | :----------------- | :------------------------------------------------------------------------------------------ | :--------------------------------------------------- |

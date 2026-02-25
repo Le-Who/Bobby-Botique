@@ -5,6 +5,36 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.3.0] – 2026-02-25 – Codebase Audit, Docker Optimization & Bug Fixes
+
+### 🧹 Codebase Audit & Cleanup
+
+- **Legacy Files**: Moved 12 obsolete files to the `legacy/` directory to declutter the root workspace.
+  - Dead code (`app/health.py`, `app/alerts.py`) and their orphaned tests moved to `legacy/app/` and `legacy/tests/`.
+  - Development tools and benchmarks moved to `legacy/dev_scripts/`.
+  - Obsolete Render deployment configs moved to `legacy/deploy_render/`.
+- **Gitignore**: Expanded `.gitignore` to explicitly exclude IDE configurations (`.vscode`, `.cursor`, `.Jules`, `.roomodes`), linter caches, and stale test logs.
+
+### 🐳 Docker & CI Optimization
+
+- **`Dockerfile.northflank` Overhaul**:
+  - Upgraded base image from Python 3.11 to **Python 3.14-slim** for better performance string resolving and modern standard library features.
+  - Reduced Dockerfile length by 50% (71 → 36 lines).
+  - Extracted inline startup commands into a dedicated `start.sh` executable.
+  - Consolidated `RUN` layers to reduce image size.
+  - Added native Docker `HEALTHCHECK` instruction.
+- **Requirements Split**: Separated dependencies into `requirements.txt` (prod-only) and `requirements-dev.txt` (includes `pytest`). Production image no longer installs testing frameworks.
+- **`.dockerignore`**: Created robust `.dockerignore` to prevent tests, legacy files, and IDE caches from inflating the production image.
+
+### 🐛 Bug Fixes
+
+- **Telegram Polling Crash**: Fixed `TypeError: Updater.start_polling() got an unexpected keyword argument` on startup.
+  - **Root Cause**: `python-telegram-bot` v22.0 removed HTTP timeout arguments from `start_polling()`.
+  - **Fix**: Removed deprecated kwargs, preserved valid Telegram long-polling `timeout=30`, and kept HTTP timeouts correctly scoped to `HTTPXRequest`. Added static AST regression test (`test_start_polling_kwargs.py`) to prevent recurrence.
+- **Database Metrics Crash**: Fixed `column "request_id" does not exist` error spamming logs on boot.
+  - **Root Cause**: The `metrics` and `error_logs` tables relied on a standalone SQL migration script that was never executed in the deployment pipeline.
+  - **Fix**: Native schema definitions and the missing `request_id` column patching were integrated directly into the `app/database.py:_init_schema` and `_run_migrations` boot sequence for automatic repair.
+
 ## [2.2.0] – 2026-02-22 – Test Suite Isolation Overhaul
 
 ### Context
