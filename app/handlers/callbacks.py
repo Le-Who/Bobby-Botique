@@ -333,7 +333,16 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     from app.handlers.agent import _handle_regular_chat
 
-    await _handle_regular_chat(placeholder_message, user_id, last_text, chat_state)
+    try:
+        await _handle_regular_chat(placeholder_message, user_id, last_text, chat_state)
+    except Exception as e:
+        logging.error("retry_last_callback failed: %s", e, exc_info=True)
+        try:
+            await placeholder_message.edit_text(
+                "❌ Произошла ошибка при повторе запроса. Попробуйте позже."
+            )
+        except Exception:
+            pass
 
 
 async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

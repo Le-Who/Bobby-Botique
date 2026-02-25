@@ -859,9 +859,12 @@ class ProviderRouter:
             # Success — update health and increment usage
             if response_text and not is_error_message(response_text):
                 health.record_success()
-                await use_case.increment_key_usage(
-                    key_data["key_hash"], model_used, use_openrouter
-                )
+                try:
+                    await use_case.increment_key_usage(
+                        key_data["key_hash"], model_used, use_openrouter
+                    )
+                except Exception as e:
+                    logging.warning("Non-critical: failed to increment key usage: %s", e)
 
             return response_text, token_count
 

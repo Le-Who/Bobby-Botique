@@ -100,7 +100,8 @@ async def get_user_chat(user_id: int) -> Optional[ChatState]:
             # Update cache
             async with db_manager._cache_lock:
                 if not hasattr(db_manager, "_active_chats_cache"):
-                    db_manager._active_chats_cache = {}
+                    from cachetools import TTLCache
+                    db_manager._active_chats_cache = TTLCache(maxsize=1000, ttl=900)
                 db_manager._active_chats_cache[user_id] = chat_state
 
             return chat_state
@@ -119,7 +120,8 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
             # Update cache
             async with db_manager._cache_lock:
                 if not hasattr(db_manager, "_active_chats_cache"):
-                    db_manager._active_chats_cache = {}
+                    from cachetools import TTLCache
+                    db_manager._active_chats_cache = TTLCache(maxsize=1000, ttl=900)
                 db_manager._active_chats_cache[user_id] = chat_state
 
             current_length = len(chat_state.history)
