@@ -8,6 +8,7 @@ import logging
 import asyncio
 import time
 import psutil
+import inspect
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -153,7 +154,7 @@ class MemoryManager:
             # Run all cleanup callbacks
             for callback in self._cleanup_callbacks:
                 try:
-                    if asyncio.iscoroutinefunction(callback):
+                    if inspect.iscoroutinefunction(callback):
                         await asyncio.wait_for(callback(), timeout=5.0)
                     else:
                         callback()
@@ -194,7 +195,7 @@ class MemoryManager:
             # Run cleanup callbacks
             for callback in self._cleanup_callbacks:
                 try:
-                    if asyncio.iscoroutinefunction(callback):
+                    if inspect.iscoroutinefunction(callback):
                         await asyncio.wait_for(callback(), timeout=2.0)
                     else:
                         callback()

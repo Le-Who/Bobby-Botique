@@ -91,7 +91,6 @@ def test_split_text_safe_nested_tags(mock_max_length):
     assert full_content.replace(" ", "") == strip_tags(text).replace(" ", "")
 
 
-@pytest.mark.xfail(reason="Bug in split_text_safe splits inside tag attributes")
 def test_split_text_safe_code_block():
     # Code block splitting
     code = 'def foo():\n    return "bar"\n'
@@ -123,8 +122,9 @@ def test_split_text_safe_code_block():
 
     # Check content preservation
     content = "".join([strip_tags(c) for c in chunks])
-    assert "def foo" in content
-    assert "return" in content
+    content_stripped = content.replace(" ", "")
+    assert "deffoo" in content_stripped
+    assert "return" in content_stripped
 
 
 def test_split_text_safe_hard_split():
@@ -135,7 +135,9 @@ def test_split_text_safe_hard_split():
     assert len(chunks[1]) == 20
     assert len(chunks[2]) == 10
 
+
 # --- New tests for format_text ---
+
 
 def test_format_text_basic():
     text = "Hello world"
@@ -167,7 +169,10 @@ def test_markdown_to_html_formatting():
     # Inline code
     assert format_text("`code`")[0] == "<code>code</code>"
     # Link
-    assert format_text("[link](http://example.com)")[0] == '<a href="http://example.com">link</a>'
+    assert (
+        format_text("[link](http://example.com)")[0]
+        == '<a href="http://example.com">link</a>'
+    )
 
 
 def test_markdown_to_html_escaping():

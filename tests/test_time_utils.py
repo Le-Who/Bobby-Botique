@@ -1,19 +1,22 @@
 import unittest
 from unittest.mock import patch
 from datetime import datetime
-from app.utils.time import get_kyiv_reset_time, get_pacific_tz
+import pytz
+
+from app.utils.time import get_kyiv_reset_time
 
 
 class TestTimeUtils(unittest.TestCase):
     def setUp(self):
         # We need the real datetime class for combine and min
         self.real_datetime = datetime
+        # Use real pytz timezones directly (avoids any mock contamination)
+        self.pacific_tz = pytz.timezone("US/Pacific")
 
     @patch("app.utils.time.datetime")
     def test_get_kyiv_reset_time_standard(self, mock_datetime):
         """Test reset time calculation during standard time difference (10 hours)."""
-        pacific_tz = get_pacific_tz()
-        fixed_now = self.real_datetime(2023, 10, 26, 10, 0, 0, tzinfo=pacific_tz)
+        fixed_now = self.pacific_tz.localize(self.real_datetime(2023, 10, 26, 10, 0, 0))
 
         class MockDatetime(self.real_datetime):
             @classmethod
@@ -33,8 +36,7 @@ class TestTimeUtils(unittest.TestCase):
     @patch("app.utils.time.datetime")
     def test_get_kyiv_reset_time_dst_mismatch(self, mock_datetime):
         """Test reset time calculation during mismatched DST (late October, 9 hours diff)."""
-        pacific_tz = get_pacific_tz()
-        fixed_now = self.real_datetime(2023, 10, 30, 12, 0, 0, tzinfo=pacific_tz)
+        fixed_now = self.pacific_tz.localize(self.real_datetime(2023, 10, 30, 12, 0, 0))
 
         class MockDatetime(self.real_datetime):
             @classmethod
@@ -54,8 +56,7 @@ class TestTimeUtils(unittest.TestCase):
     @patch("app.utils.time.datetime")
     def test_get_kyiv_reset_time_year_rollover(self, mock_datetime):
         """Test reset time calculation across year boundary."""
-        pacific_tz = get_pacific_tz()
-        fixed_now = self.real_datetime(2023, 12, 31, 23, 0, 0, tzinfo=pacific_tz)
+        fixed_now = self.pacific_tz.localize(self.real_datetime(2023, 12, 31, 23, 0, 0))
 
         class MockDatetime(self.real_datetime):
             @classmethod

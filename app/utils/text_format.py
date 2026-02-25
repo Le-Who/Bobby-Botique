@@ -195,6 +195,18 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> List[str
             # Last resort: hard cut
             cut_point = limit
 
+        # Check if cut_point is inside an HTML tag.
+        # This occurs if the last '<' before the cut_point does not have a matching '>' before the cut_point.
+        last_open_angle = text.rfind("<", 0, cut_point)
+        if last_open_angle != -1:
+            last_close_angle_after_open = text.find(">", last_open_angle, cut_point)
+            if last_close_angle_after_open == -1:
+                # We are between '<' and '>'. We should cut BEFORE the '<' so we don't break the tag string itself.
+                # However, if last_open_angle is 0, setting cut_point to 0 will cause an infinite loop.
+                # In that case, the tag itself is longer than max_length, so we are forced to cut inside it.
+                if last_open_angle > 0:
+                    cut_point = last_open_angle
+
         chunk = text[:cut_point]
         remaining = text[
             cut_point:
@@ -230,6 +242,15 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> List[str
         chunk += closing_str
         if remaining:
             remaining = opening_str + remaining
+
+        # Infinite loop prevention: Force a hard cut if no text content was processed
+        if remaining == text:
+            cut_point = limit
+            chunk = text[:cut_point]
+            remaining = text[cut_point:].lstrip()
+            chunks.append(chunk)
+            text = remaining
+            continue
 
         chunks.append(chunk)
         text = remaining

@@ -835,6 +835,20 @@ async def get_user_chat(user_id: int) -> ChatState:
             await clear_user_context(conn=conn)
 
 
+def _extract_message_content(msg: dict) -> str:
+    """Extract content string from a message dict that may use 'content' or 'parts' key."""
+    if "content" in msg:
+        content = msg["content"]
+        return json.dumps(content) if isinstance(content, list) else str(content)
+    elif "parts" in msg:
+        parts = msg["parts"]
+        text_parts = [p for p in parts if isinstance(p, str)]
+        if len(text_parts) == 1:
+            return text_parts[0]
+        return json.dumps(text_parts) if text_parts else ""
+    return ""
+
+
 async def update_user_chat(user_id: int, chat_state: ChatState):
     async with db_manager._cache_lock:
         if hasattr(db_manager, "_active_chats_cache"):
@@ -859,11 +873,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
                 if current_length > 0:
                     insert_data = []
                     for msg in chat_state.history:
-                        content_str = (
-                            json.dumps(msg["content"])
-                            if isinstance(msg["content"], list)
-                            else str(msg.get("content", ""))
-                        )
+                        content_str = _extract_message_content(msg)
                         insert_data.append((user_id, msg["role"], content_str))
                     await db_execute_many(
                         "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
@@ -875,11 +885,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState):
                 new_items = chat_state.history[chat_state._original_length :]
                 insert_data = []
                 for msg in new_items:
-                    content_str = (
-                        json.dumps(msg["content"])
-                        if isinstance(msg["content"], list)
-                        else str(msg.get("content", ""))
-                    )
+                    content_str = _extract_message_content(msg)
                     insert_data.append((user_id, msg["role"], content_str))
                 await db_execute_many(
                     "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",

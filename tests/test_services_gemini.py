@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from app.services import get_gemini_response, _execute_gemini_request
 from google.genai.errors import APIError
 
+
 @pytest.mark.asyncio
 async def test_get_gemini_response_input_validation():
     """Test input validation for get_gemini_response."""
@@ -22,20 +23,27 @@ async def test_get_gemini_response_input_validation():
 
     # Invalid user_id
     with pytest.raises(ValueError, match="user_id must be an integer"):
-        await get_gemini_response("key", [{"role": "user", "parts": ["hi"]}], "model", user_id="invalid")
+        await get_gemini_response(
+            "key", [{"role": "user", "parts": ["hi"]}], "model", user_id="invalid"
+        )
 
     # Invalid chat_id
     with pytest.raises(ValueError, match="chat_id must be an integer"):
-        await get_gemini_response("key", [{"role": "user", "parts": ["hi"]}], "model", chat_id="invalid")
+        await get_gemini_response(
+            "key", [{"role": "user", "parts": ["hi"]}], "model", chat_id="invalid"
+        )
+
 
 @pytest.mark.asyncio
 async def test_get_gemini_response_retry_success():
     """Test successful retry logic in get_gemini_response."""
-    with patch("app.services._execute_gemini_request", new_callable=AsyncMock) as mock_exec:
+    with patch(
+        "app.services._execute_gemini_request", new_callable=AsyncMock
+    ) as mock_exec:
         # First call fails with 503 (simulated by raising Exception), second succeeds
         mock_exec.side_effect = [
             Exception("503 Service Unavailable"),
-            ("Success Response", 100)
+            ("Success Response", 100),
         ]
 
         with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
@@ -48,10 +56,13 @@ async def test_get_gemini_response_retry_success():
             assert mock_exec.call_count == 2
             mock_sleep.assert_called_once()
 
+
 @pytest.mark.asyncio
 async def test_get_gemini_response_retry_exhausted():
     """Test exhausted retries in get_gemini_response."""
-    with patch("app.services._execute_gemini_request", new_callable=AsyncMock) as mock_exec:
+    with patch(
+        "app.services._execute_gemini_request", new_callable=AsyncMock
+    ) as mock_exec:
         # Always fails with 503
         mock_exec.side_effect = Exception("503 Service Unavailable")
 
@@ -66,10 +77,13 @@ async def test_get_gemini_response_retry_exhausted():
             assert mock_exec.call_count == 3
             assert mock_sleep.call_count == 2
 
+
 @pytest.mark.asyncio
 async def test_get_gemini_response_non_retryable_error():
     """Test non-retryable error in get_gemini_response."""
-    with patch("app.services._execute_gemini_request", new_callable=AsyncMock) as mock_exec:
+    with patch(
+        "app.services._execute_gemini_request", new_callable=AsyncMock
+    ) as mock_exec:
         # Fails with non-503 error
         mock_exec.side_effect = Exception("400 Bad Request")
 
@@ -81,12 +95,17 @@ async def test_get_gemini_response_non_retryable_error():
         assert tokens is None
         assert mock_exec.call_count == 1
 
+
 @pytest.mark.asyncio
 async def test_execute_gemini_request_success():
     """Test _execute_gemini_request happy path."""
-    with patch("app.services.genai.Client") as MockClient, \
-         patch("app.services.metrics_collector", new_callable=AsyncMock), \
-         patch("app.services.api_logger", new_callable=MagicMock):
+    with (
+        patch("app.services.genai.Client") as MockClient,
+        patch("app.services.metrics_collector", new_callable=AsyncMock),
+        patch("app.services.api_logger", new_callable=MagicMock),
+        patch("app.services.settings") as mock_settings,
+    ):
+        mock_settings.SAFETY_SETTINGS = []
 
         mock_client_instance = MockClient.return_value
         mock_response = MagicMock()
@@ -95,8 +114,12 @@ async def test_execute_gemini_request_success():
         mock_token_count.total_tokens = 50
 
         # Mock generate_content and count_tokens
-        mock_client_instance.models.generate_content = MagicMock(return_value=mock_response)
-        mock_client_instance.models.count_tokens = MagicMock(return_value=mock_token_count)
+        mock_client_instance.models.generate_content = MagicMock(
+            return_value=mock_response
+        )
+        mock_client_instance.models.count_tokens = MagicMock(
+            return_value=mock_token_count
+        )
 
         response, tokens = await _execute_gemini_request(
             "key", [{"role": "user", "parts": ["hi"]}], "model"
@@ -105,12 +128,17 @@ async def test_execute_gemini_request_success():
         assert response == "Generated Text"
         assert tokens == 50
 
+
 @pytest.mark.asyncio
 async def test_execute_gemini_request_503_error():
     """Test _execute_gemini_request with 503 error."""
-    with patch("app.services.genai.Client") as MockClient, \
-         patch("app.services.metrics_collector", new_callable=AsyncMock), \
-         patch("app.services.api_logger", new_callable=MagicMock):
+    with (
+        patch("app.services.genai.Client") as MockClient,
+        patch("app.services.metrics_collector", new_callable=AsyncMock),
+        patch("app.services.api_logger", new_callable=MagicMock),
+        patch("app.services.settings") as mock_settings,
+    ):
+        mock_settings.SAFETY_SETTINGS = []
 
         mock_client_instance = MockClient.return_value
         # Mock generate_content to raise APIError 503
@@ -147,12 +175,17 @@ async def test_execute_gemini_request_503_error():
                 "key", [{"role": "user", "parts": ["hi"]}], "model"
             )
 
+
 @pytest.mark.asyncio
 async def test_execute_gemini_request_other_error():
     """Test _execute_gemini_request with other error."""
-    with patch("app.services.genai.Client") as MockClient, \
-         patch("app.services.metrics_collector", new_callable=AsyncMock), \
-         patch("app.services.api_logger", new_callable=MagicMock):
+    with (
+        patch("app.services.genai.Client") as MockClient,
+        patch("app.services.metrics_collector", new_callable=AsyncMock),
+        patch("app.services.api_logger", new_callable=MagicMock),
+        patch("app.services.settings") as mock_settings,
+    ):
+        mock_settings.SAFETY_SETTINGS = []
 
         mock_client_instance = MockClient.return_value
 
@@ -170,13 +203,23 @@ async def test_execute_gemini_request_other_error():
         assert "Произошла ошибка вызова API" in response or "Bad Request" in response
         assert tokens is None
 
+
 @pytest.mark.asyncio
 async def test_execute_gemini_request_timeout():
     """Test _execute_gemini_request timeout."""
-    with patch("app.services.genai.Client") as MockClient, \
-         patch("app.services.metrics_collector", new_callable=AsyncMock), \
-         patch("app.services.api_logger", new_callable=MagicMock), \
-         patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+
+    def timeout_side_effect(coro, timeout=None):
+        coro.close()
+        raise asyncio.TimeoutError("Timeout")
+
+    with (
+        patch("app.services.genai.Client") as MockClient,
+        patch("app.services.metrics_collector", new_callable=AsyncMock),
+        patch("app.services.api_logger", new_callable=MagicMock),
+        patch("app.services.settings") as mock_settings,
+        patch("asyncio.wait_for", side_effect=timeout_side_effect),
+    ):
+        mock_settings.SAFETY_SETTINGS = []
 
         response, tokens = await _execute_gemini_request(
             "key", [{"role": "user", "parts": ["hi"]}], "model"
