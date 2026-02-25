@@ -162,21 +162,57 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             conv_data[0]["role_id"],
             conv_data[0]["summary"],
         )
-        messages = await get_conversation_messages(conversation_id, user_id)
-        if messages is None:
-            return False
 
-        await db_query(
-            "DELETE FROM active_chat_messages WHERE user_id = $1", (user_id,)
-        )
-        if messages:
-            insert_data = [
-                (user_id, msg["role"], str(msg.get("content", ""))) for msg in messages
-            ]
-            await db_execute_many(
-                "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-                insert_data,
-            )
+        # Performance Optimization: Use a single transaction to swap messages
+        # This avoids fetching all messages to Python and sending them back
+        async with db_manager.pool.acquire() as conn:
+            async with conn.transaction():
+                # 1. Clear active messages
+                await conn.execute(
+                    "DELETE FROM active_chat_messages WHERE user_id = $1", user_id
+                )
+
+                # 2. Copy messages from history (bulk insert directly in DB)
+                await conn.execute(
+                    """
+                    INSERT INTO active_chat_messages (user_id, role, content, created_at)
+                    SELECT $1, cm.role, cm.content, cm.created_at
+                    FROM conversations c
+                    JOIN conversation_messages cm ON c.id = cm.conversation_id
+                    WHERE c.id = $2 AND c.user_id = $1
+                    ORDER BY cm.created_at ASC
+                    """,
+                    user_id,
+                    conversation_id,
+                )
+
+                # 3. Reset token count
+                await conn.execute(
+                    "UPDATE chats SET token_count = 0 WHERE user_id = $1", user_id
+                )
+
+                # 4. Update system prompt if needed
+                if role_type and role_id:
+                    role_data = None
+                    if role_type == "role":
+                        # We use db_query inside transaction via conn if needed, but db_query uses pool.
+                        # Since we have conn, let's use it.
+                        res = await conn.fetch(
+                            "SELECT prompt FROM roles WHERE id = $1", role_id
+                        )
+                        role_data = [dict(r) for r in res] if res else None
+                    elif role_type == "user_role":
+                        res = await conn.fetch(
+                            "SELECT prompt FROM user_roles WHERE id = $1", role_id
+                        )
+                        role_data = [dict(r) for r in res] if res else None
+
+                    if role_data:
+                        await conn.execute(
+                            "UPDATE chats SET system_prompt = $1 WHERE user_id = $2",
+                            role_data[0]["prompt"],
+                            user_id,
+                        )
 
         async with db_manager._cache_lock:
             if (
@@ -185,28 +221,9 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             ):
                 del db_manager._active_chats_cache[user_id]
 
-        await db_query(
-            "UPDATE chats SET token_count = 0 WHERE user_id = $1", (user_id,)
-        )
-
-        if role_type and role_id:
-            role_data = None
-            if role_type == "role":
-                role_data = await db_query(
-                    "SELECT prompt FROM roles WHERE id = $1", (role_id,)
-                )
-            elif role_type == "user_role":
-                role_data = await db_query(
-                    "SELECT prompt FROM user_roles WHERE id = $1", (role_id,)
-                )
-
-            if role_data:
-                await db_query(
-                    "UPDATE chats SET system_prompt = $1 WHERE user_id = $2",
-                    (role_data[0]["prompt"], user_id),
-                )
         return True
-    except (asyncpg.PostgresError, asyncpg.InterfaceError):
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+        logging.error("Error switching conversation: %s", e)
         return False
 
 
