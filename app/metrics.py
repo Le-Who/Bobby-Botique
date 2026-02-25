@@ -37,6 +37,10 @@ class MetricsCollector:
         self.daily_metrics: Dict[str, PerformanceMetrics] = defaultdict(
             PerformanceMetrics
         )
+        # Per-user daily metrics: key = (date_str, user_id)
+        self._user_daily: Dict[tuple, Dict[str, Any]] = defaultdict(
+            lambda: {"request_count": 0, "model_usage": {}}
+        )
         self._events_queue = asyncio.Queue()
         self._last_save_time = time.time()
         self._save_interval = 300  # Сохраняем каждые 5 минут
@@ -89,6 +93,12 @@ class MetricsCollector:
             self.daily_metrics[today].request_count += 1
             self.daily_metrics[today].total_response_time += response_time
 
+            # Per-user tracking
+            uid = event.get("user_id")
+            if uid:
+                ukey = (today, uid)
+                self._user_daily[ukey]["request_count"] += 1
+
         elif event_type == "api_call":
             api_name = event["api_name"]
             model = event["model"]
@@ -107,6 +117,13 @@ class MetricsCollector:
                 self.daily_metrics[today].model_usage[model] = (
                     self.daily_metrics[today].model_usage.get(model, 0) + 1
                 )
+
+                # Per-user model usage
+                uid = event.get("user_id")
+                if uid:
+                    ukey = (today, uid)
+                    mu = self._user_daily[ukey]["model_usage"]
+                    mu[model] = mu.get(model, 0) + 1
 
             self.api_event_log.append(
                 {
@@ -237,6 +254,36 @@ class MetricsCollector:
             self._last_save_time = time.time()
             logging.info(f"Metrics saved (bg): {snapshot_data['request_count']} reqs")
 
+            # Phase 3: Save per-user metrics
+            today_str = date.today().isoformat()
+            user_items = [
+                (uid, data)
+                for (d, uid), data in self._user_daily.items()
+                if d == today_str and data["request_count"] > 0
+            ]
+            if user_items:
+                params_list = [
+                    (
+                        uid,
+                        snapshot_data["date"],
+                        data["request_count"],
+                        json.dumps(data["model_usage"]),
+                    )
+                    for uid, data in user_items
+                ]
+                await db.db_execute_many(
+                    """
+                    INSERT INTO user_metrics (user_id, metric_date, request_count, model_usage, updated_at)
+                    VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id, metric_date) DO UPDATE SET
+                        request_count = EXCLUDED.request_count,
+                        model_usage = COALESCE(user_metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
+                        updated_at = CURRENT_TIMESTAMP
+                    """,
+                    params_list,
+                )
+                logging.debug(f"Per-user metrics saved for {len(user_items)} users")
+
         except Exception as e:
             logging.error(f"Error saving metrics to database: {e}")
 
@@ -347,15 +394,15 @@ class MetricsCollector:
             logging.error(f"Error loading metrics from database: {e}")
 
     async def record_request(
-        self, _request_type: str, response_time: float, success: bool = True
+        self, _request_type: str, response_time: float, success: bool = True, user_id: int = None
     ):
         """Записывает метрики запроса (Fast in-memory update)"""
         self._events_queue.put_nowait(
-            {"type": "request", "response_time": response_time, "success": success}
+            {"type": "request", "response_time": response_time, "success": success, "user_id": user_id}
         )
 
     async def record_api_call(
-        self, api_name: str, model: str = None, request_id: str = None
+        self, api_name: str, model: str = None, request_id: str = None, user_id: int = None
     ):
         """Записывает вызов API"""
         current_request_id = request_id or get_request_id()
@@ -366,6 +413,7 @@ class MetricsCollector:
                 "model": model,
                 "request_id": current_request_id,
                 "timestamp": datetime.now().isoformat(),
+                "user_id": user_id,
             }
         )
 

@@ -13,7 +13,7 @@ class TestIOHandlers(unittest.TestCase):
     def tearDown(self):
         self.loop.close()
 
-    @patch("app.document_processor.DocumentProcessor._process_pdf_with_pypdf2_path")
+    @patch("app.document_processor.DocumentProcessor._process_pdf_unified")
     def test_process_pdf_downloads_to_drive(self, mock_process_path):
         from app.document_processor import DocumentProcessor
 
@@ -37,7 +37,7 @@ class TestIOHandlers(unittest.TestCase):
 
         self.loop.run_until_complete(run_test())
 
-    @patch("app.document_processor.DocumentProcessor._process_word_path")
+    @patch("app.document_processor.DocumentProcessor._process_word_unified")
     def test_process_word_downloads_to_drive(self, mock_process_path):
         from app.document_processor import DocumentProcessor
 

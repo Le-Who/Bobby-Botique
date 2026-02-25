@@ -495,14 +495,97 @@ async def _init_schema():
         )
     """)
 
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS user_state (
+            user_id BIGINT PRIMARY KEY,
+            document_mode BOOLEAN DEFAULT FALSE,
+            selected_document_id INTEGER,
+            awaiting_custom_role_input BOOLEAN DEFAULT FALSE,
+            generated_role JSONB,
+            last_custom_role_prompt TEXT,
+            generating_custom_role BOOLEAN DEFAULT FALSE,
+            last_sent_message_text TEXT,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS feedback (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL,
+            message_id BIGINT,
+            rating TEXT NOT NULL CHECK (rating IN ('up', 'down')),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     await setup_row_level_security()
     await _run_migrations()
     await _insert_initial_data()
 
 
 async def _run_migrations():
+    """Run numbered SQL migration files from scripts/migrations/ with version tracking.
+
+    Creates a `schema_migrations` table to track which migrations have been applied.
+    Files are expected to be named NNN_description.sql (e.g. 001_create_metrics_tables.sql).
+    Each file is executed inside a transaction; on error the migration is rolled back.
+    """
+    import pathlib
+
+    # 1. Create version tracking table if it doesn't exist
+    await db_query("""
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version TEXT PRIMARY KEY,
+            filename TEXT NOT NULL,
+            applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # 2. Get already-applied versions
+    applied = await db_query("SELECT version FROM schema_migrations ORDER BY version")
+    applied_versions = {row["version"] for row in applied}
+
+    # 3. Find migration files
+    migrations_dir = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "migrations"
+    if not migrations_dir.exists():
+        logging.info("No migrations directory found at %s — skipping file migrations", migrations_dir)
+        # Fall through to legacy inline migrations below
+    else:
+        sql_files = sorted(migrations_dir.glob("*.sql"))
+
+        for sql_file in sql_files:
+            # Extract version: "001" from "001_create_metrics_tables.sql"
+            version = sql_file.stem.split("_", 1)[0]
+
+            if version in applied_versions:
+                continue  # Already applied
+
+            logging.info("Applying migration %s (%s)...", version, sql_file.name)
+
+            try:
+                sql_content = sql_file.read_text(encoding="utf-8")
+
+                # Execute inside a transaction
+                async with db_manager.pool.acquire() as conn:
+                    async with conn.transaction():
+                        await conn.execute(sql_content)
+                        await conn.execute(
+                            "INSERT INTO schema_migrations (version, filename) VALUES ($1, $2)",
+                            version, sql_file.name,
+                        )
+
+                logging.info("Migration %s applied successfully.", version)
+                applied_versions.add(version)
+
+            except Exception as e:
+                logging.error("Migration %s FAILED: %s", version, e)
+                # Don't halt startup — log and continue
+                break  # Stop at first failure to preserve order
+
+    # 4. Legacy inline migrations (for environments without SQL files)
+    #    These are idempotent column-add checks that run on every startup.
     try:
-        # Document Table Migration
         doc_columns = await db_query(
             "SELECT column_name FROM information_schema.columns WHERE table_name='user_documents'"
         )
@@ -527,36 +610,21 @@ async def _run_migrations():
                     f"ALTER TABLE user_documents ADD COLUMN {col} {col_type};"
                 )
 
-        # Tavily Key Usage Migration
-        tavily_columns = await db_query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='tavily_key_usage'"
-        )
-        if "request_count" in {c["column_name"] for c in tavily_columns}:
-            await db_query(
-                "ALTER TABLE tavily_key_usage RENAME COLUMN request_count TO credit_usage;"
-            )
-
-        # Users Table Migration
         users_columns = await db_query(
             "SELECT column_name FROM information_schema.columns WHERE table_name='users'"
         )
-        if "is_deep_dive" not in {c["column_name"] for c in users_columns}:
+        user_col_names = {c["column_name"] for c in users_columns}
+
+        if "is_deep_dive" not in user_col_names:
             await db_query(
                 "ALTER TABLE users ADD COLUMN is_deep_dive BOOLEAN DEFAULT FALSE;"
             )
 
-        if "deep_dive_thread_id" not in {c["column_name"] for c in users_columns}:
+        if "deep_dive_thread_id" not in user_col_names:
             await db_query("ALTER TABLE users ADD COLUMN deep_dive_thread_id TEXT;")
 
-        # Error Logs Migration
-        error_logs_columns = await db_query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='error_logs'"
-        )
-        if "request_id" not in {c["column_name"] for c in error_logs_columns}:
-            await db_query("ALTER TABLE error_logs ADD COLUMN request_id TEXT;")
-
-    except asyncpg.PostgresError as e:
-        logging.warning(f"Migration warning: {e}")
+    except Exception as e:
+        logging.warning(f"Legacy migration warning: {e}")
 
 
 async def _insert_initial_data():
@@ -643,6 +711,8 @@ RLS_CONFIG = {
     "chats": [{"name": "chats_policy", "template": RLS_POLICY_USER}],
     "user_documents": [{"name": "user_documents_policy", "template": RLS_POLICY_USER}],
     "user_roles": [{"name": "user_roles_policy", "template": RLS_POLICY_USER}],
+    "user_state": [{"name": "user_state_policy", "template": RLS_POLICY_USER}],
+    "feedback": [{"name": "feedback_policy", "template": RLS_POLICY_USER}],
     "conversations": [{"name": "conversations_policy", "template": RLS_POLICY_USER}],
     "roles": [
         {
@@ -1630,3 +1700,98 @@ async def get_conversation_count(user_id: int) -> int:
         return result[0]["count"] if result else 0
     except Exception:
         return 0
+
+
+# =============================================================================
+# USER STATE PERSISTENCE
+# =============================================================================
+
+
+async def load_user_state(user_id: int) -> Optional[Dict[str, Any]]:
+    """Load persisted user state from the database.
+
+    Returns a dict of state fields or None if no saved state exists.
+    """
+    try:
+        result = await db_query(
+            """
+            SELECT document_mode, selected_document_id,
+                   awaiting_custom_role_input, generated_role,
+                   last_custom_role_prompt, generating_custom_role,
+                   last_sent_message_text
+            FROM user_state WHERE user_id = $1
+            """,
+            (user_id,),
+        )
+        if result:
+            row = result[0]
+            # Convert asyncpg Record to plain dict; generated_role is already JSON
+            return {
+                "document_mode": row.get("document_mode", False) or False,
+                "selected_document_id": row.get("selected_document_id"),
+                "awaiting_custom_role_input": row.get("awaiting_custom_role_input", False) or False,
+                "generated_role": row.get("generated_role"),  # JSONB → dict
+                "last_custom_role_prompt": row.get("last_custom_role_prompt"),
+                "generating_custom_role": row.get("generating_custom_role", False) or False,
+                "last_sent_message_text": row.get("last_sent_message_text"),
+            }
+        return None
+    except Exception as e:
+        logging.warning(f"Failed to load user state for {user_id}: {e}")
+        return None
+
+
+async def save_user_state(
+    user_id: int,
+    document_mode: bool = False,
+    selected_document_id: Optional[int] = None,
+    awaiting_custom_role_input: bool = False,
+    generated_role: Optional[dict] = None,
+    last_custom_role_prompt: Optional[str] = None,
+    generating_custom_role: bool = False,
+    last_sent_message_text: Optional[str] = None,
+) -> None:
+    """Persist user state to the database using UPSERT."""
+    try:
+        # Convert generated_role dict to JSON string for JSONB column
+        role_json = json.dumps(generated_role) if generated_role else None
+
+        await db_query(
+            """
+            INSERT INTO user_state (
+                user_id, document_mode, selected_document_id,
+                awaiting_custom_role_input, generated_role,
+                last_custom_role_prompt, generating_custom_role,
+                last_sent_message_text, updated_at
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id) DO UPDATE SET
+                document_mode = EXCLUDED.document_mode,
+                selected_document_id = EXCLUDED.selected_document_id,
+                awaiting_custom_role_input = EXCLUDED.awaiting_custom_role_input,
+                generated_role = EXCLUDED.generated_role,
+                last_custom_role_prompt = EXCLUDED.last_custom_role_prompt,
+                generating_custom_role = EXCLUDED.generating_custom_role,
+                last_sent_message_text = EXCLUDED.last_sent_message_text,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                user_id, document_mode, selected_document_id,
+                awaiting_custom_role_input, role_json,
+                last_custom_role_prompt, generating_custom_role,
+                last_sent_message_text,
+            ),
+        )
+    except Exception as e:
+        logging.warning(f"Failed to save user state for {user_id}: {e}")
+
+
+async def save_feedback(user_id: int, message_id: int, rating: str) -> None:
+    """Save user feedback (thumbs up/down) on an AI response."""
+    try:
+        await db_query(
+            "INSERT INTO feedback (user_id, message_id, rating) VALUES ($1, $2, $3)",
+            (user_id, message_id, rating),
+        )
+    except Exception as e:
+        logging.warning(f"Failed to save feedback for user {user_id}: {e}")
+

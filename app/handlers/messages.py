@@ -424,6 +424,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+
+    # Hydrate persisted user state from DB (lazy, fast no-op if already loaded)
+    from app.state import ensure_state_loaded
+    await ensure_state_loaded(user_id)
+
     request_id = set_request_id(f"tgmsg-{chat_id}-{getattr(update, 'update_id', 'na')}")
 
     # Correlation contract: request_id is propagated as trace_id baseline.
@@ -509,10 +514,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Сохраняем последний пользовательский ввод для кнопки "🔁 Попробовать ещё раз"
     try:
-        from app.state import get_user_state
+        from app.state import set_last_sent_message
 
         if update.message and update.message.text:
-            get_user_state(user_id).last_sent_message_text = update.message.text
+            set_last_sent_message(user_id, update.message.text)
     except Exception:
         logging.exception("Error saving last sent message text")
 

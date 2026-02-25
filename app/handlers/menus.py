@@ -7,9 +7,10 @@ from app.config import settings, get_model_hash, get_openrouter_keys
 from app import prompts
 from app.metrics import get_system_status_data
 from app.document_processor import get_user_documents
+import logging
 
 
-def get_start_menu_content(chat_state):
+async def get_start_menu_content(chat_state, user_id=None):
     search_status = "🟢 ВКЛЮЧЕН" if chat_state.search_enabled else "🔴 ВЫКЛЮЧЕН"
     prompt_status = (
         f"`{chat_state.system_prompt[:50]}...`"
@@ -17,6 +18,33 @@ def get_start_menu_content(chat_state):
         else "Не задана"
     )
     search_icon = "🟢" if chat_state.search_enabled else "🔴"
+
+    # Fetch user context when user_id is provided
+    context_block = ""
+    if user_id:
+        try:
+            # Today's request count (personal — per-user metrics)
+            today_requests = await db.db_query(
+                "SELECT COALESCE(request_count, 0) as cnt FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
+                (user_id,),
+            )
+            req_count = today_requests[0]["cnt"] if today_requests else 0
+
+            # Active documents
+            docs = await get_user_documents(user_id)
+            doc_count = len(docs) if docs else 0
+
+            # Saved conversations
+            conv_count = await db.get_conversation_count(user_id)
+
+            context_block = (
+                "\n**📈 Ваша активность:**\n"
+                f"• Запросов сегодня: `{req_count}`\n"
+                f"• Документов: `{doc_count}`\n"
+                f"• Сохранённых бесед: `{conv_count}`\n"
+            )
+        except Exception as e:
+            logging.debug(f"Could not fetch user context for /start: {e}")
 
     start_text = (
         "🤖 **Добро пожаловать в Gemini Bot!**\n\n"
@@ -28,7 +56,8 @@ def get_start_menu_content(chat_state):
         "**📊 Ваши настройки:**\n"
         f"• Модель: `{chat_state.model}`\n"
         f"• Поиск: {search_status}\n"
-        f"• Инструкция: {prompt_status}\n\n"
+        f"• Инструкция: {prompt_status}\n"
+        f"{context_block}\n"
         "**🚀 Быстрый старт:**\n"
         "• Просто напишите сообщение для чата\n"
         "• `? вопрос` — быстрый ответ\n"
@@ -41,7 +70,7 @@ def get_start_menu_content(chat_state):
         "• `/model` — выбрать модель\n"
         "• `/setprompt` — задать инструкцию\n"
         "• `/documents` — управление документами\n"
-        "• `/metrics` — статистика системы\n"
+        "• `/stats` — ваша статистика\n"
         "• `/roles` — выбор ролей и создание своей\n\n"
         "**💡 Совет:** Начните с простого вопроса!"
     )

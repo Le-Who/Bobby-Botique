@@ -5,6 +5,53 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.5.0] – 2026-02-25 – Sprint 5: Polish & Hardening
+
+### ⚡ ProviderRouter Enhancements
+
+- **Multimodal auto-detection**: Router detects PIL Image / bytes in history and forces Gemini automatically — handlers no longer pass `use_openrouter=False` explicitly.
+- **Per-user rate limiting**: Sliding-window `_UserRateLimiter` (default 20 req/min) prevents abuse. Returns user-friendly `⏳ Слишком много запросов` on throttle.
+
+### 📊 Per-User Metrics
+
+- **`user_metrics` table**: New `(user_id, metric_date)` keyed table tracks personal request counts and model usage.
+- **`MetricsCollector` update**: `record_request()` and `record_api_call()` now accept `user_id` param; per-user data saved to DB alongside global metrics.
+- **`/stats` and `/start` personalized**: Queries now show personal stats (today count, 7-day history, model usage) instead of global.
+
+### 🖼️ Stage Indicators
+
+- Wired `STAGES_PHOTO` into `ai_photo.py`: `_handle_photo` and `_handle_media_group_photos` now show animated processing stages.
+
+### 🧪 Test Coverage (+28 tests → 291 total)
+
+- `test_stage_indicators.py`: 15 tests (definitions, update behavior, capping, sequential, error handling).
+- `test_provider_router.py`: 13 tests (KeyHealth scoring, ProviderRouter retry/skip/detection).
+
+### 🧹 Cleanup
+
+- Removed 4 stale re-exports from `agent.py` facade.
+- Removed unused `from app import services` in `ai_photo.py`.
+
+---
+
+## [2.4.0] – 2026-02-25 – Sprint 4: Legacy Cleanup
+
+### 🧹 Removed Dead Code
+
+- `_LegacyGeminiWrapper` / `_LegacyOpenRouterWrapper` aliases from `ai_provider.py`.
+- `_UserLocksProxy` class + `USER_LOCKS` singleton from `state.py`.
+- `get_user_locks()` backward-compat alias from `state.py`.
+- `_cleanup_memory_cache()` deprecated stub from `cache.py`.
+
+### 🔄 Handler Router Migration (Pre-Sprint-4)
+
+- **All AI handlers** now use `_get_ai_response_with_routing()` instead of direct `services.get_gemini_response()` calls.
+- Migrated: `ai_photo.py` (3 functions), `ai_document.py`, `ai_search.py::_handle_complex_agent_search`.
+- Removed manual `db.increment_gemini_key_usage()` calls — router handles usage tracking internally.
+- Added `handle_ai_response_error()` checks for router error messages.
+
+---
+
 ## [2.3.0] – 2026-02-25 – Codebase Audit, Docker Optimization & Bug Fixes
 
 ### 🧹 Codebase Audit & Cleanup

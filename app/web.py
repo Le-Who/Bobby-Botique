@@ -1,16 +1,55 @@
+"""
+Web dashboard for GemAI Bot v2.
+
+Provides:
+- Cookie-session login (browser-friendly)
+- Comprehensive metrics dashboard
+- JSON API endpoints for operational data
+- Health check (unauthenticated) for Northflank
+"""
+
 import os
 import hmac
 import asyncio
-import inspect
+import hashlib
 import datetime
 import logging
+import time
 from functools import wraps
-from flask import Flask, render_template, request, abort
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    session,
+    abort,
+    jsonify,
+)
 from app import database
 from app.config import settings
 
-# --- WEB SERVER FOR RENDER HEALTH CHECK ---
+# --- FLASK APP SETUP ---
 flask_app = Flask(__name__)
+
+# Derive a secret key for Flask sessions from ADMIN_SECRET
+_admin_secret = os.environ.get("ADMIN_SECRET", "")
+if not _admin_secret and settings:
+    _admin_secret = getattr(settings, "ADMIN_SECRET", "") or ""
+flask_app.secret_key = hashlib.sha256(
+    f"gemaibotv2-session-{_admin_secret}".encode()
+).hexdigest()
+
+# Session configuration
+flask_app.config["SESSION_COOKIE_NAME"] = "gembot_session"
+flask_app.config["SESSION_COOKIE_HTTPONLY"] = True
+flask_app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+flask_app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=7)
+
+
+# =============================================================================
+# SECURITY HEADERS
+# =============================================================================
 
 
 @flask_app.after_request
@@ -19,17 +58,11 @@ def add_security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
 
-    # Content Security Policy (CSP)
-    # Strict policy:
-    # - No scripts allowed (script-src 'none') as the dashboard is pure HTML/CSS
-    # - Styles allowed from self, inline (needed for progress bars), and Google Fonts
-    # - Fonts allowed from self and Google Fonts
-    # - Images allowed from self and data URIs
-    # - No frames allowed
     csp = (
         "default-src 'self'; "
-        "script-src 'none'; "
+        "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data:; "
@@ -40,242 +73,366 @@ def add_security_headers(response):
     return response
 
 
+# =============================================================================
+# AUTHENTICATION
+# =============================================================================
+
+
+def _get_admin_secret():
+    """Returns the configured admin secret."""
+    secret = os.environ.get("ADMIN_SECRET")
+    if not secret and settings:
+        secret = getattr(settings, "ADMIN_SECRET", None)
+    return secret
+
+
+def _is_authenticated():
+    """Check if current request has a valid session or header token."""
+    # Check session cookie first
+    if session.get("authenticated"):
+        return True
+    # Fallback: check X-Auth-Token header (for API/monitoring tools)
+    token = request.headers.get("X-Auth-Token")
+    expected = _get_admin_secret()
+    if token and expected and hmac.compare_digest(token, expected):
+        return True
+    return False
+
+
 def require_auth(f):
-    def validate_auth():
-        # Security: Only allow token via header to prevent leakage in logs/history
-        token = request.headers.get("X-Auth-Token")
-
-        # Determine the expected secret
-        expected_secret = os.environ.get("ADMIN_SECRET")
-        if not expected_secret and settings:
-            expected_secret = getattr(settings, "ADMIN_SECRET", None)
-
-        if not expected_secret:
-            logging.error("No authentication secret configured for web endpoints.")
-            abort(
-                500,
-                description="Server misconfiguration: Authentication secret not set.",
-            )
-
-        # Use constant-time comparison to prevent timing attacks
-        if not token or not hmac.compare_digest(token, expected_secret):
-            abort(
-                401,
-                description="Unauthorized: Invalid or missing token. Use 'X-Auth-Token' header.",
-            )
-
-    if inspect.iscoroutinefunction(f):
-
-        @wraps(f)
-        async def decorated_function(*args, **kwargs):
-            validate_auth()
-            return await f(*args, **kwargs)
-
-        return decorated_function
+    """Decorator that requires authentication via session cookie or header token."""
 
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        validate_auth()
+        if not _is_authenticated():
+            # For API endpoints, return 401 JSON
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Unauthorized"}), 401
+            # For pages, redirect to login
+            return redirect(url_for("login_page"))
         return f(*args, **kwargs)
 
     return decorated_function
 
 
+@flask_app.route("/login", methods=["GET", "POST"])
+def login_page():
+    """Login page with password form."""
+    error = None
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        expected = _get_admin_secret()
+
+        if not expected:
+            error = "Server misconfiguration: ADMIN_SECRET not set."
+        elif hmac.compare_digest(password, expected):
+            session["authenticated"] = True
+            session.permanent = True
+            return redirect(url_for("dashboard"))
+        else:
+            error = "Invalid password."
+
+    return render_template("login.html", error=error)
+
+
+@flask_app.route("/logout")
+def logout():
+    """Clear session and redirect to login."""
+    session.clear()
+    return redirect(url_for("login_page"))
+
+
+# =============================================================================
+# DASHBOARD PAGE
+# =============================================================================
+
+
 @flask_app.route("/")
 @require_auth
 def dashboard():
-    """Main Dashboard Endpoint"""
+    """Main Dashboard — serves the HTML shell. Data loaded via JS fetch."""
     try:
-        # Collect Status Data
-        status_data = {
-            "bot": "running",
-            "database": "connected"
-            if database.is_database_connected()
-            else "disconnected",
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "version": "2.1.0",
-            "environment": os.getenv("ENVIRONMENT", "production"),
-        }
-
-        # System Metrics
-        import psutil
-
-        try:
-            status_data["system"] = {
-                "cpu_percent": psutil.cpu_percent(interval=None),  # Non-blocking
-                "memory_percent": psutil.virtual_memory().percent,
-                "disk_percent": psutil.disk_usage("/").percent,
-            }
-        except ImportError:
-            status_data["system"] = {
-                "cpu_percent": 0,
-                "memory_percent": 0,
-                "disk_percent": 0,
-            }
-
-        return render_template("status.html", status=status_data)
+        return render_template("dashboard.html")
     except Exception as e:
         logging.error(f"Dashboard error: {e}", exc_info=True)
         return "Internal Server Error", 500
 
 
-@flask_app.route("/status")  # Keep JSON API for automated monitoring
-@require_auth
-def status_api():
-    """JSON Status API for external monitoring tools"""
-    try:
-        # Reusing logic for JSON response...
-        status = {
-            "bot": "running",
-            "database": "connected"
-            if database.is_database_connected()
-            else "disconnected",
-            "timestamp": str(datetime.datetime.now()),
-            "system": {},
-        }
-        import psutil
-
-        try:
-            status["system"] = {
-                "cpu_percent": psutil.cpu_percent(interval=None),
-                "memory_percent": psutil.virtual_memory().percent,
-                "disk_percent": psutil.disk_usage("/").percent,
-            }
-        except Exception:
-            pass
-        return status, 200
-    except Exception as e:
-        logging.error(f"Status API error: {e}", exc_info=True)
-        return {"error": "Internal Server Error"}, 500
+# =============================================================================
+# HEALTH CHECK (UNAUTHENTICATED — for Northflank)
+# =============================================================================
 
 
 @flask_app.route("/health")
-async def health_check_endpoint():
-    """Health check endpoint для мониторинга"""
+def health_check_endpoint():
+    """Health check endpoint for Northflank monitoring."""
     try:
-        # Проверяем основные компоненты
-        bot_status = "running"
-        database_status = (
-            "connected" if database.is_database_connected() else "disconnected"
-        )
+        db_ok = database.is_database_connected()
+        overall = "healthy" if db_ok else "unhealthy"
 
-        # Проверяем Redis статус
+        health = {
+            "status": overall,
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+            "service": "gemaibotv2",
+            "services": {
+                "bot": "running",
+                "database": "connected" if db_ok else "disconnected",
+            },
+        }
+
+        # Check Redis without blocking
         try:
             from app.cache import redis_client
 
             if redis_client:
                 try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(redis_client.ping), timeout=3.0
-                    )
-                    redis_status = "connected"
+                    redis_client.ping()
+                    health["services"]["redis"] = "connected"
                 except Exception:
-                    redis_status = "disconnected"
+                    health["services"]["redis"] = "disconnected"
             else:
-                redis_status = "not_configured"
+                health["services"]["redis"] = "not_configured"
         except Exception:
-            redis_status = "disconnected"
+            health["services"]["redis"] = "unknown"
 
-        # Определяем общий статус
-        if database_status == "connected" and bot_status == "running":
-            overall_status = "healthy"
-        elif database_status == "disconnected":
-            overall_status = "unhealthy"
-        else:
-            overall_status = "degraded"
-
-        health_status = {
-            "status": overall_status,
-            "timestamp": str(datetime.datetime.now()),
-            # Remove sensitive info leak
-            "service": "gemaibotv2",
-            "services": {
-                "bot": bot_status,
-                "database": database_status,
-                "redis": redis_status,
-            },
-        }
-
-        # Возвращаем соответствующий HTTP код
-        if overall_status == "healthy":
-            return health_status, 200
-        elif overall_status == "degraded":
-            return health_status, 200  # 200 для degraded, но с предупреждением
-        else:
-            return health_status, 503  # 503 для unhealthy
+        return jsonify(health), 200 if overall == "healthy" else 503
 
     except Exception as e:
         logging.error(f"Health check error: {e}", exc_info=True)
-        return {
-            "status": "unhealthy",
-            "error": "Internal Server Error",
-            "timestamp": str(datetime.datetime.now()),
-        }, 500
+        return jsonify({"status": "unhealthy", "error": str(type(e).__name__)}), 500
 
 
-@flask_app.route("/keys")
-@require_auth
-async def keys_status():
-    """Endpoint для просмотра статуса ключей Gemini API"""
+# =============================================================================
+# API ENDPOINTS — JSON data for dashboard
+# =============================================================================
+
+
+def _run_async(coro):
+    """Run an async coroutine from sync Flask context."""
     try:
-        from app import database
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
 
-        # Получаем статистику ключей
-        key_stats = await database.get_gemini_key_usage_stats()
+    if loop and loop.is_running():
+        import concurrent.futures
 
-        # Получаем информацию об активных ключах
-        active_keys = {}
-        for model in ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]:
-            active_info = await database.get_active_key_info(model)
-            if active_info:
-                active_keys[model] = active_info
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result(timeout=10)
+    else:
+        return asyncio.run(coro)
 
-        keys_status = {
-            "timestamp": str(datetime.datetime.now()),
-            "active_keys": active_keys,
-            "key_usage_stats": key_stats,
-            "cache_info": {
-                "cache_ttl_seconds": 300,
-                "models_cached": list(active_keys.keys()),
+
+@flask_app.route("/api/overview")
+@require_auth
+def api_overview():
+    """High-level system overview: system health, bot uptime, key counts."""
+    try:
+        import psutil
+
+        system = {
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "memory_percent": psutil.virtual_memory().percent,
+            "memory_used_mb": round(
+                psutil.virtual_memory().used / (1024 * 1024), 1
+            ),
+            "memory_total_mb": round(
+                psutil.virtual_memory().total / (1024 * 1024), 1
+            ),
+            "disk_percent": psutil.disk_usage("/").percent,
+        }
+    except Exception:
+        system = {
+            "cpu_percent": 0,
+            "memory_percent": 0,
+            "memory_used_mb": 0,
+            "memory_total_mb": 0,
+            "disk_percent": 0,
+        }
+
+    # Metrics summary
+    try:
+        from app.metrics import metrics_collector
+
+        metrics = _run_async(metrics_collector.get_metrics_summary())
+    except Exception:
+        metrics = {}
+
+    # Database status
+    db_status = database.is_database_connected()
+
+    # Redis status
+    try:
+        from app.cache import redis_client
+
+        redis_ok = bool(redis_client and redis_client.ping())
+    except Exception:
+        redis_ok = False
+
+    return jsonify(
+        {
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+            "system": system,
+            "metrics": metrics,
+            "services": {
+                "database": "connected" if db_status else "disconnected",
+                "redis": "connected" if redis_ok else "disconnected",
+                "bot": "running",
             },
         }
-
-        return keys_status, 200
-
-    except Exception as e:
-        logging.error(f"Keys status error: {e}", exc_info=True)
-        return {
-            "error": "Internal Server Error",
-            "timestamp": str(datetime.datetime.now()),
-        }, 500
+    )
 
 
-@flask_app.route("/keys/<model_name>")
+@flask_app.route("/api/keys")
 @require_auth
-async def model_keys_status(model_name):
-    """Endpoint для просмотра статуса ключей конкретной модели"""
+def api_keys():
+    """API key usage statistics for all models."""
     try:
-        from app import database
+        key_stats = _run_async(database.get_gemini_key_usage_stats())
 
-        # Получаем статистику ключей для конкретной модели
-        key_stats = await database.get_gemini_key_usage_stats(model_name)
+        # Get active keys per model
+        active_keys = {}
+        models = settings.AVAILABLE_MODELS or []
 
-        # Получаем информацию об активном ключе
-        active_info = await database.get_active_key_info(model_name)
+        for model in models:
+            try:
+                info = _run_async(database.get_active_key_info(model))
+                if info:
+                    active_keys[model] = info
+            except Exception:
+                pass
 
-        model_status = {
-            "model": model_name,
-            "timestamp": str(datetime.datetime.now()),
-            "active_key": active_info,
-            "all_keys": key_stats,
-            "daily_limit": settings.DAILY_LIMITS.get(model_name, "unlimited"),
-        }
-
-        return model_status, 200
-
+        return jsonify(
+            {
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "key_usage": key_stats,
+                "active_keys": active_keys,
+                "daily_limits": getattr(settings, "DAILY_LIMITS", {}),
+            }
+        )
     except Exception as e:
-        logging.error(f"Model keys status error: {e}", exc_info=True)
-        return {
-            "error": "Internal Server Error",
-            "timestamp": str(datetime.datetime.now()),
-        }, 500
+        logging.error(f"API keys error: {e}", exc_info=True)
+        return jsonify({"error": str(type(e).__name__)}), 500
+
+
+@flask_app.route("/api/errors")
+@require_auth
+def api_errors():
+    """Recent errors from metrics collector."""
+    try:
+        from app.metrics import metrics_collector
+
+        summary = metrics_collector.get_metrics_summary()
+        return jsonify(
+            {
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "error_count": summary.get("error_count", 0),
+                "error_rate": summary.get("error_rate_percent", 0),
+                "recent_errors": getattr(
+                    metrics_collector, "_recent_errors", []
+                ),
+            }
+        )
+    except Exception as e:
+        logging.error(f"API errors error: {e}", exc_info=True)
+        return jsonify({"error": str(type(e).__name__)}), 500
+
+
+@flask_app.route("/api/cache")
+@require_auth
+def api_cache():
+    """Cache performance statistics."""
+    try:
+        from app.cache import get_cache_stats, get_multi_layer_cache_stats
+
+        redis_stats = get_cache_stats()
+        ml_stats = get_multi_layer_cache_stats()
+
+        return jsonify(
+            {
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "redis": redis_stats,
+                "multi_layer": ml_stats,
+            }
+        )
+    except Exception as e:
+        logging.error(f"API cache error: {e}", exc_info=True)
+        return jsonify({"error": str(type(e).__name__)}), 500
+
+
+@flask_app.route("/api/queue")
+@require_auth
+def api_queue():
+    """Task queue statistics."""
+    try:
+        from app.queue import task_queue
+
+        stats = task_queue.get_queue_stats()
+        return jsonify(
+            {
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "queue": stats,
+            }
+        )
+    except Exception as e:
+        logging.error(f"API queue error: {e}", exc_info=True)
+        return jsonify({"error": str(type(e).__name__)}), 500
+
+
+@flask_app.route("/api/database")
+@require_auth
+def api_database():
+    """Database connection pool and health stats."""
+    try:
+        db_metrics = _run_async(database.get_supabase_metrics())
+        return jsonify(
+            {
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "database": db_metrics,
+            }
+        )
+    except Exception as e:
+        logging.error(f"API database error: {e}", exc_info=True)
+        return jsonify({"error": str(type(e).__name__)}), 500
+
+
+@flask_app.route("/api/circuit-breakers")
+@require_auth
+def api_circuit_breakers():
+    """Circuit breaker states."""
+    try:
+        from app.circuit_breaker import _circuit_breakers
+
+        breakers = {}
+        for name, cb in _circuit_breakers.items():
+            breakers[name] = cb.get_stats()
+
+        return jsonify(
+            {
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "circuit_breakers": breakers,
+            }
+        )
+    except Exception as e:
+        logging.error(f"API circuit breakers error: {e}", exc_info=True)
+        return jsonify({"error": str(type(e).__name__)}), 500
+
+
+@flask_app.route("/api/memory")
+@require_auth
+def api_memory():
+    """Memory manager statistics."""
+    try:
+        from app.memory_manager import get_memory_stats
+
+        stats = get_memory_stats()
+        return jsonify(
+            {
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "memory": stats,
+            }
+        )
+    except Exception as e:
+        logging.error(f"API memory error: {e}", exc_info=True)
+        return jsonify({"error": str(type(e).__name__)}), 500

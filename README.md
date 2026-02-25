@@ -62,7 +62,7 @@ The system runs as a single containerized application performing two parallel as
 
 ### Core Logic & Agentic Workflow
 
-Located in `app/handlers/agent.py`, the intelligent core enables:
+Located in `app/handlers/` as modular sub-handlers (`ai_core.py`, `ai_chat.py`, `ai_search.py`, `ai_photo.py`, `ai_document.py`), with `agent.py` as a thin re-export facade. Capabilities:
 
 - **Deep Dive Research**:
   1.  Analyzes user query.
@@ -81,10 +81,16 @@ Located in `app/handlers/agent.py`, the intelligent core enables:
 The bot implements a sophisticated "Smart Router" for AI requests:
 
 - **Multi-Provider Support**: Seamlessly switches between **Google Gemini** (Flash, Pro) and **OpenRouter** (GPT-4, Claude 3, etc.).
+- **ProviderRouter** (v2.4+):
+  - Per-key health scoring (exponential decay on failure, linear recovery).
+  - Automatic key skipping for unhealthy keys with cooldown-based recovery.
+  - **Multimodal auto-detection**: Detects PIL Image / bytes in history and forces Gemini automatically.
+  - **Per-user rate limiting**: Sliding-window throttle (default 20 req/min) prevents abuse.
 - **Key Rotation System**:
   - Rotates through a pool of API keys to avoid rate limits.
   - Tracks usage stats (requests/tokens) per key.
-  - **Auto-Fallback**: If a key fails (Quota Exceeded) or a provider is down, it automatically tries the next key or switches to a backup model (e.g., Gemini Pro -> Gemini Flash -> OpenRouter).
+  - **Auto-Fallback**: If a key fails (Quota Exceeded) or a provider is down, it automatically tries the next key or switches to a backup model.
+- **Stage Indicators** (v2.5+): Animated processing stages (🤔→💭→✅) keep users informed during multi-step AI operations.
 
 ### Document Processing
 
@@ -217,17 +223,17 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (258 tests)
+### Suite Structure (291 tests)
 
-| Category           | Files                                                                                       | What They Cover                                      |
-| :----------------- | :------------------------------------------------------------------------------------------ | :--------------------------------------------------- |
-| **Core Logic**     | `test_ai_provider`, `test_agent_optimization`, `test_errors`                                | AI routing, fallback chains, error handling          |
-| **Handlers**       | `test_callbacks`, `test_menus`, `test_io_handlers`                                          | Telegram callback dispatch, menu rendering, file I/O |
-| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`       | Tavily key management, query optimization, cleanup   |
-| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                      | Circuit breaker, TTL cache, race conditions          |
-| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security` | Header enforcement, auth bypass prevention           |
-| **Metrics**        | `test_metrics_integration`, `test_system_status`                                            | Batched metric saves, system status data             |
-| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                  | Text formatting, keyboard builders, timezone math    |
+| Category           | Files                                                                                       | What They Cover                                     |
+| :----------------- | :------------------------------------------------------------------------------------------ | :-------------------------------------------------- |
+| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`        | AI routing, health scoring, fallback chains, errors |
+| **Handlers**       | `test_callbacks`, `test_menus`, `test_io_handlers`, `test_stage_indicators`                 | Callback dispatch, menu rendering, file I/O, stages |
+| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`       | Tavily key management, query optimization, cleanup  |
+| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                      | Circuit breaker, TTL cache, race conditions         |
+| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security` | Header enforcement, auth bypass prevention          |
+| **Metrics**        | `test_metrics_integration`, `test_system_status`                                            | Batched metric saves, system status data            |
+| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                  | Text formatting, keyboard builders, timezone math   |
 
 ### Mock Isolation Rule
 

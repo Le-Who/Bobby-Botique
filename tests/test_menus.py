@@ -285,7 +285,8 @@ def get_menu_methods():
 
 
 @pytest.mark.unit
-def test_start_menu_content_search_on_prompt_set():
+@pytest.mark.asyncio
+async def test_start_menu_content_search_on_prompt_set():
     """Test start menu content when search is enabled and system prompt is set."""
     chat_state = ChatState(
         model="gemini-pro",
@@ -294,7 +295,7 @@ def test_start_menu_content_search_on_prompt_set():
     )
 
     get_start_menu_content, _ = get_menu_methods()
-    response = get_start_menu_content(chat_state)
+    response = await get_start_menu_content(chat_state)
     verify_response_structure(response, "HTML")
     text, parse_mode, reply_markup = response
 
@@ -320,12 +321,13 @@ def test_start_menu_content_search_on_prompt_set():
 
 
 @pytest.mark.unit
-def test_start_menu_content_search_off_prompt_unset():
+@pytest.mark.asyncio
+async def test_start_menu_content_search_off_prompt_unset():
     """Test start menu content when search is disabled and system prompt is not set."""
     chat_state = ChatState(model="gpt-4", search_enabled=False, system_prompt=None)
 
     get_start_menu_content, _ = get_menu_methods()
-    response = get_start_menu_content(chat_state)
+    response = await get_start_menu_content(chat_state)
     verify_response_structure(response, "HTML")
     text, _, reply_markup = response
 
@@ -348,14 +350,15 @@ def test_start_menu_content_search_off_prompt_unset():
 
 
 @pytest.mark.unit
-def test_start_menu_buttons_structure():
+@pytest.mark.asyncio
+async def test_start_menu_buttons_structure():
     """Verify the overall structure of the start menu buttons."""
     chat_state = ChatState(
         model="test-model", search_enabled=True, system_prompt="test"
     )
 
     get_start_menu_content, _ = get_menu_methods()
-    response = get_start_menu_content(chat_state)
+    response = await get_start_menu_content(chat_state)
     verify_response_structure(response, "HTML")
     _, _, reply_markup = response
 
@@ -540,14 +543,15 @@ def test_context_update(mock_get_keys, mock_settings_obj, mock_context):
         ("special/model:v1.0", True, "Prompt with 特殊字符"),  # Special characters
     ],
 )
-def test_start_menu_edge_cases(model, search_enabled, prompt):
+@pytest.mark.asyncio
+async def test_start_menu_edge_cases(model, search_enabled, prompt):
     """Test start menu with edge case inputs."""
     chat_state = ChatState(
         model=model, search_enabled=search_enabled, system_prompt=prompt
     )
 
     get_start_menu_content, _ = get_menu_methods()
-    response = get_start_menu_content(chat_state)
+    response = await get_start_menu_content(chat_state)
     verify_response_structure(response)
     text, _, reply_markup = response
 

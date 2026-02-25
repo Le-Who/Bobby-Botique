@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GemAI Bot v2 | Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Work+Sans:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="topbar-left">
+        <span class="topbar-logo">GEMAIBOT</span>
+        <span class="topbar-version">v2</span>
+      </div>
+      <div class="topbar-right">
+        <span class="topbar-clock" id="clock"></span>
+        <span class="topbar-dot" id="live-dot"></span>
+        <span class="topbar-live">LIVE</span>
+        <a href="{{ url_for('logout') }}" class="topbar-logout" title="Sign out"
+          >↗ Logout</a
+        >
+      </div>
+    </div>
+
+    <div class="dash">
+      <!-- ROW 1: System Health -->
+      <section class="dash-section">
+        <h2 class="section-title">System Health</h2>
+        <div class="card-row quad">
+          <div class="card" id="card-cpu">
+            <div class="card-label">CPU</div>
+            <div class="card-value" id="cpu-val">—</div>
+            <div class="card-bar">
+              <div class="card-bar-fill" id="cpu-bar"></div>
+            </div>
+          </div>
+          <div class="card" id="card-mem">
+            <div class="card-label">Memory</div>
+            <div class="card-value" id="mem-val">—</div>
+            <div class="card-sub" id="mem-detail"></div>
+            <div class="card-bar">
+              <div class="card-bar-fill" id="mem-bar"></div>
+            </div>
+          </div>
+          <div class="card" id="card-disk">
+            <div class="card-label">Disk</div>
+            <div class="card-value" id="disk-val">—</div>
+            <div class="card-bar">
+              <div class="card-bar-fill" id="disk-bar"></div>
+            </div>
+          </div>
+          <div class="card" id="card-services">
+            <div class="card-label">Services</div>
+            <div class="services-grid" id="service-dots">
+              <div class="svc">
+                <span class="dot dot-unknown" id="svc-db"></span> Database
+              </div>
+              <div class="svc">
+                <span class="dot dot-unknown" id="svc-redis"></span> Redis
+              </div>
+              <div class="svc">
+                <span class="dot dot-unknown" id="svc-bot"></span> Bot
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ROW 2: Performance Metrics -->
+      <section class="dash-section">
+        <h2 class="section-title">Performance</h2>
+        <div class="card-row quad">
+          <div class="card">
+            <div class="card-label">Requests</div>
+            <div class="card-value mono" id="req-count">—</div>
+            <div class="card-sub" id="req-sub"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Avg Response</div>
+            <div class="card-value mono" id="avg-resp">—</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Error Rate</div>
+            <div class="card-value mono" id="error-rate">—</div>
+            <div class="card-sub" id="error-count-sub"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Cache Hit Rate</div>
+            <div class="card-value mono" id="cache-hit">—</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ROW 3: AI Keys & Circuit Breakers -->
+      <section class="dash-section">
+        <h2 class="section-title">AI Provider Status</h2>
+        <div class="card-row two-col">
+          <div class="card card-wide">
+            <div class="card-label">API Key Usage (Today)</div>
+            <div class="key-table-wrap">
+              <table class="key-table" id="key-table">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Key</th>
+                    <th>Used</th>
+                    <th>Limit</th>
+                    <th>%</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="key-tbody"></tbody>
+              </table>
+              <div class="empty-state" id="keys-empty">No key usage data</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">Circuit Breakers</div>
+            <div id="cb-list" class="cb-list">
+              <div class="empty-state">Loading...</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ROW 4: Database & Queue -->
+      <section class="dash-section">
+        <h2 class="section-title">Infrastructure</h2>
+        <div class="card-row triple">
+          <div class="card">
+            <div class="card-label">Database Pool</div>
+            <div class="db-stats" id="db-stats">
+              <div class="stat-line">
+                <span class="sl-label">Status</span>
+                <span class="sl-val" id="db-status">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Pool Size</span>
+                <span class="sl-val mono" id="db-pool">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Active</span>
+                <span class="sl-val mono" id="db-active">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Free</span>
+                <span class="sl-val mono" id="db-free">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Latency</span>
+                <span class="sl-val mono" id="db-latency">—</span>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">Task Queue</div>
+            <div class="db-stats" id="queue-stats">
+              <div class="stat-line">
+                <span class="sl-label">Pending</span>
+                <span class="sl-val mono" id="q-pending">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Running</span>
+                <span class="sl-val mono" id="q-running">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Completed</span>
+                <span class="sl-val mono" id="q-completed">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Failed</span>
+                <span class="sl-val mono" id="q-failed">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Workers</span>
+                <span class="sl-val mono" id="q-workers">—</span>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-label">Cache Details</div>
+            <div class="db-stats" id="cache-stats">
+              <div class="stat-line">
+                <span class="sl-label">Memory Hits</span>
+                <span class="sl-val mono" id="c-mem-hits">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Redis Hits</span>
+                <span class="sl-val mono" id="c-redis-hits">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Misses</span>
+                <span class="sl-val mono" id="c-misses">—</span>
+              </div>
+              <div class="stat-line">
+                <span class="sl-label">Memory Items</span>
+                <span class="sl-val mono" id="c-mem-items">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="dash-footer">
+      <span>GemAI Bot v2 Operations Dashboard</span>
+      <span id="last-update">—</span>
+    </footer>
+
+    <script>
+      // =====================================================================
+      // Dashboard data fetcher — polls all API endpoints every 15 seconds
+      // =====================================================================
+
+      const API = {
+        overview: "/api/overview",
+        keys: "/api/keys",
+        errors: "/api/errors",
+        cache: "/api/cache",
+        queue: "/api/queue",
+        database: "/api/database",
+        circuitBreakers: "/api/circuit-breakers",
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      // Clock
+      function updateClock() {
+        const now = new Date();
+        $("clock").textContent = now.toLocaleTimeString("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+      }
+      setInterval(updateClock, 1000);
+      updateClock();
+
+      // Blink the live dot
+      setInterval(() => {
+        const dot = $("live-dot");
+        dot.style.opacity = dot.style.opacity === "0.3" ? "1" : "0.3";
+      }, 1000);
+
+      // Helper: set bar color based on value
+      function setBarLevel(barEl, cardEl, pct) {
+        barEl.style.width = pct + "%";
+        barEl.className = "card-bar-fill";
+        if (pct > 85) {
+          barEl.classList.add("bar-critical");
+          cardEl.classList.add("card-critical");
+        } else if (pct > 70) {
+          barEl.classList.add("bar-warning");
+          cardEl.classList.add("card-warning");
+        } else {
+          cardEl.classList.remove("card-critical", "card-warning");
+        }
+      }
+
+      // Helper: set service dot
+      function setDot(id, status) {
+        const el = $(id);
+        el.className = "dot";
+        if (
+          status === "connected" ||
+          status === "running" ||
+          status === "healthy"
+        )
+          el.classList.add("dot-ok");
+        else if (
+          status === "disconnected" ||
+          status === "unhealthy" ||
+          status === "error"
+        )
+          el.classList.add("dot-err");
+        else el.classList.add("dot-warn");
+      }
+
+      // Fetch with session — redirect to login on 401
+      async function apiFetch(url) {
+        const res = await fetch(url);
+        if (res.status === 401) {
+          window.location.href = "/login";
+          return null;
+        }
+        if (!res.ok) return null;
+        return await res.json();
+      }
+
+      // =====================================================================
+      // Data loaders
+      // =====================================================================
+
+      async function loadOverview() {
+        const d = await apiFetch(API.overview);
+        if (!d) return;
+
+        const s = d.system;
+        $("cpu-val").textContent = s.cpu_percent + "%";
+        setBarLevel($("cpu-bar"), $("card-cpu"), s.cpu_percent);
+
+        $("mem-val").textContent = s.memory_percent + "%";
+        $("mem-detail").textContent =
+          s.memory_used_mb + " / " + s.memory_total_mb + " MB";
+        setBarLevel($("mem-bar"), $("card-mem"), s.memory_percent);
+
+        $("disk-val").textContent = s.disk_percent + "%";
+        setBarLevel($("disk-bar"), $("card-disk"), s.disk_percent);
+
+        // Services
+        const svc = d.services;
+        setDot("svc-db", svc.database);
+        setDot("svc-redis", svc.redis);
+        setDot("svc-bot", svc.bot);
+
+        // Metrics
+        const m = d.metrics;
+        if (m) {
+          $("req-count").textContent = (m.request_count || 0).toLocaleString();
+          const avgMs =
+            m.average_response_time_ms ||
+            (m.average_response_time ? m.average_response_time * 1000 : 0);
+          $("avg-resp").textContent = avgMs ? avgMs.toFixed(0) + "ms" : "—";
+          const errRate = m.error_rate_percent || m.error_rate || 0;
+          $("error-rate").textContent =
+            (typeof errRate === "number" ? errRate.toFixed(1) : errRate) + "%";
+          $("error-count-sub").textContent =
+            (m.error_count || 0) + " errors total";
+          const cacheRate = m.cache_hit_rate_percent || m.cache_hit_rate || 0;
+          $("cache-hit").textContent =
+            (typeof cacheRate === "number" ? cacheRate.toFixed(1) : cacheRate) +
+            "%";
+        }
+
+        $("last-update").textContent =
+          "Updated: " + new Date().toLocaleTimeString();
+      }
+
+      async function loadKeys() {
+        const d = await apiFetch(API.keys);
+        if (!d) return;
+
+        const tbody = $("key-tbody");
+        const empty = $("keys-empty");
+        const rows = d.key_usage || [];
+
+        if (rows.length === 0) {
+          tbody.innerHTML = "";
+          empty.style.display = "block";
+          return;
+        }
+        empty.style.display = "none";
+
+        tbody.innerHTML = rows
+          .map((r) => {
+            const pct =
+              r.usage_percent != null
+                ? Number(r.usage_percent).toFixed(1)
+                : "—";
+            const statusCls = r.is_available ? "tag-ok" : "tag-err";
+            const statusTxt = r.is_available ? "OK" : "LIMIT";
+            return `<tr>
+                <td class="mono">${r.model_name || "—"}</td>
+                <td class="mono dim">${r.api_key_preview || r.key_hash?.substring(0, 10) || "—"}</td>
+                <td class="mono">${r.request_count ?? 0}</td>
+                <td class="mono">${r.daily_limit ?? "∞"}</td>
+                <td class="mono">${pct}%</td>
+                <td><span class="tag ${statusCls}">${statusTxt}</span></td>
+            </tr>`;
+          })
+          .join("");
+      }
+
+      async function loadCircuitBreakers() {
+        const d = await apiFetch(API.circuitBreakers);
+        if (!d) return;
+
+        const list = $("cb-list");
+        const cbs = d.circuit_breakers || {};
+        const names = Object.keys(cbs);
+
+        if (names.length === 0) {
+          list.innerHTML =
+            '<div class="empty-state">No circuit breakers active</div>';
+          return;
+        }
+
+        list.innerHTML = names
+          .map((name) => {
+            const cb = cbs[name];
+            const state = cb.state || "unknown";
+            const dotCls =
+              state === "closed"
+                ? "dot-ok"
+                : state === "open"
+                  ? "dot-err"
+                  : "dot-warn";
+            return `<div class="cb-item">
+                <span class="dot ${dotCls}"></span>
+                <span class="cb-name">${name}</span>
+                <span class="cb-state mono">${state.toUpperCase()}</span>
+                <span class="cb-detail mono dim">${cb.failure_count || 0} fails</span>
+            </div>`;
+          })
+          .join("");
+      }
+
+      async function loadDatabase() {
+        const d = await apiFetch(API.database);
+        if (!d || !d.database) return;
+
+        const db = d.database;
+        $("db-status").textContent = db.status || "—";
+        $("db-status").className =
+          "sl-val " + (db.status === "connected" ? "val-ok" : "val-err");
+        $("db-pool").textContent = db.pool_size ?? "—";
+        $("db-active").textContent = db.active_connections ?? "—";
+        $("db-free").textContent = db.free_size ?? "—";
+        $("db-latency").textContent =
+          db.response_time_ms != null ? db.response_time_ms + "ms" : "—";
+      }
+
+      async function loadQueue() {
+        const d = await apiFetch(API.queue);
+        if (!d || !d.queue) return;
+
+        const q = d.queue;
+        $("q-pending").textContent = q.pending ?? q.pending_tasks ?? "—";
+        $("q-running").textContent = q.running ?? q.running_tasks ?? "—";
+        $("q-completed").textContent = q.completed ?? q.completed_tasks ?? "—";
+        $("q-failed").textContent = q.failed ?? q.failed_tasks ?? "—";
+        $("q-workers").textContent = q.workers ?? q.active_workers ?? "—";
+      }
+
+      async function loadCache() {
+        const d = await apiFetch(API.cache);
+        if (!d) return;
+
+        const ml = d.multi_layer || {};
+        const mem = ml.memory || {};
+        $("c-mem-hits").textContent = mem.hits ?? ml.memory_hits ?? "—";
+        $("c-redis-hits").textContent = ml.redis_hits ?? "—";
+        $("c-misses").textContent = mem.misses ?? ml.misses ?? "—";
+        $("c-mem-items").textContent =
+          mem.total_items ?? ml.memory_items ?? "—";
+      }
+
+      // =====================================================================
+      // Poll loop
+      // =====================================================================
+
+      async function refreshAll() {
+        try {
+          await Promise.all([
+            loadOverview(),
+            loadKeys(),
+            loadCircuitBreakers(),
+            loadDatabase(),
+            loadQueue(),
+            loadCache(),
+          ]);
+        } catch (e) {
+          console.error("Dashboard refresh error:", e);
+        }
+      }
+
+      // Initial load
+      refreshAll();
+      // Refresh every 15 seconds
+      setInterval(refreshAll, 15000);
+    </script>
+  </body>
+</html>

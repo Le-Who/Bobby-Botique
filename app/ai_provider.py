@@ -4,15 +4,19 @@ AI Provider abstraction layer for unified API interactions.
 This module provides:
 - BaseAIProvider abstract class defining common interface
 - GeminiProvider and OpenRouterProvider implementations
+- ProviderRouter with per-key health scoring and automatic failover
 - Unified get_ai_response() function with automatic provider selection
 - Common validation, retry logic, and error handling
 """
 
+import logging
+import time
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, List, Dict, Any
-from dataclasses import dataclass
+from typing import Optional, Tuple, List, Dict, Any, Set
+from dataclasses import dataclass, field
+from collections import deque
 
-from app.errors import user_friendly_error
+from app.errors import user_friendly_error, is_error_message, is_key_related_error
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
 
@@ -203,16 +207,14 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
     Returns:
         Appropriate AIProvider instance
     """
-    # Import here to avoid circular imports
     if is_openrouter_model(model_name):
-        # For now, wrap existing function. Full implementation would create OpenRouterProvider
-        return _LegacyOpenRouterWrapper(api_key)
+        return OpenRouterProvider(api_key)
     else:
-        return _LegacyGeminiWrapper(api_key)
+        return GeminiProvider(api_key)
 
 
-class _LegacyGeminiWrapper(BaseAIProvider):
-    """Wrapper for existing get_gemini_response function."""
+class GeminiProvider(BaseAIProvider):
+    """Google Gemini AI provider."""
 
     provider_name = "gemini"
 
@@ -255,8 +257,10 @@ class _LegacyGeminiWrapper(BaseAIProvider):
         )
 
 
-class _LegacyOpenRouterWrapper(BaseAIProvider):
-    """Wrapper for existing get_openrouter_response function."""
+
+
+class OpenRouterProvider(BaseAIProvider):
+    """OpenRouter AI provider."""
 
     provider_name = "openrouter"
 
@@ -297,6 +301,246 @@ class _LegacyOpenRouterWrapper(BaseAIProvider):
             provider=self.provider_name,
             model=model_name,
         )
+
+
+
+
+# ── ProviderRouter ───────────────────────────────────────────────────────────
+
+
+@dataclass
+class KeyHealth:
+    """Health score for an individual API key."""
+
+    key_hash: str
+    score: float = 1.0  # 1.0 = perfect health, 0.0 = dead
+    consecutive_failures: int = 0
+    last_failure_time: float = 0.0
+    total_successes: int = 0
+    total_failures: int = 0
+
+    # Tuning knobs
+    _DECAY_PER_FAILURE: float = 0.4  # multiplicative penalty per failure
+    _RECOVERY_PER_SUCCESS: float = 0.15  # additive recovery per success
+    _COOLDOWN_SECONDS: float = 30.0  # time before deprioritized key is retried
+
+    def record_failure(self) -> None:
+        self.consecutive_failures += 1
+        self.total_failures += 1
+        self.score = max(0.0, self.score * (1. - self._DECAY_PER_FAILURE))
+        self.last_failure_time = time.monotonic()
+
+    def record_success(self) -> None:
+        self.consecutive_failures = 0
+        self.total_successes += 1
+        self.score = min(1.0, self.score + self._RECOVERY_PER_SUCCESS)
+
+    @property
+    def is_healthy(self) -> bool:
+        """Key is healthy enough to try."""
+        if self.score >= 0.3:
+            return True
+        # Allow retry after cooldown even if score is low
+        elapsed = time.monotonic() - self.last_failure_time
+        return elapsed >= self._COOLDOWN_SECONDS
+
+def _has_multimodal_content(history: list) -> bool:
+    """Detect if history contains multimodal (image) parts."""
+    try:
+        from PIL import Image as PILImage
+    except ImportError:
+        return False
+    for message in history:
+        parts = message.get("parts", [])
+        for part in parts:
+            if isinstance(part, PILImage.Image):
+                return True
+            if isinstance(part, (bytes, bytearray)):
+                return True
+    return False
+
+
+class _UserRateLimiter:
+    """Sliding-window per-user rate limiter."""
+
+    def __init__(self, max_per_minute: int = 20):
+        self._max = max_per_minute
+        self._windows: Dict[int, deque] = {}
+
+    def check(self, user_id: Optional[int]) -> bool:
+        """Return True if request is allowed, False if rate limited."""
+        if not user_id or self._max <= 0:
+            return True
+        now = time.monotonic()
+        if user_id not in self._windows:
+            self._windows[user_id] = deque()
+        window = self._windows[user_id]
+        # Remove timestamps older than 60s
+        while window and now - window[0] > 60:
+            window.popleft()
+        if len(window) >= self._max:
+            return False
+        window.append(now)
+        return True
+
+class ProviderRouter:
+    """
+    Routes AI requests to the right provider with key rotation and health scoring.
+
+    Wraps the existing AgentRequestUseCase logic while adding:
+    - Per-key health tracking (exponential decay on failure, linear recovery)
+    - Automatic key skipping for unhealthy keys
+    - Cooldown-based recovery for deprioritized keys
+    """
+
+    def __init__(self, rate_limit_per_minute: int = 20) -> None:
+        self._key_health: Dict[str, KeyHealth] = {}
+        self._rate_limiter = _UserRateLimiter(max_per_minute=rate_limit_per_minute)
+
+    def _get_health(self, key_hash: str) -> KeyHealth:
+        if key_hash not in self._key_health:
+            self._key_health[key_hash] = KeyHealth(key_hash=key_hash)
+        return self._key_health[key_hash]
+
+    async def get_response(
+        self,
+        preferred_model: str,
+        history: list,
+        system_instruction: Optional[str] = None,
+        user_id: Optional[int] = None,
+        chat_id: Optional[int] = None,
+        use_openrouter: Optional[bool] = None,
+        max_key_retries: int = 3,
+    ) -> Tuple[str, Optional[int]]:
+        """
+        Get AI response with automatic key rotation and health-aware selection.
+
+        Delegates to AgentRequestUseCase for key resolution, but wraps it
+        with health tracking so persistently-failing keys are deprioritized.
+        """
+        from app.agent_use_cases import AgentRequestUseCase
+
+        # Per-user rate limiting
+        if not self._rate_limiter.check(user_id):
+            return (
+                "⏳ Слишком много запросов. Пожалуйста, подождите минуту.",
+                None,
+            )
+
+        # Auto-detect multimodal content → force Gemini
+        if use_openrouter is None and _has_multimodal_content(history):
+            use_openrouter = False
+
+        use_case = AgentRequestUseCase()
+        failed_keys: Set[str] = set()
+
+        for attempt in range(max_key_retries):
+            key_data, model_used, resolution = await use_case.resolve_ai_request(
+                preferred_model,
+                use_openrouter=use_openrouter,
+                excluded_key_hashes=failed_keys,
+            )
+
+            if not key_data:
+                if resolution == "all_exhausted":
+                    is_or = (
+                        use_openrouter
+                        if use_openrouter is not None
+                        else ("/" in preferred_model)
+                    )
+                    provider_name = "OpenRouter" if is_or else "Gemini"
+                    return (
+                        f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже.",
+                        None,
+                    )
+                if resolution == "no_keys":
+                    return (
+                        "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.",
+                        None,
+                    )
+                return (
+                    "🚫 Не удалось получить доступный ключ API. Попробуйте позже.",
+                    None,
+                )
+
+            # Skip unhealthy keys unless this is our last resort
+            health = self._get_health(key_data["key_hash"])
+            if not health.is_healthy and attempt < max_key_retries - 1:
+                failed_keys.add(key_data["key_hash"])
+                logging.debug(
+                    f"Skipping unhealthy key {key_data['key_hash'][:8]}... "
+                    f"(score={health.score:.2f})"
+                )
+                continue
+
+            # Execute the request
+            response_text, token_count = await use_case.get_ai_response(
+                key_data["api_key"],
+                history,
+                model_used,
+                system_instruction,
+                user_id,
+                chat_id,
+                use_openrouter,
+            )
+
+            # Track health based on response
+            if (
+                response_text
+                and is_error_message(response_text)
+                and is_key_related_error(response_text)
+            ):
+                health.record_failure()
+                failed_keys.add(key_data["key_hash"])
+                logging.warning(
+                    f"Key {key_data['key_hash'][:8]}... failed "
+                    f"(score={health.score:.2f}, attempt {attempt + 1}/{max_key_retries}). "
+                    f"Error: {response_text[:100]}..."
+                )
+                continue
+
+            # Success — update health and increment usage
+            if response_text and not is_error_message(response_text):
+                health.record_success()
+                await use_case.increment_key_usage(
+                    key_data["key_hash"], model_used, use_openrouter
+                )
+
+            return response_text, token_count
+
+        is_or = (
+            use_openrouter if use_openrouter is not None else ("/" in preferred_model)
+        )
+        provider_name = "OpenRouter" if is_or else "Gemini"
+        return (
+            f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",
+            None,
+        )
+
+    def get_key_stats(self) -> Dict[str, Dict[str, Any]]:
+        """Return health stats for all tracked keys (for diagnostics)."""
+        return {
+            kh.key_hash[:8]: {
+                "score": round(kh.score, 3),
+                "consecutive_failures": kh.consecutive_failures,
+                "total_successes": kh.total_successes,
+                "total_failures": kh.total_failures,
+                "is_healthy": kh.is_healthy,
+            }
+            for kh in self._key_health.values()
+        }
+
+
+# Module-level singleton
+_provider_router: Optional[ProviderRouter] = None
+
+
+def get_provider_router() -> ProviderRouter:
+    """Get the singleton ProviderRouter instance."""
+    global _provider_router
+    if _provider_router is None:
+        _provider_router = ProviderRouter()
+    return _provider_router
 
 
 async def get_ai_response(

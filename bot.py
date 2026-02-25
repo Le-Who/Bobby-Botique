@@ -443,8 +443,21 @@ async def main():
     memory_manager = None
 
     try:
-        setup_detailed_logging()
-        logging.info("Bot starting up - Detailed logging enabled")
+        # Auto-enable structured JSON logging in production containers
+        _structured = os.environ.get("STRUCTURED_LOGGING", "").lower()
+        if _structured in ("1", "true", "yes"):
+            _use_json = True
+        elif _structured in ("0", "false", "no"):
+            _use_json = False
+        else:
+            # Auto-detect: production has DATABASE_URL set
+            _use_json = bool(os.environ.get("DATABASE_URL"))
+
+        setup_detailed_logging(enable_structured_logging=_use_json)
+        logging.info(
+            "Bot starting up — %s logging enabled",
+            "structured JSON" if _use_json else "text",
+        )
 
         try:
             await database.init_db()

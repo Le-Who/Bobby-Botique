@@ -339,9 +339,6 @@ class MultiLayerCache:
         else:
             return self.default_cache
 
-    def _cleanup_memory_cache(self):
-        """Deprecated: TTLCache handles eviction automatically"""
-        pass
 
     async def get(self, key: str, search_type: str) -> Optional[Dict[str, Any]]:
         """Gets value from multi-layer cache"""

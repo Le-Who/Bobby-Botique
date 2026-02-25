@@ -25,8 +25,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         chat_state = await db.get_user_chat(user_id)
-        formatted_text, parse_mode, reply_markup = menus.get_start_menu_content(
-            chat_state
+        formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(
+            chat_state, user_id=user_id
         )
 
         await update.message.reply_text(
@@ -990,6 +990,83 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+@authorized_only
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает личную статистику пользователя"""
+    user_id = update.effective_user.id
+    logging.info(f"Stats command from user {user_id}")
+
+    try:
+        # Сегодня (personal — per-user metrics)
+        today_res = await db.db_query(
+            "SELECT COALESCE(request_count, 0) as cnt FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
+            (user_id,),
+        )
+        today_count = today_res[0]["cnt"] if today_res else 0
+
+        # Последние 7 дней (personal)
+        week_res = await db.db_query(
+            "SELECT metric_date, request_count as cnt "
+            "FROM user_metrics WHERE user_id = $1 AND metric_date >= CURRENT_DATE - INTERVAL '6 days' "
+            "ORDER BY metric_date",
+            (user_id,),
+        )
+
+        # Использование моделей за сегодня (personal, из JSONB model_usage)
+        model_res = await db.db_query(
+            "SELECT key as model_name, value::int as cnt "
+            "FROM user_metrics, jsonb_each_text(model_usage) "
+            "WHERE user_id = $1 AND metric_date = CURRENT_DATE "
+            "ORDER BY value::int DESC",
+            (user_id,),
+        )
+
+        # Документы
+        from app.document_processor import get_user_documents
+        docs = await get_user_documents(user_id)
+        doc_count = len(docs) if docs else 0
+
+        # Беседы
+        conv_count = await db.get_conversation_count(user_id)
+
+        # Формируем текст
+        text = (
+            "📊 **Ваша статистика**\n\n"
+            f"📅 **Сегодня:** `{today_count}` запросов\n\n"
+        )
+
+        # Недельная история
+        if week_res:
+            text += "📈 **Последние 7 дней:**\n"
+            for row in week_res:
+                date_str = row["metric_date"].strftime("%d.%m") if hasattr(row["metric_date"], "strftime") else str(row["metric_date"])[:5]
+                bar = "█" * min(int(row["cnt"]), 20)  # Simple bar chart
+                text += f"  `{date_str}` {bar} `{row['cnt']}`\n"
+            text += "\n"
+
+        # Модели
+        if model_res:
+            text += "🤖 **Модели сегодня:**\n"
+            for row in model_res:
+                text += f"  • `{row['model_name']}`: `{row['cnt']}` запросов\n"
+            text += "\n"
+
+        text += (
+            f"📄 **Документов:** `{doc_count}`\n"
+            f"📝 **Сохранённых бесед:** `{conv_count}`\n"
+        )
+
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        logging.info(f"Stats command completed for user {user_id}")
+
+    except Exception as e:
+        logging.error(f"Error in stats command for user {user_id}: {e}", exc_info=True)
+        await update.message.reply_text(
+            "❌ Ошибка получения статистики. Попробуйте позже."
+        )
+
+
 def register(application: Application):
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -997,6 +1074,7 @@ def register(application: Application):
     application.add_handler(CommandHandler("model", model_command))
     application.add_handler(CommandHandler("setprompt", set_prompt_command))
     application.add_handler(CommandHandler("res", research_mode_command))
+    application.add_handler(CommandHandler("stats", stats_command))
     # Команды /keystatus и /credits объединены с /metrics
     application.add_handler(CommandHandler("listmodels", list_models_command))
     application.add_handler(CommandHandler("adduser", add_user_command))

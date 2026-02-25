@@ -31,6 +31,8 @@ services:
         secret: true
       - name: ADMIN_ID
         secret: true
+      - name: ADMIN_SECRET
+        secret: true
     ports:
       - port: 10000
         protocol: http

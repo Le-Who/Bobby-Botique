@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from app.ai_provider import (
     BaseAIProvider,
     AIResponse,
+    GeminiProvider,
+    OpenRouterProvider,
     is_openrouter_model,
     get_ai_response,
-    _LegacyGeminiWrapper,
-    _LegacyOpenRouterWrapper,
 )
 
 
@@ -166,13 +166,13 @@ class TestBaseAIProvider:
         assert "ключ" in provider._categorize_error(Exception("401 unauthorized"))
 
 
-class TestLegacyWrappers:
-    """Tests for legacy wrapper classes."""
+class TestProviders:
+    """Tests for provider classes."""
 
     @pytest.mark.asyncio
     async def test_gemini_wrapper_success(self):
-        """LegacyGeminiWrapper should return AIResponse on success."""
-        wrapper = _LegacyGeminiWrapper("test-key")
+        """GeminiProvider should return AIResponse on success."""
+        wrapper = GeminiProvider("test-key")
 
         # Patch at the source module where the function is defined
         with patch(
@@ -196,8 +196,8 @@ class TestLegacyWrappers:
 
     @pytest.mark.asyncio
     async def test_gemini_wrapper_error(self):
-        """LegacyGeminiWrapper should detect error responses."""
-        wrapper = _LegacyGeminiWrapper("test-key")
+        """GeminiProvider should detect error responses."""
+        wrapper = GeminiProvider("test-key")
 
         with patch(
             "app.services.get_gemini_response", new_callable=AsyncMock
@@ -218,8 +218,8 @@ class TestLegacyWrappers:
 
     @pytest.mark.asyncio
     async def test_openrouter_wrapper_success(self):
-        """LegacyOpenRouterWrapper should return AIResponse on success."""
-        wrapper = _LegacyOpenRouterWrapper("test-key")
+        """OpenRouterProvider should return AIResponse on success."""
+        wrapper = OpenRouterProvider("test-key")
 
         with patch(
             "app.services.get_openrouter_response", new_callable=AsyncMock

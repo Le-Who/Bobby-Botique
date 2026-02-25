@@ -101,13 +101,20 @@ def test_security_headers_on_error(client):
 
 
 def test_security_headers_on_auth_failure(client):
-    """Test that security headers are present on 401"""
+    """Test that security headers are present on auth redirect"""
     response = client.get("/")
-    assert response.status_code == 401
+    # Pages now redirect to /login instead of returning 401
+    assert response.status_code == 302
 
     headers = response.headers
     assert headers.get("X-Content-Type-Options") == "nosniff"
     assert headers.get("X-Frame-Options") == "DENY"
+
+    # Also verify API endpoints return 401 with headers
+    response = client.get("/api/overview")
+    assert response.status_code == 401
+    assert response.headers.get("X-Content-Type-Options") == "nosniff"
+    assert response.headers.get("X-Frame-Options") == "DENY"
     """Test that security headers are present even on error pages"""
     # Force an error by accessing a non-existent route or causing an exception
     # Since we are testing headers, a 404 is a good candidate

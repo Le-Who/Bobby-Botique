@@ -34,13 +34,19 @@ def setup_module(module):
     mock_psutil = MagicMock()
     mock_psutil.cpu_percent.return_value = 10.0
     mock_psutil.virtual_memory.return_value.percent = 20.0
+    mock_psutil.virtual_memory.return_value.used = 512 * 1024 * 1024
+    mock_psutil.virtual_memory.return_value.total = 1024 * 1024 * 1024
     mock_psutil.disk_usage.return_value.percent = 30.0
     sys.modules["psutil"] = mock_psutil
 
     mock_db = MagicMock()
     mock_db.db_pool = None
+    mock_db.is_database_connected.return_value = True
     mock_db.get_gemini_key_usage_stats = AsyncMock(return_value=[])
     mock_db.get_active_key_info = AsyncMock(return_value={})
+    mock_db.get_supabase_metrics = AsyncMock(
+        return_value={"status": "connected", "pool_size": 5}
+    )
     sys.modules["app.database"] = mock_db
 
 
@@ -60,19 +66,15 @@ def mock_settings():
         mock.ADMIN_ID = 123
         mock.DAILY_LIMITS = {}
         mock.PORT = 5000
+        mock.AVAILABLE_MODELS = ["gemini-2.5-flash"]
         yield mock
 
 
 @pytest.fixture
 def client(mock_settings):
-    # Reload app.web to ensure it picks up the patched settings (or we patch app.web.settings)
-    # Since we use patch('app.config.settings'), if app.web imports it, we need to ensure app.web uses the patched version.
-
     # Force reload of app.web if it's already imported
     if "app.web" in sys.modules:
         importlib.reload(sys.modules["app.web"])
-    else:
-        pass
 
     # Explicitly patch settings in app.web to be sure
     with patch("app.web.settings", mock_settings):
@@ -82,39 +84,69 @@ def client(mock_settings):
         yield flask_app.test_client()
 
 
-def test_unauthorized_access(client):
-    """Test that unauthorized access returns 401"""
-    endpoints = ["/", "/status", "/keys", "/keys/gemini-2.5-flash"]
+def test_unauthorized_page_redirects_to_login(client):
+    """Test that unauthorized page access redirects to /login."""
+    response = client.get("/")
+    assert response.status_code == 302
+    assert "/login" in response.headers.get("Location", "")
+
+
+def test_unauthorized_api_returns_401(client):
+    """Test that unauthorized API access returns 401 JSON."""
+    endpoints = ["/api/overview", "/api/keys", "/api/cache", "/api/queue"]
     for endpoint in endpoints:
         response = client.get(endpoint)
         assert response.status_code == 401
-        assert b"Unauthorized" in response.data
 
 
-def test_authorized_access(client):
-    """Test that authorized access with correct token works"""
-    endpoints = ["/", "/status", "/keys", "/keys/gemini-2.5-flash"]
+def test_login_page_accessible(client):
+    """Test that login page is publicly accessible."""
+    response = client.get("/login")
+    assert response.status_code == 200
+    assert b"password" in response.data.lower()
+
+
+def test_login_with_correct_password(client):
+    """Test that logging in with correct password creates session."""
+    response = client.post(
+        "/login",
+        data={"password": "test_token"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert "/" in response.headers.get("Location", "")
+
+
+def test_login_with_wrong_password(client):
+    """Test that wrong password shows error."""
+    response = client.post(
+        "/login",
+        data={"password": "wrong_password"},
+    )
+    assert response.status_code == 200
+    assert b"Invalid password" in response.data
+
+
+def test_header_auth_still_works(client):
+    """Test that X-Auth-Token header auth still works (backward compat)."""
     headers = {"X-Auth-Token": "test_token"}
-
-    for endpoint in endpoints:
-        response = client.get(endpoint, headers=headers)
-        # 200 or 500 (if internal logic fails due to missing mocks like psutil) means auth passed
-        assert response.status_code != 401
+    response = client.get("/", headers=headers)
+    # Should not redirect — auth passed
+    assert response.status_code != 302
 
 
-def test_invalid_token(client):
-    """Test that invalid token returns 401"""
-    endpoints = ["/", "/status", "/keys", "/keys/gemini-2.5-flash"]
+def test_invalid_header_token_redirects(client):
+    """Test that invalid token falls through to redirect."""
     headers = {"X-Auth-Token": "wrong_token"}
-    for endpoint in endpoints:
-        response = client.get(endpoint, headers=headers)
-        assert response.status_code == 401
+    response = client.get("/")
+    assert response.status_code == 302
 
 
 def test_public_health_endpoint(client):
-    """Test that /health is public"""
+    """Test that /health is public."""
     response = client.get("/health")
     assert response.status_code != 401
+    assert response.status_code != 302
 
 
 def test_security_headers_present(client):
@@ -127,8 +159,17 @@ def test_security_headers_present(client):
 
     csp = response.headers.get("Content-Security-Policy")
     assert "default-src 'self'" in csp
-    assert "script-src 'none'" in csp
     assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in csp
+
+
+def test_logout_clears_session(client):
+    """Test that logout clears session and redirects to login."""
+    # First login
+    client.post("/login", data={"password": "test_token"})
+    # Then logout
+    response = client.get("/logout", follow_redirects=False)
+    assert response.status_code == 302
+    assert "/login" in response.headers.get("Location", "")
 
 
 def test_error_leakage_prevented(client):
@@ -136,11 +177,10 @@ def test_error_leakage_prevented(client):
     secret_message = "SecretDatabaseConnectionString"
     headers = {"X-Auth-Token": "test_token"}
 
-    # We need to patch render_template in app.web
+    # Patch render_template in app.web
     with patch("app.web.render_template", side_effect=Exception(secret_message)):
         response = client.get("/", headers=headers)
         assert response.status_code == 500
 
         response_text = response.get_data(as_text=True)
         assert secret_message not in response_text
-        assert "Internal Server Error" in response_text

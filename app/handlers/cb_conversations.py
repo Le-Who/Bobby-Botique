@@ -1,0 +1,272 @@
+"""
+Conversation management callbacks — switch, rename, delete, pagination.
+Also includes admin-only metrics refresh callback.
+"""
+
+import logging
+import telegram
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+
+from app import database as db
+from app.utils.formatting import TelegramFormatter
+from app.utils.decorators import admin_only
+from app.metrics import role_conv_metrics
+from app.handlers import menus
+
+
+async def send_conversation_selection(
+    query: telegram.CallbackQuery, user_id: int, action_prefix: str, title: str
+):
+    """
+    Helper to send a list of conversations for selection.
+
+    Args:
+        query: The callback query object
+        user_id: The user ID
+        action_prefix: The prefix for the callback data (e.g. 'conv_switch_to', 'conv_delete_ask')
+        title: The title text to display
+    """
+    # Получаем список бесед для выбора
+    conversations = await db.get_user_conversations(user_id, 10, 0)
+    if not conversations:
+        await query.edit_message_text("📝 У вас нет сохранённых бесед.")
+        return
+
+    text = f"{title}\n\n"
+    buttons = []
+
+    for conv in conversations:
+        role_info = f" | {conv['role_title']}" if conv["role_title"] else ""
+        created = (
+            conv["created_at"].strftime("%d.%m %H:%M")
+            if conv["created_at"]
+            else "Неизвестно"
+        )
+        text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
+        text += f"📅 {created}\n\n"
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"🆔 {conv['id']} | {conv['title'][:30]}{'...' if len(conv['title']) > 30 else ''}",
+                    callback_data=f"{action_prefix}:{conv['id']}",
+                )
+            ]
+        )
+
+    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")])
+
+    await query.edit_message_text(
+        text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка пагинации списка бесед"""
+    query = update.callback_query
+    await query.answer()
+
+    page = int(query.data.split(":")[1])
+    user_id = query.from_user.id
+
+    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
+        user_id, page
+    )
+
+    if reply_markup is None:
+        await query.edit_message_text(text)
+    else:
+        await query.edit_message_text(
+            text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+
+
+async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключение на беседу"""
+    query = update.callback_query
+    await query.answer()
+    await send_conversation_selection(
+        query,
+        query.from_user.id,
+        "conv_switch_to",
+        "🔄 *Выберите беседу для переключения:*",
+    )
+
+
+async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключение на конкретную беседу"""
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    conv_id = int(query.data.split(":")[1])
+
+    try:
+        success = await db.switch_to_conversation(user_id, conv_id)
+        if success:
+            await role_conv_metrics.record_conversation_switched()
+            # Показываем список бесед с тостом
+            text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
+                user_id, 1
+            )
+            await query.edit_message_text(
+                text, parse_mode=parse_mode, reply_markup=reply_markup
+            )
+            await query.answer(f"✅ Переключились на беседу ID: {conv_id}")
+        else:
+            await query.answer("❌ Ошибка при переключении на беседу.")
+    except Exception as e:
+        logging.error(f"Error switching to conversation {conv_id}: {e}")
+        await query.answer("❌ Ошибка при переключении на беседу.")
+
+
+async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переименование беседы"""
+    query = update.callback_query
+    await query.answer()
+    await send_conversation_selection(
+        query,
+        query.from_user.id,
+        "conv_rename_ask",
+        "✏️ *Выберите беседу для переименования:*",
+    )
+
+
+async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаление беседы"""
+    query = update.callback_query
+    await query.answer()
+    await send_conversation_selection(
+        query,
+        query.from_user.id,
+        "conv_delete_ask",
+        "🗑️ *Выберите беседу для удаления:*",
+    )
+
+
+async def conv_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Спрашивает подтверждение удаления беседы"""
+    query = update.callback_query
+    await query.answer()
+
+    conv_id = int(query.data.split(":")[1])
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "✅ Да, удалить", callback_data=f"conv_delete_confirm:{conv_id}"
+            )
+        ],
+        [InlineKeyboardButton("❌ Отмена", callback_data="conv_delete_cancel")],
+    ]
+
+    await query.edit_message_text(
+        f"⚠️ Вы уверены, что хотите удалить беседу {conv_id}?\n\nЭто действие нельзя отменить!",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def conv_rename_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Спрашивает новое название беседы"""
+    query = update.callback_query
+    await query.answer()
+
+    conv_id = int(query.data.split(":")[1])
+    context.user_data["rename_conv_id"] = conv_id
+
+    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="conv_rename_cancel")]]
+
+    await query.edit_message_text(
+        f"✏️ Введите новое название для беседы {conv_id} (одной строкой):",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+async def conv_rename_cancel_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Отмена переименования"""
+    query = update.callback_query
+    await query.answer("❌ Переименование отменено")
+
+    context.user_data.pop("rename_conv_id", None)
+
+    await send_conversation_selection(
+        query,
+        query.from_user.id,
+        "conv_rename_ask",
+        "✏️ *Выберите беседу для переименования:*",
+    )
+
+
+async def conv_delete_confirm_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Подтверждение удаления беседы"""
+    query = update.callback_query
+
+    conv_id = int(query.data.split(":")[1])
+    user_id = query.from_user.id
+
+    success = await db.delete_conversation(user_id, conv_id)
+
+    if success:
+        await role_conv_metrics.record_conversation_deleted()
+
+        # Обновляем список
+        text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
+            user_id, 1
+        )
+        await query.edit_message_text(
+            text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+
+        await query.answer(f"✅ Беседа {conv_id} удалена")
+    else:
+        await query.answer("❌ Ошибка при удалении беседы")
+
+
+async def conv_delete_cancel_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Отмена удаления беседы"""
+    query = update.callback_query
+
+    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
+        query.from_user.id, 1
+    )
+    await query.edit_message_text(
+        text, parse_mode=parse_mode, reply_markup=reply_markup
+    )
+    await query.answer("❌ Удаление отменено")
+
+
+@admin_only
+async def refresh_metrics_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Refreshes the metrics dashboard."""
+    query = update.callback_query
+
+    try:
+        text = await menus.get_metrics_content()
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+
+        keyboard = [
+            [InlineKeyboardButton("🔄 Обновить", callback_data="refresh_metrics")]
+        ]
+
+        await query.edit_message_text(
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        await query.answer("🔄 Метрики обновлены")
+
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" in str(e):
+            await query.answer("✅ Данные актуальны", show_alert=False)
+        else:
+            logging.error(f"Error refreshing metrics: {e}")
+            await query.answer("❌ Ошибка обновления")
+    except Exception as e:
+        logging.error(f"Error in refresh metrics callback: {e}", exc_info=True)
+        await query.answer("❌ Внутренняя ошибка")

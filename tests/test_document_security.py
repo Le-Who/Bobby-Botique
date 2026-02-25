@@ -49,7 +49,7 @@ async def test_docx_magic_bytes_validation():
     # Invalid content
     invalid_content = b"this is not a zip file"
 
-    result = await processor._process_word(
+    result = await processor._process_word_unified(
         file_data=invalid_content, filename="test.docx", user_id=123, file_hash="hash"
     )
 

@@ -182,23 +182,13 @@ class DocumentProcessor:
 
             # Обрабатываем документ
             if file_ext == ".pdf":
-                if is_path:
-                    return await self._process_pdf_with_pypdf2_path(
-                        file_data, filename, user_id, file_hash
-                    )
-                else:
-                    return await self._process_pdf(
-                        file_data, filename, user_id, file_hash
-                    )
+                return await self._process_pdf_unified(
+                    file_data, filename, user_id, file_hash, is_path=is_path
+                )
             elif file_ext in [".docx", ".doc"]:
-                if is_path:
-                    return await self._process_word_path(
-                        file_data, filename, user_id, file_hash
-                    )
-                else:
-                    return await self._process_word(
-                        file_data, filename, user_id, file_hash
-                    )
+                return await self._process_word_unified(
+                    file_data, filename, user_id, file_hash, is_path=is_path
+                )
             else:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
@@ -242,23 +232,13 @@ class DocumentProcessor:
 
             # Обрабатываем документ
             if file_ext == ".pdf":
-                if is_path:
-                    return await self._process_pdf_with_pypdf2_path(
-                        file_data, filename, user_id, file_hash
-                    )
-                else:
-                    return await self._process_pdf(
-                        file_data, filename, user_id, file_hash
-                    )
+                return await self._process_pdf_unified(
+                    file_data, filename, user_id, file_hash, is_path=is_path
+                )
             elif file_ext in [".docx", ".doc"]:
-                if is_path:
-                    return await self._process_word_path(
-                        file_data, filename, user_id, file_hash
-                    )
-                else:
-                    return await self._process_word(
-                        file_data, filename, user_id, file_hash
-                    )
+                return await self._process_word_unified(
+                    file_data, filename, user_id, file_hash, is_path=is_path
+                )
             else:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
@@ -267,257 +247,87 @@ class DocumentProcessor:
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
 
-    async def _process_pdf(
-        self, file_data: bytes, filename: str, user_id: int, file_hash: str
+    async def _process_pdf_unified(
+        self, file_data, filename: str, user_id: int, file_hash: str,
+        is_path: bool = False
     ) -> Dict[str, Any]:
-        """Обрабатывает PDF документ"""
+        """Обрабатывает PDF документ (bytes или path)."""
         try:
-            # Проверяем, что файл является корректным PDF до создания временного файла
-            if not file_data.startswith(b"%PDF"):
-                logging.warning(f"Invalid PDF format for {filename}")
-                return {"error": "Invalid PDF file format"}
+            if not is_path:
+                # Validate magic bytes
+                if not file_data.startswith(b"%PDF"):
+                    logging.warning(f"Invalid PDF format for {filename}")
+                    return {"error": "Invalid PDF file format"}
 
             logging.info(f"Processing PDF {filename} with PyPDF2")
 
-            # PyMuPDF removed for free tier optimization, using PyPDF2 directly
-            return await self._process_pdf_with_pypdf2(
-                file_data, filename, user_id, file_hash
+            # Prepare input for sync function
+            if is_path:
+                sync_input = file_data  # str path
+            else:
+                import tempfile
+                stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b")
+                stream.write(file_data)
+                stream.seek(0)
+                sync_input = stream
+
+            # Run CPU-bound task in executor
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, self._process_pdf_sync, sync_input, self.max_pages
             )
+
+            if "error" in result:
+                return result
+
+            full_text = result["content"]
+            pages_count = result["pages"]
+
+            # Сохраняем в базу данных
+            await self._save_document_content(
+                user_id, filename, full_text, pages_count, file_hash
+            )
+
+            return {
+                "success": True,
+                "filename": filename,
+                "pages": pages_count,
+                "text_length": len(full_text),
+                "content": full_text,
+                "method": "PyPDF2",
+            }
 
         except Exception as e:
             logging.error(f"Error processing PDF {filename}: {e}", exc_info=True)
             await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
 
-    @staticmethod
-    def _process_pdf_sync(
-        input_data: Union[str, io.BytesIO], max_pages: int
+    async def _process_word_unified(
+        self, file_data, filename: str, user_id: int, file_hash: str,
+        is_path: bool = False
     ) -> Dict[str, Any]:
-        """Synchronous part of PDF processing to run in executor"""
-        pdf_file = None
-        should_close = False
+        """Обрабатывает Word документ (bytes или path)."""
+        if not is_path:
+            # Validate magic bytes for ZIP (all .docx files are ZIPs)
+            if not file_data.startswith(b"\x50\x4b\x03\x04"):
+                logging.warning(f"Invalid DOCX format for {filename}: Missing ZIP header")
+                return {
+                    "error": "Invalid Word document format. File must be a valid .docx file."
+                }
 
         try:
-            if isinstance(input_data, str):
-                pdf_file = open(input_data, "rb")
-                should_close = True
-                stream = pdf_file
+            if is_path:
+                sync_input = file_data  # str path
             else:
-                stream = input_data
-
-            pdf_reader = pypdf.PdfReader(stream)
-
-            if len(pdf_reader.pages) > max_pages:
-                return {"error": f"PDF too large. Maximum {max_pages} pages allowed"}
-
-            text_content = []
-            current_length = 0
-
-            for page_num, page in enumerate(pdf_reader.pages):
-                try:
-                    text = page.extract_text()
-                    if text.strip():
-                        chunk = f"--- Page {page_num + 1} ---\n{text}"
-                        text_content.append(chunk)
-                        current_length += len(chunk)
-                except Exception as page_error:
-                    logging.warning(
-                        f"Error extracting text from page {page_num + 1}: {page_error}"
-                    )
-                    chunk = f"--- Page {page_num + 1} ---\n[Error extracting text from this page]"
-                    text_content.append(chunk)
-                    current_length += len(chunk)
-
-                # Проверяем лимит токенов
-                if current_length > MAX_DOCUMENT_TEXT_LENGTH:
-                    text_content.append(
-                        f"\n--- Document truncated at page {page_num + 1} ---"
-                    )
-                    break
-
-            full_text = "\n\n".join(text_content)
-
-            return {
-                "success": True,
-                "pages": len(pdf_reader.pages),
-                "content": full_text,
-            }
-        except Exception as e:
-            return {"error": str(e)}
-        finally:
-            if should_close and pdf_file:
-                pdf_file.close()
-
-    async def _process_pdf_with_pypdf2(
-        self, file_data: bytes, filename: str, user_id: int, file_hash: str
-    ) -> Dict[str, Any]:
-        """Обрабатывает PDF документ с использованием PyPDF2 (fallback)"""
-        try:
-            # Use SpooledTemporaryFile to drop large files to disk instead of RAM
-            import tempfile
-
-            stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b")
-            stream.write(file_data)
-            stream.seek(0)
-
-            # Run CPU-bound task in executor
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None, self._process_pdf_sync, stream, self.max_pages
-            )
-
-            if "error" in result:
-                return result
-
-            full_text = result["content"]
-            pages_count = result["pages"]
-
-            # Сохраняем в базу данных
-            await self._save_document_content(
-                user_id, filename, full_text, pages_count, file_hash
-            )
-
-            return {
-                "success": True,
-                "filename": filename,
-                "pages": pages_count,
-                "text_length": len(full_text),
-                "content": full_text,
-                "method": "PyPDF2",
-            }
-
-        except Exception as e:
-            logging.error(
-                f"Error processing PDF with PyPDF2 {filename}: {e}", exc_info=True
-            )
-            await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
-            return {"error": f"Error processing PDF with PyPDF2: {str(e)}"}
-
-    async def _process_pdf_with_pypdf2_path(
-        self, file_path: str, filename: str, user_id: int, file_hash: str
-    ) -> Dict[str, Any]:
-        """Обрабатывает PDF документ по пути к файлу с использованием PyPDF2"""
-        try:
-            # Run CPU-bound task in executor
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None, self._process_pdf_sync, file_path, self.max_pages
-            )
-
-            if "error" in result:
-                return result
-
-            full_text = result["content"]
-            pages_count = result["pages"]
-
-            # Сохраняем в базу данных
-            await self._save_document_content(
-                user_id, filename, full_text, pages_count, file_hash
-            )
-
-            return {
-                "success": True,
-                "filename": filename,
-                "pages": pages_count,
-                "text_length": len(full_text),
-                "content": full_text,
-                "method": "PyPDF2",
-            }
-
-        except Exception as e:
-            logging.error(f"Error processing PDF path {filename}: {e}", exc_info=True)
-            await metrics_collector.record_error("pdf_processing_pypdf2", str(e))
-            return {"error": f"Error processing PDF: {str(e)}"}
-
-    @staticmethod
-    def _process_word_sync(input_data: Union[str, io.BytesIO]) -> Dict[str, Any]:
-        """Synchronous part of Word processing to run in executor"""
-        try:
-            doc = Document(input_data)
-
-            text_content = []
-            paragraph_count = 0
-            current_length = 0
-
-            # Извлекаем текст из параграфов
-            for para in doc.paragraphs:
-                if para.text.strip():
-                    text = para.text
-                    text_content.append(text)
-                    paragraph_count += 1
-                    current_length += len(text)
-
-                    if current_length > MAX_DOCUMENT_TEXT_LENGTH:
-                        text_content.append(
-                            f"\n--- Document truncated at {MAX_DOCUMENT_TEXT_LENGTH} chars ---"
-                        )
-                        break
-
-            # Only process tables if we haven't hit the limit
-            if current_length <= MAX_DOCUMENT_TEXT_LENGTH:
-                # Извлекаем текст из таблиц
-                table_count = 0
-                for table in doc.tables:
-                    table_count += 1
-                    text_content.append(f"\n--- Table {table_count} ---")
-                    # Approximate length increment for table header
-                    current_length += len(text_content[-1])
-
-                    for row in table.rows:
-                        row_text = []
-                        for cell in row.cells:
-                            if cell.text.strip():
-                                row_text.append(cell.text.strip())
-                        if row_text:
-                            line = " | ".join(row_text)
-                            text_content.append(line)
-                            current_length += len(line)
-
-                            if current_length > MAX_DOCUMENT_TEXT_LENGTH:
-                                break
-
-                    if current_length > MAX_DOCUMENT_TEXT_LENGTH:
-                        text_content.append(
-                            f"\n--- Document truncated at {MAX_DOCUMENT_TEXT_LENGTH} chars ---"
-                        )
-                        break
-
-            full_text = "\n\n".join(text_content)
-
-            return {
-                "success": True,
-                "pages": 1,
-                "paragraphs": paragraph_count,
-                "tables": len(doc.tables),
-                "text_length": len(full_text),
-                "content": full_text,
-            }
-        except Exception as e:
-            return {"error": str(e)}
-
-    async def _process_word(
-        self, file_data: bytes, filename: str, user_id: int, file_hash: str
-    ) -> Dict[str, Any]:
-        """Обрабатывает Word документ"""
-        # Validate magic bytes for ZIP (all .docx files are ZIPs)
-        # PK\x03\x04
-        if not file_data.startswith(b"\x50\x4b\x03\x04"):
-            logging.warning(f"Invalid DOCX format for {filename}: Missing ZIP header")
-            return {
-                "error": "Invalid Word document format. File must be a valid .docx file."
-            }
-
-        try:
-            # Use SpooledTemporaryFile to drop large files to disk instead of RAM
-            import tempfile
-
-            stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b")
-            stream.write(file_data)
-            stream.seek(0)
+                import tempfile
+                stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b")
+                stream.write(file_data)
+                stream.seek(0)
+                sync_input = stream
 
             # Offload CPU-bound task to executor
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, self._process_word_sync, stream)
+            result = await loop.run_in_executor(None, self._process_word_sync, sync_input)
 
             if "error" in result:
                 logging.error(
@@ -532,7 +342,6 @@ class DocumentProcessor:
                 user_id, filename, full_text, 1, file_hash
             )  # Word документы считаем как 1 страницу
 
-            # Merge filename into result as it's not in sync output
             result["filename"] = filename
             return result
 
@@ -540,36 +349,6 @@ class DocumentProcessor:
             logging.error(
                 f"Error processing Word document {filename}: {e}", exc_info=True
             )
-            await metrics_collector.record_error("word_processing", str(e))
-            return {"error": f"Error processing Word document: {str(e)}"}
-
-    async def _process_word_path(
-        self, file_path: str, filename: str, user_id: int, file_hash: str
-    ) -> Dict[str, Any]:
-        """Обрабатывает Word документ по пути к файлу"""
-        try:
-            # Offload CPU-bound task to executor
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None, self._process_word_sync, file_path
-            )
-
-            if "error" in result:
-                logging.error(
-                    f"Error processing Word document {filename}: {result['error']}"
-                )
-                return {"error": f"Error processing Word document: {result['error']}"}
-
-            full_text = result["content"]
-
-            await self._save_document_content(
-                user_id, filename, full_text, 1, file_hash
-            )
-            result["filename"] = filename
-            return result
-
-        except Exception as e:
-            logging.error(f"Error processing Word document path {filename}: {e}")
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
 
