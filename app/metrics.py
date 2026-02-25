@@ -189,27 +189,18 @@ class MetricsCollector:
                                        search_queries, cache_hits, cache_misses, api_calls, model_usage, updated_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
                     ON CONFLICT (metric_date) DO UPDATE SET
-                        request_count = $10,
-                        total_response_time = $11,
-                        error_count = $12,
-                        search_queries = $13,
-                        cache_hits = $14,
-                        cache_misses = $15,
-                        api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || $16::jsonb,
-                        model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || $17::jsonb,
+                        request_count = EXCLUDED.request_count,
+                        total_response_time = EXCLUDED.total_response_time,
+                        error_count = EXCLUDED.error_count,
+                        search_queries = EXCLUDED.search_queries,
+                        cache_hits = EXCLUDED.cache_hits,
+                        cache_misses = EXCLUDED.cache_misses,
+                        api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || EXCLUDED.api_calls,
+                        model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
                         updated_at = CURRENT_TIMESTAMP
                 """,
                     (
                         snapshot_data["date"],
-                        snapshot_data["request_count"],
-                        snapshot_data["total_response_time"],
-                        snapshot_data["error_count"],
-                        snapshot_data["search_queries"],
-                        snapshot_data["cache_hits"],
-                        snapshot_data["cache_misses"],
-                        json.dumps(snapshot_data["api_calls"]),
-                        json.dumps(snapshot_data["model_usage"]),
-                        # Values for UPDATE
                         snapshot_data["request_count"],
                         snapshot_data["total_response_time"],
                         snapshot_data["error_count"],
