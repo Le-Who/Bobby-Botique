@@ -3,7 +3,7 @@ import httpx
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from PIL import Image
 import asyncio
 import time
@@ -29,7 +29,9 @@ http_client = NetworkErrorHandler.create_robust_http_client()
 _image_process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=2)
 
 
-def _image_worker(image_data: bytes, max_size_mb: int = 10) -> Optional[bytes]:
+def _image_worker(
+    image_data: Union[bytes, Image.Image], max_size_mb: int = 10
+) -> Optional[bytes]:
     import io
     from PIL import Image
     import math
@@ -37,7 +39,10 @@ def _image_worker(image_data: bytes, max_size_mb: int = 10) -> Optional[bytes]:
     try:
         from app.utils.image import estimate_image_size_in_bytes
 
-        img_to_process = Image.open(io.BytesIO(image_data))
+        if isinstance(image_data, bytes):
+            img_to_process = Image.open(io.BytesIO(image_data))
+        else:
+            img_to_process = image_data
 
         # Use optimized estimation
         img_bytes_approx = estimate_image_size_in_bytes(img_to_process)
@@ -137,7 +142,7 @@ async def get_gemini_response(
 
 
 async def _save_image_as_bytes(
-    image_data: bytes, timeout: float = 5.0, max_size_mb: int = 10
+    image_data: Union[bytes, Image.Image], timeout: float = 5.0, max_size_mb: int = 10
 ) -> Optional[bytes]:
     """Сохраняет изображение как bytes с timeout и сжатием вне GIL."""
     loop = asyncio.get_running_loop()
@@ -227,23 +232,8 @@ async def _execute_gemini_request(
                 processed_parts = []
                 for part in parts:
                     if isinstance(part, (bytes, bytearray, Image.Image)):
-                        # Compatibility for old Image.Image
-                        if isinstance(part, Image.Image):
-                            import io
-
-                            buf = io.BytesIO()
-                            try:
-                                if part.mode in ("RGBA", "P"):
-                                    part = part.convert("RGB")
-                                part.save(buf, format="JPEG", quality=100)
-                                part = buf.getvalue()
-                            except Exception as e:
-                                logging.error(
-                                    f"Failed to convert old Image object: {e}"
-                                )
-                                continue
-
                         # Используем безопасное сохранение с таймаутом
+                        # Image.Image передается напрямую для обработки в пуле процессов
                         img_bytes = await _save_image_as_bytes(part)
 
                         if img_bytes:
@@ -781,21 +771,8 @@ async def _execute_openrouter_request(
             content_parts = []
             for part in parts:
                 if isinstance(part, (bytes, bytearray, Image.Image)):
-                    # Compatibility for old Image.Image
-                    if isinstance(part, Image.Image):
-                        import io
-
-                        buf = io.BytesIO()
-                        try:
-                            if part.mode in ("RGBA", "P"):
-                                part = part.convert("RGB")
-                            part.save(buf, format="JPEG", quality=100)
-                            part = buf.getvalue()
-                        except Exception as e:
-                            logging.error(f"Failed to convert old Image object: {e}")
-                            continue
-
                     # Use offloaded processing
+                    # Image.Image передается напрямую для обработки в пуле процессов
                     img_bytes = await _save_image_as_bytes(part)
                     if img_bytes:
                         # base64 encoding in thread to prevent blocking
