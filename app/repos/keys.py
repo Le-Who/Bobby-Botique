@@ -16,6 +16,7 @@ from typing import Dict, Any, Optional
 
 from app.config import UTC_TZ, settings
 from app.utils.time import get_pacific_tz
+from app.crypto import safe_decrypt, encrypt_api_key
 from app.database import (
     db_manager,
     db_query,
@@ -59,7 +60,7 @@ class DailyKeyManager:
         """
         results = await db_query(query, (model_name, today), conn=conn)
         if results:
-            return {"key_hash": results[0]["key_hash"], "api_key": results[0]["api_key"]}
+            return {"key_hash": results[0]["key_hash"], "api_key": safe_decrypt(results[0]["api_key"])}
         return None
 
     async def increment_usage(self, key_hash: str, model_name: str):
@@ -118,7 +119,7 @@ class DailyKeyManager:
         threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
         for row in results:
             if row["request_count"] < threshold:
-                return {"key_hash": row["key_hash"], "api_key": row["api_key"]}
+                return {"key_hash": row["key_hash"], "api_key": safe_decrypt(row["api_key"])}
         return None
 
 
@@ -284,7 +285,7 @@ class MonthlyKeyManager:
 
         for row in results:
             if row["credit_usage"] < threshold:
-                return {"key_hash": row["key_hash"], "api_key": row["api_key"]}
+                return {"key_hash": row["key_hash"], "api_key": safe_decrypt(row["api_key"])}
         return None
 
     async def increment_usage(self, key_hash: str, cost: int):
@@ -328,7 +329,7 @@ async def force_update_tavily_keys():
         keys_data = []
         for key in settings_obj.TAVILY_API_KEYS:
             key_hash = hashlib.sha256(key.encode()).hexdigest()
-            keys_data.append((key_hash, key))
+            keys_data.append((key_hash, encrypt_api_key(key)))
 
         if keys_data:
             await db_execute_many(

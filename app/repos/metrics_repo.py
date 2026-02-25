@@ -71,7 +71,7 @@ async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, A
         query = """
             SELECT 
                 ak.key_hash,
-                LEFT(ak.api_key, 4) || '***' as api_key_preview,
+                LEFT(ak.key_hash, 8) || '***' as api_key_preview,
                 COALESCE(ku.request_count, 0) as request_count,
                 mc.daily_limit,
                 CASE 
@@ -100,7 +100,7 @@ async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, A
         query = """
             SELECT 
                 ak.key_hash,
-                LEFT(ak.api_key, 4) || '***' as api_key_preview,
+                LEFT(ak.key_hash, 8) || '***' as api_key_preview,
                 ku.model_name,
                 COALESCE(ku.request_count, 0) as request_count,
                 mc.daily_limit,
@@ -146,7 +146,7 @@ async def get_active_key_info(model_name: str) -> Optional[Dict[str, Any]]:
             )
             return {
                 "key_hash": cached_key["key_hash"],
-                "api_key_preview": cached_key["api_key"][:4] + "***",
+                "api_key_preview": cached_key["key_hash"][:8] + "***",
                 "is_available": is_available,
                 "cached_at": time.time(),
             }

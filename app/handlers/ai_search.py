@@ -8,6 +8,7 @@ import asyncio
 from typing import Optional
 
 from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest, NetworkError
 
 from app.config import settings, get_openrouter_keys
 from app import database as db
@@ -39,7 +40,7 @@ async def _handle_qna_search(
 
     try:
         await update_stage(placeholder_message, STAGES_SEARCH_QUICK, 0)
-    except Exception as edit_error:
+    except (BadRequest, NetworkError) as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text(
             "🔎 Ищу быстрый ответ..."
@@ -57,14 +58,14 @@ async def _handle_qna_search(
     if search_result.get("error"):
         try:
             await placeholder_message.edit_text(search_result["error"])
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     tavily_answer = search_result.get("answer", "Не удалось найти прямой ответ.")
     try:
         await update_stage(placeholder_message, STAGES_SEARCH_QUICK, 1)
-    except Exception as edit_error:
+    except (BadRequest, NetworkError) as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text(
             "🌍 Адаптирую ответ..."
@@ -128,7 +129,7 @@ async def _handle_qna_search(
                 "Получен пустой ответ от API.",
                 reply_markup=build_retry_and_roles_keyboard(),
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
 
 
@@ -147,7 +148,7 @@ async def _handle_research_agent(
 
     try:
         await update_stage(placeholder_message, STAGES_SEARCH_DEEP, 0)
-    except Exception as edit_error:
+    except (BadRequest, NetworkError) as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text(
             "🔎 Ищу источники..."
@@ -169,14 +170,14 @@ async def _handle_research_agent(
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при поиске. Попробуйте позже."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     if search_result.get("error"):
         try:
             await placeholder_message.edit_text(search_result["error"])
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
@@ -186,7 +187,7 @@ async def _handle_research_agent(
             await placeholder_message.edit_text(
                 "Не удалось найти релевантные источники для исследования."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
@@ -204,7 +205,7 @@ async def _handle_research_agent(
             await placeholder_message.edit_text(
                 "Не удалось найти валидные источники для исследования."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
@@ -215,7 +216,7 @@ async def _handle_research_agent(
         await placeholder_message.edit_text(
             f"✅ Найдено {count} источников. Выбираю лучшие..."
         )
-    except Exception as edit_error:
+    except (BadRequest, NetworkError) as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
 
     # Используем model from chat_state, if она указана, иначе use settings by default
@@ -291,7 +292,7 @@ async def _handle_research_agent(
                 await placeholder_message.edit_text(
                     selected_urls_str, reply_markup=reply_markup
                 )
-            except Exception as edit_error:
+            except (BadRequest, NetworkError) as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
             return
 
@@ -301,7 +302,7 @@ async def _handle_research_agent(
                     "Не удалось выбрать источники.",
                     reply_markup=build_retry_and_roles_keyboard(),
                 )
-            except Exception as edit_error:
+            except (BadRequest, NetworkError) as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
             return
     except Exception as gemini_error:
@@ -310,7 +311,7 @@ async def _handle_research_agent(
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при выборе источников. Попробуйте позже."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
@@ -325,7 +326,7 @@ async def _handle_research_agent(
             await placeholder_message.edit_text(
                 "Не удалось выбрать подходящие источники для глубокого анализа. Попробуйте переформулировать запрос."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
@@ -334,7 +335,7 @@ async def _handle_research_agent(
         await placeholder_message.edit_text(
             f"✅ Выбрано {count} источников. Собираю контент..."
         )
-    except Exception as edit_error:
+    except (BadRequest, NetworkError) as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
 
     final_context_list = []
@@ -358,13 +359,13 @@ async def _handle_research_agent(
             await placeholder_message.edit_text(
                 "Не удалось собрать контент с выбранных страниц."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     try:
         await update_stage(placeholder_message, STAGES_SEARCH_DEEP, 2)
-    except Exception as edit_error:
+    except (BadRequest, NetworkError) as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
 
     # Используем model from chat_state or переопределение, if указано
@@ -432,7 +433,7 @@ async def _handle_research_agent(
                 await placeholder_message.edit_text(
                     "❌ История чата пуста. Невозможно обработать вопрос."
                 )
-            except Exception as edit_error:
+            except (BadRequest, NetworkError) as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
             return
 
@@ -454,7 +455,7 @@ async def _handle_research_agent(
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при синтезе ответа. Попробуйте позже."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
@@ -514,7 +515,7 @@ async def _handle_research_agent(
                 "Получен пустой ответ от API.",
                 reply_markup=build_retry_and_roles_keyboard(),
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
 
 
@@ -527,7 +528,7 @@ async def _handle_complex_agent_search(
 
     try:
         await placeholder_message.edit_text("🖼️ Анализирую изображение...")
-    except Exception as edit_error:
+    except (BadRequest, NetworkError) as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
         # If не можем отредактировать, отправляем new message
         placeholder_message = await placeholder_message.reply_text(
@@ -563,7 +564,7 @@ async def _handle_complex_agent_search(
             await placeholder_message.edit_text(
                 "Не удалось проанализировать изображение для поиска."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 

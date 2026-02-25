@@ -490,7 +490,8 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
 
         for i, row in enumerate(keys_result, 1):
             key_hash = row["key_hash"]
-            api_key = row["api_key"]
+            from app.crypto import safe_decrypt
+            api_key = safe_decrypt(row["api_key"])
             report += f"🔑 *Ключ {i}:*\n"
             report += f"   Хэш: `{key_hash[:16]}...`\n"
             report += f"   API: `{api_key[:10]}...{api_key[-4:]}`\n\n"

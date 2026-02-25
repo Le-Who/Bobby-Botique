@@ -15,10 +15,16 @@ if _env_path.exists():
     load_dotenv(_env_path, override=False)
 
 
+def pytest_configure(config):
+    """Suppress cosmetic 'Task was destroyed' warnings from asyncio cleanup."""
+    config.addinivalue_line(
+        "filterwarnings", "ignore::RuntimeWarning:asyncio"
+    )
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _cancel_db_background_tasks():
-    """Cancel lingering DatabaseManager background tasks to suppress
-    'Task was destroyed but it is pending!' warnings."""
+    """Cancel lingering DatabaseManager background tasks after all tests."""
     yield
     try:
         from app.database import db_manager
@@ -29,4 +35,5 @@ def _cancel_db_background_tasks():
                 task.cancel()
     except Exception:
         pass
+
 

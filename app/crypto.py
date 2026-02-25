@@ -72,8 +72,8 @@ def decrypt_api_key(ciphertext: str) -> str:
 
 
 def is_encrypted(value: str) -> bool:
-    """Heuristic check: Fernet tokens start with 'gAAAAA'."""
-    return value.startswith("gAAAAA") and len(value) > 100
+    """Heuristic check: Fernet tokens start with 'gAAAAA' and are base64url."""
+    return len(value) > 50 and value.startswith("gAAAAA")
 
 
 def safe_decrypt(value: str) -> str:

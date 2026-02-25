@@ -64,7 +64,7 @@ class MetricsCollector:
 
                 now = time.time()
                 if now - last_save >= self._save_interval:
-                    if db.db_pool and not db.db_pool._closed:
+                    if db.db_manager.is_connected:
                         await self._save_metrics_to_db()
                     last_save = now
             except asyncio.CancelledError:
@@ -525,7 +525,7 @@ class MetricsCollector:
                 self._bg_save_task = None
 
             # Check, что база данных доступна before сохранением
-            if db.db_pool and not db.db_pool._closed:
+            if db.db_manager.is_connected:
                 await self._save_metrics_to_db()
             else:
                 logging.warning(
