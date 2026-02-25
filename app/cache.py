@@ -69,10 +69,10 @@ def _safe_decode_redis_response(
         elif isinstance(data, str):
             return json.loads(data)
         else:
-            logging.warning(f"Unexpected Redis response type: {type(data)}")
+            logging.warning("Unexpected Redis response type: %s", type(data))
             return None
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logging.error(f"Failed to decode Redis response: {e}")
+        logging.error("Failed to decode Redis response: %s", e)
         return None
 
 
@@ -115,76 +115,13 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
 
         except RedisError as e:
             # Other Redis errors don't require retry
-            logging.error(f"Redis operation error: {e}")
+            logging.error("Redis operation error: %s", e)
             raise RedisConnectionError(f"Redis operation error: {e}")
 
     raise RedisConnectionError(
         f"Redis operation failed after {max_retries} attempts: {last_error}"
     )
 
-
-async def _redis_operation_with_retry_enhanced(
-    operation, *args, max_retries=3, **kwargs
-):
-    """Enhanced Redis operation with better error handling and connection management."""
-    if not redis_client:
-        raise RedisConnectionError("Redis client not configured")
-
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            # Check connection health before operation (starting from 2nd attempt)
-            if attempt > 0:
-                try:
-                    await asyncio.to_thread(redis_client.ping)
-                except Exception:
-                    logging.warning(
-                        f"Redis connection check failed, attempt {attempt + 1}"
-                    )
-                    # Continue to retry even if ping fails
-                    pass
-
-            # Execute operation with timeout
-            result = await asyncio.wait_for(
-                asyncio.to_thread(operation, *args, **kwargs),
-                timeout=5.0,  # 5 second timeout for Redis operations
-            )
-            return result
-
-        except asyncio.TimeoutError:
-            last_error = "Operation timeout"
-            if attempt < max_retries - 1:
-                wait_time = (2**attempt) * 0.2  # Exponential backoff: 0.2s, 0.4s, 0.8s
-                logging.warning(
-                    f"Redis operation timeout (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time}s..."
-                )
-                await asyncio.sleep(wait_time)
-            else:
-                logging.error(f"Redis operation timeout after {max_retries} attempts")
-                raise RedisConnectionError("Redis operation timeout")
-
-        except (ConnectionError, TimeoutError) as e:
-            last_error = e
-            if attempt < max_retries - 1:
-                wait_time = (2**attempt) * 0.2  # Exponential backoff: 0.2s, 0.4s, 0.8s
-                logging.warning(
-                    f"Redis operation failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {wait_time}s..."
-                )
-                await asyncio.sleep(wait_time)
-            else:
-                logging.error(
-                    f"Redis operation failed after {max_retries} attempts: {e}"
-                )
-                raise RedisConnectionError(f"Redis operation failed: {e}")
-
-        except RedisError as e:
-            # Other Redis errors don't require retry
-            logging.error(f"Redis operation error: {e}")
-            raise RedisConnectionError(f"Redis operation error: {e}")
-
-    raise RedisConnectionError(
-        f"Redis operation failed after {max_retries} attempts: {last_error}"
-    )
 
 
 async def get_cached_search_result(
@@ -228,7 +165,7 @@ async def get_cached_search_result(
             return None
 
     except RedisConnectionError as e:
-        logging.warning(f"Redis cache unavailable: {e}")
+        logging.warning("Redis cache unavailable: %s", e)
         await metrics_collector.record_cache_miss()
         return None
     except Exception as e:
@@ -259,12 +196,12 @@ async def cache_search_result(query: str, search_type: str, result: Dict[str, An
 
         # Use retry logic for Redis operations
         await _redis_operation_with_retry(redis_client.setex, cache_key, ttl, json_data)
-        logging.info(f"Cached search result for query: {query[:50]}...")
+        logging.info("Cached search result for query: %s...", query[:50])
 
     except RedisConnectionError as e:
-        logging.warning(f"Failed to store in Redis cache (connection issue): {e}")
+        logging.warning("Failed to store in Redis cache (connection issue): %s", e)
     except Exception as e:
-        logging.error(f"Error caching result to Redis: {e}")
+        logging.error("Error caching result to Redis: %s", e)
 
 
 async def get_cache_stats() -> Dict[str, Any]:
@@ -297,10 +234,10 @@ async def get_cache_stats() -> Dict[str, Any]:
         }
 
     except RedisConnectionError as e:
-        logging.warning(f"Redis stats unavailable: {e}")
+        logging.warning("Redis stats unavailable: %s", e)
         return {"error": f"Redis connection issue: {e}"}
     except Exception as e:
-        logging.error(f"Error getting Redis stats: {e}")
+        logging.error("Error getting Redis stats: %s", e)
         return {"error": str(e)}
 
 
@@ -314,7 +251,7 @@ async def clear_cache():
         await _redis_operation_with_retry(redis_client.flushdb)
         logging.info("Cache cleared")
     except RedisConnectionError as e:
-        logging.warning(f"Failed to clear Redis cache (connection issue): {e}")
+        logging.warning("Failed to clear Redis cache (connection issue): %s", e)
     except Exception as e:
         logging.error("Error clearing Redis cache: %s", e)
 
@@ -372,7 +309,7 @@ class MultiLayerCache:
                         logging.warning("Failed to decode Redis data for key: %s", key)
 
             except RedisConnectionError as e:
-                logging.warning(f"Redis cache unavailable: {e}")
+                logging.warning("Redis cache unavailable: %s", e)
             except Exception as e:
                 logging.warning("Redis cache error: %s", e)
 

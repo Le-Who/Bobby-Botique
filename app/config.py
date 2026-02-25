@@ -50,7 +50,7 @@ def _load_and_clean_keys(env_var_name: str, required: bool = True) -> List[str]:
 
 def _load_daily_limits() -> Dict[str, int]:
     """
-    Загружает DAILY_LIMITS из env переменной в формате JSON или компактном формате.
+    Загружает DAILY_LIMITS from env переменной to formatе JSON or компактном формате.
 
     Формат в env (JSON, рекомендуется):
     DAILY_LIMITS='{"gemini-exp-1206": 250, "gemini-flash-latest": 15}'
@@ -59,11 +59,11 @@ def _load_daily_limits() -> Dict[str, int]:
     DAILY_LIMITS='gemini-exp-1206:250,gemini-flash-latest:15'
 
     Returns:
-        Dict[str, int]: Словарь с лимитами для моделей
+        Dict[str, int]: Словарь с limitами for моделей
     """
     value = os.getenv("DAILY_LIMITS")
 
-    # Значения по умолчанию
+    # Значения by default
     default_limits = {
         "gemini-2.5-flash": 15,
         "gemini-2.5-flash-latest": 15,
@@ -81,7 +81,7 @@ def _load_daily_limits() -> Dict[str, int]:
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            # Если не JSON, пробуем компактный формат: "model1:limit1,model2:limit2"
+            # If не JSON, пробуем компактный формат: "model1:limit1,model2:limit2"
             result = {}
             for item in cleaned.split(","):
                 if ":" in item:
@@ -92,19 +92,19 @@ def _load_daily_limits() -> Dict[str, int]:
             else:
                 raise ValueError("No valid limits found")
     except (ValueError, AttributeError, json.JSONDecodeError) as e:
-        logging.warning(f"Failed to parse DAILY_LIMITS from env: {e}. Using defaults.")
+        logging.warning("Failed to parse DAILY_LIMITS from env: %s. Using defaults.", e)
         return default_limits
 
 
 def get_model_hash(model_name: str) -> str:
     """
-    Генерирует короткий хэш модели (8 символов) для использования в callback_data.
+    Генерирует короткий хэш models (8 символов) for использования в callback_data.
 
     Args:
-        model_name: Полное имя модели
+        model_name: Полное имя models
 
     Returns:
-        str: 8-символьный хэш модели
+        str: 8-символьный хэш models
     """
     return hashlib.md5(model_name.encode()).hexdigest()[:8]
 
@@ -121,7 +121,7 @@ class Settings(BaseModel):
     ADMIN_SECRET: Optional[str] = None
     GEMINI_API_KEYS: List[str]
     TAVILY_API_KEYS: List[str]
-    OPENROUTER_API_KEYS: List[str] = []  # Опционально, по умолчанию пустой список
+    OPENROUTER_API_KEYS: List[str] = []  # Optional, by default empty list
     DATABASE_URL: str
     ADMIN_ID: int
     PORT: int
@@ -132,7 +132,7 @@ class Settings(BaseModel):
     TELEGRAM_MESSAGE_LIMIT: int = 4096
 
     # --- MODELS ---
-    # Модели загружаются из env переменных, значения по умолчанию используются если не указаны
+    # Модели загружаются from env переменных, значения by default используются if не указаны
     AVAILABLE_MODELS: List[str] = [
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
@@ -146,7 +146,7 @@ class Settings(BaseModel):
     URL_SELECTION_MODEL: str = "gemini-flash-latest"
 
     # --- OPENROUTER MODELS ---
-    # Модели загружаются из env переменных, значения по умолчанию используются если не указаны
+    # Модели загружаются from env переменных, значения by default используются if не указаны
     OPENROUTER_AVAILABLE_MODELS: List[str] = []
     OPENROUTER_DEFAULT_MODEL: str = "stepfun/step-3.5-flash:free"
     OPENROUTER_QNA_MODEL: str = "stepfun/step-3.5-flash:free"
@@ -155,7 +155,7 @@ class Settings(BaseModel):
 
     # --- API PROVIDER SELECTION ---
     USE_OPENROUTER: bool = (
-        False  # По умолчанию используем Gemini, можно переключить на OpenRouter
+        False  # По умолчанию use Gemini, можно переkeysть на OpenRouter
     )
 
     # --- LIMITS ---
@@ -164,7 +164,7 @@ class Settings(BaseModel):
     TAVILY_QNA_SEARCH_COST: int = 2
     TAVILY_ADVANCED_SEARCH_COST: int = 2
     LIMIT_THRESHOLD_PERCENT: float = 0.95
-    # DAILY_LIMITS загружается из env переменной DAILY_LIMITS в формате JSON
+    # DAILY_LIMITS загружается from env переменной DAILY_LIMITS to formatе JSON
     DAILY_LIMITS: Dict[str, int] = {
         "gemini-2.5-flash": 15,
         "gemini-flash-latest": 15,
@@ -185,14 +185,14 @@ class Settings(BaseModel):
 
     # --- DEFAULT SYSTEM PROMPT ---
     DEFAULT_SYSTEM_PROMPT: str = r"""# РОЛЬ И ЗАДАЧА
-Ты — полезный ИИ-ассистент для Telegram. Твоя задача — отвечать на вопросы пользователя, используя правильное форматирование и предоставляя точную, полезную информацию.
+Ты — полезный ИИ-ассистент for Telegram. Твоя задача — отвеchatь на вопросы user, используя правильное форматирование и предоставляя точную, полезную информацию.
 
 # КОНТЕКСТ
-Ты работаешь в Telegram-боте. Твои ответы должны быть отформатированы в **стандартном Markdown** (не MarkdownV2!).
+Ты работаешь в Telegram-боте. Твои responseы должны быть отформатированы в **стандартном Markdown** (не MarkdownV2!).
 
 # ПОШАГОВЫЕ ИНСТРУКЦИИ
-1. **Проанализируй вопрос пользователя**
-2. **Сформулируй четкий, структурированный ответ**
+1. **Проаналfromируй вопрос user**
+2. **Сформулируй четкий, структурированный response**
 3. **Примени стандартное Markdown форматирование**
 4. **Проверь корректность математических выражений**
 5. **Убедись, что НЕТ лишнего экранирования**
@@ -200,7 +200,7 @@ class Settings(BaseModel):
 # FEW-SHOT ПРИМЕРЫ
 ## Пример 1: Технический вопрос
 **Вопрос:** "Что такое Python?"
-**Правильный ответ:**
+**Правильный response:**
 **Python** — это высокоуровневый язык программирования.
 
 _Основные особенности:_
@@ -211,19 +211,19 @@ _Основные особенности:_
 
 ## Пример 2: Математический вопрос
 **Вопрос:** "Как решить x² + 2x + 1 = 0?"
-**Правильный ответ:**
+**Правильный response:**
 Решение уравнения `x² + 2x + 1 = 0`:
 1. Дискриминант: `D = 0`
 2. Корень: `x = -1`
 
 # ПРАВИЛА ФОРМАТИРОВАНИЯ
 ## ✅ РАЗРЕШЕНО (Стандартный Markdown)
-- `**жирный текст**` или `__жирный текст__`
-- `*курсив*` или `_курсив_`
-- `` `код` `` для технических терминов
-- `[текст ссылки](URL)` для ссылок
-- `- ` для списков
-- `> ` для цитат
+- `**жирный text**` or `__жирный text__`
+- `*курсив*` or `_курсив_`
+- `` `код` `` for технических терминов
+- `[text ссылки](URL)` for ссылок
+- `- ` for списков
+- `> ` for цитат
 
 ## ❌ ЗАПРЕЩЕНО
 - **MarkdownV2 экранирование**: НЕ пиши `\.`, `\-`, `\!`, `\(`, `\)`. Пиши просто `.`, `-`, `!`, `(`, `)`.
@@ -231,7 +231,7 @@ _Основные особенности:_
 - **LaTeX**: НЕ используй `$...$`.
 
 # ФОРМАТИРОВАНИЕ МАТЕМАТИКИ
-Пиши формулы как обычный текст или код:
+Пиши формулы как обычный text or код:
 - `2 * 2 = 4`
 - `x^2`
 - `sqrt(4) = 2`
@@ -239,7 +239,7 @@ _Основные особенности:_
 # СТИЛЬ ОБЩЕНИЯ
 - Будь полезным и точным
 - Структурируй информацию логично
-- Используй примеры
+- Используй onмеры
 - Будь дружелюбным
 
 # ФИНАЛЬНАЯ ПРОВЕРКА
@@ -249,18 +249,18 @@ _Основные особенности:_
 - [ ] Нет HTML тегов
 - [ ] Ответ полезен и структурирован"""
 
-    # COMPACT_SYSTEM_PROMPT (оптимизированная версия) ---
-    # Компактная версия базового промпта для экономии токенов
-    # Используется при наличии роли или для простых запросов
+    # COMPACT_SYSTEM_PROMPT (оптимfromированная версия) ---
+    # Компактная версия базового промпта for экономии tokenов
+    # Используется on наличии roles or for простых requestов
     COMPACT_SYSTEM_PROMPT: str = r"""# РОЛЬ
-ИИ-ассистент для Telegram. Отвечай точно, используя **Standard Markdown**.
+ИИ-ассистент for Telegram. Отвечай точно, используя **Standard Markdown**.
 
 # ФОРМАТИРОВАНИЕ
 ✅ `**жирный**`, `_курсив_`, `` `код` ``, `[ссылка](URL)`, `- списки`
 ❌ HTML теги, MarkdownV2 (`\.`, `\-`), LaTeX
 
 # МАТЕМАТИКА
-Обычный текст: `2 * 3 = 6`, `x^2`, `sqrt(2)`
+Обычный text: `2 * 3 = 6`, `x^2`, `sqrt(2)`
 
 # ЭКРАНИРОВАНИЕ
 ⛔️ **НЕ ЭКРАНИРУЙ** знаки препинания! Пиши `.` `!` `(` `)` как есть.
@@ -275,7 +275,7 @@ def load_settings() -> Settings:
     using the Pydantic model. This is the most robust method.
     """
     try:
-        # Значения по умолчанию для моделей
+        # Значения by default for моделей
         default_gemini_models = [
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
@@ -299,7 +299,7 @@ def load_settings() -> Settings:
             "OPENROUTER_API_KEYS": _load_and_clean_keys(
                 "OPENROUTER_API_KEYS", required=False
             ),
-            # Загружаем модели из env или используем значения по умолчанию
+            # Load models from env or use значения by default
             "AVAILABLE_MODELS": _load_and_clean_keys(
                 "GEMINI_AVAILABLE_MODELS", required=False
             )
@@ -329,10 +329,10 @@ def load_settings() -> Settings:
             "DAILY_LIMITS": _load_daily_limits(),
         }
 
-        # Валидация: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей
+        # Validation: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей
         settings_obj = Settings(**raw_settings)
 
-        # Проверяем Gemini модели
+        # Check Gemini models
         if settings_obj.DEFAULT_MODEL not in settings_obj.AVAILABLE_MODELS:
             logging.warning(
                 f"DEFAULT_MODEL '{settings_obj.DEFAULT_MODEL}' not in AVAILABLE_MODELS. Adding it."
@@ -351,7 +351,7 @@ def load_settings() -> Settings:
             )
             settings_obj.AVAILABLE_MODELS.append(settings_obj.RESEARCH_MODEL)
 
-        # Проверяем OpenRouter модели
+        # Check OpenRouter models
         if (
             settings_obj.OPENROUTER_DEFAULT_MODEL
             not in settings_obj.OPENROUTER_AVAILABLE_MODELS
@@ -373,10 +373,10 @@ def load_settings() -> Settings:
 
 
 # --- TIMEZONES ---
-# Кэшируем временные зоны для предотвращения запросов к pg_timezone_names
+# Кэшируем временные зоны for предотвращения requestов к pg_timezone_names
 PACIFIC_TZ = pytz.timezone("US/Pacific")
 KYIV_TZ = pytz.timezone("Europe/Kyiv")
-UTC_TZ = pytz.UTC  # Используем константу вместо pytz.utc
+UTC_TZ = pytz.UTC  # Используем константу instead of pytz.utc
 
 # --- LAZY LOADING SETTINGS ---
 _settings_instance: Optional[Settings] = None
@@ -392,7 +392,7 @@ def get_settings() -> Settings:
         try:
             _settings_instance = load_settings()
         except Exception as e:
-            logging.error(f"Failed to load settings: {e}")
+            logging.error("Failed to load settings: %s", e)
             raise
     return _settings_instance
 
@@ -460,10 +460,10 @@ class ConfigManager:
                 # === ВАЛИДАЦИЯ И МИГРАЦИЯ АКТИВНЫХ ПОЛЬЗОВАТЕЛЕЙ ===
                 migrated_count = 0
                 try:
-                    # Импортируем database только здесь, чтобы избежать циклических импортов
+                    # Импортируем database only здесь, чтобы fromбежать циклических импортов
                     from app import database as db
 
-                    # Получаем все доступные модели (Gemini + OpenRouter)
+                    # Get все available models (Gemini + OpenRouter)
                     all_available_models = set()
                     if new_settings.AVAILABLE_MODELS:
                         all_available_models.update(new_settings.AVAILABLE_MODELS)
@@ -473,8 +473,8 @@ class ConfigManager:
                         )
 
                     if all_available_models and db.db_pool and not db.db_pool._closed:
-                        # Находим пользователей с несуществующими моделями
-                        # Используем параметризованный запрос для безопасности
+                        # Находим users с несуществующими моделями
+                        # Используем parameterfromованный request for withoutопасности
                         placeholders = ",".join(
                             [f"${i + 1}" for i in range(len(all_available_models))]
                         )
@@ -488,18 +488,18 @@ class ConfigManager:
                             tuple(all_available_models),
                         )
 
-                        # Мигрируем пользователей на DEFAULT_MODEL
+                        # Мигрируем users на DEFAULT_MODEL
                         for chat in invalid_chats:
                             user_id = chat["user_id"]
                             old_model = chat["model"]
 
                             # Определяем правильный DEFAULT_MODEL
-                            if "/" in old_model:  # OpenRouter модель
+                            if "/" in old_model:  # OpenRouter model
                                 default_model = new_settings.OPENROUTER_DEFAULT_MODEL
-                            else:  # Gemini модель
+                            else:  # Gemini model
                                 default_model = new_settings.DEFAULT_MODEL
 
-                            # Обновляем модель пользователя
+                            # Update model user
                             await db.db_query(
                                 """
                                 UPDATE chats 
@@ -519,10 +519,10 @@ class ConfigManager:
                                 f"Migrated {migrated_count} users to default models after config reload"
                             )
                 except Exception as migration_error:
-                    # Не прерываем перезагрузку при ошибке миграции
-                    logging.error(f"Error during user migration: {migration_error}")
+                    # Не прерываем перезагрузку on ошибке миграции
+                    logging.error("Error during user migration: %s", migration_error)
 
-                # Проверяем, что DEFAULT_MODEL существует
+                # Check, что DEFAULT_MODEL существует
                 all_available_models_check = set()
                 if new_settings.AVAILABLE_MODELS:
                     all_available_models_check.update(new_settings.AVAILABLE_MODELS)
@@ -551,7 +551,7 @@ class ConfigManager:
 
             except Exception as e:
                 logging.error("Failed to reload configuration: %s", e)
-                # Не прерываем работу при ошибке перезагрузки конфигурации
+                # Не прерываем работу on ошибке перезагрузки конфигурации
                 # Система продолжит работать со старыми настройками
 
     def add_watcher(self, callback: Callable[[Settings, Settings], None]) -> None:

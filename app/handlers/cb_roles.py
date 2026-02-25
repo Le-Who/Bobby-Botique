@@ -106,7 +106,7 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     key = query.data.split(":", 1)[1]
     role_title = ""
 
-    # Получаем данные роли через хелпер
+    # Get data roles via хелпер
     role_data = await db.get_role_data(key, user_id)
 
     if not role_data:
@@ -120,17 +120,17 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_state.system_prompt = role_data["prompt"]
     role_title = role_data["title"]
 
-    # Записываем метрику (используем key для консистентности)
+    # Write метрику (use key for консистентности)
     await role_conv_metrics.record_role_application(role_data["key"])
 
-    # Сохраняем состояние
+    # Save state
     await db.update_user_chat(user_id, chat_state)
 
-    # Обновляем меню
-    # Сохраняем состояние
+    # Update menu
+    # Save state
     await db.update_user_chat(user_id, chat_state)
 
-    # Обновляем меню - возвращаемся в Hub
+    # Update menu - возвращаемся в Hub
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state, view_mode="hub"
     )
@@ -148,13 +148,13 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     user_id = query.from_user.id
     chat_state = await db.get_user_chat(user_id)
-    # Очищаем системный промпт (будет использован базовый)
+    # Clean up системный промпт (будет использован базовый)
     chat_state.system_prompt = None
     await db.update_user_chat(user_id, chat_state)
     await role_conv_metrics.record_role_clear()
 
-    # Обновляем меню
-    # Обновляем меню - возвращаемся в Hub
+    # Update menu
+    # Update menu - возвращаемся в Hub
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state, view_mode="hub"
     )
@@ -235,8 +235,8 @@ async def role_custom_apply_callback(
         await query.edit_message_text("❌ Нет сгенерированной роли для применения.")
         return
     prompt_text = role.get("prompt") or role.get("system_prompt") or ""
-    # Сохраняем только промпт роли (без базового системного промпта)
-    # compose_system_instruction будет вызван при использовании
+    # Save only промпт roles (without базового системного промпта)
+    # compose_system_instruction будет вызван on использовании
     chat_state.system_prompt = prompt_text
     await db.update_user_chat(user_id, chat_state)
     clear_custom_role_state(user_id)
@@ -257,9 +257,9 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
     if not role:
         await query.edit_message_text("❌ Нет сгенерированной роли для сохранения.")
         return
-    # Сохраняем в user_roles
+    # Save в user_roles
     try:
-        # Сохраняем
+        # Save
         await db.db_query(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
             (
@@ -269,11 +269,11 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
             ),
         )
         await role_conv_metrics.record_custom_role_creation()
-        # И сразу применяем
+        # И сразу onменяем
         prompt_text = role.get("prompt") or role.get("system_prompt") or ""
         chat_state = await db.get_user_chat(user_id)
-        # Сохраняем только промпт роли (без базового системного промпта)
-        # compose_system_instruction будет вызван при использовании
+        # Save only промпт roles (without базового системного промпта)
+        # compose_system_instruction будет вызван on использовании
         chat_state.system_prompt = prompt_text
         await db.update_user_chat(user_id, chat_state)
         clear_custom_role_state(user_id)
@@ -300,7 +300,7 @@ async def role_custom_retry_callback(
     # Запускаем повтор генерации как в messages.handle_request
     chat_state = await db.get_user_chat(user_id)
 
-    # Используем универсальную функцию для получения ключа (поддерживает и Gemini, и OpenRouter)
+    # Используем универсальную функцию for получения keyа (поддерживает и Gemini, и OpenRouter)
     from app.handlers.ai_core import _resolve_ai_request, _get_ai_response, _increment_key_usage
 
     model_for_role = chat_state.model or settings.DEFAULT_MODEL
@@ -312,7 +312,7 @@ async def role_custom_retry_callback(
     set_generating_custom_role(user_id, True)
     history = [{"role": "user", "parts": [last_prompt]}]
 
-    # Используем универсальную функцию для получения ответа (поддерживает и Gemini, и OpenRouter)
+    # Используем универсальную функцию for получения responseа (поддерживает и Gemini, и OpenRouter)
     response_text, _ = await _get_ai_response(
         key_data["api_key"],
         history,
@@ -322,15 +322,15 @@ async def role_custom_retry_callback(
         chat_id=user_id,
     )
 
-    # Инкрементируем использование ключа
+    # Инкрементируем использование keyа
     await _increment_key_usage(key_data["key_hash"], model_used)
 
-    # Логируем ответ модели для отладки
-    logging.info(f"Model response for role retry: {response_text[:500]}...")
+    # Log response models for отладки
+    logging.info("Model response for role retry: %s...", response_text[:500])
 
     role_obj = prompts.extract_json_object(response_text)
     if not role_obj:
-        # Обработка явной 503 ошибки из текста
+        # Processing явной 503 ошибки from textа
         if (
             "503" in (response_text or "")
             or "unavailable" in (response_text or "").lower()
@@ -405,7 +405,7 @@ async def role_delete_cancel_callback(
     await query.answer()
     role_id = query.data.split(":")[1]
 
-    # Возвращаемся в детали роли
+    # Returnся в детали roles
     user_id = query.from_user.id
     chat_state = await db.get_user_chat(user_id)
 
@@ -427,10 +427,10 @@ async def role_delete_confirm_callback(
         return
     try:
         role_id = int(query.data.split(":")[1])
-        # Проверяем, не активна ли эта роль сейчас
+        # Check, не активна ли эта role сейчас
         chat_state = await db.get_user_chat(user_id)
 
-        # Получаем промпт удаляемой роли, чтобы проверить, активна ли она
+        # Get промпт удаляемой roles, чтобы проверить, активна ли она
         role_data = await db.db_query(
             "SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2",
             (role_id, user_id),
@@ -440,12 +440,12 @@ async def role_delete_confirm_callback(
             "DELETE FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id)
         )
 
-        # Если удаляемая роль была активна, сбрасываем ее
+        # If удаляемая role была активна, сбрасываем ее
         if role_data and chat_state.system_prompt == role_data[0]["prompt"]:
             chat_state.system_prompt = None
             await db.update_user_chat(user_id, chat_state)
 
-        # Обновляем меню - переходим в список "Мои роли"
+        # Update menu - переходим в list "Мои roles"
         text, parse_mode, reply_markup = await menus.get_roles_menu_content(
             user_id, chat_state, view_mode="my_roles", page=0
         )
@@ -461,7 +461,7 @@ async def role_delete_confirm_callback(
         await query.answer("🗑️ Роль удалена.")
 
     except Exception as e:
-        logging.error(f"Error deleting role: {e}")
+        logging.error("Error deleting role: %s", e)
         await query.answer("❌ Ошибка удаления роли")
 
 
@@ -559,7 +559,7 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = query.from_user.id
     if not await db.is_authorized(user_id):
         return
-    # Отображаем меню ролей так же, как и команда /roles
+    # Отображаем menu ролей так же, как и команда /roles
     from app.handlers.commands import roles_command
 
     await roles_command(DummyUpdate(query.message, query.from_user), context)

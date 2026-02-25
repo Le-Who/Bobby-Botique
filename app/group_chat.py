@@ -45,7 +45,7 @@ class GroupChatManager:
     async def initialize(self):
         """Инициализирует менеджер групповых чатов"""
         try:
-            # Создаем таблицы для групповых чатов
+            # Create таблицы for групповых chatов
             await db.db_query("""
                 CREATE TABLE IF NOT EXISTS group_chats (
                     chat_id BIGINT PRIMARY KEY,
@@ -81,13 +81,13 @@ class GroupChatManager:
                 )
             """)
 
-            # Загружаем активные группы
+            # Load active groups
             await self._load_active_groups()
 
             logging.info("Group chat manager initialized")
 
         except Exception as e:
-            logging.error(f"Error initializing group chat manager: {e}")
+            logging.error("Error initializing group chat manager: %s", e)
 
     async def _load_active_groups(self):
         """Загружает активные группы из базы данных"""
@@ -114,7 +114,7 @@ class GroupChatManager:
                 chat_ids.append(group.chat_id)
 
             if chat_ids:
-                # Загружаем участников всех активных групп одним запросом
+                # Load участников всех активных групп одним requestом
                 members = await db.db_query(
                     "SELECT chat_id, user_id FROM group_members WHERE chat_id = ANY($1::bigint[])",
                     (chat_ids,),
@@ -123,38 +123,38 @@ class GroupChatManager:
                 for member in members:
                     self.user_groups[member["user_id"]].add(member["chat_id"])
 
-            logging.info(f"Loaded {len(self.active_groups)} active groups")
+            logging.info("Loaded %s active groups", len(self.active_groups))
 
         except Exception as e:
-            logging.error(f"Error loading active groups: {e}")
+            logging.error("Error loading active groups: %s", e)
 
     async def register_group(
         self, chat_id: int, title: str, admin_user_id: int
     ) -> bool:
         """Регистрирует новую группу"""
         try:
-            # Проверяем, что пользователь авторизован
+            # Check, что user авторfromован
             if not await db.is_authorized(admin_user_id):
                 return False
 
             async with self._lock:
-                # Проверяем, не зарегистрирована ли уже группа
+                # Check, не зарегистрирована ли уже group
                 if chat_id in self.active_groups:
                     return False
 
-                # Создаем группу в базе данных
+                # Create группу в базе данных
                 await db.db_query(
                     "INSERT INTO group_chats (chat_id, title, admin_user_id) VALUES ($1, $2, $3)",
                     (chat_id, title, admin_user_id),
                 )
 
-                # Добавляем администратора как участника
+                # Add администратора как участника
                 await db.db_query(
                     "INSERT INTO group_members (chat_id, user_id, is_admin) VALUES ($1, $2, TRUE)",
                     (chat_id, admin_user_id),
                 )
 
-                # Создаем объект группы
+                # Create объект groups
                 group = GroupChat(
                     chat_id=chat_id,
                     title=title,
@@ -170,11 +170,11 @@ class GroupChatManager:
                 self.group_settings[chat_id] = {}
                 self.user_groups[admin_user_id].add(chat_id)
 
-                logging.info(f"Registered new group: {title} (ID: {chat_id})")
+                logging.info("Registered new group: %s (ID: %s)", title, chat_id)
                 return True
 
         except Exception as e:
-            logging.error(f"Error registering group: {e}")
+            logging.error("Error registering group: %s", e)
             return False
 
     async def add_member_to_group(self, chat_id: int, user_id: int) -> bool:
@@ -183,12 +183,12 @@ class GroupChatManager:
             if chat_id not in self.active_groups:
                 return False
 
-            # Проверяем, что пользователь авторизован
+            # Check, что user авторfromован
             if not await db.is_authorized(user_id):
                 return False
 
             async with self._lock:
-                # Добавляем в базу данных
+                # Add в базу данных
                 await db.db_query(
                     "INSERT INTO group_members (chat_id, user_id) VALUES ($1, $2) ON CONFLICT (chat_id, user_id) DO NOTHING",
                     (chat_id, user_id),
@@ -200,7 +200,7 @@ class GroupChatManager:
                     (chat_id,),
                 )
 
-                # Обновляем в памяти
+                # Update в памяти
                 self.user_groups[user_id].add(chat_id)
                 if chat_id in self.active_groups:
                     self.active_groups[chat_id].member_count += 1
@@ -208,7 +208,7 @@ class GroupChatManager:
                 return True
 
         except Exception as e:
-            logging.error(f"Error adding member to group: {e}")
+            logging.error("Error adding member to group: %s", e)
             return False
 
     async def remove_member_from_group(self, chat_id: int, user_id: int) -> bool:
@@ -218,7 +218,7 @@ class GroupChatManager:
                 return False
 
             async with self._lock:
-                # Удаляем из базы данных
+                # Delete from базы данных
                 await db.db_query(
                     "DELETE FROM group_members WHERE chat_id = $1 AND user_id = $2",
                     (chat_id, user_id),
@@ -230,7 +230,7 @@ class GroupChatManager:
                     (chat_id,),
                 )
 
-                # Обновляем в памяти
+                # Update в памяти
                 self.user_groups[user_id].discard(chat_id)
                 if chat_id in self.active_groups:
                     self.active_groups[chat_id].member_count = max(
@@ -240,7 +240,7 @@ class GroupChatManager:
                 return True
 
         except Exception as e:
-            logging.error(f"Error removing member from group: {e}")
+            logging.error("Error removing member from group: %s", e)
             return False
 
     async def is_member(self, chat_id: int, user_id: int) -> bool:
@@ -258,7 +258,7 @@ class GroupChatManager:
             return result and result[0]["is_admin"]
 
         except Exception as e:
-            logging.error(f"Error checking admin status: {e}")
+            logging.error("Error checking admin status: %s", e)
             return False
 
     async def get_group_info(self, chat_id: int) -> Optional[GroupChat]:
@@ -284,7 +284,7 @@ class GroupChatManager:
                 )
 
         except Exception as e:
-            logging.error(f"Error updating group activity: {e}")
+            logging.error("Error updating group activity: %s", e)
 
     async def log_group_message(
         self,
@@ -304,7 +304,7 @@ class GroupChatManager:
             await self.update_group_activity(chat_id)
 
         except Exception as e:
-            logging.error(f"Error logging group message: {e}")
+            logging.error("Error logging group message: %s", e)
 
     async def get_group_stats(self, chat_id: int) -> Dict[str, Any]:
         """Получает статистику группы"""
@@ -315,13 +315,13 @@ class GroupChatManager:
                 (chat_id,),
             )
 
-            # Сообщения за последние 24 часа
+            # Сообщения за afterдние 24 часа
             recent_messages = await db.db_query(
                 "SELECT COUNT(*) as count FROM group_messages WHERE chat_id = $1 AND created_at > NOW() - INTERVAL '24 hours'",
                 (chat_id,),
             )
 
-            # Активные пользователи за последние 24 часа
+            # Активные пользователи за afterдние 24 часа
             active_users = await db.db_query(
                 "SELECT COUNT(DISTINCT user_id) as count FROM group_messages WHERE chat_id = $1 AND created_at > NOW() - INTERVAL '24 hours'",
                 (chat_id,),
@@ -339,11 +339,11 @@ class GroupChatManager:
             }
 
         except Exception as e:
-            logging.error(f"Error getting group stats: {e}")
+            logging.error("Error getting group stats: %s", e)
             return {}
 
 
-# Глобальный экземпляр менеджера групповых чатов
+# Глобальный экземпляр менеджера групповых chatов
 group_chat_manager = GroupChatManager()
 
 

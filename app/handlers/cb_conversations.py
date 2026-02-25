@@ -27,7 +27,7 @@ async def send_conversation_selection(
         action_prefix: The prefix for the callback data (e.g. 'conv_switch_to', 'conv_delete_ask')
         title: The title text to display
     """
-    # Получаем список бесед для выбора
+    # Get list бесед for выбора
     conversations = await db.get_user_conversations(user_id, 10, 0)
     if not conversations:
         await query.edit_message_text("📝 У вас нет сохранённых бесед.")
@@ -105,7 +105,7 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
         success = await db.switch_to_conversation(user_id, conv_id)
         if success:
             await role_conv_metrics.record_conversation_switched()
-            # Показываем список бесед с тостом
+            # Показываем list бесед с тостом
             text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
                 user_id, 1
             )
@@ -116,7 +116,7 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
         else:
             await query.answer("❌ Ошибка при переключении на беседу.")
     except Exception as e:
-        logging.error(f"Error switching to conversation {conv_id}: {e}")
+        logging.error("Error switching to conversation %s: %s", conv_id, e)
         await query.answer("❌ Ошибка при переключении на беседу.")
 
 
@@ -213,7 +213,7 @@ async def conv_delete_confirm_callback(
     if success:
         await role_conv_metrics.record_conversation_deleted()
 
-        # Обновляем список
+        # Update list
         text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
             user_id, 1
         )
@@ -265,8 +265,8 @@ async def refresh_metrics_callback(update: Update, context: ContextTypes.DEFAULT
         if "Message is not modified" in str(e):
             await query.answer("✅ Данные актуальны", show_alert=False)
         else:
-            logging.error(f"Error refreshing metrics: {e}")
+            logging.error("Error refreshing metrics: %s", e)
             await query.answer("❌ Ошибка обновления")
     except Exception as e:
-        logging.error(f"Error in refresh metrics callback: {e}", exc_info=True)
+        logging.error("Error in refresh metrics callback: %s", e, exc_info=True)
         await query.answer("❌ Внутренняя ошибка")

@@ -56,10 +56,10 @@ async def send_long_message(
     preserve_formatting: bool = True,
 ):
     """
-    Отправляет длинное сообщение, разбивая его на части, если необходимо.
-    Использует безопасное HTML форматирование.
+    Отправляет длинное message, разбивая его на части, if необходимо.
+    Использует safe HTML форматирование.
     """
-    # Валидация состояния deep dive (legacy logic preserved)
+    # Validation состояния deep dive (legacy logic preserved)
     if is_deep_dive:
         try:
             from app.database import get_user_chat
@@ -78,13 +78,13 @@ async def send_long_message(
                 ):
                     is_deep_dive = False
         except Exception as e:
-            logging.error(f"Error validating deep dive state: {e}")
+            logging.error("Error validating deep dive state: %s", e)
             is_deep_dive = False
 
-    # Форматируем текст в HTML
+    # Format text в HTML
     formatted_text, parse_mode = format_text(text, parse_mode="HTML")
 
-    # Разбиваем уже отформатированный текст, сохраняя теги
+    # Разбиваем уже отформатированный text, сохраняя теги
     parts = split_text_safe(formatted_text)
 
     is_first_part = True
@@ -147,10 +147,10 @@ async def send_long_message(
                         plain_text, reply_markup=current_reply_markup
                     )
             except Exception as final_error:
-                logging.error(f"Critical error sending message: {final_error}")
+                logging.error("Critical error sending message: %s", final_error)
 
         except Exception as e:
-            logging.error(f"Unexpected error in send_long_message: {e}")
+            logging.error("Unexpected error in send_long_message: %s", e)
 
         is_first_part = False
         await asyncio.sleep(0.3)
@@ -162,7 +162,7 @@ async def send_formatted_message(message: Message, text: str, parse_mode: str = 
         formatted, mode = format_text(text, parse_mode=parse_mode)
         await message.reply_text(formatted, parse_mode=mode)
     except Exception as e:
-        logging.error(f"Error sending formatted message: {e}")
+        logging.error("Error sending formatted message: %s", e)
         await message.reply_text(strip_formatting(text))
 
 
@@ -172,5 +172,5 @@ async def edit_formatted_message(message: Message, text: str, parse_mode: str = 
         formatted, mode = format_text(text, parse_mode=parse_mode)
         await message.edit_text(formatted, parse_mode=mode)
     except Exception as e:
-        logging.error(f"Error editing formatted message: {e}")
+        logging.error("Error editing formatted message: %s", e)
         await message.edit_text(strip_formatting(text))

@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional, Set, Tuple
 
 from app import database as db
-from app import services
+
 from app.config import get_openrouter_keys, get_use_openrouter, settings
 from app.errors import is_error_message, is_key_related_error
 
@@ -146,13 +146,20 @@ class AgentRequestUseCase:
                 None,
             )
 
-        if use_openrouter:
-            return await services.get_openrouter_response(
-                api_key, history, model_name, system_instruction, user_id, chat_id
-            )
-        return await services.get_gemini_response(
-            api_key, history, model_name, system_instruction, user_id, chat_id
+        # Unified path: delegate to Provider classes (same path as ProviderRouter)
+        from app.ai_provider import get_provider_for_model
+
+        provider = get_provider_for_model(model_name, api_key)
+        response = await provider.get_response(
+            history=history,
+            model_name=model_name,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            chat_id=chat_id,
         )
+
+        token_count = response.token_count if response.success else None
+        return response.text, token_count
 
     async def increment_key_usage(
         self, key_hash: str, model_name: str, use_openrouter: bool = None

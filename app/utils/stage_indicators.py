@@ -73,6 +73,6 @@ async def update_stage(
         await message.edit_text(full_text)
     except Exception as e:
         # Silently handle "message not modified" and similar
-        logging.debug(f"Stage indicator update skipped: {e}")
+        logging.debug("Stage indicator update skipped: %s", e)
 
     return min(stage_index + 1, len(stage_list) - 1)

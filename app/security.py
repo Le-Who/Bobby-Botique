@@ -493,71 +493,72 @@ def validate_file_upload(filename: str, file_size: int, mime_type: str) -> bool:
 
 
 class RateLimiter:
-    """Rate limiting для защиты от злоупотреблений"""
+    """Sliding-window per-user rate limiter with periodic cleanup."""
 
     def __init__(self, max_requests: int = 30, window_seconds: int = 60):
         """
         Args:
-            max_requests: Максимальное количество запросов в окне
-            window_seconds: Размер окна в секундах
+            max_requests: Maximum number of requests per window
+            window_seconds: Window size in seconds
         """
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._user_requests: Dict[int, List[float]] = defaultdict(list)
         self._lock = asyncio.Lock()
-        self._cleanup_interval = 300  # Очистка каждые 5 минут
+        self._cleanup_interval = 300  # Cleanup every 5 minutes
         self._last_cleanup = time.time()
 
     async def check_rate_limit(self, user_id: int) -> bool:
         """
-        Проверяет, не превышен ли лимит запросов для пользователя.
+        Check if a user has exceeded their request rate limit.
 
         Args:
-            user_id: ID пользователя
+            user_id: User ID
 
         Returns:
-            True если запрос разрешен, False если лимит превышен
+            True if request is allowed, False if rate limited
         """
         current_time = time.time()
 
         async with self._lock:
-            # Очищаем старые записи периодически
+            # Periodically clean up old entries
             if current_time - self._last_cleanup > self._cleanup_interval:
                 await self._cleanup_old_entries(current_time)
                 self._last_cleanup = current_time
 
-            # Получаем список запросов пользователя
+            # Get user's request list
             user_requests = self._user_requests[user_id]
 
-            # Удаляем запросы старше окна
+            # Remove requests older than the window
             cutoff_time = current_time - self.window_seconds
             user_requests[:] = [
                 req_time for req_time in user_requests if req_time > cutoff_time
             ]
 
-            # Проверяем лимит
+            # Check limit
             if len(user_requests) >= self.max_requests:
                 logging.warning(
-                    f"Rate limit exceeded for user {user_id}: {len(user_requests)}/{self.max_requests} requests"
+                    "Rate limit exceeded for user %s: %s/%s requests",
+                    user_id, len(user_requests), self.max_requests
                 )
                 return False
 
-            # Добавляем текущий запрос
+            # Record current request
             user_requests.append(current_time)
             return True
 
     async def _cleanup_old_entries(self, current_time: float):
-        """Очищает старые записи для экономии памяти"""
+        """Remove stale entries to conserve memory."""
         cutoff_time = current_time - self.window_seconds
         users_to_remove = []
 
         for user_id, requests in self._user_requests.items():
-            # Удаляем старые запросы
+            # Remove stale requests
             self._user_requests[user_id] = [
                 req_time for req_time in requests if req_time > cutoff_time
             ]
 
-            # Удаляем пользователей без активных запросов
+            # Mark users with no active requests for removal
             if not self._user_requests[user_id]:
                 users_to_remove.append(user_id)
 
@@ -570,7 +571,7 @@ class RateLimiter:
             )
 
     async def get_user_stats(self, user_id: int) -> Dict[str, Any]:
-        """Возвращает статистику запросов пользователя"""
+        """Return request statistics for a user."""
         current_time = time.time()
         cutoff_time = current_time - self.window_seconds
 
@@ -592,26 +593,26 @@ class RateLimiter:
             }
 
     async def reset_user_limit(self, user_id: int):
-        """Сбрасывает лимит для пользователя (для админов)"""
+        """Reset rate limit for a user (admin action)."""
         async with self._lock:
             if user_id in self._user_requests:
                 del self._user_requests[user_id]
-                logging.info(f"Rate limit reset for user {user_id}")
+                logging.info("Rate limit reset for user %s", user_id)
 
 
-# Глобальный экземпляр rate limiter
-# Настройки: 30 запросов в минуту по умолчанию
+# Global rate limiter instance
+# Settings: 30 requests per minute by default
 rate_limiter = RateLimiter(max_requests=30, window_seconds=60)
 
 
 async def check_user_rate_limit(user_id: int) -> bool:
     """
-    Проверяет rate limit для пользователя.
+    Check rate limit for a user.
 
     Args:
-        user_id: ID пользователя
+        user_id: User ID
 
     Returns:
-        True если запрос разрешен, False если лимит превышен
+        True if request is allowed, False if rate limited
     """
     return await rate_limiter.check_rate_limit(user_id)

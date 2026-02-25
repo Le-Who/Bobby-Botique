@@ -107,7 +107,7 @@ async def _ensure_loaded(state: UserState) -> UserState:
             )
             state.last_sent_message_text = data.get("last_sent_message_text")
     except Exception as e:
-        logging.debug(f"Could not load state for {state._user_id}: {e}")
+        logging.debug("Could not load state for %s: %s", state._user_id, e)
 
     state._loaded_from_db = True
     return state
@@ -132,7 +132,7 @@ async def _persist(state: UserState) -> None:
             last_sent_message_text=state.last_sent_message_text,
         )
     except Exception as e:
-        logging.debug(f"Could not persist state for {state._user_id}: {e}")
+        logging.debug("Could not persist state for %s: %s", state._user_id, e)
 
 
 def _schedule_persist(state: UserState) -> None:

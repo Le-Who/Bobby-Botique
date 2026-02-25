@@ -195,7 +195,7 @@ class DatabaseManager:
                 result = await conn.fetch(query_str, *params)
                 return [dict(record) for record in result]
             except Exception as e:
-                logging.error(f"Error in provided connection query: {e}")
+                logging.error("Error in provided connection query: %s", e)
                 raise e
 
         last_exception = None
@@ -219,7 +219,7 @@ class DatabaseManager:
                 last_exception = Exception(
                     f"Database query timeout: {query_str[:100]}..."
                 )
-                logging.warning(f"Database query timeout (attempt {attempt + 1})")
+                logging.warning("Database query timeout (attempt %s)", attempt + 1)
 
             except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
                 last_exception = e
@@ -238,7 +238,7 @@ class DatabaseManager:
                 last_exception = e
                 if "rate limit" in str(e).lower():
                     raise
-                logging.error(f"Database query error (attempt {attempt + 1}): {e}")
+                logging.error("Database query error (attempt %s): %s", attempt + 1, e)
                 if attempt == retries:
                     break
                 await asyncio.sleep(min(2**attempt, 10))
@@ -259,7 +259,7 @@ class DatabaseManager:
                 await conn.executemany(query_str, params_list)
                 return
             except Exception as e:
-                logging.error(f"Error in provided connection executemany: {e}")
+                logging.error("Error in provided connection executemany: %s", e)
                 raise e
 
         last_exception = None
@@ -283,7 +283,7 @@ class DatabaseManager:
                 last_exception = Exception(
                     f"Database executemany timeout: {query_str[:100]}..."
                 )
-                logging.warning(f"Database executemany timeout (attempt {attempt + 1})")
+                logging.warning("Database executemany timeout (attempt %s)", attempt + 1)
 
             except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
                 last_exception = e
@@ -378,7 +378,7 @@ async def init_db():
             await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
             await conn.execute("SET lock_timeout = '30s'")
     except Exception as e:
-        logging.warning(f"Failed to apply DB optimizations: {e}")
+        logging.warning("Failed to apply DB optimizations: %s", e)
 
     # Initialize Schema
     await _init_schema()
@@ -624,7 +624,7 @@ async def _run_migrations():
             await db_query("ALTER TABLE users ADD COLUMN deep_dive_thread_id TEXT;")
 
     except Exception as e:
-        logging.warning(f"Legacy migration warning: {e}")
+        logging.warning("Legacy migration warning: %s", e)
 
 
 async def _insert_initial_data():
@@ -702,7 +702,11 @@ RLS_POLICY_CONVERSATION_MESSAGES = """
 CREATE POLICY {policy_name} ON {table_name}
 FOR ALL USING (
     (select current_setting('app.is_admin', true)) = 'true'
-    OR owner_user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
+    OR EXISTS (
+        SELECT 1 FROM conversations c
+        WHERE c.id = {table_name}.conversation_id
+        AND c.user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
+    )
 );
 """
 
@@ -768,7 +772,7 @@ VALID_TABLES = set(RLS_CONFIG.keys())
 async def setup_row_level_security():
     """Настраивает Row Level Security для всех таблиц"""
     try:
-        # Быстрая проверка, настроены ли уже политики (чтобы не гонять ALTER TABLE при каждом рестарте)
+        # Быстрая проверка, настроены ли уже политики (чтобы не гонять ALTER TABLE on каждом рестарте)
         existing = await db_query(
             "SELECT 1 FROM pg_policies WHERE tablename = 'users' AND policyname = 'users_policy'"
         )
@@ -781,21 +785,21 @@ async def setup_row_level_security():
                 await db_query(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
                 await create_rls_policies(table)
             except Exception as e:
-                logging.warning(f"Failed to enable RLS for table {table}: {e}")
+                logging.warning("Failed to enable RLS for table %s: %s", table, e)
     except Exception as e:
-        logging.error(f"Error setting up RLS: {e}")
+        logging.error("Error setting up RLS: %s", e)
 
 
 async def create_rls_policies(table_name: str):
     """Создает политики безопасности для таблицы"""
     if table_name not in VALID_TABLES:
-        logging.error(f"Invalid table name for RLS policy: {table_name}")
+        logging.error("Invalid table name for RLS policy: %s", table_name)
         return
 
     try:
         policies = RLS_CONFIG.get(table_name)
         if not policies:
-            logging.warning(f"No RLS configuration found for table: {table_name}")
+            logging.warning("No RLS configuration found for table: %s", table_name)
             return
 
         for policy_cfg in policies:
@@ -831,7 +835,7 @@ async def create_rls_policies(table_name: str):
                 raise e
 
     except Exception as e:
-        logging.error(f"Error creating RLS policies for {table_name}: {e}")
+        logging.error("Error creating RLS policies for %s: %s", table_name, e)
 
 
 async def set_user_context(user_id: int, is_admin: bool = False, conn=None):
@@ -839,14 +843,14 @@ async def set_user_context(user_id: int, is_admin: bool = False, conn=None):
         await db_query(
             """
             SELECT 
-                set_config('app.user_id', $1, false),
-                set_config('app.is_admin', $2, false)
+                set_config('app.user_id', $1, true),
+                set_config('app.is_admin', $2, true)
         """,
             (str(user_id), str(is_admin).lower()),
             conn=conn,
         )
     except Exception as e:
-        logging.warning(f"Failed to set user context: {e}")
+        logging.warning("Failed to set user context: %s", e)
 
 
 async def clear_user_context(conn=None):
@@ -854,13 +858,13 @@ async def clear_user_context(conn=None):
         await db_query(
             """
             SELECT 
-                set_config('app.user_id', '', false),
-                set_config('app.is_admin', 'false', false)
+                set_config('app.user_id', '', true),
+                set_config('app.is_admin', 'false', true)
         """,
             conn=conn,
         )
     except Exception as e:
-        logging.warning(f"Failed to clear user context: {e}")
+        logging.warning("Failed to clear user context: %s", e)
 
 
 async def get_user_chat(user_id: int) -> ChatState:
@@ -923,7 +927,7 @@ async def get_user_chat(user_id: int) -> ChatState:
                             if msg["content"].startswith("[")
                             else msg["content"]
                         )
-                    except:
+                    except (json.JSONDecodeError, ValueError, TypeError):
                         content = msg["content"]
                     chat_state.history.append({"role": msg["role"], "content": content})
 
@@ -1048,7 +1052,7 @@ async def get_model_daily_limit(model_name: str) -> Optional[int]:
                 db_manager._model_config_cache[model_name] = limit
         return limit
     except Exception as e:
-        logging.warning(f"Failed to fetch limit for {model_name}: {e}")
+        logging.warning("Failed to fetch limit for %s: %s", model_name, e)
         return None
 
 
@@ -1266,138 +1270,14 @@ async def increment_openrouter_key_usage(key_hash: str, model_name: str):
     await db_query(query, (key_hash, model_name, today_pacific))
 
 
-async def optimize_database_connections():
-    if not db_manager.pool:
-        return False
-    try:
-        async with db_manager.pool.acquire() as conn:
-            await conn.execute("SET statement_timeout = '60s'")
-            await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
-            await conn.execute("SET lock_timeout = '30s'")
-        return True
-    except Exception:
-        return False
+# Re-export metrics functions from repos layer (canonical location)
+from app.repos.metrics_repo import (  # noqa: E402, F811
+    optimize_database_connections,
+    get_supabase_metrics,
+    get_gemini_key_usage_stats,
+    get_active_key_info,
+)
 
-
-async def get_supabase_metrics() -> Dict[str, Any]:
-    if not db_manager.pool:
-        return {"status": "disconnected", "pool_size": 0, "active_connections": 0}
-    try:
-        pool = db_manager.pool
-        pool_stats = {
-            "status": "connected" if not pool._closed else "closed",
-            "pool_size": pool.get_size(),
-            "free_size": pool.get_free_size(),
-            "active_connections": pool.get_size() - pool.get_free_size(),
-        }
-        start_time = time.time()
-        async with pool.acquire() as conn:
-            await conn.execute("SELECT 1")
-            response_time = time.time() - start_time
-            pool_stats.update(
-                {
-                    "response_time_ms": round(response_time * 1000, 2),
-                    "connection_health": "healthy" if response_time < 0.1 else "slow",
-                }
-            )
-        return pool_stats
-    except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e),
-            "pool_size": 0,
-            "active_connections": 0,
-        }
-
-
-async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, Any]]:
-    today_pacific: date = datetime.now(get_pacific_tz()).date()
-    if model_name:
-        query = """
-            SELECT 
-                ak.key_hash,
-                LEFT(ak.api_key, 10) || '...' as api_key_preview,
-                COALESCE(ku.request_count, 0) as request_count,
-                mc.daily_limit,
-                CASE 
-                    WHEN mc.daily_limit IS NULL THEN 0
-                    ELSE (COALESCE(ku.request_count, 0)::float / mc.daily_limit * 100)
-                END as usage_percent,
-                CASE 
-                    WHEN mc.daily_limit IS NULL THEN true
-                    ELSE COALESCE(ku.request_count, 0) < (mc.daily_limit * $2)
-                END as is_available
-            FROM api_keys ak
-            LEFT JOIN model_configuration mc ON mc.model_name = $1
-            LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash 
-                AND ku.model_name = $1 AND ku.usage_date = $3
-            ORDER BY COALESCE(ku.request_count, 0) ASC
-        """
-        results = await db_query(
-            query,
-            (
-                model_name,
-                settings.LIMIT_THRESHOLD_PERCENT,
-                today_pacific,
-            ),
-        )
-    else:
-        query = """
-            SELECT 
-                ak.key_hash,
-                LEFT(ak.api_key, 10) || '...' as api_key_preview,
-                ku.model_name,
-                COALESCE(ku.request_count, 0) as request_count,
-                mc.daily_limit,
-                CASE 
-                    WHEN mc.daily_limit IS NULL THEN 0
-                    ELSE (COALESCE(ku.request_count, 0)::float / mc.daily_limit * 100)
-                END as usage_percent,
-                CASE 
-                    WHEN mc.daily_limit IS NULL THEN true
-                    ELSE COALESCE(ku.request_count, 0) < (mc.daily_limit * $1)
-                END as is_available
-            FROM api_keys ak
-            LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash AND ku.usage_date = $2
-            LEFT JOIN model_configuration mc ON mc.model_name = ku.model_name
-            WHERE ku.model_name IS NOT NULL
-            ORDER BY ku.model_name, COALESCE(ku.request_count, 0) ASC
-        """
-        results = await db_query(
-            query, (settings.LIMIT_THRESHOLD_PERCENT, today_pacific)
-        )
-    return results
-
-
-async def get_active_key_info(model_name: str) -> Optional[Dict[str, Any]]:
-    # 1. Get from cache without I/O
-    cached_key = None
-    cached_at = time.time()  # approximate since we don't track explicitly anymore
-    async with db_manager._cache_lock:
-        if model_name in db_manager._active_keys_cache:
-            cached_key = db_manager._active_keys_cache[model_name]
-
-    if not cached_key:
-        return None
-
-    # 2. Verify availability outside lock with proper context
-    if not db_manager.is_connected:
-        await reconnect_database()
-
-    async with db_manager.pool.acquire() as conn:
-        await set_user_context(settings.ADMIN_ID, True, conn=conn)
-        try:
-            is_available = await _is_key_available(
-                cached_key["key_hash"], model_name, conn=conn
-            )
-            return {
-                "key_hash": cached_key["key_hash"],
-                "api_key_preview": cached_key["api_key"][:10] + "...",
-                "is_available": is_available,
-                "cached_at": cached_at,
-            }
-        finally:
-            await clear_user_context(conn=conn)
 
 
 async def force_update_tavily_keys():
@@ -1407,22 +1287,27 @@ async def force_update_tavily_keys():
         settings = get_settings()
         if not settings or not settings.TAVILY_API_KEYS:
             return False
-        await db_query("DELETE FROM tavily_api_keys")
+
         keys_data = []
         for key in settings.TAVILY_API_KEYS:
             key_hash = hashlib.sha256(key.encode()).hexdigest()
             keys_data.append((key_hash, key))
 
-        if keys_data:
-            await db_execute_many(
-                "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2)",
-                keys_data,
-            )
-        await db_query("DELETE FROM tavily_key_usage")
+        async with db_manager.pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("DELETE FROM tavily_api_keys")
+                if keys_data:
+                    await conn.executemany(
+                        "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2)",
+                        keys_data,
+                    )
+                await conn.execute("DELETE FROM tavily_key_usage")
+
         async with db_manager._cache_lock:
             db_manager._active_keys_cache.clear()
         return True
-    except Exception:
+    except Exception as e:
+        logging.error("Failed to force update Tavily keys: %s", e)
         return False
 
 
@@ -1469,8 +1354,8 @@ async def is_authorized(user_id: int) -> bool:
 
 async def get_role_data(role_key: str, user_id: int) -> Optional[Dict[str, Any]]:
     """
-    Получает данные роли (название, промпт) по ключу.
-    Поддерживает системные роли (из prompts.py) и пользовательские (из БД).
+    Получает data roles (название, промпт) по keyу.
+    Поддерживает системные roles (from prompts.py) и userские (from БД).
     """
     from app import prompts
 
@@ -1479,7 +1364,7 @@ async def get_role_data(role_key: str, user_id: int) -> Optional[Dict[str, Any]]
 
     if role_key.startswith("user_role:"):
         try:
-            # Извлекаем ID из ключа "user_role:ID"
+            # Extract ID from keyа "user_role:ID"
             role_id = int(role_key.split(":")[1])
             res = await db_query(
                 "SELECT id, title, prompt FROM user_roles WHERE id = $1 AND user_id = $2",
@@ -1493,8 +1378,8 @@ async def get_role_data(role_key: str, user_id: int) -> Optional[Dict[str, Any]]
                     "is_custom": True,
                     "key": role_key,
                 }
-        except (ValueError, IndexError, Exception):
-            pass
+        except (ValueError, IndexError):
+            logging.warning("Failed to parse user role key %s", role_key)
     elif role_key in prompts.DEFAULT_ROLES:
         meta = prompts.DEFAULT_ROLES[role_key]
         return {
@@ -1528,10 +1413,10 @@ async def save_conversation(
                     "CALL save_chat_to_conversation($1, $2)", (user_id, conv_id)
                 )
             except Exception as e:
-                logging.error(f"Error saving conversation messages via Procedure: {e}")
+                logging.error("Error saving conversation messages via Procedure: %s", e)
         return conv_id
     except Exception as e:
-        logging.error(f"Error in save_conversation: {e}")
+        logging.error("Error in save_conversation: %s", e)
         return None
 
 
@@ -1600,7 +1485,7 @@ async def get_conversation_messages(conversation_id: int, user_id: int) -> list:
 async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
     try:
         conv_data = await db_query(
-            "SELECT role_type, role_id, summary FROM conversations WHERE id = $1 AND user_id = $2",
+            "SELECT role_type, role_id, summary, token_budget FROM conversations WHERE id = $1 AND user_id = $2",
             (conversation_id, user_id),
         )
         if not conv_data:
@@ -1633,8 +1518,11 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             ):
                 del db_manager._active_chats_cache[user_id]
 
+        # Restore token count from the conversation's stored token_budget
+        stored_budget = conv_data[0].get("token_budget") if conv_data else 0
         await db_query(
-            "UPDATE chats SET token_count = 0 WHERE user_id = $1", (user_id,)
+            "UPDATE chats SET token_count = $1 WHERE user_id = $2",
+            (stored_budget or 0, user_id),
         )
 
         if role_type and role_id:
@@ -1673,22 +1561,28 @@ async def rename_conversation(
 
 async def delete_conversation(user_id: int, conversation_id: int) -> bool:
     try:
-        conv_check = await db_query(
-            "SELECT id FROM conversations WHERE id = $1 AND user_id = $2",
-            (conversation_id, user_id),
-        )
-        if not conv_check:
-            return False
-        await db_query(
-            "DELETE FROM conversation_messages WHERE conversation_id = $1",
-            (conversation_id,),
-        )
-        await db_query(
-            "DELETE FROM conversations WHERE id = $1 AND user_id = $2",
-            (conversation_id, user_id),
-        )
+        async with db_manager.pool.acquire() as conn:
+            async with conn.transaction():
+                conv_check = await db_query(
+                    "SELECT id FROM conversations WHERE id = $1 AND user_id = $2",
+                    (conversation_id, user_id),
+                    conn=conn,
+                )
+                if not conv_check:
+                    return False
+                await db_query(
+                    "DELETE FROM conversation_messages WHERE conversation_id = $1",
+                    (conversation_id,),
+                    conn=conn,
+                )
+                await db_query(
+                    "DELETE FROM conversations WHERE id = $1 AND user_id = $2",
+                    (conversation_id, user_id),
+                    conn=conn,
+                )
         return True
-    except Exception:
+    except Exception as e:
+        logging.error("Failed to delete conversation %s for user %s: %s", conversation_id, user_id, e)
         return False
 
 
@@ -1737,7 +1631,7 @@ async def load_user_state(user_id: int) -> Optional[Dict[str, Any]]:
             }
         return None
     except Exception as e:
-        logging.warning(f"Failed to load user state for {user_id}: {e}")
+        logging.warning("Failed to load user state for %s: %s", user_id, e)
         return None
 
 
@@ -1782,7 +1676,7 @@ async def save_user_state(
             ),
         )
     except Exception as e:
-        logging.warning(f"Failed to save user state for {user_id}: {e}")
+        logging.warning("Failed to save user state for %s: %s", user_id, e)
 
 
 async def save_feedback(user_id: int, message_id: int, rating: str) -> None:
@@ -1793,5 +1687,19 @@ async def save_feedback(user_id: int, message_id: int, rating: str) -> None:
             (user_id, message_id, rating),
         )
     except Exception as e:
-        logging.warning(f"Failed to save feedback for user {user_id}: {e}")
+        logging.warning("Failed to save feedback for user %s: %s", user_id, e)
 
+
+# =============================================================================
+# REPOSITORY LAYER (canonical new locations for business logic)
+#
+# The functions above are duplicated in app/repos/ modules.
+# New code should import from:
+#   app.repos.users       — is_admin, is_authorized, load_user_state, etc.
+#   app.repos.chats       — get_user_chat, update_user_chat
+#   app.repos.keys        — get_available_gemini_key, increment_*, etc.
+#   app.repos.conversations — save_conversation, switch_to_conversation, etc.
+#   app.repos.metrics_repo — get_supabase_metrics, get_gemini_key_usage_stats
+#
+# Existing `from app.database import X` calls continue to work unchanged.
+# =============================================================================

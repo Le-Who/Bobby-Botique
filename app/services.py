@@ -1,4 +1,5 @@
 import logging
+import warnings
 import httpx
 from google import genai
 from google.genai import types
@@ -25,8 +26,81 @@ import concurrent.futures
 # Используем улучшенную конфигурацию HTTP клиента
 http_client = NetworkErrorHandler.create_robust_http_client()
 
-# Глобальный пул процессов для обработки изображений вне GIL
+# Глобальный пул процессов for обработки fromображений вне GIL
 _image_process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=2)
+
+
+# ─── Shared helpers ──────────────────────────────────────────────────────────
+
+
+def _validate_api_inputs(
+    api_key: str,
+    history: list,
+    model_name: str,
+    user_id: Optional[int] = None,
+    chat_id: Optional[int] = None,
+) -> None:
+    """Common input validation for all AI provider functions."""
+    if not isinstance(api_key, str) or not api_key.strip():
+        raise ValueError("api_key must be a non-empty string")
+    if not isinstance(history, list) or not history:
+        raise ValueError("history must be a non-empty list")
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError("model_name must be a non-empty string")
+    if user_id is not None and not isinstance(user_id, int):
+        raise ValueError("user_id must be an integer")
+    if chat_id is not None and not isinstance(chat_id, int):
+        raise ValueError("chat_id must be an integer")
+
+
+def _caller_info() -> str:
+    """Return caller filename:lineno for deprecation tracking."""
+    import inspect
+    frame = inspect.currentframe()
+    try:
+        # Walk two frames up: _caller_info -> deprecated func -> actual caller
+        caller = frame.f_back.f_back if frame and frame.f_back else None
+        if caller:
+            fname = caller.f_code.co_filename.replace("\\", "/").rsplit("/", 1)[-1]
+            return f"{fname}:{caller.f_lineno}"
+        return "unknown"
+    finally:
+        del frame
+
+
+async def _with_retry(
+    provider_name: str,
+    execute_fn,
+    max_retries: int = 3,
+    *,
+    non_retryable_msg: str = "❌ Ошибка вызова API: {error}",
+):
+    """Shared retry wrapper with exponential backoff for transient errors."""
+    for attempt in range(max_retries):
+        try:
+            return await execute_fn()
+        except Exception as e:
+            error_text = str(e).lower()
+            is_transient = (
+                "503" in str(e)
+                or "unavailable" in error_text
+                or "overloaded" in error_text
+            )
+            if is_transient and attempt < max_retries - 1:
+                wait_time = min(2 ** (attempt + 1), 10)
+                logging.warning(
+                    f"{provider_name} API overloaded (attempt {attempt + 1}/{max_retries}). "
+                    f"Retrying in {wait_time}s..."
+                )
+                await asyncio.sleep(wait_time)
+                continue
+            elif is_transient:
+                logging.error("Max retries exceeded for %s API: %s", provider_name, e)
+                continue
+            else:
+                return non_retryable_msg.format(error=e), None
+
+    return "❌ Превышено максимальное количество попыток. Попробуйте позже.", None
 
 
 def _image_worker(
@@ -48,20 +122,18 @@ def _image_worker(
         img_bytes_approx = estimate_image_size_in_bytes(img_to_process)
 
         if img_bytes_approx > max_size_mb * 1024 * 1024:
-            # Уменьшаем
             ratio = math.sqrt((max_size_mb * 1024 * 1024) / img_bytes_approx)
             new_size = tuple(int(dim * ratio) for dim in img_to_process.size)
             img_to_process = img_to_process.resize(new_size, Image.Resampling.LANCZOS)
 
         buf = io.BytesIO()
-        # Convert to RGB if necessary (e.g. RGBA to JPEG)
         if img_to_process.mode in ("RGBA", "P"):
             img_to_process = img_to_process.convert("RGB")
 
         img_to_process.save(buf, format="JPEG", quality=85, optimize=True)
         return buf.getvalue()
     except Exception as e:
-        logging.error(f"Error in image processing worker: {e}", exc_info=True)
+        logging.error("Error in image processing worker: %s", e, exc_info=True)
         return None
 
 
@@ -75,70 +147,29 @@ async def get_gemini_response(
     max_retries: int = 3,
 ):
     """
-    Получает ответ от Gemini API с улучшенной обработкой ошибок и retry механизмом.
-
-    Args:
-        api_key: API ключ для Gemini
-        history: История сообщений
-        model_name: Название модели
-        system_instruction: Системная инструкция
-        user_id: ID пользователя для логирования
-        chat_id: ID чата для логирования
-        max_retries: Максимальное количество попыток при ошибках 503
+    Получает response от Gemini API with retry mechanism.
 
     Returns:
-        Tuple (response_text, token_count) или (error_message, None)
+        Tuple (response_text, token_count) or (error_message, None)
     """
-    # Валидация входных параметров
-    if not isinstance(api_key, str) or not api_key.strip():
-        raise ValueError("api_key must be a non-empty string")
+    warnings.warn(
+        "get_gemini_response() is deprecated. Use GeminiProvider._execute_request() "
+        "or ProviderRouter.get_response() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    logging.warning(
+        "DEPRECATION: get_gemini_response() called by %s — migrate to Provider classes",
+        _caller_info(),
+    )
+    _validate_api_inputs(api_key, history, model_name, user_id, chat_id)
 
-    if not isinstance(history, list) or not history:
-        raise ValueError("history must be a non-empty list")
+    async def _attempt():
+        return await _execute_gemini_request(
+            api_key, history, model_name, system_instruction, user_id, chat_id
+        )
 
-    if not isinstance(model_name, str) or not model_name.strip():
-        raise ValueError("model_name must be a non-empty string")
-
-    if user_id is not None and not isinstance(user_id, int):
-        raise ValueError("user_id must be an integer")
-
-    if chat_id is not None and not isinstance(chat_id, int):
-        raise ValueError("chat_id must be an integer")
-
-    # Retry механизм для ошибок 503
-    for attempt in range(max_retries):
-        try:
-            return await _execute_gemini_request(
-                api_key, history, model_name, system_instruction, user_id, chat_id
-            )
-        except Exception as e:
-            error_message = str(e).lower()
-
-            is_retryable = (
-                "503" in str(e)
-                or "unavailable" in error_message
-                or "overloaded" in error_message
-            )
-
-            if is_retryable:
-                if attempt < max_retries - 1:
-                    # Экспоненциальная задержка с максимумом 10 секунд
-                    wait_time = min(2 ** (attempt + 1), 10)
-                    logging.warning(
-                        f"Gemini API overloaded (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time} seconds..."
-                    )
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    logging.error(f"Max retries exceeded for Gemini API: {e}")
-                    # Fallthrough to return the error message below
-                    continue
-            else:
-                # For non-retryable errors, return the error message
-                return f"❌ Ошибка вызова API: {e}", None
-
-    # Этот код не должен выполняться, но на всякий случай
-    return "❌ Превышено максимальное количество попыток. Попробуйте позже.", None
+    return await _with_retry("Gemini", _attempt, max_retries)
 
 
 async def _save_image_as_bytes(
@@ -154,7 +185,7 @@ async def _save_image_as_bytes(
             timeout=timeout,
         )
     except Exception as e:
-        logging.error(f"Image processing error: {e}")
+        logging.error("Image processing error: %s", e)
         return None
 
 
@@ -167,9 +198,9 @@ async def _execute_gemini_request(
     chat_id: int = None,
 ):
     """
-    Внутренняя функция для выполнения запроса к Gemini API.
+    Internal function for выполнения requestа к Gemini API.
     """
-    # Гарантированная инициализация времени
+    # Guaranteed initialization времени
     start_time = time.time()
 
     try:
@@ -189,11 +220,11 @@ async def _execute_gemini_request(
                 if part is not None
             )
         except Exception as e:
-            logging.warning(f"Metrics calc error: {e}")
+            logging.warning("Metrics calc error: %s", e)
             prompt_length = 0
             has_images = False
 
-        # Логируем запрос (функция вернет start_time)
+        # Log request (функция вернет start_time)
         start_time = api_logger.log_gemini_request(
             model=model_name,
             prompt_length=prompt_length,
@@ -203,14 +234,15 @@ async def _execute_gemini_request(
         )
         request_id = get_request_id()
         client_kwargs = {"api_key": api_key}
+        # SDK-level HTTP timeout prevents zombie connections if the model
+        # takes too long to respond (e.g. gemini-2.5-flash "thinking" models)
+        http_opts = {"timeout": 90_000}  # 90s in milliseconds
         if request_id:
-            # google-genai SDK supports custom transport headers via http_options.
-            client_kwargs["http_options"] = types.HttpOptions(
-                headers={"X-Request-ID": request_id}
-            )
+            http_opts["headers"] = {"X-Request-ID": request_id}
+        client_kwargs["http_options"] = types.HttpOptions(**http_opts)
 
         client = genai.Client(**client_kwargs)
-        # Преобразуем историю в формат types.Content
+        # Convert history to format types.Content
         contents = []
         try:
             for item in history:
@@ -222,18 +254,18 @@ async def _execute_gemini_request(
 
                 role = item.get("role", "user")
                 parts = item.get("parts", [])
-                # Убедимся, что parts - это список
+                # Ensure parts is a list
                 if not isinstance(parts, list):
                     parts = [parts] if parts is not None else []
                 elif parts is None:
                     parts = []
 
-                # Преобразуем PIL Image в Part, если необходимо
+                # Convert PIL Image в Part, if необходимо
                 processed_parts = []
                 for part in parts:
                     if isinstance(part, (bytes, bytearray, Image.Image)):
-                        # Используем безопасное сохранение с таймаутом
-                        # Image.Image передается напрямую для обработки в пуле процессов
+                        # Use safe save with timeout
+                        # Image.Image passed directly for processing in process pool
                         img_bytes = await _save_image_as_bytes(part)
 
                         if img_bytes:
@@ -245,14 +277,14 @@ async def _execute_gemini_request(
                                 )
                                 processed_parts.append(image_part)
                             except Exception as e:
-                                logging.warning(f"Failed to create image part: {e}")
+                                logging.warning("Failed to create image part: %s", e)
                         else:
                             logging.warning(
                                 "Skipping image part due to processing error"
                             )
                         continue
                     else:
-                        # Безопасное преобразование текста - убеждаемся, что это строка
+                        # Safe text conversion - ensure, что это строка
                         try:
                             text_content = str(part)
                             processed_parts.append(
@@ -264,7 +296,7 @@ async def _execute_gemini_request(
                             )
                             continue
 
-                # Добавляем content только если есть обработанные parts
+                # Add content only if processed parts exist
                 if processed_parts and len(processed_parts) > 0:
                     try:
                         contents.append(types.Content(role=role, parts=processed_parts))
@@ -274,8 +306,8 @@ async def _execute_gemini_request(
                         )
                         continue
         except Exception as e:
-            logging.error(f"Error processing history: {e}")
-            # Fallback: создаем простой content с ошибкой
+            logging.error("Error processing history: %s", e)
+            # Fallback: create simple error content
             try:
                 contents.append(
                     types.Content(
@@ -284,10 +316,10 @@ async def _execute_gemini_request(
                     )
                 )
             except Exception as fallback_error:
-                logging.error(f"Failed to create fallback content: {fallback_error}")
+                logging.error("Failed to create fallback content: %s", fallback_error)
                 return "❌ Ошибка обработки запроса", None
 
-        # Проверяем, что contents не пустой
+        # Check, что contents не empty
         if not contents or len(contents) == 0:
             error_msg = (
                 "Failed to create valid content for Gemini API - no valid parts found"
@@ -308,42 +340,43 @@ async def _execute_gemini_request(
                     f"Failed to set system_instruction: {e}, continuing without it"
                 )
 
-        # Выполняем запрос с timeout
+        # Native async call — properly supports cancellation via CancelledError.
+        # The old asyncio.to_thread(client.models.generate_content, ...) approach
+        # spawned a thread that kept running even after asyncio.wait_for cancelled
+        # the future, causing zombie requests on timeout with "thinking" models.
         response = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.models.generate_content,
+            client.aio.models.generate_content(
                 model=model_name,
                 contents=contents,
                 config=config,
             ),
-            timeout=120.0,  # 120 секунд timeout (увеличено для медленных моделей)
+            timeout=100.0,  # 100s Python-side deadline (SDK has 90s HTTP timeout)
         )
 
-        # Подсчет токенов с timeout
+        # Token counting — also native async
         try:
             token_count_response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    client.models.count_tokens, model=model_name, contents=contents
+                client.aio.models.count_tokens(
+                    model=model_name, contents=contents
                 ),
-                timeout=10.0,  # 10 секунд timeout
+                timeout=10.0,
             )
         except Exception as token_error:
-            logging.warning(f"Failed to count tokens: {token_error}, using fallback")
+            logging.warning("Failed to count tokens: %s, using fallback", token_error)
 
-            # Создаем fallback объект для токенов
             class FallbackTokenCount:
                 def __init__(self):
                     self.total_tokens = 0
 
             token_count_response = FallbackTokenCount()
 
-        # Дополнительная проверка response на None
+        # Additional check for None response
         if not response or not hasattr(response, "text"):
             error_msg = "Gemini API returned invalid response object"
             logging.error(error_msg)
             await metrics_collector.record_error("gemini_invalid_response", error_msg)
 
-            # Логируем ошибку
+            # Log error
             if start_time is not None:
                 api_logger.log_gemini_response(
                     start_time=start_time,
@@ -357,14 +390,14 @@ async def _execute_gemini_request(
 
             return "❌ API вернул некорректный ответ. Попробуйте еще раз.", None
 
-        # Безопасная проверка и извлечение response.text
+        # Safe check and extraction response.text
         response_text = response.text if response.text else ""
         if not response_text:
             error_msg = "Gemini API returned None or empty response text"
             logging.error(error_msg)
             await metrics_collector.record_error("gemini_none_response", error_msg)
 
-            # Логируем ошибку
+            # Log error
             if start_time is not None:
                 api_logger.log_gemini_response(
                     start_time=start_time,
@@ -378,7 +411,7 @@ async def _execute_gemini_request(
 
             return "❌ API вернул пустой ответ. Попробуйте еще раз.", None
 
-        # Логируем успешный ответ Gemini API (используем безопасную переменную)
+        # Log успешный response Gemini API (use withoutопасную переменную)
         if start_time is not None:
             api_logger.log_gemini_response(
                 start_time=start_time,
@@ -397,7 +430,7 @@ async def _execute_gemini_request(
         logging.error(error_msg)
         await metrics_collector.record_error("gemini_timeout", error_msg)
 
-        # Логируем ошибку timeout только если start_time был инициализирован
+        # Log error timeout only if start_time был инициалfromирован
         if start_time is not None:
             api_logger.log_gemini_response(
                 start_time=start_time,
@@ -412,7 +445,7 @@ async def _execute_gemini_request(
         return "⏰ Превышено время ожидания ответа от API. Попробуйте позже.", None
 
     except APIError as e:
-        # Логируем ошибку Gemini API только если start_time был инициализирован
+        # Log error Gemini API only if start_time был инициалfromирован
         if start_time is not None:
             api_logger.log_gemini_response(
                 start_time=start_time,
@@ -424,9 +457,9 @@ async def _execute_gemini_request(
                 chat_id=chat_id,
             )
 
-        logging.error(f"Gemini API Error: {e}")
+        logging.error("Gemini API Error: %s", e)
 
-        # Обработка специфических ошибок
+        # Handle specific errors
         error_message = str(e).lower()
 
         if "quota" in error_message:
@@ -454,7 +487,7 @@ async def _execute_gemini_request(
             return f"Произошла ошибка вызова API: {e}", None
 
     except Exception as e:
-        # Логируем общую ошибку Gemini API только если start_time был инициализирован
+        # Log общую ошибку Gemini API only if start_time был инициалfromирован
         if start_time is not None:
             api_logger.log_gemini_response(
                 start_time=start_time,
@@ -466,7 +499,7 @@ async def _execute_gemini_request(
                 chat_id=chat_id,
             )
 
-        logging.error(f"Gemini API generic error: {e}")
+        logging.error("Gemini API generic error: %s", e, exc_info=True)
         await metrics_collector.record_error("gemini_api", str(e))
         return f"Произошла непредвиденная ошибка API: {e}", None
 
@@ -485,34 +518,34 @@ async def _tavily_api_call(payload: Dict[str, Any]) -> Dict[str, Any]:
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        logging.error(f"Tavily API call error: {e}")
+        logging.error("Tavily API call error: %s", e)
         raise
 
 
 async def tavily_search_agent(
     query: str, search_type: str = "search", user_id: int = None, chat_id: int = None
 ):
-    # Валидация входных параметров
+    # Validation входных parameterов
     if not isinstance(query, str) or not query.strip():
         raise ValueError("Query must be a non-empty string")
 
-    if query and len(query) > 1000:  # Ограничение длины запроса
+    if query and len(query) > 1000:  # Ограничение длины requestа
         raise ValueError("Query too long. Maximum 1000 characters allowed")
 
     if search_type not in ["search", "qna"]:
         raise ValueError("search_type must be 'search' or 'qna'")
 
-    # Валидация user_id и chat_id если они предоставлены
+    # Validation user_id и chat_id if они предоставлены
     if user_id is not None and (not isinstance(user_id, int) or user_id <= 0):
         raise ValueError("user_id must be a positive integer")
 
     if chat_id is not None and not isinstance(chat_id, int):
         raise ValueError("chat_id must be an integer")
 
-    # Проверяем кэш перед выполнением поиска
+    # Check cache before выполнением searchа
     cached_result = await get_cached_search_result(query, search_type)
     if cached_result:
-        logging.info(f"Cache hit for Tavily search: {query[:50]}...")
+        logging.info("Cache hit for Tavily search: %s...", query[:50])
         return cached_result
 
     available_key = await database.get_available_tavily_key()
@@ -523,7 +556,7 @@ async def tavily_search_agent(
 
     api_key = available_key["api_key"]
 
-    # Детальное логирование Tavily API запроса
+    # Детальное логирование Tavily API requestа
     start_time = api_logger.log_tavily_request(
         query=query, search_type=search_type, user_id=user_id, chat_id=chat_id
     )
@@ -532,7 +565,7 @@ async def tavily_search_agent(
         f"Performing Tavily API call (type: {search_type}) for query: {query[:100]}"
     )
 
-    # Записываем метрики поискового запроса
+    # Write metrics searchового requestа
     await metrics_collector.record_search_query()
     await metrics_collector.record_api_call("tavily", search_type)
 
@@ -557,10 +590,10 @@ async def tavily_search_agent(
         else:
             result = {"type": "search", "results": data.get("results", [])}
 
-        # Сохраняем результат в кэш
+        # Save result в cache
         await cache_search_result(query, search_type, result)
 
-        # Логируем успешный ответ Tavily API
+        # Log успешный response Tavily API
         results = result.get("results", [])
         results_count = (
             len(results) if results and result.get("type") == "search" else 1
@@ -577,7 +610,7 @@ async def tavily_search_agent(
         return result
 
     except httpx.HTTPStatusError as e:
-        # Логируем ошибку Tavily API
+        # Log error Tavily API
         api_logger.log_tavily_response(
             start_time=start_time,
             search_type=search_type,
@@ -598,7 +631,7 @@ async def tavily_search_agent(
             "error": f"Ошибка API поиска: {e.response.status_code}. Убедитесь, что ключ API валиден."
         }
     except Exception as e:
-        # Логируем общую ошибку Tavily API
+        # Log общую ошибку Tavily API
         api_logger.log_tavily_response(
             start_time=start_time,
             search_type=search_type,
@@ -609,7 +642,7 @@ async def tavily_search_agent(
             chat_id=chat_id,
         )
 
-        logging.error(f"Tavily API call failed: {e}")
+        logging.error("Tavily API call failed: %s", e, exc_info=True)
         await metrics_collector.record_error("tavily_api", str(e))
         return {"error": f"Произошла непредвиденная ошибка API: {e}"}
 
@@ -624,70 +657,29 @@ async def get_openrouter_response(
     max_retries: int = 3,
 ):
     """
-    Получает ответ от OpenRouter API с улучшенной обработкой ошибок и retry механизмом.
-
-    Args:
-        api_key: API ключ для OpenRouter
-        history: История сообщений (в формате Gemini: [{'role': 'user', 'parts': [...]}])
-        model_name: Название модели (например, "openai/gpt-4o")
-        system_instruction: Системная инструкция
-        user_id: ID пользователя для логирования
-        chat_id: ID чата для логирования
-        max_retries: Максимальное количество попыток при ошибках 503
+    Получает response от OpenRouter API with retry mechanism.
 
     Returns:
-        Tuple (response_text, token_count) или (error_message, None)
+        Tuple (response_text, token_count) or (error_message, None)
     """
-    # Валидация входных параметров
-    if not isinstance(api_key, str) or not api_key.strip():
-        raise ValueError("api_key must be a non-empty string")
-
-    if not isinstance(history, list) or not history:
-        raise ValueError("history must be a non-empty list")
-
-    if not isinstance(model_name, str) or not model_name.strip():
-        raise ValueError("model_name must be a non-empty string")
-
-    if user_id is not None and not isinstance(user_id, int):
-        raise ValueError("user_id must be an integer")
-
-    if chat_id is not None and not isinstance(chat_id, int):
-        raise ValueError("chat_id must be an integer")
-
-    # Логируем входящие параметры
-    logging.info(
-        f"🔍 get_openrouter_response called: model={model_name}, system_instruction={'provided' if system_instruction else 'None'}, length={len(system_instruction) if system_instruction else 0}"
+    warnings.warn(
+        "get_openrouter_response() is deprecated. Use OpenRouterProvider._execute_request() "
+        "or ProviderRouter.get_response() instead.",
+        DeprecationWarning,
+        stacklevel=2,
     )
+    logging.warning(
+        "DEPRECATION: get_openrouter_response() called by %s — migrate to Provider classes",
+        _caller_info(),
+    )
+    _validate_api_inputs(api_key, history, model_name, user_id, chat_id)
 
-    # Retry механизм для ошибок 503
-    for attempt in range(max_retries):
-        try:
-            return await _execute_openrouter_request(
-                api_key, history, model_name, system_instruction, user_id, chat_id
-            )
-        except Exception as e:
-            error_message = str(e).lower()
+    async def _attempt():
+        return await _execute_openrouter_request(
+            api_key, history, model_name, system_instruction, user_id, chat_id
+        )
 
-            # Если это ошибка 503 и у нас еще есть попытки, пробуем снова
-            if (
-                "503" in str(e)
-                or "unavailable" in error_message
-                or "overloaded" in error_message
-            ) and attempt < max_retries - 1:
-                wait_time = (
-                    attempt + 1
-                ) * 2  # Экспоненциальная задержка: 2, 4, 6 секунд
-                logging.warning(
-                    f"OpenRouter API overloaded (attempt {attempt + 1}/{max_retries}). Retrying in {wait_time} seconds..."
-                )
-                await asyncio.sleep(wait_time)
-                continue
-            else:
-                # Если это не 503 ошибка или попытки закончились, пробрасываем ошибку
-                raise
-
-    # Этот код не должен выполняться, но на всякий случай
-    return "❌ Превышено максимальное количество попыток. Попробуйте позже.", None
+    return await _with_retry("OpenRouter", _attempt, max_retries)
 
 
 async def _execute_openrouter_request(
@@ -699,55 +691,25 @@ async def _execute_openrouter_request(
     chat_id: int = None,
 ):
     """
-    Внутренняя функция для выполнения запроса к OpenRouter API.
+    Internal function for выполнения requestа к OpenRouter API.
     """
     start_time = None
 
     try:
         await metrics_collector.record_api_call("openrouter", model_name)
 
-        # Детальное логирование OpenRouter API запроса
-        try:
-            sum(
-                len(str(part))
-                for item in history
-                for part in (item.get("parts", []) or [])
-                if part is not None
-            )
-            any(
-                isinstance(part, (bytes, bytearray, Image.Image))
-                for item in history
-                for part in (item.get("parts", []) or [])
-                if part is not None
-            )
-        except Exception as e:
-            logging.warning(
-                f"Error calculating prompt metrics: {e}, using fallback values"
-            )
-
-        # Используем тот же api_logger, но с типом "openrouter"
         start_time = time.time()
 
-        # Преобразуем историю Gemini в формат OpenAI для OpenRouter
+        # Convert history Gemini to format OpenAI for OpenRouter
         messages = []
 
-        # Добавляем системное сообщение, если есть
-        # В OpenRouter системное сообщение должно быть первым в массиве messages
+        # System message first
         if system_instruction:
             system_content = str(system_instruction).strip()
             if system_content:
                 messages.append({"role": "system", "content": system_content})
-                logging.info(
-                    f"✅ OpenRouter: Added system instruction (length: {len(system_content)}, preview: {system_content[:100]}...)"
-                )
-            else:
-                logging.warning(
-                    "⚠️ OpenRouter: system_instruction is empty after strip()"
-                )
-        else:
-            logging.warning("⚠️ OpenRouter: system_instruction is None or falsy")
 
-        # Преобразуем историю из формата Gemini в формат OpenAI
+        # Convert history from format Gemini to format OpenAI
         for item in history:
             if not isinstance(item, dict):
                 logging.warning(
@@ -756,7 +718,7 @@ async def _execute_openrouter_request(
                 continue
 
             role = item.get("role", "user")
-            # В OpenRouter используем "assistant" вместо "model"
+            # В OpenRouter use "assistant" instead of "model"
             if role == "model":
                 role = "assistant"
 
@@ -766,13 +728,13 @@ async def _execute_openrouter_request(
             elif parts is None:
                 parts = []
 
-            # Объединяем все части в один контент
-            # Для изображений конвертируем в base64 (если нужно)
+            # Объединяем все части в один content
+            # Для fromображений конвертируем в base64 (if нужно)
             content_parts = []
             for part in parts:
                 if isinstance(part, (bytes, bytearray, Image.Image)):
                     # Use offloaded processing
-                    # Image.Image передается напрямую для обработки в пуле процессов
+                    # Image.Image passed directly for processing in process pool
                     img_bytes = await _save_image_as_bytes(part)
                     if img_bytes:
                         # base64 encoding in thread to prevent blocking
@@ -789,14 +751,14 @@ async def _execute_openrouter_request(
                             }
                         )
                 else:
-                    # Текстовый контент
+                    # Text content
                     text_content = str(part)
                     if text_content.strip():
                         content_parts.append({"type": "text", "text": text_content})
 
-            # Если есть контент, добавляем сообщение
+            # If content exists, add message
             if content_parts:
-                # Если только один текстовый элемент, упрощаем формат
+                # If only one text element, simplify format
                 if len(content_parts) == 1 and content_parts[0].get("type") == "text":
                     messages.append({"role": role, "content": content_parts[0]["text"]})
                 else:
@@ -810,7 +772,7 @@ async def _execute_openrouter_request(
             )
             return f"❌ Ошибка создания контента для API: {error_msg}", None
 
-        # Формируем запрос к OpenRouter API
+        # Build request к OpenRouter API
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -823,30 +785,17 @@ async def _execute_openrouter_request(
             headers["X-Request-ID"] = request_id
 
         payload = {"model": model_name, "messages": messages}
-        # Логируем структуру сообщений для отладки
-        has_system = len(messages) > 0 and messages[0].get("role") == "system"
-        if has_system:
-            system_content = messages[0].get("content", "")
-            logging.info(
-                f"✅ OpenRouter: Request includes system message (length: {len(system_content)}, first 200 chars: {system_content[:200]}...)"
-            )
-        else:
-            logging.warning(
-                f"⚠️ OpenRouter: Request does NOT include system message! Total messages: {len(messages)}"
-            )
-            if len(messages) > 0:
-                logging.warning(
-                    f"⚠️ OpenRouter: First message role: {messages[0].get('role')}"
-                )
-        logging.info(
-            f"📤 OpenRouter: Sending request with {len(messages)} messages, model: {model_name}"
+        logging.debug(
+            f"OpenRouter: sending {len(messages)} messages to {model_name}"
         )
 
-        # Выполняем запрос с timeout
+        # OpenRouter uses httpx.AsyncClient (already async — no zombie-thread risk).
+        # The httpx client has a 30s read timeout as the primary deadline.
+        # This asyncio.wait_for is a safety net for extreme edge cases.
         try:
             response = await asyncio.wait_for(
                 http_client.post(url, json=payload, headers=headers),
-                timeout=120.0,  # 120 секунд timeout (увеличено для медленных моделей)
+                timeout=90.0,
             )
             response.raise_for_status()
             response_data = response.json()
@@ -856,7 +805,7 @@ async def _execute_openrouter_request(
             await metrics_collector.record_error("openrouter_http", error_msg)
 
             if start_time is not None:
-                api_logger.log_gemini_response(  # Используем тот же логгер
+                api_logger.log_gemini_response(  # Using the same logger
                     start_time=start_time,
                     model=model_name,
                     response_length=0,
@@ -866,7 +815,7 @@ async def _execute_openrouter_request(
                     chat_id=chat_id,
                 )
 
-            # Обработка специфических ошибок
+            # Handle specific errors
             if e.response.status_code == 429:
                 return (
                     "⏱️ Превышен лимит запросов. Подождите немного и попробуйте снова.",
@@ -918,7 +867,7 @@ async def _execute_openrouter_request(
 
             return f"❌ Ошибка API: {error_msg}", None
 
-        # Извлекаем ответ
+        # Extract response
         if (
             not response_data
             or "choices" not in response_data
@@ -965,11 +914,11 @@ async def _execute_openrouter_request(
 
             return "❌ API вернул пустой ответ. Попробуйте еще раз.", None
 
-        # Подсчет токенов из ответа API (если доступно)
+        # Подсчет tokenов from responseа API (if доступно)
         usage = response_data.get("usage", {})
         token_count = usage.get("total_tokens", 0)
 
-        # Логируем успешный ответ
+        # Log успешный response
         if start_time is not None:
             api_logger.log_gemini_response(
                 start_time=start_time,
@@ -984,9 +933,8 @@ async def _execute_openrouter_request(
         return response_text, token_count
 
     except Exception as e:
-        error_msg = f"OpenRouter API generic error: {e}"
-        logging.error(error_msg)
-        await metrics_collector.record_error("openrouter_api", error_msg)
+        logging.error("OpenRouter API generic error: %s", e, exc_info=True)
+        await metrics_collector.record_error("openrouter_api", str(e))
 
         if start_time is not None:
             api_logger.log_gemini_response(
@@ -994,7 +942,7 @@ async def _execute_openrouter_request(
                 model=model_name,
                 response_length=0,
                 success=False,
-                error_message=error_msg,
+                error_message=str(e),
                 user_id=user_id,
                 chat_id=chat_id,
             )

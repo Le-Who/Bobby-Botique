@@ -81,11 +81,13 @@ Located in `app/handlers/` as modular sub-handlers (`ai_core.py`, `ai_chat.py`, 
 The bot implements a sophisticated "Smart Router" for AI requests:
 
 - **Multi-Provider Support**: Seamlessly switches between **Google Gemini** (Flash, Pro) and **OpenRouter** (GPT-4, Claude 3, etc.).
-- **ProviderRouter** (v2.4+):
+- **ProviderRouter** (v2.6+):
+  - Unified AI call path — both `ProviderRouter` and `AgentRequestUseCase` route through Provider classes (`GeminiProvider` / `OpenRouterProvider`).
   - Per-key health scoring (exponential decay on failure, linear recovery).
   - Automatic key skipping for unhealthy keys with cooldown-based recovery.
   - **Multimodal auto-detection**: Detects PIL Image / bytes in history and forces Gemini automatically.
-  - **Per-user rate limiting**: Sliding-window throttle (default 20 req/min) prevents abuse.
+  - **Per-user rate limiting**: Consolidated `RateLimiter` with periodic cleanup, stats, and admin reset.
+  - **`DailyKeyManager`**: Generic key rotation engine shared by Gemini and OpenRouter, parameterized by table names.
 - **Key Rotation System**:
   - Rotates through a pool of API keys to avoid rate limits.
   - Tracks usage stats (requests/tokens) per key.
@@ -108,6 +110,8 @@ The bot implements a sophisticated "Smart Router" for AI requests:
   - Database-side JSON ETL handling to bypass Python GIL limits
   - Prepared statements for high-throughput concurrency
   - RLS Denormalization indexing (`owner_user_id`) to optimize security policies
+  - Transaction-local RLS context (`set_config(..., true)`) preventing context leaks
+- **Repository Layer** (`app/repos/`): Canonical location for domain logic — `keys.py`, `users.py`, `chats.py`, `conversations.py`, `metrics_repo.py`, `analytics.py`.
 - **In-Memory Caching** (TTLCache / Redis)
   - Key status, user authorization, and dynamic AI model limits are aggressively cached to reduce DB I/O.
 - **Scoped DB Transactions**: Optimized database pooling (`max_size=10`) with `asyncio.Semaphore` and scope-limited transactions to prevent connection starvation without hitting provider DB connection limits.
@@ -223,7 +227,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (291 tests)
+### Suite Structure (322 tests)
 
 | Category           | Files                                                                                       | What They Cover                                     |
 | :----------------- | :------------------------------------------------------------------------------------------ | :-------------------------------------------------- |

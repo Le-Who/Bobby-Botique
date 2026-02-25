@@ -26,7 +26,7 @@ def strip_markdown(text: str) -> str:
 
 class TelegramFormatter:
     """
-    Класс для форматирования текста для Telegram.
+    Класс for форматирования textа for Telegram.
     Now acts as a wrapper around the robust HTML formatter in app.utils.text_format.
     """
 
@@ -35,14 +35,14 @@ class TelegramFormatter:
         cls, text: str, preserve_formatting: bool = True
     ) -> Tuple[str, Optional[str]]:
         """
-        Форматирует текст для отправки в Telegram.
+        Форматирует text for отправки в Telegram.
 
         Args:
-            text: Исходный текст
+            text: Исходный text
             preserve_formatting: Сохранять ли форматирование
 
         Returns:
-            Tuple[str, str]: (отформатированный_текст, parse_mode)
+            Tuple[str, str]: (отформатированный_text, parse_mode)
         """
         if not preserve_formatting or not text:
             return new_strip_formatting(text), None

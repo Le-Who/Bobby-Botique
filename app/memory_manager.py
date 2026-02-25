@@ -55,7 +55,7 @@ class MemoryManager:
             self._monitoring_task = asyncio.create_task(self._monitor_memory())
         except RuntimeError as e:
             self._running = False
-            logging.error(f"Failed to start memory monitoring: {e}")
+            logging.error("Failed to start memory monitoring: %s", e)
 
     def start(self):
         """Manually starts memory monitoring."""

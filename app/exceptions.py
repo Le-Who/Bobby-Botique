@@ -52,37 +52,37 @@ class DatabasePoolError(DatabaseError):
 
 
 # API Exceptions
-class APIError(GemaibotBaseException):
-    """Base class for API-related errors."""
+class GemaibotAPIError(GemaibotBaseException):
+    """Base class for API-related errors. Renamed to avoid collision with google.genai.errors.APIError."""
 
     pass
 
 
-class GeminiAPIError(APIError):
+class GeminiAPIError(GemaibotAPIError):
     """Raised when Gemini API calls fail."""
 
     pass
 
 
-class TavilyAPIError(APIError):
+class TavilyAPIError(GemaibotAPIError):
     """Raised when Tavily API calls fail."""
 
     pass
 
 
-class TelegramAPIError(APIError):
+class TelegramAPIError(GemaibotAPIError):
     """Raised when Telegram Bot API calls fail."""
 
     pass
 
 
-class APIQuotaExceededError(APIError):
+class APIQuotaExceededError(GemaibotAPIError):
     """Raised when API quota is exceeded."""
 
     pass
 
 
-class APIInvalidResponseError(APIError):
+class APIInvalidResponseError(GemaibotAPIError):
     """Raised when API returns invalid response."""
 
     pass
@@ -101,8 +101,8 @@ class ConnectionTimeoutError(NetworkError):
     pass
 
 
-class ConnectionRefusedError(NetworkError):
-    """Raised when connection is refused."""
+class ServiceConnectionRefusedError(NetworkError):
+    """Raised when connection is refused. Renamed to avoid shadowing built-in ConnectionRefusedError."""
 
     pass
 
@@ -230,7 +230,7 @@ def convert_to_typed_exception(
                 {"original_error": error_type, "context": context},
             )
         elif "refused" in error_message.lower():
-            return ConnectionRefusedError(
+            return ServiceConnectionRefusedError(
                 f"Connection refused: {error_message}",
                 {"original_error": error_type, "context": context},
             )
@@ -248,7 +248,7 @@ def convert_to_typed_exception(
                 {"original_error": error_type, "context": context},
             )
         else:
-            return APIError(
+            return GemaibotAPIError(
                 f"API error: {error_message}",
                 {"original_error": error_type, "context": context},
             )

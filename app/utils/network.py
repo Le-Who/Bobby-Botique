@@ -62,7 +62,7 @@ class NetworkErrorHandler:
                 logging.warning(
                     f"Network error on attempt {attempt + 1}/{max_retries + 1} for {func.__name__}: {e}"
                 )
-                logging.info(f"Retrying in {delay} seconds...")
+                logging.info("Retrying in %s seconds...", delay)
 
                 await asyncio.sleep(delay)
 
@@ -128,7 +128,7 @@ class NetworkErrorHandler:
                 response = await client.get(url)
                 return response.status_code == 200
         except Exception as e:
-            logging.info(f"Connectivity check failed for {url}: {e}")
+            logging.info("Connectivity check failed for %s: %s", url, e)
             return False
 
 

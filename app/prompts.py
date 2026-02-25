@@ -223,7 +223,7 @@ def prepare_context_with_limits(
         # Лимиты не превышены, возвращаем историю как есть
         return history, summary or ""
 
-    logging.info(f"Контекст требует суммаризации: {reason}")
+    logging.info("Контекст требует суммаризации: %s", reason)
 
     # Если есть готовая суммаризация, используем её
     if summary:
@@ -256,7 +256,7 @@ def prepare_context_with_limits(
             )
         )
     except Exception as e:
-        logging.warning(f"Failed to record summarization metrics: {e}")
+        logging.warning("Failed to record summarization metrics: %s", e)
 
     return recent_messages, summary_text
 

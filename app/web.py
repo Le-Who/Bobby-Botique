@@ -154,7 +154,7 @@ def dashboard():
     try:
         return render_template("dashboard.html")
     except Exception as e:
-        logging.error(f"Dashboard error: {e}", exc_info=True)
+        logging.error("Dashboard error: %s", e, exc_info=True)
         return "Internal Server Error", 500
 
 
@@ -198,7 +198,7 @@ def health_check_endpoint():
         return jsonify(health), 200 if overall == "healthy" else 503
 
     except Exception as e:
-        logging.error(f"Health check error: {e}", exc_info=True)
+        logging.error("Health check error: %s", e, exc_info=True)
         return jsonify({"status": "unhealthy", "error": str(type(e).__name__)}), 500
 
 
@@ -333,7 +333,7 @@ def api_keys():
             }
         )
     except Exception as e:
-        logging.error(f"API keys error: {e}", exc_info=True)
+        logging.error("API keys error: %s", e, exc_info=True)
         return jsonify({"error": str(type(e).__name__)}), 500
 
 
@@ -356,7 +356,7 @@ def api_errors():
             }
         )
     except Exception as e:
-        logging.error(f"API errors error: {e}", exc_info=True)
+        logging.error("API errors error: %s", e, exc_info=True)
         return jsonify({"error": str(type(e).__name__)}), 500
 
 
@@ -378,7 +378,7 @@ def api_cache():
             }
         )
     except Exception as e:
-        logging.error(f"API cache error: {e}", exc_info=True)
+        logging.error("API cache error: %s", e, exc_info=True)
         return jsonify({"error": str(type(e).__name__)}), 500
 
 
@@ -397,7 +397,7 @@ def api_queue():
             }
         )
     except Exception as e:
-        logging.error(f"API queue error: {e}", exc_info=True)
+        logging.error("API queue error: %s", e, exc_info=True)
         return jsonify({"error": str(type(e).__name__)}), 500
 
 
@@ -414,7 +414,7 @@ def api_database():
             }
         )
     except Exception as e:
-        logging.error(f"API database error: {e}", exc_info=True)
+        logging.error("API database error: %s", e, exc_info=True)
         return jsonify({"error": str(type(e).__name__)}), 500
 
 
@@ -436,7 +436,7 @@ def api_circuit_breakers():
             }
         )
     except Exception as e:
-        logging.error(f"API circuit breakers error: {e}", exc_info=True)
+        logging.error("API circuit breakers error: %s", e, exc_info=True)
         return jsonify({"error": str(type(e).__name__)}), 500
 
 
@@ -455,5 +455,5 @@ def api_memory():
             }
         )
     except Exception as e:
-        logging.error(f"API memory error: {e}", exc_info=True)
+        logging.error("API memory error: %s", e, exc_info=True)
         return jsonify({"error": str(type(e).__name__)}), 500

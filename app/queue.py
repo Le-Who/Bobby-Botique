@@ -58,7 +58,7 @@ class TaskQueue:
         self._task_handlers: Dict[str, Callable] = {}
         self._cleanup_task: Optional[asyncio.Task] = None
         self._metrics_scheduler_task: Optional[asyncio.Task] = None
-        # Инициализируем обработчики задач
+        # Initialize обработчики задач
         self._init_task_handlers()
 
     def _init_task_handlers(self):
@@ -75,7 +75,7 @@ class TaskQueue:
             return
 
         self.running = True
-        logging.info(f"Starting task queue with {self.max_workers} workers")
+        logging.info("Starting task queue with %s workers", self.max_workers)
 
         # Запускаем воркеры
         for i in range(self.max_workers):
@@ -103,7 +103,7 @@ class TaskQueue:
 
         self.running = False
         logging.info("Stopping task queue...")
-        # Добавляем сигналы завершения для каждого воркера
+        # Add сигналы завершения for каждого воркера
         for _ in range(self.max_workers):
             await self.queue.put((float("-inf"), None))
         # Ждем завершения всех воркеров
@@ -165,11 +165,11 @@ class TaskQueue:
 
         async with self._lock:
             if self.queue.full():
-                logging.warning(f"Task queue is full. Rejecting task {task_id}")
+                logging.warning("Task queue is full. Rejecting task %s", task_id)
                 return ""
             self.tasks[task_id] = task
 
-        # Добавляем в очередь (приоритет - это отрицательное число, чтобы высокий приоритет был первым)
+        # Add в queue (onоритет - это отрицательное число, чтобы высокий onоритет был первым)
         try:
             await asyncio.wait_for(
                 self.queue.put((-priority.value, task_id)), timeout=2.0
@@ -177,10 +177,10 @@ class TaskQueue:
         except asyncio.TimeoutError:
             async with self._lock:
                 self.tasks.pop(task_id, None)
-            logging.warning(f"Task queue put timeout. Rejecting task {task_id}")
+            logging.warning("Task queue put timeout. Rejecting task %s", task_id)
             return ""
 
-        logging.info(f"Added task {task_id} of type {task_type} for user {user_id}")
+        logging.info("Added task %s of type %s for user %s", task_id, task_type, user_id)
         return task_id
 
     async def get_task_status(self, task_id: str) -> Optional[Task]:
@@ -204,14 +204,14 @@ class TaskQueue:
 
     async def _worker(self, worker_name: str):
         """Воркер для обработки задач"""
-        logging.info(f"Worker {worker_name} started")
+        logging.info("Worker %s started", worker_name)
         while True:
             try:
-                # Получаем задачу из очереди
+                # Get задачу from очереди
                 priority, task_id = await self.queue.get()
 
                 try:
-                    # Проверяем сигнал завершения
+                    # Check сигнал завершения
                     if task_id is None:
                         break
 
@@ -223,9 +223,9 @@ class TaskQueue:
                         task.status = TaskStatus.RUNNING
                         task.started_at = datetime.now()
 
-                    logging.info(f"Worker {worker_name} processing task {task_id}")
+                    logging.info("Worker %s processing task %s", worker_name, task_id)
 
-                    # Выполняем задачу
+                    # Execute задачу
                     try:
                         result = await self._execute_task(task)
 
@@ -234,10 +234,10 @@ class TaskQueue:
                             task.completed_at = datetime.now()
                             task.result = result
 
-                        logging.info(f"Task {task_id} completed successfully")
+                        logging.info("Task %s completed successfully", task_id)
 
                     except Exception as e:
-                        logging.error(f"Task {task_id} failed: {e}")
+                        logging.error("Task %s failed: %s", task_id, e)
 
                         async with self._lock:
                             task.error = str(e)
@@ -245,7 +245,7 @@ class TaskQueue:
 
                             if task.retry_count < task.max_retries:
                                 task.status = TaskStatus.PENDING
-                                # Повторно добавляем в очередь с более низким приоритетом
+                                # Повторно добавляем в queue с более нfromким onоритетом
                                 await self.queue.put(
                                     (-task.priority.value + 1, task_id)
                                 )
@@ -258,10 +258,10 @@ class TaskQueue:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error(f"Worker {worker_name} error: {e}")
+                logging.error("Worker %s error: %s", worker_name, e)
                 await asyncio.sleep(1)
 
-        logging.info(f"Worker {worker_name} stopped")
+        logging.info("Worker %s stopped", worker_name)
 
     async def _execute_task(self, task: Task) -> Dict[str, Any]:
         """Выполняет задачу"""
@@ -269,7 +269,7 @@ class TaskQueue:
         if not handler:
             raise ValueError(f"Unknown task type: {task.task_type}")
 
-        # Вызываем обработчик задачи
+        # Call обработчик задачи
         result = await handler(**task.data)
         return result
 
@@ -285,7 +285,7 @@ class TaskQueue:
             if not all([file_data, filename, user_id]):
                 return {"status": "failed", "error": "Missing required parameters"}
 
-            # Обрабатываем документ
+            # Process document
             result = await process_uploaded_document(file_data, filename, user_id)
 
             if result.get("error"):
@@ -300,19 +300,19 @@ class TaskQueue:
             }
 
         except Exception as e:
-            logging.error(f"Error in document processing task: {e}")
+            logging.error("Error in document processing task: %s", e)
             return {"status": "failed", "error": str(e)}
 
     async def _handle_cleanup_metrics(self, **kwargs) -> Dict[str, Any]:
         """Обработчик для очистки старых метрик"""
         try:
-            # Удаляем метрики старше 30 дней
+            # Delete metrics старше 30 дней
             await db.db_query("""
                 DELETE FROM metrics 
                 WHERE metric_date < CURRENT_DATE - INTERVAL '30 days'
             """)
 
-            # Удаляем старые ошибки (старше 7 дней)
+            # Delete old ошибки (старше 7 дней)
             await db.db_query("""
                 DELETE FROM error_logs 
                 WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
@@ -320,18 +320,18 @@ class TaskQueue:
 
             return {"status": "completed", "message": "Old metrics cleaned up"}
         except Exception as e:
-            logging.error(f"Error cleaning up metrics: {e}")
+            logging.error("Error cleaning up metrics: %s", e)
             return {"status": "failed", "error": str(e)}
 
     async def _cleanup_old_tasks(self):
         """Очищает старые задачи"""
         while self.running:
             try:
-                await asyncio.sleep(3600)  # Проверяем каждый час
+                await asyncio.sleep(3600)  # Check каждый час
 
                 cutoff_time = datetime.now() - timedelta(
                     days=7
-                )  # Удаляем задачи старше недели
+                )  # Delete задачи старше недели
 
                 async with self._lock:
                     tasks_to_remove = [
@@ -344,10 +344,10 @@ class TaskQueue:
                         del self.tasks[task_id]
 
                     if tasks_to_remove:
-                        logging.info(f"Cleaned up {len(tasks_to_remove)} old tasks")
+                        logging.info("Cleaned up %s old tasks", len(tasks_to_remove))
 
             except Exception as e:
-                logging.error(f"Error in cleanup task: {e}")
+                logging.error("Error in cleanup task: %s", e)
 
     async def _schedule_metrics_cleanup(self):
         """Планирует автоматическую очистку метрик"""
@@ -355,7 +355,7 @@ class TaskQueue:
             try:
                 await asyncio.sleep(86400)  # Ждем 24 часа
 
-                # Добавляем задачу очистки метрик
+                # Add задачу очистки метрик
                 await self.add_task(
                     user_id=0,  # Системная задача
                     task_type="cleanup_metrics",
@@ -366,7 +366,7 @@ class TaskQueue:
                 logging.info("Scheduled metrics cleanup task")
 
             except Exception as e:
-                logging.error(f"Error in metrics cleanup scheduler: {e}")
+                logging.error("Error in metrics cleanup scheduler: %s", e)
 
     async def get_queue_stats(self) -> Dict[str, Any]:
         """Возвращает статистику очереди"""

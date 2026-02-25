@@ -85,15 +85,15 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     user_id = query.from_user.id
 
-    # Получаем модель из индекса (новый формат с хэшем) или из полного имени (старый формат для совместимости)
+    # Get model from индекса (new формат с хэшем) or from полного имени (old формат for совместимости)
     if query.data.startswith("model:"):
-        # Новый формат: model:index:hash или model:index (старый формат без хэша)
+        # Новый формат: model:index:hash or model:index (old формат without хэша)
         try:
             parts = query.data.split(":")
             model_index = int(parts[1])
             expected_hash = parts[2] if len(parts) > 2 else None
 
-            # Получаем актуальный список моделей из настроек
+            # Get актуальный list моделей from настроек
             all_models = []
             if settings.AVAILABLE_MODELS:
                 all_models.extend(settings.AVAILABLE_MODELS)
@@ -104,11 +104,11 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             if 0 <= model_index < len(all_models):
                 model_name = all_models[model_index]
 
-                # Если есть хэш, проверяем валидность
+                # If есть хэш, проверяем валидность
                 if expected_hash:
                     actual_hash = get_model_hash(model_name)
                     if actual_hash != expected_hash:
-                        # Модель изменилась (удалена/добавлена), просим выбрать заново
+                        # Модель fromменилась (удалена/добавлена), просим выбрать заново
                         await query.edit_message_text(
                             "⚠️ Список моделей обновился. Пожалуйста, выберите модель заново через /model"
                         )
@@ -118,10 +118,10 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 return
         except (ValueError, IndexError) as e:
             await query.edit_message_text("❌ Ошибка: неверный формат callback_data.")
-            logging.error(f"Error parsing model callback: {e}, data: {query.data}")
+            logging.error("Error parsing model callback: %s, data: %s", e, query.data)
             return
     else:
-        # Старый формат для совместимости: model_gemini-2.5-pro
+        # Старый формат for совместимости: model_gemini-2.5-pro
         model_name = query.data.split("_", 1)[1] if "_" in query.data else None
         if not model_name:
             await query.edit_message_text("❌ Ошибка: неверный формат callback_data.")
@@ -130,12 +130,12 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat_state.model = model_name
     await db.update_user_chat(user_id, chat_state)
 
-    # Обновляем меню с новой выбранной моделью
+    # Update menu с новой выбранной modelю
     formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(
         chat_state, context
     )
 
-    # Определяем имя для тоста
+    # Определяем имя for тоста
     is_openrouter = "/" in model_name
     display_name = model_name.split("/")[-1] if is_openrouter else model_name
 
@@ -163,7 +163,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
         await placeholder_message.delete()
         return
 
-    # Получаем оригинальное сообщение из контекста или из reply_to_message
+    # Get оригинальное message from contextа or from reply_to_message
     original_message = None
     if hasattr(context, "user_data") and "original_message" in context.user_data:
         original_message = context.user_data["original_message"]
@@ -191,7 +191,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
             placeholder_message, original_message, chat_state
         )
     elif action == "confirm":
-        # У этой функции своя обратная связь ("Анализирую..."), поэтому здесь ничего не меняем.
+        # У этой функции своя обратная связь ("Аналfromирую..."), поэтому здесь ничего не меняем.
         search_prefix = (
             "??"
             if (original_message.caption and original_message.caption.startswith("??"))
@@ -201,7 +201,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
             placeholder_message, original_message, search_prefix
         )
 
-    # 3. Если задача определена, запускаем ее в фоне под блокировкой.
+    # 3. If задача определена, запускаем ее в фоне под блокировкой.
     if task_to_run:
 
         async def task_wrapper():
@@ -224,7 +224,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await placeholder_message.edit_text("Операция отменена.")
         return
 
-    # Получаем оригинальное сообщение из контекста или из reply_to_message
+    # Get оригинальное message from contextа or from reply_to_message
     original_message = None
     if hasattr(context, "user_data") and "original_message" in context.user_data:
         original_message = context.user_data["original_message"]
@@ -327,7 +327,7 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not last_text:
         await query.edit_message_text("Нет запроса для повтора.")
         return
-    # Создаём плейсхолдер и запускаем обычную обработку как при новом сообщении
+    # Create плейсхолдер и запускаем обычную обработку как on новом сообщении
     placeholder_message = await query.message.reply_text(
         "🔁 Повторяю предыдущий запрос…"
     )
@@ -398,7 +398,7 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await db.save_feedback(user_id, message_id, rating)
     except Exception as e:
-        logging.warning(f"Feedback save failed: {e}")
+        logging.warning("Feedback save failed: %s", e)
 
     # Visual confirmation: replace the feedback row with a "thanks" indicator
     emoji = "👍" if rating == "up" else "👎"
@@ -441,7 +441,7 @@ def _add_fast_callback(application: Application, callback, pattern: str):
 # ── Registration ─────────────────────────────────────────────────────────────
 
 def register(application: Application):
-    # Быстрый канал для UI-настроек: callback выполняется без блокировки update loop.
+    # Быстрый канал for UI-настроек: callback выполняется without блокировки update loop.
     _add_fast_callback(application, toggle_search_callback, "^toggle_search$")
     _add_fast_callback(application, new_chat_callback, "^new_chat$")
     _add_fast_callback(application, model_menu_callback, "^model_menu$")
@@ -457,7 +457,7 @@ def register(application: Application):
     _add_fast_callback(application, conv_switch_callback, "^conv_switch$")
     _add_fast_callback(application, conv_switch_to_callback, "^conv_switch_to:")
 
-    # Обрабатываем оба формата: model:0 (новый) и model_none (разделитель)
+    # Process оба формата: model:0 (new) и model_none (разделитель)
     application.add_handler(
         CallbackQueryHandler(complex_search_callback, pattern="^complex:")
     )

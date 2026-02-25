@@ -27,7 +27,7 @@ async def _handle_document_question(
 ):
     """Обрабатывает вопросы по загруженным документам"""
     try:
-        # Получаем последний документ пользователя
+        # Get afterдний document user
         from app.document_processor import get_user_documents, get_document_content
 
         documents = await get_user_documents(user_id)
@@ -37,14 +37,14 @@ async def _handle_document_question(
                     "❌ У вас нет загруженных документов. Сначала загрузите документ."
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
-                # Fallback на новое сообщение
+                logging.error("Could not edit placeholder message: %s", edit_error)
+                # Fallback на new message
                 await placeholder_message.reply_text(
                     "❌ У вас нет загруженных документов. Сначала загрузите документ."
                 )
             return
 
-        # Берем самый последний документ
+        # Берем самый afterдний document
         latest_document = documents[0]
         document_content = await get_document_content(latest_document["id"], user_id)
 
@@ -54,8 +54,8 @@ async def _handle_document_question(
                     "❌ Не удалось получить содержимое документа."
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
-                # Fallback на новое сообщение
+                logging.error("Could not edit placeholder message: %s", edit_error)
+                # Fallback на new message
                 await placeholder_message.reply_text(
                     "❌ Не удалось получить содержимое документа."
                 )
@@ -64,13 +64,13 @@ async def _handle_document_question(
         try:
             await update_stage(placeholder_message, STAGES_DOCUMENT, 0)
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-            # Если не можем отредактировать, отправляем новое сообщение
+            logging.error("Could not edit placeholder message: %s", edit_error)
+            # If не можем отредактировать, отправляем new message
             placeholder_message = await placeholder_message.reply_text(
                 "📄 Анализирую документ..."
             )
 
-        # Ограничиваем размер контекста документа
+        # Ограничиваем размер contextа documentа
         max_context_length = 30000  # Ограничиваем до 30K символов
         original_length = len(document_content) if document_content else 0
         if document_content and len(document_content) > max_context_length:
@@ -86,13 +86,13 @@ async def _handle_document_question(
         try:
             safe_document_content = str(document_content)
         except Exception as e:
-            logging.error(f"Failed to convert document content to string: {e}")
+            logging.error("Failed to convert document content to string: %s", e)
             try:
                 await placeholder_message.edit_text(
                     "❌ Ошибка обработки содержимого документа."
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
+                logging.error("Could not edit placeholder message: %s", edit_error)
             return
 
         content_length = len(safe_document_content) if safe_document_content else 0
@@ -100,64 +100,64 @@ async def _handle_document_question(
             f"Processing document question for user {user_id}, document: {latest_document['filename']}, content length: {content_length}"
         )
 
-        # Создаем промпт для вопроса по документу
+        # Create промпт for вопроса по documentу
         document_prompt = f"""# РОЛЬ И ЗАДАЧА
-Ты — эксперт по анализу документов для Telegram-бота. Твоя задача — отвечать на вопросы пользователя по содержимому документа, используя правильное форматирование и предоставляя точную, полезную информацию.
+Ты — эксперт по аналfromу documentов for Telegram-бота. Твоя задача — отвеchatь на вопросы user по содержимому documentа, используя правильное форматирование и предоставляя точную, полезную информацию.
 
 # КОНТЕКСТ
-**Содержимое документа:**
+**Содержимое documentа:**
 {safe_document_content}
 
-**Вопрос пользователя:** {user_message}
+**Вопрос user:** {user_message}
 
 # ПОШАГОВЫЙ ПРОЦЕСС
-1. **Внимательно прочитай содержимое документа**
+1. **Внимательно прочитай содержимое documentа**
 2. **Найди информацию, относящуюся к вопросу**
-3. **Структурируй ответ логично**
+3. **Структурируй response логично**
 4. **Примени правильное MarkdownV2 форматирование**
 
 # FEW-SHOT ПРИМЕРЫ
 ## Пример 1: Технический вопрос
-**Вопрос:** "Какие технологии упоминаются в документе?"
-**Правильный ответ:**
-*Технологии, упомянутые в документе:*
-- Docker — для контейнеризации
-- Python — основной язык программирования
+**Вопрос:** "Какие технологии упоминаются в documentе?"
+**Правильный response:**
+*Технологии, упомянутые в documentе:*
+- Docker — for контейнерfromации
+- Python — main язык программирования
 - PostgreSQL — база данных
-- Redis — кэш-система
+- Redis — cache-система
 
 ## Пример 2: Поиск конкретной информации
 **Вопрос:** "Какая версия Python используется?"
-**Правильный ответ:**
+**Правильный response:**
 *Версия Python:*
-Согласно документу, используется Python версии `3.9` или выше.
+Согласно documentу, используется Python версии `3.9` or выше.
 
 _Дополнительные требования:_
 - Поддержка async/await синтаксиса
-- Совместимость с последними библиотеками
+- Совместимость с afterдними библиотеками
 
 ## Пример 3: Объяснение концепции
 **Вопрос:** "Объясни архитектуру системы"
-**Правильный ответ:**
+**Правильный response:**
 *Архитектура системы:*
 Документ описывает микросервисную архитектуру с следующими компонентами:
 
 _Основные сервисы:_
 - API Gateway — точка входа
-- User Service — управление пользователями
+- User Service — управление userми
 - Database Service — работа с данными
 
 # ПРАВИЛА ФОРМАТИРОВАНИЯ
 ## ✅ РАЗРЕШЕНО
-- `*жирный текст*` для ключевых терминов и заголовков
-- `_курсив_` для вторичного акцента и определений
-- `` `код` `` для технических терминов, команд и кода
-- `[текст ссылки](URL)` для ссылок (если есть в документе)
-- `- ` для списков
+- `*жирный text*` for keyевых терминов и заголовков
+- `_курсив_` for вторичного акцента и определений
+- `` `код` `` for технических терминов, команд и кода
+- `[text ссылки](URL)` for ссылок (if есть в documentе)
+- `- ` for списков
 
 ## ❌ ЗАПРЕЩЕНО
 - HTML теги: `<b>`, `<i>`, `<code>`, `<a>`, `<strong>`, `<em>`
-- Двойные символы: `**текст**`, `__текст__`
+- Двойные символы: `**text**`, `__text__`
 - LaTeX математические выражения: `$...$`, `$$...$$`
 - Неэкранированные спецсимволы
 
@@ -173,45 +173,45 @@ _Основные сервисы:_
 ## ❌ НЕПРАВИЛЬНО
 - `$1 × 1 = 1$` - LaTeX синтаксис
 - `$$√2$$` - LaTeX синтаксис
-- `a+b` - без пробелов
-- `x=y` - без пробелов
+- `a+b` - without пробелов
+- `x=y` - without пробелов
 
 # СТРУКТУРИРОВАНИЕ ОТВЕТОВ
 ## Для технических вопросов:
-1. *Краткий ответ* - основная информация
+1. *Краткий response* - main информация
 2. _Детали_ - дополнительные сведения
-3. - Список ключевых элементов
-4. [Ссылки на ресурсы](URL) - если есть в документе
+3. - Список keyевых элементов
+4. [Ссылки на ресурсы](URL) - if есть в documentе
 
-## Для поиска информации:
+## Для searchа информации:
 1. *Найденная информация* - что обнаружено
-2. _Контекст_ - где и как это упоминается
+2. _Конtext_ - где и как это упоминается
 3. - Дополнительные детали
 
 ## Для объяснения концепций:
 1. *Определение* - основное понятие
 2. _Принципы работы_ - как это функционирует
-3. - Практические применения
+3. - Практические onменения
 
 # ВАЖНЫЕ ПРАВИЛА
-- Отвечай ТОЛЬКО на основе содержимого документа
-- Если информации недостаточно, честно скажи об этом
+- Отвечай ТОЛЬКО на основе содержимого documentа
+- If информации недостаточно, честно скажи об этом
 - Не используй предварительные знания
-- Структурируй ответ согласно примерам выше
+- Структурируй response согласно onмерам выше
 - Применяй правильное форматирование
 
 # ФИНАЛЬНАЯ ПРОВЕРКА
-Перед отправкой ответа убедись, что:
-- [ ] Ответ основан на содержимом документа
-- [ ] Информация структурирована согласно примерам
+Перед отправкой responseа убедись, что:
+- [ ] Ответ основан на содержимом documentа
+- [ ] Информация структурирована согласно onмерам
 - [ ] Использован правильный MarkdownV2 синтаксис
 - [ ] Математические выражения отформатированы правильно
-- [ ] Нет HTML тегов или LaTeX синтаксиса
+- [ ] Нет HTML тегов or LaTeX синтаксиса
 - [ ] Все спецсимволы правильно экранированы
 
 Ответь на вопрос пользователя, основываясь на содержимом документа. Если в документе нет информации для ответа, честно скажи об этом."""
 
-        # Создаем parts для Gemini API: промпт
+        # Create parts for Gemini API: промпт
         parts = [document_prompt] if document_prompt else []
         response_text, _ = await _get_ai_response_with_routing(
             settings.DEFAULT_MODEL,
@@ -221,14 +221,14 @@ _Основные сервисы:_
         )
 
         if response_text:
-            # Проверяем, является ли ответ ошибкой
+            # Check, является ли response ошибкой
             from app.errors import build_retry_and_roles_keyboard
 
             # Используем универсальную функцию обработки ошибок
             if await handle_ai_response_error(response_text, placeholder_message):
-                return  # Ошибка обработана, выходим
+                return  # Error обработана, выходим
             else:
-                # Успешный ответ - показываем обычные кнопки для документов
+                # Успешный response - показываем обычные buttons for documentов
                 keyboard = [
                     [
                         InlineKeyboardButton(
@@ -259,7 +259,7 @@ _Основные сервисы:_
                     ],
                 ]
 
-                # Отправляем ответ с кнопками
+                # Send response с buttonми
                 await send_long_message(
                     placeholder_message,
                     response_text,
@@ -275,8 +275,8 @@ _Основные сервисы:_
                     reply_markup=build_retry_and_roles_keyboard(),
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
-                # Fallback на новое сообщение
+                logging.error("Could not edit placeholder message: %s", edit_error)
+                # Fallback на new message
                 try:
                     from app.errors import build_retry_and_roles_keyboard
 
@@ -288,14 +288,14 @@ _Основные сервисы:_
                     pass
 
     except Exception as e:
-        logging.error(f"Error processing document question: {e}", exc_info=True)
+        logging.error("Error processing document question: %s", e, exc_info=True)
         try:
             await placeholder_message.edit_text(
                 f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}"
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-            # Fallback на новое сообщение
+            logging.error("Could not edit placeholder message: %s", edit_error)
+            # Fallback на new message
             await placeholder_message.reply_text(
                 f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}"
             )

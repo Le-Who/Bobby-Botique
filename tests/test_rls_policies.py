@@ -76,7 +76,7 @@ async def test_create_rls_policies_conversation_messages():
         assert len(creation_sql) > 0
         sql = creation_sql[0]
         assert "CREATE POLICY conversation_messages_policy ON conversation_messages" in sql
-        assert "owner_user_id" in sql
+        assert "conversations" in sql  # Uses subquery through conversations table
 
 @pytest.mark.asyncio
 async def test_create_rls_policies_group_chats():

@@ -31,9 +31,9 @@ class MetricsCollector:
 
     def __init__(self):
         self.metrics = PerformanceMetrics()
-        self.response_times = deque(maxlen=1000)  # Храним последние 1000 запросов
-        self.error_log = deque(maxlen=100)  # Храним последние 100 ошибок
-        self.api_event_log = deque(maxlen=200)  # Храним последние API события
+        self.response_times = deque(maxlen=1000)  # Храним afterдние 1000 requestов
+        self.error_log = deque(maxlen=100)  # Храним afterдние 100 ошибок
+        self.api_event_log = deque(maxlen=200)  # Храним afterдние API события
         self.daily_metrics: Dict[str, PerformanceMetrics] = defaultdict(
             PerformanceMetrics
         )
@@ -43,7 +43,7 @@ class MetricsCollector:
         )
         self._events_queue = asyncio.Queue()
         self._last_save_time = time.time()
-        self._save_interval = 300  # Сохраняем каждые 5 минут
+        self._save_interval = 300  # Save каждые 5 минут
         self._bg_save_task = None
 
     async def _event_processor(self):
@@ -70,7 +70,7 @@ class MetricsCollector:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error(f"Error in metrics event processor: {e}")
+                logging.error("Error in metrics event processor: %s", e)
                 await asyncio.sleep(5)
 
     def _process_event(self, event: Dict[str, Any]):
@@ -192,13 +192,13 @@ class MetricsCollector:
             ]
 
         except Exception as e:
-            logging.error(f"Error creating metrics snapshot: {e}")
+            logging.error("Error creating metrics snapshot: %s", e)
             return
 
         # Phase 2: Save to DB (IO - No Lock)
         try:
             if snapshot_data:
-                # Обновляем или вставляем метрики за сегодня
+                # Update or вставляем metrics за сегодня
                 # Using SET (upsert replacement) to handle updates correctly
                 await db.db_query(
                     """
@@ -252,7 +252,7 @@ class MetricsCollector:
                         error["saved"] = True
 
             self._last_save_time = time.time()
-            logging.info(f"Metrics saved (bg): {snapshot_data['request_count']} reqs")
+            logging.info("Metrics saved (bg): %s reqs", snapshot_data['request_count'])
 
             # Phase 3: Save per-user metrics
             today_str = date.today().isoformat()
@@ -282,15 +282,24 @@ class MetricsCollector:
                     """,
                     params_list,
                 )
-                logging.debug(f"Per-user metrics saved for {len(user_items)} users")
+                logging.debug("Per-user metrics saved for %s users", len(user_items))
+
+                # Update streaks for active users
+                try:
+                    from app.repos.analytics import record_daily_activity
+
+                    for uid, _ in user_items:
+                        await record_daily_activity(uid)
+                except Exception as streak_err:
+                    logging.debug("Streak update skipped: %s", streak_err)
 
         except Exception as e:
-            logging.error(f"Error saving metrics to database: {e}")
+            logging.error("Error saving metrics to database: %s", e)
 
     async def _load_metrics_from_db(self):
         """Загружает метрики из базы данных"""
         try:
-            # Загружаем общие метрики (без JSONB полей в основном запросе)
+            # Load общие metrics (without JSONB полей в основном requestе)
             result = await db.db_query("""
                 SELECT 
                     COALESCE(SUM(request_count), 0) as total_requests,
@@ -336,7 +345,7 @@ class MetricsCollector:
             self.metrics.model_usage = {
                 row["key"]: int(row["total"]) for row in model_usage_result
             }
-            # Загружаем дневные метрики за последние 7 дней
+            # Load дневные metrics за afterдние 7 дней
             daily_result = await db.db_query("""
                 SELECT metric_date, request_count, total_response_time, error_count,
                        search_queries, cache_hits, cache_misses, api_calls, model_usage
@@ -369,7 +378,7 @@ class MetricsCollector:
                     )
                     continue
 
-            # Загружаем последние ошибки
+            # Load afterдние ошибки
             error_result = await db.db_query("""
                 SELECT error_type, error_message, request_id, created_at
                 FROM error_logs
@@ -391,7 +400,7 @@ class MetricsCollector:
             logging.info("Metrics loaded from database")
 
         except Exception as e:
-            logging.error(f"Error loading metrics from database: {e}")
+            logging.error("Error loading metrics from database: %s", e)
 
     async def record_request(
         self, _request_type: str, response_time: float, success: bool = True, user_id: int = None
@@ -515,7 +524,7 @@ class MetricsCollector:
                     pass
                 self._bg_save_task = None
 
-            # Проверяем, что база данных доступна перед сохранением
+            # Check, что база данных доступна before сохранением
             if db.db_pool and not db.db_pool._closed:
                 await self._save_metrics_to_db()
             else:
@@ -523,7 +532,7 @@ class MetricsCollector:
                     "Database pool unavailable during metrics cleanup, skipping save"
                 )
         except Exception as e:
-            logging.error(f"Error during metrics cleanup: {e}")
+            logging.error("Error during metrics cleanup: %s", e)
             # Не позволяем ошибкам метрик прерывать shutdown
 
 
@@ -619,7 +628,7 @@ class RoleConversationMetricsCollector:
             self.role_metrics.role_applications[role_key] = (
                 self.role_metrics.role_applications.get(role_key, 0) + 1
             )
-            logging.info(f"Role applied: {role_key}")
+            logging.info("Role applied: %s", role_key)
 
     async def record_custom_role_creation(self):
         """Записывает создание кастомной роли"""
@@ -677,7 +686,7 @@ class RoleConversationMetricsCollector:
 
             self.summarization_metrics.total_tokens_saved += tokens_saved
 
-            # Обновляем среднюю длину суммаризации
+            # Update среднюю длину суммарfromации
             current_avg = self.summarization_metrics.average_summary_length
             count = self.summarization_metrics.summarizations_triggered
             self.summarization_metrics.average_summary_length = (
@@ -721,17 +730,17 @@ role_conv_metrics = RoleConversationMetricsCollector()
 
 async def get_system_status_data() -> Dict[str, Any]:
     """
-    Агрегирует все системные метрики, включая производительность,
-    использование API ключей и кредитов.
+    Агрегирует все системные metrics, вkeyая проfromводительность,
+    использование API keyей и кредитов.
     """
-    # 1. Метрики производительности
+    # 1. Метрики проfromводительности
     metrics = await metrics_collector.get_metrics_summary()
 
-    # 2. Статус ключей Gemini
+    # 2. Статус keyей Gemini
     today_pacific = time_utils.get_pacific_date()
     gemini_keys = await db.db_query("SELECT * FROM api_keys")
 
-    # Получаем использование ключей Gemini за сегодня
+    # Get использование keyей Gemini за сегодня
     gemini_usage_map = {}
     if gemini_keys:
         all_usage = await db.db_query(
@@ -749,7 +758,7 @@ async def get_system_status_data() -> Dict[str, Any]:
     current_month = time_utils.get_current_month_str()
     tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
 
-    # Получаем использование ключей Tavily за месяц
+    # Get использование keyей Tavily за месяц
     tavily_usage_map = {}
     if tavily_keys:
         all_tavily_usage = await db.db_query(

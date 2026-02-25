@@ -11,6 +11,8 @@ Provides:
 import logging
 import sys
 import json
+import time
+import functools
 from typing import Optional, Any
 
 from app.request_context import get_request_id
@@ -124,6 +126,46 @@ def log_with_context(
     logger.log(level, message, extra=extra_dict)
 
 
+def timed_operation(operation_name: str = ""):
+    """Decorator that logs the execution time of async functions.
+
+    Usage:
+        @timed_operation("database_query")
+        async def get_user(user_id: int):
+            ...
+    """
+    def decorator(fn):
+        name = operation_name or fn.__qualname__
+
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            start = time.perf_counter()
+            try:
+                result = await fn(*args, **kwargs)
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                if elapsed_ms > 500:
+                    logging.warning(
+                        f"Slow operation {name}: {elapsed_ms:.1f}ms",
+                        extra={"operation": name, "duration_ms": round(elapsed_ms, 1)},
+                    )
+                else:
+                    logging.debug(
+                        f"Operation {name}: {elapsed_ms:.1f}ms",
+                        extra={"operation": name, "duration_ms": round(elapsed_ms, 1)},
+                    )
+                return result
+            except Exception:
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                logging.debug(
+                    f"Operation {name} failed after {elapsed_ms:.1f}ms",
+                    extra={"operation": name, "duration_ms": round(elapsed_ms, 1)},
+                )
+                raise
+
+        return wrapper
+    return decorator
+
+
 # =============================================================================
 # SETUP FUNCTIONS
 # =============================================================================
@@ -167,13 +209,13 @@ def setup_detailed_logging(
     enable_structured_logging: bool = False,
 ) -> None:
     """
-    Настраивает детальное логирование для всех компонентов бота
+    Настраивает детальное логирование for всех компонентов бота
 
     Args:
         log_level: Уровень логирования (INFO, WARNING, ERROR, CRITICAL)
-        log_to_file: Логировать ли в файл
-        log_file_path: Путь к файлу логов
-        enable_structured_logging: Включить JSON логирование для production
+        log_to_file: Логировать ли в file
+        log_file_path: Путь к fileу логов
+        enable_structured_logging: Вkeysть JSON логирование for production
     """
     # Convert string to logging level
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
@@ -210,13 +252,12 @@ def setup_detailed_logging(
     for logger_name in ["api_logger", "telegram", "asyncpg"]:
         _setup_logger(logger_name, numeric_level, enable_structured_logging)
 
-    # Status output
-    print("=== DETAILED LOGGING SETUP COMPLETE ===", flush=True)
-    print(f"Log level: {log_level}", flush=True)
-    print(f"Log to file: {log_to_file}", flush=True)
-    if log_to_file:
-        print(f"Log file: {log_file_path}", flush=True)
-    print("=== LOGGING READY ===", flush=True)
+    logging.info(
+        "Logging setup complete — level=%s, structured=%s, file=%s",
+        log_level,
+        enable_structured_logging,
+        log_file_path if log_to_file else "disabled",
+    )
 
 
 # Legacy compatibility functions
@@ -236,12 +277,7 @@ def setup_database_logger(level: int, enable_structured_logging: bool = False) -
 
 
 def log_api_summary() -> None:
-    """Выводит краткую сводку по API запросам"""
-    print("=== API LOGGING SUMMARY ===", flush=True)
-    print("✅ Gemini API - детальное логирование запросов и ответов", flush=True)
-    print("✅ Tavily API - детальное логирование поисковых запросов", flush=True)
-    print("✅ Telegram Bot API - детальное логирование обработки сообщений", flush=True)
-    print("✅ Все API запросы логируются с временем выполнения", flush=True)
-    print("✅ Ошибки API логируются с полным стектрейсом", flush=True)
-    print("✅ Чувствительные данные (API ключи) автоматически скрываются", flush=True)
-    print("=== SUMMARY COMPLETE ===", flush=True)
+    """Выводит краткую сводку по API логированию."""
+    logging.info(
+        "API logging active — Gemini, Tavily, Telegram request/response + error tracing"
+    )

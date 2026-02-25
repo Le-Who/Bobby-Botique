@@ -44,7 +44,7 @@ async def get_start_menu_content(chat_state, user_id=None):
                 f"• Сохранённых бесед: `{conv_count}`\n"
             )
         except Exception as e:
-            logging.debug(f"Could not fetch user context for /start: {e}")
+            logging.debug("Could not fetch user context for /start: %s", e)
 
     start_text = (
         "🤖 **Добро пожаловать в Gemini Bot!**\n\n"
@@ -98,22 +98,22 @@ async def get_start_menu_content(chat_state, user_id=None):
 
 def _generate_model_buttons(models, current_model, start_index, is_openrouter=False):
     """
-    Генерирует список кнопок для выбора модели.
+    Генерирует list кнопок for выбора models.
 
     Args:
         models (list): Список моделей.
-        current_model (str): Текущая выбранная модель.
-        start_index (int): Начальный индекс для callback_data.
+        current_model (str): Текущая выбранная model.
+        start_index (int): Начальный индекс for callback_data.
         is_openrouter (bool): Флаг, указывающий на использование OpenRouter.
 
     Returns:
-        tuple: (список строк кнопок, следующий индекс)
+        tuple: (list строк кнопок, следующий индекс)
     """
     rows = []
     current_index = start_index
 
     for m in models:
-        # Проверяем, выбрана ли модель
+        # Check, выбрана ли model
         is_selected = m == current_model
         selected_mark = "✅ " if is_selected else ""
 
@@ -125,7 +125,7 @@ def _generate_model_buttons(models, current_model, start_index, is_openrouter=Fa
             display_name = m
             icon = "🤖"
 
-        # Формируем кнопку
+        # Build кнопку
         model_hash = get_model_hash(m)
         text = f"{selected_mark}{icon} {display_name}"
         callback_data = f"model:{current_index}:{model_hash}"
@@ -139,10 +139,10 @@ def _generate_model_buttons(models, current_model, start_index, is_openrouter=Fa
 def get_model_menu_content(chat_state, context):
     current_model = chat_state.model
 
-    # Определяем, какой провайдер используется для текущей модели
+    # Определяем, какой провайдер используется for текущей models
     openrouter_available = bool(get_openrouter_keys())
 
-    # Создаем единый список всех моделей для индексации
+    # Create единый list всех моделей for индексации
     all_models = []
     if settings.AVAILABLE_MODELS:
         all_models.extend(settings.AVAILABLE_MODELS)
@@ -152,7 +152,7 @@ def get_model_menu_content(chat_state, context):
     if not all_models:
         return "❌ Нет доступных моделей. Проверьте настройки.", None, None
 
-    # Сохраняем маппинг моделей в context для использования в callback
+    # Save маппинг моделей в context for использования в callback
     if context and hasattr(context, "user_data"):
         # Ensure user_data exists if it's None (though ContextTypes usually ensures it's a dict-like)
         if context.user_data is None:
@@ -162,14 +162,14 @@ def get_model_menu_content(chat_state, context):
     keyboard = []
     model_index = 0
 
-    # Добавляем модели Gemini
+    # Add models Gemini
     if settings.AVAILABLE_MODELS:
         buttons, model_index = _generate_model_buttons(
             settings.AVAILABLE_MODELS, current_model, model_index, is_openrouter=False
         )
         keyboard.extend(buttons)
 
-    # Добавляем разделитель, если есть оба провайдера
+    # Add разделитель, if есть оба провайдера
     if (
         settings.AVAILABLE_MODELS
         and openrouter_available
@@ -179,7 +179,7 @@ def get_model_menu_content(chat_state, context):
             [InlineKeyboardButton("─────────────", callback_data="model_none")]
         )
 
-    # Добавляем модели OpenRouter, если доступны
+    # Add models OpenRouter, if доступны
     if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
         buttons, model_index = _generate_model_buttons(
             settings.OPENROUTER_AVAILABLE_MODELS,
@@ -189,7 +189,7 @@ def get_model_menu_content(chat_state, context):
         )
         keyboard.extend(buttons)
 
-    # Формируем текст с информацией о текущей модели
+    # Build text с информацией о текущей models
     is_current_openrouter = "/" in current_model if current_model else False
     provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
     text = "**Выберите модель для разговора:**\n\n"
@@ -205,7 +205,7 @@ def get_model_menu_content(chat_state, context):
 
 async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
     """Генерирует контент для главной страницы меню ролей (Hub)."""
-    # Получаем количество кастомных ролей для бейджика
+    # Get количество кастомных ролей for бейджика
     custom_count_res = await db.db_query(
         "SELECT COUNT(*) as count FROM user_roles WHERE user_id = $1", (user_id,)
     )
@@ -221,7 +221,7 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
 
     keyboard = []
 
-    # 1. Кнопка сброса (если роль активна)
+    # 1. Кнопка сброса (if role активна)
     if current_prompt:
         keyboard.append(
             [InlineKeyboardButton("🛑 Отключить роль", callback_data="role_clear")]
@@ -258,7 +258,7 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
     if not role_key:
         return "Ошибка: не указана роль", None, None
 
-    # Ищем данные роли через хелпер
+    # Ищем data roles via хелпер
     role_data = await db.get_role_data(role_key, user_id)
     if not role_data:
         return "Роль не найдена или удалена.", None, None
@@ -300,7 +300,7 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
             ]
         )
 
-    # 2. Действия над ролью
+    # 2. Действия над roleю
     row_actions = []
     row_actions.append(
         InlineKeyboardButton("👁️ Промпт", callback_data=f"role_view_prompt:{role_key}")
@@ -321,7 +321,7 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
     keyboard.append(row_actions)
 
     # 3. Назад
-    # Определяем, куда возвращаться (в Мои или Системные)
+    # Определяем, куда возвращаться (в Мои or Системные)
     back_view = "my_roles" if is_custom else "system_roles"
     keyboard.append(
         [
@@ -346,7 +346,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
         title_header = "📂 **Ваши личные роли**"
         empty_text = "У вас пока нет сохраненных ролей."
 
-        # Формируем items для пагинатора
+        # Build items for пагинатора
         items = []
         for r in roles:
             key = f"user_role:{r['id']}"
@@ -380,7 +380,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     total_items = len(items)
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
 
-    # Корректируем страницу если вышли за пределы
+    # Корректируем страницу if вышли за пределы
     if page < 0:
         page = 0
     if page >= total_pages and total_pages > 0:
@@ -397,7 +397,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     keyboard = []
 
     for item in current_items:
-        # Одна широкая кнопка
+        # Одна широкая button
         keyboard.append(
             [InlineKeyboardButton(item["text"], callback_data=item["callback"])]
         )
@@ -434,7 +434,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     if nav_row:
         keyboard.append(nav_row)
 
-    # Кнопки управления (только для "Мои роли")
+    # Кнопки управления (only for "Мои roles")
     if view_mode == "my_roles":
         keyboard.append(
             [InlineKeyboardButton("➕ Создать", callback_data="role_create")]
@@ -453,18 +453,18 @@ async def get_roles_menu_content(
     user_id, chat_state, view_mode="hub", page=0, role_key=None
 ):
     """
-    Генерирует контент для меню ролей в стиле "Smart Hub".
+    Генерирует content for menu ролей в стиле "Smart Hub".
     view_mode: 'hub' | 'my_roles' | 'system_roles' | 'role_details'
-    page: номер страницы для списков
-    role_key: ключ роли для просмотра деталей (id для кастомных, key для системных)
+    page: номер страницы for списков
+    role_key: key roles for просмотра деталей (id for кастомных, key for системных)
     """
 
-    # 1. Определяем активную роль
+    # 1. Определяем активную role
     current_prompt = chat_state.system_prompt
     active_role_title = "👤 Базовая (без роли)"
     active_role_key = None
 
-    # Пытаемся найти название активной роли
+    # Пытаемся найти название активной roles
     if current_prompt:
         for key, meta in prompts.DEFAULT_ROLES.items():
             if meta.get("prompt") == current_prompt:
@@ -484,7 +484,7 @@ async def get_roles_menu_content(
                     active_role_key = f"user_role:{role['id']}"
                     break
 
-            # Если всё ещё не нашли, но промпт есть
+            # If всё ещё не нашли, но промпт есть
             if not active_role_key:
                 active_role_title = "📝 Пользовательская инструкция"
                 active_role_key = "custom_prompt"
@@ -507,13 +507,13 @@ async def get_roles_menu_content(
 
 async def get_metrics_content():
     """Generates the metrics report text."""
-    # Получаем все данные
+    # Get все data
     data = await get_system_status_data()
     metrics = data["metrics_summary"]
     gemini_data = data["gemini"]
     tavily_data = data["tavily"]
 
-    # Формируем основной текст
+    # Build main text
     text = (
         "📊 *Полная сводка системы:*\n\n"
         "*🚀 Производительность:*\n"
@@ -524,7 +524,7 @@ async def get_metrics_content():
         f"• Поисковых запросов: `{metrics['search_queries']}`\n\n"
     )
 
-    # Добавляем использование API и моделей
+    # Add использование API и моделей
     if metrics.get("api_calls"):
         text += "*🔌 Использование API:*\n"
         for api, count in metrics["api_calls"].items():
@@ -535,7 +535,7 @@ async def get_metrics_content():
     if metrics.get("model_usage"):
         text += "*🤖 Использование моделей:*\n"
         for model, count in metrics["model_usage"].items():
-            # Пропускаем записи, которые содержат имена файлов (это ошибки в логике)
+            # Пропускаем записи, которые содержат имена fileов (это ошибки в логике)
             if (
                 isinstance(model, str)
                 and isinstance(count, (int, float))
@@ -546,7 +546,7 @@ async def get_metrics_content():
                 text += f"• {model}: `{count}`\n"
         text += "\n"
 
-    # Добавляем статус ключей Gemini
+    # Add статус keyей Gemini
     if gemini_data["keys"]:
         text += "*🔑 Статус ключей Gemini (сегодня):*\n"
 
@@ -566,7 +566,7 @@ async def get_metrics_content():
                     text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
         text += f"Сброс лимитов: *{gemini_data['reset_time']}* по Киеву\n\n"
 
-    # Добавляем статус кредитов Tavily
+    # Add статус кредитов Tavily
     if tavily_data["keys"]:
         text += "*💳 Кредиты Tavily (текущий месяц):*\n"
 
@@ -579,7 +579,7 @@ async def get_metrics_content():
             text += f"• `{display_name}`: {count} / {limit}\n"
         text += "Сброс лимитов: 1-го числа каждого месяца\n\n"
 
-    # Добавляем историю за последние дни
+    # Add history за afterдние дни
     if metrics["daily_metrics"]:
         text += "*📈 История за последние дни:*\n"
         for date_str, daily_data in list(metrics["daily_metrics"].items())[
@@ -590,7 +590,7 @@ async def get_metrics_content():
             text += f"• {date_str}: {requests} запросов, {errors} ошибок\n"
         text += "\n"
 
-    # Добавляем последние ошибки
+    # Add afterдние ошибки
     if metrics["recent_errors"]:
         text += "*⚠️ Последние ошибки:*\n"
         for error in metrics["recent_errors"][:3]:  # Последние 3 ошибки

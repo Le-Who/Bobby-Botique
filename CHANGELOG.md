@@ -5,6 +5,62 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.0] – 2026-02-25 – Sprint 6–7: Audit & Refactoring
+
+### 🔒 Security Audit (12 fixes)
+
+- **C-1**: RLS `set_config` scoped to transaction-local (`true`) to prevent context leakage between pooled connections.
+- **C-2**: Bare `except:` → `except (json.JSONDecodeError, ValueError, TypeError)` in `database.py`.
+- **C-3**: API key preview reduced from 10 → 4 chars across `database.py` and `metrics_repo.py`.
+- **C-4**: `force_update_tavily_keys()` wrapped in atomic transaction.
+- **C-5**: Added `exc_info=True` to generic exception handlers in `services.py`.
+- **C-6**: `delete_conversation()` wrapped in atomic transaction.
+- **C-8**: `conversation_messages` RLS policy rewritten to use subquery through `conversations` table.
+- **A-1**: `APIError` → `GemaibotAPIError` to avoid collision with `google.genai.errors.APIError`.
+- **D-2**: Redundant `except Exception:` clause removed from `database.py`.
+- **D-3**: `ConnectionRefusedError` → `ServiceConnectionRefusedError` to avoid shadowing builtin.
+- **D-4**: `token_count` correctly restored from `token_budget` on conversation switch.
+
+### 🏗️ Architecture Refactoring
+
+- **Metrics deduplication**: Deleted ~125 duplicate lines from `database.py` → re-exports from `repos/metrics_repo.py`.
+- **Rate limiter consolidation**: Removed `_UserRateLimiter` (23 lines) from `ai_provider.py`. `ProviderRouter` now uses `security.RateLimiter` (includes periodic cleanup, stats, admin reset).
+- **`DailyKeyManager` class**: New generic key rotation engine in `repos/keys.py`. Gemini and OpenRouter share one parameterized SQL engine. Tavily kept separate (monthly-credit model).
+- **Provider call chain fix**: `GeminiProvider` and `OpenRouterProvider` now call `_execute_*_request()` directly, eliminating double-retry bug.
+- **Unified AI call path**: `AgentRequestUseCase.get_ai_response()` now delegates to Provider classes via `get_provider_for_model()` instead of calling `services.get_*_response()` directly.
+- **Deprecation warnings**: `services.get_gemini_response()` and `services.get_openrouter_response()` now emit `DeprecationWarning`. New code should use Provider classes.
+
+### ⚡ Performance
+
+- **Lazy logging**: Converted 242 f-string logging calls → `%s` format across 36 files. Prevents string interpolation when log level is disabled.
+
+### 🐛 Bug Fix: Model Timeout (gemini-2.5-flash / gemini-3-flash)
+
+- **Root cause**: `asyncio.to_thread(client.models.generate_content, ...)` ran the synchronous SDK method in a thread. When `asyncio.wait_for()` timed out, it cancelled only the Python future — the thread continued running the HTTP request as a zombie, consuming resources.
+- **Fix**: Switched to native async `client.aio.models.generate_content()` + `client.aio.models.count_tokens()`. These properly support `asyncio.CancelledError` and abort the HTTP connection on timeout.
+- **SDK-level deadline**: Added `HttpOptions(timeout=90_000)` (90s) to the `genai.Client`, ensuring the HTTP library itself enforces a hard deadline even if the asyncio layer fails.
+- **Python-side deadline**: Reduced from 120s → 100s (10s buffer over SDK timeout) to prevent silent hangs.
+
+### 🧪 Tests (+31 → 322 total)
+
+- `test_daily_key_manager.py`: 12 DailyKeyManager + 5 MonthlyKeyManager tests.
+- `test_unified_call_path.py`: 4 tests (Gemini routing, OpenRouter routing, error response, no-keys guard).
+- `test_provider_router_integration.py`: 6 tests (full chain Gemini/OpenRouter, all-exhausted, rate limit, multimodal, key-failure retry).
+- `test_timeout_smoke.py`: 4 tests (async cancellation, no zombie tasks, CancelledError propagation, SDK HTTP timeout config).
+- Updated `test_services_gemini.py` mocks: `client.models.*` → `client.aio.models.*` (`AsyncMock`).
+
+### 🧹 Code Quality
+
+- Standardized all Russian comments/docstrings in `security.py` `RateLimiter` to English.
+- Removed dead `from app import services` import from `agent_use_cases.py`.
+- **MonthlyKeyManager** — new generic class for monthly-credit key rotation (Tavily). Completes the KeyManager abstraction alongside DailyKeyManager.
+- **OpenRouter timeout** tightened 120s → 90s with explanatory comments. No zombie-thread risk (uses async httpx).
+- **asyncio.to_thread audit** — all remaining usages verified safe (CPU-bound encoding, Redis ops).
+- **\_save_image_as_bytes** — reviewed, already has 5s ProcessPoolExecutor timeout. No changes needed.
+- **Russian → English comments** — automated translation of 659 comment/docstring lines across 26 files (dictionary-based, no LLM). User-facing strings preserved.
+
+---
+
 ## [2.5.0] – 2026-02-25 – Sprint 5: Polish & Hardening
 
 ### ⚡ ProviderRouter Enhancements

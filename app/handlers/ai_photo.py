@@ -38,15 +38,15 @@ async def _handle_photo(
         img = bytes(photo_data)
         prompt = original_message.caption or "Опиши это изображение."
 
-        # Добавляем инструкции по форматированию к промпту для изображений
+        # Add инструкции по форматированию к промпту for fromображений
         formatted_prompt = f"""# РОЛЬ И ЗАДАЧА
-Ты — эксперт по анализу изображений для Telegram-бота. Твоя задача — описать изображение, используя правильное форматирование и предоставляя детальную, полезную информацию.
+Ты — эксперт по аналfromу fromображений for Telegram-бота. Твоя задача — описать image, используя правильное форматирование и предоставляя детальную, полезную информацию.
 
 # КОНТЕКСТ
-**Запрос пользователя:** {prompt}
+**Запрос user:** {prompt}
 
 # ПОШАГОВЫЙ АНАЛИЗ
-1. **Внимательно изучи изображение**
+1. **Внимательно fromучи image**
 2. **Определи основные объекты и детали**
 3. **Структурируй описание логично**
 4. **Примени правильное MarkdownV2 форматирование**
@@ -59,7 +59,7 @@ async def _handle_photo(
 
 _Детали:_
 - Снежные пики отражают солнечный свет
-- Внизу виднеется зеленый лес
+- Внfromу виднеется зеленый лес
 - Облака создают драматическую атмосферу
 
 ## Пример 2: Портрет
@@ -70,12 +70,12 @@ _Детали:_
 _Характеристики:_
 - Темный костюм с галстуком
 - Профессиональная поза
-- Фон размыт для акцента на лице
+- Фон размыт for акцента на лице
 
 ## Пример 3: Технический объект
-**Изображение:** Современный автомобиль
+**Изображение:** Соtemporary автомобиль
 **Правильное описание:**
-*Современный автомобиль* с обтекаемым дизайном и спортивными линиями.
+*Соtemporary автомобиль* с обтекаемым дfromайном и спортивными линиями.
 
 _Особенности:_
 - Аэродинамическая форма кузова
@@ -84,43 +84,43 @@ _Особенности:_
 
 # ПРАВИЛА ФОРМАТИРОВАНИЯ
 ## ✅ РАЗРЕШЕНО
-- `*жирный текст*` для ключевых объектов и характеристик
-- `_курсив_` для вторичных деталей и описаний
-- `` `код` `` для технических терминов
-- `[текст ссылки](URL)` для ссылок (если применимо)
-- `- ` для списков характеристик
+- `*жирный text*` for keyевых объектов и характеристик
+- `_курсив_` for вторичных деталей и описаний
+- `` `код` `` for технических терминов
+- `[text ссылки](URL)` for ссылок (if onменимо)
+- `- ` for списков характеристик
 
 ## ❌ ЗАПРЕЩЕНО
 - HTML теги: `<b>`, `<i>`, `<code>`, `<a>`
-- Двойные символы: `**текст**`, `__текст__`
+- Двойные символы: `**text**`, `__text__`
 - LaTeX математические выражения: `$...$`, `$$...$$`
 
 # СТРУКТУРА ОПИСАНИЯ
-1. **Основной объект** - что изображено
+1. **Основной объект** - что fromображено
 2. **Ключевые характеристики** - цвет, размер, стиль
-3. **Контекст и окружение** - где, когда, в какой обстановке
+3. **Конtext и окружение** - где, когда, в какой обстановке
 4. **Детали и особенности** - уникальные элементы
-5. **Общее впечатление** - настроение, атмосфера
+5. **Общее впеchatление** - настроение, атмосфера
 
 # ВАЖНЫЕ ПРАВИЛА
 - Будь конкретным и детальным
-- Используй описательные прилагательные
+- Используй описательные onлагательные
 - Структурируй информацию по пунктам
 - Применяй правильное форматирование
-- Не используй технический жаргон без объяснений
-- Следуй структуре примеров выше
+- Не используй технический жаргон without объяснений
+- Следуй структуре onмеров выше
 
 # ФИНАЛЬНАЯ ПРОВЕРКА
 Перед отправкой описания убедись, что:
-- [ ] Описание полностью описывает изображение
-- [ ] Информация структурирована согласно примерам
+- [ ] Описание полностью описывает image
+- [ ] Информация структурирована согласно onмерам
 - [ ] Использован правильный MarkdownV2 синтаксис
-- [ ] Нет HTML тегов или LaTeX синтаксиса
+- [ ] Нет HTML тегов or LaTeX синтаксиса
 - [ ] Тон описания информативный и дружелюбный
 
 Опиши изображение, следуя указанным инструкциям и структуре примеров."""
 
-        # Создаем parts для Gemini API: текст + изображение
+        # Create parts for Gemini API: text + image
         parts = [formatted_prompt, img] if img else [formatted_prompt]
 
         await update_stage(placeholder_message, STAGES_PHOTO, 1)
@@ -132,7 +132,7 @@ _Особенности:_
             chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
         )
 
-        # Проверяем ошибки от роутера
+        # Check ошибки от роутера
         if await handle_ai_response_error(response_text, placeholder_message):
             return
 
@@ -154,7 +154,7 @@ _Особенности:_
             await send_long_message(
                 placeholder_message, response_text, reply_markup=reply_markup
             )
-            # Сохраняем контекст изображения в истории
+            # Save context images в истории
             chat_state.history.append({"role": "user", "parts": [formatted_prompt]})
             chat_state.history.append({"role": "model", "parts": [response_text]})
             await db.update_user_chat(original_message.from_user.id, chat_state)
@@ -184,14 +184,14 @@ _Особенности:_
 
 
     except Exception as e:
-        logging.error(f"Error processing photo: {e}")
+        logging.error("Error processing photo: %s", e)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при обработке изображения."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
-            # Fallback на новое сообщение
+            logging.error("Could not edit placeholder message: %s", edit_error)
+            # Fallback на new message
             await original_message.reply_text(
                 "❌ Произошла ошибка при обработке изображения."
             )
@@ -204,7 +204,7 @@ async def process_media_group_request(
     messages: List[Message],
     caption: str,
 ):
-    # context используется для совместимости с другими функциями
+    # context используется for совместимости с другими функциями
     """Обрабатывает группу изображений как единое целое"""
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
@@ -214,7 +214,7 @@ async def process_media_group_request(
         f"🔄 Обрабатываю группу из {count} изображений для пользователя {user_id}"
     )
 
-    # Проверяем, есть ли поисковый префикс в caption
+    # Check, есть ли searchовый префикс в caption
     search_prefix = None
     if caption:
         if caption.startswith("??"):
@@ -222,13 +222,13 @@ async def process_media_group_request(
         elif caption.startswith("?"):
             search_prefix = "?"
 
-    # Если есть поисковый префикс, используем сложный поиск
+    # If есть searchовый префикс, use сложный search
     if search_prefix:
         await _handle_complex_media_group_search(
             placeholder_message, messages, caption, search_prefix, chat_state
         )
     else:
-        # Обычная обработка группы изображений
+        # Обычная обработка groups fromображений
         await _handle_media_group_photos(
             placeholder_message, messages, caption, chat_state
         )
@@ -256,7 +256,7 @@ async def _download_images_concurrently(
 
             return img
         except Exception as e:
-            logging.error(f"Error loading image {index + 1}: {e}")
+            logging.error("Error loading image %s: %s", index + 1, e)
             return None
 
     tasks = [download_one(i, msg) for i, msg in enumerate(messages)]
@@ -273,7 +273,7 @@ async def _handle_media_group_photos(
 ):
     """Обрабатывает группу изображений для обычного описания"""
     try:
-        # Загружаем все изображения из группы
+        # Load все images from groups
         images = await _download_images_concurrently(messages)
 
         if not images:
@@ -284,99 +284,99 @@ async def _handle_media_group_photos(
 
         await update_stage(placeholder_message, STAGES_PHOTO, 1)
 
-        # Формируем промпт для группы изображений
+        # Build промпт for groups fromображений
         count = len(images) if images else 0
         prompt = caption or f"Опиши эти {count} изображения."
 
-        # Добавляем инструкции по форматированию
+        # Add инструкции по форматированию
         formatted_prompt = f"""# РОЛЬ И ЗАДАЧА
-Ты — эксперт по анализу групп изображений для Telegram-бота. Твоя задача — описать группу изображений, используя правильное форматирование и предоставляя детальную, полезную информацию.
+Ты — эксперт по аналfromу групп fromображений for Telegram-бота. Твоя задача — описать группу fromображений, используя правильное форматирование и предоставляя детальную, полезную информацию.
 
 # КОНТЕКСТ
-**Запрос пользователя:** {prompt}
+**Запрос user:** {prompt}
 
 # ПОШАГОВЫЙ АНАЛИЗ
-1. **Внимательно изучи каждое изображение**
+1. **Внимательно fromучи каждое image**
 2. **Определи основные объекты и детали**
-3. **Проанализируй связи между изображениями**
+3. **Проаналfromируй связи between imagesми**
 4. **Структурируй описание логично**
 5. **Примени правильное MarkdownV2 форматирование**
 
 # FEW-SHOT ПРИМЕРЫ
 ## Пример 1: Последовательность событий
-**Группа:** 3 изображения процесса приготовления блюда
+**Группа:** 3 images процесса onготовления блюда
 **Правильное описание:**
-*Группа изображений показывает процесс приготовления блюда:*
+*Группа fromображений показывает процесс onготовления блюда:*
 
 _Изображение 1:_ Подготовка ингредиентов на кухонном столе
 _Изображение 2:_ Процесс готовки на плите
 _Изображение 3:_ Готовое блюдо на тарелке
 
 ## Пример 2: Разные аспекты темы
-**Группа:** 4 изображения разных типов автомобилей
+**Группа:** 4 images разных типов автомобилей
 **Правильное описание:**
 *Коллекция различных типов автомобилей:*
 
-_Изображение 1:_ *Спортивный автомобиль* с обтекаемым дизайном
+_Изображение 1:_ *Спортивный автомобиль* с обтекаемым дfromайном
 _Изображение 2:_ *Внедорожник* с высоким клиренсом
 _Изображение 3:_ *Семейный седан* с практичным салоном
-_Изображение 4:_ *Электромобиль* с современным дизайном
+_Изображение 4:_ *Электромобиль* с современным дfromайном
 
-## Пример 3: Сравнение или контраст
-**Группа:** 2 изображения старого и нового здания
+## Пример 3: Сравнение or контраст
+**Группа:** 2 images старого и нового здания
 **Правильное описание:**
 *Сравнение архитектурных стилей:*
 
 _Изображение 1:_ *Классическое здание* с традиционными элементами
-_Изображение 2:_ *Современное здание* с инновационным дизайном
+_Изображение 2:_ *Современное здание* с инновационным дfromайном
 
 # ПРАВИЛА ФОРМАТИРОВАНИЯ
 ## ✅ РАЗРЕШЕНО
-- `*жирный текст*` для ключевых объектов и характеристик
-- `_курсив_` для вторичных деталей и описаний
-- `` `код` `` для технических терминов
-- `[текст ссылки](URL)` для ссылок (если применимо)
-- `- ` для списков характеристик
+- `*жирный text*` for keyевых объектов и характеристик
+- `_курсив_` for вторичных деталей и описаний
+- `` `код` `` for технических терминов
+- `[text ссылки](URL)` for ссылок (if onменимо)
+- `- ` for списков характеристик
 
 ## ❌ ЗАПРЕЩЕНО
 - HTML теги: `<b>`, `<i>`, `<code>`, `<a>`
-- Двойные символы: `**текст**`, `__текст__`
+- Двойные символы: `**text**`, `__text__`
 - LaTeX математические выражения: `$...$`, `$$...$$`
 
 # СТРУКТУРА ОПИСАНИЯ ГРУППЫ
-1. **Общий контекст** - что представляет группа изображений
-2. **Индивидуальные описания** - каждое изображение отдельно
-3. **Связи и отношения** - как изображения связаны между собой
-4. **Общие темы** - что объединяет все изображения
-5. **Общее впечатление** - итоговое восприятие группы
+1. **Общий context** - что представляет group fromображений
+2. **Индивидуальные описания** - каждое image отдельно
+3. **Связи и отношения** - как images связаны between собой
+4. **Общие темы** - что объединяет все images
+5. **Общее впеchatление** - итоговое восonятие groups
 
 # ВАЖНЫЕ ПРАВИЛА
-- Пронумеруй изображения для ясности
-- Опиши каждое изображение отдельно
-- Выдели связи между изображениями
+- Пронумеруй images for ясности
+- Опиши каждое image отдельно
+- Выдели связи between imagesми
 - Будь конкретным и детальным
-- Используй описательные прилагательные
+- Используй описательные onлагательные
 - Структурируй информацию по пунктам
 - Применяй правильное форматирование
-- Не используй технический жаргон без объяснений
-- Следуй структуре примеров выше
+- Не используй технический жаргон without объяснений
+- Следуй структуре onмеров выше
 
 # ФИНАЛЬНАЯ ПРОВЕРКА
 Перед отправкой описания убедись, что:
-- [ ] Описание полностью описывает группу изображений
-- [ ] Каждое изображение описано отдельно
-- [ ] Выделены связи между изображениями
-- [ ] Информация структурирована согласно примерам
+- [ ] Описание полностью описывает группу fromображений
+- [ ] Каждое image описано отдельно
+- [ ] Выделены связи between imagesми
+- [ ] Информация структурирована согласно onмерам
 - [ ] Использован правильный MarkdownV2 синтаксис
-- [ ] Нет HTML тегов или LaTeX синтаксиса
+- [ ] Нет HTML тегов or LaTeX синтаксиса
 - [ ] Тон описания информативный и дружелюбный
 
 Опиши группу изображений, следуя указанным инструкциям и структуре примеров."""
 
-        # Создаем parts для Gemini API: текст + все изображения
+        # Create parts for Gemini API: text + все images
         parts = [formatted_prompt] + (images or [])
 
-        # Получаем user_id и chat_id для логирования
+        # Get user_id и chat_id for логирования
         user_id = (
             placeholder_message.from_user.id if placeholder_message.from_user else None
         )
@@ -389,7 +389,7 @@ _Изображение 2:_ *Современное здание* с иннов�
             chat_id=chat_id,
         )
 
-        # Проверяем ошибки от роутера
+        # Check ошибки от роутера
         if await handle_ai_response_error(response_text, placeholder_message):
             return
 
@@ -407,16 +407,16 @@ _Изображение 2:_ *Современное здание* с иннов�
 
 
         count = len(images) if images else 0
-        logging.info(f"✅ Группа из {count} изображений обработана успешно")
+        logging.info("✅ Группа из %s изображений обработана успешно", count)
 
     except Exception as e:
-        logging.error(f"Error processing media group photos: {e}")
+        logging.error("Error processing media group photos: %s", e)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при обработке группы изображений."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
 
 
 async def _handle_complex_media_group_search(
@@ -432,7 +432,7 @@ async def _handle_complex_media_group_search(
     try:
         await placeholder_message.edit_text("🖼️ Анализирую группу изображений...")
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
+        logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text(
             "🖼️ Анализирую группу изображений..."
         )
@@ -440,7 +440,7 @@ async def _handle_complex_media_group_search(
     vision_model = settings.RESEARCH_MODEL
 
     try:
-        # Загружаем все изображения из группы
+        # Load все images from groups
         images = await _download_images_concurrently(
             messages, log_context="для анализа"
         )
@@ -451,36 +451,36 @@ async def _handle_complex_media_group_search(
             )
             return
 
-        # Анализируем группу изображений для поиска
+        # Аналfromируем группу fromображений for searchа
         analysis_prompt = f"""{prompts.IMAGE_ANALYSIS_PROMPT}
 
 # ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ДЛЯ ГРУППЫ ИЗОБРАЖЕНИЙ
-## Анализ группы
-- Проанализируй все изображения как единый контекст
-- Выдели общие темы, объекты или концепции
-- Учти взаимосвязи между изображениями
-- Создай поисковый запрос, который охватывает весь контекст группы
+## Аналfrom groups
+- Проаналfromируй все images как единый context
+- Выдели общие темы, объекты or концепции
+- Учти взаимосвязи between imagesми
+- Создай searchовый request, который охватывает весь context groups
 
 ## Специальные случаи
-- Если изображения показывают последовательность или процесс, отрази это в запросе
-- Если изображения демонстрируют разные аспекты одной темы, объедини их
-- Если изображения показывают сравнение или контраст, укажи это
+- If images показывают afterдовательность or процесс, отрази это в requestе
+- If images демонстрируют разные аспекты одной темы, объедини их
+- If images показывают сравнение or контраст, укажи это
 
 # FEW-SHOT ПРИМЕРЫ ДЛЯ ГРУПП
 ## Пример 1: Последовательность событий
-**Группа:** 3 изображения процесса приготовления блюда
-**Правильный запрос:** `cooking process step by step recipe preparation`
+**Группа:** 3 images процесса onготовления блюда
+**Правильный request:** `cooking process step by step recipe preparation`
 
 ## Пример 2: Разные аспекты темы
-**Группа:** 4 изображения разных типов автомобилей
-**Правильный запрос:** `car types comparison sedan SUV sports luxury vehicles`
+**Группа:** 4 images разных типов автомобилей
+**Правильный request:** `car types comparison sedan SUV sports luxury vehicles`
 
-## Пример 3: Контраст или сравнение
-**Группа:** 2 изображения старого и нового здания
-**Правильный запрос:** `architecture evolution old vs new building comparison`
+## Пример 3: Контраст or сравнение
+**Группа:** 2 images старого и нового здания
+**Правильный request:** `architecture evolution old vs new building comparison`
 
 # ФОРМАТ ВЫВОДА
-Верни ТОЛЬКО поисковый запрос без:
+Верни ТОЛЬКО searchовый request without:
 - Кавычек
 - Двоеточий
 - Объяснений
@@ -492,10 +492,10 @@ async def _handle_complex_media_group_search(
 cooking process step by step recipe preparation
 ```"""
 
-        # Создаем parts для анализа: промпт + все изображения
+        # Create parts for аналfromа: промпт + все images
         parts = [analysis_prompt] + (images or [])
 
-        # Получаем user_id и chat_id для логирования
+        # Get user_id и chat_id for логирования
         user_id = (
             placeholder_message.from_user.id if placeholder_message.from_user else None
         )
@@ -508,7 +508,7 @@ cooking process step by step recipe preparation
             chat_id=chat_id,
         )
 
-        # Проверяем ошибки от роутера
+        # Check ошибки от роутера
         if await handle_ai_response_error(search_query, placeholder_message):
             return
 
@@ -518,10 +518,10 @@ cooking process step by step recipe preparation
                     "Не удалось проанализировать группу изображений для поиска."
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
+                logging.error("Could not edit placeholder message: %s", edit_error)
             return
 
-        # Получаем оригинальное сообщение пользователя для локализации
+        # Get оригинальное message user for локалfromации
         count = len(images) if images else 0
         original_user_message = caption or f"Опиши эти {count} изображения."
 
@@ -539,13 +539,13 @@ cooking process step by step recipe preparation
             )
 
         count = len(images) if images else 0
-        logging.info(f"✅ Группа из {count} изображений проанализирована для поиска")
+        logging.info("✅ Группа из %s изображений проанализирована для поиска", count)
 
     except Exception as e:
-        logging.error(f"Error processing complex media group search: {e}")
+        logging.error("Error processing complex media group search: %s", e)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при анализе группы изображений."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)

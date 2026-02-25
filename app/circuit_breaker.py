@@ -63,7 +63,7 @@ class CircuitBreaker:
         self._monitor_task: Optional[asyncio.Task] = None
         self._start_monitoring()
 
-        logging.info(f"Circuit Breaker '{name}' initialized with config: {self.config}")
+        logging.info("Circuit Breaker '%s' initialized with config: %s", name, self.config)
 
     async def call(self, func: Callable, *args, **kwargs) -> Any:
         """
@@ -194,7 +194,7 @@ class CircuitBreaker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error(f"Circuit Breaker '{self.name}' monitoring error: {e}")
+                logging.error("Circuit Breaker '%s' monitoring error: %s", self.name, e)
 
     def get_state(self) -> CircuitState:
         """Returns current circuit breaker state."""

@@ -18,7 +18,7 @@ from app.metrics import metrics_collector
 # Maximum characters to extract from a document to prevent OOM and performance issues
 MAX_DOCUMENT_TEXT_LENGTH = 100000
 
-# Проверяем поддержку документов
+# Check поддержку documentов
 try:
     # PyMuPDF removed for free tier optimization
     DOCUMENT_SUPPORT = True
@@ -75,7 +75,7 @@ class DocumentProcessor:
                 }
             return None
         except Exception as e:
-            logging.error(f"Error checking duplicate file: {e}")
+            logging.error("Error checking duplicate file: %s", e)
             return None
 
     async def _check_document_limit(self, user_id: int) -> bool:
@@ -88,13 +88,13 @@ class DocumentProcessor:
             doc_count = result[0]["doc_count"] if result else 0
             return doc_count < settings.MAX_DOCUMENTS_PER_USER
         except Exception as e:
-            logging.error(f"Error checking document limit: {e}")
+            logging.error("Error checking document limit: %s", e)
             return True  # В случае ошибки разрешаем загрузку
 
     async def _cleanup_oldest_documents(self, user_id: int, keep_count: int = 4) -> int:
         """Удаляет старые документы пользователя, оставляя указанное количество"""
         try:
-            # Оптимизировано: удаляем старые документы одним запросом с подзапросом
+            # Оптимfromировано: удаляем old documents одним requestом с подrequestом
             result = await database.db_query(
                 """
                 DELETE FROM user_documents
@@ -119,7 +119,7 @@ class DocumentProcessor:
             return deleted_count
 
         except Exception as e:
-            logging.error(f"Error cleaning up oldest documents: {e}")
+            logging.error("Error cleaning up oldest documents: %s", e)
             return 0
 
     async def process_document(
@@ -130,7 +130,7 @@ class DocumentProcessor:
             return {"error": "Document processing is not available"}
 
         try:
-            # Проверяем размер файла
+            # Check размер fileа
             if is_path:
                 import os
 
@@ -143,20 +143,20 @@ class DocumentProcessor:
                     "error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"
                 }
 
-            # Определяем тип файла
+            # Определяем тип fileа
             file_ext = Path(filename).suffix.lower()
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-            # Проверяем лимит документов
+            # Check limit documentов
             if not await self._check_document_limit(user_id):
-                # Если лимит превышен, удаляем самый старый документ
+                # If limit превышен, удаляем самый old document
                 await self._cleanup_oldest_documents(user_id, 4)
                 logging.info(
                     f"Document limit exceeded for user {user_id}, removed oldest document"
                 )
 
-            # Вычисляем хэш файла и проверяем дубликаты
+            # Вычисляем хэш fileа и проверяем дубликаты
             # Offload hash calculation to executor to avoid blocking event loop
             loop = asyncio.get_running_loop()
             file_hash = await loop.run_in_executor(
@@ -180,7 +180,7 @@ class DocumentProcessor:
                     "duplicate_info": duplicate,
                 }
 
-            # Обрабатываем документ
+            # Process document
             if file_ext == ".pdf":
                 return await self._process_pdf_unified(
                     file_data, filename, user_id, file_hash, is_path=is_path
@@ -193,7 +193,7 @@ class DocumentProcessor:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
         except Exception as e:
-            logging.error(f"Error processing document {filename}: {e}")
+            logging.error("Error processing document %s: %s", filename, e)
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
 
@@ -205,7 +205,7 @@ class DocumentProcessor:
             return {"error": "Document processing is not available"}
 
         try:
-            # Проверяем размер файла
+            # Check размер fileа
             if is_path:
                 import os
 
@@ -218,19 +218,19 @@ class DocumentProcessor:
                     "error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"
                 }
 
-            # Определяем тип файла
+            # Определяем тип fileа
             file_ext = Path(filename).suffix.lower()
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-            # Вычисляем хэш файла (но не проверяем дубликаты)
+            # Вычисляем хэш fileа (но не проверяем дубликаты)
             # Offload hash calculation to executor to avoid blocking event loop
             loop = asyncio.get_running_loop()
             file_hash = await loop.run_in_executor(
                 None, self._calculate_file_hash_sync, file_data
             )
 
-            # Обрабатываем документ
+            # Process document
             if file_ext == ".pdf":
                 return await self._process_pdf_unified(
                     file_data, filename, user_id, file_hash, is_path=is_path
@@ -243,7 +243,7 @@ class DocumentProcessor:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
         except Exception as e:
-            logging.error(f"Error processing document {filename}: {e}")
+            logging.error("Error processing document %s: %s", filename, e)
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
 
@@ -256,10 +256,10 @@ class DocumentProcessor:
             if not is_path:
                 # Validate magic bytes
                 if not file_data.startswith(b"%PDF"):
-                    logging.warning(f"Invalid PDF format for {filename}")
+                    logging.warning("Invalid PDF format for %s", filename)
                     return {"error": "Invalid PDF file format"}
 
-            logging.info(f"Processing PDF {filename} with PyPDF2")
+            logging.info("Processing PDF %s with PyPDF2", filename)
 
             # Prepare input for sync function
             if is_path:
@@ -283,7 +283,7 @@ class DocumentProcessor:
             full_text = result["content"]
             pages_count = result["pages"]
 
-            # Сохраняем в базу данных
+            # Save в базу данных
             await self._save_document_content(
                 user_id, filename, full_text, pages_count, file_hash
             )
@@ -298,7 +298,7 @@ class DocumentProcessor:
             }
 
         except Exception as e:
-            logging.error(f"Error processing PDF {filename}: {e}", exc_info=True)
+            logging.error("Error processing PDF %s: %s", filename, e, exc_info=True)
             await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
 
@@ -310,7 +310,7 @@ class DocumentProcessor:
         if not is_path:
             # Validate magic bytes for ZIP (all .docx files are ZIPs)
             if not file_data.startswith(b"\x50\x4b\x03\x04"):
-                logging.warning(f"Invalid DOCX format for {filename}: Missing ZIP header")
+                logging.warning("Invalid DOCX format for %s: Missing ZIP header", filename)
                 return {
                     "error": "Invalid Word document format. File must be a valid .docx file."
                 }
@@ -337,10 +337,10 @@ class DocumentProcessor:
 
             full_text = result["content"]
 
-            # Сохраняем в базу данных
+            # Save в базу данных
             await self._save_document_content(
                 user_id, filename, full_text, 1, file_hash
-            )  # Word документы считаем как 1 страницу
+            )  # Word documents count как 1 страницу
 
             result["filename"] = filename
             return result
@@ -361,16 +361,16 @@ class DocumentProcessor:
 
             # NOTE: Schema migrations are now centralized in database.py
 
-            # Сохраняем документ
+            # Save document
             await database.db_query(
                 "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES ($1, $2, $3, $4, $5, $6)",
                 (user_id, filename, content, pages, len(content), file_hash),
             )
 
-            logging.info(f"Saved document {filename} for user {user_id}")
+            logging.info("Saved document %s for user %s", filename, user_id)
 
         except Exception as e:
-            logging.error(f"Error saving document to database: {e}")
+            logging.error("Error saving document to database: %s", e)
 
     async def get_document_by_id(
         self, document_id: int, user_id: int
@@ -397,13 +397,13 @@ class DocumentProcessor:
             return None
 
         except Exception as e:
-            logging.error(f"Error getting document by ID: {e}")
+            logging.error("Error getting document by ID: %s", e)
             return None
 
     async def get_user_documents(self, user_id: int) -> List[Dict[str, Any]]:
         """Получает список документов пользователя"""
         try:
-            # Устанавливаем контекст пользователя для RLS
+            # Устанавливаем context user for RLS
             await database.set_user_context(user_id, database.is_admin(user_id))
 
             try:
@@ -426,11 +426,11 @@ class DocumentProcessor:
                     for row in result
                 ]
             finally:
-                # Очищаем контекст пользователя
+                # Clean up context user
                 await database.clear_user_context()
 
         except Exception as e:
-            logging.error(f"Error getting user documents: {e}")
+            logging.error("Error getting user documents: %s", e)
             return []
 
     async def get_document_content(
@@ -438,7 +438,7 @@ class DocumentProcessor:
     ) -> Optional[str]:
         """Получает содержимое документа"""
         try:
-            # Устанавливаем контекст пользователя для RLS
+            # Устанавливаем context user for RLS
             await database.set_user_context(user_id, database.is_admin(user_id))
 
             try:
@@ -451,11 +451,11 @@ class DocumentProcessor:
                     return result[0]["content"]
                 return None
             finally:
-                # Очищаем контекст пользователя
+                # Clean up context user
                 await database.clear_user_context()
 
         except Exception as e:
-            logging.error(f"Error getting document content: {e}")
+            logging.error("Error getting document content: %s", e)
             return None
 
     async def delete_document(self, document_id: int, user_id: int) -> bool:
@@ -468,7 +468,7 @@ class DocumentProcessor:
             return True
 
         except Exception as e:
-            logging.error(f"Error deleting document: {e}")
+            logging.error("Error deleting document: %s", e)
             return False
 
     async def delete_all_user_documents(self, user_id: int) -> int:
@@ -482,7 +482,7 @@ class DocumentProcessor:
             return len(result) if result else 0
 
         except Exception as e:
-            logging.error(f"Error deleting all documents: {e}")
+            logging.error("Error deleting all documents: %s", e)
             return 0
 
     async def cleanup_old_documents(self, days_old: int = 3) -> int:
@@ -504,13 +504,13 @@ class DocumentProcessor:
             return deleted_count
 
         except Exception as e:
-            logging.error(f"Error cleaning up old documents: {e}")
+            logging.error("Error cleaning up old documents: %s", e)
             return 0
 
     async def get_document_stats(self) -> Dict[str, Any]:
         """Получает статистику документов"""
         try:
-            # Размер БД (приблизительно)
+            # Размер БД (onблfromительно)
             size_result = await database.db_query("""
                 SELECT 
                     COUNT(*) as doc_count,
@@ -538,7 +538,7 @@ class DocumentProcessor:
             }
 
         except Exception as e:
-            logging.error(f"Error getting document stats: {e}")
+            logging.error("Error getting document stats: %s", e)
             return {
                 "total_documents": 0,
                 "total_size_chars": 0,
@@ -549,14 +549,14 @@ class DocumentProcessor:
     async def get_user_document_stats(self, user_id: int) -> Dict[str, Any]:
         """Получает статистику документов конкретного пользователя"""
         try:
-            # Количество документов пользователя
+            # Количество documentов user
             count_result = await database.db_query(
                 "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
                 (user_id,),
             )
             doc_count = count_result[0]["doc_count"] if count_result else 0
 
-            # Размер документов пользователя
+            # Размер documentов user
             size_result = await database.db_query(
                 """
                 SELECT 
@@ -591,7 +591,7 @@ class DocumentProcessor:
             }
 
         except Exception as e:
-            logging.error(f"Error getting user document stats: {e}")
+            logging.error("Error getting user document stats: %s", e)
             return {
                 "document_count": 0,
                 "total_size_chars": 0,
@@ -602,7 +602,7 @@ class DocumentProcessor:
             }
 
 
-# Глобальный экземпляр процессора документов
+# Глобальный экземпляр процессора documentов
 document_processor = DocumentProcessor()
 
 
@@ -647,10 +647,10 @@ async def delete_all_user_documents(user_id: int) -> int:
 async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
     """Internal function for uploading file to x0.at with retry logic."""
     timeout_config = httpx.Timeout(
-        connect=10.0,  # 10 секунд на подключение
-        read=60.0,  # 60 секунд на чтение (для загрузки файлов)
-        write=60.0,  # 60 секунд на запись (для загрузки файлов)
-        pool=30.0,  # 30 секунд на получение соединения из пула
+        connect=10.0,  # 10 секунд на подkeyение
+        read=60.0,  # 60 секунд на чтение (for загрузки fileов)
+        write=60.0,  # 60 секунд на запись (for загрузки fileов)
+        pool=30.0,  # 30 секунд на получение соединения from пула
     )
 
     async with httpx.AsyncClient(timeout=timeout_config) as client:
@@ -660,10 +660,10 @@ async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> Optional[str
         if response.status_code == 200:
             url = response.text.strip()
             if url.startswith("http"):
-                logging.info(f"File {filename} uploaded to x0.at: {url}")
+                logging.info("File %s uploaded to x0.at: %s", filename, url)
                 return url
             else:
-                logging.error(f"Invalid response from x0.at: {response.text}")
+                logging.error("Invalid response from x0.at: %s", response.text)
                 return None
         else:
             logging.error(
@@ -683,7 +683,7 @@ async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
             filename=filename,
         )
     except Exception as e:
-        logging.error(f"Error uploading to x0.at after retries: {e}")
+        logging.error("Error uploading to x0.at after retries: %s", e)
         return None
 
 

@@ -19,9 +19,9 @@ from app.request_context import set_request_id
 
 @authorized_only
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
-    logging.info(f"Start command from user {user_id}")
+    logging.info("Start command from user %s", user_id)
 
     try:
         chat_state = await db.get_user_chat(user_id)
@@ -32,9 +32,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
         )
-        logging.info(f"Start command completed successfully for user {user_id}")
+        logging.info("Start command completed successfully for user %s", user_id)
     except Exception as e:
-        logging.error(f"Error in start command for user {user_id}: {e}", exc_info=True)
+        logging.error("Error in start command for user %s: %s", user_id, e, exc_info=True)
         await update.message.reply_text(
             "❌ Произошла ошибка при обработке команды. Попробуйте позже."
         )
@@ -42,10 +42,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized_only
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Показывает подробную справку по использованию бота"""
     user_id = update.effective_user.id
-    logging.info(f"Help command from user {user_id}")
+    logging.info("Help command from user %s", user_id)
 
     try:
         help_text = (
@@ -73,9 +73,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        logging.info(f"Help command completed successfully for user {user_id}")
+        logging.info("Help command completed successfully for user %s", user_id)
     except Exception as e:
-        logging.error(f"Error in help command for user {user_id}: {e}", exc_info=True)
+        logging.error("Error in help command for user %s: %s", user_id, e, exc_info=True)
         await update.message.reply_text(
             "❌ Произошла ошибка при обработке команды. Попробуйте позже."
         )
@@ -83,7 +83,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized_only
 async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для получения аргументов команды
+    # context используется for получения argumentов команды
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
 
@@ -134,7 +134,7 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 @authorized_only
 async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
 
@@ -146,7 +146,7 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized_only
 async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     set_request_id(f"tgcmd-newchat-{chat_id}-{getattr(update, 'update_id', 'na')}")
@@ -157,7 +157,7 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_state.system_prompt = None
     await db.update_user_chat(user_id, chat_state)
 
-    # Формируем статус для UX
+    # Build статус for UX
     search_icon = "🟢" if chat_state.search_enabled else "🔴"
     search_status = "ВКЛ" if chat_state.search_enabled else "ВЫКЛ"
 
@@ -189,7 +189,7 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized_only
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
 
@@ -207,14 +207,14 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized_only
 async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
     chat_state.search_enabled = not chat_state.search_enabled
     await db.update_user_chat(user_id, chat_state)
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
 
-    # Используем TelegramFormatter для правильного экранирования
+    # Используем TelegramFormatter for правильного экранирования
     formatted_text, parse_mode = TelegramFormatter.format_text(
         f"🌐 Постоянный режим исследования *{status_text}*."
     )
@@ -226,7 +226,7 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 @admin_only
 async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     key_data = await db.get_available_gemini_key(settings.DEFAULT_MODEL)
     if not key_data:
         await update.message.reply_text(
@@ -242,7 +242,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             if "generateContent" in m.supported_generation_methods
         ]
 
-        # Используем TelegramFormatter для правильного экранирования
+        # Используем TelegramFormatter for правильного экранирования
         formatted_text, parse_mode = TelegramFormatter.format_text(
             "✅ *Доступные модели:*\n" + "\n".join(models_list)
         )
@@ -253,7 +253,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для получения аргументов команды
+    # context используется for получения argumentов команды
     try:
         user_to_add = int(context.args[0])
         await db.db_query(
@@ -268,7 +268,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для получения аргументов команды
+    # context используется for получения argumentов команды
     try:
         user_to_del = int(context.args[0])
         if user_to_del == settings.ADMIN_ID:
@@ -287,7 +287,7 @@ async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     rows = await db.db_query("SELECT user_id FROM users WHERE is_authorized = 1")
     user_ids = [str(row["user_id"]) for row in rows]
     await update.message.reply_text(
@@ -297,12 +297,12 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 @admin_only
 async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Показывает полную сводку метрик, статуса ключей и кредитов"""
     try:
         text = await menus.get_metrics_content()
 
-        # Используем TelegramFormatter для надежного форматирования
+        # Используем TelegramFormatter for надежного форматирования
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
         keyboard = [
@@ -326,7 +326,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Показывает статистику кэша"""
     try:
         stats = await get_cache_stats()
@@ -353,10 +353,10 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @authorized_only
 async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Показывает список документов пользователя и управляет ими"""
 
-    # Очищаем состояние работы с документами при входе в команду
+    # Clean up state работы с documentами on входе в команду
     from app.state import clear_document_state
 
     clear_document_state(update.effective_user.id)
@@ -372,12 +372,12 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка получения документов: {e}")
-        logging.error(f"Error in documents command: {e}", exc_info=True)
+        logging.error("Error in documents command: %s", e, exc_info=True)
 
 
 @admin_only
 async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Показывает статистику очереди задач"""
     try:
         stats = await task_queue.get_queue_stats()
@@ -407,7 +407,7 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Очищает кэш"""
     try:
         from app.cache import clear_cache
@@ -421,16 +421,16 @@ async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Очищает старые метрики (старше 30 дней)"""
     try:
-        # Удаляем метрики старше 30 дней
+        # Delete metrics старше 30 дней
         await db.db_query("""
             DELETE FROM metrics 
             WHERE metric_date < CURRENT_DATE - INTERVAL '30 days'
         """)
 
-        # Удаляем старые ошибки (старше 7 дней)
+        # Delete old ошибки (старше 7 дней)
         await db.db_query("""
             DELETE FROM error_logs 
             WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
@@ -446,12 +446,12 @@ async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAUL
 async def update_tavily_keys_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Команда для обновления ключей Tavily API"""
     try:
         await update.message.reply_text("🔄 Обновляю ключи Tavily API...")
 
-        # Принудительно обновляем ключи
+        # Принудительно обновляем keys
         success = await db.force_update_tavily_keys()
 
         if success:
@@ -473,19 +473,19 @@ async def update_tavily_keys_command(
 
 @admin_only
 async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Команда для проверки статуса ключей Tavily API"""
     try:
         await update.message.reply_text("🔍 Проверяю статус ключей Tavily API...")
 
-        # Получаем текущие ключи из базы данных
+        # Get текущие keys from базы данных
         keys_result = await db.db_query("SELECT key_hash, api_key FROM tavily_api_keys")
 
         if not keys_result:
             await update.message.reply_text("❌ В базе данных нет ключей Tavily API")
             return
 
-        # Формируем отчет
+        # Build отчет
         report = f"📋 Найдено {len(keys_result)} ключей Tavily API:\n\n"
 
         for i, row in enumerate(keys_result, 1):
@@ -495,7 +495,7 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
             report += f"   Хэш: `{key_hash[:16]}...`\n"
             report += f"   API: `{api_key[:10]}...{api_key[-4:]}`\n\n"
 
-        # Проверяем использование
+        # Check использование
         current_month = time_utils.get_current_month_str()
         usage_result = await db.db_query(
             """
@@ -517,7 +517,7 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
         else:
             report += f"📊 *Использование за {current_month}:*\n   Нет данных\n"
 
-        # Добавляем информацию о лимитах
+        # Add информацию о limitах
         report += "\n⚡ *Лимиты:*\n"
         report += (
             f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n"
@@ -534,7 +534,7 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
 
 @authorized_only
 async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Регистрирует групповой чат"""
     user_id = update.effective_user.id
 
@@ -562,7 +562,7 @@ async def register_group_command(update: Update, context: ContextTypes.DEFAULT_T
 
 @authorized_only
 async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Показывает статистику группы"""
 
     chat = update.effective_chat
@@ -592,7 +592,7 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @admin_only
 async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Показывает статистику документов"""
     try:
         from app.document_processor import document_processor
@@ -616,22 +616,22 @@ async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_T
 
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения статистики документов: {e}")
-        logging.error(f"Error in document_stats_command: {e}", exc_info=True)
+        logging.error("Error in document_stats_command: %s", e, exc_info=True)
 
 
 @admin_only
 async def clear_old_documents_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Очищает старые документы (старше 3 дней)"""
     try:
         from app.document_processor import document_processor
 
-        # Очищаем документы старше 3 дней
+        # Clean up documents старше 3 дней
         deleted_count = await document_processor.cleanup_old_documents(3)
 
-        # Получаем статистику после очистки
+        # Get статистику after очистки
         stats = await document_processor.get_document_stats()
 
         text = (
@@ -649,7 +649,7 @@ async def clear_old_documents_command(
 
     except Exception as e:
         await update.message.reply_text(f"Ошибка очистки документов: {e}")
-        logging.error(f"Error in clear_old_documents_command: {e}", exc_info=True)
+        logging.error("Error in clear_old_documents_command: %s", e, exc_info=True)
 
 
 # ============================================================================
@@ -659,32 +659,20 @@ async def clear_old_documents_command(
 
 @authorized_only
 async def save_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для получения аргументов команды
+    # context используется for получения argumentов команды
     """Сохранить текущую беседу"""
     user_id = update.effective_user.id
 
     args = context.args
     if not args:
-        # Автогенерация названия на основе последних сообщений
+        # AI-powered auto-title from first messages
         chat_state = await db.get_user_chat(user_id)
         if chat_state and chat_state.history:
-            # Берем последнее сообщение пользователя для генерации названия
-            last_user_msg = None
-            if isinstance(chat_state.history, list):
-                for msg in reversed(chat_state.history):
-                    if isinstance(msg, dict) and msg.get("role") == "user":
-                        content = msg.get("content", "")
-                        if isinstance(content, list):
-                            content = " ".join(str(part) for part in content)
-                        last_user_msg = str(content)[:50]  # Первые 50 символов
-                        break
+            from app.repos.analytics import generate_auto_title
 
-            if last_user_msg:
-                title = f"Беседа: {last_user_msg}..."
-            else:
-                from datetime import datetime
-
-                title = f"Беседа от {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+            title = generate_auto_title(
+                chat_state.history if isinstance(chat_state.history, list) else []
+            )
         else:
             from datetime import datetime
 
@@ -695,13 +683,13 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
     if len(title) > 100:
         title = title[:97] + "..."
 
-    # Определяем текущую роль
+    # Определяем current role
     chat_state = await db.get_user_chat(user_id)
     role_type = None
     role_id = None
 
     if chat_state and chat_state.system_prompt:
-        # Проверяем, есть ли активная роль
+        # Check, есть ли активная role
         for key, role_data in prompts.DEFAULT_ROLES.items():
             if role_data["prompt"] in chat_state.system_prompt:
                 role_type = "role"
@@ -718,11 +706,11 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
 
 @authorized_only
 async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для получения аргументов команды
+    # context используется for получения argumentов команды
     """Показать список сохранённых бесед"""
     user_id = update.effective_user.id
 
-    # Парсим аргументы для пагинации
+    # Parse arguments for пагинации
     page = 1
     if context.args and context.args[0].isdigit():
         page = int(context.args[0])
@@ -743,7 +731,7 @@ async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TY
 async def switch_conversation_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    # context используется для получения аргументов команды
+    # context используется for получения argumentов команды
     """Переключиться на беседу"""
     user_id = update.effective_user.id
 
@@ -770,7 +758,7 @@ async def switch_conversation_command(
 async def rename_conversation_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    # context используется для получения аргументов команды
+    # context используется for получения argumentов команды
     """Переименовать беседу"""
     user_id = update.effective_user.id
 
@@ -807,7 +795,7 @@ async def rename_conversation_command(
 async def delete_conversation_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    # context используется для получения аргументов команды
+    # context используется for получения argumentов команды
     """Удалить беседу"""
 
     args = context.args
@@ -838,7 +826,7 @@ async def delete_conversation_command(
 
 @admin_only
 async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Показать метрики ролей и бесед"""
     try:
         metrics = await role_conv_metrics.get_metrics_summary()
@@ -854,7 +842,7 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
         text += f"• Сбросов ролей: `{metrics['roles']['clears']}`\n"
         text += f"• Сохранений ролей: `{metrics['roles']['saves']}`\n\n"
 
-        # Популярные роли
+        # Популярные roles
         if metrics["roles"]["applications"]:
             text += "*🔥 Популярные роли:*\n"
             sorted_roles = sorted(
@@ -876,7 +864,7 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
         text += f"• Переименований: `{metrics['conversations']['renamed']}`\n"
         text += f"• Удалений: `{metrics['conversations']['deleted']}`\n\n"
 
-        # Метрики суммаризации
+        # Метрики суммарfromации
         text += "*📝 Суммаризация:*\n"
         text += f"• Срабатываний: `{metrics['summarization']['triggered']}`\n"
         text += f"• Мягких лимитов: `{metrics['summarization']['soft_limit']}`\n"
@@ -889,12 +877,12 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
 
     except Exception as e:
         await update.message.reply_text(f"Ошибка получения метрик: {e}")
-        logging.error(f"Error in role_conv_metrics_command: {e}", exc_info=True)
+        logging.error("Error in role_conv_metrics_command: %s", e, exc_info=True)
 
 
 @admin_only
 async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Перезагружает конфигурацию из переменных окружения"""
     try:
         await update.message.reply_text("🔄 Перезагружаю конфигурацию...")
@@ -904,10 +892,10 @@ async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TY
 
         await config_manager.force_reload()
 
-        # Получаем обновленные настройки
+        # Get обновленные settings
         new_settings = config_manager.settings
 
-        # Формируем отчет
+        # Build отчет
         report = "✅ *Конфигурация перезагружена*\n\n"
         report += "🔑 *API ключи:*\n"
         report += f"• Gemini: `{len(new_settings.GEMINI_API_KEYS)}` ключей\n"
@@ -928,21 +916,21 @@ async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TY
         formatted_text, parse_mode = TelegramFormatter.format_text(report)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
-        logging.info(f"Configuration reloaded by admin {update.effective_user.id}")
+        logging.info("Configuration reloaded by admin %s", update.effective_user.id)
 
     except Exception as e:
         error_msg = f"❌ Ошибка перезагрузки: {str(e)[:200]}"
         await update.message.reply_text(error_msg)
-        logging.error(f"Error reloading config: {e}", exc_info=True)
+        logging.error("Error reloading config: %s", e, exc_info=True)
 
 
 @admin_only
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # context используется для совместимости с другими командами
+    # context используется for совместимости с другими командами
     """Показывает справку по админским командам"""
     try:
         user_id = update.effective_user.id
-        logging.info(f"Admin command from user {user_id}")
+        logging.info("Admin command from user %s", user_id)
 
         help_text = (
             "🔧 *Админские команды Gemini Bot*\n\n"
@@ -981,10 +969,10 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        logging.info(f"Admin command completed successfully for user {user_id}")
+        logging.info("Admin command completed successfully for user %s", user_id)
 
     except Exception as e:
-        logging.error(f"Error in admin command for user {user_id}: {e}", exc_info=True)
+        logging.error("Error in admin command for user %s: %s", user_id, e, exc_info=True)
         await update.message.reply_text(
             "❌ Произошла ошибка при обработке команды. Попробуйте позже."
         )
@@ -994,9 +982,16 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает личную статистику пользователя"""
     user_id = update.effective_user.id
-    logging.info(f"Stats command from user {user_id}")
+    logging.info("Stats command from user %s", user_id)
 
     try:
+        from app.repos.analytics import get_engagement_summary, streak_badge
+
+        # Engagement summary (streak + 7-day stats)
+        engagement = await get_engagement_summary(user_id)
+        streak = engagement["current_streak"]
+        badge = streak_badge(streak)
+
         # Сегодня (personal — per-user metrics)
         today_res = await db.db_query(
             "SELECT COALESCE(request_count, 0) as cnt FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
@@ -1012,7 +1007,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (user_id,),
         )
 
-        # Использование моделей за сегодня (personal, из JSONB model_usage)
+        # Использование моделей за сегодня (personal, from JSONB model_usage)
         model_res = await db.db_query(
             "SELECT key as model_name, value::int as cnt "
             "FROM user_metrics, jsonb_each_text(model_usage) "
@@ -1029,18 +1024,25 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Беседы
         conv_count = await db.get_conversation_count(user_id)
 
-        # Формируем текст
-        text = (
-            "📊 **Ваша статистика**\n\n"
-            f"📅 **Сегодня:** `{today_count}` запросов\n\n"
-        )
+        # Build text
+        text = "📊 **Ваша статистика**\n\n"
 
-        # Недельная история
+        # Streak badge
+        if streak > 0:
+            text += f"{badge} **Серия:** `{streak}` {'день' if streak == 1 else 'дней'}\n"
+            if engagement["longest_streak"] > streak:
+                text += f"🏆 **Рекорд:** `{engagement['longest_streak']}` дней\n"
+            text += "\n"
+
+        text += f"📅 **Сегодня:** `{today_count}` запросов\n"
+        text += f"📈 **7 дней:** `{engagement['total_requests_7d']}` запросов ({engagement['active_days_7d']}/7 дней)\n\n"
+
+        # Недельная history
         if week_res:
-            text += "📈 **Последние 7 дней:**\n"
+            text += "📊 **По дням:**\n"
             for row in week_res:
                 date_str = row["metric_date"].strftime("%d.%m") if hasattr(row["metric_date"], "strftime") else str(row["metric_date"])[:5]
-                bar = "█" * min(int(row["cnt"]), 20)  # Simple bar chart
+                bar = "█" * min(int(row["cnt"]), 20)
                 text += f"  `{date_str}` {bar} `{row['cnt']}`\n"
             text += "\n"
 
@@ -1058,10 +1060,10 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        logging.info(f"Stats command completed for user {user_id}")
+        logging.info("Stats command completed for user %s", user_id)
 
     except Exception as e:
-        logging.error(f"Error in stats command for user {user_id}: {e}", exc_info=True)
+        logging.error("Error in stats command for user %s: %s", user_id, e, exc_info=True)
         await update.message.reply_text(
             "❌ Ошибка получения статистики. Попробуйте позже."
         )
@@ -1081,7 +1083,7 @@ def register(application: Application):
     application.add_handler(CommandHandler("deluser", del_user_command))
     application.add_handler(CommandHandler("listusers", list_users_command))
 
-    # Новые команды для мониторинга и управления
+    # Новые команды for мониторинга и управления
     application.add_handler(CommandHandler("metrics", metrics_command))
     application.add_handler(CommandHandler("cachestats", cache_stats_command))
     application.add_handler(CommandHandler("queuestats", queue_stats_command))
@@ -1098,16 +1100,16 @@ def register(application: Application):
         CommandHandler("checktavilykeys", check_tavily_keys_command)
     )
 
-    # Команды для групповых чатов
+    # Команды for групповых chatов
     application.add_handler(CommandHandler("registergroup", register_group_command))
     application.add_handler(CommandHandler("groupstats", group_stats_command))
 
-    # Команды для работы с документами
+    # Команды for работы с documentами
     application.add_handler(CommandHandler("documents", documents_command))
     # Новая команда ролей
     application.add_handler(CommandHandler("roles", roles_command))
 
-    # Команды для работы с беседами
+    # Команды for работы с беседами
     application.add_handler(CommandHandler("save", save_conversation_command))
     application.add_handler(CommandHandler("conversations", conversations_command))
     application.add_handler(CommandHandler("switch", switch_conversation_command))

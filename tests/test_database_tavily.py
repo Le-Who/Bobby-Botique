@@ -34,44 +34,41 @@ async def test_force_update_tavily_keys():
 
     mock_settings = MockSettings(TAVILY_API_KEYS=test_keys)
 
-    # We explicitly import app.database to ensure it's available for patching
-    # But we want to avoid side effects of import if possible, or handle them.
-    # The benchmark script showed we can import it if we mock dependencies.
-
-    # We need to make sure 'app.config' is in sys.modules so patch can find it
     if "app.config" not in sys.modules:
-        # Create a mock module if it failed to import
         sys.modules["app.config"] = MagicMock()
 
-    # However, if app.config WAS imported, we patch it.
-
-    # We'll use a nested patch approach.
-
-    # Patch get_settings.
-    # Note: We patch where it is imported IF it was imported using 'from ... import ...'
-    # So we should patch "app.config.get_settings"
-
-    # We also need to patch db_query and db_execute_many in app.database
-
     with patch("app.config.get_settings", return_value=mock_settings):
-        # We need to ensure app.database is imported
         from app import database
 
-        # Now patch the functions inside app.database
+        # Create mock connection with transaction support
+        # transaction() is called synchronously, returns an async context manager
+        mock_conn = MagicMock()
+        mock_txn_ctx = MagicMock()
+        mock_txn_ctx.__aenter__ = AsyncMock(return_value=mock_txn_ctx)
+        mock_txn_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_conn.transaction.return_value = mock_txn_ctx
+        mock_conn.execute = AsyncMock()
+        mock_conn.executemany = AsyncMock()
+
+        # pool.acquire() returns a sync object with __aenter__/__aexit__
+        mock_acquire_ctx = MagicMock()
+        mock_acquire_ctx.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_acquire_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value = mock_acquire_ctx
+
         with (
-            patch.object(database, "db_query", new_callable=AsyncMock) as mock_db_query,
-            patch.object(
-                database, "db_execute_many", new_callable=AsyncMock
-            ) as mock_db_execute_many,
             patch.object(database, "db_manager") as mock_db_manager,
         ):
+            mock_db_manager.pool = mock_pool
+
             # Mock the cache lock
             mock_lock = AsyncMock()
             mock_lock.__aenter__.return_value = None
             mock_lock.__aexit__.return_value = None
             mock_db_manager._cache_lock = mock_lock
             mock_db_manager._active_keys_cache = {}
-            mock_db_manager._cache_last_updated = {}
 
             # Execute
             result = await database.force_update_tavily_keys()
@@ -79,23 +76,15 @@ async def test_force_update_tavily_keys():
             # Verify
             assert result is True
 
-            # Verify DELETE calls
-            assert mock_db_query.call_count == 2
-            mock_db_query.assert_any_call("DELETE FROM tavily_api_keys")
-            mock_db_query.assert_any_call("DELETE FROM tavily_key_usage")
+            # Verify DELETE + INSERT via conn.execute / conn.executemany
+            mock_conn.execute.assert_any_call("DELETE FROM tavily_api_keys")
+            mock_conn.execute.assert_any_call("DELETE FROM tavily_key_usage")
+            mock_conn.executemany.assert_called_once()
 
-            # Verify INSERT batch call
-            assert mock_db_execute_many.call_count == 1
-
-            call_args = mock_db_execute_many.call_args
+            call_args = mock_conn.executemany.call_args
             query, data = call_args[0]
-
-            assert (
-                query
-                == "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2)"
-            )
+            assert query == "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2)"
             assert len(data) == 3
-            # Sort data to compare if order is not guaranteed (it is guaranteed in list comprehension though)
             assert data == expected_data
 
 

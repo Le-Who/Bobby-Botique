@@ -176,7 +176,7 @@ class TestProviders:
 
         # Patch at the source module where the function is defined
         with patch(
-            "app.services.get_gemini_response", new_callable=AsyncMock
+            "app.services._execute_gemini_request", new_callable=AsyncMock
         ) as mock_gemini:
             mock_gemini.return_value = ("Hello!", 15)
 
@@ -200,7 +200,7 @@ class TestProviders:
         wrapper = GeminiProvider("test-key")
 
         with patch(
-            "app.services.get_gemini_response", new_callable=AsyncMock
+            "app.services._execute_gemini_request", new_callable=AsyncMock
         ) as mock_gemini:
             mock_gemini.return_value = ("❌ Error occurred", None)
 
@@ -222,7 +222,7 @@ class TestProviders:
         wrapper = OpenRouterProvider("test-key")
 
         with patch(
-            "app.services.get_openrouter_response", new_callable=AsyncMock
+            "app.services._execute_openrouter_request", new_callable=AsyncMock
         ) as mock_openrouter:
             mock_openrouter.return_value = ("Greetings!", 20)
 

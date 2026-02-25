@@ -31,21 +31,21 @@ async def _handle_qna_search(
     chat_state: db.ChatState,
     search_query: str = None,
 ):
-    # Если передан search_query, используем его для поиска, а user_message для локализации
+    # If beforeан search_query, use его for searchа, а user_message for локалfromации
     actual_search_query = search_query if search_query else user_message
-    # chat_state используется для совместимости с другими функциями
+    # chat_state используется for совместимости с другими функциями
 
     await metrics_collector.record_search_query()
 
     try:
         await update_stage(placeholder_message, STAGES_SEARCH_QUICK, 0)
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
+        logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text(
             "🔎 Ищу быстрый ответ..."
         )
 
-    # Получаем user_id и chat_id для логирования
+    # Get user_id и chat_id for логирования
     user_id = (
         placeholder_message.from_user.id if placeholder_message.from_user else None
     )
@@ -58,19 +58,19 @@ async def _handle_qna_search(
         try:
             await placeholder_message.edit_text(search_result["error"])
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     tavily_answer = search_result.get("answer", "Не удалось найти прямой ответ.")
     try:
         await update_stage(placeholder_message, STAGES_SEARCH_QUICK, 1)
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
+        logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text(
             "🌍 Адаптирую ответ..."
         )
 
-    # Используем модель из chat_state, если она указана, иначе используем настройки по умолчанию
+    # Используем model from chat_state, if она указана, иначе use settings by default
     preferred_model = (
         chat_state.model
         if chat_state.model
@@ -81,20 +81,20 @@ async def _handle_qna_search(
         )
     )
 
-    # Экранируем фигурные скобки в данных для предотвращения ошибок форматирования
+    # Экранируем фигурные скобки в данных for предотвращения ошибок форматирования
     safe_user_message = escape_format_chars(user_message)
     safe_tavily_answer = escape_format_chars(tavily_answer)
 
     localization_prompt = prompts.QNA_LOCALIZATION_PROMPT.format(
         user_message=safe_user_message, tavily_answer=safe_tavily_answer
     )
-    # Получаем user_id и chat_id для логирования
+    # Get user_id и chat_id for логирования
     user_id = (
         placeholder_message.from_user.id if placeholder_message.from_user else None
     )
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
-    # Используем системную инструкцию из chat_state
+    # Используем системную инструкцию from chat_state
     system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
 
     # Используем health-aware роутинг
@@ -106,11 +106,11 @@ async def _handle_qna_search(
         chat_id=chat_id,
     )
 
-    # Проверяем, является ли ответ ошибкой (используем универсальную функцию)
+    # Check, является ли response ошибкой (use универсальную функцию)
     if await handle_ai_response_error(final_answer, placeholder_message):
-        return  # Ошибка обработана, выходим
+        return  # Error обработана, выходим
     elif final_answer:
-        # Успешный ответ
+        # Успешный response
         buttons = [
             [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
@@ -120,7 +120,7 @@ async def _handle_qna_search(
             placeholder_message, final_answer, reply_markup=reply_markup
         )
     else:
-        # Пустой ответ
+        # Пустой response
         try:
             from app.errors import build_retry_and_roles_keyboard
 
@@ -129,7 +129,7 @@ async def _handle_qna_search(
                 reply_markup=build_retry_and_roles_keyboard(),
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
 
 
 async def _handle_research_agent(
@@ -140,7 +140,7 @@ async def _handle_research_agent(
     model_override: Optional[str] = None,
     search_query: str = None,
 ):
-    # Если передан search_query, используем его для поиска, а user_message для локализации
+    # If beforeан search_query, use его for searchа, а user_message for локалfromации
     actual_search_query = search_query if search_query else user_message
 
     await metrics_collector.record_search_query()
@@ -148,12 +148,12 @@ async def _handle_research_agent(
     try:
         await update_stage(placeholder_message, STAGES_SEARCH_DEEP, 0)
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
+        logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text(
             "🔎 Ищу источники..."
         )
 
-    # Получаем user_id и chat_id для логирования
+    # Get user_id и chat_id for логирования
     user_id = (
         placeholder_message.from_user.id if placeholder_message.from_user else None
     )
@@ -164,20 +164,20 @@ async def _handle_research_agent(
             actual_search_query, search_type="search", user_id=user_id, chat_id=chat_id
         )
     except Exception as search_error:
-        logging.error(f"Error in Tavily search: {search_error}")
+        logging.error("Error in Tavily search: %s", search_error)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при поиске. Попробуйте позже."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     if search_result.get("error"):
         try:
             await placeholder_message.edit_text(search_result["error"])
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     search_results = search_result.get("results", [])
@@ -187,17 +187,17 @@ async def _handle_research_agent(
                 "Не удалось найти релевантные источники для исследования."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
-    # Проверяем, что search_results содержит валидные данные
+    # Check, что search_results содержит валидные data
     valid_results = []
     if search_results:
         for result in search_results:
             if isinstance(result, dict) and result.get("url") and result.get("title"):
                 valid_results.append(result)
             else:
-                logging.warning(f"Skipping invalid search result: {result}")
+                logging.warning("Skipping invalid search result: %s", result)
 
     if not valid_results:
         try:
@@ -205,10 +205,10 @@ async def _handle_research_agent(
                 "Не удалось найти валидные источники для исследования."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
-    search_results = valid_results  # Используем только валидные результаты
+    search_results = valid_results  # Используем only валидные results
 
     try:
         count = len(search_results) if search_results else 0
@@ -216,9 +216,9 @@ async def _handle_research_agent(
             f"✅ Найдено {count} источников. Выбираю лучшие..."
         )
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
+        logging.error("Could not edit placeholder message: %s", edit_error)
 
-    # Используем модель из chat_state, если она указана, иначе используем настройки по умолчанию
+    # Используем model from chat_state, if она указана, иначе use settings by default
     preferred_model = (
         chat_state.model
         if chat_state.model
@@ -230,7 +230,7 @@ async def _handle_research_agent(
     )
 
     try:
-        # Безопасная сериализация search_results
+        # Безопасная сериалfromация search_results
         safe_search_results = []
         if search_results:
             for result in search_results:
@@ -244,7 +244,7 @@ async def _handle_research_agent(
                 }
                 safe_search_results.append(safe_result)
 
-        # Экранируем фигурные скобки в user_message для предотвращения ошибок форматирования
+        # Экранируем фигурные скобки в user_message for предотвращения ошибок форматирования
         safe_user_message = escape_format_chars(user_message)
 
         selection_prompt = prompts.URL_SELECTION_PROMPT.format(
@@ -255,9 +255,9 @@ async def _handle_research_agent(
             ),
         )
 
-        # Создаем parts для API: промпт
+        # Create parts for API: промпт
         parts = [selection_prompt] if selection_prompt else []
-        # Используем системную инструкцию из chat_state
+        # Используем системную инструкцию from chat_state
         system_instruction = prompts.compose_system_instruction(
             chat_state.system_prompt
         )
@@ -271,7 +271,7 @@ async def _handle_research_agent(
             chat_id=chat_id,
         )
 
-        # Проверяем, является ли ответ ошибкой
+        # Check, является ли response ошибкой
         from app.errors import (
             is_error_message,
             is_retryable_error,
@@ -292,7 +292,7 @@ async def _handle_research_agent(
                     selected_urls_str, reply_markup=reply_markup
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
+                logging.error("Could not edit placeholder message: %s", edit_error)
             return
 
         if not selected_urls_str:
@@ -302,16 +302,16 @@ async def _handle_research_agent(
                     reply_markup=build_retry_and_roles_keyboard(),
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
+                logging.error("Could not edit placeholder message: %s", edit_error)
             return
     except Exception as gemini_error:
-        logging.error(f"Error in Gemini URL selection: {gemini_error}")
+        logging.error("Error in Gemini URL selection: %s", gemini_error)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при выборе источников. Попробуйте позже."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     selected_urls = [
@@ -326,7 +326,7 @@ async def _handle_research_agent(
                 "Не удалось выбрать подходящие источники для глубокого анализа. Попробуйте переформулировать запрос."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     try:
@@ -335,17 +335,17 @@ async def _handle_research_agent(
             f"✅ Выбрано {count} источников. Собираю контент..."
         )
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
+        logging.error("Could not edit placeholder message: %s", edit_error)
 
     final_context_list = []
     if selected_urls and search_results:
-        # Создаем словарь для быстрого поиска по URL (O(1) вместо O(N*M))
+        # Create dictionary for быстрого searchа по URL (O(1) instead of O(N*M))
         results_map = {res.get("url"): res for res in search_results if res.get("url")}
         for url in selected_urls:
             res = results_map.get(url)
             if res:
-                # Возвращаем старый формат для совместимости с Gemini API
-                # но с улучшенной структурой для AI
+                # Return old формат for совместимости с Gemini API
+                # но с улучшенной структурой for AI
                 source_info = (
                     f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
                 )
@@ -359,15 +359,15 @@ async def _handle_research_agent(
                 "Не удалось собрать контент с выбранных страниц."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     try:
         await update_stage(placeholder_message, STAGES_SEARCH_DEEP, 2)
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
+        logging.error("Could not edit placeholder message: %s", edit_error)
 
-    # Используем модель из chat_state или переопределение, если указано
+    # Используем model from chat_state or переопределение, if указано
     model_for_synthesis = (
         model_override
         or chat_state.model
@@ -378,24 +378,24 @@ async def _handle_research_agent(
         )
     )
 
-    # Экранируем фигурные скобки в данных для предотвращения ошибок форматирования
-    # Применяем экранирование к данным перед форматированием промпта
+    # Экранируем фигурные скобки в данных for предотвращения ошибок форматирования
+    # Применяем экранирование к данным before форматированием промпта
     safe_full_context = escape_format_chars(full_context)
     safe_user_message = escape_format_chars(user_message)
 
     augmented_prompt = prompts.SYNTHESIS_PROMPT.format(
         full_context=safe_full_context, user_message=safe_user_message
     )
-    # Подготавливаем контекст с учётом лимитов токенов
+    # Подготавливаем context с учётом limitов tokenов
 
-    # Извлекаем суммаризацию из истории, если есть
+    # Extract суммарfromацию from истории, if есть
     summary = None
     if (
         chat_state.history
         and isinstance(chat_state.history, list)
         and len(chat_state.history) > 0
     ):
-        # Проверяем, есть ли суммаризация в первом сообщении
+        # Check, есть ли суммарfromация в первом сообщении
         first_msg = chat_state.history[0]
         if (
             isinstance(first_msg, dict)
@@ -406,34 +406,34 @@ async def _handle_research_agent(
             and "[Суммаризация предыдущего контекста]" in first_msg["parts"][0]
         ):
             summary = first_msg["parts"][0]
-            # Убираем суммаризацию из истории для обработки
+            # Убираем суммарfromацию from истории for обработки
             chat_state.history = chat_state.history[1:]
 
-    # Добавляем augmented_prompt в историю
+    # Add augmented_prompt в history
     chat_state.history.append({"role": "user", "parts": [augmented_prompt]})
 
-    # Подготавливаем контекст с лимитами
+    # Подготавливаем context с limitами
     prepared_history, new_summary = prompts.prepare_context_with_limits(
         chat_state.history, "", summary
     )
 
-    # Строим финальный контекст
+    # Строим финальный context
     final_context = prompts.build_context_with_summary(
         prepared_history, new_summary, ""
     )
 
-    # Обновляем историю в chat_state
+    # Update history в chat_state
     chat_state.history = final_context
 
     try:
-        # Проверяем, что history не пустой
+        # Check, что history не empty
         if not chat_state.history or len(chat_state.history) == 0:
             try:
                 await placeholder_message.edit_text(
                     "❌ История чата пуста. Невозможно обработать вопрос."
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
+                logging.error("Could not edit placeholder message: %s", edit_error)
             return
 
         # Используем health-aware роутинг
@@ -447,7 +447,7 @@ async def _handle_research_agent(
             chat_id=chat_id,
         )
     except Exception as ai_error:
-        logging.error(f"Error in AI synthesis: {ai_error}")
+        logging.error("Error in AI synthesis: %s", ai_error)
         chat_state.history.pop()  # Убираем добавленный промпт
         await db.update_user_chat(user_id, chat_state)
         try:
@@ -455,11 +455,11 @@ async def _handle_research_agent(
                 "❌ Произошла ошибка при синтезе ответа. Попробуйте позже."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     if response_text and response_text.strip():
-        # Проверяем, является ли ответ ошибкой
+        # Check, является ли response ошибкой
         from app.errors import (
             is_error_message,
             is_retryable_error,
@@ -474,9 +474,9 @@ async def _handle_research_agent(
         if await handle_ai_response_error(
             response_text, placeholder_message, on_error_callback=cleanup_on_error
         ):
-            return  # Ошибка обработана, выходим
+            return  # Error обработана, выходим
         else:
-            # Успешный ответ
+            # Успешный response
             await send_long_message(
                 placeholder_message, response_text, is_deep_dive=True
             )
@@ -484,7 +484,7 @@ async def _handle_research_agent(
             chat_state.token_count = new_token_count
             chat_state.is_deep_dive = True
 
-            # Генерируем уникальный thread_id для deep dive сессии
+            # Генерируем уникальный thread_id for deep dive сессии
             import uuid
 
             # Безопасная проверка атрибута deep_dive_thread_id
@@ -515,7 +515,7 @@ async def _handle_research_agent(
                 reply_markup=build_retry_and_roles_keyboard(),
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
 
 
 async def _handle_complex_agent_search(
@@ -528,8 +528,8 @@ async def _handle_complex_agent_search(
     try:
         await placeholder_message.edit_text("🖼️ Анализирую изображение...")
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
-        # Если не можем отредактировать, отправляем новое сообщение
+        logging.error("Could not edit placeholder message: %s", edit_error)
+        # If не можем отредактировать, отправляем new message
         placeholder_message = await placeholder_message.reply_text(
             "🖼️ Анализирую изображение..."
         )
@@ -544,7 +544,7 @@ async def _handle_complex_agent_search(
 
     analysis_prompt = prompts.IMAGE_ANALYSIS_PROMPT
 
-    # Создаем parts для Gemini API: промпт + изображение
+    # Create parts for Gemini API: промпт + image
     parts = [analysis_prompt, img] if img else [analysis_prompt]
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
     search_query, _ = await _get_ai_response_with_routing(
@@ -554,7 +554,7 @@ async def _handle_complex_agent_search(
         chat_id=chat_id,
     )
 
-    # Проверяем ошибки от роутера
+    # Check ошибки от роутера
     if await handle_ai_response_error(search_query, placeholder_message):
         return
 
@@ -564,11 +564,11 @@ async def _handle_complex_agent_search(
                 "Не удалось проанализировать изображение для поиска."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     chat_state = await db.get_user_chat(user_id)
-    # Получаем оригинальное сообщение пользователя для локализации
+    # Get оригинальное message user for локалfromации
     original_user_message = original_message.caption or "Опиши это изображение."
 
     if search_prefix == "?":

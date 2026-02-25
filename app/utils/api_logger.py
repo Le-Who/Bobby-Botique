@@ -12,19 +12,19 @@ from app.request_context import get_request_id
 
 class APILogger:
     """
-    Детальное логирование для всех API запросов (Telegram, Gemini, Tavily)
+    Детальное логирование for всех API requestов (Telegram, Gemini, Tavily)
     """
 
     def __init__(self):
         self.logger = logging.getLogger("api_logger")
         self.logger.setLevel(logging.INFO)
 
-        # Создаем форматтер для детального логирования
+        # Create форматтер for детального логирования
         formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
 
-        # Добавляем handler если его нет
+        # Add handler if его нет
         if not self.logger.handlers:
             handler = logging.StreamHandler()
             handler.setFormatter(formatter)
@@ -128,9 +128,9 @@ class APILogger:
             return start_time
 
         except Exception as e:
-            # Логируем ошибку логирования, но не прерываем выполнение
-            logging.error(f"Error in log_gemini_request: {e}")
-            # Возвращаем текущее время как fallback
+            # Log error логирования, но не прерываем выполнение
+            logging.error("Error in log_gemini_request: %s", e)
+            # Return текущее время как fallback
             return time.time()
 
     def log_gemini_response(
@@ -146,7 +146,7 @@ class APILogger:
     ):
         """Логирует ответ Gemini API"""
         try:
-            # Проверяем, что start_time является числом
+            # Check, что start_time является числом
             if not isinstance(start_time, (int, float)) or start_time <= 0:
                 logging.warning(
                     f"Invalid start_time in log_gemini_response: {start_time}, using current time"
@@ -182,8 +182,8 @@ class APILogger:
             return duration
 
         except Exception as e:
-            # Логируем ошибку логирования, но не прерываем выполнение
-            logging.error(f"Error in log_gemini_response: {e}")
+            # Log error логирования, но не прерываем выполнение
+            logging.error("Error in log_gemini_response: %s", e)
             return 0.0
 
     def log_tavily_request(
@@ -362,7 +362,7 @@ class APILogger:
         summary = {}
 
         if isinstance(response_data, dict):
-            # Подсчитываем размер ответа
+            # Подсчитываем размер responseа
             if "text" in response_data and response_data["text"] is not None:
                 summary["text_length"] = len(str(response_data["text"]))
             if "results" in response_data and response_data["results"] is not None:
@@ -383,11 +383,11 @@ def log_api_call(api_name: str, endpoint: str = ""):
     def decorator(func: Callable):
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
-            # Извлекаем user_id и chat_id из аргументов если возможно
+            # Extract user_id и chat_id from argumentов if возможно
             user_id = None
             chat_id = None
 
-            # Ищем объекты Update или Message в аргументах
+            # Ищем объекты Update or Message в argumentах
             for arg in args:
                 if hasattr(arg, "effective_user") and arg.effective_user:
                     user_id = arg.effective_user.id
@@ -462,7 +462,7 @@ def log_api_call(api_name: str, endpoint: str = ""):
                 )
                 raise
 
-        # Возвращаем асинхронную или синхронную обертку в зависимости от типа функции
+        # Return асинхронную or синхронную обертку в зависимости от типа функции
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
         else:

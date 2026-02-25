@@ -27,12 +27,12 @@ async def _handle_regular_chat(
     chat_state: db.ChatState,
     model_override: Optional[str] = None,
 ):
-    # Используем переопределение модели, если указано, иначе модель из chat_state
+    # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
     ai_key, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
     if resolution == "all_exhausted":
-        # Определяем провайдер на основе модели
+        # Определяем провайдер на основе models
         is_openrouter = (
             "/" in model_for_this_request if model_for_this_request else False
         )
@@ -42,7 +42,7 @@ async def _handle_regular_chat(
                 f"🚫 Все лимиты для всех моделей {provider_name} на сегодня исчерпаны. Попробуйте позже."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     if resolution == "confirm_fallback":
@@ -63,19 +63,19 @@ async def _handle_regular_chat(
                 reply_markup=InlineKeyboardMarkup(keyboard),
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
-    # Подготавливаем контекст с учётом лимитов токенов
+    # Подготавливаем context с учётом limitов tokenов
 
-    # Извлекаем суммаризацию из истории, если есть
+    # Extract суммарfromацию from истории, if есть
     summary = None
     if (
         chat_state.history
         and isinstance(chat_state.history, list)
         and len(chat_state.history) > 0
     ):
-        # Проверяем, есть ли суммаризация в первом сообщении
+        # Check, есть ли суммарfromация в первом сообщении
         first_msg = chat_state.history[0]
         if (
             isinstance(first_msg, dict)
@@ -86,34 +86,34 @@ async def _handle_regular_chat(
             and "[Суммаризация предыдущего контекста]" in first_msg["parts"][0]
         ):
             summary = first_msg["parts"][0]
-            # Убираем суммаризацию из истории для обработки
+            # Убираем суммарfromацию from истории for обработки
             chat_state.history = chat_state.history[1:]
 
-    # Подготавливаем контекст с лимитами
+    # Подготавливаем context с limitами
     prepared_history, new_summary = prompts.prepare_context_with_limits(
         chat_state.history, user_message, summary
     )
 
-    # Строим финальный контекст
+    # Строим финальный context
     final_context = prompts.build_context_with_summary(
         prepared_history, new_summary, user_message
     )
 
-    # Обновляем историю в chat_state
+    # Update history в chat_state
     chat_state.history = final_context
 
-    # Используем системную инструкцию пользователя или инструкцию по умолчанию
+    # Используем системную инструкцию user or инструкцию by default
     system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
 
     try:
         await update_stage(placeholder_message, STAGES_CHAT, 0)
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
+        logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text(
             f"🧠 Модель {model_used} думает..."
         )
 
-    # Используем обертку с ротацией ключей и health-scoring
+    # Используем обертку с ротацией keyей и health-scoring
     response_text, new_token_count = await _get_ai_response_with_routing(
         model_used,
         chat_state.history,
@@ -123,7 +123,7 @@ async def _handle_regular_chat(
     )
 
     if response_text:
-        # Проверяем, является ли ответ ошибкой
+        # Check, является ли response ошибкой
         from app.errors import build_retry_and_roles_keyboard
 
         # Используем универсальную функцию обработки ошибок
@@ -134,9 +134,9 @@ async def _handle_regular_chat(
         if await handle_ai_response_error(
             response_text, placeholder_message, on_error_callback=cleanup_on_error
         ):
-            return  # Ошибка обработана, выходим
+            return  # Error обработана, выходим
         else:
-            # Успешный ответ - добавляем в историю и показываем обычные кнопки
+            # Успешный response - добавляем в history и показываем обычные buttons
             buttons = [
                 [
                     InlineKeyboardButton(
@@ -194,4 +194,4 @@ async def _handle_regular_chat(
                 reply_markup=build_retry_and_roles_keyboard(),
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)

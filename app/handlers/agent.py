@@ -78,20 +78,20 @@ async def process_long_request(
                 [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")],
             ]
 
-            # Сохраняем оригинальное сообщение в контексте
+            # Save оригинальное message в contextе
             if not hasattr(context, "user_data"):
                 context.user_data = {}
             context.user_data["original_message"] = update.message
 
-            # Не удаляем placeholder сообщение, а редактируем его
+            # Не удаляем placeholder message, а редактируем его
             try:
                 await placeholder_message.edit_text(
                     "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
-                # Если не можем отредактировать, отправляем новое сообщение
+                logging.error("Could not edit placeholder message: %s", edit_error)
+                # If не можем отредактировать, отправляем new message
                 await context.bot.send_message(
                     chat_id=update.effective_chat.id,
                     text="Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
@@ -103,10 +103,10 @@ async def process_long_request(
             await _handle_photo(placeholder_message, update.message, chat_state)
             return
 
-        # Проверяем, есть ли у пользователя документы для вопросов
+        # Check, есть ли у user documents for вопросов
         from app.document_processor import get_user_documents
 
-        # user_documents используется для проверки наличия документов
+        # user_documents используется for проверки наличия documentов
         await get_user_documents(update.effective_user.id)
 
         if text.startswith("??"):
@@ -128,7 +128,7 @@ async def process_long_request(
             )
 
     except Exception as e:
-        logging.error(f"Error in background task dispatcher: {e}", exc_info=True)
+        logging.error("Error in background task dispatcher: %s", e, exc_info=True)
         try:
             from app.errors import user_friendly_error, build_retry_and_roles_keyboard
 
@@ -137,4 +137,4 @@ async def process_long_request(
                 friendly, reply_markup=build_retry_and_roles_keyboard()
             )
         except Exception as inner_e:
-            logging.error(f"Could not edit placeholder message: {inner_e}")
+            logging.error("Could not edit placeholder message: %s", inner_e)

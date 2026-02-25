@@ -14,7 +14,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple, List, Dict, Any, Set
 from dataclasses import dataclass, field
-from collections import deque
+
 
 from app.errors import user_friendly_error, is_error_message, is_key_related_error
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
@@ -227,31 +227,25 @@ class GeminiProvider(BaseAIProvider):
         chat_id: Optional[int],
         timeout: float,
     ) -> AIResponse:
-        from app.services import get_gemini_response
+        # Call the execution function directly — BaseAIProvider already handles retries
+        from app.services import _execute_gemini_request
 
-        text, tokens = await get_gemini_response(
+        text, tokens = await _execute_gemini_request(
             api_key=self.api_key,
             history=history,
             model_name=model_name,
             system_instruction=system_instruction,
             user_id=user_id,
             chat_id=chat_id,
-            max_retries=1,  # We handle retries in base class
         )
 
-        # Check if response is an error message
-        is_error = (
-            text.startswith("❌")
-            or text.startswith("🔄")
-            or text.startswith("🚫")
-            or text.startswith("⏰")
-        )
+        is_err = is_error_message(text)
 
         return AIResponse(
             text=text,
             token_count=tokens or 0,
-            success=not is_error and tokens is not None,
-            error_message=text if is_error else None,
+            success=not is_err and tokens is not None,
+            error_message=text if is_err else None,
             provider=self.provider_name,
             model=model_name,
         )
@@ -273,31 +267,25 @@ class OpenRouterProvider(BaseAIProvider):
         chat_id: Optional[int],
         timeout: float,
     ) -> AIResponse:
-        from app.services import get_openrouter_response
+        # Call the execution function directly — BaseAIProvider already handles retries
+        from app.services import _execute_openrouter_request
 
-        text, tokens = await get_openrouter_response(
+        text, tokens = await _execute_openrouter_request(
             api_key=self.api_key,
             history=history,
             model_name=model_name,
             system_instruction=system_instruction,
             user_id=user_id,
             chat_id=chat_id,
-            max_retries=1,  # We handle retries in base class
         )
 
-        # Check if response is an error message
-        is_error = (
-            text.startswith("❌")
-            or text.startswith("🔄")
-            or text.startswith("🚫")
-            or text.startswith("⏰")
-        )
+        is_err = is_error_message(text)
 
         return AIResponse(
             text=text,
             token_count=tokens or 0,
-            success=not is_error and tokens is not None,
-            error_message=text if is_error else None,
+            success=not is_err and tokens is not None,
+            error_message=text if is_err else None,
             provider=self.provider_name,
             model=model_name,
         )
@@ -360,29 +348,6 @@ def _has_multimodal_content(history: list) -> bool:
     return False
 
 
-class _UserRateLimiter:
-    """Sliding-window per-user rate limiter."""
-
-    def __init__(self, max_per_minute: int = 20):
-        self._max = max_per_minute
-        self._windows: Dict[int, deque] = {}
-
-    def check(self, user_id: Optional[int]) -> bool:
-        """Return True if request is allowed, False if rate limited."""
-        if not user_id or self._max <= 0:
-            return True
-        now = time.monotonic()
-        if user_id not in self._windows:
-            self._windows[user_id] = deque()
-        window = self._windows[user_id]
-        # Remove timestamps older than 60s
-        while window and now - window[0] > 60:
-            window.popleft()
-        if len(window) >= self._max:
-            return False
-        window.append(now)
-        return True
-
 class ProviderRouter:
     """
     Routes AI requests to the right provider with key rotation and health scoring.
@@ -395,7 +360,11 @@ class ProviderRouter:
 
     def __init__(self, rate_limit_per_minute: int = 20) -> None:
         self._key_health: Dict[str, KeyHealth] = {}
-        self._rate_limiter = _UserRateLimiter(max_per_minute=rate_limit_per_minute)
+        # Use the consolidated RateLimiter from security.py (includes periodic cleanup)
+        from app.security import RateLimiter
+        self._rate_limiter = RateLimiter(
+            max_requests=rate_limit_per_minute, window_seconds=60
+        )
 
     def _get_health(self, key_hash: str) -> KeyHealth:
         if key_hash not in self._key_health:
@@ -420,8 +389,8 @@ class ProviderRouter:
         """
         from app.agent_use_cases import AgentRequestUseCase
 
-        # Per-user rate limiting
-        if not self._rate_limiter.check(user_id):
+        # Per-user rate limiting (async — RateLimiter from security.py)
+        if user_id and not await self._rate_limiter.check_rate_limit(user_id):
             return (
                 "⏳ Слишком много запросов. Пожалуйста, подождите минуту.",
                 None,

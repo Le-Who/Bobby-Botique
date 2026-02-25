@@ -21,16 +21,16 @@ async def handle_ai_response_error(
     response_text: str, placeholder_message: Message, on_error_callback=None
 ) -> bool:
     """
-    Универсальная обработка ошибок AI ответов.
+    Универсальная обработка ошибок AI responseов.
     Убирает дублирование кода обработки ошибок.
 
     Args:
-        response_text: Текст ответа от AI
-        placeholder_message: Сообщение для редактирования
-        on_error_callback: Опциональный callback для дополнительных действий при ошибке (async функция)
+        response_text: Текст responseа от AI
+        placeholder_message: Сообщение for редактирования
+        on_error_callback: Опциональный callback for дополнительных действий on ошибке (async функция)
 
     Returns:
-        True если это была ошибка и она была обработана, False если это не ошибка
+        True if это была ошибка и она была обработана, False if это не ошибка
     """
     from app.errors import (
         is_error_message,
@@ -42,7 +42,7 @@ async def handle_ai_response_error(
     if not response_text or not is_error_message(response_text):
         return False
 
-    # Выполняем дополнительные действия перед обработкой ошибки (например, очистка истории)
+    # Execute дополнительные действия before обработкой ошибки (наonмер, очистка истории)
     if on_error_callback:
         try:
             if asyncio.iscoroutinefunction(on_error_callback):
@@ -50,7 +50,7 @@ async def handle_ai_response_error(
             else:
                 on_error_callback()
         except Exception as e:
-            logging.error(f"Error in on_error_callback: {e}")
+            logging.error("Error in on_error_callback: %s", e)
 
     # Определяем тип клавиатуры в зависимости от типа ошибки
     if is_retryable_error(response_text):
@@ -58,11 +58,11 @@ async def handle_ai_response_error(
     else:
         reply_markup = build_roles_keyboard()
 
-    # Пытаемся отредактировать сообщение, если не получается - отправляем новое
+    # Пытаемся отредактировать message, if не получается - отправляем new
     try:
         await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
     except Exception as edit_error:
-        logging.error(f"Could not edit placeholder message: {edit_error}")
+        logging.error("Could not edit placeholder message: %s", edit_error)
         try:
             await placeholder_message.reply_text(
                 response_text, reply_markup=reply_markup

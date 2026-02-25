@@ -16,7 +16,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 
 # =============================================================================
-# USER-FRIENDLY ERROR MESSAGES (единая точка кастомизации)
+# USER-FRIENDLY ERROR MESSAGES (единая точка кастомfromации)
 # =============================================================================
 GENERIC_ERROR = "❌ Произошла ошибка. Попробуйте ещё раз."
 OVERLOADED_ERROR = "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд."
@@ -81,26 +81,26 @@ def is_retryable_error(text: str) -> bool:
 
 def is_key_related_error(text: str) -> bool:
     """
-    Определяет, является ли ошибка связанной с ключом API.
-    Такие ошибки требуют попытки с другим ключом.
+    Определяет, является ли ошибка связанной с keyом API.
+    Такие ошибки требуют попытки с другим keyом.
 
-    Ошибки, связанные с ключом:
-    - Quota Exceeded (🚫) - ключ валиден, но исчерпан лимит
-    - Invalid API Key - ключ невалиден
-    - Authentication Error - проблема с авторизацией
-    - Rate Limit (⏱️) - ключ валиден, но превышен лимит запросов/сек
+    Ошибки, связанные с keyом:
+    - Quota Exceeded (🚫) - key валиден, но исчерпан limit
+    - Invalid API Key - key невалиден
+    - Authentication Error - проблема с авторfromацией
+    - Rate Limit (⏱️) - key валиден, но превышен limit requestов/сек
 
-    Ошибки, НЕ связанные с ключом (не требуют смены ключа):
+    Ошибки, НЕ связанные с keyом (не требуют смены keyа):
     - 503 Service Unavailable (🔄) - проблема сервера
     - Timeout (⏰) - проблема сети/сервера
-    - Invalid Request (❌) - ошибка в запросе (коде)
+    - Invalid Request (❌) - ошибка в requestе (коде)
     """
     if not text:
         return False
 
     text_lower = text.lower()
 
-    # Ошибки, связанные с ключом - пробуем другой ключ
+    # Ошибки, связанные с keyом - пробуем другой key
     key_related_patterns = [
         "🚫",  # Quota/лимит
         "⏱️",  # Rate limit
@@ -120,7 +120,7 @@ def is_key_related_error(text: str) -> bool:
         "лимит запросов",
     ]
 
-    # Ошибки, НЕ связанные с ключом - не меняем ключ
+    # Ошибки, НЕ связанные с keyом - не меняем key
     not_key_related_patterns = [
         "⏰",  # Timeout
         "🔄",  # Service unavailable (503)
@@ -135,14 +135,14 @@ def is_key_related_error(text: str) -> bool:
         "malformed",
     ]
 
-    # Сначала проверяем на ошибки, НЕ связанные с ключом (приоритет выше)
+    # Сначала проверяем на ошибки, НЕ связанные с keyом (onоритет выше)
     if any(
         pattern.lower() in text_lower or text.startswith(pattern)
         for pattern in not_key_related_patterns
     ):
         return False
 
-    # Проверяем на ошибки, связанные с ключом
+    # Check на ошибки, связанные с keyом
     return any(
         pattern.lower() in text_lower or text.startswith(pattern)
         for pattern in key_related_patterns
@@ -180,7 +180,7 @@ def build_roles_keyboard() -> InlineKeyboardMarkup:
 
 def log_and_format_error(context: str, err: Exception) -> str:
     """Logs error with context and returns user-friendly message."""
-    logging.error(f"{context}: {err}", exc_info=True)
+    logging.error("%s: %s", context, err, exc_info=True)
     return user_friendly_error(err)
 
 
@@ -273,7 +273,7 @@ async def handle_api_errors(
         user_msg = user_friendly_error(e)
 
         # Log the error with context
-        logging.error(f"{context}: {e}", exc_info=True)
+        logging.error("%s: %s", context, e, exc_info=True)
 
         # Determine keyboard
         keyboard = None
@@ -286,7 +286,7 @@ async def handle_api_errors(
         try:
             await placeholder_message.edit_text(user_msg, reply_markup=keyboard)
         except Exception as edit_error:
-            logging.warning(f"Failed to edit message with error: {edit_error}")
+            logging.warning("Failed to edit message with error: %s", edit_error)
 
         # Run callback if provided
         if on_error:
@@ -295,7 +295,7 @@ async def handle_api_errors(
                 if hasattr(result, "__await__"):
                     await result
             except Exception as callback_error:
-                logging.warning(f"Error callback failed: {callback_error}")
+                logging.warning("Error callback failed: %s", callback_error)
 
         if reraise:
             raise

@@ -26,16 +26,16 @@ from app.handlers import menus
 from app.request_context import set_request_id
 from app.tracing import bind_request_span
 
-# Глобальный лимитер для тяжёлых AI-задач, чтобы избежать перегрузки event loop/провайдеров
+# Глобальный limitер for тяжёлых AI-задач, чтобы fromбежать перегрузки event loop/провайдеров
 _HEAVY_REQUEST_LIMIT = max(
     1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_REQUESTS", 4))
 )
 _HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore(_HEAVY_REQUEST_LIMIT)
 
-# Глобальный словарь для хранения групп изображений
+# Глобальный dictionary for хранения групп fromображений
 MEDIA_GROUPS = {}
-MEDIA_GROUPS_TTL = {}  # TTL для автоматической очистки старых групп
-MEDIA_GROUP_TIMEOUT = 300  # 5 минут таймаут для группы изображений
+MEDIA_GROUPS_TTL = {}  # TTL for автоматической очистки старых групп
+MEDIA_GROUP_TIMEOUT = 300  # 5 минут timeout for groups fromображений
 
 
 async def cleanup_old_media_groups():
@@ -50,13 +50,13 @@ async def cleanup_old_media_groups():
     for media_group_id in expired_groups:
         MEDIA_GROUPS.pop(media_group_id, None)
         MEDIA_GROUPS_TTL.pop(media_group_id, None)
-        logging.info(f"🧹 Очищена устаревшая группа изображений: {media_group_id}")
+        logging.info("🧹 Очищена устаревшая группа изображений: %s", media_group_id)
 
     if expired_groups:
-        logging.info(f"🧹 Очищено {len(expired_groups)} устаревших групп изображений")
+        logging.info("🧹 Очищено %s устаревших групп изображений", len(expired_groups))
 
 
-# Запускаем периодическую очистку при импорте модуля
+# Запускаем периодическую очистку on импорте модуля
 _cleanup_task = None
 
 
@@ -69,12 +69,12 @@ async def start_media_groups_cleanup():
     async def cleanup_loop():
         while True:
             try:
-                await asyncio.sleep(60)  # Проверяем каждую минуту
+                await asyncio.sleep(60)  # Check каждую минуту
                 await cleanup_old_media_groups()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error(f"Error in media groups cleanup: {e}")
+                logging.error("Error in media groups cleanup: %s", e)
                 await asyncio.sleep(60)
 
     _cleanup_task = asyncio.create_task(cleanup_loop())
@@ -94,7 +94,7 @@ async def _handle_conversation_rename(
                 context.user_data.pop("rename_conv_id", None)
                 await role_conv_metrics.record_conversation_renamed()
 
-                # Показываем список бесед с обновленным названием
+                # Показываем list бесед с обновленным названием
                 (
                     text,
                     parse_mode,
@@ -114,7 +114,7 @@ async def _handle_conversation_rename(
                 )
                 return True
         except Exception as e:
-            logging.error(f"Error renaming conversation: {e}")
+            logging.error("Error renaming conversation: %s", e)
             await update.message.reply_text(
                 "❌ Не удалось переименовать беседу. Попробуйте позже."
             )
@@ -132,16 +132,16 @@ async def _handle_custom_role_generation(
 ) -> bool:
     """Обрабатывает генерацию кастомной роли. Возвращает True, если обработано."""
     if is_awaiting_custom_role_input(user_id):
-        # Если мы ждем ввода описания роли
-        logging.info(f"User {user_id} sent custom role description: {message_text}")
+        # If мы ждем ввода описания roles
+        logging.info("User %s sent custom role description: %s", user_id, message_text)
 
-        # Получаем настройки и ключи
+        # Get settings и keys
         chat_state = await db.get_user_chat(user_id)
         from app.config import settings
 
         model_for_role = chat_state.model or settings.DEFAULT_MODEL
 
-        # Используем универсальную функцию для получения ключа
+        # Используем универсальную функцию for получения keyа
         key_data, model_used, resolution = await agent._resolve_ai_request(
             model_for_role
         )
@@ -156,11 +156,11 @@ async def _handle_custom_role_generation(
         progress_msg = await update.message.reply_text("🛠️ Генерирую роль…")
         set_generating_custom_role(user_id, True)
 
-        # Формируем запрос
+        # Build request
         history = [{"role": "user", "parts": [message_text]}]
 
         try:
-            # Используем универсальную функцию для получения ответа
+            # Используем универсальную функцию for получения responseа
             response_text, _ = await agent._get_ai_response(
                 key_data["api_key"],
                 history,
@@ -170,10 +170,10 @@ async def _handle_custom_role_generation(
                 chat_id=chat_id,
             )
 
-            # Инкрементируем использование ключа
+            # Инкрементируем использование keyа
             await agent._increment_key_usage(key_data["key_hash"], model_used)
 
-            # Логируем ответ модели для отладки
+            # Log response models for отладки
             logging.info(
                 f"Model response for role generation: {response_text[:500]}..."
             )
@@ -198,7 +198,7 @@ async def _handle_custom_role_generation(
                         ],
                     ]
                 )
-                # Обработка явной 503 ошибки из текста
+                # Processing явной 503 ошибки from textа
                 if (
                     "503" in (response_text or "")
                     or "unavailable" in (response_text or "").lower()
@@ -260,7 +260,7 @@ async def _handle_custom_role_generation(
             )
 
         except Exception as e:
-            logging.error(f"Error generating custom role: {e}", exc_info=True)
+            logging.error("Error generating custom role: %s", e, exc_info=True)
             error_kb = InlineKeyboardMarkup(
                 [
                     [
@@ -308,7 +308,7 @@ async def _handle_role_rename(
                 )
                 context.user_data.pop("rename_role_id", None)
                 await update.message.reply_text(f"✅ Роль переименована в: {new_title}")
-                # Возврат в детали роли
+                # Return в детали roles
                 chat_state = await db.get_user_chat(user_id)
                 text, parse_mode, reply_markup = await menus.get_roles_menu_content(
                     user_id,
@@ -326,7 +326,7 @@ async def _handle_role_rename(
                 )
                 return True
         except Exception as e:
-            logging.error(f"Error renaming role: {e}")
+            logging.error("Error renaming role: %s", e)
             await update.message.reply_text(
                 "❌ Не удалось переименовать роль. Попробуйте позже."
             )
@@ -347,7 +347,7 @@ async def _process_media_group_update(
             f"📸 Получено изображение с media_group_id {media_group_id} от пользователя {user_id}"
         )
 
-        # Инициализируем группу, если её нет
+        # Initialize группу, if её нет
         if media_group_id not in MEDIA_GROUPS:
             current_time = asyncio.get_event_loop().time()
             MEDIA_GROUPS[media_group_id] = {
@@ -359,24 +359,24 @@ async def _process_media_group_update(
                 "placeholder_message": None,
                 "processing_scheduled": False,
             }
-            # Устанавливаем TTL для автоматической очистки
+            # Устанавливаем TTL for автоматической очистки
             MEDIA_GROUPS_TTL[media_group_id] = current_time
-            # Запускаем очистку при первом создании группы
+            # Запускаем очистку on первом создании groups
             if _cleanup_task is None or _cleanup_task.done():
                 asyncio.create_task(start_media_groups_cleanup())
 
-        # Добавляем сообщение в группу
+        # Add message в группу
         MEDIA_GROUPS[media_group_id]["messages"].append(update.message)
 
-        # Если это первое сообщение группы, создаем placeholder и планируем обработку
+        # If это первое message groups, создаем placeholder и планируем обработку
         if len(MEDIA_GROUPS[media_group_id]["messages"]) == 1:
             placeholder_message = await update.message.reply_text(
                 "🖼️ Обрабатываю изображение..."
             )
             MEDIA_GROUPS[media_group_id]["placeholder_message"] = placeholder_message
-            logging.info(f"📸 Создан placeholder для media_group_id {media_group_id}")
+            logging.info("📸 Создан placeholder для media_group_id %s", media_group_id)
 
-            # Планируем обработку через 1 секунду
+            # Планируем обработку via 1 секунду
             if not MEDIA_GROUPS[media_group_id]["processing_scheduled"]:
                 MEDIA_GROUPS[media_group_id]["processing_scheduled"] = True
                 asyncio.create_task(
@@ -417,7 +417,7 @@ async def _handle_document_mode_interaction(
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает входящие сообщения"""
-    # Валидация входных данных
+    # Validation входных данных
     if not update or not update.effective_user:
         logging.error("Invalid update object received")
         return
@@ -433,16 +433,16 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Correlation contract: request_id is propagated as trace_id baseline.
     with bind_request_span(request_id, span_name="telegram-message"):
-        # Валидация user_id
+        # Validation user_id
         if not isinstance(user_id, int) or user_id <= 0:
             logging.error("Invalid user_id: %s", user_id)
             return
 
-        # Обрабатываем медиа-группы
+        # Process медиа-groups
         if await _process_media_group_update(update, context, user_id, chat_id):
             return
 
-        # Детальное логирование Telegram API запроса
+        # Детальное логирование Telegram API requestа
         message_type = (
             "photo"
             if update.message.photo
@@ -457,7 +457,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_type=message_type,
         )
 
-        # Валидация текста сообщения
+        # Validation textа messages
         message_text = (
             update.message.text if update.message and update.message.text else "No text"
         )
@@ -472,7 +472,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logging.info("Received message from user %s: %s", user_id, message_text[:100])
 
-    # Проверка rate limit для защиты от злоупотреблений
+    # Check rate limit for защиты от злоупотреблений
     if not await check_user_rate_limit(user_id):
         logging.warning("Rate limit exceeded for user %s", user_id)
         await update.message.reply_text(
@@ -484,7 +484,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.warning("Unauthorized user %s attempted to use bot", user_id)
         return
 
-    # Обрабатываем документы
+    # Process documents
     if update.message.document:
         logging.info(
             "Processing document from user %s: %s",
@@ -494,7 +494,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_document(update, context)
         return
 
-    # Переименование роли
+    # Переименование roles
     if await _handle_role_rename(update, context, user_id):
         return
 
@@ -502,17 +502,17 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _handle_conversation_rename(update, context, user_id):
         return
 
-    # Генерация кастомной роли
+    # Генерация кастомной roles
     if await _handle_custom_role_generation(
         update, context, user_id, chat_id, message_text
     ):
         return
 
-    # Проверяем, находится ли пользователь в режиме работы с документами
+    # Check, находится ли user в режиме работы с documentами
     if await _handle_document_mode_interaction(update, context, user_id):
         return
 
-    # Сохраняем последний пользовательский ввод для кнопки "🔁 Попробовать ещё раз"
+    # Save afterдний userский ввод for buttons "🔁 Попробовать ещё раз"
     try:
         from app.state import set_last_sent_message
 
@@ -521,16 +521,16 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         logging.exception("Error saving last sent message text")
 
-    # Проверяем, есть ли изображение (одиночное)
+    # Check, есть ли image (одиночное)
     is_photo = bool(update.message.photo)
 
     if is_photo:
-        logging.info(f"Processing single photo from user {user_id}")
+        logging.info("Processing single photo from user %s", user_id)
         placeholder_message = await update.message.reply_text(
             "🖼️ Обрабатываю изображение..."
         )
     else:
-        logging.info(f"Processing text message from user {user_id}")
+        logging.info("Processing text message from user %s", user_id)
         placeholder_message = await update.message.reply_text("🤔 Думаю...")
 
     # Обычная обработка сообщений
@@ -540,20 +540,20 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 async with state.get_user_lock(user_id):
                     logging.info("Starting task processing for user %s", user_id)
 
-                    # Восстанавливаем обработку через agent
+                    # Восстанавливаем обработку via agent
                     try:
                         from app.handlers.agent import process_long_request
 
                         await process_long_request(placeholder_message, update, context)
                     except ImportError:
-                        # Fallback если agent недоступен
+                        # Fallback if agent недоступен
                         await placeholder_message.edit_text(
                             "🤔 Обрабатываю ваш запрос... (упрощенный режим)"
                         )
 
                     logging.info("Completed task processing for user %s", user_id)
 
-                # Логируем успешный ответ Telegram API
+                # Log успешный response Telegram API
                 api_logger.log_telegram_response(
                     start_time=start_time,
                     method="handle_message",
@@ -571,9 +571,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "❌ Произошла ошибка при обработке запроса."
                 )
             except Exception as edit_error:
-                logging.error(f"Could not edit placeholder message: {edit_error}")
+                logging.error("Could not edit placeholder message: %s", edit_error)
 
-            # Логируем ошибку Telegram API
+            # Log error Telegram API
             api_logger.log_telegram_response(
                 start_time=start_time,
                 method="handle_message",
@@ -602,18 +602,18 @@ async def delayed_process_media_group(
         )
 
         try:
-            # Если это действительно группа (больше 1 изображения), обрабатываем как группу
+            # If это действительно group (больше 1 images), обрабатываем как группу
             if message_count > 1:
-                logging.info(f"🔄 Обрабатываю группу из {message_count} изображений")
+                logging.info("🔄 Обрабатываю группу из %s изображений", message_count)
                 await process_media_group(media_group_id, context)
             else:
-                # Если это одиночное изображение, обрабатываем через стандартный путь
+                # If это одиночное image, обрабатываем via стандартный путь
                 logging.info(
                     "📸 Одиночное изображение, перенаправляю в стандартную обработку"
                 )
                 await process_single_image_from_group(media_group_id, context)
         finally:
-            # Очищаем группу после обработки
+            # Clean up группу after обработки
             MEDIA_GROUPS.pop(media_group_id, None)
             MEDIA_GROUPS_TTL.pop(media_group_id, None)
             logging.info(
@@ -632,7 +632,7 @@ async def process_single_image_from_group(
     message = group_data["messages"][0]
     placeholder_message = group_data["placeholder_message"]
 
-    # Создаем мок Update для совместимости
+    # Create мок Update for совместимости
     mock_update = type(
         "MockUpdate",
         (),
@@ -644,31 +644,31 @@ async def process_single_image_from_group(
     )()
 
     try:
-        # Обрабатываем через стандартный путь
+        # Process via стандартный путь
         from app.handlers.agent import process_long_request
 
         await process_long_request(placeholder_message, mock_update, context)
     except Exception as e:
-        logging.error(f"Error processing single image from group: {e}")
+        logging.error("Error processing single image from group: %s", e)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при обработке изображения."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
     finally:
-        # Очищаем группу (включая TTL)
+        # Clean up группу (вkeyая TTL)
         if media_group_id in MEDIA_GROUPS:
             del MEDIA_GROUPS[media_group_id]
         if media_group_id in MEDIA_GROUPS_TTL:
             del MEDIA_GROUPS_TTL[media_group_id]
-        logging.info(f"🧹 Очищена одиночная группа изображений {media_group_id}")
+        logging.info("🧹 Очищена одиночная группа изображений %s", media_group_id)
 
 
 async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает группу изображений как единое целое"""
     if media_group_id not in MEDIA_GROUPS:
-        logging.error(f"Media group {media_group_id} not found")
+        logging.error("Media group %s not found", media_group_id)
         return
 
     group_data = MEDIA_GROUPS[media_group_id]
@@ -684,7 +684,7 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
         f"🔄 Обрабатываю группу изображений {media_group_id}: {message_count} изображений"
     )
 
-    # Проверяем, что это действительно группа
+    # Check, что это действительно group
     if message_count <= 1:
         logging.warning(
             f"Media group {media_group_id} содержит только {message_count} сообщений, перенаправляю в одиночную обработку"
@@ -695,20 +695,20 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
     try:
         async with _HEAVY_REQUEST_SEMAPHORE:
             async with state.get_user_lock(user_id):
-                # Создаем мок Update для совместимости с существующим кодом
+                # Create мок Update for совместимости с существующим кодом
                 mock_update = type(
                     "MockUpdate",
                     (),
                     {
                         "message": messages[
                             0
-                        ],  # Используем первое сообщение как основное
+                        ],  # Используем первое message как основное
                         "effective_user": messages[0].from_user,
                         "effective_chat": messages[0].chat,
                     },
                 )()
 
-                # Обрабатываем группу через agent
+                # Process группу via agent
                 from app.handlers.agent import process_media_group_request
 
                 await process_media_group_request(
@@ -724,15 +724,15 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
                 "❌ Произошла ошибка при обработке группы изображений."
             )
         except Exception as edit_error:
-            logging.error(f"Could not edit placeholder message: {edit_error}")
+            logging.error("Could not edit placeholder message: %s", edit_error)
 
     finally:
-        # Очищаем группу из памяти (включая TTL)
+        # Clean up группу from памяти (вkeyая TTL)
         if media_group_id in MEDIA_GROUPS:
             del MEDIA_GROUPS[media_group_id]
         if media_group_id in MEDIA_GROUPS_TTL:
             del MEDIA_GROUPS_TTL[media_group_id]
-        logging.info(f"🧹 Очищена группа изображений {media_group_id}")
+        logging.info("🧹 Очищена группа изображений %s", media_group_id)
 
 
 async def handle_document_question(
@@ -745,7 +745,7 @@ async def handle_document_question(
     try:
         from app.document_processor import get_document_content, get_document_by_id
 
-        # Получаем информацию о документе
+        # Get информацию о documentе
         document = await get_document_by_id(document_id, user_id)
         if not document:
             await update.message.reply_text("❌ Документ не найден.")
@@ -754,7 +754,7 @@ async def handle_document_question(
             clear_document_state(user_id)
             return
 
-        # Получаем содержимое документа
+        # Get содержимое documentа
         document_content = await get_document_content(document_id, user_id)
         if not document_content:
             await update.message.reply_text(
@@ -762,20 +762,20 @@ async def handle_document_question(
             )
             return
 
-        # Обрабатываем вопрос через AI
+        # Process вопрос via AI
         from app.handlers.agent import _handle_document_question
         from app import database as db
 
         chat_state = await db.get_user_chat(user_id)
 
-        # Передаем оригинальное сообщение пользователя как placeholder
-        # _handle_document_question сама создаст нужное сообщение
+        # Передаем оригинальное message user как placeholder
+        # _handle_document_question сама создаст нужное message
         await _handle_document_question(
             update.message, user_id, user_message, chat_state
         )
 
     except Exception as e:
-        logging.error(f"Error handling document question: {e}")
+        logging.error("Error handling document question: %s", e)
         await update.message.reply_text(
             f"❌ Произошла ошибка при обработке вопроса: {str(e)}"
         )
@@ -785,20 +785,20 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает загруженные документы"""
     user_id = update.effective_user.id
 
-    # Проверяем, что это действительно документ, а не изображение
+    # Check, что это действительно document, а не image
     if not update.message.document:
-        return  # Если это не документ, просто выходим
+        return  # If это не document, просто выходим
 
     document = update.message.document
 
-    # Проверяем размер файла (максимум 50MB)
+    # Check размер fileа (максимум 50MB)
     if document.file_size > 50 * 1024 * 1024:
         await update.message.reply_text(
             "❌ Файл слишком большой. Максимальный размер: 50MB"
         )
         return
 
-    # Проверяем тип файла
+    # Check тип fileа
     supported_formats = [".pdf", ".docx", ".doc"]
     file_ext = (
         document.file_name.lower().split(".")[-1] if "." in document.file_name else ""
@@ -810,11 +810,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Отправляем сообщение о начале обработки
+    # Send message о начале обработки
     processing_msg = await update.message.reply_text("📄 Обрабатываю документ...")
 
     try:
-        # Скачиваем файл во временный файл на диске вместо ОЗУ
+        # Скачиваем file во temporary file на диске instead of ОЗУ
         import tempfile
         import os
 
@@ -826,7 +826,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await file.download_to_drive(custom_path=tmp_path)
 
-            # Обрабатываем документ с диска
+            # Process document с диска
             result = await process_uploaded_document(
                 tmp_path, document.file_name, user_id, is_path=True
             )
@@ -841,7 +841,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if result.get("error"):
             if result.get("error") == "duplicate":
-                # Обрабатываем дубликат
+                # Process дубликат
                 duplicate_info = result.get("duplicate_info", {})
 
                 # Правильно обрабатываем datetime
@@ -865,7 +865,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Хотите использовать существующий документ?"
                 )
 
-                # Создаем кнопки для работы с дубликатом
+                # Create buttons for работы с дубликатом
                 keyboard = [
                     [
                         InlineKeyboardButton(
@@ -896,12 +896,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-        # Получаем статистику пользователя для отображения лимитов
+        # Get статистику user for отображения limitов
         from app.document_processor import document_processor
 
         user_stats = await document_processor.get_user_document_stats(user_id)
 
-        # Отправляем результат
+        # Send result
         success_text = (
             f"✅ Документ обработан успешно!\n\n"
             f"📄 *{document.file_name}*\n"
@@ -921,7 +921,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         success_text += '\n💡 *Как задавать вопросы:*\n• Просто напишите ваш вопрос\n• Например: "Какие основные пункты?", "Что говорится о...?"\n• Система автоматически найдет ответ в документе\n\n'
         success_text += "📅 *Срок хранения:* 3 дня (автоматическая очистка)"
 
-        # Создаем кнопки для управления документом
+        # Create buttons for управления documentом
         keyboard = [
             [
                 InlineKeyboardButton(
@@ -947,12 +947,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
-        # Устанавливаем состояние работы с документами
+        # Устанавливаем state работы с documentами
         from app.state import set_document_mode
 
         set_document_mode(user_id, True)
 
-        # Записываем метрики
+        # Write metrics
         await metrics_collector.record_api_call("document_processing")
 
     except Exception as e:

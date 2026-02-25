@@ -113,13 +113,11 @@ async def test_execute_gemini_request_success():
         mock_token_count = MagicMock()
         mock_token_count.total_tokens = 50
 
-        # Mock generate_content and count_tokens
-        mock_client_instance.models.generate_content = MagicMock(
-            return_value=mock_response
-        )
-        mock_client_instance.models.count_tokens = MagicMock(
-            return_value=mock_token_count
-        )
+        # Mock async generate_content and count_tokens (client.aio.models.*)
+        mock_aio_models = MagicMock()
+        mock_aio_models.generate_content = AsyncMock(return_value=mock_response)
+        mock_aio_models.count_tokens = AsyncMock(return_value=mock_token_count)
+        mock_client_instance.aio.models = mock_aio_models
 
         response, tokens = await _execute_gemini_request(
             "key", [{"role": "user", "parts": ["hi"]}], "model"
@@ -141,23 +139,14 @@ async def test_execute_gemini_request_503_error():
         mock_settings.SAFETY_SETTINGS = []
 
         mock_client_instance = MockClient.return_value
-        # Mock generate_content to raise APIError 503
-        # APIError(code, response)
-        mock_response = MagicMock()
-        mock_response.status_code = 503
-        mock_response.text = "Service Unavailable"
+        mock_response_obj = MagicMock()
+        mock_response_obj.status_code = 503
+        mock_response_obj.text = "Service Unavailable"
+        error = APIError(503, mock_response_obj)
 
-        # We need to construct APIError correctly or mock it entirely if we don't want to rely on its internals.
-        # But since we use str(e) in the code, mocking it to return our message on str() is key.
-
-        # Option 1: Mock the exception class itself if we can't easily instantiate it.
-        # Option 2: Instantiate with dummy values.
-
-        # Let's try mocking the side_effect to be an instance that str() returns what we want.
-        error = APIError(503, mock_response)
-        # Force str(error) to contain "503" if the default __str__ doesn't do it right (it probably does).
-
-        mock_client_instance.models.generate_content.side_effect = error
+        mock_aio_models = MagicMock()
+        mock_aio_models.generate_content = AsyncMock(side_effect=error)
+        mock_client_instance.aio.models = mock_aio_models
 
         # Currently, this returns a string. After fix, it should raise APIError or similar.
         # We assert the current behavior (it returns string), but mark as something expected to change if we want.
@@ -189,12 +178,14 @@ async def test_execute_gemini_request_other_error():
 
         mock_client_instance = MockClient.return_value
 
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.text = "Bad Request"
-        error = APIError(400, mock_response)
+        mock_response_obj = MagicMock()
+        mock_response_obj.status_code = 400
+        mock_response_obj.text = "Bad Request"
+        error = APIError(400, mock_response_obj)
 
-        mock_client_instance.models.generate_content.side_effect = error
+        mock_aio_models = MagicMock()
+        mock_aio_models.generate_content = AsyncMock(side_effect=error)
+        mock_client_instance.aio.models = mock_aio_models
 
         response, tokens = await _execute_gemini_request(
             "key", [{"role": "user", "parts": ["hi"]}], "model"
