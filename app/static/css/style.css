@@ -575,8 +575,14 @@ body {
 }
 
 .tab.active {
-  color: var(--teal);
-  border-bottom-color: var(--teal);
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--surface-hover);
 }
 
 .tab-badge {
