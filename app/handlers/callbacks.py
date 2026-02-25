@@ -255,7 +255,12 @@ async def _handle_document_cancel(query, context, user_id):
 
     text = "✅ **Режим работы с документами отключен**\n\nТеперь ваши сообщения будут обрабатываться в обычном режиме чата.\nЧтобы снова работать с документами, загрузите новый файл или используйте команду /documents."
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    await query.edit_message_text(formatted_text, parse_mode=parse_mode)
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🏠 Главное меню", callback_data="start_menu")]]
+    )
+    await query.edit_message_text(
+        formatted_text, parse_mode=parse_mode, reply_markup=kb
+    )
 
 
 async def _handle_document_clear_all(query, context, user_id):
@@ -615,7 +620,12 @@ async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAUL
         return
     role_id = int(query.data.split(":")[1])
     context.user_data["rename_role_id"] = role_id
-    await query.message.reply_text("Введите новое название роли одной строкой:")
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❌ Отмена", callback_data="role_rename_cancel")]]
+    )
+    await query.message.reply_text(
+        "Введите новое название роли одной строкой:", reply_markup=kb
+    )
 
 
 async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -706,6 +716,11 @@ def register(application: Application):
         CallbackQueryHandler(role_create_callback, pattern="^role_create$")
     )
     application.add_handler(
+        CallbackQueryHandler(
+            role_create_cancel_callback, pattern="^role_create_cancel$"
+        )
+    )
+    application.add_handler(
         CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$")
     )
     application.add_handler(
@@ -740,6 +755,11 @@ def register(application: Application):
     )
     application.add_handler(
         CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:")
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            role_rename_cancel_callback, pattern="^role_rename_cancel$"
+        )
     )
 
     # Role Navigation (New)
@@ -869,9 +889,55 @@ async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     begin_custom_role_creation(query.from_user.id)
-    await query.message.reply_text(
-        "Опишите, какую роль хотите создать (1–2 предложения):"
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❌ Отмена", callback_data="role_create_cancel")]]
     )
+    await query.message.reply_text(
+        "Опишите, какую роль хотите создать (1–2 предложения):",
+        reply_markup=kb,
+    )
+
+
+async def role_create_cancel_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Отмена создания кастомной роли — возврат в hub."""
+    query = update.callback_query
+    await query.answer("❌ Создание роли отменено")
+    user_id = query.from_user.id
+    clear_custom_role_state(user_id)
+    chat_state = await db.get_user_chat(user_id)
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+        user_id, chat_state, view_mode="hub"
+    )
+    try:
+        await query.edit_message_text(
+            text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise e
+
+
+async def role_rename_cancel_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    """Отмена переименования роли — возврат в hub."""
+    query = update.callback_query
+    await query.answer("❌ Переименование отменено")
+    context.user_data.pop("rename_role_id", None)
+    user_id = query.from_user.id
+    chat_state = await db.get_user_chat(user_id)
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+        user_id, chat_state, view_mode="hub"
+    )
+    try:
+        await query.edit_message_text(
+            text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise e
 
 
 async def role_custom_apply_callback(
@@ -891,8 +957,12 @@ async def role_custom_apply_callback(
     chat_state.system_prompt = prompt_text
     await db.update_user_chat(user_id, chat_state)
     clear_custom_role_state(user_id)
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]]
+    )
     await query.edit_message_text(
-        f"✅ Роль '{role.get('title', 'Кастомная роль')}' применена."
+        f"✅ Роль '{role.get('title', 'Кастомная роль')}' применена.",
+        reply_markup=kb,
     )
 
 
@@ -924,7 +994,12 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
         chat_state.system_prompt = prompt_text
         await db.update_user_chat(user_id, chat_state)
         clear_custom_role_state(user_id)
-        await query.edit_message_text("💾 Роль сохранена и применена.")
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]]
+        )
+        await query.edit_message_text(
+            "💾 Роль сохранена и применена.", reply_markup=kb
+        )
     except Exception as e:
         await query.edit_message_text(f"❌ Ошибка сохранения роли: {e}")
 

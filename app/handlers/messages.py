@@ -181,20 +181,39 @@ async def _handle_custom_role_generation(
             role_obj = prompts.extract_json_object(response_text)
 
             if not role_obj:
+                # Build error keyboard with retry/cancel
+                error_kb = InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "🔄 Попробовать снова",
+                                callback_data="role_create",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "❌ Отмена",
+                                callback_data="role_create_cancel",
+                            )
+                        ],
+                    ]
+                )
                 # Обработка явной 503 ошибки из текста
                 if (
                     "503" in (response_text or "")
                     or "unavailable" in (response_text or "").lower()
                 ):
                     await progress_msg.edit_text(
-                        "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд."
+                        "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.",
+                        reply_markup=error_kb,
                     )
                 else:
                     logging.error(
                         f"Failed to parse role JSON. Response: {response_text}"
                     )
                     await progress_msg.edit_text(
-                        "❌ Не удалось сгенерировать роль. Попробуйте изменить описание."
+                        "❌ Не удалось сгенерировать роль. Попробуйте изменить описание.",
+                        reply_markup=error_kb,
                     )
                 set_generating_custom_role(user_id, False)
                 return True
@@ -242,7 +261,26 @@ async def _handle_custom_role_generation(
 
         except Exception as e:
             logging.error(f"Error generating custom role: {e}", exc_info=True)
-            await progress_msg.edit_text("❌ Произошла ошибка при генерации роли.")
+            error_kb = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Попробовать снова",
+                            callback_data="role_create",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "❌ Отмена",
+                            callback_data="role_create_cancel",
+                        )
+                    ],
+                ]
+            )
+            await progress_msg.edit_text(
+                "❌ Произошла ошибка при генерации роли.",
+                reply_markup=error_kb,
+            )
 
         finally:
             set_generating_custom_role(user_id, False)
