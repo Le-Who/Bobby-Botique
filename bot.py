@@ -232,11 +232,6 @@ async def run_bot_with_retry():
         await application.updater.start_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
-            timeout=30,
-            read_timeout=30,
-            write_timeout=30,
-            connect_timeout=10,
-            pool_timeout=60,
         )
 
         logging.info("Bot started successfully and polling")
