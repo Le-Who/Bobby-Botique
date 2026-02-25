@@ -159,7 +159,7 @@ async def get_retention_stats() -> Dict[str, Any]:
         row = result[0]
         dau = row["dau"]
 
-        def safe_rate(retained, total):
+        def safe_rate(retained: int, total: int) -> float:
             return round((retained / total) * 100, 1) if total > 0 else 0.0
 
         return {

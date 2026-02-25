@@ -1,4 +1,5 @@
 import logging
+import re
 import json
 import hashlib
 import asyncio
@@ -192,7 +193,7 @@ class DatabaseManager:
             try:
                 result = await conn.fetch(query_str, *params)
                 return [dict(record) for record in result]
-            except Exception as e:
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.error("Error in provided connection query: %s", e)
                 raise e
 
@@ -232,7 +233,7 @@ class DatabaseManager:
                         pass
                     continue
 
-            except Exception as e:
+            except asyncpg.PostgresError as e:
                 last_exception = e
                 if "rate limit" in str(e).lower():
                     raise
@@ -256,7 +257,7 @@ class DatabaseManager:
             try:
                 await conn.executemany(query_str, params_list)
                 return
-            except Exception as e:
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.error("Error in provided connection executemany: %s", e)
                 raise e
 
@@ -296,7 +297,7 @@ class DatabaseManager:
                         pass
                     continue
 
-            except Exception as e:
+            except asyncpg.PostgresError as e:
                 last_exception = e
                 if "rate limit" in str(e).lower():
                     raise
@@ -374,7 +375,7 @@ async def init_db():
             await conn.execute("SET statement_timeout = '60s'")
             await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
             await conn.execute("SET lock_timeout = '30s'")
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to apply DB optimizations: %s", e)
 
     # Initialize Schema
@@ -575,7 +576,7 @@ async def _run_migrations():
                 logging.info("Migration %s applied successfully.", version)
                 applied_versions.add(version)
 
-            except Exception as e:
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.error("Migration %s FAILED: %s", version, e)
                 # Don't halt startup — log and continue
                 break  # Stop at first failure to preserve order
@@ -620,7 +621,7 @@ async def _run_migrations():
         if "deep_dive_thread_id" not in user_col_names:
             await db_query("ALTER TABLE users ADD COLUMN deep_dive_thread_id TEXT;")
 
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Legacy migration warning: %s", e)
 
 
@@ -767,6 +768,9 @@ RLS_CONFIG = {
 
 VALID_TABLES = set(RLS_CONFIG.keys())
 
+# Regex for safely validating SQL identifiers (table names) before interpolation
+_SAFE_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
 
 async def setup_row_level_security():
     """Настраивает Row Level Security для всех таблиц"""
@@ -780,12 +784,15 @@ async def setup_row_level_security():
             return
 
         for table in VALID_TABLES:
+            if not _SAFE_IDENTIFIER_RE.match(table):
+                logging.error("Refusing to use unsafe table name in SQL: %s", table)
+                continue
             try:
                 await db_query(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
                 await create_rls_policies(table)
-            except Exception as e:
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.warning("Failed to enable RLS for table %s: %s", table, e)
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.error("Error setting up RLS: %s", e)
 
 
@@ -827,13 +834,13 @@ async def create_rls_policies(table_name: str):
 
                     await db_query(sql)
 
-            except Exception as e:
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.error(
                     f"Failed to create policy {policy_name} for table {table_name}: {e}"
                 )
                 raise e
 
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.error("Error creating RLS policies for %s: %s", table_name, e)
 
 
@@ -848,8 +855,9 @@ async def set_user_context(user_id: int, is_admin: bool = False, conn=None):
             (str(user_id), str(is_admin).lower()),
             conn=conn,
         )
-    except Exception as e:
-        logging.warning("Failed to set user context: %s", e)
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+        logging.error("Failed to set user context for user %s: %s", user_id, e)
+        raise  # Propagate — callers must not run queries with stale RLS context
 
 
 async def clear_user_context(conn=None):
@@ -862,7 +870,7 @@ async def clear_user_context(conn=None):
         """,
             conn=conn,
         )
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to clear user context: %s", e)
 
 

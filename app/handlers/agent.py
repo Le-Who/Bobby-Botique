@@ -57,7 +57,7 @@ from app.handlers.ai_photo import (  # noqa: F401
 
 async def process_long_request(
     placeholder_message: Message, update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     try:
         is_photo = bool(update.message.photo)
         text = update.message.text or update.message.caption or ""

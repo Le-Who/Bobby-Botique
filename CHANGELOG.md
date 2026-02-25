@@ -41,7 +41,7 @@ Format is optimized for agent-parseable context.
 - **SDK-level deadline**: Added `HttpOptions(timeout=90_000)` (90s) to the `genai.Client`, ensuring the HTTP library itself enforces a hard deadline even if the asyncio layer fails.
 - **Python-side deadline**: Reduced from 120s → 100s (10s buffer over SDK timeout) to prevent silent hangs.
 
-### 🧪 Tests (+31 → 318 total)
+### 🧪 Tests (+31 → 349 pre-Phase 7)
 
 - `test_daily_key_manager.py`: 12 DailyKeyManager + 5 MonthlyKeyManager tests.
 - `test_unified_call_path.py`: 4 tests (Gemini routing, OpenRouter routing, error response, no-keys guard).
@@ -60,6 +60,44 @@ Format is optimized for agent-parseable context.
 - **Russian → English comments** — automated translation of 659 comment/docstring lines across 26 files (dictionary-based, no LLM). User-facing strings preserved.
 - **Provider class migration** — moved `_execute_gemini_request` (312 lines) and `_execute_openrouter_request` (265 lines) from `services.py` into self-contained `GeminiProvider` and `OpenRouterProvider` classes. New `app/utils/image_utils.py` for shared image processing.
 - **services.py → search_services.py** — renamed to reflect actual content (pure Tavily search). Backward-compat shim at `services.py`. Removed all deprecated wrappers (`get_gemini_response`, `get_openrouter_response`, `_with_retry`, `_validate_api_inputs`, `_caller_info`) and execute stubs. Dead `from app import services` import removed from `ai_document.py`. Final size: 160 lines (was 951).
+
+### 🔒 Security Hardening (Phase 7)
+
+- **RLS enabled** on 4 previously unprotected tables: `user_metrics`, `user_state`, `feedback`, `schema_migrations`.
+- **2 unused indexes dropped**: `idx_group_messages_owner`, `idx_error_logs_created_at`.
+
+### 🏗️ Typed Exception Catches (Phase 6–7, 75 total)
+
+| File                    | Catches Refined | Types Used                                                                |
+| ----------------------- | --------------- | ------------------------------------------------------------------------- |
+| `database.py`           | 13              | `(asyncpg.PostgresError, asyncpg.InterfaceError)`                         |
+| `document_processor.py` | 17              | `asyncpg.*`, `ValueError`, `pypdf.errors.PdfReadError`, `httpx.HTTPError` |
+| `ai_search.py`          | 20              | `(BadRequest, NetworkError)`                                              |
+| `messages.py`           | 4               | `(BadRequest, NetworkError)`, `OSError`                                   |
+| `ai_provider.py`        | 10              | `(APIError, httpx.HTTPError)`, `(TypeError, ValueError)`                  |
+| `memory_manager.py`     | 2               | `(OSError, AttributeError)`                                               |
+| `cache.py`              | 9               | `(ConnectionError, RedisError)`, `(TypeError, ValueError, KeyError)`      |
+
+### 🧪 Tests (+34 → 383 total)
+
+- `test_repos_users.py`: 11 tests — auth, cache, state, feedback.
+- `test_repos_conversations.py`: 8 tests — CRUD, rename, delete.
+- `test_repos_keys.py`: 12 tests — DailyKeyManager, MonthlyKeyManager, cache.
+- `test_io_handlers.py`: Converted from `unittest.TestCase` + manual event loop → `pytest-asyncio` (fixed test-ordering failure).
+- `test_ai_provider.py`: Fixed `test_gemini_wrapper_error` — added missing `count_tokens` mock.
+
+### 📝 Type Hints (Phase 8, 114 annotations)
+
+- **Repos** (11): `keys.py` (6), `users.py` (1), `chats.py` (1), `analytics.py` (1), `metrics_repo.py` (1), `conversations.py` (1)
+- **Handlers** (103): `commands.py` (33), `cb_roles.py` (20), `callbacks.py` (14), `cb_conversations.py` (12), `messages.py` (11), `menus.py` (6), + 7 smaller files
+
+### 🧪 Integration Tests (+18 → 401 total)
+
+- `test_integration_flows.py`: 18 tests across 4 cross-module flows:
+  - **AI response lifecycle** (3): Gemini routing, OpenRouter routing, error handling
+  - **Key rotation** (8): DailyKeyManager get/exhaust/increment/available, MonthlyKeyManager get/exhaust
+  - **Conversation CRUD** (4): create+list, rename, delete, save history
+  - **User auth chain** (4): admin bypass, DB lookup, unauthorized, cache hit
 
 ---
 

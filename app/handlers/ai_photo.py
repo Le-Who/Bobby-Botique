@@ -203,7 +203,7 @@ async def process_media_group_request(
     context,
     messages: List[Message],
     caption: str,
-):
+) -> None:
     # context используется for совместимости с другими функциями
     """Обрабатывает группу изображений как единое целое"""
     user_id = update.effective_user.id
@@ -241,7 +241,7 @@ async def _download_images_concurrently(
     Downloads images from a list of messages concurrently.
     """
 
-    async def download_one(index, message):
+    async def download_one(index, message) -> None:
         try:
             photo_file = await message.photo[-1].get_file()
             photo_data = await photo_file.download_as_bytearray()

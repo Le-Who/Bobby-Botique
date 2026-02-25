@@ -18,7 +18,7 @@ from app.request_context import set_request_id
 
 
 @authorized_only
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     logging.info("Start command from user %s", user_id)
@@ -41,7 +41,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized_only
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Показывает подробную справку по использованию бота"""
     user_id = update.effective_user.id
@@ -82,7 +82,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized_only
-async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
@@ -133,7 +133,7 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 @authorized_only
-async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
@@ -145,7 +145,7 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized_only
-async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -188,7 +188,7 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized_only
-async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
@@ -206,7 +206,7 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized_only
-async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     chat_state = await db.get_user_chat(user_id)
@@ -225,7 +225,7 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 @admin_only
-async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     key_data = await db.get_available_gemini_key(settings.DEFAULT_MODEL)
     if not key_data:
@@ -252,7 +252,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 @admin_only
-async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     try:
         user_to_add = int(context.args[0])
@@ -267,7 +267,7 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @admin_only
-async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     try:
         user_to_del = int(context.args[0])
@@ -286,7 +286,7 @@ async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @admin_only
-async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     rows = await db.db_query("SELECT user_id FROM users WHERE is_authorized = 1")
     user_ids = [str(row["user_id"]) for row in rows]
@@ -296,7 +296,7 @@ async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 @admin_only
-async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Показывает полную сводку метрик, статуса ключей и кредитов"""
     try:
@@ -325,7 +325,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @admin_only
-async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Показывает статистику кэша"""
     try:
@@ -352,7 +352,7 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 @authorized_only
-async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Показывает список документов пользователя и управляет ими"""
 
@@ -376,7 +376,7 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @admin_only
-async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Показывает статистику очереди задач"""
     try:
@@ -406,7 +406,7 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 @admin_only
-async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Очищает кэш"""
     try:
@@ -420,7 +420,7 @@ async def clear_cache_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 @admin_only
-async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Очищает старые метрики (старше 30 дней)"""
     try:
@@ -445,7 +445,7 @@ async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAUL
 @admin_only
 async def update_tavily_keys_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     # context используется for совместимости с другими командами
     """Команда для обновления ключей Tavily API"""
     try:
@@ -472,7 +472,7 @@ async def update_tavily_keys_command(
 
 
 @admin_only
-async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Команда для проверки статуса ключей Tavily API"""
     try:
@@ -534,7 +534,7 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
 
 
 @authorized_only
-async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def register_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Регистрирует групповой чат"""
     user_id = update.effective_user.id
@@ -562,7 +562,7 @@ async def register_group_command(update: Update, context: ContextTypes.DEFAULT_T
 
 
 @authorized_only
-async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Показывает статистику группы"""
 
@@ -592,7 +592,7 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 @admin_only
-async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Показывает статистику документов"""
     try:
@@ -623,7 +623,7 @@ async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_T
 @admin_only
 async def clear_old_documents_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     # context используется for совместимости с другими командами
     """Очищает старые документы (старше 3 дней)"""
     try:
@@ -659,7 +659,7 @@ async def clear_old_documents_command(
 
 
 @authorized_only
-async def save_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def save_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     """Сохранить текущую беседу"""
     user_id = update.effective_user.id
@@ -706,7 +706,7 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
 
 
 @authorized_only
-async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     """Показать список сохранённых бесед"""
     user_id = update.effective_user.id
@@ -731,7 +731,7 @@ async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TY
 @authorized_only
 async def switch_conversation_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     # context используется for получения argumentов команды
     """Переключиться на беседу"""
     user_id = update.effective_user.id
@@ -758,7 +758,7 @@ async def switch_conversation_command(
 @authorized_only
 async def rename_conversation_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     # context используется for получения argumentов команды
     """Переименовать беседу"""
     user_id = update.effective_user.id
@@ -795,7 +795,7 @@ async def rename_conversation_command(
 @authorized_only
 async def delete_conversation_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     # context используется for получения argumentов команды
     """Удалить беседу"""
 
@@ -826,7 +826,7 @@ async def delete_conversation_command(
 
 
 @admin_only
-async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Показать метрики ролей и бесед"""
     try:
@@ -882,7 +882,7 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
 
 
 @admin_only
-async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Перезагружает конфигурацию из переменных окружения"""
     try:
@@ -926,7 +926,7 @@ async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 @admin_only
-async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Показывает справку по админским командам"""
     try:
@@ -980,7 +980,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized_only
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает личную статистику пользователя"""
     user_id = update.effective_user.id
     logging.info("Stats command from user %s", user_id)
@@ -1070,7 +1070,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-def register(application: Application):
+def register(application: Application) -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("newchat", new_chat_command))

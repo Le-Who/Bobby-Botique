@@ -17,7 +17,7 @@ from app.handlers import menus
 
 async def send_conversation_selection(
     query: telegram.CallbackQuery, user_id: int, action_prefix: str, title: str
-):
+) -> None:
     """
     Helper to send a list of conversations for selection.
 
@@ -62,7 +62,7 @@ async def send_conversation_selection(
     )
 
 
-async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработка пагинации списка бесед"""
     query = update.callback_query
     await query.answer()
@@ -82,7 +82,7 @@ async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 
-async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Переключение на беседу"""
     query = update.callback_query
     await query.answer()
@@ -94,7 +94,7 @@ async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Переключение на конкретную беседу"""
     query = update.callback_query
     user_id = query.from_user.id
@@ -120,7 +120,7 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.answer("❌ Ошибка при переключении на беседу.")
 
 
-async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Переименование беседы"""
     query = update.callback_query
     await query.answer()
@@ -132,7 +132,7 @@ async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Удаление беседы"""
     query = update.callback_query
     await query.answer()
@@ -144,7 +144,7 @@ async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def conv_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Спрашивает подтверждение удаления беседы"""
     query = update.callback_query
     await query.answer()
@@ -166,7 +166,7 @@ async def conv_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT
     )
 
 
-async def conv_rename_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def conv_rename_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Спрашивает новое название беседы"""
     query = update.callback_query
     await query.answer()
@@ -184,7 +184,7 @@ async def conv_rename_ask_callback(update: Update, context: ContextTypes.DEFAULT
 
 async def conv_rename_cancel_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     """Отмена переименования"""
     query = update.callback_query
     await query.answer("❌ Переименование отменено")
@@ -201,7 +201,7 @@ async def conv_rename_cancel_callback(
 
 async def conv_delete_confirm_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     """Подтверждение удаления беседы"""
     query = update.callback_query
 
@@ -228,7 +228,7 @@ async def conv_delete_confirm_callback(
 
 async def conv_delete_cancel_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     """Отмена удаления беседы"""
     query = update.callback_query
 
@@ -242,7 +242,7 @@ async def conv_delete_cancel_callback(
 
 
 @admin_only
-async def refresh_metrics_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def refresh_metrics_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Refreshes the metrics dashboard."""
     query = update.callback_query
 

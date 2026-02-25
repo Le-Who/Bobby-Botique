@@ -1,82 +1,56 @@
-import unittest
-import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
+"""Tests for document I/O handlers: PDF, Word processing via physical file paths."""
+
+import pytest
 import os
 import tempfile
+from unittest.mock import patch
 
 
-class TestIOHandlers(unittest.TestCase):
-    def setUp(self):
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
+@pytest.mark.asyncio
+@patch("app.document_processor.DocumentProcessor._process_pdf_unified")
+async def test_process_pdf_downloads_to_drive(mock_process_path):
+    from app.document_processor import DocumentProcessor
 
-    def tearDown(self):
-        self.loop.close()
+    fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
 
-    @patch("app.document_processor.DocumentProcessor._process_pdf_unified")
-    def test_process_pdf_downloads_to_drive(self, mock_process_path):
-        from app.document_processor import DocumentProcessor
+    mock_process_path.return_value = "Extracted PDF content"
 
-        async def run_test():
-            fd, temp_path = tempfile.mkstemp(suffix=".pdf")
-            os.close(fd)
+    processor = DocumentProcessor()
+    result = await processor.process_document(temp_path, "test.pdf", 1, is_path=True)
 
-            mock_process_path.return_value = "Extracted PDF content"
-
-            processor = DocumentProcessor()
-            # In v2.1 optimization, the handler passes the downloaded physical file path
-            result = await processor.process_document(
-                temp_path, "test.pdf", 1, is_path=True
-            )
-
-            mock_process_path.assert_called_once()
-            args, _ = mock_process_path.call_args
-            self.assertEqual(args[0], temp_path)
-
-            self.assertEqual(result, "Extracted PDF content")
-
-        self.loop.run_until_complete(run_test())
-
-    @patch("app.document_processor.DocumentProcessor._process_word_unified")
-    def test_process_word_downloads_to_drive(self, mock_process_path):
-        from app.document_processor import DocumentProcessor
-
-        async def run_test():
-            fd, temp_path = tempfile.mkstemp(suffix=".docx")
-            os.close(fd)
-
-            mock_process_path.return_value = "Extracted DOCX content"
-
-            processor = DocumentProcessor()
-            result = await processor.process_document(
-                temp_path, "test.docx", 1, is_path=True
-            )
-
-            mock_process_path.assert_called_once()
-            args, _ = mock_process_path.call_args
-            self.assertEqual(args[0], temp_path)
-
-            self.assertEqual(result, "Extracted DOCX content")
-
-        self.loop.run_until_complete(run_test())
-
-    @patch("app.utils.image_utils._image_process_pool")
-    def test_save_image_as_bytes_uses_executor(self, mock_pool):
-        from app.utils.image_utils import save_image_as_bytes
-
-        async def run_test():
-            raw_image_data = b"fake image bytes"
-
-            # Execute
-            result = await save_image_as_bytes(raw_image_data)
-
-            # Since _image_worker executes in process pool, we expect run_in_executor to have been triggered
-            from app.utils.image_utils import _image_worker
-
-            self.assertIsNotNone(_image_worker)
-
-        self.loop.run_until_complete(run_test())
+    mock_process_path.assert_called_once()
+    args, _ = mock_process_path.call_args
+    assert args[0] == temp_path
+    assert result == "Extracted PDF content"
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.asyncio
+@patch("app.document_processor.DocumentProcessor._process_word_unified")
+async def test_process_word_downloads_to_drive(mock_process_path):
+    from app.document_processor import DocumentProcessor
+
+    fd, temp_path = tempfile.mkstemp(suffix=".docx")
+    os.close(fd)
+
+    mock_process_path.return_value = "Extracted DOCX content"
+
+    processor = DocumentProcessor()
+    result = await processor.process_document(temp_path, "test.docx", 1, is_path=True)
+
+    mock_process_path.assert_called_once()
+    args, _ = mock_process_path.call_args
+    assert args[0] == temp_path
+    assert result == "Extracted DOCX content"
+
+
+@pytest.mark.asyncio
+@patch("app.utils.image_utils._image_process_pool")
+async def test_save_image_as_bytes_uses_executor(mock_pool):
+    from app.utils.image_utils import save_image_as_bytes
+
+    raw_image_data = b"fake image bytes"
+    result = await save_image_as_bytes(raw_image_data)
+
+    from app.utils.image_utils import _image_worker
+    assert _image_worker is not None

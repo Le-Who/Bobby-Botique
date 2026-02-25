@@ -255,7 +255,7 @@ async def _handle_document_delete_document(query, context, user_id):
         await query.answer("❌ Ошибка при удалении документа.")
 
 
-async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обрабатывает callback-кнопки для управления документами"""
     query = update.callback_query
     await query.answer()

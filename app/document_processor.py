@@ -2,6 +2,7 @@ import logging
 import hashlib
 import tempfile
 import asyncio
+import asyncpg
 import io
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
@@ -74,7 +75,7 @@ class DocumentProcessor:
                     "created_at": result[0]["created_at"],
                 }
             return None
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error checking duplicate file: %s", e)
             return None
 
@@ -87,7 +88,7 @@ class DocumentProcessor:
             )
             doc_count = result[0]["doc_count"] if result else 0
             return doc_count < settings.MAX_DOCUMENTS_PER_USER
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error checking document limit: %s", e)
             return True  # В случае ошибки разрешаем загрузку
 
@@ -118,7 +119,7 @@ class DocumentProcessor:
             )
             return deleted_count
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error cleaning up oldest documents: %s", e)
             return 0
 
@@ -192,7 +193,7 @@ class DocumentProcessor:
             else:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-        except Exception as e:
+        except (ValueError, UnicodeDecodeError, OSError) as e:
             logging.error("Error processing document %s: %s", filename, e)
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
@@ -242,7 +243,7 @@ class DocumentProcessor:
             else:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-        except Exception as e:
+        except (ValueError, UnicodeDecodeError, OSError) as e:
             logging.error("Error processing document %s: %s", filename, e)
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
@@ -297,7 +298,7 @@ class DocumentProcessor:
                 "method": "PyPDF2",
             }
 
-        except Exception as e:
+        except (ValueError, OSError, pypdf.errors.PdfReadError) as e:
             logging.error("Error processing PDF %s: %s", filename, e, exc_info=True)
             await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
@@ -345,7 +346,7 @@ class DocumentProcessor:
             result["filename"] = filename
             return result
 
-        except Exception as e:
+        except (ValueError, UnicodeDecodeError, OSError) as e:
             logging.error(
                 f"Error processing Word document {filename}: {e}", exc_info=True
             )
@@ -369,7 +370,7 @@ class DocumentProcessor:
 
             logging.info("Saved document %s for user %s", filename, user_id)
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error saving document to database: %s", e)
 
     async def get_document_by_id(
@@ -396,7 +397,7 @@ class DocumentProcessor:
                 }
             return None
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error getting document by ID: %s", e)
             return None
 
@@ -429,7 +430,7 @@ class DocumentProcessor:
                 # Clean up context user
                 await database.clear_user_context()
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error getting user documents: %s", e)
             return []
 
@@ -454,7 +455,7 @@ class DocumentProcessor:
                 # Clean up context user
                 await database.clear_user_context()
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error getting document content: %s", e)
             return None
 
@@ -467,7 +468,7 @@ class DocumentProcessor:
             )
             return True
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error deleting document: %s", e)
             return False
 
@@ -481,7 +482,7 @@ class DocumentProcessor:
             )
             return len(result) if result else 0
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error deleting all documents: %s", e)
             return 0
 
@@ -503,7 +504,7 @@ class DocumentProcessor:
             )
             return deleted_count
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error cleaning up old documents: %s", e)
             return 0
 
@@ -537,7 +538,7 @@ class DocumentProcessor:
                 "total_size_mb": 0,
             }
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error getting document stats: %s", e)
             return {
                 "total_documents": 0,
@@ -590,7 +591,7 @@ class DocumentProcessor:
                 "can_upload": True,
             }
 
-        except Exception as e:
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
             logging.error("Error getting user document stats: %s", e)
             return {
                 "document_count": 0,
@@ -682,7 +683,7 @@ async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
             file_data=file_data,
             filename=filename,
         )
-    except Exception as e:
+    except (httpx.HTTPError, OSError) as e:
         logging.error("Error uploading to x0.at after retries: %s", e)
         return None
 

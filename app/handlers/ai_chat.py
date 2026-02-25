@@ -127,7 +127,7 @@ async def _handle_regular_chat(
         from app.errors import build_retry_and_roles_keyboard
 
         # Используем универсальную функцию обработки ошибок
-        async def cleanup_on_error():
+        async def cleanup_on_error() -> None:
             chat_state.history.pop()  # Убираем добавленный промпт
             await db.update_user_chat(user_id, chat_state)
 

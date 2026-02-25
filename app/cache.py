@@ -31,7 +31,7 @@ else:
             decode_responses=False,  # Keep as bytes for manual handling
         )
         logging.info("Redis client initialized successfully for Upstash.com")
-    except Exception as e:
+    except (ConnectionError, RedisError) as e:
         logging.warning("Failed to connect to Redis: %s. Caching will be disabled.", e)
         redis_client = None
 
@@ -133,7 +133,7 @@ async def get_cached_search_result(
         result = await get_cached_search_result_ml(query, search_type)
         if result:
             return result
-    except Exception as e:
+    except (TypeError, ValueError, KeyError) as e:
         logging.warning("Multi-layer cache error, falling back to Redis: %s", e)
 
     # Fallback to Redis-only approach
@@ -168,7 +168,7 @@ async def get_cached_search_result(
         logging.warning("Redis cache unavailable: %s", e)
         await metrics_collector.record_cache_miss()
         return None
-    except Exception as e:
+    except RedisError as e:
         logging.error("Error getting from Redis cache: %s", e)
         await metrics_collector.record_cache_miss()
         return None
@@ -180,7 +180,7 @@ async def cache_search_result(query: str, search_type: str, result: Dict[str, An
     try:
         await cache_search_result_ml(query, search_type, result)
         return
-    except Exception as e:
+    except (TypeError, ValueError, KeyError) as e:
         logging.warning("Multi-layer cache save error, falling back to Redis: %s", e)
 
     # Fallback to Redis-only approach
@@ -200,7 +200,7 @@ async def cache_search_result(query: str, search_type: str, result: Dict[str, An
 
     except RedisConnectionError as e:
         logging.warning("Failed to store in Redis cache (connection issue): %s", e)
-    except Exception as e:
+    except RedisError as e:
         logging.error("Error caching result to Redis: %s", e)
 
 
@@ -236,7 +236,7 @@ async def get_cache_stats() -> Dict[str, Any]:
     except RedisConnectionError as e:
         logging.warning("Redis stats unavailable: %s", e)
         return {"error": f"Redis connection issue: {e}"}
-    except Exception as e:
+    except RedisError as e:
         logging.error("Error getting Redis stats: %s", e)
         return {"error": str(e)}
 
@@ -252,7 +252,7 @@ async def clear_cache():
         logging.info("Cache cleared")
     except RedisConnectionError as e:
         logging.warning("Failed to clear Redis cache (connection issue): %s", e)
-    except Exception as e:
+    except RedisError as e:
         logging.error("Error clearing Redis cache: %s", e)
 
 
@@ -310,7 +310,7 @@ class MultiLayerCache:
 
             except RedisConnectionError as e:
                 logging.warning("Redis cache unavailable: %s", e)
-            except Exception as e:
+            except RedisError as e:
                 logging.warning("Redis cache error: %s", e)
 
         await metrics_collector.record_cache_miss()
@@ -340,7 +340,7 @@ class MultiLayerCache:
                 logging.warning(
                     f"Failed to store in Redis cache (connection issue): {e}"
                 )
-            except Exception as e:
+            except RedisError as e:
                 logging.warning("Failed to store in Redis cache: %s", e)
 
     def get_memory_stats(self) -> Dict[str, Any]:

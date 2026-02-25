@@ -468,7 +468,7 @@ async def _handle_research_agent(
         )
 
         # Используем универсальную функцию обработки ошибок
-        async def cleanup_on_error():
+        async def cleanup_on_error() -> None:
             chat_state.history.pop()  # Убираем добавленный промпт
             await db.update_user_chat(user_id, chat_state)
 

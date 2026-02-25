@@ -21,7 +21,7 @@ from app.database import (
 )
 
 
-async def optimize_database_connections():
+async def optimize_database_connections() -> bool:
     if not db_manager.pool:
         return False
     try:

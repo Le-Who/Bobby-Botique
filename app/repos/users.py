@@ -55,7 +55,7 @@ async def is_authorized(user_id: int) -> bool:
             await clear_user_context(conn=conn)
 
 
-async def invalidate_user_auth_cache(user_id: int):
+async def invalidate_user_auth_cache(user_id: int) -> None:
     async with db_manager._cache_lock:
         if user_id in db_manager._user_auth_cache:
             del db_manager._user_auth_cache[user_id]

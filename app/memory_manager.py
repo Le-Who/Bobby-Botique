@@ -131,7 +131,7 @@ class MemoryManager:
                 "total_mb": virtual_memory.total / 1024 / 1024,
                 "cpu_percent": process.cpu_percent(interval=0.1),
             }
-        except Exception as e:
+        except (OSError, AttributeError) as e:
             logging.error("Failed to get memory info: %s", e)
             return {"timestamp": datetime.now(), "error": str(e)}
 
@@ -258,7 +258,7 @@ class MemoryManager:
                     "cleanup": self.thresholds.cleanup_percent,
                 },
             }
-        except Exception as e:
+        except (OSError, AttributeError) as e:
             return {"error": str(e)}
 
     async def stop(self):

@@ -75,7 +75,7 @@ from app.handlers.cb_conversations import (  # noqa: F401
 
 # ── Core / Navigation callbacks (stay here — thin and tightly coupled) ───────
 
-async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
@@ -151,7 +151,7 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer(f"✅ Модель изменена на {display_name}")
 
 
-async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     await query.answer()
@@ -204,7 +204,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     # 3. If задача определена, запускаем ее в фоне под блокировкой.
     if task_to_run:
 
-        async def task_wrapper():
+        async def task_wrapper() -> None:
             async with _HEAVY_CALLBACK_SEMAPHORE:
                 async with user_lock:
                     await task_to_run
@@ -212,7 +212,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
         asyncio.create_task(task_wrapper())
 
 
-async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     await query.answer()
@@ -241,7 +241,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_lock.locked():
         return
 
-    async def task_wrapper():
+    async def task_wrapper() -> None:
         async with _HEAVY_CALLBACK_SEMAPHORE:
             async with user_lock:
                 if action == "confirm":
@@ -258,7 +258,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(task_wrapper())
 
 
-async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles callbacks from deep dive mode buttons."""
     query = update.callback_query
     await query.answer()
@@ -285,7 +285,7 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 
-async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles the 'new_topic' button press, clearing the chat context."""
     query = update.callback_query
     await query.answer("Начинаем новую тему...")
@@ -308,7 +308,7 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
-async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Повтор последнего пользовательского запроса по кнопке."""
     query = update.callback_query
     await query.answer()
@@ -336,7 +336,7 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await _handle_regular_chat(placeholder_message, user_id, last_text, chat_state)
 
 
-async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     from app.handlers.commands import new_chat_command
@@ -344,7 +344,7 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await new_chat_command(DummyUpdate(query.message, query.from_user), context)
 
 
-async def model_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def model_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     from app.handlers.commands import model_command
@@ -352,7 +352,7 @@ async def model_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await model_command(DummyUpdate(query.message, query.from_user), context)
 
 
-async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     from app.handlers.commands import help_command
@@ -360,7 +360,7 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await help_command(DummyUpdate(query.message, query.from_user), context)
 
 
-async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
 
@@ -385,7 +385,7 @@ async def _noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
 
 
-async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle 👍/👎 feedback on AI responses."""
     query = update.callback_query
     await query.answer()
@@ -440,7 +440,7 @@ def _add_fast_callback(application: Application, callback, pattern: str):
 
 # ── Registration ─────────────────────────────────────────────────────────────
 
-def register(application: Application):
+def register(application: Application) -> None:
     # Быстрый канал for UI-настроек: callback выполняется without блокировки update loop.
     _add_fast_callback(application, toggle_search_callback, "^toggle_search$")
     _add_fast_callback(application, new_chat_callback, "^new_chat$")

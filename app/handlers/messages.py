@@ -4,6 +4,7 @@ import asyncio
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, MessageHandler, filters, Application
+from telegram.error import BadRequest, NetworkError
 
 from app.config import settings
 from app import database as db
@@ -38,7 +39,7 @@ MEDIA_GROUPS_TTL = {}  # TTL for автоматической очистки с�
 MEDIA_GROUP_TIMEOUT = 300  # 5 минут timeout for groups fromображений
 
 
-async def cleanup_old_media_groups():
+async def cleanup_old_media_groups() -> None:
     """Очищает старые группы изображений для предотвращения утечки памяти"""
     current_time = asyncio.get_event_loop().time()
     expired_groups = []
@@ -60,13 +61,13 @@ async def cleanup_old_media_groups():
 _cleanup_task = None
 
 
-async def start_media_groups_cleanup():
+async def start_media_groups_cleanup() -> None:
     """Запускает периодическую очистку групп изображений"""
     global _cleanup_task
     if _cleanup_task and not _cleanup_task.done():
         return
 
-    async def cleanup_loop():
+    async def cleanup_loop() -> None:
         while True:
             try:
                 await asyncio.sleep(60)  # Check каждую минуту
@@ -415,7 +416,7 @@ async def _handle_document_mode_interaction(
     return False
 
 
-async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обрабатывает входящие сообщения"""
     # Validation входных данных
     if not update or not update.effective_user:
@@ -534,7 +535,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         placeholder_message = await update.message.reply_text("🤔 Думаю...")
 
     # Обычная обработка сообщений
-    async def task_wrapper():
+    async def task_wrapper() -> None:
         try:
             async with _HEAVY_REQUEST_SEMAPHORE:
                 async with state.get_user_lock(user_id):
@@ -570,7 +571,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await placeholder_message.edit_text(
                     "❌ Произошла ошибка при обработке запроса."
                 )
-            except Exception as edit_error:
+            except (BadRequest, NetworkError) as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
 
             # Log error Telegram API
@@ -589,7 +590,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def delayed_process_media_group(
     media_group_id: str, context: ContextTypes.DEFAULT_TYPE, delay: float
-):
+) -> None:
     """Отложенная обработка группы изображений"""
     await asyncio.sleep(delay)
 
@@ -623,7 +624,7 @@ async def delayed_process_media_group(
 
 async def process_single_image_from_group(
     media_group_id: str, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     """Обрабатывает одиночное изображение из группы"""
     if media_group_id not in MEDIA_GROUPS:
         return
@@ -654,7 +655,7 @@ async def process_single_image_from_group(
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при обработке изображения."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
     finally:
         # Clean up группу (вkeyая TTL)
@@ -665,7 +666,7 @@ async def process_single_image_from_group(
         logging.info("🧹 Очищена одиночная группа изображений %s", media_group_id)
 
 
-async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE):
+async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обрабатывает группу изображений как единое целое"""
     if media_group_id not in MEDIA_GROUPS:
         logging.error("Media group %s not found", media_group_id)
@@ -723,7 +724,7 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при обработке группы изображений."
             )
-        except Exception as edit_error:
+        except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
 
     finally:
@@ -737,7 +738,7 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
 
 async def handle_document_question(
     update: Update, context: ContextTypes.DEFAULT_TYPE, document_id: int
-):
+) -> None:
     """Обрабатывает вопрос по конкретному документу"""
     user_id = update.effective_user.id
     user_message = update.message.text
@@ -781,7 +782,7 @@ async def handle_document_question(
         )
 
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обрабатывает загруженные документы"""
     user_id = update.effective_user.id
 
@@ -834,7 +835,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if os.path.exists(tmp_path):
                 try:
                     os.unlink(tmp_path)
-                except Exception as cleanup_error:
+                except OSError as cleanup_error:
                     logging.warning(
                         f"Failed to cleanup temp doc file {tmp_path}: {cleanup_error}"
                     )
@@ -964,7 +965,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await metrics_collector.record_error("document_processing", str(e))
 
 
-def register(application: Application):
+def register(application: Application) -> None:
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_request)
     )

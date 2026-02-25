@@ -186,6 +186,57 @@ class APILogger:
             logging.error("Error in log_gemini_response: %s", e)
             return 0.0
 
+    def log_openrouter_response(
+        self,
+        start_time: float,
+        model: str,
+        response_length: int,
+        token_count: Optional[int] = None,
+        success: bool = True,
+        error_message: Optional[str] = None,
+        user_id: Optional[int] = None,
+        chat_id: Optional[int] = None,
+    ):
+        """Логирует ответ OpenRouter API"""
+        try:
+            if not isinstance(start_time, (int, float)) or start_time <= 0:
+                logging.warning(
+                    f"Invalid start_time in log_openrouter_response: {start_time}, using current time"
+                )
+                start_time = time.time()
+
+            duration = time.time() - start_time
+
+            log_data = {
+                "timestamp": datetime.now().isoformat(),
+                "api": "openrouter",
+                "model": model,
+                "duration_ms": round(duration * 1000, 2),
+                "request_id": get_request_id(),
+                "response_length": response_length,
+                "token_count": token_count,
+                "success": success,
+                "user_id": user_id,
+                "chat_id": chat_id,
+                "error_message": error_message,
+                "status": "COMPLETED",
+            }
+
+            if success:
+                self.logger.info(
+                    f"✅ OPENROUTER RESPONSE COMPLETED: {json.dumps(log_data, ensure_ascii=False)}"
+                )
+            else:
+                self.logger.error(
+                    f"❌ OPENROUTER RESPONSE FAILED: {json.dumps(log_data, ensure_ascii=False)}"
+                )
+
+            return duration
+
+        except Exception as e:
+            logging.error("Error in log_openrouter_response: %s", e)
+            return 0.0
+
     def log_tavily_request(
         self,
         query: str,

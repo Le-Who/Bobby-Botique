@@ -10,7 +10,7 @@ from app.document_processor import get_user_documents
 import logging
 
 
-async def get_start_menu_content(chat_state, user_id=None):
+async def get_start_menu_content(chat_state, user_id=None) -> None:
     search_status = "🟢 ВКЛЮЧЕН" if chat_state.search_enabled else "🔴 ВЫКЛЮЧЕН"
     prompt_status = (
         f"`{chat_state.system_prompt[:50]}...`"
@@ -136,7 +136,7 @@ def _generate_model_buttons(models, current_model, start_index, is_openrouter=Fa
     return rows, current_index
 
 
-def get_model_menu_content(chat_state, context):
+def get_model_menu_content(chat_state, context) -> None:
     current_model = chat_state.model
 
     # Определяем, какой провайдер используется for текущей models
@@ -451,7 +451,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
 
 async def get_roles_menu_content(
     user_id, chat_state, view_mode="hub", page=0, role_key=None
-):
+) -> None:
     """
     Генерирует content for menu ролей в стиле "Smart Hub".
     view_mode: 'hub' | 'my_roles' | 'system_roles' | 'role_details'
@@ -505,7 +505,7 @@ async def get_roles_menu_content(
         return f"Ошибка режима: {view_mode}", None, None
 
 
-async def get_metrics_content():
+async def get_metrics_content() -> None:
     """Generates the metrics report text."""
     # Get все data
     data = await get_system_status_data()
@@ -602,7 +602,7 @@ async def get_metrics_content():
     return text
 
 
-async def get_documents_menu_content(user_id):
+async def get_documents_menu_content(user_id) -> None:
     documents = await get_user_documents(user_id)
 
     if not documents:
@@ -657,7 +657,7 @@ async def get_documents_menu_content(user_id):
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
 
-async def get_conversations_menu_content(user_id, page=1):
+async def get_conversations_menu_content(user_id, page=1) -> None:
     limit = 5
     offset = (page - 1) * limit
 

@@ -116,7 +116,7 @@ class BaseAIProvider(ABC):
                 is_retryable=lambda e: self._is_transient_error(str(e)),
             )
             return response
-        except Exception as e:
+        except (APIError, httpx.HTTPError) as e:
             last_error = e
 
         error_msg = user_friendly_error(last_error) if last_error else "Unknown error"
@@ -259,7 +259,7 @@ class GeminiProvider(BaseAIProvider):
                     for part in (item.get("parts", []) or [])
                     if part is not None
                 )
-            except Exception as e:
+            except (APIError, httpx.HTTPError) as e:
                 logging.warning("Metrics calc error: %s", e)
                 prompt_length = 0
                 has_images = False
@@ -295,7 +295,7 @@ class GeminiProvider(BaseAIProvider):
             if system_instruction:
                 try:
                     config.system_instruction = str(system_instruction)
-                except Exception as e:
+                except (TypeError, ValueError) as e:
                     logging.warning("Failed to set system_instruction: %s", e)
 
             # Native async call — properly supports CancelledError
@@ -315,7 +315,7 @@ class GeminiProvider(BaseAIProvider):
                     timeout=10.0,
                 )
                 token_count = token_resp.total_tokens
-            except Exception as e:
+            except (APIError, httpx.HTTPError) as e:
                 logging.warning("Failed to count tokens: %s, using 0", e)
                 token_count = 0
 
@@ -384,12 +384,12 @@ class GeminiProvider(BaseAIProvider):
                 error_message=str(e), provider=self.provider_name, model=model_name,
             )
 
-        except Exception as e:
+        except httpx.HTTPError as e:
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
-            logging.error("Gemini API generic error: %s", e, exc_info=True)
-            await metrics_collector.record_error("gemini_api", str(e))
+            logging.error("Gemini HTTP error: %s", e, exc_info=True)
+            await metrics_collector.record_error("gemini_http", str(e))
             return AIResponse(
-                text=f"Произошла непредвиденная ошибка API: {e}",
+                text=f"Произошла непредвиденная ошибка HTTP: {e}",
                 token_count=0, success=False, error_message=str(e),
                 provider=self.provider_name, model=model_name,
             )
@@ -408,8 +408,6 @@ class GeminiProvider(BaseAIProvider):
                 parts = item.get("parts", [])
                 if not isinstance(parts, list):
                     parts = [parts] if parts is not None else []
-                elif parts is None:
-                    parts = []
 
                 processed = []
                 for part in parts:
@@ -422,20 +420,20 @@ class GeminiProvider(BaseAIProvider):
                                         mime_type="image/jpeg", data=img_bytes
                                     )
                                 ))
-                            except Exception as e:
+                            except (TypeError, ValueError) as e:
                                 logging.warning("Failed to create image part: %s", e)
                         else:
                             logging.warning("Skipping image part due to processing error")
                     else:
                         try:
                             processed.append(types.Part.from_text(text=str(part)))
-                        except Exception as e:
+                        except (TypeError, ValueError) as e:
                             logging.warning("Failed to process text part: %s", e)
 
                 if processed:
                     try:
                         contents.append(types.Content(role=role, parts=processed))
-                    except Exception as e:
+                    except (TypeError, ValueError) as e:
                         logging.warning("Failed to create Content object: %s", e)
         except Exception as e:
             logging.error("Error processing history: %s", e)
@@ -466,6 +464,7 @@ class GeminiProvider(BaseAIProvider):
                 success=False, error_message=msg,
                 user_id=user_id, chat_id=chat_id,
             )
+
 
 
 # Module-level httpx client for OpenRouter
@@ -538,7 +537,7 @@ class OpenRouterProvider(BaseAIProvider):
                     token_count=0, success=False, error_message=msg,
                     provider=self.provider_name, model=model_name,
                 )
-            except Exception as e:
+            except (APIError, httpx.HTTPError) as e:
                 msg = f"OpenRouter API error: {e}"
                 logging.error(msg)
                 await metrics_collector.record_error("openrouter_api", msg)
@@ -588,7 +587,7 @@ class OpenRouterProvider(BaseAIProvider):
                 success=True, provider=self.provider_name, model=model_name,
             )
 
-        except Exception as e:
+        except (APIError, httpx.HTTPError) as e:
             logging.error("OpenRouter API generic error: %s", e, exc_info=True)
             await metrics_collector.record_error("openrouter_api", str(e))
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
@@ -620,8 +619,6 @@ class OpenRouterProvider(BaseAIProvider):
             parts = item.get("parts", [])
             if not isinstance(parts, list):
                 parts = [parts] if parts is not None else []
-            elif parts is None:
-                parts = []
 
             content_parts = []
             for part in parts:
@@ -675,7 +672,7 @@ class OpenRouterProvider(BaseAIProvider):
 
     def _log_failure(self, start_time, model, msg, user_id, chat_id):
         if start_time is not None:
-            api_logger.log_gemini_response(
+            api_logger.log_openrouter_response(
                 start_time=start_time, model=model, response_length=0,
                 success=False, error_message=msg,
                 user_id=user_id, chat_id=chat_id,

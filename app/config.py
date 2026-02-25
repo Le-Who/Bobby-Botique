@@ -472,7 +472,7 @@ class ConfigManager:
                             new_settings.OPENROUTER_AVAILABLE_MODELS
                         )
 
-                    if all_available_models and db.db_pool and not db.db_pool._closed:
+                    if all_available_models and db.db_manager.is_connected:
                         # Находим users с несуществующими моделями
                         # Используем parameterfromованный request for withoutопасности
                         placeholders = ",".join(

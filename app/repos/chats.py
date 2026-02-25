@@ -108,7 +108,7 @@ async def get_user_chat(user_id: int) -> Optional[ChatState]:
             await clear_user_context(conn=conn)
 
 
-async def update_user_chat(user_id: int, chat_state: ChatState):
+async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
     """Save the chat state back to the database, syncing new messages."""
     if not db_manager.is_connected:
         await reconnect_database()

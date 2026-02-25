@@ -167,7 +167,7 @@ async def _get_fresh_available_key(
     return await _gemini_km.get_fresh_available_key(model_name, daily_limit, conn=conn)
 
 
-async def invalidate_key_cache(model_name: str = None):
+async def invalidate_key_cache(model_name: str = None) -> None:
     async with db_manager._cache_lock:
         if model_name:
             if model_name in db_manager._active_keys_cache:
@@ -228,7 +228,7 @@ async def get_current_active_gemini_key(model_name: str) -> Optional[Dict[str, A
     return None
 
 
-async def increment_gemini_key_usage(key_hash: str, model_name: str):
+async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
     result = await _gemini_km.increment_usage(key_hash, model_name)
     current_usage = result[0]["request_count"] if result else 0
 
@@ -310,15 +310,15 @@ _tavily_km = MonthlyKeyManager(
 )
 
 
-async def get_available_tavily_key():
+async def get_available_tavily_key() -> Optional[Dict[str, Any]]:
     return await _tavily_km.get_available_key()
 
 
-async def increment_tavily_key_usage(key_hash: str, cost: int):
+async def increment_tavily_key_usage(key_hash: str, cost: int) -> None:
     await _tavily_km.increment_usage(key_hash, cost)
 
 
-async def force_update_tavily_keys():
+async def force_update_tavily_keys() -> bool:
     try:
         from app.config import get_settings
 
@@ -359,5 +359,5 @@ async def get_available_openrouter_key(model_name: str) -> Optional[Dict[str, An
             await clear_user_context(conn=conn)
 
 
-async def increment_openrouter_key_usage(key_hash: str, model_name: str):
+async def increment_openrouter_key_usage(key_hash: str, model_name: str) -> None:
     await _openrouter_km.increment_usage(key_hash, model_name)

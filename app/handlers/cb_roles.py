@@ -28,12 +28,12 @@ from app.handlers import menus
 class DummyUpdate:
     """Helper class to mock an Update object for calling commands from callbacks."""
 
-    def __init__(self, msg, user):
+    def __init__(self, msg, user) -> None:
         self.message = msg
         self.effective_user = user
 
 
-async def role_rename_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_rename_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -69,7 +69,7 @@ async def role_rename_menu_callback(update: Update, context: ContextTypes.DEFAUL
     )
 
 
-async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -85,7 +85,7 @@ async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAUL
     )
 
 
-async def start_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
@@ -99,7 +99,7 @@ async def start_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     chat_state = await db.get_user_chat(user_id)
@@ -144,7 +144,7 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer(f"✅ Роль '{role_title}' применена.")
 
 
-async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     chat_state = await db.get_user_chat(user_id)
@@ -168,7 +168,7 @@ async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer("🧹 Роль сброшена.")
 
 
-async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     begin_custom_role_creation(query.from_user.id)
@@ -183,7 +183,7 @@ async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def role_create_cancel_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     """Отмена создания кастомной роли — возврат в hub."""
     query = update.callback_query
     await query.answer("❌ Создание роли отменено")
@@ -204,7 +204,7 @@ async def role_create_cancel_callback(
 
 async def role_rename_cancel_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     """Отмена переименования роли — возврат в hub."""
     query = update.callback_query
     await query.answer("❌ Переименование отменено")
@@ -225,7 +225,7 @@ async def role_rename_cancel_callback(
 
 async def role_custom_apply_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -249,7 +249,7 @@ async def role_custom_apply_callback(
     )
 
 
-async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -289,7 +289,7 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
 
 async def role_custom_retry_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -371,7 +371,7 @@ async def role_custom_retry_callback(
     set_generating_custom_role(user_id, False)
 
 
-async def role_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     role_id = query.data.split(":")[1]
@@ -400,7 +400,7 @@ async def role_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT
 
 async def role_delete_cancel_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     query = update.callback_query
     await query.answer()
     role_id = query.data.split(":")[1]
@@ -419,7 +419,7 @@ async def role_delete_cancel_callback(
 
 async def role_delete_confirm_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-):
+) -> None:
     query = update.callback_query
     user_id = query.from_user.id
     if not await db.is_authorized(user_id):
@@ -465,7 +465,7 @@ async def role_delete_confirm_callback(
         await query.answer("❌ Ошибка удаления роли")
 
 
-async def role_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
@@ -487,7 +487,7 @@ async def role_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             raise e
 
 
-async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
@@ -507,7 +507,7 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
         await query.message.reply_text("❌ Не удалось найти промпт.")
 
 
-async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
@@ -529,7 +529,7 @@ async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise e
 
 
-async def role_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def role_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
@@ -553,7 +553,7 @@ async def role_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             raise e
 
 
-async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
