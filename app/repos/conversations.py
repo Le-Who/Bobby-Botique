@@ -7,6 +7,7 @@ Extracted from app/database.py to isolate conversation-domain logic.
 """
 
 import logging
+import asyncpg
 from typing import Dict, Any, Optional
 
 from app.database import (
@@ -44,7 +45,7 @@ async def get_role_data(role_key: str, user_id: int) -> Optional[Dict[str, Any]]
                     "is_custom": True,
                     "key": role_key,
                 }
-        except (ValueError, IndexError, Exception):
+        except (ValueError, IndexError, asyncpg.PostgresError):
             pass
     elif role_key in prompts.DEFAULT_ROLES:
         meta = prompts.DEFAULT_ROLES[role_key]
@@ -79,10 +80,10 @@ async def save_conversation(
                 await db_query(
                     "CALL save_chat_to_conversation($1, $2)", (user_id, conv_id)
                 )
-            except Exception as e:
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.error("Error saving conversation messages via Procedure: %s", e)
         return conv_id
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.error("Error in save_conversation: %s", e)
         return None
 
@@ -115,7 +116,7 @@ async def get_user_conversations(
             }
             for row in result
         ]
-    except Exception:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return []
 
 
@@ -144,7 +145,7 @@ async def get_conversation_messages(conversation_id: int, user_id: int) -> list:
             }
             for row in result
         ]
-    except Exception:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return None
 
 
@@ -205,7 +206,7 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                     (role_data[0]["prompt"], user_id),
                 )
         return True
-    except Exception:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False
 
 
@@ -218,7 +219,7 @@ async def rename_conversation(
             (new_title, conversation_id, user_id),
         )
         return result is not None
-    except Exception:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False
 
 
@@ -239,7 +240,7 @@ async def delete_conversation(user_id: int, conversation_id: int) -> bool:
             (conversation_id, user_id),
         )
         return True
-    except Exception:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False
 
 
@@ -249,5 +250,5 @@ async def get_conversation_count(user_id: int) -> int:
             "SELECT COUNT(*) FROM conversations WHERE user_id = $1", (user_id,)
         )
         return result[0]["count"] if result else 0
-    except Exception:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return 0

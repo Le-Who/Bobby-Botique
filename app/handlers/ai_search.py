@@ -11,7 +11,7 @@ from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings, get_openrouter_keys
 from app import database as db
-from app import services
+from app import search_services
 from app.utils.messaging import send_long_message
 from app import prompts
 from app.metrics import metrics_collector
@@ -51,7 +51,7 @@ async def _handle_qna_search(
     )
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
-    search_result = await services.tavily_search_agent(
+    search_result = await search_services.tavily_search_agent(
         actual_search_query, search_type="qna", user_id=user_id, chat_id=chat_id
     )
     if search_result.get("error"):
@@ -160,7 +160,7 @@ async def _handle_research_agent(
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
     try:
-        search_result = await services.tavily_search_agent(
+        search_result = await search_services.tavily_search_agent(
             actual_search_query, search_type="search", user_id=user_id, chat_id=chat_id
         )
     except Exception as search_error:

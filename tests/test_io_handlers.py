@@ -60,20 +60,18 @@ class TestIOHandlers(unittest.TestCase):
 
         self.loop.run_until_complete(run_test())
 
-    @patch("app.services._image_process_pool")
+    @patch("app.utils.image_utils._image_process_pool")
     def test_save_image_as_bytes_uses_executor(self, mock_pool):
-        from app.services import _save_image_as_bytes
+        from app.utils.image_utils import save_image_as_bytes
 
         async def run_test():
             raw_image_data = b"fake image bytes"
 
             # Execute
-            result = await _save_image_as_bytes(raw_image_data)
+            result = await save_image_as_bytes(raw_image_data)
 
             # Since _image_worker executes in process pool, we expect run_in_executor to have been triggered
-            # However, asyncio.wait_for wraps loop.run_in_executor in services.py
-            # Since we didn't patch asyncio.get_running_loop(), we can assert _image_worker is callable
-            from app.services import _image_worker
+            from app.utils.image_utils import _image_worker
 
             self.assertIsNotNone(_image_worker)
 

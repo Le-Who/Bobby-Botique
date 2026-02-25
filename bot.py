@@ -48,7 +48,7 @@ from app.queue import start_task_queue, stop_task_queue
 from app.group_chat import initialize_group_chats
 
 # Import extracted modules
-from app.web import flask_app, set_main_loop
+from app.web import flask_app
 
 # Global shutdown event
 shutdown_event = asyncio.Event()
@@ -299,29 +299,9 @@ async def run_bot_and_server():
 
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
-        logging.info("Shutting down services...")
-        await _cleanup_with_retry(
-            "task queue",
-            stop_task_queue,
-            retries=3,
-            base_delay=0.5,
-        )
-
-        await _cleanup_with_retry(
-            "metrics collector",
-            metrics_collector.cleanup,
-            retries=3,
-            base_delay=0.5,
-        )
-
-        await _cleanup_with_retry(
-            "database manager",
-            database.db_manager.close,
-            retries=3,
-            base_delay=0.5,
-        )
-
-        logging.info("Shutdown complete.")
+        # Resource cleanup (task queue, metrics, DB) is handled by main()'s
+        # finally-block to avoid double-free.
+        logging.info("Async tasks cancelled; returning to main() for resource cleanup.")
 
 
 async def _cleanup_with_retry(resource_name, cleanup_coro, retries=1, base_delay=0.25):
@@ -396,8 +376,7 @@ async def startup_health_check():
 
 
 async def main():
-    # Capture the main event loop for Flask/Hypercorn worker threads
-    set_main_loop(asyncio.get_running_loop())
+    # Quart is ASGI-native; no event loop injection needed.
 
     database_available = False
     memory_manager = None

@@ -5,6 +5,12 @@ import asyncio
 from datetime import datetime, date
 from app.config import UTC_TZ, settings
 from app.utils.time import get_pacific_tz
+from app.errors import (
+    ConfigurationError,
+    DatabaseConnectionError,
+    DatabaseRateLimitError,
+    DatabasePoolError,
+)
 import asyncpg
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
@@ -65,10 +71,6 @@ class DatabaseManager:
                 },
             )
 
-            # Sync global variable for backward compatibility
-            global db_pool
-            db_pool = self.pool
-
             if self.pool and not self.pool._closed:
                 self._monitor_task = self._start_background_task(
                     self._monitor_task,
@@ -82,15 +84,15 @@ class DatabaseManager:
                 logging.critical(
                     "Supabase.com rate limit exceeded. Please upgrade your plan or wait for quota reset."
                 )
-                raise Exception(f"Database rate limit exceeded: {e}")
+                raise DatabaseRateLimitError(f"Database rate limit exceeded: {e}")
             elif "connection" in str(e).lower() or "timeout" in str(e).lower():
                 logging.warning(
                     "Database connection issue: %s. This might be temporary.", e
                 )
-                raise Exception(f"Database connection failed: {e}")
+                raise DatabaseConnectionError(f"Database connection failed: {e}")
             else:
                 logging.error("Unexpected database error: %s", e)
-                raise Exception(f"Database initialization failed: {e}")
+                raise DatabasePoolError(f"Database initialization failed: {e}")
 
     async def close(self):
         # Cancel background tasks
@@ -100,10 +102,6 @@ class DatabaseManager:
             await self.pool.close()
             self.pool = None
             logging.info("Database pool closed")
-
-            # Sync global variable
-            global db_pool
-            db_pool = None
 
     async def reconnect(self):
         logging.info("Attempting to reconnect to database...")
@@ -365,11 +363,11 @@ async def ensure_database_connection():
 
 async def init_db():
     if not settings.DATABASE_URL:
-        raise Exception("DATABASE_URL not set")
+        raise ConfigurationError("DATABASE_URL not set")
 
     await db_manager.create_pool()
     if not db_manager.pool:
-        raise Exception("Critical: Failed to create database connection pool")
+        raise DatabasePoolError("Critical: Failed to create database connection pool")
 
     # Apply Supabase optimizations
     try:
@@ -633,33 +631,35 @@ async def _insert_initial_data():
         (settings.ADMIN_ID,),
     )
 
+    from app.crypto import encrypt_api_key
+
     gemini_data = [
-        (hashlib.sha256(key.encode()).hexdigest(), key)
+        (hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key))
         for key in settings.GEMINI_API_KEYS
     ]
     if gemini_data:
         await db_execute_many(
-            "INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING",
+            "INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO UPDATE SET api_key = EXCLUDED.api_key",
             gemini_data,
         )
 
     tavily_data = [
-        (hashlib.sha256(key.encode()).hexdigest(), key)
+        (hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key))
         for key in settings.TAVILY_API_KEYS
     ]
     if tavily_data:
         await db_execute_many(
-            "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING",
+            "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO UPDATE SET api_key = EXCLUDED.api_key",
             tavily_data,
         )
 
     openrouter_data = [
-        (hashlib.sha256(key.encode()).hexdigest(), key)
+        (hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key))
         for key in settings.OPENROUTER_API_KEYS
     ]
     if openrouter_data:
         await db_execute_many(
-            "INSERT INTO openrouter_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO NOTHING",
+            "INSERT INTO openrouter_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO UPDATE SET api_key = EXCLUDED.api_key",
             openrouter_data,
         )
 

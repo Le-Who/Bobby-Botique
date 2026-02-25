@@ -1,4 +1,5 @@
 import pytest
+import asyncpg
 from unittest.mock import patch, AsyncMock, MagicMock
 from app.database import ChatState
 import app.database as database
@@ -22,8 +23,8 @@ async def test_save_conversation_success(mock_chat_state):
     title = "Test Conversation"
     expected_conv_id = 1
 
-    with patch("app.database.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
-         patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
+    with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
+         patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query:
 
         mock_get_user_chat.return_value = mock_chat_state
 
@@ -57,7 +58,7 @@ async def test_save_conversation_no_chat_state():
     user_id = 123
     title = "Test Conversation"
 
-    with patch("app.database.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat:
+    with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat:
         mock_get_user_chat.return_value = None
 
         result = await database.save_conversation(user_id, title)
@@ -70,8 +71,8 @@ async def test_save_conversation_insert_failure(mock_chat_state):
     user_id = 123
     title = "Test Conversation"
 
-    with patch("app.database.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
-         patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
+    with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
+         patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query:
 
         mock_get_user_chat.return_value = mock_chat_state
         mock_db_query.return_value = [] # Return empty list simulating failure to return ID
@@ -97,8 +98,8 @@ async def test_save_conversation_no_history():
         _original_length=0
     )
 
-    with patch("app.database.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
-         patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
+    with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
+         patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query:
 
         mock_get_user_chat.return_value = mock_chat_state_empty
         mock_db_query.return_value = [{"id": expected_conv_id}]
@@ -117,16 +118,16 @@ async def test_save_conversation_procedure_failure(mock_chat_state):
     title = "Test Conversation"
     expected_conv_id = 3
 
-    with patch("app.database.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
-         patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query, \
-         patch("app.database.logging.error") as mock_logging_error:
+    with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
+         patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query, \
+         patch("app.repos.conversations.logging.error") as mock_logging_error:
 
         mock_get_user_chat.return_value = mock_chat_state
 
         # Setup db_query side effects
         # First call: INSERT -> returns [{"id": 3}]
-        # Second call: CALL -> raises Exception
-        mock_db_query.side_effect = [[{"id": expected_conv_id}], Exception("Procedure failed")]
+        # Second call: CALL -> raises asyncpg error
+        mock_db_query.side_effect = [[{"id": expected_conv_id}], asyncpg.PostgresError("Procedure failed")]
 
         result = await database.save_conversation(user_id, title)
 

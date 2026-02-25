@@ -8,7 +8,6 @@ from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
 from app import database as db
-from app import services
 from app.utils.messaging import send_long_message
 from app.metrics import metrics_collector
 from app.utils.stage_indicators import update_stage, STAGES_DOCUMENT

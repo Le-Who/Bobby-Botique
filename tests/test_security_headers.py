@@ -28,7 +28,7 @@ def setup_module(module):
         sys.modules[k] = MagicMock()
 
     mock_db = MagicMock()
-    mock_db.db_pool = None
+    mock_db.is_database_connected.return_value = True
     sys.modules["app.database"] = mock_db
 
 
@@ -66,14 +66,14 @@ def client():
             mock_vm.return_value.percent = 20
             mock_du.return_value.percent = 30
 
-            with flask_app.test_client() as client:
-                yield client
+            yield flask_app.test_client()
 
 
-def test_security_headers_present(client):
+@pytest.mark.asyncio
+async def test_security_headers_present(client):
     """Test that security headers are present in responses"""
     # Test public endpoint
-    response = client.get("/health")
+    response = await client.get("/health")
     assert response.status_code == 200
 
     headers = response.headers
@@ -89,10 +89,10 @@ def test_security_headers_present(client):
     assert "font-src 'self' https://fonts.gstatic.com" in csp
 
 
-def test_security_headers_on_error(client):
+@pytest.mark.asyncio
+async def test_security_headers_on_error(client):
     """Test that security headers are present even on error responses"""
-    # Force an error by mocking something to raise exception, or just use 404
-    response = client.get("/non-existent-endpoint")
+    response = await client.get("/non-existent-endpoint")
     assert response.status_code == 404
 
     headers = response.headers
@@ -100,9 +100,10 @@ def test_security_headers_on_error(client):
     assert headers.get("X-Frame-Options") == "DENY"
 
 
-def test_security_headers_on_auth_failure(client):
+@pytest.mark.asyncio
+async def test_security_headers_on_auth_failure(client):
     """Test that security headers are present on auth redirect"""
-    response = client.get("/")
+    response = await client.get("/")
     # Pages now redirect to /login instead of returning 401
     assert response.status_code == 302
 
@@ -111,14 +112,14 @@ def test_security_headers_on_auth_failure(client):
     assert headers.get("X-Frame-Options") == "DENY"
 
     # Also verify API endpoints return 401 with headers
-    response = client.get("/api/overview")
+    response = await client.get("/api/overview")
     assert response.status_code == 401
     assert response.headers.get("X-Content-Type-Options") == "nosniff"
     assert response.headers.get("X-Frame-Options") == "DENY"
     """Test that security headers are present even on error pages"""
     # Force an error by accessing a non-existent route or causing an exception
     # Since we are testing headers, a 404 is a good candidate
-    response = client.get("/non-existent-route")
+    response = await client.get("/non-existent-route")
 
     assert response.status_code == 404
     assert response.headers.get("X-Content-Type-Options") == "nosniff"

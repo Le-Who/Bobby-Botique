@@ -56,9 +56,10 @@ async def test_get_conversation_messages_optimization():
 
     mock_db_query.side_effect = side_effect
 
-    # Patch the function in the module
+    # Patch the function in the canonical repos module
+    from app.repos import conversations as conv_module
     database = get_database()
-    with patch.object(database, "db_query", mock_db_query):
+    with patch.object(conv_module, "db_query", mock_db_query):
         # 1. Valid Conversation with Messages
         messages = await database.get_conversation_messages(123, 1)
         assert messages is not None

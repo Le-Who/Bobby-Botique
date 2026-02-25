@@ -6,6 +6,7 @@ Extracted from app/database.py to isolate observability queries.
 
 import logging
 import time
+import asyncpg
 from datetime import datetime, date
 from typing import Dict, Any, List, Optional
 
@@ -29,7 +30,7 @@ async def optimize_database_connections():
             await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
             await conn.execute("SET lock_timeout = '30s'")
         return True
-    except Exception:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False
 
 
@@ -55,7 +56,7 @@ async def get_supabase_metrics() -> Dict[str, Any]:
                 }
             )
         return pool_stats
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         return {
             "status": "error",
             "error": str(e),

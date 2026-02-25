@@ -9,15 +9,28 @@ This module provides:
 - Common validation, retry logic, and error handling
 """
 
+import asyncio
+import base64
 import logging
 import time
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple, List, Dict, Any, Set
 from dataclasses import dataclass, field
 
+from google import genai
+from google.genai import types
+from google.genai.errors import APIError
+from PIL import Image
+import httpx
 
+from app.config import settings
 from app.errors import user_friendly_error, is_error_message, is_key_related_error
+from app.metrics import metrics_collector
+from app.request_context import get_request_id
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
+from app.utils.api_logger import api_logger
+from app.utils.image_utils import save_image_as_bytes
+from app.utils.network import NetworkErrorHandler
 
 
 @dataclass
@@ -214,7 +227,7 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
 
 
 class GeminiProvider(BaseAIProvider):
-    """Google Gemini AI provider."""
+    """Google Gemini AI provider — self-contained execution logic."""
 
     provider_name = "gemini"
 
@@ -227,34 +240,240 @@ class GeminiProvider(BaseAIProvider):
         chat_id: Optional[int],
         timeout: float,
     ) -> AIResponse:
-        # Call the execution function directly — BaseAIProvider already handles retries
-        from app.services import _execute_gemini_request
+        start_time = time.time()
 
-        text, tokens = await _execute_gemini_request(
-            api_key=self.api_key,
-            history=history,
-            model_name=model_name,
-            system_instruction=system_instruction,
-            user_id=user_id,
-            chat_id=chat_id,
-        )
+        try:
+            await metrics_collector.record_api_call("gemini", model_name)
 
-        is_err = is_error_message(text)
+            # Compute metrics
+            try:
+                prompt_length = sum(
+                    len(str(part))
+                    for item in history
+                    for part in (item.get("parts", []) or [])
+                    if part is not None
+                )
+                has_images = any(
+                    isinstance(part, (bytes, bytearray, Image.Image))
+                    for item in history
+                    for part in (item.get("parts", []) or [])
+                    if part is not None
+                )
+            except Exception as e:
+                logging.warning("Metrics calc error: %s", e)
+                prompt_length = 0
+                has_images = False
 
+            start_time = api_logger.log_gemini_request(
+                model=model_name,
+                prompt_length=prompt_length,
+                has_images=has_images,
+                user_id=user_id,
+                chat_id=chat_id,
+            )
+
+            # Build client with SDK-level HTTP timeout
+            request_id = get_request_id()
+            client_kwargs = {"api_key": self.api_key}
+            http_opts = {"timeout": 90_000}  # 90s SDK deadline
+            if request_id:
+                http_opts["headers"] = {"X-Request-ID": request_id}
+            client_kwargs["http_options"] = types.HttpOptions(**http_opts)
+            client = genai.Client(**client_kwargs)
+
+            # Convert history → types.Content
+            contents = await self._build_contents(history)
+            if contents is None:
+                return self._error_response(
+                    "Failed to create valid content for Gemini API",
+                    model_name, start_time, user_id, chat_id,
+                )
+
+            config = types.GenerateContentConfig(
+                safety_settings=settings.SAFETY_SETTINGS
+            )
+            if system_instruction:
+                try:
+                    config.system_instruction = str(system_instruction)
+                except Exception as e:
+                    logging.warning("Failed to set system_instruction: %s", e)
+
+            # Native async call — properly supports CancelledError
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=model_name, contents=contents, config=config,
+                ),
+                timeout=100.0,
+            )
+
+            # Token counting
+            try:
+                token_resp = await asyncio.wait_for(
+                    client.aio.models.count_tokens(
+                        model=model_name, contents=contents
+                    ),
+                    timeout=10.0,
+                )
+                token_count = token_resp.total_tokens
+            except Exception as e:
+                logging.warning("Failed to count tokens: %s, using 0", e)
+                token_count = 0
+
+            # Validate response
+            if not response or not hasattr(response, "text"):
+                return self._error_response(
+                    "Gemini API returned invalid response object",
+                    model_name, start_time, user_id, chat_id,
+                )
+
+            response_text = response.text if response.text else ""
+            if not response_text:
+                return self._error_response(
+                    "Gemini API returned empty response text",
+                    model_name, start_time, user_id, chat_id,
+                )
+
+            # Log success
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time, model=model_name,
+                    response_length=len(response_text),
+                    token_count=token_count, success=True,
+                    user_id=user_id, chat_id=chat_id,
+                )
+
+            return AIResponse(
+                text=response_text, token_count=token_count,
+                success=True, provider=self.provider_name, model=model_name,
+            )
+
+        except asyncio.TimeoutError:
+            msg = f"Gemini API request timed out for model {model_name}"
+            logging.error(msg)
+            await metrics_collector.record_error("gemini_timeout", msg)
+            self._log_failure(start_time, model_name, msg, user_id, chat_id)
+            return AIResponse(
+                text="⏰ Превышено время ожидания ответа от API. Попробуйте позже.",
+                token_count=0, success=False, error_message=msg,
+                provider=self.provider_name, model=model_name,
+            )
+
+        except APIError as e:
+            self._log_failure(start_time, model_name, str(e), user_id, chat_id)
+            logging.error("Gemini API Error: %s", e)
+            err_lower = str(e).lower()
+
+            if "quota" in err_lower:
+                await metrics_collector.record_error("gemini_quota", str(e))
+                text = "🚫 Достигнут лимит запросов к API (Quota Exceeded)."
+            elif "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower:
+                await metrics_collector.record_error("gemini_overloaded", str(e))
+                raise  # Trigger retry in BaseAIProvider
+            elif "invalid" in err_lower or "malformed" in err_lower:
+                await metrics_collector.record_error("gemini_invalid_request", str(e))
+                text = "❌ Некорректный запрос к API. Проверьте параметры."
+            elif "rate limit" in err_lower:
+                await metrics_collector.record_error("gemini_rate_limit", str(e))
+                text = "⏱️ Превышен лимит запросов в секунду. Подождите немного."
+            else:
+                await metrics_collector.record_error("gemini_api_call", str(e))
+                text = f"Произошла ошибка вызова API: {e}"
+
+            return AIResponse(
+                text=text, token_count=0, success=False,
+                error_message=str(e), provider=self.provider_name, model=model_name,
+            )
+
+        except Exception as e:
+            self._log_failure(start_time, model_name, str(e), user_id, chat_id)
+            logging.error("Gemini API generic error: %s", e, exc_info=True)
+            await metrics_collector.record_error("gemini_api", str(e))
+            return AIResponse(
+                text=f"Произошла непредвиденная ошибка API: {e}",
+                token_count=0, success=False, error_message=str(e),
+                provider=self.provider_name, model=model_name,
+            )
+
+    # ── Gemini helpers ───────────────────────────────────────────────────
+
+    async def _build_contents(self, history: list) -> Optional[list]:
+        """Convert history dicts → list[types.Content]. Returns None on total failure."""
+        contents = []
+        try:
+            for item in history:
+                if not isinstance(item, dict):
+                    logging.warning("Skipping invalid history item (not dict): %s", type(item))
+                    continue
+                role = item.get("role", "user")
+                parts = item.get("parts", [])
+                if not isinstance(parts, list):
+                    parts = [parts] if parts is not None else []
+                elif parts is None:
+                    parts = []
+
+                processed = []
+                for part in parts:
+                    if isinstance(part, (bytes, bytearray, Image.Image)):
+                        img_bytes = await save_image_as_bytes(part)
+                        if img_bytes:
+                            try:
+                                processed.append(types.Part(
+                                    inline_data=types.Blob(
+                                        mime_type="image/jpeg", data=img_bytes
+                                    )
+                                ))
+                            except Exception as e:
+                                logging.warning("Failed to create image part: %s", e)
+                        else:
+                            logging.warning("Skipping image part due to processing error")
+                    else:
+                        try:
+                            processed.append(types.Part.from_text(text=str(part)))
+                        except Exception as e:
+                            logging.warning("Failed to process text part: %s", e)
+
+                if processed:
+                    try:
+                        contents.append(types.Content(role=role, parts=processed))
+                    except Exception as e:
+                        logging.warning("Failed to create Content object: %s", e)
+        except Exception as e:
+            logging.error("Error processing history: %s", e)
+            try:
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part.from_text("Error processing request")],
+                ))
+            except Exception:
+                return None
+
+        return contents if contents else None
+
+    def _error_response(
+        self, msg: str, model: str, start_time, user_id, chat_id,
+    ) -> AIResponse:
+        logging.error(msg)
+        self._log_failure(start_time, model, msg, user_id, chat_id)
         return AIResponse(
-            text=text,
-            token_count=tokens or 0,
-            success=not is_err and tokens is not None,
-            error_message=text if is_err else None,
-            provider=self.provider_name,
-            model=model_name,
+            text=f"❌ {msg}", token_count=0, success=False,
+            error_message=msg, provider=self.provider_name, model=model,
         )
 
+    def _log_failure(self, start_time, model, msg, user_id, chat_id):
+        if start_time is not None:
+            api_logger.log_gemini_response(
+                start_time=start_time, model=model, response_length=0,
+                success=False, error_message=msg,
+                user_id=user_id, chat_id=chat_id,
+            )
 
+
+# Module-level httpx client for OpenRouter
+_openrouter_http_client = NetworkErrorHandler.create_robust_http_client()
 
 
 class OpenRouterProvider(BaseAIProvider):
-    """OpenRouter AI provider."""
+    """OpenRouter AI provider — self-contained execution logic."""
 
     provider_name = "openrouter"
 
@@ -267,28 +486,200 @@ class OpenRouterProvider(BaseAIProvider):
         chat_id: Optional[int],
         timeout: float,
     ) -> AIResponse:
-        # Call the execution function directly — BaseAIProvider already handles retries
-        from app.services import _execute_openrouter_request
+        start_time = None
 
-        text, tokens = await _execute_openrouter_request(
-            api_key=self.api_key,
-            history=history,
-            model_name=model_name,
-            system_instruction=system_instruction,
-            user_id=user_id,
-            chat_id=chat_id,
-        )
+        try:
+            await metrics_collector.record_api_call("openrouter", model_name)
+            start_time = time.time()
 
-        is_err = is_error_message(text)
+            # Convert Gemini history → OpenAI format
+            messages = await self._build_messages(history, system_instruction)
+            if not messages:
+                msg = "Failed to create valid messages for OpenRouter API"
+                logging.error(msg)
+                await metrics_collector.record_error("openrouter_content_creation", msg)
+                return AIResponse(
+                    text=f"❌ {msg}", token_count=0, success=False,
+                    error_message=msg, provider=self.provider_name, model=model_name,
+                )
+
+            # Build request
+            url = "https://openrouter.ai/api/v1/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/your-repo",
+                "X-Title": "GeminiBot v2",
+            }
+            request_id = get_request_id()
+            if request_id:
+                headers["X-Request-ID"] = request_id
+
+            payload = {"model": model_name, "messages": messages}
+            logging.debug("OpenRouter: sending %d messages to %s", len(messages), model_name)
+
+            # httpx has a 30s read timeout; this is a safety net
+            try:
+                response = await asyncio.wait_for(
+                    _openrouter_http_client.post(url, json=payload, headers=headers),
+                    timeout=90.0,
+                )
+                response.raise_for_status()
+                response_data = response.json()
+            except httpx.HTTPStatusError as e:
+                return await self._handle_http_error(e, model_name, start_time, user_id, chat_id)
+            except asyncio.TimeoutError:
+                msg = f"OpenRouter API request timed out for model {model_name}"
+                logging.error(msg)
+                await metrics_collector.record_error("openrouter_timeout", msg)
+                self._log_failure(start_time, model_name, msg, user_id, chat_id)
+                return AIResponse(
+                    text="⏰ Превышено время ожидания ответа от API. Попробуйте позже.",
+                    token_count=0, success=False, error_message=msg,
+                    provider=self.provider_name, model=model_name,
+                )
+            except Exception as e:
+                msg = f"OpenRouter API error: {e}"
+                logging.error(msg)
+                await metrics_collector.record_error("openrouter_api", msg)
+                self._log_failure(start_time, model_name, msg, user_id, chat_id)
+                return AIResponse(
+                    text=f"❌ Ошибка API: {msg}", token_count=0, success=False,
+                    error_message=msg, provider=self.provider_name, model=model_name,
+                )
+
+            # Validate response structure
+            if not response_data or "choices" not in response_data or not response_data["choices"]:
+                msg = "OpenRouter API returned invalid response"
+                logging.error(msg)
+                await metrics_collector.record_error("openrouter_invalid_response", msg)
+                self._log_failure(start_time, model_name, msg, user_id, chat_id)
+                return AIResponse(
+                    text="❌ API вернул некорректный ответ. Попробуйте еще раз.",
+                    token_count=0, success=False, error_message=msg,
+                    provider=self.provider_name, model=model_name,
+                )
+
+            response_text = response_data["choices"][0].get("message", {}).get("content", "")
+            if not response_text:
+                msg = "OpenRouter API returned empty response"
+                logging.error(msg)
+                await metrics_collector.record_error("openrouter_empty_response", msg)
+                self._log_failure(start_time, model_name, msg, user_id, chat_id)
+                return AIResponse(
+                    text="❌ API вернул пустой ответ. Попробуйте еще раз.",
+                    token_count=0, success=False, error_message=msg,
+                    provider=self.provider_name, model=model_name,
+                )
+
+            token_count = response_data.get("usage", {}).get("total_tokens", 0)
+
+            # Log success
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time, model=model_name,
+                    response_length=len(response_text),
+                    token_count=token_count, success=True,
+                    user_id=user_id, chat_id=chat_id,
+                )
+
+            return AIResponse(
+                text=response_text, token_count=token_count,
+                success=True, provider=self.provider_name, model=model_name,
+            )
+
+        except Exception as e:
+            logging.error("OpenRouter API generic error: %s", e, exc_info=True)
+            await metrics_collector.record_error("openrouter_api", str(e))
+            self._log_failure(start_time, model_name, str(e), user_id, chat_id)
+            return AIResponse(
+                text=f"❌ Произошла непредвиденная ошибка API: {e}",
+                token_count=0, success=False, error_message=str(e),
+                provider=self.provider_name, model=model_name,
+            )
+
+    # ── OpenRouter helpers ───────────────────────────────────────────────
+
+    async def _build_messages(
+        self, history: list, system_instruction: Optional[str]
+    ) -> list:
+        """Convert Gemini-format history → OpenAI-format messages."""
+        messages = []
+        if system_instruction:
+            content = str(system_instruction).strip()
+            if content:
+                messages.append({"role": "system", "content": content})
+
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role", "user")
+            if role == "model":
+                role = "assistant"
+
+            parts = item.get("parts", [])
+            if not isinstance(parts, list):
+                parts = [parts] if parts is not None else []
+            elif parts is None:
+                parts = []
+
+            content_parts = []
+            for part in parts:
+                if isinstance(part, (bytes, bytearray, Image.Image)):
+                    img_bytes = await save_image_as_bytes(part)
+                    if img_bytes:
+                        img_b64 = await asyncio.to_thread(
+                            lambda b=img_bytes: base64.b64encode(b).decode("utf-8")
+                        )
+                        content_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                        })
+                else:
+                    text = str(part)
+                    if text.strip():
+                        content_parts.append({"type": "text", "text": text})
+
+            if content_parts:
+                if len(content_parts) == 1 and content_parts[0].get("type") == "text":
+                    messages.append({"role": role, "content": content_parts[0]["text"]})
+                else:
+                    messages.append({"role": role, "content": content_parts})
+
+        return messages
+
+    async def _handle_http_error(
+        self, e: httpx.HTTPStatusError, model: str, start_time, user_id, chat_id,
+    ) -> AIResponse:
+        msg = f"OpenRouter API HTTP error: {e.response.status_code} - {e.response.text}"
+        logging.error(msg)
+        await metrics_collector.record_error("openrouter_http", msg)
+        self._log_failure(start_time, model, msg, user_id, chat_id)
+
+        status = e.response.status_code
+        if status == 429:
+            text = "⏱️ Превышен лимит запросов. Подождите немного."
+        elif status == 401:
+            text = "🔑 Неверный API ключ. Проверьте настройки."
+        elif status == 402:
+            text = "💳 Недостаточно средств на счету OpenRouter."
+        elif status == 503:
+            text = "🔄 Сервер OpenRouter перегружен. Попробуйте позже."
+        else:
+            text = f"❌ Ошибка API: {status}"
 
         return AIResponse(
-            text=text,
-            token_count=tokens or 0,
-            success=not is_err and tokens is not None,
-            error_message=text if is_err else None,
-            provider=self.provider_name,
-            model=model_name,
+            text=text, token_count=0, success=False,
+            error_message=msg, provider=self.provider_name, model=model,
         )
+
+    def _log_failure(self, start_time, model, msg, user_id, chat_id):
+        if start_time is not None:
+            api_logger.log_gemini_response(
+                start_time=start_time, model=model, response_length=0,
+                success=False, error_message=msg,
+                user_id=user_id, chat_id=chat_id,
+            )
 
 
 

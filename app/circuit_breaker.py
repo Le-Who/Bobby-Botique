@@ -9,7 +9,7 @@ import logging
 from typing import Callable, Any, Optional, Dict
 from enum import Enum
 from dataclasses import dataclass
-from app.exceptions import CircuitBreakerOpenError
+from app.errors import CircuitBreakerOpenError
 
 
 class CircuitState(Enum):

@@ -62,7 +62,7 @@ async def send_long_message(
     # Validation состояния deep dive (legacy logic preserved)
     if is_deep_dive:
         try:
-            from app.database import get_user_chat
+            from app.repos.chats import get_user_chat
 
             user_id = message.from_user.id if message.from_user else None
             if user_id:

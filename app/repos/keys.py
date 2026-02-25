@@ -10,6 +10,7 @@ Extracted from app/database.py to isolate key-management domain logic.
 import hashlib
 import logging
 import time
+import asyncpg
 from datetime import datetime, date
 from typing import Dict, Any, Optional
 
@@ -148,7 +149,7 @@ async def get_model_daily_limit(model_name: str) -> Optional[int]:
             if hasattr(db_manager, "_model_config_cache"):
                 db_manager._model_config_cache[model_name] = limit
         return limit
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to fetch limit for %s: %s", model_name, e)
         return None
 
@@ -338,7 +339,7 @@ async def force_update_tavily_keys():
         async with db_manager._cache_lock:
             db_manager._active_keys_cache.clear()
         return True
-    except Exception:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False
 
 

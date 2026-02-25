@@ -174,11 +174,22 @@ class TestProviders:
         """GeminiProvider should return AIResponse on success."""
         wrapper = GeminiProvider("test-key")
 
-        # Patch at the source module where the function is defined
-        with patch(
-            "app.services._execute_gemini_request", new_callable=AsyncMock
-        ) as mock_gemini:
-            mock_gemini.return_value = ("Hello!", 15)
+        mock_response = MagicMock()
+        mock_response.text = "Hello!"
+        mock_token = MagicMock()
+        mock_token.total_tokens = 15
+
+        with (
+            patch("app.ai_provider.genai.Client") as MockClient,
+            patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
+            patch("app.ai_provider.api_logger", new_callable=MagicMock),
+            patch("app.ai_provider.settings") as mock_settings,
+        ):
+            mock_settings.SAFETY_SETTINGS = []
+            mock_aio = MagicMock()
+            mock_aio.generate_content = AsyncMock(return_value=mock_response)
+            mock_aio.count_tokens = AsyncMock(return_value=mock_token)
+            MockClient.return_value.aio.models = mock_aio
 
             response = await wrapper._execute_request(
                 history=[{"role": "user", "parts": ["hi"]}],
@@ -199,10 +210,19 @@ class TestProviders:
         """GeminiProvider should detect error responses."""
         wrapper = GeminiProvider("test-key")
 
-        with patch(
-            "app.services._execute_gemini_request", new_callable=AsyncMock
-        ) as mock_gemini:
-            mock_gemini.return_value = ("❌ Error occurred", None)
+        mock_response = MagicMock()
+        mock_response.text = None  # Empty response triggers error
+
+        with (
+            patch("app.ai_provider.genai.Client") as MockClient,
+            patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
+            patch("app.ai_provider.api_logger", new_callable=MagicMock),
+            patch("app.ai_provider.settings") as mock_settings,
+        ):
+            mock_settings.SAFETY_SETTINGS = []
+            mock_aio = MagicMock()
+            mock_aio.generate_content = AsyncMock(return_value=mock_response)
+            MockClient.return_value.aio.models = mock_aio
 
             response = await wrapper._execute_request(
                 history=[{"role": "user", "parts": ["hi"]}],
@@ -221,10 +241,19 @@ class TestProviders:
         """OpenRouterProvider should return AIResponse on success."""
         wrapper = OpenRouterProvider("test-key")
 
-        with patch(
-            "app.services._execute_openrouter_request", new_callable=AsyncMock
-        ) as mock_openrouter:
-            mock_openrouter.return_value = ("Greetings!", 20)
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "choices": [{"message": {"content": "Greetings!"}}],
+            "usage": {"total_tokens": 20},
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        with (
+            patch("app.ai_provider._openrouter_http_client") as mock_client,
+            patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
+            patch("app.ai_provider.api_logger", new_callable=MagicMock),
+        ):
+            mock_client.post = AsyncMock(return_value=mock_resp)
 
             response = await wrapper._execute_request(
                 history=[{"role": "user", "parts": ["hello"]}],

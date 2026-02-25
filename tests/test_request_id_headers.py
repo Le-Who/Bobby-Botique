@@ -2,7 +2,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.request_context import clear_request_id, set_request_id
-from app.services import _execute_openrouter_request, _tavily_api_call
+from app.search_services import _tavily_api_call
+from app.ai_provider import OpenRouterProvider
 
 
 @pytest.mark.asyncio
@@ -14,7 +15,7 @@ async def test_tavily_api_call_adds_request_id_header():
     mock_response.json.return_value = {"ok": True}
 
     with patch(
-        "app.services.http_client.post", new=AsyncMock(return_value=mock_response)
+        "app.search_services.http_client.post", new=AsyncMock(return_value=mock_response)
     ) as mock_post:
         result = await _tavily_api_call({"query": "hello"})
 
@@ -29,6 +30,8 @@ async def test_tavily_api_call_adds_request_id_header():
 async def test_openrouter_request_adds_request_id_header():
     set_request_id("req-openrouter-456")
 
+    provider = OpenRouterProvider("test-key")
+
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {
@@ -38,20 +41,23 @@ async def test_openrouter_request_adds_request_id_header():
 
     with (
         patch(
-            "app.services.http_client.post", new=AsyncMock(return_value=mock_response)
+            "app.ai_provider._openrouter_http_client.post", new=AsyncMock(return_value=mock_response)
         ) as mock_post,
-        patch("app.services.metrics_collector.record_api_call", new=AsyncMock()),
-        patch("app.services.metrics_collector.record_error", new=AsyncMock()),
-        patch("app.services.api_logger.log_gemini_response", new=MagicMock()),
+        patch("app.ai_provider.metrics_collector.record_api_call", new=AsyncMock()),
+        patch("app.ai_provider.metrics_collector.record_error", new=AsyncMock()),
+        patch("app.ai_provider.api_logger.log_gemini_response", new=MagicMock()),
     ):
-        text, tokens = await _execute_openrouter_request(
-            api_key="test-key",
+        resp = await provider._execute_request(
             history=[{"role": "user", "parts": ["hi"]}],
             model_name="openai/gpt-4o-mini",
+            system_instruction=None,
+            user_id=None,
+            chat_id=None,
+            timeout=90.0,
         )
 
-    assert text == "ok"
-    assert tokens == 7
+    assert resp.text == "ok"
+    assert resp.token_count == 7
     assert mock_post.await_count == 1
     assert (
         mock_post.await_args.kwargs["headers"]["X-Request-ID"] == "req-openrouter-456"

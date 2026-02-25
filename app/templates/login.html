@@ -166,6 +166,7 @@
   </head>
   <body>
     <form class="login-card" method="POST" action="{{ url_for('login_page') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <div class="logo">
         <h1>GEMAIBOT v2</h1>
         <div class="sub">Operations Dashboard</div>

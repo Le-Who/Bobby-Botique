@@ -11,7 +11,7 @@ from redis import Redis
 from redis.exceptions import ConnectionError, TimeoutError, RedisError
 
 from app.metrics import metrics_collector
-from app.exceptions import RedisConnectionError
+from app.errors import RedisConnectionError
 
 # Initialize Redis client with Upstash.com optimized configuration
 redis_url = os.getenv("REDIS_URL")

@@ -6,18 +6,21 @@ Provides:
 - Comprehensive metrics dashboard
 - JSON API endpoints for operational data
 - Health check (unauthenticated) for Northflank
+
+Uses Quart (ASGI-native Flask-compatible framework) served directly by
+Hypercorn — no sync↔async bridge needed.
 """
 
 import os
 import hmac
-import asyncio
 import hashlib
 import datetime
 import logging
-import time
+import asyncio
+import secrets
 from functools import wraps
-from flask import (
-    Flask,
+from quart import (
+    Quart,
     render_template,
     request,
     redirect,
@@ -29,13 +32,20 @@ from flask import (
 from app import database
 from app.config import settings
 
-# --- FLASK APP SETUP ---
-flask_app = Flask(__name__)
+# --- QUART APP SETUP ---
+flask_app = Quart(__name__)  # kept as `flask_app` for backward compat with bot.py
 
-# Derive a secret key for Flask sessions from ADMIN_SECRET
-_admin_secret = os.environ.get("ADMIN_SECRET", "")
-if not _admin_secret and settings:
-    _admin_secret = getattr(settings, "ADMIN_SECRET", "") or ""
+
+# Derive a secret key for sessions from ADMIN_SECRET
+def _get_admin_secret():
+    """Returns the configured admin secret."""
+    secret = os.environ.get("ADMIN_SECRET")
+    if not secret and settings:
+        secret = getattr(settings, "ADMIN_SECRET", None)
+    return secret
+
+
+_admin_secret = _get_admin_secret() or ""
 flask_app.secret_key = hashlib.sha256(
     f"gemaibotv2-session-{_admin_secret}".encode()
 ).hexdigest()
@@ -44,6 +54,7 @@ flask_app.secret_key = hashlib.sha256(
 flask_app.config["SESSION_COOKIE_NAME"] = "gembot_session"
 flask_app.config["SESSION_COOKIE_HTTPONLY"] = True
 flask_app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+flask_app.config["SESSION_COOKIE_SECURE"] = bool(os.environ.get("DATABASE_URL"))  # True in production
 flask_app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=7)
 
 
@@ -53,7 +64,7 @@ flask_app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=7)
 
 
 @flask_app.after_request
-def add_security_headers(response):
+async def add_security_headers(response):
     """Add security headers to all responses."""
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -77,13 +88,7 @@ def add_security_headers(response):
 # AUTHENTICATION
 # =============================================================================
 
-
-def _get_admin_secret():
-    """Returns the configured admin secret."""
-    secret = os.environ.get("ADMIN_SECRET")
-    if not secret and settings:
-        secret = getattr(settings, "ADMIN_SECRET", None)
-    return secret
+# _get_admin_secret() is defined above (before session key derivation).
 
 
 def _is_authenticated():
@@ -103,40 +108,51 @@ def require_auth(f):
     """Decorator that requires authentication via session cookie or header token."""
 
     @wraps(f)
-    def decorated_function(*args, **kwargs):
+    async def decorated_function(*args, **kwargs):
         if not _is_authenticated():
             # For API endpoints, return 401 JSON
             if request.path.startswith("/api/"):
                 return jsonify({"error": "Unauthorized"}), 401
             # For pages, redirect to login
             return redirect(url_for("login_page"))
-        return f(*args, **kwargs)
+        return await f(*args, **kwargs)
 
     return decorated_function
 
 
 @flask_app.route("/login", methods=["GET", "POST"])
-def login_page():
-    """Login page with password form."""
+async def login_page():
+    """Login page with password form and CSRF protection."""
     error = None
     if request.method == "POST":
-        password = request.form.get("password", "")
+        form = await request.form
+        password = form.get("password", "")
+        csrf_token = form.get("csrf_token", "")
         expected = _get_admin_secret()
 
-        if not expected:
+        # Validate CSRF token
+        expected_csrf = session.get("csrf_token", "")
+        if not csrf_token or not expected_csrf or not hmac.compare_digest(csrf_token, expected_csrf):
+            error = "Invalid request. Please try again."
+        elif not expected:
             error = "Server misconfiguration: ADMIN_SECRET not set."
         elif hmac.compare_digest(password, expected):
+            session.pop("csrf_token", None)  # Consume the token
             session["authenticated"] = True
             session.permanent = True
             return redirect(url_for("dashboard"))
         else:
             error = "Invalid password."
 
-    return render_template("login.html", error=error)
+    # Generate fresh CSRF token for the form
+    csrf_token = secrets.token_hex(32)
+    session["csrf_token"] = csrf_token
+
+    return await render_template("login.html", error=error, csrf_token=csrf_token)
 
 
 @flask_app.route("/logout")
-def logout():
+async def logout():
     """Clear session and redirect to login."""
     session.clear()
     return redirect(url_for("login_page"))
@@ -149,10 +165,10 @@ def logout():
 
 @flask_app.route("/")
 @require_auth
-def dashboard():
+async def dashboard():
     """Main Dashboard — serves the HTML shell. Data loaded via JS fetch."""
     try:
-        return render_template("dashboard.html")
+        return await render_template("dashboard.html")
     except Exception as e:
         logging.error("Dashboard error: %s", e, exc_info=True)
         return "Internal Server Error", 500
@@ -164,7 +180,7 @@ def dashboard():
 
 
 @flask_app.route("/health")
-def health_check_endpoint():
+async def health_check_endpoint():
     """Health check endpoint for Northflank monitoring."""
     try:
         db_ok = database.is_database_connected()
@@ -199,55 +215,17 @@ def health_check_endpoint():
 
     except Exception as e:
         logging.error("Health check error: %s", e, exc_info=True)
-        return jsonify({"status": "unhealthy", "error": str(type(e).__name__)}), 500
+        return jsonify({"status": "unhealthy", "error": "internal_error"}), 500
 
 
 # =============================================================================
-# API ENDPOINTS — JSON data for dashboard
+# API ENDPOINTS — JSON data for dashboard (native async, no bridge needed)
 # =============================================================================
-
-
-# Reference to the main asyncio event loop (set during startup in bot.py).
-# Needed because Flask routes run in Hypercorn's worker threads which have
-# no event loop; we schedule async work back onto the main loop.
-_main_loop: asyncio.AbstractEventLoop | None = None
-
-
-def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
-    """Store the main event loop so _run_async can schedule onto it."""
-    global _main_loop
-    _main_loop = loop
-
-
-def _run_async(coro):
-    """Run an async coroutine from sync Flask context.
-
-    Hypercorn serves Flask WSGI handlers inside worker threads that do NOT
-    have their own event loop.  The asyncpg connection pool (and its internal
-    Futures) is bound to the main event loop, so we must schedule the
-    coroutine there — never create a second loop.
-    """
-    # Fast path: if the main loop reference was captured at startup, use it.
-    if _main_loop is not None and _main_loop.is_running():
-        future = asyncio.run_coroutine_threadsafe(coro, _main_loop)
-        return future.result(timeout=15)
-
-    # Fallback: no Hypercorn (e.g. unit tests, local `flask run`).
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        return future.result(timeout=15)
-    else:
-        return asyncio.run(coro)
 
 
 @flask_app.route("/api/overview")
 @require_auth
-def api_overview():
+async def api_overview():
     """High-level system overview: system health, bot uptime, key counts."""
     try:
         import psutil
@@ -276,7 +254,7 @@ def api_overview():
     try:
         from app.metrics import metrics_collector
 
-        metrics = _run_async(metrics_collector.get_metrics_summary())
+        metrics = await metrics_collector.get_metrics_summary()
     except Exception:
         metrics = {}
 
@@ -307,22 +285,25 @@ def api_overview():
 
 @flask_app.route("/api/keys")
 @require_auth
-def api_keys():
+async def api_keys():
     """API key usage statistics for all models."""
     try:
-        key_stats = _run_async(database.get_gemini_key_usage_stats())
+        key_stats = await database.get_gemini_key_usage_stats()
 
-        # Get active keys per model
+        # Get active keys per model (batched to avoid N+1)
         active_keys = {}
         models = settings.AVAILABLE_MODELS or []
 
-        for model in models:
-            try:
-                info = _run_async(database.get_active_key_info(model))
-                if info:
-                    active_keys[model] = info
-            except Exception:
-                pass
+        if models:
+            results = await asyncio.gather(
+                *[database.get_active_key_info(m) for m in models],
+                return_exceptions=True,
+            )
+            for model, result in zip(models, results):
+                if isinstance(result, Exception):
+                    continue
+                if result:
+                    active_keys[model] = result
 
         return jsonify(
             {
@@ -339,12 +320,12 @@ def api_keys():
 
 @flask_app.route("/api/errors")
 @require_auth
-def api_errors():
+async def api_errors():
     """Recent errors from metrics collector."""
     try:
         from app.metrics import metrics_collector
 
-        summary = _run_async(metrics_collector.get_metrics_summary())
+        summary = await metrics_collector.get_metrics_summary()
         return jsonify(
             {
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
@@ -362,13 +343,13 @@ def api_errors():
 
 @flask_app.route("/api/cache")
 @require_auth
-def api_cache():
+async def api_cache():
     """Cache performance statistics."""
     try:
         from app.cache import get_cache_stats, get_multi_layer_cache_stats
 
-        redis_stats = _run_async(get_cache_stats())
-        ml_stats = _run_async(get_multi_layer_cache_stats())
+        redis_stats = await get_cache_stats()
+        ml_stats = await get_multi_layer_cache_stats()
 
         return jsonify(
             {
@@ -384,12 +365,12 @@ def api_cache():
 
 @flask_app.route("/api/queue")
 @require_auth
-def api_queue():
+async def api_queue():
     """Task queue statistics."""
     try:
         from app.queue import task_queue
 
-        stats = _run_async(task_queue.get_queue_stats())
+        stats = await task_queue.get_queue_stats()
         return jsonify(
             {
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
@@ -403,10 +384,10 @@ def api_queue():
 
 @flask_app.route("/api/database")
 @require_auth
-def api_database():
+async def api_database():
     """Database connection pool and health stats."""
     try:
-        db_metrics = _run_async(database.get_supabase_metrics())
+        db_metrics = await database.get_supabase_metrics()
         return jsonify(
             {
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
@@ -420,7 +401,7 @@ def api_database():
 
 @flask_app.route("/api/circuit-breakers")
 @require_auth
-def api_circuit_breakers():
+async def api_circuit_breakers():
     """Circuit breaker states."""
     try:
         from app.circuit_breaker import _circuit_breakers
@@ -442,7 +423,7 @@ def api_circuit_breakers():
 
 @flask_app.route("/api/memory")
 @require_auth
-def api_memory():
+async def api_memory():
     """Memory manager statistics."""
     try:
         from app.memory_manager import get_memory_stats

@@ -7,6 +7,7 @@ from database infrastructure.
 
 import json
 import logging
+import asyncpg
 from typing import Dict, Any, Optional
 
 from app.config import settings
@@ -88,7 +89,7 @@ async def load_user_state(user_id: int) -> Optional[Dict[str, Any]]:
                 "last_sent_message_text": row.get("last_sent_message_text"),
             }
         return None
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to load user state for %s: %s", user_id, e)
         return None
 
@@ -132,7 +133,7 @@ async def save_user_state(
                 last_sent_message_text,
             ),
         )
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to save user state for %s: %s", user_id, e)
 
 
@@ -143,5 +144,5 @@ async def save_feedback(user_id: int, message_id: int, rating: str) -> None:
             "INSERT INTO feedback (user_id, message_id, rating) VALUES ($1, $2, $3)",
             (user_id, message_id, rating),
         )
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to save feedback for user %s: %s", user_id, e)

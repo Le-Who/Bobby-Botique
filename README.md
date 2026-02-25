@@ -227,7 +227,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (322 tests)
+### Suite Structure (318 tests)
 
 | Category           | Files                                                                                       | What They Cover                                     |
 | :----------------- | :------------------------------------------------------------------------------------------ | :-------------------------------------------------- |

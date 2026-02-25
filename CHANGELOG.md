@@ -41,7 +41,7 @@ Format is optimized for agent-parseable context.
 - **SDK-level deadline**: Added `HttpOptions(timeout=90_000)` (90s) to the `genai.Client`, ensuring the HTTP library itself enforces a hard deadline even if the asyncio layer fails.
 - **Python-side deadline**: Reduced from 120s → 100s (10s buffer over SDK timeout) to prevent silent hangs.
 
-### 🧪 Tests (+31 → 322 total)
+### 🧪 Tests (+31 → 318 total)
 
 - `test_daily_key_manager.py`: 12 DailyKeyManager + 5 MonthlyKeyManager tests.
 - `test_unified_call_path.py`: 4 tests (Gemini routing, OpenRouter routing, error response, no-keys guard).
@@ -58,6 +58,8 @@ Format is optimized for agent-parseable context.
 - **asyncio.to_thread audit** — all remaining usages verified safe (CPU-bound encoding, Redis ops).
 - **\_save_image_as_bytes** — reviewed, already has 5s ProcessPoolExecutor timeout. No changes needed.
 - **Russian → English comments** — automated translation of 659 comment/docstring lines across 26 files (dictionary-based, no LLM). User-facing strings preserved.
+- **Provider class migration** — moved `_execute_gemini_request` (312 lines) and `_execute_openrouter_request` (265 lines) from `services.py` into self-contained `GeminiProvider` and `OpenRouterProvider` classes. New `app/utils/image_utils.py` for shared image processing.
+- **services.py → search_services.py** — renamed to reflect actual content (pure Tavily search). Backward-compat shim at `services.py`. Removed all deprecated wrappers (`get_gemini_response`, `get_openrouter_response`, `_with_retry`, `_validate_api_inputs`, `_caller_info`) and execute stubs. Dead `from app import services` import removed from `ai_document.py`. Final size: 160 lines (was 951).
 
 ---
 

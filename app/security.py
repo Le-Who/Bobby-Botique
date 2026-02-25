@@ -12,7 +12,7 @@ import ipaddress
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 from collections import defaultdict
-from app.exceptions import InputSanitizationError
+from app.errors import InputSanitizationError
 
 
 class InputSanitizer:

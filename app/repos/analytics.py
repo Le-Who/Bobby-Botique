@@ -10,6 +10,7 @@ Provides:
 """
 
 import logging
+import asyncpg
 from datetime import date, timedelta
 from typing import Optional, Dict, Any, List
 
@@ -66,7 +67,7 @@ async def record_daily_activity(user_id: int) -> Dict[str, int]:
             }
         return {"current_streak": 0, "longest_streak": 0}
 
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to record daily activity for user %s: %s", user_id, e)
         return {"current_streak": 0, "longest_streak": 0}
 
@@ -85,7 +86,7 @@ async def get_user_streak(user_id: int) -> Dict[str, int]:
                 "longest_streak": result[0]["longest_streak"] or 0,
             }
         return {"current_streak": 0, "longest_streak": 0}
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to get streak for user %s: %s", user_id, e)
         return {"current_streak": 0, "longest_streak": 0}
 
@@ -103,7 +104,7 @@ async def get_dau_count(target_date: Optional[date] = None) -> int:
             (d,),
         )
         return result[0]["cnt"] if result else 0
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to get DAU for %s: %s", d, e)
         return 0
 
@@ -167,7 +168,7 @@ async def get_retention_stats() -> Dict[str, Any]:
             "d7": safe_rate(row["retained_d7"], row["total_d7"]),
             "d30": safe_rate(row["retained_d30"], row["total_d30"]),
         }
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to get retention stats: %s", e)
         return {"dau": 0, "d1": 0.0, "d7": 0.0, "d30": 0.0}
 
@@ -210,7 +211,7 @@ async def get_engagement_summary(user_id: int) -> Dict[str, Any]:
             "current_streak": 0,
             "longest_streak": 0,
         }
-    except Exception as e:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to get engagement summary for user %s: %s", user_id, e)
         return {
             "total_requests_7d": 0,

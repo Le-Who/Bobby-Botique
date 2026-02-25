@@ -2,6 +2,7 @@
 Unified error handling for GemAI Bot v2.
 
 This module provides:
+- Typed exception hierarchy (base + domain-specific)
 - User-friendly error message constants
 - Error classification functions (retryable, key-related)
 - APIError exception class with auto-detection
@@ -11,12 +12,261 @@ This module provides:
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional, Callable, Any, Union
+from typing import Optional, Callable, Any, Union, Dict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 
 # =============================================================================
-# USER-FRIENDLY ERROR MESSAGES (единая точка кастомfromации)
+# TYPED EXCEPTION HIERARCHY
+# =============================================================================
+
+
+class GemaibotBaseException(Exception):
+    """Base exception class for all bot-related errors."""
+
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(message)
+        self.message = message
+        self.details = details or {}
+
+    def __str__(self) -> str:
+        if self.details:
+            return f"{self.message} | Details: {self.details}"
+        return self.message
+
+
+# --- Database Exceptions ---
+
+
+class DatabaseError(GemaibotBaseException):
+    """Base class for database-related errors."""
+    pass
+
+
+class DatabaseConnectionError(DatabaseError):
+    """Raised when database connection fails."""
+    pass
+
+
+class DatabaseQueryError(DatabaseError):
+    """Raised when database query execution fails."""
+    pass
+
+
+class DatabaseRateLimitError(DatabaseError):
+    """Raised when database rate limit is exceeded."""
+    pass
+
+
+class DatabasePoolError(DatabaseError):
+    """Raised when database connection pool issues occur."""
+    pass
+
+
+# --- API Exceptions ---
+
+
+class GemaibotAPIError(GemaibotBaseException):
+    """Base class for API-related errors. Renamed to avoid collision with google.genai.errors.APIError."""
+    pass
+
+
+class GeminiAPIError(GemaibotAPIError):
+    """Raised when Gemini API calls fail."""
+    pass
+
+
+class TavilyAPIError(GemaibotAPIError):
+    """Raised when Tavily API calls fail."""
+    pass
+
+
+class TelegramAPIError(GemaibotAPIError):
+    """Raised when Telegram Bot API calls fail."""
+    pass
+
+
+class APIQuotaExceededError(GemaibotAPIError):
+    """Raised when API quota is exceeded."""
+    pass
+
+
+class APIInvalidResponseError(GemaibotAPIError):
+    """Raised when API returns invalid response."""
+    pass
+
+
+# --- Network Exceptions ---
+
+
+class NetworkError(GemaibotBaseException):
+    """Base class for network-related errors."""
+    pass
+
+
+class ConnectionTimeoutError(NetworkError):
+    """Raised when connection times out."""
+    pass
+
+
+class ServiceConnectionRefusedError(NetworkError):
+    """Raised when connection is refused. Renamed to avoid shadowing built-in."""
+    pass
+
+
+class CircuitBreakerOpenError(NetworkError):
+    """Raised when circuit breaker is open."""
+    pass
+
+
+# --- Validation Exceptions ---
+
+
+class ValidationError(GemaibotBaseException):
+    """Base class for validation errors."""
+    pass
+
+
+class InputValidationError(ValidationError):
+    """Raised when input validation fails."""
+    pass
+
+
+class ConfigurationError(ValidationError):
+    """Raised when configuration is invalid."""
+    pass
+
+
+# --- Business Logic Exceptions ---
+
+
+class BusinessLogicError(GemaibotBaseException):
+    """Base class for business logic errors."""
+    pass
+
+
+class UserLimitExceededError(BusinessLogicError):
+    """Raised when user limits are exceeded."""
+    pass
+
+
+class DocumentProcessingError(BusinessLogicError):
+    """Raised when document processing fails."""
+    pass
+
+
+class ChatStateError(BusinessLogicError):
+    """Raised when chat state operations fail."""
+    pass
+
+
+# --- Cache Exceptions ---
+
+
+class CacheError(GemaibotBaseException):
+    """Base class for cache-related errors."""
+    pass
+
+
+class RedisConnectionError(CacheError):
+    """Raised when Redis connection fails."""
+    pass
+
+
+class CacheKeyError(CacheError):
+    """Raised when cache key operations fail."""
+    pass
+
+
+# --- Security Exceptions ---
+
+
+class SecurityError(GemaibotBaseException):
+    """Base class for security-related errors."""
+    pass
+
+
+class InputSanitizationError(SecurityError):
+    """Raised when input sanitization fails."""
+    pass
+
+
+class AuthenticationError(SecurityError):
+    """Raised when authentication fails."""
+    pass
+
+
+# =============================================================================
+# EXCEPTION CONVERSION UTILITY
+# =============================================================================
+
+
+def convert_to_typed_exception(
+    exception: Exception, context: str = ""
+) -> GemaibotBaseException:
+    """Converts generic exceptions to typed exceptions based on context."""
+
+    error_message = str(exception)
+    error_type = type(exception).__name__
+
+    # Database exceptions
+    if "asyncpg" in error_type or "postgres" in error_message.lower():
+        if "connection" in error_message.lower() or "timeout" in error_message.lower():
+            return DatabaseConnectionError(
+                f"Database connection failed: {error_message}",
+                {"original_error": error_type, "context": context},
+            )
+        elif "rate limit" in error_message.lower() or "quota" in error_message.lower():
+            return DatabaseRateLimitError(
+                f"Database rate limit exceeded: {error_message}",
+                {"original_error": error_type, "context": context},
+            )
+        else:
+            return DatabaseQueryError(
+                f"Database query failed: {error_message}",
+                {"original_error": error_type, "context": context},
+            )
+
+    # Network exceptions
+    elif "httpx" in error_type or "connection" in error_message.lower():
+        if "timeout" in error_message.lower():
+            return ConnectionTimeoutError(
+                f"Connection timeout: {error_message}",
+                {"original_error": error_type, "context": context},
+            )
+        elif "refused" in error_message.lower():
+            return ServiceConnectionRefusedError(
+                f"Connection refused: {error_message}",
+                {"original_error": error_type, "context": context},
+            )
+        else:
+            return NetworkError(
+                f"Network error: {error_message}",
+                {"original_error": error_type, "context": context},
+            )
+
+    # API exceptions
+    elif "api" in error_message.lower() or "gemini" in error_message.lower():
+        if "quota" in error_message.lower() or "limit" in error_message.lower():
+            return APIQuotaExceededError(
+                f"API quota exceeded: {error_message}",
+                {"original_error": error_type, "context": context},
+            )
+        else:
+            return GemaibotAPIError(
+                f"API error: {error_message}",
+                {"original_error": error_type, "context": context},
+            )
+
+    # Default fallback
+    return GemaibotBaseException(
+        f"Unexpected error: {error_message}",
+        {"original_error": error_type, "context": context},
+    )
+
+
+# =============================================================================
+# USER-FRIENDLY ERROR MESSAGES (единая точка кастомизации)
 # =============================================================================
 GENERIC_ERROR = "❌ Произошла ошибка. Попробуйте ещё раз."
 OVERLOADED_ERROR = "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд."
@@ -24,11 +274,11 @@ QUOTA_ERROR = "🚫 Достигнут лимит запросов к API."
 PROCESSING_ERROR = "❌ Ошибка обработки запроса."
 DOCUMENT_ERROR = "❌ Ошибка обработки содержимого документа."
 TIMEOUT_ERROR = "⏰ Превышено время ожидания. Попробуйте ещё раз."
-NETWORK_ERROR = "🌐 Ошибка сети. Проверьте подключение."
+NETWORK_ERROR_MSG = "🌐 Ошибка сети. Проверьте подключение."
 
 
 # =============================================================================
-# ERROR CLASSIFICATION FUNCTIONS (must be defined before APIError class)
+# ERROR CLASSIFICATION FUNCTIONS
 # =============================================================================
 
 
@@ -81,26 +331,15 @@ def is_retryable_error(text: str) -> bool:
 
 def is_key_related_error(text: str) -> bool:
     """
-    Определяет, является ли ошибка связанной с keyом API.
-    Такие ошибки требуют попытки с другим keyом.
-
-    Ошибки, связанные с keyом:
-    - Quota Exceeded (🚫) - key валиден, но исчерпан limit
-    - Invalid API Key - key невалиден
-    - Authentication Error - проблема с авторfromацией
-    - Rate Limit (⏱️) - key валиден, но превышен limit requestов/сек
-
-    Ошибки, НЕ связанные с keyом (не требуют смены keyа):
-    - 503 Service Unavailable (🔄) - проблема сервера
-    - Timeout (⏰) - проблема сети/сервера
-    - Invalid Request (❌) - ошибка в requestе (коде)
+    Определяет, является ли ошибка связанной с ключом API.
+    Такие ошибки требуют попытки с другим ключом.
     """
     if not text:
         return False
 
     text_lower = text.lower()
 
-    # Ошибки, связанные с keyом - пробуем другой key
+    # Ошибки, связанные с ключом - пробуем другой ключ
     key_related_patterns = [
         "🚫",  # Quota/лимит
         "⏱️",  # Rate limit
@@ -120,7 +359,7 @@ def is_key_related_error(text: str) -> bool:
         "лимит запросов",
     ]
 
-    # Ошибки, НЕ связанные с keyом - не меняем key
+    # Ошибки, НЕ связанные с ключом - не меняем ключ
     not_key_related_patterns = [
         "⏰",  # Timeout
         "🔄",  # Service unavailable (503)
@@ -135,14 +374,14 @@ def is_key_related_error(text: str) -> bool:
         "malformed",
     ]
 
-    # Сначала проверяем на ошибки, НЕ связанные с keyом (onоритет выше)
+    # Сначала проверяем на ошибки, НЕ связанные с ключом (приоритет выше)
     if any(
         pattern.lower() in text_lower or text.startswith(pattern)
         for pattern in not_key_related_patterns
     ):
         return False
 
-    # Check на ошибки, связанные с keyом
+    # Проверка на ошибки, связанные с ключом
     return any(
         pattern.lower() in text_lower or text.startswith(pattern)
         for pattern in key_related_patterns
@@ -185,26 +424,21 @@ def log_and_format_error(context: str, err: Exception) -> str:
 
 
 # =============================================================================
-# APIError EXCEPTION CLASS
+# APIError EXCEPTION CLASS (Telegram-facing)
 # =============================================================================
 
 
-class APIError(Exception):
+class APIError(GemaibotAPIError):
     """
-    Base exception for API-related errors with user-friendly messages.
+    Exception for API-related errors with user-friendly messages.
+
+    Extends GemaibotAPIError from the typed hierarchy.
 
     Attributes:
         raw_error: Original error text or exception
         retryable: Whether the error can be resolved by retrying
         key_related: Whether the error requires trying a different API key
         user_message: User-friendly error message
-
-    Usage:
-        raise APIError("Quota exceeded", retryable=False, key_related=True)
-
-        # Or from existing exception:
-        except SomeException as e:
-            raise APIError.from_exception(e)
     """
 
     def __init__(
@@ -219,6 +453,7 @@ class APIError(Exception):
         self.retryable = retryable
         self.key_related = key_related
         self.user_message = user_friendly_error(self.raw_error)
+        # Initialize base with message + empty details
         super().__init__(self.user_message)
 
     @classmethod
@@ -253,18 +488,6 @@ async def handle_api_errors(
     - Displays user-friendly message in the placeholder
     - Shows appropriate retry/roles keyboard
     - Calls optional error callback
-
-    Usage:
-        async with handle_api_errors(message, "Gemini request"):
-            response = await get_ai_response(...)
-            await message.edit_text(response)
-
-    Args:
-        placeholder_message: Telegram message to edit with error
-        context: Description of the operation for logging
-        on_error: Optional callback to run on error (sync or async)
-        show_retry_button: Whether to show retry keyboard on error
-        reraise: Whether to re-raise the exception after handling
     """
     try:
         yield

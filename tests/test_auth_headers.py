@@ -30,7 +30,6 @@ def setup_module(module):
         sys.modules[k] = MagicMock()
 
     mock_db = MagicMock()
-    mock_db.db_pool = None
     mock_db.get_gemini_key_usage_stats = MagicMock(return_value=[])
     mock_db.get_active_key_info = MagicMock(return_value={})
     sys.modules["app.database"] = mock_db
@@ -43,9 +42,6 @@ def teardown_module(module):
     sys.modules.update(_original_modules)
 
 
-# Ensure app.config is imported
-
-
 @pytest.fixture
 def client():
     # Mock settings
@@ -56,8 +52,6 @@ def client():
         # Ensure app.web uses these settings
         if "app.web" in sys.modules:
             importlib.reload(sys.modules["app.web"])
-        else:
-            pass
 
         with patch("app.web.settings", mock_settings):
             from app.web import flask_app
@@ -66,18 +60,20 @@ def client():
             yield flask_app.test_client()
 
 
-def test_query_param_auth_rejected(client):
+@pytest.mark.asyncio
+async def test_query_param_auth_rejected(client):
     """
     Test that authentication via query parameter is REJECTED (vulnerability fixed).
     """
     # Verify accessing protected API endpoint with query param (not header)
-    response = client.get("/api/overview?token=test_secret_token")
+    response = await client.get("/api/overview?token=test_secret_token")
 
     # DESIRED BEHAVIOR: 401 Unauthorized (query params ignored for auth)
     assert response.status_code == 401
 
 
-def test_header_auth_works(client):
+@pytest.mark.asyncio
+async def test_header_auth_works(client):
     """Verify header auth still works"""
-    response = client.get("/api/overview", headers={"X-Auth-Token": "test_secret_token"})
+    response = await client.get("/api/overview", headers={"X-Auth-Token": "test_secret_token"})
     assert response.status_code != 401
