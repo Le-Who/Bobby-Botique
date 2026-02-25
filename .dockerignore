@@ -1,0 +1,34 @@
+# Version control
+.git/
+
+# IDE & editor configs
+.vscode/
+.cursor/
+.Jules/
+.roomodes
+
+# Caches
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.pyo
+
+# Tests (not needed in production image)
+tests/
+pytest.ini
+
+# Legacy
+legacy/
+
+# Dev artifacts
+tests_output.log
+verification/
+
+# Secrets
+.env
+.env.txt
+
+# Docs (not needed in image)
+README.md
+CHANGELOG.md

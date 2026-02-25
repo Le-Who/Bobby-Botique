@@ -1,70 +1,36 @@
-# Оптимизированный Dockerfile для Northflank.com
-FROM python:3.11-slim
+# Production Dockerfile for Northflank.com
+FROM python:3.14-slim
 
-# Устанавливаем системные зависимости и очищаем кэш
+# Install minimal system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    procps \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Создаем non-root пользователя для безопасности
-RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
-
-# Копируем файл с зависимостями
+# Install Python dependencies first (layer caching)
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Устанавливаем зависимости
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Копируем исходный код
+# Copy application code
 COPY . .
 
-# Создаем улучшенный скрипт для запуска
-RUN echo '#!/bin/bash' > /app/start.sh && \
-    echo 'set -e' >> /app/start.sh && \
-    echo 'echo "=== BOT STARTUP SCRIPT ==="' >> /app/start.sh && \
-    echo 'echo "Container ID: $HOSTNAME"' >> /app/start.sh && \
-    echo 'echo "Process ID: $$"' >> /app/start.sh && \
-    echo 'echo "Timestamp: $(date)"' >> /app/start.sh && \
-    echo '' >> /app/start.sh && \
-    echo '# Очистка старых блокировок' >> /app/start.sh && \
-    echo 'echo "Cleaning up old locks..."' >> /app/start.sh && \
-    echo 'find /tmp -name "*.lock" -delete 2>/dev/null || true' >> /app/start.sh && \
-    echo 'echo "Lock cleanup completed"' >> /app/start.sh && \
-    echo '' >> /app/start.sh && \
-    echo '# Проверка переменных окружения' >> /app/start.sh && \
-    echo 'echo "Checking environment variables..."' >> /app/start.sh && \
-    echo 'if [ -z "$TELEGRAM_BOT_TOKEN" ]; then' >> /app/start.sh && \
-    echo '    echo "ERROR: TELEGRAM_BOT_TOKEN not set"' >> /app/start.sh && \
-    echo '    exit 1' >> /app/start.sh && \
-    echo 'fi' >> /app/start.sh && \
-    echo 'if [ -z "$DATABASE_URL" ]; then' >> /app/start.sh && \
-    echo '    echo "ERROR: DATABASE_URL not set"' >> /app/start.sh && \
-    echo '    exit 1' >> /app/start.sh && \
-    echo 'fi' >> /app/start.sh && \
-    echo 'echo "Environment variables OK"' >> /app/start.sh && \
-    echo '' >> /app/start.sh && \
-    echo '# Запуск бота' >> /app/start.sh && \
-    echo 'echo "Starting bot..."' >> /app/start.sh && \
-    echo 'exec python /app/bot.py' >> /app/start.sh && \
-    chmod +x /app/start.sh
+# Prepare startup script + create non-root user
+RUN chmod +x /app/start.sh \
+    && useradd --create-home --shell /bin/bash app \
+    && chown -R app:app /app
 
-# Настраиваем переменные окружения
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 
-# Передаем права пользователю app
-RUN chown -R app:app /app
 USER app
 
-# Expose порт для Northflank
 EXPOSE 10000
 
-# Команда для запуска бота
+HEALTHCHECK --interval=60s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:10000/health || exit 1
+
 CMD ["/app/start.sh"]

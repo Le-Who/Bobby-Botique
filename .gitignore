@@ -1,10 +1,25 @@
-# Файл с секретами
+# Секреты
 .env
 .env.txt
 
-# Папка с данными (база данных будет на диске Render)
+# Данные (база данных на диске)
 data/
 
-# Системные файлы Python
+# Python
 __pycache__/
 *.pyc
+*.pyo
+
+# IDE и редакторы
+.vscode/
+.cursor/
+.Jules/
+.roomodes
+
+# Кэши линтеров и тестов
+.ruff_cache/
+.pytest_cache/
+
+# Стейл-артефакты
+tests_output.log
+verification/
