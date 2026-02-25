@@ -56,7 +56,7 @@ def _image_worker(image_data: bytes, max_size_mb: int = 10) -> Optional[bytes]:
         img_to_process.save(buf, format="JPEG", quality=85, optimize=True)
         return buf.getvalue()
     except Exception as e:
-        print(f"Error in image processing worker: {e}")
+        logging.error(f"Error in image processing worker: {e}", exc_info=True)
         return None
 
 
