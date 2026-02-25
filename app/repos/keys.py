@@ -9,7 +9,6 @@ Extracted from app/database.py to isolate key-management domain logic.
 
 import hashlib
 import logging
-import time
 import asyncpg
 from datetime import datetime, date
 from typing import Dict, Any, Optional
@@ -238,10 +237,6 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
 
         if current_usage >= threshold:
             await invalidate_key_cache(model_name)
-        else:
-            async with db_manager._cache_lock:
-                if model_name in db_manager._cache_last_updated:
-                    db_manager._cache_last_updated[model_name] = time.time()
 
 
 # ─── Generic monthly-credit key manager ─────────────────────────────────────
