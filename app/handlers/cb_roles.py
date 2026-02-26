@@ -660,7 +660,6 @@ async def role_manual_save_callback(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
             (user_id, title, prompt_text),
         )
-        from app.repos.role_conv_metrics import role_conv_metrics
         await role_conv_metrics.record_custom_role_creation()
         # Apply role immediately
         chat_state = await db.get_user_chat(user_id)
