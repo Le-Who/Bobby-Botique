@@ -7,6 +7,9 @@
 .Jules/
 .roomodes
 
+# Virtual environment (local deps, useless in Docker)
+.venv/
+
 # Caches
 __pycache__/
 .pytest_cache/
