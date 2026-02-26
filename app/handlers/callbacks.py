@@ -365,27 +365,145 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inline new chat — edits current message, no flooding."""
     query = update.callback_query
-    await query.answer()
-    from app.handlers.commands import new_chat_command
+    user_id = query.from_user.id
 
-    await new_chat_command(DummyUpdate(query.message, query.from_user), context)
+    chat_state = await db.get_user_chat(user_id)
+    chat_state.history = []
+    chat_state.token_count = 0
+    chat_state.system_prompt = None
+    await db.update_user_chat(user_id, chat_state)
+
+    text = (
+        "✨ **Новый чат начат!**\n\n"
+        "Контекст и роль сброшены. Напишите что-нибудь. 👇"
+    )
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    keyboard = [
+        [
+            InlineKeyboardButton("🎭 Начать с роли", callback_data="open_roles"),
+            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
+        ]
+    ]
+    try:
+        await query.edit_message_text(
+            formatted_text, parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except telegram.error.BadRequest:
+        pass
+    await query.answer("✨ Чат очищен!")
 
 
 async def model_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inline model menu — edits current message, no flooding."""
     query = update.callback_query
     await query.answer()
-    from app.handlers.commands import model_command
-
-    await model_command(DummyUpdate(query.message, query.from_user), context)
+    user_id = query.from_user.id
+    chat_state = await db.get_user_chat(user_id)
+    formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(
+        chat_state, context
+    )
+    try:
+        await query.edit_message_text(
+            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+    except telegram.error.BadRequest:
+        pass
 
 
 async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Categorized help with sub-topic buttons — no flooding."""
     query = update.callback_query
     await query.answer()
-    from app.handlers.commands import help_command
 
-    await help_command(DummyUpdate(query.message, query.from_user), context)
+    help_text = (
+        "📚 **Справка**\n\n"
+        "💬 **Чат** — просто напишите сообщение\n"
+        "🌐 **Поиск** — `?` или `??` перед вопросом\n"
+        "📄 **Документы** — отправьте PDF/DOCX\n"
+        "🎭 **Роли** — специализация бота\n\n"
+        "Нажмите кнопку для подробностей:"
+    )
+    formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
+    keyboard = [
+        [
+            InlineKeyboardButton("💬 Чат", callback_data="help_topic:chat"),
+            InlineKeyboardButton("🌐 Поиск", callback_data="help_topic:search"),
+        ],
+        [
+            InlineKeyboardButton("📄 Документы", callback_data="help_topic:docs"),
+            InlineKeyboardButton("🎭 Роли", callback_data="help_topic:roles"),
+        ],
+        [InlineKeyboardButton("⬅️ Меню", callback_data="start_menu")],
+    ]
+    try:
+        await query.edit_message_text(
+            formatted_text, parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except telegram.error.BadRequest:
+        pass
+
+
+# ── Help sub-topic handlers ──────────────────────────────────────────────────
+
+_HELP_TOPICS = {
+    "chat": (
+        "💬 **Как общаться**\n\n"
+        "Просто напишите сообщение в чат — бот ответит "
+        "с помощью AI.\n\n"
+        "• Отправьте 🖼️ фото — бот проанализирует изображение\n"
+        "• `/newchat` — начать новый диалог\n"
+        "• `/setprompt` — задать системную инструкцию\n"
+        "• `/save` — сохранить текущую беседу"
+    ),
+    "search": (
+        "🌐 **Поиск в интернете**\n\n"
+        "• `? вопрос` — быстрый фактический ответ\n"
+        "• `?? вопрос` — глубокое исследование с источниками\n"
+        "• `??` + фото — поиск по изображению\n\n"
+        "💡 `/res` — включить/выключить поиск для всех сообщений"
+    ),
+    "docs": (
+        "📄 **Работа с документами**\n\n"
+        "Отправьте PDF или DOCX файл в чат — "
+        "бот извлечёт текст и будет отвечать "
+        "на основе содержимого.\n\n"
+        "• Максимум: 5 документов\n"
+        "• Хранение: 3 дня\n"
+        "• `/documents` — управление документами"
+    ),
+    "roles": (
+        "🎭 **Роли**\n\n"
+        "Роль — это специализация бота: он будет "
+        "отвечать как эксперт в выбранной области.\n\n"
+        "• 6 готовых ролей: преподаватель, IT-инженер, доктор…\n"
+        "• ✨ Сгенерировать роль по описанию\n"
+        "• 📝 Написать свою вручную\n"
+        "• `/roles` — открыть меню ролей"
+    ),
+}
+
+
+async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Shows a specific help topic with back-to-help button."""
+    query = update.callback_query
+    await query.answer()
+    topic = query.data.split(":", 1)[1]
+    text = _HELP_TOPICS.get(topic, "❓ Тема не найдена.")
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    keyboard = [
+        [InlineKeyboardButton("⬅️ К справке", callback_data="help")],
+    ]
+    try:
+        await query.edit_message_text(
+            formatted_text, parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except telegram.error.BadRequest:
+        pass
 
 
 async def open_documents_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -512,6 +630,7 @@ def register(application: Application) -> None:
     _add_fast_callback(application, conv_page_callback, "^conv_page:")
     _add_fast_callback(application, conv_switch_callback, "^conv_switch$")
     _add_fast_callback(application, conv_switch_to_callback, "^conv_switch_to:")
+    _add_fast_callback(application, help_topic_callback, "^help_topic:")
     _add_fast_callback(application, open_documents_callback, "^open_documents$")
     _add_fast_callback(application, open_conversations_callback, "^open_conversations$")
 

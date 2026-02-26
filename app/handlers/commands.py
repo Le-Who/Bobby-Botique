@@ -49,30 +49,29 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     try:
         help_text = (
-            "📚 **Подробная справка по Gemini Bot**\n\n"
-            "**💬 Обычный чат:**\n"
-            "Просто напишите сообщение для общения с AI\n\n"
-            "**🔍 Поиск и анализ:**\n"
-            "• `? вопрос` — быстрый фактический ответ\n"
-            "• `?? вопрос` — глубокое исследование с источниками\n"
-            "• `??` + фото — поиск по изображению\n\n"
-            "**📄 Работа с документами:**\n"
-            "• Отправьте PDF или DOCX файл\n"
-            "• Задавайте вопросы по содержимому\n"
-            "• `/documents` — управление документами\n\n"
-            "**⚙️ Настройки:**\n"
-            "• `/model` — выбор AI модели\n"
-            "• `/setprompt` — системная инструкция\n"
-            "• `/res` — режим поиска вкл/выкл\n"
-            "• `/newchat` — новый чат\n\n"
-            "**📊 Статистика:**\n"
-            "• `/metrics` — полная сводка (метрики, ключи, кредиты)\n\n"
-            "**🧩 Роли:**\n"
-            "• `/roles` — выбрать предустановленную роль или создать свою\n"
+            "📚 **Справка**\n\n"
+            "💬 **Чат** — просто напишите сообщение\n"
+            "🌐 **Поиск** — `?` или `??` перед вопросом\n"
+            "📄 **Документы** — отправьте PDF/DOCX\n"
+            "🎭 **Роли** — специализация бота\n\n"
+            "Нажмите кнопку для подробностей:"
         )
 
         formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        keyboard = [
+            [
+                InlineKeyboardButton("💬 Чат", callback_data="help_topic:chat"),
+                InlineKeyboardButton("🌐 Поиск", callback_data="help_topic:search"),
+            ],
+            [
+                InlineKeyboardButton("📄 Документы", callback_data="help_topic:docs"),
+                InlineKeyboardButton("🎭 Роли", callback_data="help_topic:roles"),
+            ],
+        ]
+        await update.message.reply_text(
+            formatted_text, parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         logging.info("Help command completed successfully for user %s", user_id)
     except Exception as e:
         logging.error("Error in help command for user %s: %s", user_id, e, exc_info=True)
@@ -157,26 +156,17 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_state.system_prompt = None
     await db.update_user_chat(user_id, chat_state)
 
-    # Build статус for UX
-    search_icon = "🟢" if chat_state.search_enabled else "🔴"
-    search_status = "ВКЛ" if chat_state.search_enabled else "ВЫКЛ"
-
     text = (
-        "🧹 **Чат очищен!**\n"
-        "История и контекст сброшены.\n\n"
-        "⚙️ **Текущие настройки:**\n"
-        f"• Модель: `{chat_state.model}`\n"
-        f"• Поиск: {search_icon} {search_status}\n"
-        f"• Роль: 👤 Базовая\n\n"
-        "Готов к новой теме!"
+        "✨ **Новый чат начат!**\n\n"
+        "Контекст и роль сброшены. Напишите что-нибудь. 👇"
     )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
     keyboard = [
         [
-            InlineKeyboardButton("⚙️ Настройки модели", callback_data="model_menu"),
-            InlineKeyboardButton("🎭 Выбрать роль", callback_data="open_roles"),
+            InlineKeyboardButton("🎭 Начать с роли", callback_data="open_roles"),
+            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
         ]
     ]
 

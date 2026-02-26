@@ -582,15 +582,22 @@ async def role_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Opens roles hub inline — no flooding."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
     if not await db.is_authorized(user_id):
         return
-    # Отображаем menu ролей так же, как и команда /roles
-    from app.handlers.commands import roles_command
-
-    await roles_command(DummyUpdate(query.message, query.from_user), context)
+    chat_state = await db.get_user_chat(user_id)
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+        user_id, chat_state
+    )
+    try:
+        await query.edit_message_text(
+            text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+    except telegram.error.BadRequest:
+        pass
 
 
 # ── Manual role creation callbacks ────────────────────────────────────────────

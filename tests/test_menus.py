@@ -300,7 +300,7 @@ async def test_start_menu_content_search_on_prompt_set():
     text, parse_mode, reply_markup = response
 
     # Verify text content
-    assert "🟢 ВКЛЮЧЕН" in text, "Search status indicator missing"
+    assert "🟢" in text, "Search status indicator missing"
     assert "You are a helpful assistant" in text, "System prompt not displayed"
     assert "gemini-pro" in text, "Model name not displayed"
 
@@ -332,8 +332,7 @@ async def test_start_menu_content_search_off_prompt_unset():
     text, _, reply_markup = response
 
     # Verify text content
-    assert "🔴 ВЫКЛЮЧЕН" in text, "Search disabled status missing"
-    assert "Не задана" in text, "Unset prompt message missing"
+    assert "🔴" in text, "Search disabled status missing"
     assert "gpt-4" in text, "Model name not displayed"
 
     # Verify search button
@@ -376,8 +375,8 @@ async def test_start_menu_buttons_structure():
     roles_pos = find_button_by_text(keyboard, "Роли")
     verify_button(keyboard, *roles_pos, "🎭 Роли", "open_roles", partial_match=True)
 
-    help_pos = find_button_by_text(keyboard, "Справка")
-    verify_button(keyboard, *help_pos, "❓ Справка", "help", partial_match=True)
+    help_pos = find_button_by_text(keyboard, "Помощь")
+    verify_button(keyboard, *help_pos, "❓ Помощь", "help", partial_match=True)
 
     # Verify new document/conversation buttons
     docs_pos = find_button_by_text(keyboard, "Документы")

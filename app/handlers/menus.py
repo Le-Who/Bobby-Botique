@@ -11,68 +11,57 @@ import logging
 
 
 async def get_start_menu_content(chat_state, user_id=None) -> None:
-    search_status = "🟢 ВКЛЮЧЕН" if chat_state.search_enabled else "🔴 ВЫКЛЮЧЕН"
-    prompt_status = (
-        f"`{chat_state.system_prompt[:50]}...`"
-        if chat_state.system_prompt
-        else "Не задана"
-    )
     search_icon = "🟢" if chat_state.search_enabled else "🔴"
 
-    # Fetch user context when user_id is provided
-    context_block = ""
+    # Compact status line
+    prompt_label = (
+        f"🎭 {chat_state.system_prompt[:40]}…"
+        if chat_state.system_prompt
+        else ""
+    )
+    status_parts = [f"`{chat_state.model}`", f"Поиск: {search_icon}"]
+    if prompt_label:
+        status_parts.append(prompt_label)
+    status_line = " · ".join(status_parts)
+
+    # Fetch user activity (only if user_id provided)
+    req_count = 0
+    activity_line = ""
     if user_id:
         try:
-            # Today's request count (personal — per-user metrics)
             today_requests = await db.db_query(
                 "SELECT COALESCE(request_count, 0) as cnt FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
                 (user_id,),
             )
             req_count = today_requests[0]["cnt"] if today_requests else 0
 
-            # Active documents
             docs = await get_user_documents(user_id)
             doc_count = len(docs) if docs else 0
 
-            # Saved conversations
             conv_count = await db.get_conversation_count(user_id)
 
-            context_block = (
-                "\n**📈 Ваша активность:**\n"
-                f"• Запросов сегодня: `{req_count}`\n"
-                f"• Документов: `{doc_count}`\n"
-                f"• Сохранённых бесед: `{conv_count}`\n"
-            )
+            if req_count > 0 or doc_count > 0 or conv_count > 0:
+                activity_line = (
+                    f"📈 Сегодня: {req_count} запр. · "
+                    f"{doc_count} док. · {conv_count} бесед\n\n"
+                )
         except Exception as e:
             logging.debug("Could not fetch user context for /start: %s", e)
 
+    # Adaptive hint: new user vs returning
+    if req_count == 0 and not chat_state.system_prompt:
+        hint = (
+            "💡 **Совет:** попробуйте 🎭 **Роли** — бот ответит "
+            "как эксперт. Или отправьте 🖼️ картинку для анализа."
+        )
+    else:
+        hint = "Напишите сообщение — и я отвечу. 👇"
+
     start_text = (
-        "🤖 **Добро пожаловать в Gemini Bot!**\n\n"
-        "Я ваш умный ассистент с возможностями:\n"
-        "• 💬 Обычный чат с AI\n"
-        "• 🔍 Веб-поиск и анализ\n"
-        "• 🖼️ Поиск по изображениям\n"
-        "• 📄 Обработка документов\n\n"
-        "**📊 Ваши настройки:**\n"
-        f"• Модель: `{chat_state.model}`\n"
-        f"• Поиск: {search_status}\n"
-        f"• Инструкция: {prompt_status}\n"
-        f"{context_block}\n"
-        "**🚀 Быстрый старт:**\n"
-        "• Просто напишите сообщение для чата\n"
-        "• `? вопрос` — быстрый ответ\n"
-        "• `?? вопрос` — глубокий анализ\n"
-        "• Отправьте фото для анализа\n\n"
-        "**⚙️ Основные команды:**\n"
-        "• `/help` — подробная справка\n"
-        "• `/res` — режим поиска вкл/выкл\n"
-        "• `/newchat` — новый чат\n"
-        "• `/model` — выбрать модель\n"
-        "• `/setprompt` — задать инструкцию\n"
-        "• `/documents` — управление документами\n"
-        "• `/stats` — ваша статистика\n"
-        "• `/roles` — выбор ролей и создание своей\n\n"
-        "**💡 Совет:** Начните с простого вопроса!"
+        f"🤖 **Gemini Bot** — ваш AI-ассистент\n\n"
+        f"📊 {status_line}\n\n"
+        f"{activity_line}"
+        f"{hint}"
     )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
@@ -93,11 +82,24 @@ async def get_start_menu_content(chat_state, user_id=None) -> None:
             InlineKeyboardButton(
                 f"🌐 Поиск: {search_icon}", callback_data="toggle_search"
             ),
-            InlineKeyboardButton("❓ Справка", callback_data="help"),
+            InlineKeyboardButton("❓ Помощь", callback_data="help"),
         ],
     ]
 
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
+
+
+# Model descriptions for decision support
+MODEL_HINTS = {
+    "gemini-2.5-pro": "🧠 Самая умная — сложные задачи, анализ, код",
+    "gemini-2.5-pro-preview-05-06": "🧠 Самая умная — сложные задачи, анализ, код",
+    "gemini-2.5-flash": "⚡ Быстрая — баланс скорости и качества",
+    "gemini-2.5-flash-preview-04-17": "⚡ Быстрая — баланс скорости и качества",
+    "gemini-2.0-flash": "🚀 Ультрабыстрая — простые вопросы",
+    "gemini-2.0-flash-lite": "💨 Самая лёгкая — мгновенные ответы",
+    "gemini-1.5-pro": "📐 Предыдущее поколение — стабильная",
+    "gemini-1.5-flash": "📐 Предыдущее поколение — быстрая",
+}
 
 
 def _generate_model_buttons(models, current_model, start_index, is_openrouter=False):
@@ -193,13 +195,30 @@ def get_model_menu_content(chat_state, context) -> None:
         )
         keyboard.extend(buttons)
 
-    # Build text с информацией о текущей models
+    # Build text with model hint for decision support
     is_current_openrouter = "/" in current_model if current_model else False
     provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
-    text = "**Выберите модель для разговора:**\n\n"
-    text += f"**Текущая модель:** `{current_model}`\n"
-    text += f"**Провайдер:** {provider_name}\n\n"
-    text += "Нажмите на модель для выбора."
+
+    text = f"🧠 **Выбор модели**\n\n"
+    text += f"Текущая: `{current_model}`\n"
+
+    # Show hint for current model
+    hint = MODEL_HINTS.get(current_model, "")
+    if hint:
+        text += f"→ {hint}\n"
+
+    text += f"\nПровайдер: {provider_name}\n"
+
+    # Recommendation for undecided users
+    if len(all_models) > 1:
+        # Find best recommendation
+        rec = None
+        for m in ["gemini-2.5-flash", "gemini-2.5-flash-preview-04-17"]:
+            if m in all_models and m != current_model:
+                rec = m
+                break
+        if rec:
+            text += f"\n💡 Не знаете, что выбрать? `{rec}` — лучший баланс."
 
     keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
 
@@ -216,16 +235,26 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
     custom_count = custom_count_res[0]["count"] if custom_count_res else 0
 
     text = (
-        f"🎭 **Управление ролями**\n\n"
-        f"Ниже вы можете выбрать готовую роль или создать свою.\n"
-        f"Роль определяет стиль общения и задачи бота.\n\n"
-        f"🔋 **Активная роль:**\n"
-        f"✨ **{active_role_title}**\n"
+        f"🎭 **Роли**\n\n"
+        f"Роль — это специализация бота. Выберите готовую "
+        f"или создайте свою.\n\n"
+        f"✨ Активная: **{active_role_title}**\n"
     )
 
     keyboard = []
 
-    # 1. Основные разделы навигации (Browse)
+    # 1. Quick-apply: top-3 preset roles for immediate use
+    top_roles = list(prompts.DEFAULT_ROLES.items())[:3]
+    if top_roles:
+        quick_row = []
+        for key, meta in top_roles:
+            title = meta.get("title", key)
+            quick_row.append(
+                InlineKeyboardButton(title, callback_data=f"role_apply:{key}")
+            )
+        keyboard.append(quick_row)
+
+    # 2. Browse catalogs
     keyboard.append(
         [
             InlineKeyboardButton(
@@ -237,7 +266,7 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
         ]
     )
 
-    # 2. Создание (AI + Manual)
+    # 3. Creation (AI + Manual)
     keyboard.append(
         [
             InlineKeyboardButton("✨ Сгенерировать", callback_data="role_create"),
@@ -245,7 +274,7 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
         ]
     )
 
-    # 3. Сброс (if role активна)
+    # 4. Reset (if role is active)
     if current_prompt:
         keyboard.append(
             [
@@ -255,7 +284,7 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
             ]
         )
 
-    # 4. Назад
+    # 5. Back
     keyboard.append(
         [InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]
     )
@@ -621,34 +650,23 @@ async def get_documents_menu_content(user_id) -> None:
 
     if not documents:
         text = (
-            "📋 *Ваши документы*\n\n"
-            "У вас пока нет загруженных документов.\n\n"
-            "💡 *Как загрузить документ:*\n"
-            "• Отправьте PDF или DOCX файл\n"
-            "• Максимальный размер: 50MB\n"
-            "• После загрузки вы сможете задавать вопросы по содержимому\n\n"
-            "📋 *Политика хранения:*\n"
-            "• Максимум документов: 5\n"
-            "• Срок хранения: 3 дня"
+            "📄 **Документы**\n\n"
+            "Загрузите PDF или DOCX — и задавайте вопросы "
+            "по содержимому.\n"
+            "Бот ответит на основе вашего текста, "
+            "а не общих знаний.\n\n"
+            "📎 Отправьте файл прямо в чат."
         )
     else:
-        text = "📋 *Ваши документы:*\n\n"
+        text = f"📄 **Документы** ({len(documents)})\n\n"
         for i, doc in enumerate(documents[:10], 1):
-            text += f"{i}. *{doc['filename']}*\n"
+            text += f"{i}. **{doc['filename']}**\n"
             text += f"   📄 Страниц: {doc['pages']}\n"
             text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
             text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
         if len(documents) > 10:
-            text += f"... и еще {len(documents) - 10} документов\n\n"
-        text += (
-            "💡 *Действия:*\n"
-            "• Отправьте новый документ для загрузки\n"
-            "• Задайте вопрос по последнему документу\n"
-            "• Используйте кнопки под сообщениями для управления\n\n"
-            "📋 *Политика хранения:*\n"
-            "• Максимум документов: 5\n"
-            "• Срок хранения: 3 дня"
-        )
+            text += f"… и ещё {len(documents) - 10} документов\n\n"
+        text += "📎 Отправьте новый файл для загрузки."
 
     keyboard = [
         [
@@ -682,14 +700,17 @@ async def get_conversations_menu_content(user_id, page=1) -> None:
     total_count = await db.get_conversation_count(user_id)
 
     if not conversations:
+        empty_text = (
+            "💬 **Сохранённые беседы**\n\n"
+            "Сохраняйте важные диалоги и возвращайтесь "
+            "к ним в любой момент.\n\n"
+            "💡 Используйте /save после важного разговора."
+        )
+        formatted_empty, pm = TelegramFormatter.format_text(empty_text)
         kb = InlineKeyboardMarkup(
             [[InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]]
         )
-        return (
-            "📝 У вас пока нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.",
-            None,
-            kb,
-        )
+        return formatted_empty, pm, kb
 
     text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
 
