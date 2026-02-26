@@ -929,6 +929,7 @@ _REPO_EXPORTS = {
     # app.repos.metrics_repo
     "get_gemini_key_usage_stats": "app.repos.metrics_repo",
     "get_active_key_info": "app.repos.metrics_repo",
+    "get_supabase_metrics": "app.repos.metrics_repo",
 }
 
 

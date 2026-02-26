@@ -346,15 +346,14 @@ async def api_errors():
 async def api_cache():
     """Cache performance statistics."""
     try:
-        from app.cache import get_cache_stats, get_multi_layer_cache_stats
+        from app.cache import get_multi_layer_cache_stats
 
-        redis_stats = await get_cache_stats()
         ml_stats = await get_multi_layer_cache_stats()
 
         return jsonify(
             {
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
-                "redis": redis_stats,
+                "redis": ml_stats.get("redis", {}),
                 "multi_layer": ml_stats,
             }
         )

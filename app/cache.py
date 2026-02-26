@@ -213,24 +213,16 @@ async def get_cache_stats() -> Dict[str, Any]:
         # Use retry logic for Redis operations
         info = await _redis_operation_with_retry(redis_client.info)
 
-        # Parse info response safely
-        if isinstance(info, bytes):
-            info_str = info.decode("utf-8")
-        else:
-            info_str = str(info)
-
-        # Extract basic stats
-        stats = {}
-        for line in info_str.split("\n"):
-            if ":" in line:
-                key, value = line.split(":", 1)
-                stats[key.strip()] = value.strip()
+        # redis-py .info() returns a dict — access keys directly
+        db0 = info.get("db0", {})
+        total_keys = db0.get("keys", 0) if isinstance(db0, dict) else str(db0)
 
         return {
-            "total_keys": stats.get("db0", "0"),
-            "used_memory": stats.get("used_memory_human", "N/A"),
-            "uptime_in_days": stats.get("uptime_in_days", "N/A"),
-            "cache_hit_rate": await metrics_collector.get_cache_hit_rate(),
+            "total_keys": total_keys,
+            "used_memory": info.get("used_memory_human", "N/A"),
+            "uptime_in_days": info.get("uptime_in_days", "N/A"),
+            "connected_clients": info.get("connected_clients", "N/A"),
+            "cache_hit_rate": metrics_collector.get_cache_hit_rate(),
         }
 
     except RedisConnectionError as e:

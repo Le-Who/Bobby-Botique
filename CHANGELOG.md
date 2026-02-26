@@ -5,6 +5,35 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.3] – 2026-02-26 – Codebase Audit & Bug Fixes
+
+### 🔴 Critical Fixes
+
+- **Missing `get_supabase_metrics` re-export**: `web.py:api_database()` called `database.get_supabase_metrics()` which was missing from `_REPO_EXPORTS` → `AttributeError` at runtime. Added mapping to `_REPO_EXPORTS`.
+- **`await` on synchronous `float` return**: `cache.py:get_cache_stats()` used `await metrics_collector.get_cache_hit_rate()`, but `get_cache_hit_rate()` is a sync function returning `float` → `TypeError: 'float' object can't be awaited`. Removed erroneous `await`.
+
+### 🟡 Medium Fixes
+
+- **Redundant Redis `INFO` call**: `/api/cache` endpoint called both `get_cache_stats()` and `get_multi_layer_cache_stats()`, but the latter already calls `get_cache_stats()` internally — doubling Redis round-trips. Removed standalone call.
+- **`redis.info()` dict mishandled as string**: `get_cache_stats()` converted the `redis.info()` dict to `str(dict)` and split on newlines, producing garbled stats (`"N/A"` for memory, uptime). Now accesses dict keys directly.
+
+### ✅ Audit Findings (Clean)
+
+Full scan of 21 core modules, 13 handlers, 7 repos confirmed:
+
+- No SQL injection (all user-facing queries parameterized)
+- No bare `except:`, `eval()`, `exec()`, `os.system()`
+- No `asyncio.run()` or blocking `time.sleep()` in async context
+- All `_REPO_EXPORTS` entries resolve correctly (60+ callsites verified)
+- Security module (`InputSanitizer`, `RateLimiter`) comprehensive
+- Circuit breaker, memory manager, task queue all properly bounded
+
+### 🧪 Tests
+
+- **404 passed**, 1 skipped — full green suite after all fixes.
+
+---
+
 ## [2.6.2] – 2026-02-26 – UI/UX Audit & Manual Role Creation
 
 ### 🎨 UI/UX Improvements (Marketing Psychology)
