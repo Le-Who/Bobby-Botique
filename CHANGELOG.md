@@ -5,6 +5,49 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.2] – 2026-02-26 – UI/UX Audit & Manual Role Creation
+
+### 🎨 UI/UX Improvements (Marketing Psychology)
+
+- **Start menu restructured** (Hick's Law): New 4-row layout with primary CTA (`💬 Новый чат`), paired settings row (`🧠 Модель AI` + `🎭 Роли`), document/conversation shortcuts, and compact toggle row.
+- **Roles hub redesigned** (AIDA funnel): Browse (`📚 Каталог` + `👤 Мои роли`) → Create (`✨ Сгенерировать` + `📝 Написать`) → Reset → Back.
+- **Role detail buttons** updated: `✅ Применить` → `▶️ Активировать`, `🛑 Отключить` → `🔄 Сбросить` (positive framing).
+- **Delete confirmation dialogs** — loss-aversion framing: "🚨 Все документы будут удалены безвозвратно" / "Вся история сообщений будет потеряна безвозвратно".
+- **Cancel buttons** relabeled: `❌ Отмена` → `↩️ Отмена` (less alarming).
+- **Keyboard button labels** updated: `🆕→✨ Новая тема`, `🔁→🔄 Повторить` (reduced activation energy).
+
+### 🐛 Anti-Flood Fixes
+
+- **6 `reply_text` → `edit_message_text`** conversions: role rename prompt, role AI creation prompt, role prompt view, and 3 error messages that were creating new messages instead of editing.
+
+### 🛡️ Error Recovery (15+ dead-ends fixed)
+
+- All error messages now have at least one actionable button (`⬅️ Меню`, `🎭 Меню ролей`, `📄 К документам`, `⬅️ К беседам`).
+- Fixed across: `callbacks.py`, `cb_roles.py`, `cb_documents.py`, `cb_conversations.py`.
+
+### ✨ New Feature: Manual Role Creation
+
+- New `📝 Написать` button in roles hub and role lists.
+- 2-step text flow: Title → Prompt → Preview → 💾 Save & Apply.
+- 3 new callbacks: `role_create_manual`, `role_manual_cancel`, `role_manual_save`.
+- State management: 3 new fields + 6 helper functions in `state.py`.
+- Text handler: `_handle_manual_role_input()` in `messages.py`.
+
+### 🧹 Code Quality
+
+- **Keyboard consolidation**: Removed dead `main_menu_keyboard()` / `document_menu_keyboard()`. Added centralized `feedback_row()`, `ai_response_keyboard()`, `deep_dive_keyboard()`, `error_with_back_keyboard()`.
+- **`messaging.py` migration**: 42 lines of duplicated keyboard code → single imports from `keyboards.py`.
+- **Conversations menu**: Added `⬅️ Назад` back button and fixed empty-state dead-end.
+- **Documents menu**: Added `⬅️ Назад` back button (from Phase 1).
+
+### 🧪 Tests (404 passed, 1 skipped)
+
+- Updated `test_keyboards.py`: 7 new tests (feedback_row, ai_response, deep_dive, error_with_back).
+- Updated `test_menus.py`: new start menu assertions (4 rows, updated labels, new doc/conv buttons).
+- Updated `test_roles_menu.py`: assertions match new button labels (Сгенерировать, Активировать).
+
+---
+
 ## [2.6.1] – 2026-02-26 – Technical Audit Fixes
 
 ### 🔴 Critical Fixes

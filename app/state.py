@@ -33,6 +33,10 @@ class UserState:
         "last_custom_role_prompt",
         "generating_custom_role",
         "last_sent_message_text",
+        # Manual role creation fields
+        "awaiting_manual_role_title",
+        "awaiting_manual_role_prompt",
+        "manual_role_title",
         # Internal bookkeeping
         "_loaded_from_db",
         "_dirty",
@@ -51,6 +55,10 @@ class UserState:
         self.last_custom_role_prompt: Optional[str] = None
         self.generating_custom_role: bool = False
         self.last_sent_message_text: Optional[str] = None
+        # Manual role creation
+        self.awaiting_manual_role_title: bool = False
+        self.awaiting_manual_role_prompt: bool = False
+        self.manual_role_title: str = ""
         # Internal
         self._loaded_from_db: bool = False
         self._dirty: bool = False
@@ -106,6 +114,13 @@ async def _ensure_loaded(state: UserState) -> UserState:
                 "generating_custom_role", False
             )
             state.last_sent_message_text = data.get("last_sent_message_text")
+            state.awaiting_manual_role_title = data.get(
+                "awaiting_manual_role_title", False
+            )
+            state.awaiting_manual_role_prompt = data.get(
+                "awaiting_manual_role_prompt", False
+            )
+            state.manual_role_title = data.get("manual_role_title", "")
     except Exception as e:
         logging.debug("Could not load state for %s: %s", state._user_id, e)
 
@@ -130,6 +145,9 @@ async def _persist(state: UserState) -> None:
             last_custom_role_prompt=state.last_custom_role_prompt,
             generating_custom_role=state.generating_custom_role,
             last_sent_message_text=state.last_sent_message_text,
+            awaiting_manual_role_title=state.awaiting_manual_role_title,
+            awaiting_manual_role_prompt=state.awaiting_manual_role_prompt,
+            manual_role_title=state.manual_role_title,
         )
     except Exception as e:
         logging.debug("Could not persist state for %s: %s", state._user_id, e)
@@ -273,3 +291,45 @@ def set_last_sent_message(user_id: int, text: str):
 
 def get_last_sent_message(user_id: int) -> Optional[str]:
     return get_user_state(user_id).last_sent_message_text
+
+
+# --- Manual role creation ---
+
+
+def begin_manual_role_creation(user_id: int):
+    """Start manual role creation — awaiting title input."""
+    state = get_user_state(user_id)
+    state.awaiting_manual_role_title = True
+    state.awaiting_manual_role_prompt = False
+    state.manual_role_title = ""
+    _schedule_persist(state)
+
+
+def set_manual_role_title(user_id: int, title: str):
+    """Set the manual role title and transition to prompt input."""
+    state = get_user_state(user_id)
+    state.manual_role_title = title
+    state.awaiting_manual_role_title = False
+    state.awaiting_manual_role_prompt = True
+    _schedule_persist(state)
+
+
+def clear_manual_role_state(user_id: int):
+    """Clear manual role creation state."""
+    state = get_user_state(user_id)
+    state.awaiting_manual_role_title = False
+    state.awaiting_manual_role_prompt = False
+    state.manual_role_title = ""
+    _schedule_persist(state)
+
+
+def is_awaiting_manual_role_title(user_id: int) -> bool:
+    return get_user_state(user_id).awaiting_manual_role_title
+
+
+def is_awaiting_manual_role_prompt(user_id: int) -> bool:
+    return get_user_state(user_id).awaiting_manual_role_prompt
+
+
+def get_manual_role_title(user_id: int) -> str:
+    return get_user_state(user_id).manual_role_title

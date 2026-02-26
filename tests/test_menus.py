@@ -306,7 +306,7 @@ async def test_start_menu_content_search_on_prompt_set():
 
     # Verify keyboard structure
     keyboard = reply_markup.inline_keyboard
-    assert len(keyboard) == 3, f"Expected 3 rows, got {len(keyboard)}"
+    assert len(keyboard) == 4, f"Expected 4 rows, got {len(keyboard)}"
 
     # Verify search button dynamically
     search_row, search_col = find_button_by_text(keyboard, "Поиск: 🟢")
@@ -367,17 +367,24 @@ async def test_start_menu_buttons_structure():
     # Find and verify buttons dynamically
     new_chat_pos = find_button_by_text(keyboard, "Новый чат")
     verify_button(
-        keyboard, *new_chat_pos, "🆕 Новый чат", "new_chat", partial_match=True
+        keyboard, *new_chat_pos, "💬 Новый чат", "new_chat", partial_match=True
     )
 
-    models_pos = find_button_by_text(keyboard, "Модели")
-    verify_button(keyboard, *models_pos, "⚙️ Модели", "model_menu", partial_match=True)
+    models_pos = find_button_by_text(keyboard, "Модель")
+    verify_button(keyboard, *models_pos, "🧠 Модель AI", "model_menu", partial_match=True)
 
     roles_pos = find_button_by_text(keyboard, "Роли")
     verify_button(keyboard, *roles_pos, "🎭 Роли", "open_roles", partial_match=True)
 
     help_pos = find_button_by_text(keyboard, "Справка")
-    verify_button(keyboard, *help_pos, "📚 Справка", "help", partial_match=True)
+    verify_button(keyboard, *help_pos, "❓ Справка", "help", partial_match=True)
+
+    # Verify new document/conversation buttons
+    docs_pos = find_button_by_text(keyboard, "Документы")
+    verify_button(keyboard, *docs_pos, "📄 Документы", "open_documents", partial_match=True)
+
+    conv_pos = find_button_by_text(keyboard, "Беседы")
+    verify_button(keyboard, *conv_pos, "💬 Беседы", "open_conversations", partial_match=True)
 
 
 @pytest.mark.unit

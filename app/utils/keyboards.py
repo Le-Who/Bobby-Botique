@@ -56,8 +56,8 @@ def confirm_cancel_row(
 def new_topic_retry_row() -> List[InlineKeyboardButton]:
     """Creates standard row with New Topic and Retry buttons."""
     return [
-        InlineKeyboardButton("🆕 Новая тема", callback_data="new_topic"),
-        InlineKeyboardButton("🔁 Повторить", callback_data="retry_last"),
+        InlineKeyboardButton("✨ Новая тема", callback_data="new_topic"),
+        InlineKeyboardButton("🔄 Повторить", callback_data="retry_last"),
     ]
 
 
@@ -239,20 +239,13 @@ def build_paginated_keyboard(
 # =============================================================================
 
 
-def main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Returns the main menu keyboard used in /start."""
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("🆕 Новый чат", callback_data="new_chat"),
-                InlineKeyboardButton("⚙️ Модели", callback_data="model_menu"),
-            ],
-            [
-                InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
-                InlineKeyboardButton("📚 Справка", callback_data="help"),
-            ],
-        ]
-    )
+def feedback_row() -> List[InlineKeyboardButton]:
+    """Creates feedback button row: 👍 👎 🔄"""
+    return [
+        InlineKeyboardButton("👍", callback_data="feedback:up"),
+        InlineKeyboardButton("👎", callback_data="feedback:down"),
+        InlineKeyboardButton("🔄", callback_data="retry_last"),
+    ]
 
 
 def after_response_keyboard(
@@ -270,9 +263,9 @@ def after_response_keyboard(
     """
     row = []
     if include_new_topic:
-        row.append(InlineKeyboardButton("🆕 Новая тема", callback_data="new_topic"))
+        row.append(InlineKeyboardButton("✨ Новая тема", callback_data="new_topic"))
     if include_retry:
-        row.append(InlineKeyboardButton("🔁 Повторить", callback_data="retry_last"))
+        row.append(InlineKeyboardButton("🔄 Повторить", callback_data="retry_last"))
 
     keyboard = [row] if row else []
     if custom_buttons:
@@ -281,16 +274,55 @@ def after_response_keyboard(
     return InlineKeyboardMarkup(keyboard) if keyboard else None
 
 
-def document_menu_keyboard() -> InlineKeyboardMarkup:
-    """Returns the document management menu keyboard."""
+def ai_response_keyboard() -> InlineKeyboardMarkup:
+    """Centralized keyboard for AI responses: feedback + actions."""
     return InlineKeyboardMarkup(
         [
-            [
-                InlineKeyboardButton(
-                    "📄 Загрузить новый", callback_data="doc:upload_new"
-                )
-            ],
-            [InlineKeyboardButton("📋 Выбрать", callback_data="doc:select_document")],
-            [InlineKeyboardButton("🗑️ Очистить все", callback_data="doc:clear_all")],
+            feedback_row(),
+            [InlineKeyboardButton("✨ Новая тема", callback_data="new_topic")],
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
         ]
     )
+
+
+def deep_dive_keyboard(is_last_part: bool = True) -> InlineKeyboardMarkup:
+    """Keyboard for deep dive mode responses."""
+    buttons = [
+        feedback_row(),
+        [
+            InlineKeyboardButton(
+                "✨ Начать новую тему", callback_data="deepdive:new_topic"
+            )
+        ],
+    ]
+    if is_last_part:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "🔬 Исследовать глубже", callback_data="deepdive:deeper_dive"
+                )
+            ]
+        )
+    buttons.append(
+        [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
+    )
+    return InlineKeyboardMarkup(buttons)
+
+
+def error_with_back_keyboard(
+    back_callback: str = "start_menu",
+    back_text: str = "⬅️ Назад",
+    extra_buttons: Optional[List[List[InlineKeyboardButton]]] = None,
+) -> InlineKeyboardMarkup:
+    """
+    Creates keyboard for error messages — ensures no dead-ends.
+
+    Args:
+        back_callback: Where the back button leads
+        back_text: Text for the back button
+        extra_buttons: Additional action rows (e.g., retry)
+    """
+    keyboard = list(extra_buttons) if extra_buttons else []
+    keyboard.append(back_button(back_callback, back_text))
+    return InlineKeyboardMarkup(keyboard)
+

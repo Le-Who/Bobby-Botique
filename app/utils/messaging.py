@@ -1,51 +1,9 @@
 import asyncio
 import logging
-from telegram import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Message, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from app.utils.text_format import format_text, split_text_safe, strip_formatting
-
-
-def _get_deep_dive_keyboard(is_last_part: bool) -> InlineKeyboardMarkup:
-    """Get keyboard for deep dive mode responses."""
-    buttons = [
-        [
-            InlineKeyboardButton("👍", callback_data="feedback:up"),
-            InlineKeyboardButton("👎", callback_data="feedback:down"),
-            InlineKeyboardButton("🔁", callback_data="retry_last"),
-        ],
-        [
-            InlineKeyboardButton(
-                "✨ Начать новую тему", callback_data="deepdive:new_topic"
-            )
-        ],
-    ]
-    if is_last_part:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    "👇 Копнуть глубже", callback_data="deepdive:deeper_dive"
-                )
-            ]
-        )
-    buttons.append(
-        [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
-    )
-    return InlineKeyboardMarkup(buttons)
-
-
-def _get_default_response_keyboard() -> InlineKeyboardMarkup:
-    """Get default keyboard for AI responses."""
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("👍", callback_data="feedback:up"),
-                InlineKeyboardButton("👎", callback_data="feedback:down"),
-                InlineKeyboardButton("🔁", callback_data="retry_last"),
-            ],
-            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
-            [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
-        ]
-    )
+from app.utils.keyboards import ai_response_keyboard, deep_dive_keyboard
 
 
 async def send_long_message(
@@ -101,9 +59,9 @@ async def send_long_message(
         if reply_markup is not None:
             current_reply_markup = reply_markup if is_last_part else None
         elif is_deep_dive:
-            current_reply_markup = _get_deep_dive_keyboard(is_last_part)
+            current_reply_markup = deep_dive_keyboard(is_last_part)
         else:
-            current_reply_markup = _get_default_response_keyboard()
+            current_reply_markup = ai_response_keyboard()
 
         # Sending logic
         try:

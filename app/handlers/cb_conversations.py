@@ -30,7 +30,11 @@ async def send_conversation_selection(
     # Get list бесед for выбора
     conversations = await db.get_user_conversations(user_id, 10, 0)
     if not conversations:
-        await query.edit_message_text("📝 У вас нет сохранённых бесед.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "📝 У вас нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.",
+            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+        )
         return
 
     text = f"{title}\n\n"
@@ -114,9 +118,19 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
             )
             await query.answer(f"✅ Переключились на беседу ID: {conv_id}")
         else:
+            from app.utils.keyboards import error_with_back_keyboard
+            await query.edit_message_text(
+                "❌ Ошибка при переключении на беседу.",
+                reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
+            )
             await query.answer("❌ Ошибка при переключении на беседу.")
     except Exception as e:
         logging.error("Error switching to conversation %s: %s", conv_id, e)
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Ошибка при переключении на беседу.",
+            reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
+        )
         await query.answer("❌ Ошибка при переключении на беседу.")
 
 
@@ -161,7 +175,9 @@ async def conv_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT
     ]
 
     await query.edit_message_text(
-        f"⚠️ Вы уверены, что хотите удалить беседу {conv_id}?\n\nЭто действие нельзя отменить!",
+        f"⚠️ **Удалить беседу {conv_id}?**\n\n"
+        f"🚨 **Вся история сообщений будет потеряна безвозвратно.**",
+        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -174,7 +190,7 @@ async def conv_rename_ask_callback(update: Update, context: ContextTypes.DEFAULT
     conv_id = int(query.data.split(":")[1])
     context.user_data["rename_conv_id"] = conv_id
 
-    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="conv_rename_cancel")]]
+    keyboard = [[InlineKeyboardButton("↩️ Отмена", callback_data="conv_rename_cancel")]]
 
     await query.edit_message_text(
         f"✏️ Введите новое название для беседы {conv_id} (одной строкой):",
@@ -223,6 +239,11 @@ async def conv_delete_confirm_callback(
 
         await query.answer(f"✅ Беседа {conv_id} удалена")
     else:
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Ошибка при удалении беседы.",
+            reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
+        )
         await query.answer("❌ Ошибка при удалении беседы")
 
 

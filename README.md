@@ -75,6 +75,7 @@ Located in `app/handlers/` as modular sub-handlers (`ai_core.py`, `ai_chat.py`, 
   - Injects system instructions and user preferences into every prompt.
   - Supports "New Topic" to reset context while keeping long-term memory.
 - **Group Chat Mode**: Specialized handlers for admin-only or reply-only interactions in groups.
+- **Customizable Roles**: Browse system role catalog, generate AI roles, or write custom roles manually — all manageable via an AIDA-structured roles hub.
 
 ### AI Provider Routing & Key Rotation
 
@@ -255,17 +256,17 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (401 tests)
+### Suite Structure (404 tests)
 
-| Category           | Files                                                                                       | What They Cover                                     |
-| :----------------- | :------------------------------------------------------------------------------------------ | :-------------------------------------------------- |
-| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`        | AI routing, health scoring, fallback chains, errors |
-| **Handlers**       | `test_callbacks`, `test_menus`, `test_io_handlers`, `test_stage_indicators`                 | Callback dispatch, menu rendering, file I/O, stages |
-| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`       | Tavily key management, query optimization, cleanup  |
-| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                      | Circuit breaker, TTL cache, race conditions         |
-| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security` | Header enforcement, auth bypass prevention          |
-| **Metrics**        | `test_metrics_integration`, `test_system_status`                                            | Batched metric saves, system status data            |
-| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                  | Text formatting, keyboard builders, timezone math   |
+| Category           | Files                                                                                          | What They Cover                                              |
+| :----------------- | :--------------------------------------------------------------------------------------------- | :----------------------------------------------------------- |
+| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`           | AI routing, health scoring, fallback chains, errors          |
+| **Handlers**       | `test_callbacks`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators` | Callback dispatch, menu rendering, role UI, file I/O, stages |
+| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`          | Tavily key management, query optimization, cleanup           |
+| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                         | Circuit breaker, TTL cache, race conditions                  |
+| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`    | Header enforcement, auth bypass prevention                   |
+| **Metrics**        | `test_metrics_integration`, `test_system_status`                                               | Batched metric saves, system status data                     |
+| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                     | Text formatting, keyboard builders, timezone math            |
 
 ### Mock Isolation Rule
 

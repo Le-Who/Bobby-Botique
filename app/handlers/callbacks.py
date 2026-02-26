@@ -51,6 +51,9 @@ from app.handlers.cb_roles import (  # noqa: F401
     role_nav_callback,
     role_page_callback,
     open_roles_callback,
+    role_create_manual_callback,
+    role_manual_cancel_callback,
+    role_manual_save_callback,
 )
 
 from app.handlers.cb_documents import (  # noqa: F401
@@ -109,22 +112,36 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     actual_hash = get_model_hash(model_name)
                     if actual_hash != expected_hash:
                         # Модель fromменилась (удалена/добавлена), просим выбрать заново
+                        from app.utils.keyboards import error_with_back_keyboard
                         await query.edit_message_text(
-                            "⚠️ Список моделей обновился. Пожалуйста, выберите модель заново через /model"
+                            "⚠️ Список моделей обновился. Пожалуйста, выберите модель заново.",
+                            reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель")
                         )
                         return
             else:
-                await query.edit_message_text("❌ Ошибка: неверный индекс модели.")
+                from app.utils.keyboards import error_with_back_keyboard
+                await query.edit_message_text(
+                    "❌ Ошибка: неверный индекс модели.",
+                    reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель")
+                )
                 return
         except (ValueError, IndexError) as e:
-            await query.edit_message_text("❌ Ошибка: неверный формат callback_data.")
+            from app.utils.keyboards import error_with_back_keyboard
+            await query.edit_message_text(
+                "❌ Ошибка: неверный формат callback_data.",
+                reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель")
+            )
             logging.error("Error parsing model callback: %s, data: %s", e, query.data)
             return
     else:
         # Старый формат for совместимости: model_gemini-2.5-pro
         model_name = query.data.split("_", 1)[1] if "_" in query.data else None
         if not model_name:
-            await query.edit_message_text("❌ Ошибка: неверный формат callback_data.")
+            from app.utils.keyboards import error_with_back_keyboard
+            await query.edit_message_text(
+                "❌ Ошибка: неверный формат callback_data.",
+                reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель")
+            )
             return
     chat_state = await db.get_user_chat(user_id)
     chat_state.model = model_name
@@ -338,8 +355,10 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logging.error("retry_last_callback failed: %s", e, exc_info=True)
         try:
+            from app.utils.keyboards import error_with_back_keyboard
             await placeholder_message.edit_text(
-                "❌ Произошла ошибка при повторе запроса. Попробуйте позже."
+                "❌ Произошла ошибка при повторе запроса.",
+                reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
             )
         except Exception:
             pass
@@ -367,6 +386,34 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     from app.handlers.commands import help_command
 
     await help_command(DummyUpdate(query.message, query.from_user), context)
+
+
+async def open_documents_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Opens documents menu from start menu button."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    formatted_text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
+    try:
+        await query.edit_message_text(
+            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+    except telegram.error.BadRequest:
+        pass
+
+
+async def open_conversations_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Opens conversations menu from start menu button."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id)
+    try:
+        await query.edit_message_text(
+            text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+    except telegram.error.BadRequest:
+        pass
 
 
 async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -427,7 +474,7 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         # Add confirmed feedback indicator
         confirmed_row = [
-            InlineKeyboardButton(f"{emoji} Спасибо за отзыв!", callback_data="noop")
+            InlineKeyboardButton(f"{emoji} Спасибо! Отзыв учтён", callback_data="noop")
         ]
         new_buttons.insert(0, confirmed_row)
 
@@ -465,6 +512,8 @@ def register(application: Application) -> None:
     _add_fast_callback(application, conv_page_callback, "^conv_page:")
     _add_fast_callback(application, conv_switch_callback, "^conv_switch$")
     _add_fast_callback(application, conv_switch_to_callback, "^conv_switch_to:")
+    _add_fast_callback(application, open_documents_callback, "^open_documents$")
+    _add_fast_callback(application, open_conversations_callback, "^open_conversations$")
 
     # Process оба формата: model:0 (new) и model_none (разделитель)
     application.add_handler(
@@ -507,6 +556,16 @@ def register(application: Application) -> None:
     )
     application.add_handler(
         CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$")
+    )
+    # Manual role creation
+    application.add_handler(
+        CallbackQueryHandler(role_create_manual_callback, pattern="^role_create_manual$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(role_manual_cancel_callback, pattern="^role_manual_cancel$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(role_manual_save_callback, pattern="^role_manual_save$")
     )
     # New Role management
     application.add_handler(

@@ -61,7 +61,11 @@ async def _handle_document_clear_all(query, context, user_id):
         await query.answer("У вас нет документов для удаления.")
         return
 
-    text = "⚠️ **Вы уверены?**\n\nЭто действие удалит **ВСЕ** ваши загруженные документы.\nЭто действие нельзя отменить."
+    text = (
+        "⚠️ **Вы уверены?**\n\n"
+        "🚨 **Все документы будут удалены безвозвратно.**\n"
+        "Вы потеряете все загруженные файлы и их обработку."
+    )
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     await query.edit_message_text(
         formatted_text,
@@ -103,7 +107,11 @@ async def _handle_document_use_existing(query, context, user_id):
 
     document = await get_document_by_id(document_id, user_id)
     if not document:
-        await query.edit_message_text("❌ Документ не найден.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Документ не найден.",
+            reply_markup=error_with_back_keyboard("doc:list", "📄 К документам")
+        )
         return
 
     # Устанавливаем state работы с documentами
@@ -162,7 +170,7 @@ async def _handle_document_select_document(query, context, user_id):
             ]
         )
 
-    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")])
+    keyboard.append([InlineKeyboardButton("↩️ Назад", callback_data="doc:list")])
 
     text = "📋 **Выберите документ для работы:**\n\nНажмите на документ, чтобы начать работу с ним."
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
@@ -179,7 +187,11 @@ async def _handle_document_select(query, context, user_id):
 
     document = await get_document_by_id(document_id, user_id)
     if not document:
-        await query.edit_message_text("❌ Документ не найден.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Документ не найден.",
+            reply_markup=error_with_back_keyboard("doc:list", "📄 К документам")
+        )
         return
 
     # Устанавливаем state работы с documentами

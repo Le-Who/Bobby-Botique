@@ -17,9 +17,11 @@ from app.utils.keyboards import (
     build_item_list_keyboard,
     build_paginated_keyboard,
     # Common patterns
-    main_menu_keyboard,
+    feedback_row,
     after_response_keyboard,
-    document_menu_keyboard,
+    ai_response_keyboard,
+    deep_dive_keyboard,
+    error_with_back_keyboard,
 )
 
 
@@ -185,10 +187,13 @@ class TestBuildPaginatedKeyboard:
 class TestCommonKeyboards:
     """Tests for common keyboard patterns."""
 
-    def test_main_menu_keyboard(self):
-        kb = main_menu_keyboard()
-        # Should have standard menu structure
-        assert len(kb.inline_keyboard) >= 2
+    def test_feedback_row(self):
+        row = feedback_row()
+        assert len(row) == 3
+        callbacks = [b.callback_data for b in row]
+        assert "feedback:up" in callbacks
+        assert "feedback:down" in callbacks
+        assert "retry_last" in callbacks
 
     def test_after_response_keyboard(self):
         kb = after_response_keyboard()
@@ -202,9 +207,26 @@ class TestCommonKeyboards:
         kb = after_response_keyboard(include_new_topic=False, include_retry=False)
         assert kb is None
 
-    def test_document_menu_keyboard(self):
-        kb = document_menu_keyboard()
-        assert len(kb.inline_keyboard) == 3
+    def test_ai_response_keyboard(self):
+        kb = ai_response_keyboard()
+        assert len(kb.inline_keyboard) >= 2
+        # First row should be feedback
+        assert kb.inline_keyboard[0][0].callback_data == "feedback:up"
+
+    def test_deep_dive_keyboard(self):
+        kb = deep_dive_keyboard(is_last_part=True)
+        assert len(kb.inline_keyboard) >= 3
+
+    def test_error_with_back_keyboard(self):
+        kb = error_with_back_keyboard("test_back", "Go Back")
+        assert len(kb.inline_keyboard) == 1
+        assert kb.inline_keyboard[0][0].callback_data == "test_back"
+
+    def test_error_with_back_keyboard_extra_buttons(self):
+        from telegram import InlineKeyboardButton
+        extra = [[InlineKeyboardButton("Retry", callback_data="retry")]]
+        kb = error_with_back_keyboard("back", extra_buttons=extra)
+        assert len(kb.inline_keyboard) == 2
 
 
 if __name__ == "__main__":

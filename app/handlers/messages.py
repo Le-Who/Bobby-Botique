@@ -124,6 +124,76 @@ async def _handle_conversation_rename(
     return False
 
 
+async def _handle_manual_role_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+) -> bool:
+    """Handle text input during manual role creation (title → prompt → preview).
+    
+    Returns True if the message was consumed by manual role creation flow.
+    """
+    from app.state import (
+        is_awaiting_manual_role_title,
+        is_awaiting_manual_role_prompt,
+        set_manual_role_title,
+        get_manual_role_title,
+        clear_manual_role_state,
+    )
+
+    message_text = (update.message.text or "").strip() if update.message else ""
+    if not message_text:
+        return False
+
+    # Step 1: User sends title
+    if is_awaiting_manual_role_title(user_id):
+        if len(message_text) > 100:
+            await update.message.reply_text(
+                "⚠️ Название слишком длинное (макс. 100 символов). Попробуйте короче."
+            )
+            return True
+        set_manual_role_title(user_id, message_text)
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")]]
+        )
+        await update.message.reply_text(
+            f"✅ Название: **{message_text}**\n\n"
+            f"Теперь введите **системный промпт** (инструкцию для бота).\n"
+            f"Можно несколько строк — это будет поведение вашей роли:",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        return True
+
+    # Step 2: User sends prompt text
+    if is_awaiting_manual_role_prompt(user_id):
+        title = get_manual_role_title(user_id)
+        # Store prompt in user_data for the save callback
+        context.user_data["manual_role_prompt"] = message_text
+        clear_manual_role_state(user_id)
+        preview_len = 200
+        prompt_preview = (
+            message_text[:preview_len] + "..." if len(message_text) > preview_len else message_text
+        )
+        kb = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("💾 Сохранить и применить", callback_data="role_manual_save")],
+                [InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")],
+            ]
+        )
+        await update.message.reply_text(
+            f"📋 **Предпросмотр новой роли**\n\n"
+            f"🏷 **Название:** {title}\n"
+            f"📝 **Промпт:**\n`{prompt_preview}`\n\n"
+            f"Нажмите кнопку ниже, чтобы сохранить:",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        return True
+
+    return False
+
+
 async def _handle_custom_role_generation(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -501,6 +571,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Переименование беседы
     if await _handle_conversation_rename(update, context, user_id):
+        return
+
+    # Ручное создание роли (без AI)
+    if await _handle_manual_role_input(update, context, user_id):
         return
 
     # Генерация кастомной roles

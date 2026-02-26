@@ -78,10 +78,10 @@ async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAUL
     role_id = int(query.data.split(":")[1])
     context.user_data["rename_role_id"] = role_id
     kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("❌ Отмена", callback_data="role_rename_cancel")]]
+        [[InlineKeyboardButton("↩️ Отмена", callback_data="role_rename_cancel")]]
     )
-    await query.message.reply_text(
-        "Введите новое название роли одной строкой:", reply_markup=kb
+    await query.edit_message_text(
+        "✏️ Введите новое название роли одной строкой:", reply_markup=kb
     )
 
 
@@ -173,10 +173,10 @@ async def role_create_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     begin_custom_role_creation(query.from_user.id)
     kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("❌ Отмена", callback_data="role_create_cancel")]]
+        [[InlineKeyboardButton("↩️ Отмена", callback_data="role_create_cancel")]]
     )
-    await query.message.reply_text(
-        "Опишите, какую роль хотите создать (1–2 предложения):",
+    await query.edit_message_text(
+        "📝 Опишите, какую роль хотите создать (1–2 предложения):",
         reply_markup=kb,
     )
 
@@ -232,7 +232,11 @@ async def role_custom_apply_callback(
     chat_state = await db.get_user_chat(user_id)
     role = get_generated_role(user_id)
     if not role:
-        await query.edit_message_text("❌ Нет сгенерированной роли для применения.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Нет сгенерированной роли для применения.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+        )
         return
     prompt_text = role.get("prompt") or role.get("system_prompt") or ""
     # Save only промпт roles (without базового системного промпта)
@@ -255,7 +259,11 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
     user_id = query.from_user.id
     role = get_generated_role(user_id)
     if not role:
-        await query.edit_message_text("❌ Нет сгенерированной роли для сохранения.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Нет сгенерированной роли для сохранения.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+        )
         return
     # Save в user_roles
     try:
@@ -284,7 +292,11 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
             "💾 Роль сохранена и применена.", reply_markup=kb
         )
     except Exception as e:
-        await query.edit_message_text(f"❌ Ошибка сохранения роли: {e}")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            f"❌ Ошибка сохранения роли: {e}",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+        )
 
 
 async def role_custom_retry_callback(
@@ -295,7 +307,11 @@ async def role_custom_retry_callback(
     user_id = query.from_user.id
     last_prompt = get_last_custom_role_prompt(user_id)
     if not last_prompt:
-        await query.edit_message_text("❌ Нет предыдущего запроса для повтора.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Нет предыдущего запроса для повтора.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+        )
         return
     # Запускаем повтор генерации как в messages.handle_request
     chat_state = await db.get_user_chat(user_id)
@@ -306,7 +322,11 @@ async def role_custom_retry_callback(
     model_for_role = chat_state.model or settings.DEFAULT_MODEL
     key_data, model_used, resolution = await _resolve_ai_request(model_for_role)
     if not key_data:
-        await query.edit_message_text("❌ Нет доступных ключей API для генерации роли.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Нет доступных ключей API для генерации роли.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+        )
         return
     progress_msg = await query.message.reply_text("🛠️ Генерирую роль…")
     set_generating_custom_role(user_id, True)
@@ -499,12 +519,20 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
     prompt = role_data.get("prompt") if role_data else ""
 
     if prompt:
-        # Send as a new message so user can copy it easily
-        await query.message.reply_text(
-            f"📝 *Полный промпт роли:*\n\n`{prompt}`", parse_mode="Markdown"
+        from app.utils.keyboards import error_with_back_keyboard
+        back_view = "my_roles" if role_data.get("user_id") else "system_roles"
+        kb = error_with_back_keyboard(f"role_detail:{role_key}", "⬅️ Назад к роли")
+        await query.edit_message_text(
+            f"📝 *Полный промпт роли:*\n\n`{prompt}`",
+            parse_mode="Markdown",
+            reply_markup=kb,
         )
     else:
-        await query.message.reply_text("❌ Не удалось найти промпт.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Не удалось найти промпт.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+        )
 
 
 async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -563,3 +591,94 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     from app.handlers.commands import roles_command
 
     await roles_command(DummyUpdate(query.message, query.from_user), context)
+
+
+# ── Manual role creation callbacks ────────────────────────────────────────────
+
+
+async def role_create_manual_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Start manual role creation — asks user for a title."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    from app.state import begin_manual_role_creation
+    begin_manual_role_creation(user_id)
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")]]
+    )
+    await query.edit_message_text(
+        "📝 **Создание роли вручную**\n\n"
+        "Введите **название** для новой роли (1 строка):",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
+
+
+async def role_manual_cancel_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Cancel manual role creation — return to roles hub."""
+    query = update.callback_query
+    await query.answer("↩️ Создание роли отменено")
+    user_id = query.from_user.id
+    from app.state import clear_manual_role_state
+    clear_manual_role_state(user_id)
+    chat_state = await db.get_user_chat(user_id)
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+        user_id, chat_state, view_mode="hub"
+    )
+    try:
+        await query.edit_message_text(
+            text, parse_mode=parse_mode, reply_markup=reply_markup
+        )
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise e
+
+
+async def role_manual_save_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Save the manually created role to DB and apply it."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    from app.state import get_manual_role_title, clear_manual_role_state
+    title = get_manual_role_title(user_id)
+    prompt_text = context.user_data.get("manual_role_prompt", "")
+    if not title or not prompt_text:
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Нет данных для сохранения роли.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+        )
+        return
+    try:
+        await db.db_query(
+            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
+            (user_id, title, prompt_text),
+        )
+        from app.repos.role_conv_metrics import role_conv_metrics
+        await role_conv_metrics.record_custom_role_creation()
+        # Apply role immediately
+        chat_state = await db.get_user_chat(user_id)
+        chat_state.system_prompt = prompt_text
+        await db.update_user_chat(user_id, chat_state)
+        clear_manual_role_state(user_id)
+        context.user_data.pop("manual_role_prompt", None)
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]]
+        )
+        await query.edit_message_text(
+            f"💾 Роль **{title}** сохранена и применена!",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+    except Exception as e:
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            f"❌ Ошибка сохранения: {e}",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+        )

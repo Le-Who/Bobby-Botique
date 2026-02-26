@@ -79,17 +79,21 @@ async def get_start_menu_content(chat_state, user_id=None) -> None:
 
     keyboard = [
         [
-            InlineKeyboardButton("🆕 Новый чат", callback_data="new_chat"),
-            InlineKeyboardButton("⚙️ Модели", callback_data="model_menu"),
+            InlineKeyboardButton("💬 Новый чат", callback_data="new_chat"),
         ],
         [
+            InlineKeyboardButton("🧠 Модель AI", callback_data="model_menu"),
             InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
-            InlineKeyboardButton("📚 Справка", callback_data="help"),
+        ],
+        [
+            InlineKeyboardButton("📄 Документы", callback_data="open_documents"),
+            InlineKeyboardButton("💬 Беседы", callback_data="open_conversations"),
         ],
         [
             InlineKeyboardButton(
                 f"🌐 Поиск: {search_icon}", callback_data="toggle_search"
-            )
+            ),
+            InlineKeyboardButton("❓ Справка", callback_data="help"),
         ],
     ]
 
@@ -221,32 +225,39 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
 
     keyboard = []
 
-    # 1. Кнопка сброса (if role активна)
-    if current_prompt:
-        keyboard.append(
-            [InlineKeyboardButton("🛑 Отключить роль", callback_data="role_clear")]
-        )
-
-    # 2. Основные разделы навигации
+    # 1. Основные разделы навигации (Browse)
     keyboard.append(
         [
             InlineKeyboardButton(
-                f"📂 Мои роли ({custom_count})", callback_data="role_nav:my_roles"
+                "📚 Каталог ролей", callback_data="role_nav:system_roles"
             ),
             InlineKeyboardButton(
-                "📚 Каталог ролей", callback_data="role_nav:system_roles"
+                f"👤 Мои роли ({custom_count})", callback_data="role_nav:my_roles"
             ),
         ]
     )
 
-    # 3. Быстрые действия
+    # 2. Создание (AI + Manual)
     keyboard.append(
-        [InlineKeyboardButton("➕ Создать новую роль", callback_data="role_create")]
+        [
+            InlineKeyboardButton("✨ Сгенерировать", callback_data="role_create"),
+            InlineKeyboardButton("📝 Написать", callback_data="role_create_manual"),
+        ]
     )
+
+    # 3. Сброс (if role активна)
+    if current_prompt:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "🔄 Сбросить к стандартной", callback_data="role_clear"
+                )
+            ]
+        )
 
     # 4. Назад
     keyboard.append(
-        [InlineKeyboardButton("⬅️ Назад в меню", callback_data="start_menu")]
+        [InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]
     )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
@@ -289,13 +300,13 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
     # 1. Применить/Снять
     if is_active:
         keyboard.append(
-            [InlineKeyboardButton("🛑 Отключить эту роль", callback_data="role_clear")]
+            [InlineKeyboardButton("🔄 Сбросить роль", callback_data="role_clear")]
         )
     else:
         keyboard.append(
             [
                 InlineKeyboardButton(
-                    "✅ Применить роль", callback_data=f"role_apply:{role_key}"
+                    "▶️ Активировать", callback_data=f"role_apply:{role_key}"
                 )
             ]
         )
@@ -437,7 +448,10 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     # Кнопки управления (only for "Мои roles")
     if view_mode == "my_roles":
         keyboard.append(
-            [InlineKeyboardButton("➕ Создать", callback_data="role_create")]
+            [
+                InlineKeyboardButton("✨ Сгенерировать", callback_data="role_create"),
+                InlineKeyboardButton("📝 Написать", callback_data="role_create_manual"),
+            ]
         )
 
     # Кнопка Назад (в Хаб)
@@ -649,8 +663,11 @@ async def get_documents_menu_content(user_id) -> None:
         ],
         [
             InlineKeyboardButton(
-                "🗑️ Очистить все документы", callback_data="doc:clear_all"
+                "🗑️ Удалить все документы", callback_data="doc:clear_all"
             )
+        ],
+        [
+            InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")
         ],
     ]
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
@@ -665,10 +682,13 @@ async def get_conversations_menu_content(user_id, page=1) -> None:
     total_count = await db.get_conversation_count(user_id)
 
     if not conversations:
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]]
+        )
         return (
             "📝 У вас пока нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.",
             None,
-            None,
+            kb,
         )
 
     text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
@@ -709,5 +729,10 @@ async def get_conversations_menu_content(user_id, page=1) -> None:
         keyboard.append(
             [InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")]
         )
+
+    # Кнопка Назад
+    keyboard.append(
+        [InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]
+    )
 
     return text, "Markdown", InlineKeyboardMarkup(keyboard)

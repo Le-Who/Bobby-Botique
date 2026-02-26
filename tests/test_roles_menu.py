@@ -86,7 +86,7 @@ async def test_hub_view_no_active_role(chat_state, mock_db, run_patched):
     buttons = [btn.text for row in reply_markup.inline_keyboard for btn in row]
     assert any("Мои роли" in b for b in buttons)
     assert any("Каталог ролей" in b for b in buttons)
-    assert any("Создать новую роль" in b for b in buttons)
+    assert any("Сгенерировать" in b for b in buttons)
 
 
 @pytest.mark.asyncio
@@ -143,7 +143,7 @@ async def test_list_view_my_roles_empty(chat_state, mock_db, run_patched):
     assert "У вас пока нет" in text
 
     buttons = [btn.text for row in reply_markup.inline_keyboard for btn in row]
-    assert any("Создать" in b for b in buttons)
+    assert any("Сгенерировать" in b for b in buttons)
     assert any("Назад" in b for b in buttons)
 
 
@@ -164,7 +164,7 @@ async def test_list_view_my_roles_items(chat_state, mock_db, run_patched):
     buttons = [btn.text for row in reply_markup.inline_keyboard for btn in row]
     assert any("Role 1" in b for b in buttons)
     assert any("Role 2" in b for b in buttons)
-    assert any("Создать" in b for b in buttons)
+    assert any("Сгенерировать" in b for b in buttons)
 
 
 @pytest.mark.asyncio
@@ -207,7 +207,7 @@ async def test_details_view_system_role(chat_state, mock_db, run_patched):
     assert "First sys role prompt" in text
 
     buttons = [btn.text for row in reply_markup.inline_keyboard for btn in row]
-    assert any("Применить" in b for b in buttons)
+    assert any("Активировать" in b for b in buttons)
 
 
 @pytest.mark.asyncio
@@ -228,7 +228,7 @@ async def test_details_view_custom_role(chat_state, mock_db, run_patched):
     assert "My prompt" in text
 
     buttons = [btn.text for row in reply_markup.inline_keyboard for btn in row]
-    assert any("Применить" in b for b in buttons)
+    assert any("Активировать" in b for b in buttons)
     assert any("Удалить" in b for b in buttons)
 
 
