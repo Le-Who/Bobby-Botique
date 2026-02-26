@@ -26,9 +26,10 @@ else:
             redis_url,
             socket_timeout=5,  # Fast timeout for quick failure detection
             socket_connect_timeout=5,  # Fast connect timeout
-            max_connections=1,  # Single connection for stability
+            max_connections=2,  # Allow ping + one operation concurrently
             retry_on_timeout=True,  # Only retry on timeout, not all errors
             decode_responses=False,  # Keep as bytes for manual handling
+            health_check_interval=0,  # Disable built-in health-check pings
         )
         logging.info("Redis client initialized successfully for Upstash.com")
     except (ConnectionError, RedisError) as e:
@@ -37,6 +38,16 @@ else:
 
 # Thread-safe cache lock
 _cache_lock = threading.Lock()
+
+
+async def ping_safe() -> bool:
+    """Lightweight Redis ping for health checks. Returns bool, never throws."""
+    if not redis_client:
+        return False
+    try:
+        return bool(await asyncio.to_thread(redis_client.ping))
+    except Exception:
+        return False
 
 
 def _generate_cache_key(query: str, search_type: str) -> str:

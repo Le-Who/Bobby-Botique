@@ -249,18 +249,16 @@ async def health_check_endpoint():
             },
         }
 
-        # Check Redis without blocking
+        # Check Redis without blocking (ping_safe never throws or warns)
         try:
-            from app.cache import redis_client
+            from app.cache import ping_safe, redis_client
 
-            if redis_client:
-                try:
-                    await asyncio.to_thread(redis_client.ping)
-                    health["services"]["redis"] = "connected"
-                except Exception:
-                    health["services"]["redis"] = "disconnected"
-            else:
+            if redis_client is None:
                 health["services"]["redis"] = "not_configured"
+            elif await ping_safe():
+                health["services"]["redis"] = "connected"
+            else:
+                health["services"]["redis"] = "disconnected"
         except Exception:
             health["services"]["redis"] = "unknown"
 
@@ -314,11 +312,11 @@ async def api_overview():
     # Database status
     db_status = database.is_database_connected()
 
-    # Redis status
+    # Redis status (ping_safe never throws or warns)
     try:
-        from app.cache import redis_client
+        from app.cache import ping_safe
 
-        redis_ok = bool(redis_client and await asyncio.to_thread(redis_client.ping))
+        redis_ok = await ping_safe()
     except Exception:
         redis_ok = False
 

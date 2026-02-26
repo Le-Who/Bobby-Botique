@@ -499,7 +499,7 @@ class MetricsCollector:
             },
         }
 
-        logging.info(
+        logging.debug(
             f"Metrics summary: {summary['total_requests']} requests, {summary['error_rate']:.1f}% errors"
         )
         return summary
