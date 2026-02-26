@@ -155,13 +155,18 @@ async def get_model_daily_limit(model_name: str) -> Optional[int]:
         )
         limit = res[0]["daily_limit"] if res else None
 
+        # Fallback to settings.DAILY_LIMITS when DB has no entry for this model
+        if limit is None:
+            limit = settings.DAILY_LIMITS.get(model_name)
+
         async with db_manager._cache_lock:
             if hasattr(db_manager, "_model_config_cache"):
                 db_manager._model_config_cache[model_name] = limit
         return limit
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to fetch limit for %s: %s", model_name, e)
-        return None
+        # Fallback to config even on DB error
+        return settings.DAILY_LIMITS.get(model_name)
 
 
 async def _is_key_available(key_hash: str, model_name: str, conn=None) -> bool:

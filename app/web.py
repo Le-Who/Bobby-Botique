@@ -339,7 +339,16 @@ async def api_overview():
 async def api_keys():
     """API key usage statistics for all models."""
     try:
+        from app.utils.time import get_kyiv_reset_time
+
         key_stats = await database.get_gemini_key_usage_stats()
+
+        # Get Tavily key stats
+        tavily_stats = []
+        try:
+            tavily_stats = await database.get_tavily_key_usage_stats()
+        except Exception:
+            pass
 
         # Get active keys per model (batched to avoid N+1)
         active_keys = {}
@@ -360,8 +369,13 @@ async def api_keys():
             {
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
                 "key_usage": key_stats,
+                "tavily_usage": tavily_stats,
                 "active_keys": active_keys,
                 "daily_limits": getattr(settings, "DAILY_LIMITS", {}),
+                "reset_info": {
+                    "gemini_resets": get_kyiv_reset_time(),
+                    "tavily_credit_limit": settings.TAVILY_MONTHLY_CREDIT_LIMIT,
+                },
             }
         )
     except Exception as e:

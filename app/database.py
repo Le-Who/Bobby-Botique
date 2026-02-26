@@ -498,6 +498,7 @@ _REPO_EXPORTS = {
     "force_update_tavily_keys": "app.repos.keys",
     # app.repos.metrics_repo
     "get_gemini_key_usage_stats": "app.repos.metrics_repo",
+    "get_tavily_key_usage_stats": "app.repos.metrics_repo",
     "get_active_key_info": "app.repos.metrics_repo",
     "get_supabase_metrics": "app.repos.metrics_repo",
 }

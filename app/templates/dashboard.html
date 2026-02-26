@@ -112,9 +112,19 @@
       <!-- TAB: AI Providers -->
       <div class="tab-panel" id="panel-providers">
 
+      <!-- Reset Time Info -->
+      <section class="dash-section">
+        <div class="card" style="padding: 0.6rem 1.2rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem;">
+            <span style="color: var(--text-muted);">🔄 Gemini daily limits reset: <span class="mono" id="reset-time" style="color: var(--accent);">—</span></span>
+            <span style="color: var(--text-muted);">📊 Tavily monthly credit limit: <span class="mono" id="tavily-limit" style="color: var(--accent);">—</span></span>
+          </div>
+        </div>
+      </section>
+
       <!-- ROW 3: AI Keys & Circuit Breakers -->
       <section class="dash-section">
-        <h2 class="section-title">AI Provider Status</h2>
+        <h2 class="section-title">Gemini API Keys</h2>
         <div class="card-row two-col">
           <div class="card card-wide">
             <div class="card-label">API Key Usage (Today)</div>
@@ -140,6 +150,29 @@
             <div id="cb-list" class="cb-list">
               <div class="empty-state">Loading...</div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tavily Keys -->
+      <section class="dash-section">
+        <h2 class="section-title">Tavily Search API</h2>
+        <div class="card card-wide">
+          <div class="card-label">Monthly Credit Usage</div>
+          <div class="key-table-wrap">
+            <table class="key-table" id="tavily-table">
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Credits Used</th>
+                  <th>Limit</th>
+                  <th>%</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="tavily-tbody"></tbody>
+            </table>
+            <div class="empty-state" id="tavily-empty">No Tavily usage data</div>
           </div>
         </div>
       </section>
@@ -415,6 +448,7 @@
         const d = await apiFetch(API.keys);
         if (!d) return;
 
+        // --- Gemini keys ---
         const tbody = $("key-tbody");
         const empty = $("keys-empty");
         const rows = d.key_usage || [];
@@ -422,28 +456,88 @@
         if (rows.length === 0) {
           tbody.innerHTML = "";
           empty.style.display = "block";
-          return;
+        } else {
+          empty.style.display = "none";
+          tbody.innerHTML = rows
+            .map((r) => {
+              const limit = r.daily_limit;
+              const used = r.request_count ?? 0;
+              const pct =
+                r.usage_percent != null
+                  ? Number(r.usage_percent).toFixed(1)
+                  : "—";
+              // Status logic: meaningful labels
+              let statusCls, statusTxt;
+              if (limit == null) {
+                statusCls = "tag-warn";
+                statusTxt = "∞ No Limit";
+              } else if (used >= limit) {
+                statusCls = "tag-err";
+                statusTxt = "✗ Exhausted";
+              } else if (!r.is_available) {
+                statusCls = "tag-warn";
+                statusTxt = "⚠ Near Limit";
+              } else {
+                statusCls = "tag-ok";
+                statusTxt = "✓ Available";
+              }
+              return `<tr>
+                  <td class="mono">${r.model_name || "—"}</td>
+                  <td class="mono dim">${r.api_key_preview || r.key_hash?.substring(0, 10) || "—"}</td>
+                  <td class="mono">${used}</td>
+                  <td class="mono">${limit ?? "∞"}</td>
+                  <td class="mono">${limit != null ? pct + "%" : "—"}</td>
+                  <td><span class="tag ${statusCls}">${statusTxt}</span></td>
+              </tr>`;
+            })
+            .join("");
         }
-        empty.style.display = "none";
 
-        tbody.innerHTML = rows
-          .map((r) => {
-            const pct =
-              r.usage_percent != null
-                ? Number(r.usage_percent).toFixed(1)
-                : "—";
-            const statusCls = r.is_available ? "tag-ok" : "tag-err";
-            const statusTxt = r.is_available ? "OK" : "LIMIT";
-            return `<tr>
-                <td class="mono">${r.model_name || "—"}</td>
-                <td class="mono dim">${r.api_key_preview || r.key_hash?.substring(0, 10) || "—"}</td>
-                <td class="mono">${r.request_count ?? 0}</td>
-                <td class="mono">${r.daily_limit ?? "∞"}</td>
-                <td class="mono">${pct}%</td>
-                <td><span class="tag ${statusCls}">${statusTxt}</span></td>
-            </tr>`;
-          })
-          .join("");
+        // --- Tavily keys ---
+        const tBody = $("tavily-tbody");
+        const tEmpty = $("tavily-empty");
+        const tRows = d.tavily_usage || [];
+
+        if (tRows.length === 0) {
+          tBody.innerHTML = "";
+          tEmpty.style.display = "block";
+        } else {
+          tEmpty.style.display = "none";
+          tBody.innerHTML = tRows
+            .map((r) => {
+              const used = r.credit_usage ?? 0;
+              const limit = r.credit_limit ?? 0;
+              const pct = r.usage_percent != null
+                ? Number(r.usage_percent).toFixed(1) : "0.0";
+              let statusCls, statusTxt;
+              if (used >= limit) {
+                statusCls = "tag-err";
+                statusTxt = "✗ Exhausted";
+              } else if (!r.is_available) {
+                statusCls = "tag-warn";
+                statusTxt = "⚠ Near Limit";
+              } else {
+                statusCls = "tag-ok";
+                statusTxt = "✓ Available";
+              }
+              return `<tr>
+                  <td class="mono dim">${r.api_key_preview || "—"}</td>
+                  <td class="mono">${used}</td>
+                  <td class="mono">${limit}</td>
+                  <td class="mono">${pct}%</td>
+                  <td><span class="tag ${statusCls}">${statusTxt}</span></td>
+              </tr>`;
+            })
+            .join("");
+        }
+
+        // --- Reset time info ---
+        const ri = d.reset_info;
+        if (ri) {
+          $("reset-time").textContent = ri.gemini_resets || "—";
+          $("tavily-limit").textContent = ri.tavily_credit_limit != null
+            ? ri.tavily_credit_limit + " credits/month" : "—";
+        }
       }
 
       async function loadCircuitBreakers() {

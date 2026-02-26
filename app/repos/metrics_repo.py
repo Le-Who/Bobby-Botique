@@ -67,6 +67,34 @@ async def get_supabase_metrics() -> Dict[str, Any]:
         }
 
 
+async def get_tavily_key_usage_stats() -> List[Dict[str, Any]]:
+    """Get monthly credit usage stats for all Tavily API keys."""
+    current_month = datetime.now(get_pacific_tz()).strftime("%Y-%m")
+    query = """
+        SELECT
+            ak.key_hash,
+            LEFT(ak.key_hash, 8) || '***' as api_key_preview,
+            COALESCE(ku.credit_usage, 0) as credit_usage,
+            $1::int as credit_limit,
+            CASE
+                WHEN $1::int = 0 THEN 0
+                ELSE (COALESCE(ku.credit_usage, 0)::float / $1::int * 100)
+            END as usage_percent,
+            CASE
+                WHEN $1::int = 0 THEN true
+                ELSE COALESCE(ku.credit_usage, 0) < ($1::int * $2)
+            END as is_available
+        FROM tavily_api_keys ak
+        LEFT JOIN tavily_key_usage ku ON ak.key_hash = ku.key_hash
+            AND ku.usage_month = $3
+        ORDER BY COALESCE(ku.credit_usage, 0) ASC
+    """
+    return await db_query(
+        query,
+        (settings.TAVILY_MONTHLY_CREDIT_LIMIT, settings.TAVILY_LIMIT_THRESHOLD_PERCENT, current_month),
+    )
+
+
 async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, Any]]:
     today_pacific: date = datetime.now(get_pacific_tz()).date()
     if model_name:
