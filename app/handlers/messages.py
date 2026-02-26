@@ -168,8 +168,9 @@ async def _handle_manual_role_input(
     # Step 2: User sends prompt text
     if is_awaiting_manual_role_prompt(user_id):
         title = get_manual_role_title(user_id)
-        # Store prompt in user_data for the save callback
+        # Store prompt and title in user_data for the save callback
         context.user_data["manual_role_prompt"] = message_text
+        context.user_data["manual_role_title"] = title
         clear_manual_role_state(user_id)
         preview_len = 200
         prompt_preview = (
