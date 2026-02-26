@@ -39,11 +39,13 @@ async def get_supabase_metrics() -> Dict[str, Any]:
         return {"status": "disconnected", "pool_size": 0, "active_connections": 0}
     try:
         pool = db_manager.pool
+        pool_size = getattr(pool, "_size", 0)
+        free_size = getattr(pool, "_free_size", 0)
         pool_stats = {
             "status": "connected" if not pool._closed else "closed",
-            "pool_size": pool.get_size(),
-            "free_size": pool.get_free_size(),
-            "active_connections": pool.get_size() - pool.get_free_size(),
+            "pool_size": pool_size,
+            "free_size": free_size,
+            "active_connections": pool_size - free_size,
         }
         start_time = time.time()
         async with pool.acquire() as conn:
