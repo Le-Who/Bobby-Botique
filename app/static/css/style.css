@@ -649,3 +649,23 @@ body {
   margin-left: 0.4rem;
   opacity: 0.8;
 }
+
+/* ================================================================
+   ACCESSIBILITY
+   ================================================================ */
+
+/*
+ * Focus indicators for keyboard navigation.
+ * Uses :focus-visible to only show ring when navigating with keyboard,
+ * preserving clean look for mouse users.
+ */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.tab:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
