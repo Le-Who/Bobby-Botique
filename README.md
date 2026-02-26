@@ -56,6 +56,14 @@ The system runs as a single containerized application performing two parallel as
 - **PostgreSQL**: Stores user preferences, chat history (short-term & long-term), and API key usage statistics.
 - **Redis** (Optional): Used for high-speed caching and temporary state management.
 
+**Database Package** (`app/db/`):
+
+- `schema.py` — All `CREATE TABLE` DDL statements.
+- `migrations.py` — SQL file runner + legacy inline migrations.
+- `rls.py` — Row Level Security configuration and policy templates.
+- `seed.py` — Initial data seeding (admin user, API keys, indexes).
+- `database.py` acts as a backward-compatible facade, re-exporting all public functions.
+
 ---
 
 ## 🧠 Backend Capabilities
@@ -119,8 +127,19 @@ The bot implements a sophisticated "Smart Router" for AI requests:
   - Key status, user authorization, and dynamic AI model limits are aggressively cached to reduce DB I/O.
 - **Scoped DB Transactions**: Optimized database pooling (`max_size=10`) with `asyncio.Semaphore` and scope-limited transactions to prevent connection starvation without hitting provider DB connection limits.
 - **Micro-GC Pauses**: Fine-tuned `gc.collect(1)` macro-invocations preventing full stop-the-world application pauses during heavy traffic spikes.
-- _(Planned)_ **Database Architecture V3**: Migration from Monolithic JSON TEXT arrays to normalized JSONB/Relational models, removal of block AST caching constraints, and RLS constraint denormalization to eliminate high-concurrency CPU limits.
 - **Robust TCP Pooling**: Scaled (yet strictly constrained) HTTPX connection pools (50 concurrent external HTTP connections) with Circuit Breaker tracking for external AI Providers to defend against socket exhaustion.
+
+### Security Hardening (v2.6.5+)
+
+- **Nonce-based CSP**: Per-request `secrets.token_urlsafe(16)` nonce replaces `'unsafe-inline'` in `script-src` and `style-src` directives.
+- **Brute-force protection**: IP-based login rate limiter on `/login` (5 attempts per 5 min → 429), with periodic eviction of stale IPs.
+- **`DecryptionError` handling**: API key decryption failures produce user-friendly messages instead of raw Python tracebacks.
+- **Error response sanitization**: API endpoints return generic `"internal_error"` instead of exception class names.
+- **SQL injection prevention**: Regex validation for dynamic table names in `DailyKeyManager`.
+
+### Planned Improvements
+
+- _(Planned)_ **Database Architecture V3**: Migration from Monolithic JSON TEXT arrays to normalized JSONB/Relational models, removal of block AST caching constraints, and RLS constraint denormalization to eliminate high-concurrency CPU limits.
 
 ---
 
@@ -133,7 +152,7 @@ While primarily a Telegram bot, the project includes a web frontend for administ
   - `/`: Visual dashboard showing generic system status (CPU, RAM, Uptime).
   - `/health`: JSON endpoint for docker healthchecks.
   - `/keys`: **(Secured)** Detailed view of API key usage, active keys, and remaining quotas per model.
-- **Security**: Protected by a shared secret (`ADMIN_SECRET` or Bot Token) to prevent unauthorized access to sensitive metrics.
+- **Security**: Protected by `ADMIN_SECRET` with cookie-session auth, CSRF tokens, IP-based brute-force protection (5 attempts → 429), and nonce-based Content-Security-Policy.
 
 ---
 
@@ -258,7 +277,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (404 tests, 1 skipped)
+### Suite Structure (409 tests, 1 skipped)
 
 | Category           | Files                                                                                                                            | What They Cover                                                                      |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------- |
@@ -266,7 +285,7 @@ python -m pytest tests/ -v --tb=long
 | **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators` | Callback dispatch, request flow, commands, menu rendering, role UI, file I/O, stages |
 | **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                            | Tavily key management, query optimization, cleanup                                   |
 | **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                           | Circuit breaker, TTL cache, race conditions                                          |
-| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`                                      | Header enforcement, auth bypass prevention                                           |
+| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`    | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling      |
 | **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                 | Batched metric saves, system status data                                             |
 | **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                                                       | Text formatting, keyboard builders, timezone math                                    |
 

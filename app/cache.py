@@ -127,81 +127,21 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
 async def get_cached_search_result(
     query: str, search_type: str
 ) -> Optional[Dict[str, Any]]:
-    """Gets the search result from the cache (multi-layer first, then Redis fallback)."""
-    # Try multi-layer cache first
+    """Gets the search result from the multi-layer cache (Memory -> Redis)."""
     try:
-        result = await get_cached_search_result_ml(query, search_type)
-        if result:
-            return result
-    except (TypeError, ValueError, KeyError) as e:
-        logging.warning("Multi-layer cache error, falling back to Redis: %s", e)
-
-    # Fallback to Redis-only approach
-    if not redis_client:
-        await metrics_collector.record_cache_miss()
-        return None
-
-    cache_key = _generate_cache_key(query, search_type)
-    try:
-        # Use retry logic for Redis operations
-        cached_data = await _redis_operation_with_retry(redis_client.get, cache_key)
-
-        if cached_data:
-            await metrics_collector.record_cache_hit()
-            logging.info("Cache hit for query: %s...", query[:50])
-
-            # Safely decode the response
-            result = _safe_decode_redis_response(cached_data)
-            if result:
-                return result
-            else:
-                logging.warning(
-                    "Failed to decode cached data for query: %s", query[:50]
-                )
-                await metrics_collector.record_cache_miss()
-                return None
-        else:
-            await metrics_collector.record_cache_miss()
-            return None
-
-    except RedisConnectionError as e:
-        logging.warning("Redis cache unavailable: %s", e)
-        await metrics_collector.record_cache_miss()
-        return None
-    except RedisError as e:
-        logging.error("Error getting from Redis cache: %s", e)
+        return await get_cached_search_result_ml(query, search_type)
+    except Exception as e:
+        logging.warning("Cache get error for query %s...: %s", query[:50], e)
         await metrics_collector.record_cache_miss()
         return None
 
 
 async def cache_search_result(query: str, search_type: str, result: Dict[str, Any]):
-    """Saves the search result to the cache (multi-layer preferred)."""
-    # Try multi-layer cache first
+    """Saves the search result to the multi-layer cache (Memory + Redis)."""
     try:
         await cache_search_result_ml(query, search_type, result)
-        return
-    except (TypeError, ValueError, KeyError) as e:
-        logging.warning("Multi-layer cache save error, falling back to Redis: %s", e)
-
-    # Fallback to Redis-only approach
-    if not redis_client:
-        return
-
-    cache_key = _generate_cache_key(query, search_type)
-    ttl = _get_ttl(search_type)
-
-    try:
-        # Serialize result to JSON string
-        json_data = json.dumps(result, ensure_ascii=False)
-
-        # Use retry logic for Redis operations
-        await _redis_operation_with_retry(redis_client.setex, cache_key, ttl, json_data)
-        logging.info("Cached search result for query: %s...", query[:50])
-
-    except RedisConnectionError as e:
-        logging.warning("Failed to store in Redis cache (connection issue): %s", e)
-    except RedisError as e:
-        logging.error("Error caching result to Redis: %s", e)
+    except Exception as e:
+        logging.warning("Cache set error for query %s...: %s", query[:50], e)
 
 
 async def get_cache_stats() -> Dict[str, Any]:
@@ -259,6 +199,8 @@ class MultiLayerCache:
         self.qna_cache = TTLCache(maxsize=500, ttl=7200)
         self.search_cache = TTLCache(maxsize=500, ttl=1800)
         self.default_cache = TTLCache(maxsize=200, ttl=3600)
+        # asyncio.Lock to protect in-memory caches from concurrent coroutine access
+        self._lock = asyncio.Lock()
 
     def _get_cache(self, search_type: str):
         if search_type == "qna":
@@ -272,10 +214,11 @@ class MultiLayerCache:
     async def get(self, key: str, search_type: str) -> Optional[Dict[str, Any]]:
         """Gets value from multi-layer cache"""
         cache_dict = self._get_cache(search_type)
-        # Try memory cache first
-        if key in cache_dict:
-            logging.info("Memory cache hit for key: %s", key)
-            return cache_dict[key]
+        # Try memory cache first (under lock for TTLCache safety)
+        async with self._lock:
+            if key in cache_dict:
+                logging.info("Memory cache hit for key: %s", key)
+                return cache_dict[key]
 
         # Try Redis cache
         if redis_client:
@@ -292,7 +235,8 @@ class MultiLayerCache:
 
                     if result:
                         # Store in memory cache for faster access
-                        cache_dict[key] = result
+                        async with self._lock:
+                            cache_dict[key] = result
 
                         await metrics_collector.record_cache_hit()
                         logging.info("Redis cache hit for key: %s", key)
@@ -314,7 +258,8 @@ class MultiLayerCache:
 
         # Store in memory cache
         cache_dict = self._get_cache(search_type)
-        cache_dict[key] = value
+        async with self._lock:
+            cache_dict[key] = value
 
         # Store in Redis cache
         if redis_client:

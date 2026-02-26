@@ -85,7 +85,10 @@ async def test_security_headers_present(client):
     assert csp is not None
     assert "default-src 'self'" in csp
     assert "frame-ancestors 'none'" in csp
-    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in csp
+    # Nonce-based CSP instead of 'unsafe-inline'
+    assert "'nonce-" in csp
+    assert "'unsafe-inline'" not in csp
+    assert "https://fonts.googleapis.com" in csp
     assert "font-src 'self' https://fonts.gstatic.com" in csp
 
 

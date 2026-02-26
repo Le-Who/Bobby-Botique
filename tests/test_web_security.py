@@ -183,7 +183,10 @@ async def test_security_headers_present(client):
 
     csp = response.headers.get("Content-Security-Policy")
     assert "default-src 'self'" in csp
-    assert "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com" in csp
+    # Nonce-based CSP instead of 'unsafe-inline'
+    assert "'nonce-" in csp
+    assert "'unsafe-inline'" not in csp
+    assert "https://fonts.googleapis.com" in csp
 
 
 @pytest.mark.asyncio

@@ -196,6 +196,11 @@ class AuthenticationError(SecurityError):
     pass
 
 
+class DecryptionError(SecurityError):
+    """Raised when API key decryption fails (e.g. ADMIN_SECRET mismatch)."""
+    pass
+
+
 # =============================================================================
 # EXCEPTION CONVERSION UTILITY
 # =============================================================================

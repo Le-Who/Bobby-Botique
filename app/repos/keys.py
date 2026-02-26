@@ -13,6 +13,8 @@ import asyncpg
 from datetime import datetime, date
 from typing import Dict, Any, Optional
 
+import re
+
 from app.config import UTC_TZ, settings
 from app.utils.time import get_pacific_tz
 from app.crypto import safe_decrypt, encrypt_api_key
@@ -24,6 +26,8 @@ from app.database import (
     set_user_context,
     clear_user_context,
 )
+
+_SAFE_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 # ─── Generic daily-count key manager ────────────────────────────────────────
@@ -37,6 +41,10 @@ class DailyKeyManager:
     """
 
     def __init__(self, keys_table: str, usage_table: str):
+        if not _SAFE_TABLE_RE.match(keys_table):
+            raise ValueError(f"Unsafe table name: {keys_table!r}")
+        if not _SAFE_TABLE_RE.match(usage_table):
+            raise ValueError(f"Unsafe table name: {usage_table!r}")
         self.keys_table = keys_table
         self.usage_table = usage_table
 
@@ -209,8 +217,10 @@ async def get_current_active_gemini_key(model_name: str) -> Optional[Dict[str, A
     daily_limit = await get_model_daily_limit(model_name)
 
     if not daily_limit:
-        keys = await db_query("SELECT * FROM api_keys LIMIT 1")
-        return keys[0] if keys else None
+        keys = await db_query("SELECT key_hash, api_key FROM api_keys LIMIT 1")
+        if keys:
+            return {"key_hash": keys[0]["key_hash"], "api_key": safe_decrypt(keys[0]["api_key"])}
+        return None
 
     threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
     active_key_query = """
@@ -225,7 +235,7 @@ async def get_current_active_gemini_key(model_name: str) -> Optional[Dict[str, A
     results = await db_query(active_key_query, (model_name, today_pacific, threshold))
 
     if results:
-        return {"key_hash": results[0]["key_hash"], "api_key": results[0]["api_key"]}
+        return {"key_hash": results[0]["key_hash"], "api_key": safe_decrypt(results[0]["api_key"])}
     return None
 
 

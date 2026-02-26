@@ -81,6 +81,9 @@ def safe_decrypt(value: str) -> str:
 
     This handles the migration case where old plaintext keys
     coexist with new encrypted keys in the database.
+
+    Raises DecryptionError if the value is encrypted but cannot be decrypted
+    (e.g. ADMIN_SECRET has changed).
     """
     if is_encrypted(value):
         try:
@@ -91,12 +94,15 @@ def safe_decrypt(value: str) -> str:
             )
             return decrypted
         except (ValueError, Exception) as e:
+            from app.errors import DecryptionError
+
             logging.error(
-                "CRITICAL: Failed to decrypt key (prefix=%s..., len=%d): %s  — "
-                "returning encrypted ciphertext as API key, which WILL be rejected!",
+                "CRITICAL: Failed to decrypt key (prefix=%s..., len=%d): %s",
                 value[:12], len(value), e,
             )
-            return value
+            raise DecryptionError(
+                f"Cannot decrypt API key (prefix={value[:12]}...): {e}"
+            ) from e
     logging.debug("Key not encrypted (prefix=%s..., len=%d), using as-is", value[:8], len(value))
     return value
 

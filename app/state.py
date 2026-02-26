@@ -125,7 +125,7 @@ async def _ensure_loaded(state: UserState) -> UserState:
             state.manual_role_title = data.get("manual_role_title", "")
             state.manual_role_prompt = data.get("manual_role_prompt", "")
     except Exception as e:
-        logging.debug("Could not load state for %s: %s", state._user_id, e)
+        logging.warning("Could not load state for %s: %s", state._user_id, e)
 
     state._loaded_from_db = True
     return state
@@ -154,14 +154,20 @@ async def _persist(state: UserState) -> None:
             manual_role_prompt=state.manual_role_prompt,
         )
     except Exception as e:
-        logging.debug("Could not persist state for %s: %s", state._user_id, e)
+        logging.warning("Could not persist state for %s: %s", state._user_id, e)
 
 
 def _schedule_persist(state: UserState) -> None:
     """Schedule a non-blocking persistence task on the running event loop."""
+    def _on_done(task):
+        exc = task.exception() if not task.cancelled() else None
+        if exc:
+            logging.warning("Persist task failed for user %s: %s", state._user_id, exc)
+
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_persist(state))
+        task = loop.create_task(_persist(state))
+        task.add_done_callback(_on_done)
     except RuntimeError:
         # No running event loop (e.g. during tests) — skip persistence
         pass

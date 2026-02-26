@@ -116,21 +116,21 @@ class TestSafeDecrypt:
         assert safe_decrypt("tvly-abc") == "tvly-abc"
         assert safe_decrypt("") == ""
 
-    def test_returns_corrupted_ciphertext_as_is(self, _mock_settings):
-        """If decryption fails (e.g. wrong key), safe_decrypt returns as-is."""
+    def test_raises_on_corrupted_ciphertext(self, _mock_settings):
+        """If decryption fails (e.g. wrong key), safe_decrypt raises DecryptionError."""
         from app.crypto import safe_decrypt, reset_fernet
 
         # Encrypt with one secret
         from app.crypto import encrypt_api_key
+        from app.errors import DecryptionError
         ciphertext = encrypt_api_key("secret-key")
 
         # Reset and use different secret
         reset_fernet()
         different_mock = _MockSettings(ADMIN_SECRET="completely-different-secret")
         with patch("app.config.settings", different_mock):
-            result = safe_decrypt(ciphertext)
-            # Should return the ciphertext as-is since it can't decrypt
-            assert result == ciphertext
+            with pytest.raises(DecryptionError):
+                safe_decrypt(ciphertext)
 
 
 # ---------------------------------------------------------------------------

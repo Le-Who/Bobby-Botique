@@ -18,7 +18,10 @@ import datetime
 import logging
 import asyncio
 import secrets
+import time
 from functools import wraps
+from typing import Dict
+from collections import defaultdict
 from quart import (
     Quart,
     render_template,
@@ -28,6 +31,7 @@ from quart import (
     session,
     abort,
     jsonify,
+    g,
 )
 from app import database
 from app.config import settings
@@ -63,6 +67,12 @@ flask_app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=7)
 # =============================================================================
 
 
+@flask_app.before_request
+async def generate_csp_nonce():
+    """Generate a per-request CSP nonce for inline scripts/styles."""
+    g.csp_nonce = secrets.token_urlsafe(16)
+
+
 @flask_app.after_request
 async def add_security_headers(response):
     """Add security headers to all responses."""
@@ -71,10 +81,11 @@ async def add_security_headers(response):
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "1; mode=block"
 
+    nonce = getattr(g, "csp_nonce", "")
     csp = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        f"style-src 'self' 'nonce-{nonce}' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
@@ -120,11 +131,52 @@ def require_auth(f):
     return decorated_function
 
 
+# Simple IP-based login rate limiter (brute-force protection)
+_login_attempts: Dict[str, list] = defaultdict(list)
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 300  # 5 minutes
+_login_cleanup_counter = 0
+
+
+def _check_login_rate_limit(ip: str) -> bool:
+    """Returns True if allowed, False if rate limited."""
+    global _login_cleanup_counter
+    now = time.time()
+    cutoff = now - _LOGIN_WINDOW_SECONDS
+    _login_attempts[ip] = [t for t in _login_attempts[ip] if t > cutoff]
+
+    # Periodic cleanup: evict stale IPs every 50 checks
+    _login_cleanup_counter += 1
+    if _login_cleanup_counter >= 50:
+        _login_cleanup_counter = 0
+        stale = [k for k, v in _login_attempts.items() if not v or v[-1] <= cutoff]
+        for k in stale:
+            del _login_attempts[k]
+
+    if len(_login_attempts[ip]) >= _LOGIN_MAX_ATTEMPTS:
+        return False
+    return True
+
+
+def _record_login_attempt(ip: str) -> None:
+    _login_attempts[ip].append(time.time())
+
+
 @flask_app.route("/login", methods=["GET", "POST"])
 async def login_page():
-    """Login page with password form and CSRF protection."""
+    """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
+    client_ip = request.remote_addr or "unknown"
+
     if request.method == "POST":
+        # Check brute-force rate limit
+        if not _check_login_rate_limit(client_ip):
+            logging.warning("Login rate limit exceeded for IP %s", client_ip)
+            error = "Слишком много попыток входа. Повторите через 5 минут."
+            csrf_token = secrets.token_hex(32)
+            session["csrf_token"] = csrf_token
+            return await render_template("login.html", error=error, csrf_token=csrf_token), 429
+
         form = await request.form
         password = form.get("password", "")
         csrf_token = form.get("csrf_token", "")
@@ -142,6 +194,7 @@ async def login_page():
             session.permanent = True
             return redirect(url_for("dashboard"))
         else:
+            _record_login_attempt(client_ip)
             error = "Invalid password."
 
     # Generate fresh CSRF token for the form
@@ -202,7 +255,7 @@ async def health_check_endpoint():
 
             if redis_client:
                 try:
-                    redis_client.ping()
+                    await asyncio.to_thread(redis_client.ping)
                     health["services"]["redis"] = "connected"
                 except Exception:
                     health["services"]["redis"] = "disconnected"
@@ -265,7 +318,7 @@ async def api_overview():
     try:
         from app.cache import redis_client
 
-        redis_ok = bool(redis_client and redis_client.ping())
+        redis_ok = bool(redis_client and await asyncio.to_thread(redis_client.ping))
     except Exception:
         redis_ok = False
 
@@ -315,7 +368,7 @@ async def api_keys():
         )
     except Exception as e:
         logging.error("API keys error: %s", e, exc_info=True)
-        return jsonify({"error": str(type(e).__name__)}), 500
+        return jsonify({"error": "internal_error"}), 500
 
 
 @flask_app.route("/api/errors")
@@ -338,7 +391,7 @@ async def api_errors():
         )
     except Exception as e:
         logging.error("API errors error: %s", e, exc_info=True)
-        return jsonify({"error": str(type(e).__name__)}), 500
+        return jsonify({"error": "internal_error"}), 500
 
 
 @flask_app.route("/api/cache")
@@ -359,7 +412,7 @@ async def api_cache():
         )
     except Exception as e:
         logging.error("API cache error: %s", e, exc_info=True)
-        return jsonify({"error": str(type(e).__name__)}), 500
+        return jsonify({"error": "internal_error"}), 500
 
 
 @flask_app.route("/api/queue")
@@ -378,7 +431,7 @@ async def api_queue():
         )
     except Exception as e:
         logging.error("API queue error: %s", e, exc_info=True)
-        return jsonify({"error": str(type(e).__name__)}), 500
+        return jsonify({"error": "internal_error"}), 500
 
 
 @flask_app.route("/api/database")
@@ -395,7 +448,7 @@ async def api_database():
         )
     except Exception as e:
         logging.error("API database error: %s", e, exc_info=True)
-        return jsonify({"error": str(type(e).__name__)}), 500
+        return jsonify({"error": "internal_error"}), 500
 
 
 @flask_app.route("/api/circuit-breakers")
@@ -417,7 +470,7 @@ async def api_circuit_breakers():
         )
     except Exception as e:
         logging.error("API circuit breakers error: %s", e, exc_info=True)
-        return jsonify({"error": str(type(e).__name__)}), 500
+        return jsonify({"error": "internal_error"}), 500
 
 
 @flask_app.route("/api/memory")
@@ -436,4 +489,4 @@ async def api_memory():
         )
     except Exception as e:
         logging.error("API memory error: %s", e, exc_info=True)
-        return jsonify({"error": str(type(e).__name__)}), 500
+        return jsonify({"error": "internal_error"}), 500

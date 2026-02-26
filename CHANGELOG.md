@@ -5,6 +5,54 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.5] – 2026-02-26 – Codebase Remediation & Security Hardening
+
+### 🔴 Critical Fixes
+
+- **`safe_decrypt` silent failure**: Previously returned raw ciphertext on decryption failure (wrong `ADMIN_SECRET`), causing silent API key auth errors. Now raises `DecryptionError` with clear error logging.
+- **`get_current_active_gemini_key` missing decryption**: Returned encrypted ciphertext directly to the Gemini SDK → "API key not valid" errors. Added `safe_decrypt` call.
+- **Blocking Redis `ping()`**: Synchronous `redis_client.ping()` in health check and API endpoints blocked the asyncio event loop. Wrapped with `asyncio.to_thread()`.
+- **Silent state persistence failures**: `_persist()` errors logged at `DEBUG` level → invisible in production. Upgraded to `WARNING` + added `add_done_callback` to fire-and-forget tasks.
+
+### 🔒 Security Hardening
+
+- **Brute-force protection**: IP-based login rate limiter on `/login` (5 attempts per 5 minutes → 429). Periodic eviction of stale IPs every 50 checks prevents memory growth.
+- **SQL injection prevention**: Added regex validation (`_SAFE_TABLE_RE`) for table names in `DailyKeyManager.__init__`.
+- **Nonce-based CSP**: Replaced `'unsafe-inline'` in `script-src` and `style-src` with per-request nonces (`secrets.token_urlsafe(16)`). Templates (`login.html`, `dashboard.html`) use `{{ g.csp_nonce }}`.
+- **Error response sanitization**: 7 API endpoints replaced `str(type(e).__name__)` with generic `"internal_error"` to prevent leaking internal exception class names.
+
+### 🏗️ Architecture: `database.py` → `app/db/` Package
+
+Split the monolithic `database.py` (950 → ~480 lines) into 4 focused modules:
+
+| Module                 | Contents                                                         |
+| ---------------------- | ---------------------------------------------------------------- |
+| `app/db/schema.py`     | All `CREATE TABLE` statements (~200 lines)                       |
+| `app/db/migrations.py` | SQL file runner + legacy inline migrations (~115 lines)          |
+| `app/db/rls.py`        | RLS config, policy templates, setup functions (~140 lines)       |
+| `app/db/seed.py`       | Initial data seeding (admin user, API keys, indexes) (~57 lines) |
+
+Backward compatibility preserved: `from app.database import X` continues to work via re-exports.
+
+### 🟡 Regression Fixes (Post-Audit)
+
+- **F-1 DecryptionError UX**: `_resolve_key_generic` now catches `DecryptionError` and returns `'decryption_failed'` → user sees `🔐 Ошибка расшифровки API-ключей...` instead of raw traceback.
+- **F-2 Login rate limiter leak**: `_login_attempts` dict now periodically evicts stale IPs (every 50 checks).
+- **F-3 Dual RLS wrappers**: `_init_schema` now uses the module-level backward-compat wrapper instead of a redundant direct import.
+
+### ⚡ Performance
+
+- **`asyncio.Lock` in `MultiLayerCache`**: Protects TTLCache reads/writes from concurrent coroutine corruption.
+- **Removed ~60 lines of duplicate Redis-only caching** in `get_cached_search_result` / `cache_search_result`.
+
+### 🧪 Tests (+5 → 409 total)
+
+- `test_decryption_error_handling.py`: 5 tests — primary path catch, fallback catch, user-friendly message validation, normal flow unaffected, no-retry behavior.
+- Updated `test_crypto.py`: expects `DecryptionError` from `safe_decrypt`.
+- Updated `test_security_headers.py`, `test_web_security.py`: validates nonce-based CSP (`'nonce-'` present, `'unsafe-inline'` absent).
+
+---
+
 ## [2.6.4] – 2026-02-26 – Error Handling & Role Save Bug Fix
 
 ### 🔴 Critical Fixes

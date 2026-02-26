@@ -39,13 +39,23 @@ class AgentRequestUseCase:
         invalidate_cache_func=None,
         provider_name: str = "Unknown",
     ):
+        from app.errors import DecryptionError
+
         excluded = excluded_key_hashes or set()
         if excluded and invalidate_cache_func:
             await invalidate_cache_func(preferred_model)
 
         max_attempts = 5
         for _ in range(max_attempts):
-            key = await get_key_func(preferred_model)
+            try:
+                key = await get_key_func(preferred_model)
+            except DecryptionError as e:
+                logging.error(
+                    "Cannot decrypt %s API key: %s — check ADMIN_SECRET",
+                    provider_name, e,
+                )
+                return None, None, "decryption_failed"
+
             if key and key["key_hash"] not in excluded:
                 return key, preferred_model, None
             if key and key["key_hash"] in excluded and invalidate_cache_func:
@@ -64,7 +74,15 @@ class AgentRequestUseCase:
                 await invalidate_cache_func(fallback_model)
 
             for _ in range(max_attempts):
-                key = await get_key_func(fallback_model)
+                try:
+                    key = await get_key_func(fallback_model)
+                except DecryptionError as e:
+                    logging.error(
+                        "Cannot decrypt %s API key: %s — check ADMIN_SECRET",
+                        provider_name, e,
+                    )
+                    return None, None, "decryption_failed"
+
                 if key and key["key_hash"] not in excluded:
                     logging.info(
                         f"Found available fallback key for model {fallback_model}."
@@ -200,6 +218,11 @@ class AgentRequestUseCase:
                     provider_name = "OpenRouter" if is_openrouter else "Gemini"
                     return (
                         f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже.",
+                        None,
+                    )
+                if resolution == "decryption_failed":
+                    return (
+                        "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
                         None,
                     )
                 if resolution == "no_keys":
