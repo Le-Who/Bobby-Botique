@@ -168,10 +168,12 @@ async def _handle_manual_role_input(
     # Step 2: User sends prompt text
     if is_awaiting_manual_role_prompt(user_id):
         title = get_manual_role_title(user_id)
-        # Store prompt and title in user_data for the save callback
-        context.user_data["manual_role_prompt"] = message_text
-        context.user_data["manual_role_title"] = title
-        clear_manual_role_state(user_id)
+        # Store prompt in state (NOT context.user_data — it doesn't
+        # survive between the text-message Update and the button callback).
+        from app.state import set_manual_role_prompt, finish_manual_role_input
+        set_manual_role_prompt(user_id, message_text)
+        # Mark input phase as done, but KEEP title+prompt for save callback
+        finish_manual_role_input(user_id)
         preview_len = 200
         prompt_preview = (
             message_text[:preview_len] + "..." if len(message_text) > preview_len else message_text
@@ -219,8 +221,14 @@ async def _handle_custom_role_generation(
         )
 
         if not key_data:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")],
+                [InlineKeyboardButton("⬅️ Меню", callback_data="start_menu")],
+            ])
             await update.message.reply_text(
-                "❌ Нет доступных ключей API для генерации роли."
+                "❌ Нет доступных ключей API для генерации роли.\n"
+                "Попробуйте позже или создайте роль вручную.",
+                reply_markup=kb,
             )
             clear_custom_role_state(user_id)
             return True
@@ -538,7 +546,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "Message too long from user %s: %d chars", user_id, len(message_text)
             )
             await update.message.reply_text(
-                "❌ Сообщение слишком длинное. Максимум 4096 символов."
+                "❌ Сообщение слишком длинное. Максимум 4096 символов.\n"
+                "Сократите текст и отправьте снова."
             )
             return
 
@@ -609,6 +618,36 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         logging.info("Processing text message from user %s", user_id)
         placeholder_message = await update.message.reply_text("🤔 Думаю...")
 
+    # ── 3-stage heartbeat: reassure user during long waits ──────────
+    _WAIT_STAGES = [
+        (15, "⏳ Обрабатываю ваш запрос..."),
+        (30, "⏳ Ответ генерируется, подождите ещё немного..."),
+        (50, "⏳ Запрос обрабатывается дольше обычного. Пожалуйста, подождите..."),
+    ]
+    done_event = asyncio.Event()
+
+    async def _heartbeat() -> None:
+        try:
+            elapsed = 0
+            for threshold, text in _WAIT_STAGES:
+                wait_for = threshold - elapsed
+                if wait_for <= 0:
+                    continue
+                try:
+                    await asyncio.wait_for(done_event.wait(), timeout=wait_for)
+                    return  # Main task finished — stop heartbeat
+                except asyncio.TimeoutError:
+                    pass
+                elapsed = threshold
+                try:
+                    await placeholder_message.edit_text(text)
+                except Exception:
+                    pass  # Message already edited by main task or deleted
+        except asyncio.CancelledError:
+            pass  # Cleanly stop when task_wrapper cancels us
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
+
     # Обычная обработка сообщений
     async def task_wrapper() -> None:
         try:
@@ -643,8 +682,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"Error in task wrapper for user {user_id}: {e}", exc_info=True
             )
             try:
+                from app.errors import build_retry_and_roles_keyboard
                 await placeholder_message.edit_text(
-                    "❌ Произошла ошибка при обработке запроса."
+                    "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз.",
+                    reply_markup=build_retry_and_roles_keyboard()
                 )
             except (BadRequest, NetworkError) as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
@@ -658,6 +699,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 user_id=user_id,
                 error=str(e),
             )
+        finally:
+            done_event.set()  # Signal heartbeat to stop
+            heartbeat_task.cancel()
 
     # Запускаем обработку в фоне
     asyncio.create_task(task_wrapper())
@@ -727,8 +771,10 @@ async def process_single_image_from_group(
     except Exception as e:
         logging.error("Error processing single image from group: %s", e)
         try:
+            from app.errors import build_retry_and_roles_keyboard
             await placeholder_message.edit_text(
-                "❌ Произошла ошибка при обработке изображения."
+                "❌ Произошла ошибка при обработке изображения. Попробуйте ещё раз.",
+                reply_markup=build_retry_and_roles_keyboard(include_roles=False)
             )
         except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
@@ -796,8 +842,10 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
             f"Error processing media group {media_group_id}: {e}", exc_info=True
         )
         try:
+            from app.errors import build_retry_and_roles_keyboard
             await placeholder_message.edit_text(
-                "❌ Произошла ошибка при обработке группы изображений."
+                "❌ Произошла ошибка при обработке группы изображений. Попробуйте ещё раз.",
+                reply_markup=build_retry_and_roles_keyboard(include_roles=False)
             )
         except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
@@ -824,7 +872,12 @@ async def handle_document_question(
         # Get информацию о documentе
         document = await get_document_by_id(document_id, user_id)
         if not document:
-            await update.message.reply_text("❌ Документ не найден.")
+            await update.message.reply_text(
+                "❌ Документ не найден.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("📄 К документам", callback_data="open_documents")]]
+                )
+            )
             from app.state import clear_document_state
 
             clear_document_state(user_id)
@@ -834,7 +887,10 @@ async def handle_document_question(
         document_content = await get_document_content(document_id, user_id)
         if not document_content:
             await update.message.reply_text(
-                "❌ Не удалось получить содержимое документа."
+                "❌ Не удалось получить содержимое документа.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("📄 К документам", callback_data="open_documents")]]
+                )
             )
             return
 
@@ -853,7 +909,10 @@ async def handle_document_question(
     except Exception as e:
         logging.error("Error handling document question: %s", e)
         await update.message.reply_text(
-            f"❌ Произошла ошибка при обработке вопроса: {str(e)}"
+            f"❌ Произошла ошибка при обработке вопроса. Попробуйте переформулировать.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("📄 К документам", callback_data="open_documents")]]
+            )
         )
 
 
@@ -870,7 +929,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # Check размер fileа (максимум 50MB)
     if document.file_size > 50 * 1024 * 1024:
         await update.message.reply_text(
-            "❌ Файл слишком большой. Максимальный размер: 50MB"
+            "❌ Файл слишком большой. Максимальный размер: 50MB.\n"
+            "Попробуйте файл меньшего размера."
         )
         return
 
@@ -882,7 +942,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if f".{file_ext}" not in supported_formats:
         await update.message.reply_text(
-            f"❌ Неподдерживаемый формат файла. Поддерживаемые форматы: {', '.join(supported_formats)}"
+            f"❌ Неподдерживаемый формат файла `.{file_ext}`.\n"
+            f"Отправьте PDF или DOCX."
         )
         return
 
@@ -1036,7 +1097,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logging.error(
             f"Error processing document for user {user_id}: {e}", exc_info=True
         )
-        await processing_msg.edit_text(error_msg)
+        from app.utils.keyboards import error_with_back_keyboard
+        await processing_msg.edit_text(
+            error_msg,
+            reply_markup=error_with_back_keyboard("open_documents", "📄 К документам")
+        )
         await metrics_collector.record_error("document_processing", str(e))
 
 

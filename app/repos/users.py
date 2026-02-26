@@ -72,7 +72,9 @@ async def load_user_state(user_id: int) -> Optional[Dict[str, Any]]:
             SELECT document_mode, selected_document_id,
                    awaiting_custom_role_input, generated_role,
                    last_custom_role_prompt, generating_custom_role,
-                   last_sent_message_text
+                   last_sent_message_text,
+                   awaiting_manual_role_title, awaiting_manual_role_prompt,
+                   manual_role_title, manual_role_prompt
             FROM user_state WHERE user_id = $1
             """,
             (user_id,),
@@ -87,6 +89,10 @@ async def load_user_state(user_id: int) -> Optional[Dict[str, Any]]:
                 "last_custom_role_prompt": row.get("last_custom_role_prompt"),
                 "generating_custom_role": row.get("generating_custom_role", False) or False,
                 "last_sent_message_text": row.get("last_sent_message_text"),
+                "awaiting_manual_role_title": row.get("awaiting_manual_role_title", False) or False,
+                "awaiting_manual_role_prompt": row.get("awaiting_manual_role_prompt", False) or False,
+                "manual_role_title": row.get("manual_role_title", "") or "",
+                "manual_role_prompt": row.get("manual_role_prompt", "") or "",
             }
         return None
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
@@ -103,6 +109,10 @@ async def save_user_state(
     last_custom_role_prompt: Optional[str] = None,
     generating_custom_role: bool = False,
     last_sent_message_text: Optional[str] = None,
+    awaiting_manual_role_title: bool = False,
+    awaiting_manual_role_prompt: bool = False,
+    manual_role_title: str = "",
+    manual_role_prompt: str = "",
 ) -> None:
     """Persist user state to the database using UPSERT."""
     try:
@@ -114,8 +124,11 @@ async def save_user_state(
                 user_id, document_mode, selected_document_id,
                 awaiting_custom_role_input, generated_role,
                 last_custom_role_prompt, generating_custom_role,
-                last_sent_message_text, updated_at
-            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, CURRENT_TIMESTAMP)
+                last_sent_message_text,
+                awaiting_manual_role_title, awaiting_manual_role_prompt,
+                manual_role_title, manual_role_prompt,
+                updated_at
+            ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
             ON CONFLICT (user_id) DO UPDATE SET
                 document_mode = EXCLUDED.document_mode,
                 selected_document_id = EXCLUDED.selected_document_id,
@@ -124,6 +137,10 @@ async def save_user_state(
                 last_custom_role_prompt = EXCLUDED.last_custom_role_prompt,
                 generating_custom_role = EXCLUDED.generating_custom_role,
                 last_sent_message_text = EXCLUDED.last_sent_message_text,
+                awaiting_manual_role_title = EXCLUDED.awaiting_manual_role_title,
+                awaiting_manual_role_prompt = EXCLUDED.awaiting_manual_role_prompt,
+                manual_role_title = EXCLUDED.manual_role_title,
+                manual_role_prompt = EXCLUDED.manual_role_prompt,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
@@ -131,6 +148,8 @@ async def save_user_state(
                 awaiting_custom_role_input, role_json,
                 last_custom_role_prompt, generating_custom_role,
                 last_sent_message_text,
+                awaiting_manual_role_title, awaiting_manual_role_prompt,
+                manual_role_title, manual_role_prompt,
             ),
         )
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:

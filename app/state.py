@@ -37,6 +37,7 @@ class UserState:
         "awaiting_manual_role_title",
         "awaiting_manual_role_prompt",
         "manual_role_title",
+        "manual_role_prompt",
         # Internal bookkeeping
         "_loaded_from_db",
         "_dirty",
@@ -59,6 +60,7 @@ class UserState:
         self.awaiting_manual_role_title: bool = False
         self.awaiting_manual_role_prompt: bool = False
         self.manual_role_title: str = ""
+        self.manual_role_prompt: str = ""
         # Internal
         self._loaded_from_db: bool = False
         self._dirty: bool = False
@@ -121,6 +123,7 @@ async def _ensure_loaded(state: UserState) -> UserState:
                 "awaiting_manual_role_prompt", False
             )
             state.manual_role_title = data.get("manual_role_title", "")
+            state.manual_role_prompt = data.get("manual_role_prompt", "")
     except Exception as e:
         logging.debug("Could not load state for %s: %s", state._user_id, e)
 
@@ -148,6 +151,7 @@ async def _persist(state: UserState) -> None:
             awaiting_manual_role_title=state.awaiting_manual_role_title,
             awaiting_manual_role_prompt=state.awaiting_manual_role_prompt,
             manual_role_title=state.manual_role_title,
+            manual_role_prompt=state.manual_role_prompt,
         )
     except Exception as e:
         logging.debug("Could not persist state for %s: %s", state._user_id, e)
@@ -302,6 +306,7 @@ def begin_manual_role_creation(user_id: int):
     state.awaiting_manual_role_title = True
     state.awaiting_manual_role_prompt = False
     state.manual_role_title = ""
+    state.manual_role_prompt = ""
     _schedule_persist(state)
 
 
@@ -314,12 +319,32 @@ def set_manual_role_title(user_id: int, title: str):
     _schedule_persist(state)
 
 
+def set_manual_role_prompt(user_id: int, prompt: str):
+    """Store the manual role prompt text."""
+    state = get_user_state(user_id)
+    state.manual_role_prompt = prompt
+    _schedule_persist(state)
+
+
+def finish_manual_role_input(user_id: int):
+    """Mark manual role input as complete (title+prompt collected).
+
+    Flips awaiting flags to False but KEEPS title and prompt
+    so the save callback can read them.
+    """
+    state = get_user_state(user_id)
+    state.awaiting_manual_role_title = False
+    state.awaiting_manual_role_prompt = False
+    _schedule_persist(state)
+
+
 def clear_manual_role_state(user_id: int):
-    """Clear manual role creation state."""
+    """Clear ALL manual role creation state (call after save/cancel)."""
     state = get_user_state(user_id)
     state.awaiting_manual_role_title = False
     state.awaiting_manual_role_prompt = False
     state.manual_role_title = ""
+    state.manual_role_prompt = ""
     _schedule_persist(state)
 
 
@@ -333,3 +358,7 @@ def is_awaiting_manual_role_prompt(user_id: int) -> bool:
 
 def get_manual_role_title(user_id: int) -> str:
     return get_user_state(user_id).manual_role_title
+
+
+def get_manual_role_prompt(user_id: int) -> str:
+    return get_user_state(user_id).manual_role_prompt

@@ -503,6 +503,10 @@ async def _init_schema():
             last_custom_role_prompt TEXT,
             generating_custom_role BOOLEAN DEFAULT FALSE,
             last_sent_message_text TEXT,
+            awaiting_manual_role_title BOOLEAN DEFAULT FALSE,
+            awaiting_manual_role_prompt BOOLEAN DEFAULT FALSE,
+            manual_role_title TEXT DEFAULT '',
+            manual_role_prompt TEXT DEFAULT '',
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         )
     """)

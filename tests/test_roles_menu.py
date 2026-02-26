@@ -79,7 +79,7 @@ async def test_hub_view_no_active_role(chat_state, mock_db, run_patched):
         chat_state, mock_db, view_mode="hub"
     )
 
-    assert "Управление ролями" in text
+    assert "Роли" in text
     assert "Базовая" in text  # It usually defaults to Базовая (без роли)
 
     # Check buttons text
@@ -108,7 +108,7 @@ async def test_hub_view_active_system_role(chat_state, mock_db, run_patched):
             chat_state, mock_db, view_mode="hub"
         )
 
-        assert "Активная роль:" in text
+        assert "Активная:" in text
         assert "Helpful Assistant" in text
 
 
@@ -127,7 +127,7 @@ async def test_hub_view_active_custom_role(chat_state, mock_db, run_patched):
         chat_state, mock_db, view_mode="hub"
     )
 
-    assert "Активная роль:" in text
+    assert "Активная:" in text
     assert "My Custom Role" in text
 
 

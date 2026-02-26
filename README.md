@@ -94,6 +94,8 @@ The bot implements a sophisticated "Smart Router" for AI requests:
   - Tracks usage stats (requests/tokens) per key.
   - **Auto-Fallback**: If a key fails (Quota Exceeded) or a provider is down, it automatically tries the next key or switches to a backup model.
 - **Stage Indicators** (v2.5+): Animated processing stages (🤔→💭→✅) keep users informed during multi-step AI operations.
+- **Heartbeat Feedback** (v2.6.4+): 3-stage progressive updates (15s → 30s → 50s) reassure users during long-running requests.
+- **Manual Role Persistence** (v2.6.4+): In-progress manual role creation survives bot restarts via DB-backed `user_state` columns.
 
 ### Document Processing
 
@@ -258,15 +260,15 @@ python -m pytest tests/ -v --tb=long
 
 ### Suite Structure (404 tests, 1 skipped)
 
-| Category           | Files                                                                                          | What They Cover                                              |
-| :----------------- | :--------------------------------------------------------------------------------------------- | :----------------------------------------------------------- |
-| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`           | AI routing, health scoring, fallback chains, errors          |
-| **Handlers**       | `test_callbacks`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators` | Callback dispatch, menu rendering, role UI, file I/O, stages |
-| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`          | Tavily key management, query optimization, cleanup           |
-| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                         | Circuit breaker, TTL cache, race conditions                  |
-| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`    | Header enforcement, auth bypass prevention                   |
-| **Metrics**        | `test_metrics_integration`, `test_system_status`                                               | Batched metric saves, system status data                     |
-| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                     | Text formatting, keyboard builders, timezone math            |
+| Category           | Files                                                                                                                            | What They Cover                                                                      |
+| :----------------- | :------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------- |
+| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`                                             | AI routing, health scoring, fallback chains, errors                                  |
+| **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators` | Callback dispatch, request flow, commands, menu rendering, role UI, file I/O, stages |
+| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                            | Tavily key management, query optimization, cleanup                                   |
+| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                           | Circuit breaker, TTL cache, race conditions                                          |
+| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`                                      | Header enforcement, auth bypass prevention                                           |
+| **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                 | Batched metric saves, system status data                                             |
+| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                                                       | Text formatting, keyboard builders, timezone math                                    |
 
 ### Mock Isolation Rule
 

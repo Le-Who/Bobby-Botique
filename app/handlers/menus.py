@@ -156,7 +156,8 @@ def get_model_menu_content(chat_state, context) -> None:
         all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
 
     if not all_models:
-        return "❌ Нет доступных моделей. Проверьте настройки.", None, None
+        from app.utils.keyboards import error_with_back_keyboard
+        return "❌ Нет доступных моделей. Проверьте настройки.", None, error_with_back_keyboard("start_menu", "⬅️ Меню")
 
     # Save маппинг моделей в context for использования в callback
     if context and hasattr(context, "user_data"):

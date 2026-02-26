@@ -652,14 +652,18 @@ async def role_manual_save_callback(
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    from app.state import get_manual_role_title, clear_manual_role_state
-    title = context.user_data.get("manual_role_title", "") or get_manual_role_title(user_id)
-    prompt_text = context.user_data.get("manual_role_prompt", "")
+    from app.state import get_manual_role_title, get_manual_role_prompt, clear_manual_role_state
+    title = get_manual_role_title(user_id)
+    prompt_text = get_manual_role_prompt(user_id)
     if not title or not prompt_text:
         from app.utils.keyboards import error_with_back_keyboard
         await query.edit_message_text(
-            "❌ Нет данных для сохранения роли.",
-            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+            "⚠️ Данные роли не найдены. Возможно, бот был перезапущен.\n\n"
+            "Пожалуйста, создайте роль заново.",
+            reply_markup=error_with_back_keyboard(
+                "role_create_manual", "📝 Создать заново",
+                extra_buttons=[[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]]
+            )
         )
         return
     try:
@@ -673,8 +677,6 @@ async def role_manual_save_callback(
         chat_state.system_prompt = prompt_text
         await db.update_user_chat(user_id, chat_state)
         clear_manual_role_state(user_id)
-        context.user_data.pop("manual_role_prompt", None)
-        context.user_data.pop("manual_role_title", None)
         kb = InlineKeyboardMarkup(
             [[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]]
         )

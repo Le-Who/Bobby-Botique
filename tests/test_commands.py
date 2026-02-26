@@ -51,4 +51,4 @@ async def test_new_chat_command():
         # Verify user was notified
         update.message.reply_text.assert_called_once()
         args, kwargs = update.message.reply_text.call_args
-        assert "Чат очищен" in args[0]
+        assert "Новый чат" in args[0]

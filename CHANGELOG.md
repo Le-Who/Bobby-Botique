@@ -5,6 +5,21 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.4] – 2026-02-26 – Error Handling & Role Save Bug Fix
+
+### 🔴 Critical Fixes
+
+- **Manual role save false-positive error**: `role_manual_save_callback` showed "❌ Нет данных для сохранения роли" even though the role was saved. Root cause: `clear_manual_role_state()` was called before the save callback, wiping in-memory state, and `context.user_data` doesn't reliably persist across Telegram Update boundaries. Fix: store prompt in `app.state` (new `manual_role_prompt` field), use `finish_manual_role_input()` to flip flags without clearing data, clear only after save/cancel.
+
+### 🟡 Improvements
+
+- **Actionable error messages**: 16 bare error messages across `messages.py`, `callbacks.py`, and `menus.py` now include contextual recovery buttons (retry, back to menu, back to documents) instead of dead-end text.
+- **3-stage heartbeat on long waits**: Placeholder "🤔 Думаю..." now updates progressively (15s → "⏳ Обрабатываю ваш запрос...", 30s → "⏳ Ответ генерируется...", 50s → "⏳ Запрос обрабатывается дольше обычного...") using `asyncio.Event` for race-safe cancellation.
+- **Manual role DB persistence**: Added `awaiting_manual_role_title`, `awaiting_manual_role_prompt`, `manual_role_title`, `manual_role_prompt` columns to `user_state` table (migration `008`) and updated `save_user_state`/`load_user_state` in `users.py`. Manual role creation now survives bot restarts.
+- **Stale test assertions fixed**: 4 pre-existing test failures from UI text refactoring (old: "Управление ролями"/"Чат очищен", new: "Роли"/"Новый чат") now pass.
+
+---
+
 ## [2.6.3] – 2026-02-26 – Codebase Audit & Bug Fixes
 
 ### 🔴 Critical Fixes

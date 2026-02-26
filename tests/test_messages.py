@@ -383,6 +383,6 @@ async def test_handle_request_exception_handling():
 
         # Verify that placeholder message was edited to show error
         placeholder_mock = message.reply_text.return_value
-        placeholder_mock.edit_text.assert_awaited_with(
-            "❌ Произошла ошибка при обработке запроса."
-        )
+        call_args = placeholder_mock.edit_text.call_args
+        assert "❌ Произошла ошибка при обработке запроса" in call_args[0][0]
+        assert "reply_markup" in call_args[1]

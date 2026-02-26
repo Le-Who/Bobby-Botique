@@ -188,7 +188,11 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
         original_message = query.message.reply_to_message
 
     if not original_message:
-        await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await placeholder_message.edit_text(
+            "❌ Не удалось найти оригинальное сообщение.",
+            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+        )
         return
 
     user_id = original_message.from_user.id
@@ -249,7 +253,11 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         original_message = query.message.reply_to_message
 
     if not original_message:
-        await placeholder_message.edit_text("Не удалось найти оригинальное сообщение.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await placeholder_message.edit_text(
+            "❌ Не удалось найти оригинальное сообщение.",
+            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+        )
         return
 
     user_id = original_message.from_user.id
@@ -342,7 +350,11 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         last_text = None
     if not last_text:
-        await query.edit_message_text("Нет запроса для повтора.")
+        from app.utils.keyboards import error_with_back_keyboard
+        await query.edit_message_text(
+            "❌ Нет запроса для повтора.",
+            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+        )
         return
     # Create плейсхолдер и запускаем обычную обработку как on новом сообщении
     placeholder_message = await query.message.reply_text(
