@@ -13,3 +13,6 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+## 2025-03-01 - [Pre-compile regex for markdown to html parsing]
+**Learning:** Repetitive implicit regex compilation in tight text-formatting loops adds noticeable overhead.
+**Action:** Always pre-compile regular expressions at the module level when they are used inside frequently called formatting or string manipulation functions like `markdown_to_html`.

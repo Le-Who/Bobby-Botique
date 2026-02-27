@@ -5,6 +5,17 @@ from typing import List, Tuple
 # Constants
 MAX_MESSAGE_LENGTH = 4096
 
+# Pre-compiled regular expressions for performance
+_CODE_BLOCK_RE = re.compile(r"(```(?:.|\n)*?```)")
+_CLEANUP_RE = re.compile(r"\\([.\-()!=[\]{}|#+])")
+_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_DOUBLE_RE = re.compile(r"__(.+?)__")
+_ITALIC_STAR_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+_ITALIC_UNDERSCORE_RE = re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)")
+_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_HTML_TAGS_RE = re.compile(r"<[^>]+>")
+
 
 def format_text(text: str, parse_mode: str = "HTML") -> Tuple[str, str]:
     """
@@ -39,7 +50,7 @@ def markdown_to_html(text: str) -> str:
     # Pattern to capture ```...``` blocks including language specifier
     # We use a capture group () to include the delimiters in the split result
     # Non-greedy match for content
-    segments = re.split(r"(```(?:.|\n)*?```)", text)
+    segments = _CODE_BLOCK_RE.split(text)
 
     html_parts = []
 
@@ -91,7 +102,7 @@ def markdown_to_html(text: str) -> str:
             # Remove backslashes before non-special characters or punctuation that doesn't need it in HTML
             # e.g. \. -> .   \( -> (   \) -> )   \- -> -   \= -> =
             # We be careful not to break \\ (literal backslash) if it was intended, but usually it's better to clean.
-            segment = re.sub(r"\\([.\-()!=[\]{}|#+])", r"\1", segment)
+            segment = _CLEANUP_RE.sub(r"\1", segment)
 
             # 1. Escape HTML characters (important to do first!)
             # This turns < into &lt;, etc.
@@ -102,19 +113,17 @@ def markdown_to_html(text: str) -> str:
 
             # Inline Code: `code`
             # Pattern: `...` (non-greedy)
-            escaped_text = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped_text)
+            escaped_text = _INLINE_CODE_RE.sub(r"<code>\1</code>", escaped_text)
 
             # Bold: **text**
-            escaped_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped_text)
+            escaped_text = _BOLD_RE.sub(r"<b>\1</b>", escaped_text)
 
             # Italic: __text__ (Standard Markdown allows this)
-            escaped_text = re.sub(r"__(.+?)__", r"<i>\1</i>", escaped_text)
+            escaped_text = _ITALIC_DOUBLE_RE.sub(r"<i>\1</i>", escaped_text)
 
             # Italic: *text* (Only if not part of **)
             # This regex uses lookarounds to ensure we don't match inside **
-            escaped_text = re.sub(
-                r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", escaped_text
-            )
+            escaped_text = _ITALIC_STAR_RE.sub(r"<i>\1</i>", escaped_text)
 
             # Italic: _text_ (Standard Markdown)
             # Match _text_ but not __text__ or snake_case_text
@@ -124,15 +133,12 @@ def markdown_to_html(text: str) -> str:
             # Safe heuristic: _text_ where _ is preceded/followed by non-word or space/start/end.
             # But standard Markdown is: _text_ works anywhere if surrounded by whitespace or punctuation.
             # Minimal safe version:
-            escaped_text = re.sub(
-                r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)", r"<i>\1</i>", escaped_text
-            )
+            escaped_text = _ITALIC_UNDERSCORE_RE.sub(r"<i>\1</i>", escaped_text)
 
             # Links: [text](url)
             # Since we already escaped HTML, the url might contain &amp; etc.
             # We match strict []() pattern.
-            link_pattern = r"\[([^\]]+)\]\(([^)]+)\)"
-            escaped_text = re.sub(link_pattern, r'<a href="\2">\1</a>', escaped_text)
+            escaped_text = _LINK_RE.sub(r'<a href="\2">\1</a>', escaped_text)
 
             html_parts.append(escaped_text)
 
@@ -261,7 +267,7 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> List[str
 def strip_formatting(text: str) -> str:
     """Removes all HTML tags and invisible characters."""
     # Remove HTML tags
-    text = re.sub(r"<[^>]+>", "", text)
+    text = _HTML_TAGS_RE.sub("", text)
     # Decode entities
     text = html.unescape(text)
     return text.strip()
