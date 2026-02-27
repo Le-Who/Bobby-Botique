@@ -212,3 +212,53 @@ def test_markdown_to_html_nested():
     text = "**_bold italic_**"
     result, _ = format_text(text)
     assert result == "<b><i>bold italic</i></b>"
+
+
+def test_markdown_to_html_xss_prevention():
+    """Verify that dangerous URL schemes like javascript: are stripped from Markdown links."""
+    # XSS via javascript protocol
+    text1 = "[click here](javascript:alert('XSS'))"
+    result1, _ = format_text(text1)
+    # The URL shouldn't be rendered as an href. The parsing might leave trailing characters
+    # due to the regex ending at the first ), but it should NOT contain `<a href="javascript:`
+    assert "<a href=\"javascript:" not in result1.lower()
+
+    # XSS via vbscript protocol
+    text2 = "[hack](vbscript:msgbox('XSS'))"
+    result2, _ = format_text(text2)
+    assert "<a href=\"vbscript:" not in result2.lower()
+
+    # XSS bypass via leading whitespaces
+    text_whitespace = "[XSS]( javascript:alert(1))"
+    result_ws, _ = format_text(text_whitespace)
+    assert "href" not in result_ws.lower()
+
+    # XSS bypass via control characters
+    text_ctrl = "[XSS](java\x09script:alert(1))"
+    result_ctrl, _ = format_text(text_ctrl)
+    assert "href" not in result_ctrl.lower()
+
+    # XSS bypass via HTML entities
+    text_entity = "[XSS](javascript&#x3A;alert(1))"
+    result_entity, _ = format_text(text_entity)
+    assert "href" not in result_entity.lower()
+
+    # Safe protocols should be allowed
+    text3 = "[safe](https://example.com/page?id=1)"
+    result3, _ = format_text(text3)
+    assert '<a href="https://example.com/page?id=1">safe</a>' in result3
+
+    # Telegram-specific deep links should be allowed
+    text4 = "[user](tg://user?id=12345)"
+    result4, _ = format_text(text4)
+    assert '<a href="tg://user?id=12345">user</a>' in result4
+
+    # Relative paths should be allowed
+    text_rel = "[relative](/path/to/page)"
+    result_rel, _ = format_text(text_rel)
+    assert '<a href="/path/to/page">relative</a>' in result_rel
+
+    # Fragments should be allowed
+    text_hash = "[hash](#section)"
+    result_hash, _ = format_text(text_hash)
+    assert '<a href="#section">hash</a>' in result_hash

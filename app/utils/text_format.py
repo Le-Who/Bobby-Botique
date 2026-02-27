@@ -1,6 +1,7 @@
 import re
 import html
 from typing import List, Tuple
+from urllib.parse import urlparse
 
 # Constants
 MAX_MESSAGE_LENGTH = 4096
@@ -132,7 +133,40 @@ def markdown_to_html(text: str) -> str:
             # Since we already escaped HTML, the url might contain &amp; etc.
             # We match strict []() pattern.
             link_pattern = r"\[([^\]]+)\]\(([^)]+)\)"
-            escaped_text = re.sub(link_pattern, r'<a href="\2">\1</a>', escaped_text)
+
+            def replace_link(match):
+                text_content = match.group(1)
+                url_content = match.group(2)
+
+                try:
+                    # Unescape HTML entities temporarily for URL parsing.
+                    # We might need to unescape twice if the original markdown had escaped entities like &#x3A;
+                    # that got double-escaped during html.escape()
+                    raw_url = html.unescape(html.unescape(url_content))
+
+                    # Strip all whitespace and control characters that browsers might ignore
+                    cleaned_url = re.sub(r'[\x00-\x20\x7f]', '', raw_url)
+                    parsed = urlparse(cleaned_url)
+
+                    # Security: Only allow specific safe URL schemes to prevent XSS
+                    allowed_schemes = {"http", "https", "tg", "mailto"}
+
+                    if parsed.scheme:
+                        if parsed.scheme.lower() not in allowed_schemes:
+                            # Unsafe scheme, return just the text
+                            return text_content
+                    else:
+                        # If there is no scheme, ensure it doesn't contain a colon to prevent obfuscated payloads
+                        # unless it's a safe relative path.
+                        if ':' in cleaned_url and not (cleaned_url.startswith('/') or cleaned_url.startswith('#')):
+                            return text_content
+                except Exception:
+                    # If parsing fails, fall back to safe text
+                    return text_content
+
+                return f'<a href="{url_content}">{text_content}</a>'
+
+            escaped_text = re.sub(link_pattern, replace_link, escaped_text)
 
             html_parts.append(escaped_text)
 

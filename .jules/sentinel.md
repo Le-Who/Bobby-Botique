@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-24 - [XSS] Unvalidated URLs in Markdown Links
+**Vulnerability:** The `markdown_to_html` function in `app/utils/text_format.py` parsed Markdown links (`[text](url)`) using regex and blindly substituted the URL into `<a href="...">` tags without validating the URL scheme. This permitted arbitrary script execution in client environments if an attacker supplied `javascript:` or `vbscript:` protocols.
+**Learning:** HTML escaping text content is not sufficient if untrusted input is placed into sensitive HTML attributes like `href` without scheme validation. Using regex substitution to process URLs blindly is risky.
+**Prevention:** Always validate URL schemes before inserting them into link tags. Use libraries like `urllib.parse.urlparse` to robustly extract and verify the scheme against a strict allowlist (e.g., `http`, `https`, `mailto`, `tg`). If parsing fails or the scheme is dangerous, safely strip the link structure.
