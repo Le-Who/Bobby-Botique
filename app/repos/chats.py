@@ -205,3 +205,43 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
             )
         finally:
             await clear_user_context(conn=conn)
+
+
+async def migrate_invalid_models(
+    available_models: set,
+    default_gemini_model: str,
+    default_openrouter_model: str,
+) -> int:
+    """Migrate users whose active model is no longer in the available set.
+
+    Returns the number of migrated users.
+    """
+    if not available_models or not db_manager.is_connected:
+        return 0
+
+    placeholders = ",".join([f"${i + 1}" for i in range(len(available_models))])
+    invalid_chats = await db_query(
+        f"""
+        SELECT user_id, model
+        FROM chats
+        WHERE model IS NOT NULL
+        AND model NOT IN ({placeholders})
+        """,
+        tuple(available_models),
+    )
+
+    migrated = 0
+    for chat in invalid_chats:
+        user_id = chat["user_id"]
+        old_model = chat["model"]
+        target = default_openrouter_model if "/" in old_model else default_gemini_model
+        await db_query(
+            "UPDATE chats SET model = $1 WHERE user_id = $2",
+            (target, user_id),
+        )
+        migrated += 1
+        logging.info("Migrated user %s from %s to %s", user_id, old_model, target)
+
+    if migrated:
+        logging.warning("Migrated %d users to default models after config reload", migrated)
+    return migrated

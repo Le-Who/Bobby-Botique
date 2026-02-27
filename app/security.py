@@ -461,32 +461,6 @@ def sanitize_input(input_data: Any, input_type: str = "text", **kwargs) -> Any:
         raise InputSanitizationError(f"Sanitization failed: {e}")
 
 
-def validate_file_upload(filename: str, file_size: int, mime_type: str) -> bool:
-    """
-    Validates file upload parameters.
-
-    Args:
-        filename: Filename
-        file_size: File size in bytes
-        mime_type: MIME type
-
-    Returns:
-        True if file is valid
-
-    Raises:
-        InputSanitizationError: If file is invalid
-    """
-    metadata = {"filename": filename, "file_size": file_size, "mime_type": mime_type}
-
-    validated = input_sanitizer.validate_document_metadata(metadata)
-
-    # Additional validation
-    if validated["file_size"] > 50 * 1024 * 1024:  # 50MB
-        raise InputSanitizationError("File size exceeds limit")
-
-    return True
-
-
 # ============================================================================
 # RATE LIMITING
 # ============================================================================

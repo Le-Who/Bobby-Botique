@@ -451,6 +451,15 @@ class GeminiProvider(BaseAIProvider):
 _openrouter_http_client = NetworkErrorHandler.create_robust_http_client()
 
 
+async def close_http_clients() -> None:
+    """Close module-level HTTP clients on shutdown (prevents resource warnings)."""
+    global _openrouter_http_client
+    if _openrouter_http_client is not None:
+        await _openrouter_http_client.aclose()
+        _openrouter_http_client = None
+        logging.info("OpenRouter HTTP client closed")
+
+
 class OpenRouterProvider(BaseAIProvider):
     """OpenRouter AI provider — self-contained execution logic."""
 

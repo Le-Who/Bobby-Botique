@@ -13,72 +13,60 @@ from app.config import settings
 from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.conversations import get_conversation_count
 from app.utils.formatting import TelegramFormatter
-from app.utils.decorators import authorized_only
+from app.utils.decorators import authorized_only, safe_handler
 from app.handlers import menus
 from app.request_context import set_request_id
 
 
 @authorized_only
+@safe_handler("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     user_id = update.effective_user.id
     logging.info("Start command from user %s", user_id)
 
-    try:
-        chat_state = await get_user_chat(user_id)
-        formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(
-            chat_state, user_id=user_id
-        )
+    chat_state = await get_user_chat(user_id)
+    formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(
+        chat_state, user_id=user_id
+    )
 
-        await update.message.reply_text(
-            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
-        logging.info("Start command completed successfully for user %s", user_id)
-    except Exception as e:
-        logging.error("Error in start command for user %s: %s", user_id, e, exc_info=True)
-        await update.message.reply_text(
-            "❌ Произошла ошибка при обработке команды. Попробуйте позже."
-        )
+    await update.message.reply_text(
+        formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
+    )
+    logging.info("Start command completed successfully for user %s", user_id)
 
 
 @authorized_only
+@safe_handler("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Показывает подробную справку по использованию бота"""
     user_id = update.effective_user.id
     logging.info("Help command from user %s", user_id)
 
-    try:
-        help_text = (
-            "📚 **Справка**\n\n"
-            "💬 **Чат** — просто напишите сообщение\n"
-            "🌐 **Поиск** — `?` или `??` перед вопросом\n"
-            "📄 **Документы** — отправьте PDF/DOCX\n"
-            "🎭 **Роли** — специализация бота\n\n"
-            "Нажмите кнопку для подробностей:"
-        )
+    help_text = (
+        "📚 **Справка**\n\n"
+        "💬 **Чат** — просто напишите сообщение\n"
+        "🌐 **Поиск** — `?` или `??` перед вопросом\n"
+        "📄 **Документы** — отправьте PDF/DOCX\n"
+        "🎭 **Роли** — специализация бота\n\n"
+        "Нажмите кнопку для подробностей:"
+    )
 
-        formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
-        keyboard = [
-            [
-                InlineKeyboardButton("💬 Чат", callback_data="help_topic:chat"),
-                InlineKeyboardButton("🌐 Поиск", callback_data="help_topic:search"),
-            ],
-            [
-                InlineKeyboardButton("📄 Документы", callback_data="help_topic:docs"),
-                InlineKeyboardButton("🎭 Роли", callback_data="help_topic:roles"),
-            ],
-        ]
-        await update.message.reply_text(
-            formatted_text, parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        logging.info("Help command completed successfully for user %s", user_id)
-    except Exception as e:
-        logging.error("Error in help command for user %s: %s", user_id, e, exc_info=True)
-        await update.message.reply_text(
-            "❌ Произошла ошибка при обработке команды. Попробуйте позже."
-        )
+    formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
+    keyboard = [
+        [
+            InlineKeyboardButton("💬 Чат", callback_data="help_topic:chat"),
+            InlineKeyboardButton("🌐 Поиск", callback_data="help_topic:search"),
+        ],
+        [
+            InlineKeyboardButton("📄 Документы", callback_data="help_topic:docs"),
+            InlineKeyboardButton("🎭 Роли", callback_data="help_topic:roles"),
+        ],
+    ]
+    await update.message.reply_text(
+        formatted_text, parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    logging.info("Help command completed successfully for user %s", user_id)
 
 
 @authorized_only
@@ -213,108 +201,81 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 @authorized_only
+@safe_handler("❌ Ошибка получения документов. Попробуйте позже.")
 async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # context используется for совместимости с другими командами
     """Показывает список документов пользователя и управляет ими"""
-
-    # Clean up state работы с documentами on входе в команду
     from app.state import clear_document_state
 
     clear_document_state(update.effective_user.id)
 
-    try:
-        (
-            formatted_text,
-            parse_mode,
-            reply_markup,
-        ) = await menus.get_documents_menu_content(update.effective_user.id)
-        await update.message.reply_text(
-            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка получения документов: {e}")
-        logging.error("Error in documents command: %s", e, exc_info=True)
+    formatted_text, parse_mode, reply_markup = await menus.get_documents_menu_content(
+        update.effective_user.id
+    )
+    await update.message.reply_text(
+        formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
+    )
 
 
 @authorized_only
+@safe_handler("❌ Ошибка получения статистики. Попробуйте позже.")
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает личную статистику пользователя"""
     user_id = update.effective_user.id
     logging.info("Stats command from user %s", user_id)
 
-    try:
-        from app.repos.analytics import get_engagement_summary, streak_badge
+    from app.repos.analytics import get_engagement_summary, streak_badge
 
-        # Engagement summary (streak + 7-day stats)
-        engagement = await get_engagement_summary(user_id)
-        streak = engagement["current_streak"]
-        badge = streak_badge(streak)
+    engagement = await get_engagement_summary(user_id)
+    streak = engagement["current_streak"]
+    badge = streak_badge(streak)
 
-        # Сегодня (personal — per-user metrics)
-        from app.repos.user_stats import (
-            get_user_today_request_count,
-            get_user_weekly_stats,
-            get_user_model_usage_today,
-        )
-        today_count = await get_user_today_request_count(user_id)
+    from app.repos.user_stats import (
+        get_user_today_request_count,
+        get_user_weekly_stats,
+        get_user_model_usage_today,
+    )
+    today_count = await get_user_today_request_count(user_id)
+    week_res = await get_user_weekly_stats(user_id)
+    model_res = await get_user_model_usage_today(user_id)
 
-        # Последние 7 дней (personal)
-        week_res = await get_user_weekly_stats(user_id)
+    from app.document_processor import get_user_documents
+    docs = await get_user_documents(user_id)
+    doc_count = len(docs) if docs else 0
+    conv_count = await get_conversation_count(user_id)
 
-        # Использование моделей за сегодня (personal, from JSONB model_usage)
-        model_res = await get_user_model_usage_today(user_id)
+    text = "📊 **Ваша статистика**\n\n"
 
-        # Документы
-        from app.document_processor import get_user_documents
-        docs = await get_user_documents(user_id)
-        doc_count = len(docs) if docs else 0
+    if streak > 0:
+        text += f"{badge} **Серия:** `{streak}` {'день' if streak == 1 else 'дней'}\n"
+        if engagement["longest_streak"] > streak:
+            text += f"🏆 **Рекорд:** `{engagement['longest_streak']}` дней\n"
+        text += "\n"
 
-        # Беседы
-        conv_count = await get_conversation_count(user_id)
+    text += f"📅 **Сегодня:** `{today_count}` запросов\n"
+    text += f"📈 **7 дней:** `{engagement['total_requests_7d']}` запросов ({engagement['active_days_7d']}/7 дней)\n\n"
 
-        # Build text
-        text = "📊 **Ваша статистика**\n\n"
+    if week_res:
+        text += "📊 **По дням:**\n"
+        for row in week_res:
+            date_str = row["metric_date"].strftime("%d.%m") if hasattr(row["metric_date"], "strftime") else str(row["metric_date"])[:5]
+            bar = "█" * min(int(row["cnt"]), 20)
+            text += f"  `{date_str}` {bar} `{row['cnt']}`\n"
+        text += "\n"
 
-        # Streak badge
-        if streak > 0:
-            text += f"{badge} **Серия:** `{streak}` {'день' if streak == 1 else 'дней'}\n"
-            if engagement["longest_streak"] > streak:
-                text += f"🏆 **Рекорд:** `{engagement['longest_streak']}` дней\n"
-            text += "\n"
+    if model_res:
+        text += "🤖 **Модели сегодня:**\n"
+        for row in model_res:
+            text += f"  • `{row['model_name']}`: `{row['cnt']}` запросов\n"
+        text += "\n"
 
-        text += f"📅 **Сегодня:** `{today_count}` запросов\n"
-        text += f"📈 **7 дней:** `{engagement['total_requests_7d']}` запросов ({engagement['active_days_7d']}/7 дней)\n\n"
+    text += (
+        f"📄 **Документов:** `{doc_count}`\n"
+        f"📝 **Сохранённых бесед:** `{conv_count}`\n"
+    )
 
-        # Недельная history
-        if week_res:
-            text += "📊 **По дням:**\n"
-            for row in week_res:
-                date_str = row["metric_date"].strftime("%d.%m") if hasattr(row["metric_date"], "strftime") else str(row["metric_date"])[:5]
-                bar = "█" * min(int(row["cnt"]), 20)
-                text += f"  `{date_str}` {bar} `{row['cnt']}`\n"
-            text += "\n"
-
-        # Модели
-        if model_res:
-            text += "🤖 **Модели сегодня:**\n"
-            for row in model_res:
-                text += f"  • `{row['model_name']}`: `{row['cnt']}` запросов\n"
-            text += "\n"
-
-        text += (
-            f"📄 **Документов:** `{doc_count}`\n"
-            f"📝 **Сохранённых бесед:** `{conv_count}`\n"
-        )
-
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
-        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        logging.info("Stats command completed for user %s", user_id)
-
-    except Exception as e:
-        logging.error("Error in stats command for user %s: %s", user_id, e, exc_info=True)
-        await update.message.reply_text(
-            "❌ Ошибка получения статистики. Попробуйте позже."
-        )
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+    logging.info("Stats command completed for user %s", user_id)
 
 
 def register(application: Application) -> None:

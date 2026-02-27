@@ -52,3 +52,71 @@ def admin_only(func):
         return await func(update, context, *args, **kwargs)
 
     return wrapper
+
+
+def safe_handler(error_message: str = "❌ Произошла ошибка. Попробуйте позже."):
+    """Decorator that wraps a Telegram command handler with top-level error handling.
+
+    Catches any unhandled exception, logs it, and sends a generic error reply
+    to the user. Reduces boilerplate try/except in every handler.
+
+    Usage::
+
+        @authorized_only
+        @safe_handler()
+        async def my_command(update, context):
+            ...  # no try/except needed for the generic case
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(
+            update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs
+        ):
+            try:
+                return await func(update, context, *args, **kwargs)
+            except Exception as e:
+                user_id = getattr(update.effective_user, "id", "?")
+                logging.error(
+                    "Unhandled error in %s for user %s: %s",
+                    func.__name__, user_id, e, exc_info=True,
+                )
+                try:
+                    if update.message:
+                        await update.message.reply_text(error_message)
+                    elif update.callback_query:
+                        await update.callback_query.answer(
+                            error_message, show_alert=True
+                        )
+                except Exception:
+                    pass  # Best-effort error notification
+        return wrapper
+    return decorator
+
+
+def safe_callback(error_message: str = "❌ Ошибка. Попробуйте ещё раз."):
+    """Like safe_handler but tuned for callback query handlers.
+
+    Answers the callback query to dismiss the spinner, then sends error.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(
+            update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs
+        ):
+            try:
+                return await func(update, context, *args, **kwargs)
+            except Exception as e:
+                user_id = getattr(update.effective_user, "id", "?")
+                logging.error(
+                    "Unhandled error in %s for user %s: %s",
+                    func.__name__, user_id, e, exc_info=True,
+                )
+                try:
+                    if update.callback_query:
+                        await update.callback_query.answer(
+                            error_message, show_alert=True
+                        )
+                except Exception:
+                    pass
+        return wrapper
+    return decorator

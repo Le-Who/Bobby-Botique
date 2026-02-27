@@ -35,6 +35,12 @@ from quart import (
 )
 from app import database
 from app.config import settings
+from app.repos.metrics_repo import (
+    get_gemini_key_usage_stats,
+    get_tavily_key_usage_stats,
+    get_active_key_info,
+    get_supabase_metrics,
+)
 
 # --- QUART APP SETUP ---
 flask_app = Quart(__name__)  # kept as `flask_app` for backward compat with bot.py
@@ -43,10 +49,7 @@ flask_app = Quart(__name__)  # kept as `flask_app` for backward compat with bot.
 # Derive a secret key for sessions from ADMIN_SECRET
 def _get_admin_secret():
     """Returns the configured admin secret."""
-    secret = os.environ.get("ADMIN_SECRET")
-    if not secret and settings:
-        secret = getattr(settings, "ADMIN_SECRET", None)
-    return secret
+    return getattr(settings, "ADMIN_SECRET", None) or os.environ.get("ADMIN_SECRET")
 
 
 # Placeholder — overridden at server startup via @before_serving
@@ -350,12 +353,12 @@ async def api_keys():
     try:
         from app.utils.time import get_kyiv_reset_time
 
-        key_stats = await database.get_gemini_key_usage_stats()
+        key_stats = await get_gemini_key_usage_stats()
 
         # Get Tavily key stats
         tavily_stats = []
         try:
-            tavily_stats = await database.get_tavily_key_usage_stats()
+            tavily_stats = await get_tavily_key_usage_stats()
         except Exception:
             pass
 
@@ -365,7 +368,7 @@ async def api_keys():
 
         if models:
             results = await asyncio.gather(
-                *[database.get_active_key_info(m) for m in models],
+                *[get_active_key_info(m) for m in models],
                 return_exceptions=True,
             )
             for model, result in zip(models, results):
@@ -460,7 +463,7 @@ async def api_queue():
 async def api_database():
     """Database connection pool and health stats."""
     try:
-        db_metrics = await database.get_supabase_metrics()
+        db_metrics = await get_supabase_metrics()
         return jsonify(
             {
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",

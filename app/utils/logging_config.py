@@ -392,9 +392,12 @@ def setup_detailed_logging(
             print(f"Warning: Could not create file handler: {e}", flush=True)
 
     # Configure specialized loggers
-    for logger_name in ["api_logger", "telegram", "asyncpg"]:
+    # httpx is suppressed to WARNING+ to prevent Bearer tokens from request headers
+    # leaking into debug-level logs (H5 security fix).
+    for logger_name in ["api_logger", "telegram", "asyncpg", "httpx", "httpcore"]:
         _setup_logger(
-            logger_name, numeric_level, enable_structured_logging, enable_pretty
+            logger_name, max(numeric_level, logging.WARNING) if logger_name in ("httpx", "httpcore") else numeric_level,
+            enable_structured_logging, enable_pretty
         )
 
     pretty_mode = "rich" if (enable_pretty and HAS_RICH) else (

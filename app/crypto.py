@@ -72,8 +72,17 @@ def decrypt_api_key(ciphertext: str) -> str:
 
 
 def is_encrypted(value: str) -> bool:
-    """Heuristic check: Fernet tokens start with 'gAAAAA' and are base64url."""
-    return len(value) > 50 and value.startswith("gAAAAA")
+    """Check whether a value is a Fernet token.
+
+    Fernet tokens are base64url-encoded and always start with 'gAAAAA'
+    (version byte 0x80 + 8-byte timestamp starting with zeros).
+    We also verify the value is valid base64url to avoid false positives
+    on strings that coincidentally match the prefix.
+    """
+    if len(value) <= 50 or not value.startswith("gAAAAA"):
+        return False
+    import re
+    return bool(re.fullmatch(r"[A-Za-z0-9_\-]+=*", value))
 
 
 def safe_decrypt(value: str) -> str:
@@ -89,8 +98,8 @@ def safe_decrypt(value: str) -> str:
         try:
             decrypted = decrypt_api_key(value)
             logging.debug(
-                "Key decrypted OK: encrypted_prefix=%s... -> decrypted_prefix=%s..., len=%d",
-                value[:12], decrypted[:8], len(decrypted),
+                "Key decrypted OK: encrypted_prefix=%s... -> decrypted_prefix=%s****, len=%d",
+                value[:12], decrypted[:6], len(decrypted),
             )
             return decrypted
         except (ValueError, Exception) as e:
@@ -103,7 +112,7 @@ def safe_decrypt(value: str) -> str:
             raise DecryptionError(
                 f"Cannot decrypt API key (prefix={value[:12]}...): {e}"
             ) from e
-    logging.debug("Key not encrypted (prefix=%s..., len=%d), using as-is", value[:8], len(value))
+    logging.debug("Key not encrypted (prefix=%s****, len=%d), using as-is", value[:6], len(value))
     return value
 
 

@@ -292,7 +292,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (453 tests, 1 skipped)
+### Suite Structure (485 tests, 1 skipped)
 
 | Category           | Files                                                                                                                                                                        | What They Cover                                                                                       |
 | :----------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------- |
@@ -303,7 +303,7 @@ python -m pytest tests/ -v --tb=long
 | **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                                                                       | Circuit breaker, TTL cache, race conditions                                                           |
 | **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling                       |
 | **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                                                             | Batched metric saves, system status data                                                              |
-| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                                                                                                   | Text formatting, keyboard builders, timezone math                                                     |
+| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`, `test_audit_fixes`                                                                               | Text formatting, keyboard builders, timezone math, audit regression tests                             |
 
 ### Mock Isolation Rule
 

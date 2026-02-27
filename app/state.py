@@ -78,9 +78,9 @@ class _UserStateStore:
         self._states: Dict[int, UserState] = {}
 
     def __getitem__(self, user_id: int) -> UserState:
-        if user_id not in self._states:
-            self._states[user_id] = UserState(user_id)
-        return self._states[user_id]
+        # setdefault is atomic in CPython — prevents race where two concurrent
+        # tasks create separate UserState objects for the same user_id.
+        return self._states.setdefault(user_id, UserState(user_id))
 
     def __contains__(self, user_id: int) -> bool:
         return user_id in self._states

@@ -428,6 +428,7 @@ class ConfigManager:
         self._reload_interval = 300  # 5 minutes
         self._watchers: List[Callable] = []
         self._lock = asyncio.Lock()
+        self._reload_task: Optional[asyncio.Task] = None
 
     @property
     def settings(self) -> Settings:
@@ -436,7 +437,14 @@ class ConfigManager:
             self._settings = get_settings()
         current_time = time.time()
         if current_time - self._last_reload > self._reload_interval:
-            asyncio.create_task(self._reload_config())
+            # Debounce: update timestamp eagerly to prevent overlapping reloads
+            self._last_reload = current_time
+            # Only create a new task if the previous one is done
+            if self._reload_task is None or self._reload_task.done():
+                try:
+                    self._reload_task = asyncio.create_task(self._reload_config())
+                except RuntimeError:
+                    pass  # No running event loop (e.g. during tests)
         return self._settings
 
     async def _reload_config(self) -> None:
@@ -458,12 +466,9 @@ class ConfigManager:
                     )
 
                 # === ВАЛИДАЦИЯ И МИГРАЦИЯ АКТИВНЫХ ПОЛЬЗОВАТЕЛЕЙ ===
-                migrated_count = 0
                 try:
-                    # Импортируем database only здесь, чтобы fromбежать циклических импортов
-                    from app import database as db
+                    from app.repos.chats import migrate_invalid_models
 
-                    # Get все available models (Gemini + OpenRouter)
                     all_available_models = set()
                     if new_settings.AVAILABLE_MODELS:
                         all_available_models.update(new_settings.AVAILABLE_MODELS)
@@ -472,53 +477,13 @@ class ConfigManager:
                             new_settings.OPENROUTER_AVAILABLE_MODELS
                         )
 
-                    if all_available_models and db.db_manager.is_connected:
-                        # Находим users с несуществующими моделями
-                        # Используем parameterfromованный request for withoutопасности
-                        placeholders = ",".join(
-                            [f"${i + 1}" for i in range(len(all_available_models))]
-                        )
-                        invalid_chats = await db.db_query(
-                            f"""
-                            SELECT user_id, model 
-                            FROM chats 
-                            WHERE model IS NOT NULL 
-                            AND model NOT IN ({placeholders})
-                            """,
-                            tuple(all_available_models),
-                        )
-
-                        # Мигрируем users на DEFAULT_MODEL
-                        for chat in invalid_chats:
-                            user_id = chat["user_id"]
-                            old_model = chat["model"]
-
-                            # Определяем правильный DEFAULT_MODEL
-                            if "/" in old_model:  # OpenRouter model
-                                default_model = new_settings.OPENROUTER_DEFAULT_MODEL
-                            else:  # Gemini model
-                                default_model = new_settings.DEFAULT_MODEL
-
-                            # Update model user
-                            await db.db_query(
-                                """
-                                UPDATE chats 
-                                SET model = $1 
-                                WHERE user_id = $2
-                            """,
-                                (default_model, user_id),
-                            )
-
-                            migrated_count += 1
-                            logging.info(
-                                f"Migrated user {user_id} from {old_model} to {default_model}"
-                            )
-
-                        if migrated_count > 0:
-                            logging.warning(
-                                f"Migrated {migrated_count} users to default models after config reload"
-                            )
+                    migrated_count = await migrate_invalid_models(
+                        available_models=all_available_models,
+                        default_gemini_model=new_settings.DEFAULT_MODEL,
+                        default_openrouter_model=new_settings.OPENROUTER_DEFAULT_MODEL,
+                    )
                 except Exception as migration_error:
+                    migrated_count = 0
                     # Не прерываем перезагрузку on ошибке миграции
                     logging.error("Error during user migration: %s", migration_error)
 

@@ -5,6 +5,47 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.7] – 2026-02-28 – Codebase Audit Phase 2-3: Hardening, DRY & Cleanup
+
+### 🛡️ Security & Reliability (Phase 2)
+
+- **C3 (API key logging)**: Masked API key prefix in debug logs to `[:6]****`
+- **H1 (race condition)**: `_UserStateStore.__getitem__` uses `setdefault()` to prevent TOCTOU races
+- **H2 (fire-and-forget)**: `ConfigManager.schedule_reload()` stores task reference + debounce guard (3s cooldown)
+- **H3 (zombie tasks)**: `_background_tasks` set in `messages.py` prevents "exception never retrieved"
+- **H5 (token leak)**: `httpx`/`httpcore` loggers now suppressed to WARNING+ to prevent Bearer token exposure
+- **M4 (encryption heuristic)**: `is_encrypted()` now validates base64url encoding via `re.fullmatch()`, preventing false positives
+
+### 🏗️ DRY & Code Quality (Phase 3)
+
+- **M1 (handler boilerplate)**: New `safe_handler()` / `safe_callback()` decorators in `decorators.py` — centralize error handling for Telegram handlers
+- **Decorator adoption**: Applied `@safe_handler()` to `start_command`, `help_command`, `documents_command`, `stats_command` — eliminated ~40 lines of try/except boilerplate
+- **M3 (false positives)**: `is_key_related_error` narrowed from bare `"limit"` to `"rate limit"`, `"daily limit"`, `"limit exceeded"`
+- **M2 (unnecessary lock)**: Removed `asyncio.Lock` from `RoleConversationMetricsCollector` (atomic in single-threaded asyncio)
+
+### 🧹 Cleanup
+
+- **L4 (resource leak)**: Added `close_http_clients()` for OpenRouter and `close_tavily_client()` for Tavily — both wired to `_cleanup_application()` in `bot.py`
+- **L3 (dead code)**: Removed unused `validate_file_upload` from `security.py`
+- **L1 (unclean shutdown)**: `os._exit(1)` → `sys.exit(1)` in signal handler
+- **L2 (redundant logic)**: Simplified `_get_admin_secret()` to use `settings.ADMIN_SECRET` directly
+- **I3 (unused dep)**: Replaced `pydantic-settings` with `pydantic` in `requirements.txt`
+- **M8 (unused imports)**: Removed `re`, `json`, `hashlib`, `date` from `database.py`
+
+### 📐 Type Annotations
+
+- `conversations.py`: bare `-> list` → `-> List[Dict[str, Any]]`, `-> int` → `-> Optional[int]`
+- `keys.py`: Added return types to `DailyKeyManager.increment_usage` and `MonthlyKeyManager.increment_usage`
+
+### 🧪 Tests (+32 → 485 total, 1 skipped)
+
+- `test_audit_fixes.py`: 32 regression tests covering all 23 fixes from Phases 2–3
+  - `TestIsEncryptedHardened` (5), `TestIsKeyRelatedErrorNarrowed` (6), `TestSafeHandlerDecorator` (3)
+  - `TestMediaGroupMaxSize` (2), `TestHttpClientClose` (2), `TestMetricsCollectorNoLock` (3)
+  - `TestMigrateInvalidModels` (3), `TestDatabaseCleanImports` (1), `TestValidateFileUploadRemoved` (1)
+  - `TestRequirementsPydantic` (1), `TestConfigReloadDebounce` (2), `TestUserStateStoreSetdefault` (1)
+  - `TestHttpxLoggerSuppression` (1), `TestSafeCallbackDecorator` (1)
+
 ## [2.6.6] – 2026-02-27 – Resilience, Repository Extraction & Performance Wiring
 
 ### 🛡️ Resilience: Circuit Breakers

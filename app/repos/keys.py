@@ -11,7 +11,7 @@ import hashlib
 import logging
 import asyncpg
 from datetime import datetime, date
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 import re
 
@@ -70,7 +70,7 @@ class DailyKeyManager:
             return {"key_hash": results[0]["key_hash"], "api_key": safe_decrypt(results[0]["api_key"])}
         return None
 
-    async def increment_usage(self, key_hash: str, model_name: str):
+    async def increment_usage(self, key_hash: str, model_name: str) -> List[Dict[str, Any]]:
         """UPSERT a +1 into the daily usage counter."""
         today = self._today()
         query = f"""
@@ -287,7 +287,7 @@ class MonthlyKeyManager:
                 return {"key_hash": row["key_hash"], "api_key": safe_decrypt(row["api_key"])}
         return None
 
-    async def increment_usage(self, key_hash: str, cost: int):
+    async def increment_usage(self, key_hash: str, cost: int) -> None:
         """UPSERT a +cost into the monthly credit counter."""
         current_month = self._current_month()
         query = f"""

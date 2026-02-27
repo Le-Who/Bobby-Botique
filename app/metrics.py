@@ -616,114 +616,108 @@ class SummarizationMetrics:
 
 
 class RoleConversationMetricsCollector:
-    """Сборщик метрик для ролей и бесед"""
+    """Сборщик метрик для ролей и бесед.
+
+    Note: No lock needed — all methods are simple counter increments
+    which are atomic in single-threaded asyncio (no await between
+    read and write).
+    """
 
     def __init__(self):
         self.role_metrics = RoleMetrics()
         self.conversation_metrics = ConversationMetrics()
         self.summarization_metrics = SummarizationMetrics()
-        self._lock = asyncio.Lock()
 
     async def record_role_application(self, role_key: str):
         """Записывает применение роли"""
-        async with self._lock:
-            self.role_metrics.role_applications[role_key] = (
-                self.role_metrics.role_applications.get(role_key, 0) + 1
-            )
-            logging.info("Role applied: %s", role_key)
+        self.role_metrics.role_applications[role_key] = (
+            self.role_metrics.role_applications.get(role_key, 0) + 1
+        )
+        logging.info("Role applied: %s", role_key)
 
     async def record_custom_role_creation(self):
         """Записывает создание кастомной роли"""
-        async with self._lock:
-            self.role_metrics.custom_roles_created += 1
-            logging.info("Custom role created")
+        self.role_metrics.custom_roles_created += 1
+        logging.info("Custom role created")
 
     async def record_role_clear(self):
         """Записывает сброс роли"""
-        async with self._lock:
-            self.role_metrics.role_clears += 1
-            logging.info("Role cleared")
+        self.role_metrics.role_clears += 1
+        logging.info("Role cleared")
 
     async def record_role_save(self):
         """Записывает сохранение роли"""
-        async with self._lock:
-            self.role_metrics.role_saves += 1
-            logging.info("Role saved")
+        self.role_metrics.role_saves += 1
+        logging.info("Role saved")
 
     async def record_conversation_saved(self):
         """Записывает сохранение беседы"""
-        async with self._lock:
-            self.conversation_metrics.conversations_saved += 1
-            logging.info("Conversation saved")
+        self.conversation_metrics.conversations_saved += 1
+        logging.info("Conversation saved")
 
     async def record_conversation_switched(self):
         """Записывает переключение на беседу"""
-        async with self._lock:
-            self.conversation_metrics.conversations_switched += 1
-            logging.info("Conversation switched")
+        self.conversation_metrics.conversations_switched += 1
+        logging.info("Conversation switched")
 
     async def record_conversation_renamed(self):
         """Записывает переименование беседы"""
-        async with self._lock:
-            self.conversation_metrics.conversations_renamed += 1
-            logging.info("Conversation renamed")
+        self.conversation_metrics.conversations_renamed += 1
+        logging.info("Conversation renamed")
 
     async def record_conversation_deleted(self):
         """Записывает удаление беседы"""
-        async with self._lock:
-            self.conversation_metrics.conversations_deleted += 1
-            logging.info("Conversation deleted")
+        self.conversation_metrics.conversations_deleted += 1
+        logging.info("Conversation deleted")
 
     async def record_summarization(
         self, reason: str, tokens_saved: int, summary_length: int
     ):
         """Записывает суммаризацию контекста"""
-        async with self._lock:
-            self.summarization_metrics.summarizations_triggered += 1
+        self.summarization_metrics.summarizations_triggered += 1
 
-            if "мягкий лимит" in reason:
-                self.summarization_metrics.summarizations_soft_limit += 1
-            elif "жёсткий лимит" in reason:
-                self.summarization_metrics.summarizations_hard_limit += 1
+        if "мягкий лимит" in reason:
+            self.summarization_metrics.summarizations_soft_limit += 1
+        elif "жёсткий лимит" in reason:
+            self.summarization_metrics.summarizations_hard_limit += 1
 
-            self.summarization_metrics.total_tokens_saved += tokens_saved
+        self.summarization_metrics.total_tokens_saved += tokens_saved
 
-            # Update среднюю длину суммарfromации
-            current_avg = self.summarization_metrics.average_summary_length
-            count = self.summarization_metrics.summarizations_triggered
-            self.summarization_metrics.average_summary_length = (
-                current_avg * (count - 1) + summary_length
-            ) / count
+        # Update среднюю длину суммарfromации
+        current_avg = self.summarization_metrics.average_summary_length
+        count = self.summarization_metrics.summarizations_triggered
+        self.summarization_metrics.average_summary_length = (
+            current_avg * (count - 1) + summary_length
+        ) / count
 
-            logging.info(
-                f"Summarization triggered: {reason}, tokens saved: {tokens_saved}"
-            )
+        logging.info(
+            f"Summarization triggered: {reason}, tokens saved: {tokens_saved}"
+        )
 
     async def get_metrics_summary(self) -> Dict[str, Any]:
         """Возвращает сводку метрик"""
-        async with self._lock:
-            return {
-                "roles": {
-                    "applications": dict(self.role_metrics.role_applications),
-                    "custom_created": self.role_metrics.custom_roles_created,
-                    "clears": self.role_metrics.role_clears,
-                    "saves": self.role_metrics.role_saves,
-                },
-                "conversations": {
-                    "saved": self.conversation_metrics.conversations_saved,
-                    "switched": self.conversation_metrics.conversations_switched,
-                    "renamed": self.conversation_metrics.conversations_renamed,
-                    "deleted": self.conversation_metrics.conversations_deleted,
-                    "total": self.conversation_metrics.total_conversations,
-                },
-                "summarization": {
-                    "triggered": self.summarization_metrics.summarizations_triggered,
-                    "soft_limit": self.summarization_metrics.summarizations_soft_limit,
-                    "hard_limit": self.summarization_metrics.summarizations_hard_limit,
-                    "tokens_saved": self.summarization_metrics.total_tokens_saved,
-                    "avg_summary_length": self.summarization_metrics.average_summary_length,
-                },
-            }
+        return {
+            "roles": {
+                "applications": dict(self.role_metrics.role_applications),
+                "custom_created": self.role_metrics.custom_roles_created,
+                "clears": self.role_metrics.role_clears,
+                "saves": self.role_metrics.role_saves,
+            },
+            "conversations": {
+                "saved": self.conversation_metrics.conversations_saved,
+                "switched": self.conversation_metrics.conversations_switched,
+                "renamed": self.conversation_metrics.conversations_renamed,
+                "deleted": self.conversation_metrics.conversations_deleted,
+                "total": self.conversation_metrics.total_conversations,
+            },
+            "summarization": {
+                "triggered": self.summarization_metrics.summarizations_triggered,
+                "soft_limit": self.summarization_metrics.summarizations_soft_limit,
+                "hard_limit": self.summarization_metrics.summarizations_hard_limit,
+                "tokens_saved": self.summarization_metrics.total_tokens_saved,
+                "avg_summary_length": self.summarization_metrics.average_summary_length,
+            },
+        }
 
 
 # Глобальный экземпляр сборщика метрик ролей и бесед

@@ -70,7 +70,7 @@ def signal_handler(signum, _frame):
             time.sleep(30)
             logging.warning("Force shutdown after timeout")
             # Lock release removed
-            os._exit(1)
+            sys.exit(1)
 
         force_thread = threading.Thread(target=force_shutdown, daemon=True)
         force_thread.start()
@@ -150,6 +150,19 @@ async def _cleanup_application(application):
             await application.stop()
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (application): {cleanup_error}")
+
+    # Close module-level HTTP clients
+    try:
+        from app.ai_provider import close_http_clients
+        await close_http_clients()
+    except Exception as cleanup_error:
+        logging.warning(f"Cleanup error (OpenRouter http client): {cleanup_error}")
+
+    try:
+        from app.search_services import close_tavily_client
+        await close_tavily_client()
+    except Exception as cleanup_error:
+        logging.warning(f"Cleanup error (Tavily http client): {cleanup_error}")
 
 
 async def run_bot_with_retry():

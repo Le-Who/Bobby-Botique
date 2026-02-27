@@ -8,7 +8,7 @@ Extracted from app/database.py to isolate conversation-domain logic.
 
 import logging
 import asyncpg
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 from app.database import (
     db_manager,
@@ -64,7 +64,7 @@ async def get_role_data(role_key: str, user_id: int) -> Optional[Dict[str, Any]]
 @timed_operation("save_conversation")
 async def save_conversation(
     user_id: int, title: str, role_type: str = None, role_id: int = None
-) -> int:
+) -> Optional[int]:
     try:
         from app.repos.chats import get_user_chat
 
@@ -92,7 +92,7 @@ async def save_conversation(
 
 async def get_user_conversations(
     user_id: int, limit: int = 10, offset: int = 0
-) -> list:
+) -> List[Dict[str, Any]]:
     try:
         result = await db_query(
             """SELECT c.id, c.title, c.role_type, c.role_id, c.summary, c.token_budget, c.created_at,
@@ -122,7 +122,7 @@ async def get_user_conversations(
         return []
 
 
-async def get_conversation_messages(conversation_id: int, user_id: int) -> list:
+async def get_conversation_messages(conversation_id: int, user_id: int) -> Optional[List[Dict[str, Any]]]:
     try:
         query = """
             SELECT cm.role, cm.content, cm.created_at

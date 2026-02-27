@@ -40,19 +40,22 @@ _HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore(_HEAVY_REQUEST_LIMIT)
 MEDIA_GROUPS = {}
 MEDIA_GROUPS_TTL = {}  # TTL for автоматической очистки старых групп
 MEDIA_GROUP_TIMEOUT = 300  # 5 минут timeout for groups fromображений
+MEDIA_GROUPS_MAX_SIZE = 500  # Max concurrent media groups to prevent OOM
 _media_groups_lock = asyncio.Lock()  # Protects MEDIA_GROUPS/MEDIA_GROUPS_TTL mutations
+_background_tasks: set = set()  # Track fire-and-forget tasks to prevent 'exception never retrieved'
 
 
 async def cleanup_old_media_groups() -> None:
     """Очищает старые группы изображений для предотвращения утечки памяти"""
-    current_time = asyncio.get_running_loop().time()
-    expired_groups = []
-
-    for media_group_id, created_at in MEDIA_GROUPS_TTL.items():
-        if current_time - created_at > MEDIA_GROUP_TIMEOUT:
-            expired_groups.append(media_group_id)
+    import time as _time
+    current_time = _time.monotonic()
 
     async with _media_groups_lock:
+        expired_groups = [
+            mg_id
+            for mg_id, created_at in MEDIA_GROUPS_TTL.items()
+            if current_time - created_at > MEDIA_GROUP_TIMEOUT
+        ]
         for media_group_id in expired_groups:
             MEDIA_GROUPS.pop(media_group_id, None)
             MEDIA_GROUPS_TTL.pop(media_group_id, None)
@@ -432,9 +435,21 @@ async def _process_media_group_update(
         )
 
         async with _media_groups_lock:
+            # Reject if too many concurrent groups (OOM protection)
+            if media_group_id not in MEDIA_GROUPS and len(MEDIA_GROUPS) >= MEDIA_GROUPS_MAX_SIZE:
+                logging.warning(
+                    "⚠️ MEDIA_GROUPS at capacity (%s), rejecting media_group_id %s",
+                    MEDIA_GROUPS_MAX_SIZE, media_group_id,
+                )
+                await update.message.reply_text(
+                    "⚠️ Слишком много одновременных медиа-групп. Попробуйте позже."
+                )
+                return True
+
             # Initialize группу, if её нет
             if media_group_id not in MEDIA_GROUPS:
-                current_time = asyncio.get_running_loop().time()
+                import time as _time
+                current_time = _time.monotonic()
                 MEDIA_GROUPS[media_group_id] = {
                     "user_id": user_id,
                     "chat_id": chat_id,
@@ -724,8 +739,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 done_event.set()  # Signal heartbeat to stop
                 heartbeat_task.cancel()
 
-        # Запускаем обработку в фоне
-        asyncio.create_task(task_wrapper())
+        # Запускаем обработку в фоне (tracked to prevent 'exception never retrieved')
+        task = asyncio.create_task(task_wrapper())
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
 
 async def delayed_process_media_group(

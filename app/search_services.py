@@ -17,6 +17,14 @@ from app.circuit_breaker import TAVILY_API_CONFIG
 http_client = NetworkErrorHandler.create_robust_http_client()
 
 
+async def close_tavily_client() -> None:
+    """Close the module-level Tavily HTTP client (prevents resource warnings)."""
+    global http_client
+    if http_client is not None:
+        await http_client.aclose()
+        http_client = None
+        logging.info("Tavily HTTP client closed")
+
 
 
 
