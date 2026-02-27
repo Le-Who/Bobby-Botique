@@ -42,10 +42,21 @@ def mock_db():
 def run_patched():
     """Context manager fixture to patch all external dependencies of menus.py"""
 
-    async def _run(state, db_mock, view_mode="hub", page=0, role_key=None):
+    async def _run(state, db_mock, view_mode="hub", page=0, role_key=None,
+                   custom_roles=None, custom_roles_full=None, custom_role_count=0):
         # We patch inside the app.handlers.menus module where it's used
         with (
-            patch("app.handlers.menus.db", db_mock),
+            patch("app.handlers.menus.get_role_data", db_mock.get_role_data),
+            patch("app.handlers.menus.get_conversation_count", AsyncMock(return_value=0)),
+            patch("app.handlers.menus.get_user_conversations", AsyncMock(return_value=[])),
+            patch("app.handlers.menus.get_user_custom_roles",
+                  AsyncMock(return_value=custom_roles or [])),
+            patch("app.handlers.menus.get_user_custom_roles_full",
+                  AsyncMock(return_value=custom_roles_full or [])),
+            patch("app.handlers.menus.get_custom_role_count",
+                  AsyncMock(return_value=custom_role_count)),
+            patch("app.handlers.menus.get_user_today_request_count",
+                  AsyncMock(return_value=0)),
             patch("app.handlers.menus.settings") as mock_settings,
             patch("app.handlers.menus.TelegramFormatter") as mock_formatter,
         ):
@@ -118,13 +129,12 @@ async def test_hub_view_active_custom_role(chat_state, mock_db, run_patched):
     chat_state.system_prompt = "Custom prompt from user."
 
     # Not a predefined system role, but exists in user's custom roles
-    mock_db.db_query.side_effect = [
-        [{"id": 10, "title": "My Custom Role", "prompt": "Custom prompt from user."}],
-        [{"count": 1}],
-    ]
-
     text, parse_mode, reply_markup = await run_patched(
-        chat_state, mock_db, view_mode="hub"
+        chat_state, mock_db, view_mode="hub",
+        custom_roles_full=[
+            {"id": 10, "title": "My Custom Role", "prompt": "Custom prompt from user."}
+        ],
+        custom_role_count=1,
     )
 
     assert "Активная:" in text
@@ -134,10 +144,9 @@ async def test_hub_view_active_custom_role(chat_state, mock_db, run_patched):
 @pytest.mark.asyncio
 async def test_list_view_my_roles_empty(chat_state, mock_db, run_patched):
     """Test 'my_roles' view when user has no roles."""
-    mock_db.db_query.return_value = []
-
     text, parse_mode, reply_markup = await run_patched(
-        chat_state, mock_db, view_mode="my_roles"
+        chat_state, mock_db, view_mode="my_roles",
+        custom_roles=[],
     )
 
     assert "У вас пока нет" in text
@@ -150,13 +159,12 @@ async def test_list_view_my_roles_empty(chat_state, mock_db, run_patched):
 @pytest.mark.asyncio
 async def test_list_view_my_roles_items(chat_state, mock_db, run_patched):
     """Test 'my_roles' view with user roles."""
-    mock_db.db_query.return_value = [
-        {"id": 1, "title": "Role 1", "prompt": "Desc 1"},
-        {"id": 2, "title": "Role 2", "prompt": "Desc 2"},
-    ]
-
     text, parse_mode, reply_markup = await run_patched(
-        chat_state, mock_db, view_mode="my_roles"
+        chat_state, mock_db, view_mode="my_roles",
+        custom_roles=[
+            {"id": 1, "title": "Role 1", "prompt": "Desc 1"},
+            {"id": 2, "title": "Role 2", "prompt": "Desc 2"},
+        ],
     )
 
     assert "Ваши личные роли" in text

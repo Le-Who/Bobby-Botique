@@ -178,30 +178,7 @@ class BaseAIProvider(ABC):
         """
         pass
 
-    def _categorize_error(self, error: Exception) -> str:
-        """Categorize error for user-friendly message."""
-        error_text = str(error).lower()
 
-        if "quota" in error_text:
-            return "🚫 Достигнут лимит запросов к API."
-        elif (
-            "503" in str(error)
-            or "unavailable" in error_text
-            or "overloaded" in error_text
-        ):
-            return "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд."
-        elif "rate limit" in error_text:
-            return "⏱️ Превышен лимит запросов в секунду. Подождите немного."
-        elif "timeout" in error_text:
-            return "⏰ Превышено время ожидания. Попробуйте позже."
-        elif "invalid" in error_text or "malformed" in error_text:
-            return "❌ Некорректный запрос. Проверьте параметры."
-        elif "unauthorized" in error_text or "401" in str(error):
-            return "🔑 Неверный API ключ."
-        elif "402" in str(error):
-            return "💳 Недостаточно средств на счету."
-        else:
-            return f"❌ Произошла ошибка: {error}"
 
 
 def is_openrouter_model(model_name: str) -> bool:
@@ -240,7 +217,7 @@ class GeminiProvider(BaseAIProvider):
         chat_id: Optional[int],
         timeout: float,
     ) -> AIResponse:
-        start_time = time.time()
+        start_time = None
 
         try:
             await metrics_collector.record_api_call("gemini", model_name)
@@ -259,7 +236,7 @@ class GeminiProvider(BaseAIProvider):
                     for part in (item.get("parts", []) or [])
                     if part is not None
                 )
-            except (APIError, httpx.HTTPError) as e:
+            except Exception as e:
                 logging.warning("Metrics calc error: %s", e)
                 prompt_length = 0
                 has_images = False
@@ -439,7 +416,7 @@ class GeminiProvider(BaseAIProvider):
                     except (TypeError, ValueError) as e:
                         logging.warning("Failed to create Content object: %s", e)
         except Exception as e:
-            logging.error("Error processing history: %s", e)
+            logging.error("Error processing history: %s", e, exc_info=True)
             try:
                 contents.append(types.Content(
                     role="user",
@@ -725,14 +702,10 @@ class KeyHealth:
 
 def _has_multimodal_content(history: list) -> bool:
     """Detect if history contains multimodal (image) parts."""
-    try:
-        from PIL import Image as PILImage
-    except ImportError:
-        return False
     for message in history:
         parts = message.get("parts", [])
         for part in parts:
-            if isinstance(part, PILImage.Image):
+            if isinstance(part, Image.Image):
                 return True
             if isinstance(part, (bytes, bytearray)):
                 return True
@@ -816,6 +789,11 @@ class ProviderRouter:
                 if resolution == "no_keys":
                     return (
                         "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.",
+                        None,
+                    )
+                if resolution == "decryption_failed":
+                    return (
+                        "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
                         None,
                     )
                 return (

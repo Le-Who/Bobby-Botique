@@ -141,7 +141,7 @@ class APILogger:
 
         except Exception as e:
             # Log error логирования, но не прерываем выполнение
-            logging.error("Error in log_gemini_request: %s", e)
+            logging.error("Error in log_gemini_request: %s", e, exc_info=True)
             # Return текущее время как fallback
             return time.time()
 
@@ -195,7 +195,7 @@ class APILogger:
 
         except Exception as e:
             # Log error логирования, но не прерываем выполнение
-            logging.error("Error in log_gemini_response: %s", e)
+            logging.error("Error in log_gemini_response: %s", e, exc_info=True)
             return 0.0
 
     def log_openrouter_response(
@@ -246,7 +246,7 @@ class APILogger:
             return duration
 
         except Exception as e:
-            logging.error("Error in log_openrouter_response: %s", e)
+            logging.error("Error in log_openrouter_response: %s", e, exc_info=True)
             return 0.0
 
     def log_tavily_request(

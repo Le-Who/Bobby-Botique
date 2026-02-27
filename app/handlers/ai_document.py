@@ -7,7 +7,7 @@ import logging
 from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
-from app import database as db
+from app.database import ChatState
 from app.utils.messaging import send_long_message
 from app.metrics import metrics_collector
 from app.utils.stage_indicators import update_stage, STAGES_DOCUMENT
@@ -22,7 +22,7 @@ async def _handle_document_question(
     placeholder_message: Message,
     user_id: int,
     user_message: str,
-    chat_state: db.ChatState,
+    chat_state: ChatState,
 ):
     """Обрабатывает вопросы по загруженным документам"""
     try:
@@ -85,7 +85,7 @@ async def _handle_document_question(
         try:
             safe_document_content = str(document_content)
         except Exception as e:
-            logging.error("Failed to convert document content to string: %s", e)
+            logging.error("Failed to convert document content to string: %s", e, exc_info=True)
             try:
                 await placeholder_message.edit_text(
                     "❌ Ошибка обработки содержимого документа."

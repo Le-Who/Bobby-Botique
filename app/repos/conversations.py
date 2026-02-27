@@ -18,6 +18,7 @@ from app.database import (
     set_user_context,
     clear_user_context,
 )
+from app.utils.logging_config import timed_operation
 
 
 async def get_role_data(role_key: str, user_id: int) -> Optional[Dict[str, Any]]:
@@ -60,6 +61,7 @@ async def get_role_data(role_key: str, user_id: int) -> Optional[Dict[str, Any]]
     return None
 
 
+@timed_operation("save_conversation")
 async def save_conversation(
     user_id: int, title: str, role_type: str = None, role_id: int = None
 ) -> int:
@@ -81,10 +83,10 @@ async def save_conversation(
                     "CALL save_chat_to_conversation($1, $2)", (user_id, conv_id)
                 )
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error("Error saving conversation messages via Procedure: %s", e)
+                logging.error("Error saving conversation messages via Procedure: %s", e, exc_info=True)
         return conv_id
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-        logging.error("Error in save_conversation: %s", e)
+        logging.error("Error in save_conversation: %s", e, exc_info=True)
         return None
 
 
@@ -149,35 +151,69 @@ async def get_conversation_messages(conversation_id: int, user_id: int) -> list:
         return None
 
 
+@timed_operation("switch_to_conversation")
 async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
     try:
-        conv_data = await db_query(
-            "SELECT role_type, role_id, summary FROM conversations WHERE id = $1 AND user_id = $2",
-            (conversation_id, user_id),
-        )
-        if not conv_data:
-            return False
-        role_type, role_id, summary = (
-            conv_data[0]["role_type"],
-            conv_data[0]["role_id"],
-            conv_data[0]["summary"],
-        )
-        messages = await get_conversation_messages(conversation_id, user_id)
-        if messages is None:
-            return False
+        if not db_manager.is_connected:
+            await reconnect_database()
 
-        await db_query(
-            "DELETE FROM active_chat_messages WHERE user_id = $1", (user_id,)
-        )
-        if messages:
-            insert_data = [
-                (user_id, msg["role"], str(msg.get("content", ""))) for msg in messages
-            ]
-            await db_execute_many(
-                "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-                insert_data,
-            )
+        async with db_manager.pool.acquire() as conn:
+            async with conn.transaction():
+                conv_data = await db_query(
+                    "SELECT role_type, role_id, summary FROM conversations WHERE id = $1 AND user_id = $2",
+                    (conversation_id, user_id),
+                    conn=conn,
+                )
+                if not conv_data:
+                    return False
+                role_type, role_id, summary = (
+                    conv_data[0]["role_type"],
+                    conv_data[0]["role_id"],
+                    conv_data[0]["summary"],
+                )
+                messages = await get_conversation_messages(conversation_id, user_id)
+                if messages is None:
+                    return False
 
+                await db_query(
+                    "DELETE FROM active_chat_messages WHERE user_id = $1", (user_id,),
+                    conn=conn,
+                )
+                if messages:
+                    insert_data = [
+                        (user_id, msg["role"], str(msg.get("content", ""))) for msg in messages
+                    ]
+                    await db_execute_many(
+                        "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
+                        insert_data,
+                    )
+
+                await db_query(
+                    "UPDATE chats SET token_count = 0 WHERE user_id = $1", (user_id,),
+                    conn=conn,
+                )
+
+                if role_type and role_id:
+                    role_data = None
+                    if role_type == "role":
+                        role_data = await db_query(
+                            "SELECT prompt FROM roles WHERE id = $1", (role_id,),
+                            conn=conn,
+                        )
+                    elif role_type == "user_role":
+                        role_data = await db_query(
+                            "SELECT prompt FROM user_roles WHERE id = $1", (role_id,),
+                            conn=conn,
+                        )
+
+                    if role_data:
+                        await db_query(
+                            "UPDATE chats SET system_prompt = $1 WHERE user_id = $2",
+                            (role_data[0]["prompt"], user_id),
+                            conn=conn,
+                        )
+
+        # Invalidate cache outside the transaction (non-critical)
         async with db_manager._cache_lock:
             if (
                 hasattr(db_manager, "_active_chats_cache")
@@ -185,26 +221,6 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             ):
                 del db_manager._active_chats_cache[user_id]
 
-        await db_query(
-            "UPDATE chats SET token_count = 0 WHERE user_id = $1", (user_id,)
-        )
-
-        if role_type and role_id:
-            role_data = None
-            if role_type == "role":
-                role_data = await db_query(
-                    "SELECT prompt FROM roles WHERE id = $1", (role_id,)
-                )
-            elif role_type == "user_role":
-                role_data = await db_query(
-                    "SELECT prompt FROM user_roles WHERE id = $1", (role_id,)
-                )
-
-            if role_data:
-                await db_query(
-                    "UPDATE chats SET system_prompt = $1 WHERE user_id = $2",
-                    (role_data[0]["prompt"], user_id),
-                )
         return True
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False
@@ -225,21 +241,25 @@ async def rename_conversation(
 
 async def delete_conversation(user_id: int, conversation_id: int) -> bool:
     try:
-        conv_check = await db_query(
-            "SELECT id FROM conversations WHERE id = $1 AND user_id = $2",
-            (conversation_id, user_id),
-        )
-        if not conv_check:
-            return False
-        await db_query(
-            "DELETE FROM conversation_messages WHERE conversation_id = $1",
-            (conversation_id,),
-        )
-        await db_query(
-            "DELETE FROM conversations WHERE id = $1 AND user_id = $2",
-            (conversation_id, user_id),
-        )
-        return True
+        if not db_manager.is_connected:
+            await reconnect_database()
+
+        async with db_manager.pool.acquire() as conn:
+            async with conn.transaction():
+                # Single atomic operation: delete messages then conversation
+                # No TOCTOU — if the conversation doesn't exist, no harm done
+                await db_query(
+                    "DELETE FROM conversation_messages WHERE conversation_id = $1 "
+                    "AND conversation_id IN (SELECT id FROM conversations WHERE id = $1 AND user_id = $2)",
+                    (conversation_id, user_id),
+                    conn=conn,
+                )
+                result = await db_query(
+                    "DELETE FROM conversations WHERE id = $1 AND user_id = $2 RETURNING id",
+                    (conversation_id, user_id),
+                    conn=conn,
+                )
+                return bool(result)
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False
 

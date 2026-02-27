@@ -6,6 +6,7 @@ from datetime import datetime
 from collections import defaultdict
 
 from app import database as db
+from app.repos.users import is_authorized as _is_authorized
 
 
 @dataclass
@@ -87,7 +88,7 @@ class GroupChatManager:
             logging.info("Group chat manager initialized")
 
         except Exception as e:
-            logging.error("Error initializing group chat manager: %s", e)
+            logging.error("Error initializing group chat manager: %s", e, exc_info=True)
 
     async def _load_active_groups(self):
         """Загружает активные группы из базы данных"""
@@ -126,7 +127,7 @@ class GroupChatManager:
             logging.info("Loaded %s active groups", len(self.active_groups))
 
         except Exception as e:
-            logging.error("Error loading active groups: %s", e)
+            logging.error("Error loading active groups: %s", e, exc_info=True)
 
     async def register_group(
         self, chat_id: int, title: str, admin_user_id: int
@@ -134,7 +135,7 @@ class GroupChatManager:
         """Регистрирует новую группу"""
         try:
             # Check, что user авторfromован
-            if not await db.is_authorized(admin_user_id):
+            if not await _is_authorized(admin_user_id):
                 return False
 
             async with self._lock:
@@ -174,7 +175,7 @@ class GroupChatManager:
                 return True
 
         except Exception as e:
-            logging.error("Error registering group: %s", e)
+            logging.error("Error registering group: %s", e, exc_info=True)
             return False
 
     async def add_member_to_group(self, chat_id: int, user_id: int) -> bool:
@@ -184,7 +185,7 @@ class GroupChatManager:
                 return False
 
             # Check, что user авторfromован
-            if not await db.is_authorized(user_id):
+            if not await _is_authorized(user_id):
                 return False
 
             async with self._lock:
@@ -208,7 +209,7 @@ class GroupChatManager:
                 return True
 
         except Exception as e:
-            logging.error("Error adding member to group: %s", e)
+            logging.error("Error adding member to group: %s", e, exc_info=True)
             return False
 
     async def remove_member_from_group(self, chat_id: int, user_id: int) -> bool:
@@ -240,7 +241,7 @@ class GroupChatManager:
                 return True
 
         except Exception as e:
-            logging.error("Error removing member from group: %s", e)
+            logging.error("Error removing member from group: %s", e, exc_info=True)
             return False
 
     async def is_member(self, chat_id: int, user_id: int) -> bool:
@@ -258,7 +259,7 @@ class GroupChatManager:
             return result and result[0]["is_admin"]
 
         except Exception as e:
-            logging.error("Error checking admin status: %s", e)
+            logging.error("Error checking admin status: %s", e, exc_info=True)
             return False
 
     async def get_group_info(self, chat_id: int) -> Optional[GroupChat]:
@@ -284,7 +285,7 @@ class GroupChatManager:
                 )
 
         except Exception as e:
-            logging.error("Error updating group activity: %s", e)
+            logging.error("Error updating group activity: %s", e, exc_info=True)
 
     async def log_group_message(
         self,
@@ -304,7 +305,7 @@ class GroupChatManager:
             await self.update_group_activity(chat_id)
 
         except Exception as e:
-            logging.error("Error logging group message: %s", e)
+            logging.error("Error logging group message: %s", e, exc_info=True)
 
     async def get_group_stats(self, chat_id: int) -> Dict[str, Any]:
         """Получает статистику группы"""
@@ -339,7 +340,7 @@ class GroupChatManager:
             }
 
         except Exception as e:
-            logging.error("Error getting group stats: %s", e)
+            logging.error("Error getting group stats: %s", e, exc_info=True)
             return {}
 
 

@@ -133,7 +133,7 @@ async def setup_row_level_security(db_query):
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.warning("Failed to enable RLS for table %s: %s", table, e)
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-        logging.error("Error setting up RLS: %s", e)
+        logging.error("Error setting up RLS: %s", e, exc_info=True)
 
 
 async def create_rls_policies(table_name: str, db_query):
@@ -182,4 +182,4 @@ async def create_rls_policies(table_name: str, db_query):
                 raise e
 
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-        logging.error("Error creating RLS policies for %s: %s", table_name, e)
+        logging.error("Error creating RLS policies for %s: %s", table_name, e, exc_info=True)

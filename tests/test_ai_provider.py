@@ -148,22 +148,7 @@ class TestBaseAIProvider:
         assert provider._is_transient_error("Invalid API key") is False
         assert provider._is_transient_error("Quota exceeded") is False
 
-    def test_categorize_error(self):
-        """Should return appropriate user-facing messages."""
 
-        class TestProvider(BaseAIProvider):
-            provider_name = "test"
-
-            async def _execute_request(self, **kwargs):
-                pass
-
-        provider = TestProvider("key")
-
-        assert "лимит запросов" in provider._categorize_error(
-            Exception("quota exceeded")
-        )
-        assert "перегружен" in provider._categorize_error(Exception("503 unavailable"))
-        assert "ключ" in provider._categorize_error(Exception("401 unauthorized"))
 
 
 class TestProviders:

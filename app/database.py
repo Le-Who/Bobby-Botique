@@ -57,11 +57,18 @@ class DatabaseManager:
     async def create_pool(self):
         """Создает пул соединений с базой данных"""
         try:
+            async def _init_connection(conn):
+                """Apply session-level settings to every new connection."""
+                await conn.execute("SET statement_timeout = '60s'")
+                await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
+                await conn.execute("SET lock_timeout = '30s'")
+
             self.pool = await asyncpg.create_pool(
                 dsn=settings.DATABASE_URL,
                 min_size=2,
                 max_size=10,
                 command_timeout=30,
+                init=_init_connection,
                 statement_cache_size=0,  # Required for PgBouncer transaction mode
                 server_settings={
                     "application_name": "gemaibotv2",
@@ -115,25 +122,13 @@ class DatabaseManager:
 
     def _start_background_task(self, task_ref, coro_factory, task_name: str):
         """Запускает фоновую задачу с защитой от повторного старта."""
-        if task_ref and not task_ref.done():
-            logging.debug("Background task '%s' already running", task_name)
-            return task_ref
-
-        return asyncio.create_task(coro_factory())
+        from app.utils.background_tasks import start_background_task
+        return start_background_task(task_ref, coro_factory, task_name)
 
     async def _cancel_background_task(self, attr_name: str):
         """Отменяет и ожидает завершение фоновой задачи по имени атрибута."""
-        task = getattr(self, attr_name, None)
-        if not task:
-            return
-
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-        setattr(self, attr_name, None)
+        from app.utils.background_tasks import cancel_background_task
+        await cancel_background_task(self, attr_name)
 
     async def monitor_connection_pool(self):
         while True:
@@ -168,7 +163,7 @@ class DatabaseManager:
                 except AttributeError as e:
                     pool_stats["error"] = str(e)
 
-                logging.info("Database pool stats: %s", pool_stats)
+                logging.debug("Database pool stats: %s", pool_stats)
 
                 if pool_stats.get("utilization", 0) > 80:
                     logging.warning(
@@ -183,20 +178,15 @@ class DatabaseManager:
                 logging.warning("Connection pool monitoring error: %s", e)
                 await asyncio.sleep(60)
 
-    async def query(
-        self, query_str: str, params: tuple = (), retries: int = 3, conn=None
-    ):
-        if not isinstance(query_str, str) or not query_str.strip():
-            raise ValueError("Query must be a non-empty string")
+    async def _execute_with_retry(self, operation_name: str, operation, query_str: str, retries: int = 3):
+        """Shared retry/reconnect/backoff loop for all pooled database operations.
 
-        if conn:
-            try:
-                result = await conn.fetch(query_str, *params)
-                return [dict(record) for record in result]
-            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error("Error in provided connection query: %s", e)
-                raise e
-
+        Args:
+            operation_name: Human-readable name for logging (e.g. "query", "executemany").
+            operation: An async callable(connection) -> result that performs the actual DB work.
+            query_str: The SQL query (used for timeout error messages).
+            retries: Number of retry attempts.
+        """
         last_exception = None
         for attempt in range(retries + 1):
             try:
@@ -209,21 +199,18 @@ class DatabaseManager:
                         raise Exception("Database pool is closed")
 
                 async with self.pool.acquire() as connection:
-                    result = await asyncio.wait_for(
-                        connection.fetch(query_str, *params), timeout=30.0
-                    )
-                    return [dict(record) for record in result]
+                    return await asyncio.wait_for(operation(connection), timeout=30.0)
 
             except asyncio.TimeoutError:
                 last_exception = Exception(
-                    f"Database query timeout: {query_str[:100]}..."
+                    f"Database {operation_name} timeout: {query_str[:100]}..."
                 )
-                logging.warning("Database query timeout (attempt %s)", attempt + 1)
+                logging.warning("Database %s timeout (attempt %s)", operation_name, attempt + 1)
 
             except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
                 last_exception = e
                 logging.warning(
-                    f"Database connection issue (attempt {attempt + 1}): {e}"
+                    "Database connection issue (attempt %s): %s", attempt + 1, e
                 )
                 if attempt < retries:
                     await asyncio.sleep(min(2**attempt, 10))
@@ -237,12 +224,32 @@ class DatabaseManager:
                 last_exception = e
                 if "rate limit" in str(e).lower():
                     raise
-                logging.error("Database query error (attempt %s): %s", attempt + 1, e)
+                logging.error("Database %s error (attempt %s): %s", operation_name, attempt + 1, e)
                 if attempt == retries:
                     break
                 await asyncio.sleep(min(2**attempt, 10))
 
-        raise last_exception or Exception("Database query failed")
+        raise last_exception or Exception(f"Database {operation_name} failed")
+
+    async def query(
+        self, query_str: str, params: tuple = (), retries: int = 3, conn=None
+    ):
+        if not isinstance(query_str, str) or not query_str.strip():
+            raise ValueError("Query must be a non-empty string")
+
+        if conn:
+            try:
+                result = await conn.fetch(query_str, *params)
+                return [dict(record) for record in result]
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+                logging.error("Error in provided connection query: %s", e, exc_info=True)
+                raise e
+
+        async def _do_fetch(connection):
+            result = await connection.fetch(query_str, *params)
+            return [dict(record) for record in result]
+
+        return await self._execute_with_retry("query", _do_fetch, query_str, retries)
 
     async def execute_many(
         self, query_str: str, params_list: List[tuple], retries: int = 3, conn=None
@@ -258,57 +265,13 @@ class DatabaseManager:
                 await conn.executemany(query_str, params_list)
                 return
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error("Error in provided connection executemany: %s", e)
+                logging.error("Error in provided connection executemany: %s", e, exc_info=True)
                 raise e
 
-        last_exception = None
-        for attempt in range(retries + 1):
-            try:
-                if not self.pool or self.pool._closed:
-                    logging.warning(
-                        "Database pool not initialized or closed – attempting reconnect..."
-                    )
-                    await self.reconnect()
-                    if not self.pool or self.pool._closed:
-                        raise Exception("Database pool is closed")
+        async def _do_executemany(connection):
+            await connection.executemany(query_str, params_list)
 
-                async with self.pool.acquire() as connection:
-                    await asyncio.wait_for(
-                        connection.executemany(query_str, params_list), timeout=30.0
-                    )
-                    return
-
-            except asyncio.TimeoutError:
-                last_exception = Exception(
-                    f"Database executemany timeout: {query_str[:100]}..."
-                )
-                logging.warning("Database executemany timeout (attempt %s)", attempt + 1)
-
-            except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
-                last_exception = e
-                logging.warning(
-                    f"Database connection issue (attempt {attempt + 1}): {e}"
-                )
-                if attempt < retries:
-                    await asyncio.sleep(min(2**attempt, 10))
-                    try:
-                        await self.reconnect()
-                    except Exception:
-                        pass
-                    continue
-
-            except asyncpg.PostgresError as e:
-                last_exception = e
-                if "rate limit" in str(e).lower():
-                    raise
-                logging.error(
-                    f"Database executemany error (attempt {attempt + 1}): {e}"
-                )
-                if attempt == retries:
-                    break
-                await asyncio.sleep(min(2**attempt, 10))
-
-        raise last_exception or Exception("Database executemany failed")
+        await self._execute_with_retry("executemany", _do_executemany, query_str, retries)
 
 
 # Global instances
@@ -369,14 +332,9 @@ async def init_db():
     if not db_manager.pool:
         raise DatabasePoolError("Critical: Failed to create database connection pool")
 
-    # Apply Supabase optimizations
-    try:
-        async with db_manager.pool.acquire() as conn:
-            await conn.execute("SET statement_timeout = '60s'")
-            await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
-            await conn.execute("SET lock_timeout = '30s'")
-    except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-        logging.warning("Failed to apply DB optimizations: %s", e)
+    # NOTE: Session-level settings (statement_timeout, lock_timeout, etc.)
+    # are applied via _init_connection() callback on every pool connection.
+    # No need to apply them again here.
 
     # Initialize Schema
     await _init_schema()
@@ -426,7 +384,7 @@ async def set_user_context(user_id: int, is_admin: bool = False, conn=None):
             conn=conn,
         )
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-        logging.error("Failed to set user context for user %s: %s", user_id, e)
+        logging.error("Failed to set user context for user %s: %s", user_id, e, exc_info=True)
         raise  # Propagate — callers must not run queries with stale RLS context
 
 
@@ -446,71 +404,13 @@ async def clear_user_context(conn=None):
 
 
 # =============================================================================
-# All business logic has been moved to the repos/ layer:
+# All business logic is in the repos/ layer:
 #   app.repos.users         - auth, user state, feedback
 #   app.repos.chats         - chat state management
 #   app.repos.keys          - API key management
 #   app.repos.conversations - saved conversations
+#   app.repos.roles         - custom user roles CRUD
+#   app.repos.user_stats    - per-user metrics queries
 #   app.repos.metrics_repo  - metrics queries
 #   app.repos.analytics     - user analytics
-#
-# The re-exports below keep rom app.database import X working.
 # =============================================================================
-
-# =============================================================================
-# RE-EXPORTS FROM REPOSITORY LAYER (lazy, to avoid circular imports)
-#
-# These functions are canonical in app/repos/. They are re-exported here so
-# that existing `from app.database import X` and `db.X()` calls keep working.
-# New code should import directly from the repos module.
-# =============================================================================
-
-_REPO_EXPORTS = {
-    # app.repos.users
-    "is_admin": "app.repos.users",
-    "is_authorized": "app.repos.users",
-    "invalidate_user_auth_cache": "app.repos.users",
-    "load_user_state": "app.repos.users",
-    "save_user_state": "app.repos.users",
-    "save_feedback": "app.repos.users",
-    # app.repos.conversations
-    "get_role_data": "app.repos.conversations",
-    "save_conversation": "app.repos.conversations",
-    "get_user_conversations": "app.repos.conversations",
-    "get_conversation_messages": "app.repos.conversations",
-    "switch_to_conversation": "app.repos.conversations",
-    "rename_conversation": "app.repos.conversations",
-    "delete_conversation": "app.repos.conversations",
-    "get_conversation_count": "app.repos.conversations",
-    # app.repos.chats
-    "get_user_chat": "app.repos.chats",
-    "update_user_chat": "app.repos.chats",
-    # app.repos.keys
-    "get_model_daily_limit": "app.repos.keys",
-    "get_available_gemini_key": "app.repos.keys",
-    "invalidate_key_cache": "app.repos.keys",
-    "get_current_active_gemini_key": "app.repos.keys",
-    "increment_gemini_key_usage": "app.repos.keys",
-    "get_available_tavily_key": "app.repos.keys",
-    "increment_tavily_key_usage": "app.repos.keys",
-    "get_available_openrouter_key": "app.repos.keys",
-    "increment_openrouter_key_usage": "app.repos.keys",
-    "force_update_tavily_keys": "app.repos.keys",
-    # app.repos.metrics_repo
-    "get_gemini_key_usage_stats": "app.repos.metrics_repo",
-    "get_tavily_key_usage_stats": "app.repos.metrics_repo",
-    "get_active_key_info": "app.repos.metrics_repo",
-    "get_supabase_metrics": "app.repos.metrics_repo",
-}
-
-
-def __getattr__(name: str):
-    if name in _REPO_EXPORTS:
-        import importlib
-        mod = importlib.import_module(_REPO_EXPORTS[name])
-        attr = getattr(mod, name)
-        # Cache for subsequent lookups
-        globals()[name] = attr
-        return attr
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-

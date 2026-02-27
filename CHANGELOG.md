@@ -5,6 +5,44 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.6] – 2026-02-27 – Resilience, Repository Extraction & Performance Wiring
+
+### 🛡️ Resilience: Circuit Breakers
+
+- **Tavily API**: Wrapped `_tavily_api_call` in `run_with_resilience(circuit_name="tavily")` in `search_services.py`. Trips after consecutive failures, preventing cascading Tavily hammering during outages.
+- **Telegram API**: Added lazy `_get_telegram_cb()` circuit breaker to `messaging.py`. `edit_text` and `reply_text` calls in `send_long_message` are now wrapped — prevents flooding Telegram servers when API is degraded.
+- Lazy initialization pattern (`_get_telegram_cb()`) avoids `asyncio.create_task` at import time, which previously caused test collection failures.
+
+### 🏗️ Repository Extraction: `db.db_query` → `repos/`
+
+Eliminated **all 20 raw SQL queries** from handler files. Zero `db.db_query` calls remain in any handler module.
+
+| New Module            | Functions                                                                                                                                                                      | Migrated From                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `repos/roles.py`      | 7 (`get_user_custom_roles`, `get_user_custom_roles_full`, `get_custom_role_count`, `get_custom_role_prompt`, `create_custom_role`, `delete_custom_role`, `rename_custom_role`) | `cb_roles.py`, `menus.py`, `messages.py` |
+| `repos/user_stats.py` | 3 (`get_user_today_request_count`, `get_user_weekly_stats`, `get_user_model_usage_today`)                                                                                      | `commands.py`, `menus.py`                |
+| `repos/admin.py`      | 6 (`authorize_user`, `revoke_user`, `list_authorized_users`, `clear_old_metrics`, `get_all_tavily_keys`, `get_tavily_usage_for_month`)                                         | `cmd_admin.py`                           |
+
+### ⚡ Performance & Metrics
+
+- **`track_metrics` decorator fix**: Inner function was incorrectly `async` and missing `functools.wraps` — fixed to correctly wrap async functions.
+- **Handler response time tracking**: Wired `metrics_collector.record_request()` into `handle_request` at both success and error paths. Dashboard `average_response_time` now reflects real handler latency.
+- **Search handler timing**: Applied `@track_metrics` decorator to `_handle_qna_search`, `_handle_research_agent`, `_handle_complex_agent_search` in `ai_search.py` for per-operation latency tracking.
+
+### 🧹 Cleanup
+
+- Removed stale `from app import database as db` imports from 4 handler files (`cb_roles.py`, `menus.py`, `messages.py`, `cmd_admin.py`).
+- Migrated 2 Tavily proxy imports in `search_services.py` to direct repo imports.
+- Updated `database.py` end-of-file repo directory comment with new modules.
+
+### 🧪 Tests (+4 → 453 total, 1 skipped)
+
+- `test_integration_flow.py`: 4 new end-to-end scenarios — unauthorized rejection, rate limiting, happy path through agent, error recovery with retry keyboard.
+- Updated `test_roles_menu.py`: Removed stale `db` patch, all 10 tests now target repo functions.
+- Updated `test_cmd_admin.py`: 3 tests updated to patch `repos/admin` functions instead of removed `cmd_admin.db`.
+
+---
+
 ## [2.6.5] – 2026-02-26 – Codebase Remediation & Security Hardening
 
 ### 🔴 Critical Fixes

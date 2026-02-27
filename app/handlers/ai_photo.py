@@ -12,7 +12,8 @@ from PIL import Image
 from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
-from app import database as db
+from app.database import ChatState
+from app.repos.chats import get_user_chat, update_user_chat
 from app.utils.messaging import send_long_message
 from app import prompts
 from app.metrics import metrics_collector
@@ -157,7 +158,7 @@ _Особенности:_
             # Save context images в истории
             chat_state.history.append({"role": "user", "parts": [formatted_prompt]})
             chat_state.history.append({"role": "model", "parts": [response_text]})
-            await db.update_user_chat(original_message.from_user.id, chat_state)
+            await update_user_chat(original_message.from_user.id, chat_state)
         else:
             # Add role button and new topic button to error responses too
             buttons = [
@@ -184,7 +185,7 @@ _Особенности:_
 
 
     except Exception as e:
-        logging.error("Error processing photo: %s", e)
+        logging.error("Error processing photo: %s", e, exc_info=True)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при обработке изображения."
@@ -207,7 +208,7 @@ async def process_media_group_request(
     # context используется for совместимости с другими функциями
     """Обрабатывает группу изображений как единое целое"""
     user_id = update.effective_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
 
     count = len(messages) if messages else 0
     logging.info(
@@ -256,7 +257,7 @@ async def _download_images_concurrently(
 
             return img
         except Exception as e:
-            logging.error("Error loading image %s: %s", index + 1, e)
+            logging.error("Error loading image %s: %s", index + 1, e, exc_info=True)
             return None
 
     tasks = [download_one(i, msg) for i, msg in enumerate(messages)]
@@ -269,7 +270,7 @@ async def _handle_media_group_photos(
     placeholder_message: Message,
     messages: List[Message],
     caption: str,
-    chat_state: db.ChatState,
+    chat_state: ChatState,
 ):
     """Обрабатывает группу изображений для обычного описания"""
     try:
@@ -410,7 +411,7 @@ _Изображение 2:_ *Современное здание* с иннов�
         logging.info("✅ Группа из %s изображений обработана успешно", count)
 
     except Exception as e:
-        logging.error("Error processing media group photos: %s", e)
+        logging.error("Error processing media group photos: %s", e, exc_info=True)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при обработке группы изображений."
@@ -424,7 +425,7 @@ async def _handle_complex_media_group_search(
     messages: List[Message],
     caption: str,
     search_prefix: str,
-    chat_state: db.ChatState,
+    chat_state: ChatState,
 ):
     """Обрабатывает группу изображений для сложного поиска"""
     user_id = placeholder_message.from_user.id
@@ -542,7 +543,7 @@ cooking process step by step recipe preparation
         logging.info("✅ Группа из %s изображений проанализирована для поиска", count)
 
     except Exception as e:
-        logging.error("Error processing complex media group search: %s", e)
+        logging.error("Error processing complex media group search: %s", e, exc_info=True)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при анализе группы изображений."

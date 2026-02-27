@@ -8,7 +8,7 @@ import telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from app import database as db
+from app.repos.conversations import get_user_conversations, switch_to_conversation, delete_conversation
 from app.utils.formatting import TelegramFormatter
 from app.utils.decorators import admin_only
 from app.metrics import role_conv_metrics
@@ -28,7 +28,7 @@ async def send_conversation_selection(
         title: The title text to display
     """
     # Get list бесед for выбора
-    conversations = await db.get_user_conversations(user_id, 10, 0)
+    conversations = await get_user_conversations(user_id, 10, 0)
     if not conversations:
         from app.utils.keyboards import error_with_back_keyboard
         await query.edit_message_text(
@@ -106,7 +106,7 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
     conv_id = int(query.data.split(":")[1])
 
     try:
-        success = await db.switch_to_conversation(user_id, conv_id)
+        success = await switch_to_conversation(user_id, conv_id)
         if success:
             await role_conv_metrics.record_conversation_switched()
             # Показываем list бесед с тостом
@@ -125,7 +125,7 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
             )
             await query.answer("❌ Ошибка при переключении на беседу.")
     except Exception as e:
-        logging.error("Error switching to conversation %s: %s", conv_id, e)
+        logging.error("Error switching to conversation %s: %s", conv_id, e, exc_info=True)
         from app.utils.keyboards import error_with_back_keyboard
         await query.edit_message_text(
             "❌ Ошибка при переключении на беседу.",
@@ -224,7 +224,7 @@ async def conv_delete_confirm_callback(
     conv_id = int(query.data.split(":")[1])
     user_id = query.from_user.id
 
-    success = await db.delete_conversation(user_id, conv_id)
+    success = await delete_conversation(user_id, conv_id)
 
     if success:
         await role_conv_metrics.record_conversation_deleted()

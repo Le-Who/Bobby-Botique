@@ -70,7 +70,7 @@ class MetricsCollector:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error("Error in metrics event processor: %s", e)
+                logging.error("Error in metrics event processor: %s", e, exc_info=True)
                 await asyncio.sleep(5)
 
     def _process_event(self, event: Dict[str, Any]):
@@ -192,7 +192,7 @@ class MetricsCollector:
             ]
 
         except Exception as e:
-            logging.error("Error creating metrics snapshot: %s", e)
+            logging.error("Error creating metrics snapshot: %s", e, exc_info=True)
             return
 
         # Phase 2: Save to DB (IO - No Lock)
@@ -294,7 +294,7 @@ class MetricsCollector:
                     logging.debug("Streak update skipped: %s", streak_err)
 
         except Exception as e:
-            logging.error("Error saving metrics to database: %s", e)
+            logging.error("Error saving metrics to database: %s", e, exc_info=True)
 
     async def _load_metrics_from_db(self):
         """Загружает метрики из базы данных"""
@@ -400,7 +400,7 @@ class MetricsCollector:
             logging.info("Metrics loaded from database")
 
         except Exception as e:
-            logging.error("Error loading metrics from database: %s", e)
+            logging.error("Error loading metrics from database: %s", e, exc_info=True)
 
     async def record_request(
         self, _request_type: str, response_time: float, success: bool = True, user_id: int = None
@@ -532,7 +532,7 @@ class MetricsCollector:
                     "Database pool unavailable during metrics cleanup, skipping save"
                 )
         except Exception as e:
-            logging.error("Error during metrics cleanup: %s", e)
+            logging.error("Error during metrics cleanup: %s", e, exc_info=True)
             # Не позволяем ошибкам метрик прерывать shutdown
 
 
@@ -565,8 +565,10 @@ class MetricsMiddleware:
 
 def track_metrics(func_name: str):
     """Декоратор для отслеживания метрик функции"""
+    import functools
 
-    async def decorator(func):
+    def decorator(func):
+        @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             async with MetricsMiddleware(func_name):
                 return await func(*args, **kwargs)

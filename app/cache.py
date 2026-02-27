@@ -36,8 +36,6 @@ else:
         logging.warning("Failed to connect to Redis: %s. Caching will be disabled.", e)
         redis_client = None
 
-# Thread-safe cache lock
-_cache_lock = threading.Lock()
 
 
 async def ping_safe() -> bool:
@@ -83,7 +81,7 @@ def _safe_decode_redis_response(
             logging.warning("Unexpected Redis response type: %s", type(data))
             return None
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        logging.error("Failed to decode Redis response: %s", e)
+        logging.error("Failed to decode Redis response: %s", e, exc_info=True)
         return None
 
 
@@ -126,7 +124,7 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
 
         except RedisError as e:
             # Other Redis errors don't require retry
-            logging.error("Redis operation error: %s", e)
+            logging.error("Redis operation error: %s", e, exc_info=True)
             raise RedisConnectionError(f"Redis operation error: {e}")
 
     raise RedisConnectionError(
@@ -180,7 +178,7 @@ async def get_cache_stats() -> Dict[str, Any]:
         logging.warning("Redis stats unavailable: %s", e)
         return {"error": f"Redis connection issue: {e}"}
     except RedisError as e:
-        logging.error("Error getting Redis stats: %s", e)
+        logging.error("Error getting Redis stats: %s", e, exc_info=True)
         return {"error": str(e)}
 
 
@@ -196,7 +194,7 @@ async def clear_cache():
     except RedisConnectionError as e:
         logging.warning("Failed to clear Redis cache (connection issue): %s", e)
     except RedisError as e:
-        logging.error("Error clearing Redis cache: %s", e)
+        logging.error("Error clearing Redis cache: %s", e, exc_info=True)
 
 
 # Multi-layer caching implementation

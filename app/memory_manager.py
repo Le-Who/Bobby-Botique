@@ -85,7 +85,7 @@ class MemoryManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error("Memory monitoring error: %s", e)
+                logging.error("Memory monitoring error: %s", e, exc_info=True)
                 await asyncio.sleep(60)
 
     async def _check_memory_usage(self):
@@ -113,7 +113,7 @@ class MemoryManager:
                     await self._preventive_cleanup()
 
         except Exception as e:
-            logging.error("Memory check error: %s", e)
+            logging.error("Memory check error: %s", e, exc_info=True)
 
     def _get_memory_info(self) -> Dict[str, Any]:
         """Gets current memory usage information."""
@@ -132,7 +132,7 @@ class MemoryManager:
                 "cpu_percent": process.cpu_percent(interval=0.1),
             }
         except (OSError, AttributeError) as e:
-            logging.error("Failed to get memory info: %s", e)
+            logging.error("Failed to get memory info: %s", e, exc_info=True)
             return {"timestamp": datetime.now(), "error": str(e)}
 
     async def _emergency_cleanup(self):
@@ -161,7 +161,7 @@ class MemoryManager:
                 except asyncio.TimeoutError:
                     logging.warning("Cleanup callback timed out")
                 except Exception as e:
-                    logging.error("Cleanup callback error: %s", e)
+                    logging.error("Cleanup callback error: %s", e, exc_info=True)
 
             # Clear memory history to free memory
             self._memory_history.clear()
@@ -171,7 +171,7 @@ class MemoryManager:
             return {"status": "cleanup_completed", "timestamp": time.time()}
 
         except Exception as e:
-            logging.error("Emergency cleanup error: %s", e)
+            logging.error("Emergency cleanup error: %s", e, exc_info=True)
             return {"status": "error", "error": str(e)}
 
     async def force_cleanup(self):
@@ -202,12 +202,12 @@ class MemoryManager:
                 except asyncio.TimeoutError:
                     logging.warning("Cleanup callback timed out")
                 except Exception as e:
-                    logging.error("Cleanup callback error: %s", e)
+                    logging.error("Cleanup callback error: %s", e, exc_info=True)
 
             self._last_cleanup = time.time()
 
         except Exception as e:
-            logging.error("Suggested cleanup error: %s", e)
+            logging.error("Suggested cleanup error: %s", e, exc_info=True)
 
     async def _preventive_cleanup(self):
         """Performs preventive memory cleanup."""
@@ -226,7 +226,7 @@ class MemoryManager:
             self._last_cleanup = time.time()
 
         except Exception as e:
-            logging.error("Preventive cleanup error: %s", e)
+            logging.error("Preventive cleanup error: %s", e, exc_info=True)
 
     def add_cleanup_callback(self, callback: Callable) -> None:
         """Adds a cleanup callback function."""
@@ -339,7 +339,7 @@ class AutoCleanupResource:
         try:
             self._perform_cleanup()
         except Exception as e:
-            logging.error("Auto-cleanup error for %s: %s", self.name, e)
+            logging.error("Auto-cleanup error for %s: %s", self.name, e, exc_info=True)
 
     def _perform_cleanup(self):
         """Override this method to implement specific cleanup logic."""

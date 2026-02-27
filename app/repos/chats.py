@@ -19,6 +19,7 @@ from app.database import (
     clear_user_context,
 )
 from app.config import settings
+from app.utils.logging_config import timed_operation
 
 
 def _extract_message_content(msg: dict) -> str:
@@ -38,6 +39,7 @@ def _extract_message_content(msg: dict) -> str:
     return ""
 
 
+@timed_operation("get_user_chat")
 async def get_user_chat(user_id: int) -> Optional[ChatState]:
     """Load the active chat state for a user from the database."""
     # Check cache first
@@ -109,6 +111,7 @@ async def get_user_chat(user_id: int) -> Optional[ChatState]:
             await clear_user_context(conn=conn)
 
 
+@timed_operation("update_user_chat")
 async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
     """Save the chat state back to the database, syncing new messages."""
     if not db_manager.is_connected:

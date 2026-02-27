@@ -58,10 +58,9 @@ async def test_get_conversation_messages_optimization():
 
     # Patch the function in the canonical repos module
     from app.repos import conversations as conv_module
-    database = get_database()
     with patch.object(conv_module, "db_query", mock_db_query):
         # 1. Valid Conversation with Messages
-        messages = await database.get_conversation_messages(123, 1)
+        messages = await conv_module.get_conversation_messages(123, 1)
         assert messages is not None
         assert len(messages) == 2
         assert messages[0]["role"] == "user"
@@ -69,7 +68,7 @@ async def test_get_conversation_messages_optimization():
         mock_db_query.reset_mock()
 
         # 2. Valid Conversation, Empty (Should return [])
-        messages = await database.get_conversation_messages(456, 1)
+        messages = await conv_module.get_conversation_messages(456, 1)
         assert messages is not None
         assert isinstance(messages, list)
         assert len(messages) == 0
@@ -77,7 +76,7 @@ async def test_get_conversation_messages_optimization():
         mock_db_query.reset_mock()
 
         # 3. Invalid Conversation (Should return None)
-        messages = await database.get_conversation_messages(999, 1)
+        messages = await conv_module.get_conversation_messages(999, 1)
         assert messages is None
         assert mock_db_query.call_count == 1
 

@@ -2,7 +2,9 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.utils.formatting import TelegramFormatter, format_key_for_display
-from app import database as db
+from app.repos.roles import get_user_custom_roles, get_custom_role_count, get_user_custom_roles_full
+from app.repos.user_stats import get_user_today_request_count
+from app.repos.conversations import get_conversation_count, get_user_conversations, get_role_data
 from app.config import settings, get_model_hash, get_openrouter_keys
 from app import prompts
 from app.metrics import get_system_status_data
@@ -29,16 +31,13 @@ async def get_start_menu_content(chat_state, user_id=None) -> None:
     activity_line = ""
     if user_id:
         try:
-            today_requests = await db.db_query(
-                "SELECT COALESCE(request_count, 0) as cnt FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
-                (user_id,),
-            )
-            req_count = today_requests[0]["cnt"] if today_requests else 0
+            today_requests = await get_user_today_request_count(user_id)
+            req_count = today_requests
 
             docs = await get_user_documents(user_id)
             doc_count = len(docs) if docs else 0
 
-            conv_count = await db.get_conversation_count(user_id)
+            conv_count = await get_conversation_count(user_id)
 
             if req_count > 0 or doc_count > 0 or conv_count > 0:
                 activity_line = (
@@ -230,10 +229,7 @@ def get_model_menu_content(chat_state, context) -> None:
 async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
     """Генерирует контент для главной страницы меню ролей (Hub)."""
     # Get количество кастомных ролей for бейджика
-    custom_count_res = await db.db_query(
-        "SELECT COUNT(*) as count FROM user_roles WHERE user_id = $1", (user_id,)
-    )
-    custom_count = custom_count_res[0]["count"] if custom_count_res else 0
+    custom_count = await get_custom_role_count(user_id)
 
     text = (
         f"🎭 **Роли**\n\n"
@@ -300,7 +296,7 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
         return "Ошибка: не указана роль", None, None
 
     # Ищем data roles via хелпер
-    role_data = await db.get_role_data(role_key, user_id)
+    role_data = await get_role_data(role_key, user_id)
     if not role_data:
         return "Роль не найдена или удалена.", None, None
 
@@ -380,10 +376,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     """Генерирует контент для списков ролей (мои роли, системные роли)."""
     ITEMS_PER_PAGE = 6
     if view_mode == "my_roles":
-        roles = await db.db_query(
-            "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
-            (user_id,),
-        )
+        roles = await get_user_custom_roles(user_id)
         title_header = "📂 **Ваши личные роли**"
         empty_text = "У вас пока нет сохраненных ролей."
 
@@ -518,10 +511,7 @@ async def get_roles_menu_content(
 
         if not active_role_key:
             # Ищем в кастомных
-            custom_roles = await db.db_query(
-                "SELECT id, title, prompt FROM user_roles WHERE user_id = $1",
-                (user_id,),
-            )
+            custom_roles = await get_user_custom_roles_full(user_id)
             for role in custom_roles:
                 if role.get("prompt") == current_prompt:
                     active_role_title = f"🎭 {role['title']}"
@@ -697,8 +687,8 @@ async def get_conversations_menu_content(user_id, page=1) -> None:
     limit = 5
     offset = (page - 1) * limit
 
-    conversations = await db.get_user_conversations(user_id, limit, offset)
-    total_count = await db.get_conversation_count(user_id)
+    conversations = await get_user_conversations(user_id, limit, offset)
+    total_count = await get_conversation_count(user_id)
 
     if not conversations:
         empty_text = (

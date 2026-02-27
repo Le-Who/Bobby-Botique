@@ -101,7 +101,7 @@ async def _ensure_loaded(state: UserState) -> UserState:
         return state
 
     try:
-        from app.database import load_user_state
+        from app.repos.users import load_user_state
 
         data = await load_user_state(state._user_id)
         if data:
@@ -137,7 +137,7 @@ async def _persist(state: UserState) -> None:
         return
 
     try:
-        from app.database import save_user_state
+        from app.repos.users import save_user_state
 
         await save_user_state(
             user_id=state._user_id,

@@ -8,7 +8,8 @@ from typing import Optional
 from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import settings
-from app import database as db
+from app.database import ChatState
+from app.repos.chats import update_user_chat
 from app import prompts
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import update_stage, STAGES_CHAT
@@ -24,7 +25,7 @@ async def _handle_regular_chat(
     placeholder_message: Message,
     user_id: int,
     user_message: str,
-    chat_state: db.ChatState,
+    chat_state: ChatState,
     model_override: Optional[str] = None,
 ):
     # Используем переопределение models, if указано, иначе model from chat_state
@@ -129,7 +130,7 @@ async def _handle_regular_chat(
         # Используем универсальную функцию обработки ошибок
         async def cleanup_on_error() -> None:
             chat_state.history.pop()  # Убираем добавленный промпт
-            await db.update_user_chat(user_id, chat_state)
+            await update_user_chat(user_id, chat_state)
 
         if await handle_ai_response_error(
             response_text, placeholder_message, on_error_callback=cleanup_on_error
@@ -182,10 +183,10 @@ async def _handle_regular_chat(
                     )
             chat_state.history.append({"role": "model", "parts": [response_text]})
             chat_state.token_count = new_token_count
-            await db.update_user_chat(user_id, chat_state)
+            await update_user_chat(user_id, chat_state)
     else:
         chat_state.history.pop()
-        await db.update_user_chat(user_id, chat_state)
+        await update_user_chat(user_id, chat_state)
         try:
             from app.errors import build_retry_and_roles_keyboard
 

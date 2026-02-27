@@ -194,7 +194,7 @@ class CircuitBreaker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error("Circuit Breaker '%s' monitoring error: %s", self.name, e)
+                logging.error("Circuit Breaker '%s' monitoring error: %s", self.name, e, exc_info=True)
 
     def get_state(self) -> CircuitState:
         """Returns current circuit breaker state."""

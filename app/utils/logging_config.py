@@ -43,9 +43,16 @@ class JSONFormatter(logging.Formatter):
     Automatically includes:
     - timestamp, level, logger, message
     - module, function, line number
+    - service, hostname for log aggregation
     - user_id, chat_id if set on record
     - exception info if present
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        import socket
+        self._hostname = os.environ.get("HOSTNAME", socket.gethostname())
+        self._service = os.environ.get("SERVICE_NAME", "gemaibotv2")
 
     def format(self, record: logging.LogRecord) -> str:
         log_entry = {
@@ -56,6 +63,8 @@ class JSONFormatter(logging.Formatter):
             "module": record.module,
             "function": record.funcName,
             "line": record.lineno,
+            "service": self._service,
+            "hostname": self._hostname,
         }
 
         # Add context fields if present

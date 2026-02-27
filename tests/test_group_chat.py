@@ -44,7 +44,7 @@ async def test_register_group(group_chat_manager):
     title = "Test Group"
     admin_id = 1
 
-    with patch("app.database.is_authorized", new_callable=AsyncMock) as mock_auth, \
+    with patch("app.group_chat._is_authorized", new_callable=AsyncMock) as mock_auth, \
          patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
 
         mock_auth.return_value = True
@@ -82,7 +82,7 @@ async def test_add_member_to_group(group_chat_manager):
     )
     group_chat_manager.active_groups[chat_id] = group
 
-    with patch("app.database.is_authorized", new_callable=AsyncMock) as mock_auth, \
+    with patch("app.group_chat._is_authorized", new_callable=AsyncMock) as mock_auth, \
          patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
 
         mock_auth.return_value = True

@@ -123,25 +123,13 @@ class TaskQueue:
         task_name: str,
     ) -> asyncio.Task:
         """Запускает фоновую задачу с защитой от повторного старта."""
-        if task_ref and not task_ref.done():
-            logging.debug("Background task '%s' already running", task_name)
-            return task_ref
-
-        return asyncio.create_task(coro_factory())
+        from app.utils.background_tasks import start_background_task
+        return start_background_task(task_ref, coro_factory, task_name)
 
     async def _cancel_background_task(self, attr_name: str):
         """Отменяет и ожидает завершение фоновой задачи по имени атрибута."""
-        task = getattr(self, attr_name, None)
-        if not task:
-            return
-
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-        setattr(self, attr_name, None)
+        from app.utils.background_tasks import cancel_background_task
+        await cancel_background_task(self, attr_name)
 
     async def add_task(
         self,
@@ -237,7 +225,7 @@ class TaskQueue:
                         logging.info("Task %s completed successfully", task_id)
 
                     except Exception as e:
-                        logging.error("Task %s failed: %s", task_id, e)
+                        logging.error("Task %s failed: %s", task_id, e, exc_info=True)
 
                         async with self._lock:
                             task.error = str(e)
@@ -258,7 +246,7 @@ class TaskQueue:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error("Worker %s error: %s", worker_name, e)
+                logging.error("Worker %s error: %s", worker_name, e, exc_info=True)
                 await asyncio.sleep(1)
 
         logging.info("Worker %s stopped", worker_name)
@@ -300,7 +288,7 @@ class TaskQueue:
             }
 
         except Exception as e:
-            logging.error("Error in document processing task: %s", e)
+            logging.error("Error in document processing task: %s", e, exc_info=True)
             return {"status": "failed", "error": str(e)}
 
     async def _handle_cleanup_metrics(self, **kwargs) -> Dict[str, Any]:
@@ -320,7 +308,7 @@ class TaskQueue:
 
             return {"status": "completed", "message": "Old metrics cleaned up"}
         except Exception as e:
-            logging.error("Error cleaning up metrics: %s", e)
+            logging.error("Error cleaning up metrics: %s", e, exc_info=True)
             return {"status": "failed", "error": str(e)}
 
     async def _cleanup_old_tasks(self):
@@ -347,7 +335,7 @@ class TaskQueue:
                         logging.info("Cleaned up %s old tasks", len(tasks_to_remove))
 
             except Exception as e:
-                logging.error("Error in cleanup task: %s", e)
+                logging.error("Error in cleanup task: %s", e, exc_info=True)
 
     async def _schedule_metrics_cleanup(self):
         """Планирует автоматическую очистку метрик"""
@@ -366,7 +354,7 @@ class TaskQueue:
                 logging.info("Scheduled metrics cleanup task")
 
             except Exception as e:
-                logging.error("Error in metrics cleanup scheduler: %s", e)
+                logging.error("Error in metrics cleanup scheduler: %s", e, exc_info=True)
 
     async def get_queue_stats(self) -> Dict[str, Any]:
         """Возвращает статистику очереди"""

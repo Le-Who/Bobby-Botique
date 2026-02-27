@@ -11,11 +11,12 @@ from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest, NetworkError
 
 from app.config import settings, get_openrouter_keys
-from app import database as db
+from app.database import ChatState
+from app.repos.chats import get_user_chat, update_user_chat
 from app import search_services
 from app.utils.messaging import send_long_message
 from app import prompts
-from app.metrics import metrics_collector
+from app.metrics import metrics_collector, track_metrics
 from app.utils.formatting import escape_format_chars
 from app.utils.stage_indicators import update_stage, STAGES_SEARCH_QUICK, STAGES_SEARCH_DEEP
 
@@ -26,10 +27,11 @@ from app.handlers.ai_core import (
 )
 
 
+@track_metrics("qna_search")
 async def _handle_qna_search(
     placeholder_message: Message,
     user_message: str,
-    chat_state: db.ChatState,
+    chat_state: ChatState,
     search_query: str = None,
 ):
     # If beforeан search_query, use его for searchа, а user_message for локалfromации
@@ -133,11 +135,12 @@ async def _handle_qna_search(
             logging.error("Could not edit placeholder message: %s", edit_error)
 
 
+@track_metrics("research_search")
 async def _handle_research_agent(
     placeholder_message: Message,
     user_id: int,
     user_message: str,
-    chat_state: db.ChatState,
+    chat_state: ChatState,
     model_override: Optional[str] = None,
     search_query: str = None,
 ):
@@ -450,7 +453,7 @@ async def _handle_research_agent(
     except Exception as ai_error:
         logging.error("Error in AI synthesis: %s", ai_error)
         chat_state.history.pop()  # Убираем добавленный промпт
-        await db.update_user_chat(user_id, chat_state)
+        await update_user_chat(user_id, chat_state)
         try:
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при синтезе ответа. Попробуйте позже."
@@ -470,7 +473,7 @@ async def _handle_research_agent(
         # Используем универсальную функцию обработки ошибок
         async def cleanup_on_error() -> None:
             chat_state.history.pop()  # Убираем добавленный промпт
-            await db.update_user_chat(user_id, chat_state)
+            await update_user_chat(user_id, chat_state)
 
         if await handle_ai_response_error(
             response_text, placeholder_message, on_error_callback=cleanup_on_error
@@ -498,13 +501,13 @@ async def _handle_research_agent(
                     f"Generated deep dive thread_id {chat_state.deep_dive_thread_id} for user {user_id}"
                 )
 
-            await db.update_user_chat(user_id, chat_state)
+            await update_user_chat(user_id, chat_state)
             logging.info(
                 f"Deep dive mode activated for user {user_id} with thread_id {chat_state.deep_dive_thread_id}"
             )
     else:
         chat_state.history.pop()
-        await db.update_user_chat(user_id, chat_state)
+        await update_user_chat(user_id, chat_state)
         logging.warning(
             f"Empty response from Gemini API for deep dive synthesis by user {user_id}"
         )
@@ -519,6 +522,7 @@ async def _handle_research_agent(
             logging.error("Could not edit placeholder message: %s", edit_error)
 
 
+@track_metrics("complex_search")
 async def _handle_complex_agent_search(
     placeholder_message: Message, original_message: Message, search_prefix: str
 ):
@@ -568,7 +572,7 @@ async def _handle_complex_agent_search(
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     # Get оригинальное message user for локалfromации
     original_user_message = original_message.caption or "Опиши это изображение."
 

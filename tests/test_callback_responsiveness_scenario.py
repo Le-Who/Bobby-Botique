@@ -49,10 +49,11 @@ async def test_user_b_settings_callback_not_blocked_by_user_a_long_request(monke
     monkeypatch.setattr(callbacks, "get_model_hash", lambda model_name: "hash-ok")
 
     chat_state = SimpleNamespace(model=None)
-    monkeypatch.setattr(
-        callbacks.db, "get_user_chat", AsyncMock(return_value=chat_state)
-    )
-    monkeypatch.setattr(callbacks.db, "update_user_chat", AsyncMock())
+
+    mock_get = AsyncMock(return_value=chat_state)
+    mock_update = AsyncMock()
+    monkeypatch.setattr(callbacks, "get_user_chat", mock_get)
+    monkeypatch.setattr(callbacks, "update_user_chat", mock_update)
     monkeypatch.setattr(
         callbacks.menus,
         "get_model_menu_content",
@@ -78,6 +79,6 @@ async def test_user_b_settings_callback_not_blocked_by_user_a_long_request(monke
 
     # Callback must finish well before long request completion.
     assert elapsed < 0.15
-    callbacks.db.update_user_chat.assert_awaited_once()
+    mock_update.assert_awaited_once()
     query_b.edit_message_text.assert_awaited_once()
     assert any(msg and "Модель изменена" in msg for msg, _ in query_b._answers)

@@ -392,7 +392,7 @@ def get_settings() -> Settings:
         try:
             _settings_instance = load_settings()
         except Exception as e:
-            logging.error("Failed to load settings: %s", e)
+            logging.error("Failed to load settings: %s", e, exc_info=True)
             raise
     return _settings_instance
 
@@ -550,7 +550,7 @@ class ConfigManager:
                 )
 
             except Exception as e:
-                logging.error("Failed to reload configuration: %s", e)
+                logging.error("Failed to reload configuration: %s", e, exc_info=True)
                 # Не прерываем работу on ошибке перезагрузки конфигурации
                 # Система продолжит работать со старыми настройками
 
@@ -569,7 +569,7 @@ class ConfigManager:
                 else:
                     watcher(old_settings, new_settings)
             except Exception as e:
-                logging.error("Configuration watcher error: %s", e)
+                logging.error("Configuration watcher error: %s", e, exc_info=True)
 
     async def force_reload(self) -> None:
         """Forces immediate configuration reload."""

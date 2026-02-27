@@ -1,7 +1,13 @@
 import logging
 from typing import List, Optional, Set, Tuple
 
-from app import database as db
+from app.repos.keys import (
+    get_available_gemini_key,
+    get_available_openrouter_key,
+    increment_gemini_key_usage,
+    increment_openrouter_key_usage,
+    invalidate_key_cache,
+)
 
 from app.config import get_openrouter_keys, get_use_openrouter, settings
 from app.errors import is_error_message, is_key_related_error
@@ -108,10 +114,10 @@ class AgentRequestUseCase:
         ]
         return await self._resolve_key_generic(
             preferred_model,
-            db.get_available_gemini_key,
+            get_available_gemini_key,
             fallback_priority,
             excluded_key_hashes,
-            db.invalidate_key_cache,
+            invalidate_key_cache,
             provider_name="Gemini",
         )
 
@@ -138,7 +144,7 @@ class AgentRequestUseCase:
 
         return await self._resolve_key_generic(
             openrouter_model,
-            db.get_available_openrouter_key,
+            get_available_openrouter_key,
             fallback_priority,
             excluded_key_hashes,
             invalidate_cache_func=None,
@@ -185,9 +191,9 @@ class AgentRequestUseCase:
         if use_openrouter is None:
             use_openrouter = "/" in model_name or get_use_openrouter()
         if use_openrouter:
-            await db.increment_openrouter_key_usage(key_hash, model_name)
+            await increment_openrouter_key_usage(key_hash, model_name)
         else:
-            await db.increment_gemini_key_usage(key_hash, model_name)
+            await increment_gemini_key_usage(key_hash, model_name)
 
     async def get_ai_response_with_key_rotation(
         self,
@@ -199,76 +205,20 @@ class AgentRequestUseCase:
         use_openrouter: bool = None,
         max_key_retries: int = 3,
     ) -> Tuple[str, Optional[int]]:
-        failed_keys = set()
+        """Delegate to ProviderRouter for health-aware key rotation.
 
-        for attempt in range(max_key_retries):
-            key_data, model_used, resolution = await self.resolve_ai_request(
-                preferred_model,
-                use_openrouter=use_openrouter,
-                excluded_key_hashes=failed_keys,
-            )
+        This method exists for backward compatibility. All new code should
+        use ProviderRouter.get_response() directly via _get_ai_response_with_routing().
+        """
+        from app.ai_provider import get_provider_router
 
-            if not key_data:
-                if resolution == "all_exhausted":
-                    is_openrouter = (
-                        use_openrouter
-                        if use_openrouter is not None
-                        else ("/" in preferred_model)
-                    )
-                    provider_name = "OpenRouter" if is_openrouter else "Gemini"
-                    return (
-                        f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже.",
-                        None,
-                    )
-                if resolution == "decryption_failed":
-                    return (
-                        "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
-                        None,
-                    )
-                if resolution == "no_keys":
-                    return (
-                        "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.",
-                        None,
-                    )
-                return (
-                    "🚫 Не удалось получить доступный ключ API. Попробуйте позже.",
-                    None,
-                )
-
-            response_text, token_count = await self.get_ai_response(
-                key_data["api_key"],
-                history,
-                model_used,
-                system_instruction,
-                user_id,
-                chat_id,
-                use_openrouter,
-            )
-
-            if (
-                response_text
-                and is_error_message(response_text)
-                and is_key_related_error(response_text)
-            ):
-                failed_keys.add(key_data["key_hash"])
-                logging.warning(
-                    f"Key {key_data['key_hash'][:8]}... failed with key-related error (attempt {attempt + 1}/{max_key_retries}). "
-                    f"Error: {response_text[:100]}..."
-                )
-                continue
-
-            if response_text and not is_error_message(response_text):
-                await self.increment_key_usage(
-                    key_data["key_hash"], model_used, use_openrouter
-                )
-
-            return response_text, token_count
-
-        is_openrouter = (
-            use_openrouter if use_openrouter is not None else ("/" in preferred_model)
-        )
-        provider_name = "OpenRouter" if is_openrouter else "Gemini"
-        return (
-            f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",
-            None,
+        router = get_provider_router()
+        return await router.get_response(
+            preferred_model,
+            history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            chat_id=chat_id,
+            use_openrouter=use_openrouter,
+            max_key_retries=max_key_retries,
         )

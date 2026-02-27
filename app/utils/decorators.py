@@ -2,7 +2,8 @@ import functools
 import logging
 from telegram import Update
 from telegram.ext import ContextTypes
-from app import database as db
+from app.repos.users import is_authorized, is_admin
+from app.config import settings
 
 
 def authorized_only(func):
@@ -13,7 +14,7 @@ def authorized_only(func):
         update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs
     ):
         user_id = update.effective_user.id
-        if not await db.is_authorized(user_id):
+        if not await is_authorized(user_id):
             logging.warning(
                 f"Unauthorized access attempt by user {user_id} to {func.__name__}"
             )
@@ -37,7 +38,7 @@ def admin_only(func):
         update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs
     ):
         user_id = update.effective_user.id
-        if not db.is_admin(user_id):
+        if not is_admin(user_id):
             logging.warning(
                 f"Non-admin access attempt by user {user_id} to {func.__name__}"
             )

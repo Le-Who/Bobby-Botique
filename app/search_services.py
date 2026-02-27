@@ -4,12 +4,14 @@ from typing import Dict, Any, Optional
 import asyncio
 
 from app.config import settings
-from app import database
+from app.repos.keys import get_available_tavily_key, increment_tavily_key_usage
 from app.metrics import metrics_collector
 from app.cache import get_cached_search_result, cache_search_result
 from app.request_context import get_request_id
 from app.utils.network import NetworkErrorHandler
 from app.utils.api_logger import api_logger
+from app.resilience_policy import run_with_resilience
+from app.circuit_breaker import TAVILY_API_CONFIG
 
 # Robust HTTP client for Tavily API calls
 http_client = NetworkErrorHandler.create_robust_http_client()
@@ -20,8 +22,8 @@ http_client = NetworkErrorHandler.create_robust_http_client()
 
 
 async def _tavily_api_call(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Internal function for making Tavily API calls with retry logic."""
-    try:
+    """Internal function for making Tavily API calls with circuit breaker."""
+    async def _do_call():
         headers = {}
         request_id = get_request_id()
         if request_id:
@@ -32,9 +34,14 @@ async def _tavily_api_call(payload: Dict[str, Any]) -> Dict[str, Any]:
         )
         response.raise_for_status()
         return response.json()
-    except Exception as e:
-        logging.error("Tavily API call error: %s", e)
-        raise
+
+    result, attempts = await run_with_resilience(
+        _do_call,
+        circuit_name="tavily",
+    )
+    if attempts > 1:
+        logging.info("Tavily API call succeeded after %d attempts", attempts)
+    return result
 
 
 async def tavily_search_agent(
@@ -62,7 +69,7 @@ async def tavily_search_agent(
         logging.info("Cache hit for Tavily search: %s...", query[:50])
         return cached_result
 
-    available_key = await database.get_available_tavily_key()
+    available_key = await get_available_tavily_key()
     if not available_key:
         return {
             "error": "Поиск недоступен: все API ключи сервиса поиска достигли месячного лимита."
@@ -96,7 +103,7 @@ async def tavily_search_agent(
 
     try:
         data = await _tavily_api_call(payload)
-        await database.increment_tavily_key_usage(available_key["key_hash"], cost)
+        await increment_tavily_key_usage(available_key["key_hash"], cost)
 
         result = {}
         if search_type == "qna":

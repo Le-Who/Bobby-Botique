@@ -15,24 +15,24 @@ async def test_new_chat_command():
     update.update_id = 11111
     update.message.reply_text = AsyncMock()
 
-    # Mocking db and request_context inside commands
+    mock_chat_state = MagicMock()
+    mock_chat_state.search_enabled = False
+    mock_chat_state.model = "gemini-pro"
+    mock_chat_state.system_prompt = "Old prompt"
+    mock_chat_state.history = [{"role": "user", "content": "hello"}]
+    mock_chat_state.token_count = 100
+
+    # Mocking direct imports inside commands
     with (
-        patch("app.handlers.commands.db") as mock_db,
+        patch("app.handlers.commands.get_user_chat", new_callable=AsyncMock,
+              return_value=mock_chat_state) as mock_get,
+        patch("app.handlers.commands.update_user_chat", new_callable=AsyncMock) as mock_update,
         patch(
-            "app.utils.decorators.db.is_authorized", new_callable=AsyncMock
+            "app.utils.decorators.is_authorized", new_callable=AsyncMock
         ) as mock_auth,
         patch("app.handlers.commands.set_request_id") as mock_set_request_id,
     ):
         mock_auth.return_value = True
-        mock_chat_state = MagicMock()
-        mock_chat_state.search_enabled = False
-        mock_chat_state.model = "gemini-pro"
-        mock_chat_state.system_prompt = "Old prompt"
-        mock_chat_state.history = [{"role": "user", "content": "hello"}]
-        mock_chat_state.token_count = 100
-
-        mock_db.get_user_chat = AsyncMock(return_value=mock_chat_state)
-        mock_db.update_user_chat = AsyncMock()
 
         from app.handlers.commands import new_chat_command
 
@@ -40,8 +40,8 @@ async def test_new_chat_command():
 
         # Verify side effects
         mock_set_request_id.assert_called_once()
-        mock_db.get_user_chat.assert_called_once_with(12345)
-        mock_db.update_user_chat.assert_called_once_with(12345, mock_chat_state)
+        mock_get.assert_called_once_with(12345)
+        mock_update.assert_called_once_with(12345, mock_chat_state)
 
         # Verify state was cleared
         assert mock_chat_state.history == []

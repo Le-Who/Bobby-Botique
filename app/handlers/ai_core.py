@@ -50,7 +50,7 @@ async def handle_ai_response_error(
             else:
                 on_error_callback()
         except Exception as e:
-            logging.error("Error in on_error_callback: %s", e)
+            logging.error("Error in on_error_callback: %s", e, exc_info=True)
 
     # Определяем тип клавиатуры в зависимости от типа ошибки
     if is_retryable_error(response_text):

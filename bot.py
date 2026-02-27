@@ -383,10 +383,12 @@ async def main():
 
     try:
         # Auto-enable structured JSON logging in production containers
+        # Supports: STRUCTURED_LOGGING=1, LOG_FORMAT=json, or auto-detect from DATABASE_URL
         _structured = os.environ.get("STRUCTURED_LOGGING", "").lower()
-        if _structured in ("1", "true", "yes"):
+        _log_format = os.environ.get("LOG_FORMAT", "").lower()
+        if _structured in ("1", "true", "yes") or _log_format == "json":
             _use_json = True
-        elif _structured in ("0", "false", "no"):
+        elif _structured in ("0", "false", "no") or _log_format == "text":
             _use_json = False
         else:
             # Auto-detect: production has DATABASE_URL set

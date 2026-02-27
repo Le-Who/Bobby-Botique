@@ -122,12 +122,27 @@ The bot implements a sophisticated "Smart Router" for AI requests:
   - Prepared statements for high-throughput concurrency
   - RLS Denormalization indexing (`owner_user_id`) to optimize security policies
   - Transaction-local RLS context (`set_config(..., true)`) preventing context leaks
-- **Repository Layer** (`app/repos/`): Canonical location for domain logic — `keys.py`, `users.py`, `chats.py`, `conversations.py`, `metrics_repo.py`, `analytics.py`.
+- **Repository Layer** (`app/repos/`): Canonical location for domain logic:
+  - `keys.py` — API key rotation (DailyKeyManager, MonthlyKeyManager)
+  - `users.py` — Auth, user state, feedback
+  - `chats.py` — Chat state management
+  - `conversations.py` — Saved conversations CRUD
+  - `roles.py` — Custom user roles CRUD (7 functions)
+  - `user_stats.py` — Per-user daily/weekly statistics (3 functions)
+  - `admin.py` — Admin-only operations: user management, metrics cleanup, key inspection (6 functions)
+  - `metrics_repo.py`, `analytics.py` — System metrics and analytics queries
 - **In-Memory Caching** (TTLCache / Redis)
   - Key status, user authorization, and dynamic AI model limits are aggressively cached to reduce DB I/O.
 - **Scoped DB Transactions**: Optimized database pooling (`max_size=10`) with `asyncio.Semaphore` and scope-limited transactions to prevent connection starvation without hitting provider DB connection limits.
 - **Micro-GC Pauses**: Fine-tuned `gc.collect(1)` macro-invocations preventing full stop-the-world application pauses during heavy traffic spikes.
 - **Robust TCP Pooling**: Scaled (yet strictly constrained) HTTPX connection pools (50 concurrent external HTTP connections) with Circuit Breaker tracking for external AI Providers to defend against socket exhaustion.
+
+### Resilience & Circuit Breakers (v2.6.6+)
+
+- **Gemini/OpenRouter**: Provider-level circuit breakers with health scoring (exponential decay on failure, linear recovery).
+- **Tavily API**: Circuit breaker in `search_services.py` — trips after consecutive failures, auto-recovers.
+- **Telegram API**: Lazy circuit breaker in `messaging.py` — prevents flooding Telegram servers during outages.
+- **Response time tracking**: `MetricsMiddleware` wired into `handle_request` and `@track_metrics` decorator on all search handlers for per-operation latency dashboards.
 
 ### Security Hardening (v2.6.5+)
 
@@ -277,17 +292,18 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (409 tests, 1 skipped)
+### Suite Structure (453 tests, 1 skipped)
 
-| Category           | Files                                                                                                                            | What They Cover                                                                      |
-| :----------------- | :------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------- |
-| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`                                             | AI routing, health scoring, fallback chains, errors                                  |
-| **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators` | Callback dispatch, request flow, commands, menu rendering, role UI, file I/O, stages |
-| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                            | Tavily key management, query optimization, cleanup                                   |
-| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                           | Circuit breaker, TTL cache, race conditions                                          |
-| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`    | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling      |
-| **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                 | Batched metric saves, system status data                                             |
-| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                                                       | Text formatting, keyboard builders, timezone math                                    |
+| Category           | Files                                                                                                                                                                        | What They Cover                                                                                       |
+| :----------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------- |
+| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`, `test_ai_chat`, `test_ai_search`, `test_ai_document`, `test_ai_photo`                  | AI routing, health scoring, fallback chains, errors, AI handler coverage, photo processing            |
+| **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_cmd_admin`, `test_cmd_conversations`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators` | Callback dispatch, request flow, commands, admin commands, conversation CRUD, menu rendering, role UI |
+| **Integration**    | `test_integration_flow`, `test_callback_responsiveness_scenario`                                                                                                             | End-to-end request flow (auth, rate limit, agent, error recovery), callback responsiveness            |
+| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                                                                        | Tavily key management, query optimization, cleanup                                                    |
+| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                                                                       | Circuit breaker, TTL cache, race conditions                                                           |
+| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling                       |
+| **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                                                             | Batched metric saves, system status data                                                              |
+| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`                                                                                                   | Text formatting, keyboard builders, timezone math                                                     |
 
 ### Mock Isolation Rule
 

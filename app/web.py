@@ -49,10 +49,19 @@ def _get_admin_secret():
     return secret
 
 
-_admin_secret = _get_admin_secret() or ""
-flask_app.secret_key = hashlib.sha256(
-    f"gemaibotv2-session-{_admin_secret}".encode()
-).hexdigest()
+# Placeholder — overridden at server startup via @before_serving
+flask_app.secret_key = os.urandom(32)  # Secure fallback — overridden at startup
+
+
+@flask_app.before_serving
+async def _init_secret_key():
+    """Compute session secret_key at startup when ADMIN_SECRET is definitely available."""
+    admin_secret = _get_admin_secret() or ""
+    flask_app.secret_key = hashlib.sha256(
+        f"gemaibotv2-session-{admin_secret}".encode()
+    ).hexdigest()
+    if not admin_secret:
+        logging.warning("ADMIN_SECRET is empty — session secret_key is weak")
 
 # Session configuration
 flask_app.config["SESSION_COOKIE_NAME"] = "gembot_session"
@@ -282,7 +291,7 @@ async def api_overview():
         import psutil
 
         system = {
-            "cpu_percent": psutil.cpu_percent(interval=None),
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
             "memory_percent": psutil.virtual_memory().percent,
             "memory_used_mb": round(
                 psutil.virtual_memory().used / (1024 * 1024), 1

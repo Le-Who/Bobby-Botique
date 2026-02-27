@@ -218,30 +218,13 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
 
 
 async def get_current_active_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
-    today_pacific = _gemini_km._today()
-    daily_limit = await get_model_daily_limit(model_name)
+    """Get the currently active Gemini API key with the lowest usage.
 
-    if not daily_limit:
-        keys = await db_query("SELECT key_hash, api_key FROM api_keys LIMIT 1")
-        if keys:
-            return {"key_hash": keys[0]["key_hash"], "api_key": safe_decrypt(keys[0]["api_key"])}
-        return None
-
-    threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
-    active_key_query = """
-        SELECT ak.key_hash, ak.api_key, COALESCE(ku.request_count, 0) as request_count
-        FROM api_keys ak
-        LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash 
-            AND ku.model_name = $1 AND ku.usage_date = $2
-        WHERE COALESCE(ku.request_count, 0) < $3
-        ORDER BY COALESCE(ku.request_count, 0) ASC
-        LIMIT 1
+    Delegates to DailyKeyManager.get_fresh_available_key to avoid duplicating
+    the key selection logic.
     """
-    results = await db_query(active_key_query, (model_name, today_pacific, threshold))
-
-    if results:
-        return {"key_hash": results[0]["key_hash"], "api_key": safe_decrypt(results[0]["api_key"])}
-    return None
+    daily_limit = await get_model_daily_limit(model_name)
+    return await _gemini_km.get_fresh_available_key(model_name, daily_limit)
 
 
 async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
@@ -273,6 +256,10 @@ class MonthlyKeyManager:
         credit_limit: float,
         threshold_percent: float,
     ):
+        if not _SAFE_TABLE_RE.match(keys_table):
+            raise ValueError(f"Unsafe table name: {keys_table!r}")
+        if not _SAFE_TABLE_RE.match(usage_table):
+            raise ValueError(f"Unsafe table name: {usage_table!r}")
         self.keys_table = keys_table
         self.usage_table = usage_table
         self.credit_limit = credit_limit

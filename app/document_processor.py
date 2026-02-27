@@ -76,7 +76,7 @@ class DocumentProcessor:
                 }
             return None
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error checking duplicate file: %s", e)
+            logging.error("Error checking duplicate file: %s", e, exc_info=True)
             return None
 
     async def _check_document_limit(self, user_id: int) -> bool:
@@ -89,7 +89,7 @@ class DocumentProcessor:
             doc_count = result[0]["doc_count"] if result else 0
             return doc_count < settings.MAX_DOCUMENTS_PER_USER
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error checking document limit: %s", e)
+            logging.error("Error checking document limit: %s", e, exc_info=True)
             return True  # В случае ошибки разрешаем загрузку
 
     async def _cleanup_oldest_documents(self, user_id: int, keep_count: int = 4) -> int:
@@ -120,7 +120,7 @@ class DocumentProcessor:
             return deleted_count
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error cleaning up oldest documents: %s", e)
+            logging.error("Error cleaning up oldest documents: %s", e, exc_info=True)
             return 0
 
     async def process_document(
@@ -194,7 +194,7 @@ class DocumentProcessor:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
         except (ValueError, UnicodeDecodeError, OSError) as e:
-            logging.error("Error processing document %s: %s", filename, e)
+            logging.error("Error processing document %s: %s", filename, e, exc_info=True)
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
 
@@ -244,7 +244,7 @@ class DocumentProcessor:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
         except (ValueError, UnicodeDecodeError, OSError) as e:
-            logging.error("Error processing document %s: %s", filename, e)
+            logging.error("Error processing document %s: %s", filename, e, exc_info=True)
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
 
@@ -371,7 +371,7 @@ class DocumentProcessor:
             logging.info("Saved document %s for user %s", filename, user_id)
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error saving document to database: %s", e)
+            logging.error("Error saving document to database: %s", e, exc_info=True)
 
     async def get_document_by_id(
         self, document_id: int, user_id: int
@@ -398,7 +398,7 @@ class DocumentProcessor:
             return None
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting document by ID: %s", e)
+            logging.error("Error getting document by ID: %s", e, exc_info=True)
             return None
 
     async def get_user_documents(self, user_id: int) -> List[Dict[str, Any]]:
@@ -431,7 +431,7 @@ class DocumentProcessor:
                 await database.clear_user_context()
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting user documents: %s", e)
+            logging.error("Error getting user documents: %s", e, exc_info=True)
             return []
 
     async def get_document_content(
@@ -456,7 +456,7 @@ class DocumentProcessor:
                 await database.clear_user_context()
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting document content: %s", e)
+            logging.error("Error getting document content: %s", e, exc_info=True)
             return None
 
     async def delete_document(self, document_id: int, user_id: int) -> bool:
@@ -469,7 +469,7 @@ class DocumentProcessor:
             return True
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error deleting document: %s", e)
+            logging.error("Error deleting document: %s", e, exc_info=True)
             return False
 
     async def delete_all_user_documents(self, user_id: int) -> int:
@@ -483,7 +483,7 @@ class DocumentProcessor:
             return len(result) if result else 0
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error deleting all documents: %s", e)
+            logging.error("Error deleting all documents: %s", e, exc_info=True)
             return 0
 
     async def cleanup_old_documents(self, days_old: int = 3) -> int:
@@ -505,7 +505,7 @@ class DocumentProcessor:
             return deleted_count
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error cleaning up old documents: %s", e)
+            logging.error("Error cleaning up old documents: %s", e, exc_info=True)
             return 0
 
     async def get_document_stats(self) -> Dict[str, Any]:
@@ -539,7 +539,7 @@ class DocumentProcessor:
             }
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting document stats: %s", e)
+            logging.error("Error getting document stats: %s", e, exc_info=True)
             return {
                 "total_documents": 0,
                 "total_size_chars": 0,
@@ -592,7 +592,7 @@ class DocumentProcessor:
             }
 
         except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting user document stats: %s", e)
+            logging.error("Error getting user document stats: %s", e, exc_info=True)
             return {
                 "document_count": 0,
                 "total_size_chars": 0,
@@ -684,7 +684,7 @@ async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
             filename=filename,
         )
     except (httpx.HTTPError, OSError) as e:
-        logging.error("Error uploading to x0.at after retries: %s", e)
+        logging.error("Error uploading to x0.at after retries: %s", e, exc_info=True)
         return None
 
 

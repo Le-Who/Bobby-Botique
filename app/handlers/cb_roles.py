@@ -8,7 +8,15 @@ import telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from app import database as db
+from app.repos.roles import (
+    get_user_custom_roles,
+    get_custom_role_prompt,
+    create_custom_role,
+    delete_custom_role,
+)
+from app.repos.chats import get_user_chat, update_user_chat
+from app.repos.users import is_authorized as _is_authorized
+from app.repos.conversations import get_role_data
 from app import prompts
 from app.config import settings
 from app.utils.formatting import TelegramFormatter
@@ -37,12 +45,9 @@ async def role_rename_menu_callback(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    if not await db.is_authorized(user_id):
+    if not await _is_authorized(user_id):
         return
-    roles = await db.db_query(
-        "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
-        (user_id,),
-    )
+    roles = await get_user_custom_roles(user_id)
     if not roles:
         # UX: Add back button even for empty state
         await query.edit_message_text(
@@ -73,7 +78,7 @@ async def role_rename_pick_callback(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    if not await db.is_authorized(user_id):
+    if not await _is_authorized(user_id):
         return
     role_id = int(query.data.split(":")[1])
     context.user_data["rename_role_id"] = role_id
@@ -90,7 +95,7 @@ async def start_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
 
     formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(chat_state)
 
@@ -102,12 +107,12 @@ async def start_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     key = query.data.split(":", 1)[1]
     role_title = ""
 
     # Get data roles via хелпер
-    role_data = await db.get_role_data(key, user_id)
+    role_data = await get_role_data(key, user_id)
 
     if not role_data:
         await query.answer("❌ Роль не найдена.")
@@ -124,11 +129,11 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await role_conv_metrics.record_role_application(role_data["key"])
 
     # Save state
-    await db.update_user_chat(user_id, chat_state)
+    await update_user_chat(user_id, chat_state)
 
     # Update menu
     # Save state
-    await db.update_user_chat(user_id, chat_state)
+    await update_user_chat(user_id, chat_state)
 
     # Update menu - возвращаемся в Hub
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
@@ -147,10 +152,10 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def role_clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     # Clean up системный промпт (будет использован базовый)
     chat_state.system_prompt = None
-    await db.update_user_chat(user_id, chat_state)
+    await update_user_chat(user_id, chat_state)
     await role_conv_metrics.record_role_clear()
 
     # Update menu
@@ -189,7 +194,7 @@ async def role_create_cancel_callback(
     await query.answer("❌ Создание роли отменено")
     user_id = query.from_user.id
     clear_custom_role_state(user_id)
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state, view_mode="hub"
     )
@@ -210,7 +215,7 @@ async def role_rename_cancel_callback(
     await query.answer("❌ Переименование отменено")
     context.user_data.pop("rename_role_id", None)
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state, view_mode="hub"
     )
@@ -229,7 +234,7 @@ async def role_custom_apply_callback(
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     role = get_generated_role(user_id)
     if not role:
         from app.utils.keyboards import error_with_back_keyboard
@@ -242,7 +247,7 @@ async def role_custom_apply_callback(
     # Save only промпт roles (without базового системного промпта)
     # compose_system_instruction будет вызван on использовании
     chat_state.system_prompt = prompt_text
-    await db.update_user_chat(user_id, chat_state)
+    await update_user_chat(user_id, chat_state)
     clear_custom_role_state(user_id)
     kb = InlineKeyboardMarkup(
         [[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]]
@@ -268,22 +273,19 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
     # Save в user_roles
     try:
         # Save
-        await db.db_query(
-            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-            (
-                user_id,
-                role.get("title", "Моя роль"),
-                role.get("prompt") or role.get("system_prompt", ""),
-            ),
+        await create_custom_role(
+            user_id,
+            role.get("title", "Моя роль"),
+            role.get("prompt") or role.get("system_prompt", ""),
         )
         await role_conv_metrics.record_custom_role_creation()
         # И сразу onменяем
         prompt_text = role.get("prompt") or role.get("system_prompt") or ""
-        chat_state = await db.get_user_chat(user_id)
+        chat_state = await get_user_chat(user_id)
         # Save only промпт roles (without базового системного промпта)
         # compose_system_instruction будет вызван on использовании
         chat_state.system_prompt = prompt_text
-        await db.update_user_chat(user_id, chat_state)
+        await update_user_chat(user_id, chat_state)
         clear_custom_role_state(user_id)
         kb = InlineKeyboardMarkup(
             [[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]]
@@ -314,7 +316,7 @@ async def role_custom_retry_callback(
         )
         return
     # Запускаем повтор генерации как в messages.handle_request
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
 
     # Используем универсальную функцию for получения keyа (поддерживает и Gemini, и OpenRouter)
     from app.handlers.ai_core import _resolve_ai_request, _get_ai_response, _increment_key_usage
@@ -427,7 +429,7 @@ async def role_delete_cancel_callback(
 
     # Returnся в детали roles
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
 
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state, view_mode="role_details", role_key=f"user_role:{role_id}"
@@ -442,28 +444,23 @@ async def role_delete_confirm_callback(
 ) -> None:
     query = update.callback_query
     user_id = query.from_user.id
-    if not await db.is_authorized(user_id):
+    if not await _is_authorized(user_id):
         await query.answer("❌ Нет доступа")
         return
     try:
         role_id = int(query.data.split(":")[1])
         # Check, не активна ли эта role сейчас
-        chat_state = await db.get_user_chat(user_id)
+        chat_state = await get_user_chat(user_id)
 
         # Get промпт удаляемой roles, чтобы проверить, активна ли она
-        role_data = await db.db_query(
-            "SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2",
-            (role_id, user_id),
-        )
+        role_prompt = await get_custom_role_prompt(role_id, user_id)
 
-        await db.db_query(
-            "DELETE FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id)
-        )
+        await delete_custom_role(role_id, user_id)
 
         # If удаляемая role была активна, сбрасываем ее
-        if role_data and chat_state.system_prompt == role_data[0]["prompt"]:
+        if role_prompt and chat_state.system_prompt == role_prompt:
             chat_state.system_prompt = None
-            await db.update_user_chat(user_id, chat_state)
+            await update_user_chat(user_id, chat_state)
 
         # Update menu - переходим в list "Мои roles"
         text, parse_mode, reply_markup = await menus.get_roles_menu_content(
@@ -481,7 +478,7 @@ async def role_delete_confirm_callback(
         await query.answer("🗑️ Роль удалена.")
 
     except Exception as e:
-        logging.error("Error deleting role: %s", e)
+        logging.error("Error deleting role: %s", e, exc_info=True)
         await query.answer("❌ Ошибка удаления роли")
 
 
@@ -490,7 +487,7 @@ async def role_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
 
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
 
     role_key = query.data.split(":", 1)[1]
 
@@ -515,7 +512,7 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
     user_id = query.from_user.id
 
     # Fetch role data using helper
-    role_data = await db.get_role_data(role_key, user_id)
+    role_data = await get_role_data(role_key, user_id)
     prompt = role_data.get("prompt") if role_data else ""
 
     if prompt:
@@ -540,7 +537,7 @@ async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.answer()
 
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
 
     view_mode = query.data.split(":")[1]
 
@@ -562,7 +559,7 @@ async def role_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
 
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
 
     parts = query.data.split(":")
     view_mode = parts[1]
@@ -586,9 +583,9 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    if not await db.is_authorized(user_id):
+    if not await _is_authorized(user_id):
         return
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state
     )
@@ -632,7 +629,7 @@ async def role_manual_cancel_callback(
     user_id = query.from_user.id
     from app.state import clear_manual_role_state
     clear_manual_role_state(user_id)
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state, view_mode="hub"
     )
@@ -667,15 +664,12 @@ async def role_manual_save_callback(
         )
         return
     try:
-        await db.db_query(
-            "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-            (user_id, title, prompt_text),
-        )
+        await create_custom_role(user_id, title, prompt_text)
         await role_conv_metrics.record_custom_role_creation()
         # Apply role immediately
-        chat_state = await db.get_user_chat(user_id)
+        chat_state = await get_user_chat(user_id)
         chat_state.system_prompt = prompt_text
-        await db.update_user_chat(user_id, chat_state)
+        await update_user_chat(user_id, chat_state)
         clear_manual_role_state(user_id)
         kb = InlineKeyboardMarkup(
             [[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]]

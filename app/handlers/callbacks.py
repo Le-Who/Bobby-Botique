@@ -15,7 +15,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
 
 from app.handlers import agent
-from app import database as db
+from app.repos.chats import get_user_chat, update_user_chat
+from app.repos.users import save_feedback
 from app.config import settings, get_model_hash, get_openrouter_keys
 from app import state
 from app.utils.formatting import TelegramFormatter
@@ -143,9 +144,9 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель")
             )
             return
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     chat_state.model = model_name
-    await db.update_user_chat(user_id, chat_state)
+    await update_user_chat(user_id, chat_state)
 
     # Update menu с новой выбранной modelю
     formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(
@@ -207,7 +208,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     if action == "vision_only":
         # 2. СРАЗУ даем обратную связь пользователю.
         await placeholder_message.edit_text("🖼️ Описываю изображение...")
-        chat_state = await db.get_user_chat(user_id)
+        chat_state = await get_user_chat(user_id)
         task_to_run = agent._handle_photo(
             placeholder_message, original_message, chat_state
         )
@@ -270,7 +271,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         async with _HEAVY_CALLBACK_SEMAPHORE:
             async with user_lock:
                 if action == "confirm":
-                    chat_state = await db.get_user_chat(user_id)
+                    chat_state = await get_user_chat(user_id)
                     user_message = original_message.text
                     await agent._handle_regular_chat(
                         placeholder_message,
@@ -292,12 +293,12 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = query.from_user.id
 
     if action == "new_topic":
-        chat_state = await db.get_user_chat(user_id)
+        chat_state = await get_user_chat(user_id)
         chat_state.history = []
         chat_state.token_count = 0
         chat_state.system_prompt = None
         chat_state.is_deep_dive = False
-        await db.update_user_chat(user_id, chat_state)
+        await update_user_chat(user_id, chat_state)
         await query.message.reply_text(
             "✅ Новый чат создан. История и системная инструкция сброшены."
         )
@@ -318,11 +319,11 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = query.from_user.id
 
     # Clear chat history and system prompt, similar to /newchat command
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     chat_state.history = []
     chat_state.token_count = 0
     chat_state.system_prompt = None
-    await db.update_user_chat(user_id, chat_state)
+    await update_user_chat(user_id, chat_state)
 
     # Remove the old inline keyboard
     await query.edit_message_reply_markup(reply_markup=None)
@@ -343,7 +344,7 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     from app.state import ensure_state_loaded, get_last_sent_message
     await ensure_state_loaded(user_id)
 
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     last_text = None
     try:
         last_text = get_last_sent_message(user_id)
@@ -381,11 +382,11 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     user_id = query.from_user.id
 
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     chat_state.history = []
     chat_state.token_count = 0
     chat_state.system_prompt = None
-    await db.update_user_chat(user_id, chat_state)
+    await update_user_chat(user_id, chat_state)
 
     text = (
         "✨ **Новый чат начат!**\n\n"
@@ -413,7 +414,7 @@ async def model_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(
         chat_state, context
     )
@@ -550,9 +551,9 @@ async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     user_id = query.from_user.id
 
-    chat_state = await db.get_user_chat(user_id)
+    chat_state = await get_user_chat(user_id)
     chat_state.search_enabled = not chat_state.search_enabled
-    await db.update_user_chat(user_id, chat_state)
+    await update_user_chat(user_id, chat_state)
 
     formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(chat_state)
 
@@ -582,7 +583,7 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     # Save to DB
     try:
-        await db.save_feedback(user_id, message_id, rating)
+        await save_feedback(user_id, message_id, rating)
     except Exception as e:
         logging.warning("Feedback save failed: %s", e)
 

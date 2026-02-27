@@ -2,7 +2,7 @@ import pytest
 import asyncpg
 from unittest.mock import patch, AsyncMock, MagicMock
 from app.database import ChatState
-import app.database as database
+from app.repos import conversations as conv_repo
 
 @pytest.fixture
 def mock_chat_state():
@@ -33,7 +33,7 @@ async def test_save_conversation_success(mock_chat_state):
         # Second call: CALL -> returns [] or whatever, just success
         mock_db_query.side_effect = [[{"id": expected_conv_id}], []]
 
-        result = await database.save_conversation(user_id, title)
+        result = await conv_repo.save_conversation(user_id, title)
 
         assert result == expected_conv_id
 
@@ -61,7 +61,7 @@ async def test_save_conversation_no_chat_state():
     with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat:
         mock_get_user_chat.return_value = None
 
-        result = await database.save_conversation(user_id, title)
+        result = await conv_repo.save_conversation(user_id, title)
 
         assert result is None
         mock_get_user_chat.assert_called_once_with(user_id)
@@ -77,7 +77,7 @@ async def test_save_conversation_insert_failure(mock_chat_state):
         mock_get_user_chat.return_value = mock_chat_state
         mock_db_query.return_value = [] # Return empty list simulating failure to return ID
 
-        result = await database.save_conversation(user_id, title)
+        result = await conv_repo.save_conversation(user_id, title)
 
         assert result is None
 
@@ -104,7 +104,7 @@ async def test_save_conversation_no_history():
         mock_get_user_chat.return_value = mock_chat_state_empty
         mock_db_query.return_value = [{"id": expected_conv_id}]
 
-        result = await database.save_conversation(user_id, title)
+        result = await conv_repo.save_conversation(user_id, title)
 
         assert result == expected_conv_id
 
@@ -129,7 +129,7 @@ async def test_save_conversation_procedure_failure(mock_chat_state):
         # Second call: CALL -> raises asyncpg error
         mock_db_query.side_effect = [[{"id": expected_conv_id}], asyncpg.PostgresError("Procedure failed")]
 
-        result = await database.save_conversation(user_id, title)
+        result = await conv_repo.save_conversation(user_id, title)
 
         assert result == expected_conv_id
 

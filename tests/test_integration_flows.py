@@ -232,6 +232,14 @@ class TestConversationLifecycle:
             mock_mgr._cache_lock = MagicMock()
             mock_mgr._cache_lock.__aenter__ = AsyncMock(return_value=None)
             mock_mgr._cache_lock.__aexit__ = AsyncMock(return_value=None)
+            # Mock pool.acquire() → conn with conn.transaction() support
+            mock_conn = MagicMock()
+            mock_txn = MagicMock()
+            mock_txn.__aenter__ = AsyncMock(return_value=None)
+            mock_txn.__aexit__ = AsyncMock(return_value=None)
+            mock_conn.transaction.return_value = mock_txn
+            mock_mgr.pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+            mock_mgr.pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
             yield mock_query
 
     @pytest.mark.asyncio
@@ -281,20 +289,20 @@ class TestConversationLifecycle:
 
     @pytest.mark.asyncio
     async def test_delete(self, mock_db) -> None:
-        """Deleting a conversation removes it from the database."""
+        """Deleting a conversation removes it atomically within a transaction."""
         from app.repos.conversations import delete_conversation
 
-        # First call: SELECT check; second call: DELETE messages; third call: DELETE conv
+        # First call: DELETE messages; second call: DELETE conversation RETURNING id
         mock_db.side_effect = [
-            [{"id": 42}],  # SELECT check
-            None,           # DELETE messages
-            None,           # DELETE conversation
+            None,               # DELETE messages
+            [{"id": 42}],       # DELETE conversation RETURNING id
         ]
         result = await delete_conversation(1, 42)
         assert result is True
-        # Last call should be DELETE
+        # Last call should be DELETE ... RETURNING
         sql = mock_db.call_args_list[-1][0][0]
         assert "DELETE FROM conversations" in sql
+        assert "RETURNING" in sql
 
     @pytest.mark.asyncio
     async def test_save_preserves_history(self, mock_db) -> None:

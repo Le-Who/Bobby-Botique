@@ -134,7 +134,7 @@ async def test_handle_request_unauthorized():
             "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
         ) as mock_rate_limit,
         patch(
-            "app.handlers.messages.db.is_authorized", new_callable=AsyncMock
+            "app.handlers.messages.is_authorized", new_callable=AsyncMock
         ) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as mock_logger,
     ):
@@ -167,7 +167,7 @@ async def test_handle_request_text_message_happy_path():
             "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
         ) as mock_rate_limit,
         patch(
-            "app.handlers.messages.db.is_authorized", new_callable=AsyncMock
+            "app.handlers.messages.is_authorized", new_callable=AsyncMock
         ) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
@@ -212,7 +212,7 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
             "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
         ) as mock_rate_limit,
         patch(
-            "app.handlers.messages.db.is_authorized", new_callable=AsyncMock
+            "app.handlers.messages.is_authorized", new_callable=AsyncMock
         ) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
@@ -271,7 +271,7 @@ async def test_handle_request_photo_message():
             "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
         ) as mock_rate_limit,
         patch(
-            "app.handlers.messages.db.is_authorized", new_callable=AsyncMock
+            "app.handlers.messages.is_authorized", new_callable=AsyncMock
         ) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
@@ -316,7 +316,7 @@ async def test_handle_request_document():
             "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
         ) as mock_rate_limit,
         patch(
-            "app.handlers.messages.db.is_authorized", new_callable=AsyncMock
+            "app.handlers.messages.is_authorized", new_callable=AsyncMock
         ) as mock_is_auth,
         patch(
             "app.handlers.messages.handle_document", new_callable=AsyncMock
@@ -357,7 +357,7 @@ async def test_handle_request_exception_handling():
             "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
         ) as mock_rate_limit,
         patch(
-            "app.handlers.messages.db.is_authorized", new_callable=AsyncMock
+            "app.handlers.messages.is_authorized", new_callable=AsyncMock
         ) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,

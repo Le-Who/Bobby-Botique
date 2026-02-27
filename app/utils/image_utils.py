@@ -64,5 +64,5 @@ async def save_image_as_bytes(
             timeout=timeout,
         )
     except Exception as e:
-        logging.error("Image processing error: %s", e)
+        logging.error("Image processing error: %s", e, exc_info=True)
         return None

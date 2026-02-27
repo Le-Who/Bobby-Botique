@@ -4,6 +4,12 @@ from telegram import Message, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from app.utils.text_format import format_text, split_text_safe, strip_formatting
 from app.utils.keyboards import ai_response_keyboard, deep_dive_keyboard
+from app.circuit_breaker import get_circuit_breaker, TELEGRAM_API_CONFIG
+
+
+def _get_telegram_cb():
+    """Lazy getter for Telegram circuit breaker (avoids import-time event loop)."""
+    return get_circuit_breaker("telegram", TELEGRAM_API_CONFIG)
 
 
 async def send_long_message(
@@ -36,7 +42,7 @@ async def send_long_message(
                 ):
                     is_deep_dive = False
         except Exception as e:
-            logging.error("Error validating deep dive state: %s", e)
+            logging.error("Error validating deep dive state: %s", e, exc_info=True)
             is_deep_dive = False
 
     # Format text в HTML
@@ -67,7 +73,8 @@ async def send_long_message(
         try:
             if is_first_part:
                 # Try to edit first
-                await current_message.edit_text(
+                await _get_telegram_cb().call(
+                    current_message.edit_text,
                     part,
                     parse_mode=parse_mode,
                     reply_markup=current_reply_markup,
@@ -75,7 +82,8 @@ async def send_long_message(
                 )
             else:
                 # Reply for subsequent parts
-                current_message = await current_message.reply_text(
+                current_message = await telegram_cb.call(
+                    current_message.reply_text,
                     part,
                     parse_mode=parse_mode,
                     reply_markup=current_reply_markup,
@@ -108,7 +116,7 @@ async def send_long_message(
                 logging.error("Critical error sending message: %s", final_error)
 
         except Exception as e:
-            logging.error("Unexpected error in send_long_message: %s", e)
+            logging.error("Unexpected error in send_long_message: %s", e, exc_info=True)
 
         is_first_part = False
         await asyncio.sleep(0.3)
@@ -120,7 +128,7 @@ async def send_formatted_message(message: Message, text: str, parse_mode: str = 
         formatted, mode = format_text(text, parse_mode=parse_mode)
         await message.reply_text(formatted, parse_mode=mode)
     except Exception as e:
-        logging.error("Error sending formatted message: %s", e)
+        logging.error("Error sending formatted message: %s", e, exc_info=True)
         await message.reply_text(strip_formatting(text))
 
 
@@ -130,5 +138,5 @@ async def edit_formatted_message(message: Message, text: str, parse_mode: str = 
         formatted, mode = format_text(text, parse_mode=parse_mode)
         await message.edit_text(formatted, parse_mode=mode)
     except Exception as e:
-        logging.error("Error editing formatted message: %s", e)
+        logging.error("Error editing formatted message: %s", e, exc_info=True)
         await message.edit_text(strip_formatting(text))

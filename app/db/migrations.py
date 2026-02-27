@@ -61,7 +61,7 @@ async def run_migrations(db_query, db_manager):
                 applied_versions.add(version)
 
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error("Migration %s FAILED: %s", version, e)
+                logging.error("Migration %s FAILED: %s", version, e, exc_info=True)
                 # Don't halt startup — log and continue
                 break  # Stop at first failure to preserve order
 

@@ -19,7 +19,7 @@ from typing import List
 from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from app import database as db
+from app.repos.chats import get_user_chat
 
 # ── Re-exports from ai_core ──────────────────────────────────────────────────
 from app.handlers.ai_core import (  # noqa: F401
@@ -61,7 +61,7 @@ async def process_long_request(
     try:
         is_photo = bool(update.message.photo)
         text = update.message.text or update.message.caption or ""
-        chat_state = await db.get_user_chat(update.effective_user.id)
+        chat_state = await get_user_chat(update.effective_user.id)
 
         if is_photo and (text.startswith("?") or text.startswith("??")):
             keyboard = [
