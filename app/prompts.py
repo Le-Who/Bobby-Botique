@@ -7,8 +7,8 @@ import logging
 
 from app.config import settings
 from app.prompt_registry import (
-    get_registry,
     estimate_tokens_cyrillic,
+    get_registry,
 )
 
 # ============================================================================
