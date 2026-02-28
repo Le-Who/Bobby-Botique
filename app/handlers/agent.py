@@ -103,12 +103,7 @@ async def process_long_request(
             await _handle_photo(placeholder_message, update.message, chat_state)
             return
 
-        # Check, есть ли у user documents for вопросов
-        from app.document_processor import get_user_documents
-
-        # user_documents используется for проверки наличия documentов
-        await get_user_documents(update.effective_user.id)
-
+        
         if text.startswith("??"):
             await _handle_research_agent(
                 placeholder_message,

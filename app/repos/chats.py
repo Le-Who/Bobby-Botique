@@ -83,7 +83,7 @@ async def get_user_chat(user_id: int) -> Optional[ChatState]:
                     (user_id,),
                     conn=conn,
                 )
-                history = [{"role": m["role"], "parts": [{"text": m["content"]}]} for m in messages]
+                history = [{"role": m["role"], "parts": [m["content"]]} for m in messages]
 
                 chat_state = ChatState(
                     history=history,
