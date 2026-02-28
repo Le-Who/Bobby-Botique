@@ -1,17 +1,15 @@
+import asyncio
 import hashlib
 import json
 import logging
 import os
-import asyncio
-import time
-from typing import Dict, Any, Optional, Union
-import threading
+from typing import Any
 
 from redis import Redis
-from redis.exceptions import ConnectionError, TimeoutError, RedisError
+from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
-from app.metrics import metrics_collector
 from app.errors import RedisConnectionError
+from app.metrics import metrics_collector
 
 # Initialize Redis client with Upstash.com optimized configuration
 redis_url = os.getenv("REDIS_URL")
@@ -66,8 +64,8 @@ def _get_ttl(search_type: str) -> int:
 
 
 def _safe_decode_redis_response(
-    data: Union[bytes, str, None],
-) -> Optional[Dict[str, Any]]:
+    data: bytes | str | None,
+) -> dict[str, Any] | None:
     """Safely decodes Redis response, handling both bytes and string responses."""
     if data is None:
         return None
@@ -120,12 +118,12 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
                 logging.error(
                     f"Redis operation failed after {max_retries} attempts: {e}"
                 )
-                raise RedisConnectionError(f"Redis operation failed: {e}")
+                raise RedisConnectionError(f"Redis operation failed: {e}") from e
 
         except RedisError as e:
             # Other Redis errors don't require retry
             logging.error("Redis operation error: %s", e, exc_info=True)
-            raise RedisConnectionError(f"Redis operation error: {e}")
+            raise RedisConnectionError(f"Redis operation error: {e}") from e
 
     raise RedisConnectionError(
         f"Redis operation failed after {max_retries} attempts: {last_error}"
@@ -135,7 +133,7 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
 
 async def get_cached_search_result(
     query: str, search_type: str
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Gets the search result from the multi-layer cache (Memory -> Redis)."""
     try:
         return await get_cached_search_result_ml(query, search_type)
@@ -145,7 +143,7 @@ async def get_cached_search_result(
         return None
 
 
-async def cache_search_result(query: str, search_type: str, result: Dict[str, Any]):
+async def cache_search_result(query: str, search_type: str, result: dict[str, Any]):
     """Saves the search result to the multi-layer cache (Memory + Redis)."""
     try:
         await cache_search_result_ml(query, search_type, result)
@@ -153,7 +151,7 @@ async def cache_search_result(query: str, search_type: str, result: Dict[str, An
         logging.warning("Cache set error for query %s...: %s", query[:50], e)
 
 
-async def get_cache_stats() -> Dict[str, Any]:
+async def get_cache_stats() -> dict[str, Any]:
     """Returns cache statistics."""
     if not redis_client:
         return {"error": "Redis client not configured"}
@@ -220,7 +218,7 @@ class MultiLayerCache:
             return self.default_cache
 
 
-    async def get(self, key: str, search_type: str) -> Optional[Dict[str, Any]]:
+    async def get(self, key: str, search_type: str) -> dict[str, Any] | None:
         """Gets value from multi-layer cache"""
         cache_dict = self._get_cache(search_type)
         # Try memory cache first (under lock for TTLCache safety)
@@ -261,7 +259,7 @@ class MultiLayerCache:
         await metrics_collector.record_cache_miss()
         return None
 
-    async def set(self, key: str, search_type: str, value: Dict[str, Any]):
+    async def set(self, key: str, search_type: str, value: dict[str, Any]):
         """Sets value in multi-layer cache"""
         ttl = _get_ttl(search_type)
 
@@ -289,7 +287,7 @@ class MultiLayerCache:
             except RedisError as e:
                 logging.warning("Failed to store in Redis cache: %s", e)
 
-    def get_memory_stats(self) -> Dict[str, Any]:
+    def get_memory_stats(self) -> dict[str, Any]:
         """Returns memory cache statistics"""
         memory_items = (
             len(self.qna_cache) + len(self.search_cache) + len(self.default_cache)
@@ -314,19 +312,19 @@ multi_layer_cache = MultiLayerCache()
 
 async def get_cached_search_result_ml(
     query: str, search_type: str
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Gets search result using multi-layer cache"""
     cache_key = _generate_cache_key(query, search_type)
     return await multi_layer_cache.get(cache_key, search_type)
 
 
-async def cache_search_result_ml(query: str, search_type: str, result: Dict[str, Any]):
+async def cache_search_result_ml(query: str, search_type: str, result: dict[str, Any]):
     """Saves search result using multi-layer cache"""
     cache_key = _generate_cache_key(query, search_type)
     await multi_layer_cache.set(cache_key, search_type, result)
 
 
-async def get_multi_layer_cache_stats() -> Dict[str, Any]:
+async def get_multi_layer_cache_stats() -> dict[str, Any]:
     """Returns multi-layer cache statistics"""
     redis_stats = await get_cache_stats()
     memory_stats = multi_layer_cache.get_memory_stats()

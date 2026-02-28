@@ -3,15 +3,16 @@ Security utilities for input sanitization and validation.
 Provides protection against malicious input and ensures data safety.
 """
 
-import re
-import html
-import logging
-import time
 import asyncio
+import html
 import ipaddress
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+import logging
+import re
+import time
 from collections import defaultdict
+from typing import Any
+from urllib.parse import urlparse
+
 from app.errors import InputSanitizationError
 
 
@@ -48,7 +49,7 @@ class InputSanitizer:
             for pattern in self.DANGEROUS_PATTERNS
         ]
 
-    def sanitize_text(self, text: str, max_length: Optional[int] = None) -> str:
+    def sanitize_text(self, text: str, max_length: int | None = None) -> str:
         """
         Sanitizes text input by removing dangerous patterns.
 
@@ -126,7 +127,7 @@ class InputSanitizer:
         return sanitized
 
     def validate_file_extension(
-        self, filename: str, allowed_types: Optional[List[str]] = None
+        self, filename: str, allowed_types: list[str] | None = None
     ) -> bool:
         """
         Validates file extension against allowed types.
@@ -195,7 +196,7 @@ class InputSanitizer:
         try:
             parsed = urlparse(url)
         except Exception as e:
-            raise InputSanitizationError(f"Invalid URL format: {e}")
+            raise InputSanitizationError(f"Invalid URL format: {e}") from e
 
         # Check protocol
         dangerous_protocols = {"javascript", "vbscript", "data", "file"}
@@ -275,7 +276,7 @@ class InputSanitizer:
 
         return sanitized
 
-    def validate_telegram_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_telegram_message(self, message: dict[str, Any]) -> dict[str, Any]:
         """
         Validates and sanitizes Telegram message data.
 
@@ -357,7 +358,7 @@ class InputSanitizer:
 
         return sanitized
 
-    def validate_document_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_document_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
         """
         Validates document metadata.
 
@@ -458,7 +459,7 @@ def sanitize_input(input_data: Any, input_type: str = "text", **kwargs) -> Any:
     except Exception as e:
         if isinstance(e, InputSanitizationError):
             raise
-        raise InputSanitizationError(f"Sanitization failed: {e}")
+        raise InputSanitizationError(f"Sanitization failed: {e}") from e
 
 
 # ============================================================================
@@ -477,7 +478,7 @@ class RateLimiter:
         """
         self.max_requests = max_requests
         self.window_seconds = window_seconds
-        self._user_requests: Dict[int, List[float]] = defaultdict(list)
+        self._user_requests: dict[int, list[float]] = defaultdict(list)
         self._lock = asyncio.Lock()
         self._cleanup_interval = 300  # Cleanup every 5 minutes
         self._last_cleanup = time.time()
@@ -544,7 +545,7 @@ class RateLimiter:
                 f"Cleaned up {len(users_to_remove)} inactive users from rate limiter"
             )
 
-    async def get_user_stats(self, user_id: int) -> Dict[str, Any]:
+    async def get_user_stats(self, user_id: int) -> dict[str, Any]:
         """Return request statistics for a user."""
         current_time = time.time()
         cutoff_time = current_time - self.window_seconds

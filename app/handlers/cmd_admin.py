@@ -2,26 +2,31 @@
 """Admin-only commands: user management, metrics, cache, queue, config, tavily, cleanup."""
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
+from google import genai
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.config import settings
-from google import genai
-from app.repos.admin import (
-    authorize_user, revoke_user, list_authorized_users,
-    clear_old_metrics, get_all_tavily_keys, get_tavily_usage_for_month,
-)
-from app.repos.keys import get_available_gemini_key, force_update_tavily_keys
-from app.repos.users import invalidate_user_auth_cache
-from app.utils.formatting import TelegramFormatter
-from app.utils import time as time_utils
-from app.cache import get_cache_stats
-from app.queue import task_queue
-from app.group_chat import group_chat_manager
 from app import prompts
-from app.metrics import role_conv_metrics
-from app.utils.decorators import authorized_only, admin_only
+from app.cache import get_cache_stats
+from app.config import settings
+from app.group_chat import group_chat_manager
 from app.handlers import menus
+from app.metrics import role_conv_metrics
+from app.queue import task_queue
+from app.repos.admin import (
+    authorize_user,
+    clear_old_metrics,
+    get_all_tavily_keys,
+    get_tavily_usage_for_month,
+    list_authorized_users,
+    revoke_user,
+)
+from app.repos.keys import force_update_tavily_keys, get_available_gemini_key
+from app.repos.users import invalidate_user_auth_cache
+from app.utils import time as time_utils
+from app.utils.decorators import admin_only, authorized_only
+from app.utils.formatting import TelegramFormatter
 
 
 @admin_only

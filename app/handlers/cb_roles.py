@@ -3,34 +3,34 @@ Role management callbacks — apply, clear, create, delete, rename, detail, nav,
 """
 
 import logging
-import asyncio
+
 import telegram
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.repos.roles import (
-    get_user_custom_roles,
-    get_custom_role_prompt,
-    create_custom_role,
-    delete_custom_role,
-)
-from app.repos.chats import get_user_chat, update_user_chat
-from app.repos.users import is_authorized as _is_authorized
-from app.repos.conversations import get_role_data
 from app import prompts
 from app.config import settings
-from app.utils.formatting import TelegramFormatter
+from app.handlers import menus
 from app.metrics import role_conv_metrics
+from app.repos.chats import get_user_chat, update_user_chat
+from app.repos.conversations import get_role_data
+from app.repos.roles import (
+    create_custom_role,
+    delete_custom_role,
+    get_custom_role_prompt,
+    get_user_custom_roles,
+)
+from app.repos.users import is_authorized as _is_authorized
 from app.state import (
     begin_custom_role_creation,
-    get_generated_role,
     clear_custom_role_state,
+    get_generated_role,
     get_last_custom_role_prompt,
+    set_generated_role,
     set_generating_custom_role,
     set_last_custom_role_prompt,
-    set_generated_role,
 )
-from app.handlers import menus
+from app.utils.formatting import TelegramFormatter
 
 
 class DummyUpdate:
@@ -319,10 +319,10 @@ async def role_custom_retry_callback(
     chat_state = await get_user_chat(user_id)
 
     # Используем универсальную функцию for получения keyа (поддерживает и Gemini, и OpenRouter)
-    from app.handlers.ai_core import _resolve_ai_request, _get_ai_response, _increment_key_usage
+    from app.handlers.ai_core import _get_ai_response, _increment_key_usage, _resolve_ai_request
 
     model_for_role = chat_state.model or settings.DEFAULT_MODEL
-    key_data, model_used, resolution = await _resolve_ai_request(model_for_role)
+    key_data, model_used, _ = await _resolve_ai_request(model_for_role)
     if not key_data:
         from app.utils.keyboards import error_with_back_keyboard
         await query.edit_message_text(
@@ -517,7 +517,6 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
 
     if prompt:
         from app.utils.keyboards import error_with_back_keyboard
-        back_view = "my_roles" if role_data.get("user_id") else "system_roles"
         kb = error_with_back_keyboard(f"role_detail:{role_key}", "⬅️ Назад к роли")
         await query.edit_message_text(
             f"📝 *Полный промпт роли:*\n\n`{prompt}`",
@@ -649,7 +648,7 @@ async def role_manual_save_callback(
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    from app.state import get_manual_role_title, get_manual_role_prompt, clear_manual_role_state
+    from app.state import clear_manual_role_state, get_manual_role_prompt, get_manual_role_title
     title = get_manual_role_title(user_id)
     prompt_text = get_manual_role_prompt(user_id)
     if not title or not prompt_text:

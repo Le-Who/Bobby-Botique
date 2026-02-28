@@ -10,17 +10,17 @@ Provides:
 """
 
 import logging
-import asyncpg
 from datetime import date, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Any
+
+import asyncpg
 
 from app import database as db
-
 
 # ─── Streak Tracking ────────────────────────────────────────────────────────
 
 
-async def record_daily_activity(user_id: int) -> Dict[str, int]:
+async def record_daily_activity(user_id: int) -> dict[str, int]:
     """Increment the user's streak if they haven't been active today yet.
 
     Uses a single upsert + conditional streak logic:
@@ -72,7 +72,7 @@ async def record_daily_activity(user_id: int) -> Dict[str, int]:
         return {"current_streak": 0, "longest_streak": 0}
 
 
-async def get_user_streak(user_id: int) -> Dict[str, int]:
+async def get_user_streak(user_id: int) -> dict[str, int]:
     """Get the current and longest streak for a user."""
     try:
         result = await db.db_query(
@@ -94,7 +94,7 @@ async def get_user_streak(user_id: int) -> Dict[str, int]:
 # ─── DAU / Retention ────────────────────────────────────────────────────────
 
 
-async def get_dau_count(target_date: Optional[date] = None) -> int:
+async def get_dau_count(target_date: date | None = None) -> int:
     """Count distinct users active on a given date (default: today)."""
     d = target_date or date.today()
     try:
@@ -109,7 +109,7 @@ async def get_dau_count(target_date: Optional[date] = None) -> int:
         return 0
 
 
-async def get_retention_stats() -> Dict[str, Any]:
+async def get_retention_stats() -> dict[str, Any]:
     """Calculate D1, D7, and D30 retention rates.
 
     Retention = users active on Day-N who were also active on Day-0 (registration day).
@@ -176,7 +176,7 @@ async def get_retention_stats() -> Dict[str, Any]:
 # ─── Engagement Stats ────────────────────────────────────────────────────────
 
 
-async def get_engagement_summary(user_id: int) -> Dict[str, Any]:
+async def get_engagement_summary(user_id: int) -> dict[str, Any]:
     """Get engagement summary for a user over the last 7 days."""
     try:
         result = await db.db_query(
@@ -225,7 +225,7 @@ async def get_engagement_summary(user_id: int) -> Dict[str, Any]:
 # ─── Conversation Auto-Title ────────────────────────────────────────────────
 
 
-def generate_auto_title(messages: List[Dict[str, Any]], max_len: int = 60) -> str:
+def generate_auto_title(messages: list[dict[str, Any]], max_len: int = 60) -> str:
     """Generate a concise conversation title from the first few messages.
 
     Uses a simple heuristic (no AI call) to avoid latency:

@@ -8,8 +8,6 @@ on every mutation so it survives restarts/redeployments.
 
 import asyncio
 import logging
-from collections import defaultdict
-from typing import Dict, Optional
 
 
 class UserState:
@@ -49,13 +47,13 @@ class UserState:
         self._user_id = user_id
         # Persisted fields
         self.document_mode = False
-        self.selected_document_id: Optional[int] = None
-        self.last_document_message_id: Optional[int] = None
+        self.selected_document_id: int | None = None
+        self.last_document_message_id: int | None = None
         self.awaiting_custom_role_input: bool = False
-        self.generated_role: Optional[dict] = None
-        self.last_custom_role_prompt: Optional[str] = None
+        self.generated_role: dict | None = None
+        self.last_custom_role_prompt: str | None = None
         self.generating_custom_role: bool = False
-        self.last_sent_message_text: Optional[str] = None
+        self.last_sent_message_text: str | None = None
         # Manual role creation
         self.awaiting_manual_role_title: bool = False
         self.awaiting_manual_role_prompt: bool = False
@@ -75,7 +73,7 @@ class _UserStateStore:
     """Thread-safe user state store with lazy DB loading."""
 
     def __init__(self):
-        self._states: Dict[int, UserState] = {}
+        self._states: dict[int, UserState] = {}
 
     def __getitem__(self, user_id: int) -> UserState:
         # setdefault is atomic in CPython — prevents race where two concurrent
@@ -206,7 +204,7 @@ async def ensure_state_loaded(user_id: int) -> UserState:
 
 
 def set_document_mode(
-    user_id: int, enabled: bool, document_id: Optional[int] = None
+    user_id: int, enabled: bool, document_id: int | None = None
 ):
     """Set document mode for a user and persist to DB."""
     state = get_user_state(user_id)
@@ -258,7 +256,7 @@ def set_last_custom_role_prompt(user_id: int, prompt: str):
     _schedule_persist(state)
 
 
-def get_last_custom_role_prompt(user_id: int) -> Optional[str]:
+def get_last_custom_role_prompt(user_id: int) -> str | None:
     return get_user_state(user_id).last_custom_role_prompt
 
 
@@ -272,7 +270,7 @@ def is_awaiting_custom_role_input(user_id: int) -> bool:
     return get_user_state(user_id).awaiting_custom_role_input
 
 
-def get_generated_role(user_id: int) -> Optional[dict]:
+def get_generated_role(user_id: int) -> dict | None:
     return get_user_state(user_id).generated_role
 
 
@@ -284,7 +282,7 @@ def is_in_document_mode(user_id: int) -> bool:
     return get_user_state(user_id).document_mode
 
 
-def get_selected_document_id(user_id: int) -> Optional[int]:
+def get_selected_document_id(user_id: int) -> int | None:
     """Get the selected document ID."""
     return get_user_state(user_id).selected_document_id
 
@@ -299,7 +297,7 @@ def set_last_sent_message(user_id: int, text: str):
     _schedule_persist(state)
 
 
-def get_last_sent_message(user_id: int) -> Optional[str]:
+def get_last_sent_message(user_id: int) -> str | None:
     return get_user_state(user_id).last_sent_message_text
 
 

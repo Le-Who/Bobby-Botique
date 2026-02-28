@@ -14,44 +14,41 @@ Sub-modules:
 """
 
 import logging
-from typing import List
 
-from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
-
-from app.repos.chats import get_user_chat
-
-# ── Re-exports from ai_core ──────────────────────────────────────────────────
-from app.handlers.ai_core import (  # noqa: F401
-    handle_ai_response_error,
-    _resolve_ai_request,
-    _get_ai_response,
-    _get_ai_response_with_routing,
-    _increment_key_usage,
-)
-
-# ── Re-exports from ai_search ────────────────────────────────────────────────
-from app.handlers.ai_search import (  # noqa: F401
-    _handle_qna_search,
-    _handle_research_agent,
-    _handle_complex_agent_search,
-)
 
 # ── Re-exports from ai_chat ──────────────────────────────────────────────────
 from app.handlers.ai_chat import _handle_regular_chat  # noqa: F401
+
+# ── Re-exports from ai_core ──────────────────────────────────────────────────
+from app.handlers.ai_core import (  # noqa: F401
+    _get_ai_response,
+    _get_ai_response_with_routing,
+    _increment_key_usage,
+    _resolve_ai_request,
+    handle_ai_response_error,
+)
 
 # ── Re-exports from ai_document ──────────────────────────────────────────────
 from app.handlers.ai_document import _handle_document_question  # noqa: F401
 
 # ── Re-exports from ai_photo ─────────────────────────────────────────────────
 from app.handlers.ai_photo import (  # noqa: F401
+    _download_images_concurrently,
+    _handle_complex_media_group_search,
+    _handle_media_group_photos,
     _handle_photo,
     process_media_group_request,
-    _download_images_concurrently,
-    _handle_media_group_photos,
-    _handle_complex_media_group_search,
 )
 
+# ── Re-exports from ai_search ────────────────────────────────────────────────
+from app.handlers.ai_search import (  # noqa: F401
+    _handle_complex_agent_search,
+    _handle_qna_search,
+    _handle_research_agent,
+)
+from app.repos.chats import get_user_chat
 
 # ── Orchestration (stays here — thin dispatcher) ─────────────────────────────
 
@@ -103,7 +100,7 @@ async def process_long_request(
             await _handle_photo(placeholder_message, update.message, chat_state)
             return
 
-        
+
         if text.startswith("??"):
             await _handle_research_agent(
                 placeholder_message,
@@ -125,7 +122,7 @@ async def process_long_request(
     except Exception as e:
         logging.error("Error in background task dispatcher: %s", e, exc_info=True)
         try:
-            from app.errors import user_friendly_error, build_retry_and_roles_keyboard
+            from app.errors import build_retry_and_roles_keyboard, user_friendly_error
 
             friendly = user_friendly_error(e)
             await placeholder_message.edit_text(

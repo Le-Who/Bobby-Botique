@@ -2,13 +2,12 @@
 Repository for custom user roles CRUD operations.
 """
 
-import logging
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 from app import database as db
 
 
-async def get_user_custom_roles(user_id: int) -> List[Dict[str, Any]]:
+async def get_user_custom_roles(user_id: int) -> list[dict[str, Any]]:
     """Returns all custom roles for a user, newest first."""
     return await db.db_query(
         "SELECT id, title FROM user_roles WHERE user_id = $1 ORDER BY created_at DESC",
@@ -16,7 +15,7 @@ async def get_user_custom_roles(user_id: int) -> List[Dict[str, Any]]:
     )
 
 
-async def get_user_custom_roles_full(user_id: int) -> List[Dict[str, Any]]:
+async def get_user_custom_roles_full(user_id: int) -> list[dict[str, Any]]:
     """Returns all custom roles with prompts for a user."""
     return await db.db_query(
         "SELECT id, title, prompt FROM user_roles WHERE user_id = $1",
@@ -32,7 +31,7 @@ async def get_custom_role_count(user_id: int) -> int:
     return result[0]["count"] if result else 0
 
 
-async def get_custom_role_prompt(role_id: int, user_id: int) -> Optional[str]:
+async def get_custom_role_prompt(role_id: int, user_id: int) -> str | None:
     """Returns the prompt for a specific custom role, or None if not found."""
     result = await db.db_query(
         "SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2",

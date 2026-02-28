@@ -1,17 +1,16 @@
 import logging
-import httpx
-from typing import Dict, Any, Optional
-import asyncio
+from typing import Any
 
+import httpx
+
+from app.cache import cache_search_result, get_cached_search_result
 from app.config import settings
-from app.repos.keys import get_available_tavily_key, increment_tavily_key_usage
 from app.metrics import metrics_collector
-from app.cache import get_cached_search_result, cache_search_result
+from app.repos.keys import get_available_tavily_key, increment_tavily_key_usage
 from app.request_context import get_request_id
-from app.utils.network import NetworkErrorHandler
-from app.utils.api_logger import api_logger
 from app.resilience_policy import run_with_resilience
-from app.circuit_breaker import TAVILY_API_CONFIG
+from app.utils.api_logger import api_logger
+from app.utils.network import NetworkErrorHandler
 
 # Robust HTTP client for Tavily API calls
 http_client = NetworkErrorHandler.create_robust_http_client()
@@ -29,7 +28,7 @@ async def close_tavily_client() -> None:
 
 
 
-async def _tavily_api_call(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def _tavily_api_call(payload: dict[str, Any]) -> dict[str, Any]:
     """Internal function for making Tavily API calls with circuit breaker."""
     async def _do_call():
         headers = {}

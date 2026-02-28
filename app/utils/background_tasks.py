@@ -7,11 +7,12 @@ used across DatabaseManager, TaskQueue, and other components.
 
 import asyncio
 import logging
-from typing import Callable, Coroutine, Any, Optional
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 
 def start_background_task(
-    task_ref: Optional[asyncio.Task],
+    task_ref: asyncio.Task | None,
     coro_factory: Callable[[], Coroutine[Any, Any, Any]],
     task_name: str,
 ) -> asyncio.Task:

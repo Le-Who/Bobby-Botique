@@ -10,18 +10,18 @@ Domain-specific callbacks are imported from sub-modules:
 
 import asyncio
 import logging
-import telegram
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CallbackQueryHandler, Application
 
-from app.handlers import agent
+import telegram
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+
+from app import state
+from app.config import get_model_hash, get_openrouter_keys, settings
+from app.handlers import agent, menus
 from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.users import save_feedback
-from app.config import settings, get_model_hash, get_openrouter_keys
-from app import state
-from app.utils.formatting import TelegramFormatter
 from app.request_context import set_request_id
-from app.handlers import menus
+from app.utils.formatting import TelegramFormatter
 
 # ── Concurrency limiter for heavy callback branches ──────────────────────────
 _HEAVY_CALLBACK_LIMIT = max(
@@ -29,53 +29,53 @@ _HEAVY_CALLBACK_LIMIT = max(
 )
 _HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore(_HEAVY_CALLBACK_LIMIT)
 
+# ── Background task tracking (prevents GC of fire-and-forget tasks) ──────────
+_background_tasks: set = set()
+
 
 # ── Re-exports from domain modules ──────────────────────────────────────────
+from app.handlers.cb_conversations import (  # noqa: F401
+    conv_delete_ask_callback,
+    conv_delete_callback,
+    conv_delete_cancel_callback,
+    conv_delete_confirm_callback,
+    conv_page_callback,
+    conv_rename_ask_callback,
+    conv_rename_callback,
+    conv_rename_cancel_callback,
+    conv_switch_callback,
+    conv_switch_to_callback,
+    refresh_metrics_callback,
+    send_conversation_selection,
+)
+from app.handlers.cb_documents import (  # noqa: F401
+    document_callback,
+)
 from app.handlers.cb_roles import (  # noqa: F401
     DummyUpdate,
-    role_rename_menu_callback,
-    role_rename_pick_callback,
-    start_menu_callback,
+    open_roles_callback,
     role_apply_callback,
     role_clear_callback,
     role_create_callback,
     role_create_cancel_callback,
-    role_rename_cancel_callback,
+    role_create_manual_callback,
     role_custom_apply_callback,
-    role_custom_save_callback,
     role_custom_retry_callback,
+    role_custom_save_callback,
     role_delete_ask_callback,
     role_delete_cancel_callback,
     role_delete_confirm_callback,
     role_detail_callback,
-    role_view_prompt_callback,
-    role_nav_callback,
-    role_page_callback,
-    open_roles_callback,
-    role_create_manual_callback,
     role_manual_cancel_callback,
     role_manual_save_callback,
+    role_nav_callback,
+    role_page_callback,
+    role_rename_cancel_callback,
+    role_rename_menu_callback,
+    role_rename_pick_callback,
+    role_view_prompt_callback,
+    start_menu_callback,
 )
-
-from app.handlers.cb_documents import (  # noqa: F401
-    document_callback,
-)
-
-from app.handlers.cb_conversations import (  # noqa: F401
-    send_conversation_selection,
-    conv_page_callback,
-    conv_switch_callback,
-    conv_switch_to_callback,
-    conv_rename_callback,
-    conv_delete_callback,
-    conv_delete_ask_callback,
-    conv_rename_ask_callback,
-    conv_rename_cancel_callback,
-    conv_delete_confirm_callback,
-    conv_delete_cancel_callback,
-    refresh_metrics_callback,
-)
-
 
 # ── Core / Navigation callbacks (stay here — thin and tightly coupled) ───────
 
@@ -227,11 +227,12 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     if task_to_run:
 
         async def task_wrapper() -> None:
-            async with _HEAVY_CALLBACK_SEMAPHORE:
-                async with user_lock:
-                    await task_to_run
+            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                await task_to_run
 
-        asyncio.create_task(task_wrapper())
+        _task = asyncio.create_task(task_wrapper())
+        _background_tasks.add(_task)
+        _task.add_done_callback(_background_tasks.discard)
 
 
 async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -268,20 +269,21 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     async def task_wrapper() -> None:
-        async with _HEAVY_CALLBACK_SEMAPHORE:
-            async with user_lock:
-                if action == "confirm":
-                    chat_state = await get_user_chat(user_id)
-                    user_message = original_message.text
-                    await agent._handle_regular_chat(
-                        placeholder_message,
-                        user_id,
-                        user_message,
-                        chat_state,
-                        model_override=model_override,
-                    )
+        async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+            if action == "confirm":
+                chat_state = await get_user_chat(user_id)
+                user_message = original_message.text
+                await agent._handle_regular_chat(
+                    placeholder_message,
+                    user_id,
+                    user_message,
+                    chat_state,
+                    model_override=model_override,
+                )
 
-    asyncio.create_task(task_wrapper())
+    _task = asyncio.create_task(task_wrapper())
+    _background_tasks.add(_task)
+    _task.add_done_callback(_background_tasks.discard)
 
 
 async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

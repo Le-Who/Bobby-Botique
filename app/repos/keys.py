@@ -9,23 +9,23 @@ Extracted from app/database.py to isolate key-management domain logic.
 
 import hashlib
 import logging
-import asyncpg
-from datetime import datetime, date
-from typing import Dict, Any, List, Optional
-
 import re
+from datetime import date, datetime
+from typing import Any
+
+import asyncpg
 
 from app.config import UTC_TZ, settings
-from app.utils.time import get_pacific_tz
-from app.crypto import safe_decrypt, encrypt_api_key
+from app.crypto import encrypt_api_key, safe_decrypt
 from app.database import (
+    clear_user_context,
+    db_execute_many,
     db_manager,
     db_query,
-    db_execute_many,
     reconnect_database,
     set_user_context,
-    clear_user_context,
 )
+from app.utils.time import get_pacific_tz
 
 _SAFE_TABLE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
@@ -53,7 +53,7 @@ class DailyKeyManager:
 
     async def get_available_key(
         self, model_name: str, conn=None
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get the least-used key for the given model today."""
         today = self._today()
         query = f"""
@@ -70,7 +70,7 @@ class DailyKeyManager:
             return {"key_hash": results[0]["key_hash"], "api_key": safe_decrypt(results[0]["api_key"])}
         return None
 
-    async def increment_usage(self, key_hash: str, model_name: str) -> List[Dict[str, Any]]:
+    async def increment_usage(self, key_hash: str, model_name: str) -> list[dict[str, Any]]:
         """UPSERT a +1 into the daily usage counter."""
         today = self._today()
         query = f"""
@@ -84,7 +84,7 @@ class DailyKeyManager:
         return await db_query(query, (key_hash, model_name, today))
 
     async def is_key_available(
-        self, key_hash: str, model_name: str, daily_limit: Optional[int], conn=None
+        self, key_hash: str, model_name: str, daily_limit: int | None, conn=None
     ) -> bool:
         """Check if a key is under its daily threshold."""
         if not daily_limit:
@@ -100,8 +100,8 @@ class DailyKeyManager:
         return current_usage < daily_limit * settings.LIMIT_THRESHOLD_PERCENT
 
     async def get_fresh_available_key(
-        self, model_name: str, daily_limit: Optional[int], conn=None
-    ) -> Optional[Dict[str, Any]]:
+        self, model_name: str, daily_limit: int | None, conn=None
+    ) -> dict[str, Any] | None:
         """Find the least-used key that is still under the daily limit."""
         today = self._today()
 
@@ -140,7 +140,7 @@ _openrouter_km = DailyKeyManager("openrouter_api_keys", "openrouter_key_usage")
 # ─── Gemini key helpers (public API — signatures unchanged) ──────────────────
 
 
-async def get_model_daily_limit(model_name: str) -> Optional[int]:
+async def get_model_daily_limit(model_name: str) -> int | None:
     async with db_manager._cache_lock:
         if (
             hasattr(db_manager, "_model_config_cache")
@@ -176,7 +176,7 @@ async def _is_key_available(key_hash: str, model_name: str, conn=None) -> bool:
 
 async def _get_fresh_available_key(
     model_name: str, conn=None
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     daily_limit = await get_model_daily_limit(model_name)
     return await _gemini_km.get_fresh_available_key(model_name, daily_limit, conn=conn)
 
@@ -190,7 +190,7 @@ async def invalidate_key_cache(model_name: str = None) -> None:
             db_manager._active_keys_cache.clear()
 
 
-async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
+async def get_available_gemini_key(model_name: str) -> dict[str, Any] | None:
     # Optimistic cache check (no DB lock needed)
     cached_key = None
     async with db_manager._cache_lock:
@@ -217,7 +217,7 @@ async def get_available_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
             await clear_user_context(conn=conn)
 
 
-async def get_current_active_gemini_key(model_name: str) -> Optional[Dict[str, Any]]:
+async def get_current_active_gemini_key(model_name: str) -> dict[str, Any] | None:
     """Get the currently active Gemini API key with the lowest usage.
 
     Delegates to DailyKeyManager.get_fresh_available_key to avoid duplicating
@@ -268,7 +268,7 @@ class MonthlyKeyManager:
     def _current_month(self) -> str:
         return datetime.now(UTC_TZ).strftime("%Y-%m")
 
-    async def get_available_key(self) -> Optional[Dict[str, Any]]:
+    async def get_available_key(self) -> dict[str, Any] | None:
         """Get the least-used key that's still under the monthly credit threshold."""
         current_month = self._current_month()
         query = f"""
@@ -309,7 +309,7 @@ _tavily_km = MonthlyKeyManager(
 )
 
 
-async def get_available_tavily_key() -> Optional[Dict[str, Any]]:
+async def get_available_tavily_key() -> dict[str, Any] | None:
     return await _tavily_km.get_available_key()
 
 
@@ -346,7 +346,7 @@ async def force_update_tavily_keys() -> bool:
 # ─── OpenRouter key helpers (delegates to DailyKeyManager) ───────────────────
 
 
-async def get_available_openrouter_key(model_name: str) -> Optional[Dict[str, Any]]:
+async def get_available_openrouter_key(model_name: str) -> dict[str, Any] | None:
     if not db_manager.is_connected:
         await reconnect_database()
 

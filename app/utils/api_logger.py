@@ -1,12 +1,13 @@
+import asyncio
+import json
 import logging
 import os
 import time
-import json
 import traceback
-from typing import Dict, Any, Optional, Callable
-from functools import wraps
+from collections.abc import Callable
 from datetime import datetime
-import asyncio
+from functools import wraps
+from typing import Any
 
 from app.request_context import get_request_id
 
@@ -39,9 +40,9 @@ class APILogger:
         api_name: str,
         endpoint: str,
         method: str = "GET",
-        request_data: Optional[Dict[str, Any]] = None,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
+        request_data: dict[str, Any] | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
     ):
         """Логирует начало API запроса"""
         log_data = {
@@ -66,12 +67,12 @@ class APILogger:
         api_name: str,
         endpoint: str,
         start_time: float,
-        response_data: Optional[Dict[str, Any]] = None,
-        status_code: Optional[int] = None,
+        response_data: dict[str, Any] | None = None,
+        status_code: int | None = None,
         success: bool = True,
-        error_message: Optional[str] = None,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
+        error_message: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
     ):
         """Логирует завершение API запроса"""
         duration = time.time() - start_time
@@ -107,8 +108,8 @@ class APILogger:
         model: str,
         prompt_length: int,
         has_images: bool = False,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
     ):
         """Специальное логирование для Gemini API"""
         try:
@@ -142,11 +143,11 @@ class APILogger:
         start_time: float,
         model: str,
         response_length: int,
-        token_count: Optional[int] = None,
+        token_count: int | None = None,
         success: bool = True,
-        error_message: Optional[str] = None,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
+        error_message: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
     ):
         """Логирует ответ Gemini API"""
         try:
@@ -195,11 +196,11 @@ class APILogger:
         start_time: float,
         model: str,
         response_length: int,
-        token_count: Optional[int] = None,
+        token_count: int | None = None,
         success: bool = True,
-        error_message: Optional[str] = None,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
+        error_message: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
     ):
         """Логирует ответ OpenRouter API"""
         try:
@@ -245,8 +246,8 @@ class APILogger:
         self,
         query: str,
         search_type: str,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
     ):
         """Специальное логирование для Tavily API"""
         start_time = time.time()
@@ -273,9 +274,9 @@ class APILogger:
         search_type: str,
         results_count: int,
         success: bool = True,
-        error_message: Optional[str] = None,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
+        error_message: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
     ):
         """Логирует ответ Tavily API"""
         duration = time.time() - start_time
@@ -307,9 +308,9 @@ class APILogger:
     def log_telegram_request(
         self,
         method: str,
-        chat_id: Optional[int] = None,
-        user_id: Optional[int] = None,
-        message_type: Optional[str] = None,
+        chat_id: int | None = None,
+        user_id: int | None = None,
+        message_type: str | None = None,
     ):
         """Специальное логирование для Telegram Bot API"""
         start_time = time.time()
@@ -334,9 +335,9 @@ class APILogger:
         start_time: float,
         method: str,
         success: bool = True,
-        error_message: Optional[str] = None,
-        chat_id: Optional[int] = None,
-        user_id: Optional[int] = None,
+        error_message: str | None = None,
+        chat_id: int | None = None,
+        user_id: int | None = None,
     ):
         """Логирует ответ Telegram Bot API"""
         duration = time.time() - start_time
@@ -368,9 +369,9 @@ class APILogger:
         self,
         api_name: str,
         error: Exception,
-        context: Optional[Dict[str, Any]] = None,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
+        context: dict[str, Any] | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
     ):
         """Логирует ошибки API с полным стектрейсом"""
         error_data = {
@@ -389,8 +390,8 @@ class APILogger:
         self.logger.error(f"💥 API ERROR: {self._format_log(error_data)}")
 
     def _sanitize_data(
-        self, data: Optional[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
+        self, data: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
         """Очищает чувствительные данные из логов"""
         if not data:
             return None
@@ -408,8 +409,8 @@ class APILogger:
         return sanitized
 
     def _summarize_response(
-        self, response_data: Optional[Dict[str, Any]]
-    ) -> Optional[Dict[str, Any]]:
+        self, response_data: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
         """Создает краткое описание ответа"""
         if not response_data:
             return None

@@ -10,20 +10,20 @@ Provides:
 - log_with_context() for adding user/chat context to logs
 """
 
+import functools
+import json
 import logging
 import os
 import sys
-import json
 import time
-import functools
-from typing import Optional, Any
+from typing import Any
 
 from app.request_context import get_request_id
 
 # Try importing Rich for pretty dev output (optional dependency)
 try:
-    from rich.logging import RichHandler
     from rich.console import Console
+    from rich.logging import RichHandler
     from rich.traceback import install as install_rich_tracebacks
 
     HAS_RICH = True
@@ -197,8 +197,8 @@ def log_with_context(
     logger: logging.Logger,
     level: int,
     message: str,
-    user_id: Optional[int] = None,
-    chat_id: Optional[int] = None,
+    user_id: int | None = None,
+    chat_id: int | None = None,
     **extra: Any,
 ) -> None:
     """
@@ -319,7 +319,7 @@ def setup_detailed_logging(
     log_to_file: bool = False,
     log_file_path: str = "/tmp/bot_detailed.log",
     enable_structured_logging: bool = False,
-    enable_pretty: Optional[bool] = None,
+    enable_pretty: bool | None = None,
 ) -> None:
     """
     Настраивает детальное логирование for всех компонентов бота.

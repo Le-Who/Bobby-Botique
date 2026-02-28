@@ -7,8 +7,6 @@ search → analysis → response generation.
 """
 
 import logging
-from typing import Optional
-
 
 # ── Stage definitions ──────────────────────────────────────────────────────────
 
@@ -47,7 +45,7 @@ async def update_stage(
     message,
     stage_list: list,
     stage_index: int,
-    extra_text: Optional[str] = None,
+    extra_text: str | None = None,
 ) -> int:
     """
     Update the placeholder message to show the current processing stage.

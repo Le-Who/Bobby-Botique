@@ -7,16 +7,17 @@ from database infrastructure.
 
 import json
 import logging
+from typing import Any
+
 import asyncpg
-from typing import Dict, Any, Optional
 
 from app.config import settings
 from app.database import (
+    clear_user_context,
     db_manager,
     db_query,
     reconnect_database,
     set_user_context,
-    clear_user_context,
 )
 
 
@@ -61,7 +62,7 @@ async def invalidate_user_auth_cache(user_id: int) -> None:
             del db_manager._user_auth_cache[user_id]
 
 
-async def load_user_state(user_id: int) -> Optional[Dict[str, Any]]:
+async def load_user_state(user_id: int) -> dict[str, Any] | None:
     """Load persisted user state from the database.
 
     Returns a dict of state fields or None if no saved state exists.
@@ -103,12 +104,12 @@ async def load_user_state(user_id: int) -> Optional[Dict[str, Any]]:
 async def save_user_state(
     user_id: int,
     document_mode: bool = False,
-    selected_document_id: Optional[int] = None,
+    selected_document_id: int | None = None,
     awaiting_custom_role_input: bool = False,
-    generated_role: Optional[dict] = None,
-    last_custom_role_prompt: Optional[str] = None,
+    generated_role: dict | None = None,
+    last_custom_role_prompt: str | None = None,
     generating_custom_role: bool = False,
-    last_sent_message_text: Optional[str] = None,
+    last_sent_message_text: str | None = None,
     awaiting_manual_role_title: bool = False,
     awaiting_manual_role_prompt: bool = False,
     manual_role_title: str = "",

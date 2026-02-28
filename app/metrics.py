@@ -1,15 +1,15 @@
-import time
-import logging
 import asyncio
-from datetime import datetime, date
-from typing import Dict, Any
-from dataclasses import dataclass, field
-from collections import defaultdict, deque
 import json
+import logging
+import time
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Any
 
 from app import database as db
-from app.utils import time as time_utils
 from app.request_context import get_request_id
+from app.utils import time as time_utils
 
 
 @dataclass
@@ -19,8 +19,8 @@ class PerformanceMetrics:
     request_count: int = 0
     total_response_time: float = 0.0
     error_count: int = 0
-    api_calls: Dict[str, int] = field(default_factory=dict)
-    model_usage: Dict[str, int] = field(default_factory=dict)
+    api_calls: dict[str, int] = field(default_factory=dict)
+    model_usage: dict[str, int] = field(default_factory=dict)
     search_queries: int = 0
     cache_hits: int = 0
     cache_misses: int = 0
@@ -34,11 +34,11 @@ class MetricsCollector:
         self.response_times = deque(maxlen=1000)  # Храним afterдние 1000 requestов
         self.error_log = deque(maxlen=100)  # Храним afterдние 100 ошибок
         self.api_event_log = deque(maxlen=200)  # Храним afterдние API события
-        self.daily_metrics: Dict[str, PerformanceMetrics] = defaultdict(
+        self.daily_metrics: dict[str, PerformanceMetrics] = defaultdict(
             PerformanceMetrics
         )
         # Per-user daily metrics: key = (date_str, user_id)
-        self._user_daily: Dict[tuple, Dict[str, Any]] = defaultdict(
+        self._user_daily: dict[tuple, dict[str, Any]] = defaultdict(
             lambda: {"request_count": 0, "model_usage": {}}
         )
         self._events_queue = asyncio.Queue()
@@ -59,7 +59,7 @@ class MetricsCollector:
                     )
                     self._process_event(event)
                     self._events_queue.task_done()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
 
                 now = time.time()
@@ -73,7 +73,7 @@ class MetricsCollector:
                 logging.error("Error in metrics event processor: %s", e, exc_info=True)
                 await asyncio.sleep(5)
 
-    def _process_event(self, event: Dict[str, Any]):
+    def _process_event(self, event: dict[str, Any]):
         """Обрабатывает одно событие метрики и обновляет локальные словари без блокировок"""
         today = date.today().isoformat()
         event_type = event.get("type")
@@ -301,7 +301,7 @@ class MetricsCollector:
         try:
             # Load общие metrics (without JSONB полей в основном requestе)
             result = await db.db_query("""
-                SELECT 
+                SELECT
                     COALESCE(SUM(request_count), 0) as total_requests,
                     COALESCE(SUM(total_response_time), 0.0) as total_time,
                     COALESCE(SUM(error_count), 0) as total_errors,
@@ -472,7 +472,7 @@ class MetricsCollector:
             return 0.0
         return (self.metrics.cache_hits / total_cache_requests) * 100
 
-    async def get_metrics_summary(self) -> Dict[str, Any]:
+    async def get_metrics_summary(self) -> dict[str, Any]:
         """Возвращает сводку метрик"""
         recent_errors = list(self.error_log)[-10:]
 
@@ -587,7 +587,7 @@ def track_metrics(func_name: str):
 class RoleMetrics:
     """Метрики использования ролей"""
 
-    role_applications: Dict[str, int] = field(default_factory=dict)  # role_key -> count
+    role_applications: dict[str, int] = field(default_factory=dict)  # role_key -> count
     custom_roles_created: int = 0
     role_clears: int = 0
     role_saves: int = 0
@@ -694,7 +694,7 @@ class RoleConversationMetricsCollector:
             f"Summarization triggered: {reason}, tokens saved: {tokens_saved}"
         )
 
-    async def get_metrics_summary(self) -> Dict[str, Any]:
+    async def get_metrics_summary(self) -> dict[str, Any]:
         """Возвращает сводку метрик"""
         return {
             "roles": {
@@ -724,7 +724,7 @@ class RoleConversationMetricsCollector:
 role_conv_metrics = RoleConversationMetricsCollector()
 
 
-async def get_system_status_data() -> Dict[str, Any]:
+async def get_system_status_data() -> dict[str, Any]:
     """
     Агрегирует все системные metrics, вkeyая проfromводительность,
     использование API keyей и кредитов.

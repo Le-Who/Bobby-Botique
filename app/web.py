@@ -11,35 +11,35 @@ Uses Quart (ASGI-native Flask-compatible framework) served directly by
 Hypercorn — no sync↔async bridge needed.
 """
 
-import os
-import hmac
-import hashlib
-import datetime
-import logging
 import asyncio
+import datetime
+import hashlib
+import hmac
+import logging
+import os
 import secrets
 import time
-from functools import wraps
-from typing import Dict
 from collections import defaultdict
+from functools import wraps
+
 from quart import (
     Quart,
+    g,
+    jsonify,
+    redirect,
     render_template,
     request,
-    redirect,
-    url_for,
     session,
-    abort,
-    jsonify,
-    g,
+    url_for,
 )
+
 from app import database
 from app.config import settings
 from app.repos.metrics_repo import (
-    get_gemini_key_usage_stats,
-    get_tavily_key_usage_stats,
     get_active_key_info,
+    get_gemini_key_usage_stats,
     get_supabase_metrics,
+    get_tavily_key_usage_stats,
 )
 
 # --- QUART APP SETUP ---
@@ -144,7 +144,7 @@ def require_auth(f):
 
 
 # Simple IP-based login rate limiter (brute-force protection)
-_login_attempts: Dict[str, list] = defaultdict(list)
+_login_attempts: dict[str, list] = defaultdict(list)
 _LOGIN_MAX_ATTEMPTS = 5
 _LOGIN_WINDOW_SECONDS = 300  # 5 minutes
 _login_cleanup_counter = 0
@@ -371,7 +371,7 @@ async def api_keys():
                 *[get_active_key_info(m) for m in models],
                 return_exceptions=True,
             )
-            for model, result in zip(models, results):
+            for model, result in zip(models, results, strict=False):
                 if isinstance(result, Exception):
                     continue
                 if result:

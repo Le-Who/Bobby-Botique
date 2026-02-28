@@ -4,18 +4,17 @@ AI Document handler — processes questions about uploaded documents.
 
 import logging
 
-from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.config import settings
 from app.database import ChatState
-from app.utils.messaging import send_long_message
-from app.metrics import metrics_collector
-from app.utils.stage_indicators import update_stage, STAGES_DOCUMENT
-
 from app.handlers.ai_core import (
-    handle_ai_response_error,
     _get_ai_response_with_routing,
+    handle_ai_response_error,
 )
+from app.metrics import metrics_collector
+from app.utils.messaging import send_long_message
+from app.utils.stage_indicators import STAGES_DOCUMENT, update_stage
 
 
 async def _handle_document_question(
@@ -27,7 +26,7 @@ async def _handle_document_question(
     """Обрабатывает вопросы по загруженным документам"""
     try:
         # Get afterдний document user
-        from app.document_processor import get_user_documents, get_document_content
+        from app.document_processor import get_document_content, get_user_documents
 
         documents = await get_user_documents(user_id)
         if not documents:

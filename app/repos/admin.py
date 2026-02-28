@@ -2,7 +2,7 @@
 Repository for admin-only operations.
 """
 
-from typing import List, Dict, Any
+from typing import Any
 
 from app import database as db
 
@@ -23,7 +23,7 @@ async def revoke_user(user_id: int) -> None:
     )
 
 
-async def list_authorized_users() -> List[int]:
+async def list_authorized_users() -> list[int]:
     """Returns all authorized user IDs."""
     rows = await db.db_query("SELECT user_id FROM users WHERE is_authorized = 1")
     return [row["user_id"] for row in rows]
@@ -32,26 +32,26 @@ async def list_authorized_users() -> List[int]:
 async def clear_old_metrics() -> None:
     """Deletes metrics older than 30 days and errors older than 7 days."""
     await db.db_query("""
-        DELETE FROM metrics 
+        DELETE FROM metrics
         WHERE metric_date < CURRENT_DATE - INTERVAL '30 days'
     """)
     await db.db_query("""
-        DELETE FROM error_logs 
+        DELETE FROM error_logs
         WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
     """)
 
 
-async def get_all_tavily_keys() -> List[Dict[str, Any]]:
+async def get_all_tavily_keys() -> list[dict[str, Any]]:
     """Returns all Tavily API keys (admin display)."""
     return await db.db_query("SELECT key_hash, api_key FROM tavily_api_keys")
 
 
-async def get_tavily_usage_for_month(month_str: str) -> List[Dict[str, Any]]:
+async def get_tavily_usage_for_month(month_str: str) -> list[dict[str, Any]]:
     """Returns Tavily key usage for a given month."""
     return await db.db_query(
         """
         SELECT key_hash, credit_usage
-        FROM tavily_key_usage 
+        FROM tavily_key_usage
         WHERE usage_month = $1
         """,
         (month_str,),

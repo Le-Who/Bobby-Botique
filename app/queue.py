@@ -1,10 +1,11 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Callable, List, Coroutine
-from dataclasses import dataclass
-from enum import Enum
 import uuid
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any
 
 from app import database as db
 
@@ -31,14 +32,14 @@ class Task:
     id: str
     user_id: int
     task_type: str
-    data: Dict[str, Any]
+    data: dict[str, Any]
     priority: TaskPriority
     status: TaskStatus
     created_at: datetime
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    result: dict[str, Any] | None = None
+    error: str | None = None
     retry_count: int = 0
     max_retries: int = 3
 
@@ -51,13 +52,13 @@ class TaskQueue:
         self.queue: asyncio.PriorityQueue = asyncio.PriorityQueue(
             maxsize=100
         )  # prevent unbounded queue growth
-        self.tasks: Dict[str, Task] = {}
-        self.workers: List[asyncio.Task] = []
+        self.tasks: dict[str, Task] = {}
+        self.workers: list[asyncio.Task] = []
         self.running = False
         self._lock = asyncio.Lock()
-        self._task_handlers: Dict[str, Callable] = {}
-        self._cleanup_task: Optional[asyncio.Task] = None
-        self._metrics_scheduler_task: Optional[asyncio.Task] = None
+        self._task_handlers: dict[str, Callable] = {}
+        self._cleanup_task: asyncio.Task | None = None
+        self._metrics_scheduler_task: asyncio.Task | None = None
         # Initialize обработчики задач
         self._init_task_handlers()
 
@@ -118,7 +119,7 @@ class TaskQueue:
 
     def _start_background_task(
         self,
-        task_ref: Optional[asyncio.Task],
+        task_ref: asyncio.Task | None,
         coro_factory: Callable[[], Coroutine[Any, Any, Any]],
         task_name: str,
     ) -> asyncio.Task:
@@ -135,7 +136,7 @@ class TaskQueue:
         self,
         user_id: int,
         task_type: str,
-        data: Dict[str, Any],
+        data: dict[str, Any],
         priority: TaskPriority = TaskPriority.NORMAL,
     ) -> str:
         """Добавляет задачу в очередь"""
@@ -162,7 +163,7 @@ class TaskQueue:
             await asyncio.wait_for(
                 self.queue.put((-priority.value, task_id)), timeout=2.0
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             async with self._lock:
                 self.tasks.pop(task_id, None)
             logging.warning("Task queue put timeout. Rejecting task %s", task_id)
@@ -171,7 +172,7 @@ class TaskQueue:
         logging.info("Added task %s of type %s for user %s", task_id, task_type, user_id)
         return task_id
 
-    async def get_task_status(self, task_id: str) -> Optional[Task]:
+    async def get_task_status(self, task_id: str) -> Task | None:
         """Получает статус задачи"""
         async with self._lock:
             return self.tasks.get(task_id)
@@ -196,7 +197,7 @@ class TaskQueue:
         while True:
             try:
                 # Get задачу from очереди
-                priority, task_id = await self.queue.get()
+                _, task_id = await self.queue.get()
 
                 try:
                     # Check сигнал завершения
@@ -251,7 +252,7 @@ class TaskQueue:
 
         logging.info("Worker %s stopped", worker_name)
 
-    async def _execute_task(self, task: Task) -> Dict[str, Any]:
+    async def _execute_task(self, task: Task) -> dict[str, Any]:
         """Выполняет задачу"""
         handler = self._task_handlers.get(task.task_type)
         if not handler:
@@ -261,7 +262,7 @@ class TaskQueue:
         result = await handler(**task.data)
         return result
 
-    async def _handle_document_processing(self, **kwargs) -> Dict[str, Any]:
+    async def _handle_document_processing(self, **kwargs) -> dict[str, Any]:
         """Обработчик для обработки документов"""
         try:
             from app.document_processor import process_uploaded_document
@@ -291,18 +292,18 @@ class TaskQueue:
             logging.error("Error in document processing task: %s", e, exc_info=True)
             return {"status": "failed", "error": str(e)}
 
-    async def _handle_cleanup_metrics(self, **kwargs) -> Dict[str, Any]:
+    async def _handle_cleanup_metrics(self, **kwargs) -> dict[str, Any]:
         """Обработчик для очистки старых метрик"""
         try:
             # Delete metrics старше 30 дней
             await db.db_query("""
-                DELETE FROM metrics 
+                DELETE FROM metrics
                 WHERE metric_date < CURRENT_DATE - INTERVAL '30 days'
             """)
 
             # Delete old ошибки (старше 7 дней)
             await db.db_query("""
-                DELETE FROM error_logs 
+                DELETE FROM error_logs
                 WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'
             """)
 
@@ -356,7 +357,7 @@ class TaskQueue:
             except Exception as e:
                 logging.error("Error in metrics cleanup scheduler: %s", e, exc_info=True)
 
-    async def get_queue_stats(self) -> Dict[str, Any]:
+    async def get_queue_stats(self) -> dict[str, Any]:
         """Возвращает статистику очереди"""
         async with self._lock:
             total_tasks = len(self.tasks)
@@ -401,14 +402,14 @@ async def stop_task_queue():
 async def add_background_task(
     user_id: int,
     task_type: str,
-    data: Dict[str, Any],
+    data: dict[str, Any],
     priority: TaskPriority = TaskPriority.NORMAL,
 ) -> str:
     """Добавляет задачу в фоновую очередь"""
     return await task_queue.add_task(user_id, task_type, data, priority)
 
 
-async def get_task_status(task_id: str) -> Optional[Task]:
+async def get_task_status(task_id: str) -> Task | None:
     """Получает статус задачи"""
     return await task_queue.get_task_status(task_id)
 

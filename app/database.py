@@ -1,29 +1,28 @@
-import logging
 import asyncio
-from datetime import datetime
-from app.config import UTC_TZ, settings
-from app.utils.time import get_pacific_tz
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+import asyncpg
+
+from app.config import settings
 from app.errors import (
     ConfigurationError,
     DatabaseConnectionError,
-    DatabaseRateLimitError,
     DatabasePoolError,
+    DatabaseRateLimitError,
 )
-import asyncpg
-from typing import Dict, Any, List, Optional
-from dataclasses import dataclass
-import time
 
 
 @dataclass
 class ChatState:
-    history: List[Dict[str, Any]]
+    history: list[dict[str, Any]]
     model: str
     token_count: int
     search_enabled: bool
-    system_prompt: Optional[str]
+    system_prompt: str | None
     is_deep_dive: bool = False
-    deep_dive_thread_id: Optional[str] = None
+    deep_dive_thread_id: str | None = None
     _original_length: int = 0
 
 
@@ -32,7 +31,7 @@ class DatabaseManager:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(DatabaseManager, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance.pool = None
 
             from cachetools import TTLCache
@@ -89,15 +88,15 @@ class DatabaseManager:
                 logging.critical(
                     "Supabase.com rate limit exceeded. Please upgrade your plan or wait for quota reset."
                 )
-                raise DatabaseRateLimitError(f"Database rate limit exceeded: {e}")
+                raise DatabaseRateLimitError(f"Database rate limit exceeded: {e}") from e
             elif "connection" in str(e).lower() or "timeout" in str(e).lower():
                 logging.warning(
                     "Database connection issue: %s. This might be temporary.", e
                 )
-                raise DatabaseConnectionError(f"Database connection failed: {e}")
+                raise DatabaseConnectionError(f"Database connection failed: {e}") from e
             else:
                 logging.error("Unexpected database error: %s", e)
-                raise DatabasePoolError(f"Database initialization failed: {e}")
+                raise DatabasePoolError(f"Database initialization failed: {e}") from e
 
     async def close(self):
         # Cancel background tasks
@@ -198,7 +197,7 @@ class DatabaseManager:
                 async with self.pool.acquire() as connection:
                     return await asyncio.wait_for(operation(connection), timeout=30.0)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 last_exception = Exception(
                     f"Database {operation_name} timeout: {query_str[:100]}..."
                 )
@@ -249,7 +248,7 @@ class DatabaseManager:
         return await self._execute_with_retry("query", _do_fetch, query_str, retries)
 
     async def execute_many(
-        self, query_str: str, params_list: List[tuple], retries: int = 3, conn=None
+        self, query_str: str, params_list: list[tuple], retries: int = 3, conn=None
     ):
         if not isinstance(query_str, str) or not query_str.strip():
             raise ValueError("Query must be a non-empty string")
@@ -286,7 +285,7 @@ async def db_query(query: str, params: tuple = (), retries: int = 3, conn=None):
 
 
 async def db_execute_many(
-    query: str, params_list: List[tuple], retries: int = 3, conn=None
+    query: str, params_list: list[tuple], retries: int = 3, conn=None
 ):
     return await db_manager.execute_many(query, params_list, retries, conn)
 
@@ -339,8 +338,8 @@ async def init_db():
 
 async def _init_schema():
     """Create tables, setup RLS, run migrations, and seed initial data."""
-    from app.db.schema import create_tables
     from app.db.migrations import run_migrations
+    from app.db.schema import create_tables
     from app.db.seed import insert_initial_data
 
     await create_tables(db_query)
@@ -354,8 +353,12 @@ async def _init_schema():
 from app.db.rls import (  # noqa: F401, E402
     RLS_CONFIG,
     VALID_TABLES,
-    setup_row_level_security as _setup_rls,
+)
+from app.db.rls import (
     create_rls_policies as _create_rls_policies,
+)
+from app.db.rls import (
+    setup_row_level_security as _setup_rls,
 )
 
 
@@ -373,7 +376,7 @@ async def set_user_context(user_id: int, is_admin: bool = False, conn=None):
     try:
         await db_query(
             """
-            SELECT 
+            SELECT
                 set_config('app.user_id', $1, true),
                 set_config('app.is_admin', $2, true)
         """,
@@ -389,7 +392,7 @@ async def clear_user_context(conn=None):
     try:
         await db_query(
             """
-            SELECT 
+            SELECT
                 set_config('app.user_id', '', true),
                 set_config('app.is_admin', 'false', true)
         """,

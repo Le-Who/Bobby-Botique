@@ -6,16 +6,16 @@ Conversation commands: see cmd_conversations.py
 """
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, CommandHandler, Application
 
-from app.config import settings
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+from app.handlers import menus
 from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.conversations import get_conversation_count
-from app.utils.formatting import TelegramFormatter
-from app.utils.decorators import authorized_only, safe_handler
-from app.handlers import menus
 from app.request_context import set_request_id
+from app.utils.decorators import authorized_only, safe_handler
+from app.utils.formatting import TelegramFormatter
 
 
 @authorized_only
@@ -126,7 +126,7 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
-    text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+    text, _, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state
     )
     await update.message.reply_text(text, reply_markup=reply_markup)
@@ -230,9 +230,9 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     badge = streak_badge(streak)
 
     from app.repos.user_stats import (
+        get_user_model_usage_today,
         get_user_today_request_count,
         get_user_weekly_stats,
-        get_user_model_usage_today,
     )
     today_count = await get_user_today_request_count(user_id)
     week_res = await get_user_weekly_stats(user_id)
@@ -292,13 +292,24 @@ def register(application: Application) -> None:
 
     # Admin commands (from cmd_admin)
     from app.handlers.cmd_admin import (
-        list_models_command, add_user_command, del_user_command,
-        list_users_command, metrics_command, cache_stats_command,
-        queue_stats_command, clear_cache_command, clear_old_metrics_command,
-        update_tavily_keys_command, check_tavily_keys_command,
-        register_group_command, group_stats_command,
-        document_stats_command, clear_old_documents_command,
-        role_conv_metrics_command, reload_config_command, admin_command,
+        add_user_command,
+        admin_command,
+        cache_stats_command,
+        check_tavily_keys_command,
+        clear_cache_command,
+        clear_old_documents_command,
+        clear_old_metrics_command,
+        del_user_command,
+        document_stats_command,
+        group_stats_command,
+        list_models_command,
+        list_users_command,
+        metrics_command,
+        queue_stats_command,
+        register_group_command,
+        reload_config_command,
+        role_conv_metrics_command,
+        update_tavily_keys_command,
     )
 
     application.add_handler(CommandHandler("listmodels", list_models_command))
@@ -322,9 +333,11 @@ def register(application: Application) -> None:
 
     # Conversation commands (from cmd_conversations)
     from app.handlers.cmd_conversations import (
-        save_conversation_command, conversations_command,
-        switch_conversation_command, rename_conversation_command,
+        conversations_command,
         delete_conversation_command,
+        rename_conversation_command,
+        save_conversation_command,
+        switch_conversation_command,
     )
 
     application.add_handler(CommandHandler("save", save_conversation_command))

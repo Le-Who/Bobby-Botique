@@ -4,10 +4,10 @@ Row Level Security configuration and policy management.
 Extracted from app/database.py to reduce monolith size.
 """
 
-import re
 import logging
-import asyncpg
+import re
 
+import asyncpg
 
 # --- RLS Policy Templates ---
 

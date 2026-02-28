@@ -2,11 +2,13 @@
 Network utilities for handling connection errors, timeouts, and retries.
 """
 
-import logging
 import asyncio
-import httpx
-from typing import Callable, Any
+import logging
+from collections.abc import Callable
 from functools import wraps
+from typing import Any
+
+import httpx
 
 
 class NetworkErrorHandler:
@@ -150,7 +152,7 @@ def network_retry_decorator(
         @wraps(func)
         async def wrapper(*args, **kwargs):
             return await NetworkErrorHandler.retry_with_backoff(
-                func, max_retries, base_delay, exceptions=exceptions, *args, **kwargs
+                func, max_retries, base_delay, *args, exceptions=exceptions, **kwargs
             )
 
         return wrapper

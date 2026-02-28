@@ -4,21 +4,21 @@ Database and API key metrics/stats queries for the monitoring dashboard.
 Extracted from app/database.py to isolate observability queries.
 """
 
-import logging
 import time
+from datetime import date, datetime
+from typing import Any
+
 import asyncpg
-from datetime import datetime, date
-from typing import Dict, Any, List, Optional
 
 from app.config import settings
-from app.utils.time import get_pacific_tz
 from app.database import (
+    clear_user_context,
     db_manager,
     db_query,
     reconnect_database,
     set_user_context,
-    clear_user_context,
 )
+from app.utils.time import get_pacific_tz
 
 
 async def optimize_database_connections() -> bool:
@@ -34,7 +34,7 @@ async def optimize_database_connections() -> bool:
         return False
 
 
-async def get_supabase_metrics() -> Dict[str, Any]:
+async def get_supabase_metrics() -> dict[str, Any]:
     if not db_manager.pool:
         return {"status": "disconnected", "pool_size": 0, "active_connections": 0}
     try:
@@ -67,7 +67,7 @@ async def get_supabase_metrics() -> Dict[str, Any]:
         }
 
 
-async def get_tavily_key_usage_stats() -> List[Dict[str, Any]]:
+async def get_tavily_key_usage_stats() -> list[dict[str, Any]]:
     """Get monthly credit usage stats for all Tavily API keys."""
     current_month = datetime.now(get_pacific_tz()).strftime("%Y-%m")
     query = """
@@ -95,26 +95,26 @@ async def get_tavily_key_usage_stats() -> List[Dict[str, Any]]:
     )
 
 
-async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, Any]]:
+async def get_gemini_key_usage_stats(model_name: str = None) -> list[dict[str, Any]]:
     today_pacific: date = datetime.now(get_pacific_tz()).date()
     if model_name:
         query = """
-            SELECT 
+            SELECT
                 ak.key_hash,
                 LEFT(ak.key_hash, 8) || '***' as api_key_preview,
                 COALESCE(ku.request_count, 0) as request_count,
                 mc.daily_limit,
-                CASE 
+                CASE
                     WHEN mc.daily_limit IS NULL THEN 0
                     ELSE (COALESCE(ku.request_count, 0)::float / mc.daily_limit * 100)
                 END as usage_percent,
-                CASE 
+                CASE
                     WHEN mc.daily_limit IS NULL THEN true
                     ELSE COALESCE(ku.request_count, 0) < (mc.daily_limit * $2)
                 END as is_available
             FROM api_keys ak
             LEFT JOIN model_configuration mc ON mc.model_name = $1
-            LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash 
+            LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash
                 AND ku.model_name = $1 AND ku.usage_date = $3
             ORDER BY COALESCE(ku.request_count, 0) ASC
         """
@@ -128,17 +128,17 @@ async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, A
         )
     else:
         query = """
-            SELECT 
+            SELECT
                 ak.key_hash,
                 LEFT(ak.key_hash, 8) || '***' as api_key_preview,
                 ku.model_name,
                 COALESCE(ku.request_count, 0) as request_count,
                 mc.daily_limit,
-                CASE 
+                CASE
                     WHEN mc.daily_limit IS NULL THEN 0
                     ELSE (COALESCE(ku.request_count, 0)::float / mc.daily_limit * 100)
                 END as usage_percent,
-                CASE 
+                CASE
                     WHEN mc.daily_limit IS NULL THEN true
                     ELSE COALESCE(ku.request_count, 0) < (mc.daily_limit * $1)
                 END as is_available
@@ -154,7 +154,7 @@ async def get_gemini_key_usage_stats(model_name: str = None) -> List[Dict[str, A
     return results
 
 
-async def get_active_key_info(model_name: str) -> Optional[Dict[str, Any]]:
+async def get_active_key_info(model_name: str) -> dict[str, Any] | None:
     cached_key = None
     async with db_manager._cache_lock:
         if model_name in db_manager._active_keys_cache:

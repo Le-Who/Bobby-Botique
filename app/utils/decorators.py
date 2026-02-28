@@ -1,9 +1,10 @@
 import functools
 import logging
+
 from telegram import Update
 from telegram.ext import ContextTypes
-from app.repos.users import is_authorized, is_admin
-from app.config import settings
+
+from app.repos.users import is_admin, is_authorized
 
 
 def authorized_only(func):

@@ -11,10 +11,11 @@ This module provides:
 """
 
 import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Optional, Callable, Any, Union, Dict
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from typing import Any
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 # =============================================================================
 # TYPED EXCEPTION HIERARCHY
@@ -24,7 +25,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 class GemaibotBaseException(Exception):
     """Base exception class for all bot-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -287,7 +288,7 @@ NETWORK_ERROR_MSG = "🌐 Ошибка сети. Проверьте подклю
 # =============================================================================
 
 
-def user_friendly_error(raw_error: Union[Exception, str]) -> str:
+def user_friendly_error(raw_error: Exception | str) -> str:
     """Возвращает короткое дружелюбное сообщение для пользователя."""
     text = str(raw_error) if isinstance(raw_error, Exception) else raw_error
     low = (text or "").lower()
@@ -450,7 +451,7 @@ class APIError(GemaibotAPIError):
 
     def __init__(
         self,
-        raw_error: Union[str, Exception],
+        raw_error: str | Exception,
         retryable: bool = False,
         key_related: bool = False,
     ):
@@ -483,7 +484,7 @@ class APIError(GemaibotAPIError):
 async def handle_api_errors(
     placeholder_message: Message,
     context: str = "API request",
-    on_error: Optional[Callable[[Exception], Any]] = None,
+    on_error: Callable[[Exception], Any] | None = None,
     show_retry_button: bool = True,
     reraise: bool = False,
 ):

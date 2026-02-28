@@ -5,14 +5,12 @@ Contains error handling, key resolution, and AI response wrappers
 used by all domain-specific handler modules.
 """
 
-import logging
 import asyncio
-from typing import List
+import logging
 
 from telegram import Message
 
 from app.agent_use_cases import AgentRequestUseCase
-
 
 _agent_use_case = AgentRequestUseCase()
 
@@ -33,10 +31,10 @@ async def handle_ai_response_error(
         True if это была ошибка и она была обработана, False if это не ошибка
     """
     from app.errors import (
-        is_error_message,
-        is_retryable_error,
         build_retry_and_roles_keyboard,
         build_roles_keyboard,
+        is_error_message,
+        is_retryable_error,
     )
 
     if not response_text or not is_error_message(response_text):
@@ -84,7 +82,7 @@ async def _resolve_ai_request(
 async def _resolve_key_generic(
     preferred_model: str,
     get_key_func,
-    fallback_priority: List[str],
+    fallback_priority: list[str],
     excluded_key_hashes: set = None,
     invalidate_cache_func=None,
     provider_name: str = "Unknown",

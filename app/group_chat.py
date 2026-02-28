@@ -1,9 +1,9 @@
-import logging
 import asyncio
-from typing import Dict, Any, List, Optional, Set
+import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from collections import defaultdict
+from typing import Any
 
 from app import database as db
 from app.repos.users import is_authorized as _is_authorized
@@ -20,7 +20,7 @@ class GroupChat:
     last_activity: datetime
     member_count: int
     admin_user_id: int
-    settings: Dict[str, Any]
+    settings: dict[str, Any]
 
 
 class GroupChatManager:
@@ -30,14 +30,14 @@ class GroupChatManager:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(GroupChatManager, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):
         if not hasattr(self, "initialized"):
-            self.active_groups: Dict[int, GroupChat] = {}
-            self.group_settings: Dict[int, Dict[str, Any]] = {}
-            self.user_groups: Dict[int, Set[int]] = defaultdict(
+            self.active_groups: dict[int, GroupChat] = {}
+            self.group_settings: dict[int, dict[str, Any]] = {}
+            self.user_groups: dict[int, set[int]] = defaultdict(
                 set
             )  # user_id -> set of chat_ids
             self._lock = asyncio.Lock()
@@ -262,11 +262,11 @@ class GroupChatManager:
             logging.error("Error checking admin status: %s", e, exc_info=True)
             return False
 
-    async def get_group_info(self, chat_id: int) -> Optional[GroupChat]:
+    async def get_group_info(self, chat_id: int) -> GroupChat | None:
         """Получает информацию о группе"""
         return self.active_groups.get(chat_id)
 
-    async def get_user_groups(self, user_id: int) -> List[GroupChat]:
+    async def get_user_groups(self, user_id: int) -> list[GroupChat]:
         """Получает группы пользователя"""
         group_ids = self.user_groups.get(user_id, set())
         return [
@@ -307,7 +307,7 @@ class GroupChatManager:
         except Exception as e:
             logging.error("Error logging group message: %s", e, exc_info=True)
 
-    async def get_group_stats(self, chat_id: int) -> Dict[str, Any]:
+    async def get_group_stats(self, chat_id: int) -> dict[str, Any]:
         """Получает статистику группы"""
         try:
             # Общее количество сообщений
@@ -373,7 +373,7 @@ async def is_group_admin(chat_id: int, user_id: int) -> bool:
     return await group_chat_manager.is_admin(chat_id, user_id)
 
 
-async def get_group_info(chat_id: int) -> Optional[GroupChat]:
+async def get_group_info(chat_id: int) -> GroupChat | None:
     """Получает информацию о группе"""
     return await group_chat_manager.get_group_info(chat_id)
 

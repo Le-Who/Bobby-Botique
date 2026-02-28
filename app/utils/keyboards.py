@@ -5,9 +5,8 @@ This module provides reusable keyboard components to reduce duplication
 and ensure consistent UI patterns across the bot.
 """
 
-from typing import Optional, List, Tuple
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # =============================================================================
 # BASIC BUTTON BUILDERS
@@ -16,21 +15,21 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 def back_button(
     callback: str = "start_menu", text: str = "⬅️ Назад"
-) -> List[InlineKeyboardButton]:
+) -> list[InlineKeyboardButton]:
     """Creates a back button row."""
     return [InlineKeyboardButton(text, callback_data=callback)]
 
 
 def cancel_button(
     callback: str = "cancel", text: str = "❌ Отмена"
-) -> List[InlineKeyboardButton]:
+) -> list[InlineKeyboardButton]:
     """Creates a cancel button row."""
     return [InlineKeyboardButton(text, callback_data=callback)]
 
 
 def confirm_button(
     callback: str, text: str = "✅ Подтвердить"
-) -> List[InlineKeyboardButton]:
+) -> list[InlineKeyboardButton]:
     """Creates a confirm button row."""
     return [InlineKeyboardButton(text, callback_data=callback)]
 
@@ -45,7 +44,7 @@ def confirm_cancel_row(
     cancel_callback: str = "cancel",
     confirm_text: str = "✅ Да",
     cancel_text: str = "❌ Нет",
-) -> List[InlineKeyboardButton]:
+) -> list[InlineKeyboardButton]:
     """Creates a confirm/cancel button row."""
     return [
         InlineKeyboardButton(confirm_text, callback_data=confirm_callback),
@@ -53,7 +52,7 @@ def confirm_cancel_row(
     ]
 
 
-def new_topic_retry_row() -> List[InlineKeyboardButton]:
+def new_topic_retry_row() -> list[InlineKeyboardButton]:
     """Creates standard row with New Topic and Retry buttons."""
     return [
         InlineKeyboardButton("✨ Новая тема", callback_data="new_topic"),
@@ -71,7 +70,7 @@ def pagination_row(
     total_pages: int,
     callback_prefix: str,
     show_page_number: bool = True,
-) -> List[InlineKeyboardButton]:
+) -> list[InlineKeyboardButton]:
     """
     Generates pagination buttons: [⬅️] [1/5] [➡️]
 
@@ -123,8 +122,8 @@ def pagination_row(
 
 
 def build_keyboard(
-    *rows: List[InlineKeyboardButton],
-    back_to: Optional[str] = None,
+    *rows: list[InlineKeyboardButton],
+    back_to: str | None = None,
     back_text: str = "⬅️ Назад",
 ) -> InlineKeyboardMarkup:
     """
@@ -152,7 +151,7 @@ def build_keyboard(
 
 
 def build_item_list_keyboard(
-    items: List[Tuple[str, str]], back_callback: str, items_per_row: int = 1
+    items: list[tuple[str, str]], back_callback: str, items_per_row: int = 1
 ) -> InlineKeyboardMarkup:
     """
     Builds a keyboard from a list of items.
@@ -182,13 +181,13 @@ def build_item_list_keyboard(
 
 
 def build_paginated_keyboard(
-    items: List[Tuple[str, str]],
+    items: list[tuple[str, str]],
     page: int,
     items_per_page: int,
     callback_prefix: str,
     back_callback: str,
-    extra_rows: Optional[List[List[InlineKeyboardButton]]] = None,
-) -> Tuple[InlineKeyboardMarkup, int]:
+    extra_rows: list[list[InlineKeyboardButton]] | None = None,
+) -> tuple[InlineKeyboardMarkup, int]:
     """
     Builds a paginated keyboard for lists.
 
@@ -239,7 +238,7 @@ def build_paginated_keyboard(
 # =============================================================================
 
 
-def feedback_row() -> List[InlineKeyboardButton]:
+def feedback_row() -> list[InlineKeyboardButton]:
     """Creates feedback button row: 👍 👎 🔄"""
     return [
         InlineKeyboardButton("👍", callback_data="feedback:up"),
@@ -251,7 +250,7 @@ def feedback_row() -> List[InlineKeyboardButton]:
 def after_response_keyboard(
     include_new_topic: bool = True,
     include_retry: bool = True,
-    custom_buttons: Optional[List[InlineKeyboardButton]] = None,
+    custom_buttons: list[InlineKeyboardButton] | None = None,
 ) -> InlineKeyboardMarkup:
     """
     Returns keyboard shown after AI response.
@@ -312,7 +311,7 @@ def deep_dive_keyboard(is_last_part: bool = True) -> InlineKeyboardMarkup:
 def error_with_back_keyboard(
     back_callback: str = "start_menu",
     back_text: str = "⬅️ Назад",
-    extra_buttons: Optional[List[List[InlineKeyboardButton]]] = None,
+    extra_buttons: list[list[InlineKeyboardButton]] | None = None,
 ) -> InlineKeyboardMarkup:
     """
     Creates keyboard for error messages — ensures no dead-ends.

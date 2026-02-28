@@ -2,17 +2,17 @@
 # Оптимизированные промпты для Gemini 2.5 Pro
 # Следуют принципам современного prompt engineering с few-shot примерами
 
-from typing import Dict, Optional
-from app.config import settings
 import asyncio
 import logging
+
+from app.config import settings
 
 # ============================================================================
 # ROLE COMPOSITION
 # ============================================================================
 
 # Предустановленные роли (минимальный набор для быстрого старта)
-DEFAULT_ROLES: Dict[str, Dict[str, str]] = {
+DEFAULT_ROLES: dict[str, dict[str, str]] = {
     "teacher": {
         "title": "📚 Преподаватель",
         "prompt": (
@@ -58,13 +58,13 @@ DEFAULT_ROLES: Dict[str, Dict[str, str]] = {
 }
 
 # Кэш для оптимизации формирования системного промпта
-_base_prompt_cache: Optional[str] = None
-_prompt_cache: Dict[str, str] = {}
+_base_prompt_cache: str | None = None
+_prompt_cache: dict[str, str] = {}
 _MAX_CACHE_SIZE = 100  # Максимальное количество кэшированных комбинаций
 
 
 def compose_system_instruction(
-    role_prompt: Optional[str], use_compact: bool = True
+    role_prompt: str | None, use_compact: bool = True
 ) -> str:
     """Собирает системную инструкцию: форматирование по умолчанию + опциональная роль.
     Роль не перезаписывает правила форматирования (`settings.DEFAULT_SYSTEM_PROMPT`).
@@ -250,11 +250,13 @@ def prepare_context_with_limits(
             for part in msg.get("parts", [])
             if isinstance(part, str)
         )
-        asyncio.create_task(
+        _task = asyncio.create_task(
             role_conv_metrics.record_summarization(
                 reason, tokens_saved, len(summary_text)
             )
         )
+        # prevent GC — no set needed since scope is short-lived
+        _task.add_done_callback(lambda t: None)
     except Exception as e:
         logging.warning("Failed to record summarization metrics: %s", e)
 
@@ -341,7 +343,7 @@ def build_context_with_summary(
 _custom_role_cache = {}  # Простой кэш в памяти
 
 
-def get_cached_custom_role(prompt: str) -> Optional[dict]:
+def get_cached_custom_role(prompt: str) -> dict | None:
     """Получить кастомную роль из кэша по промпту"""
     return _custom_role_cache.get(prompt)
 
@@ -359,7 +361,7 @@ def cache_custom_role(prompt: str, role: dict):
 # ============================================================================
 # HELPERS
 # ============================================================================
-def extract_json_object(text: str) -> Optional[dict]:
+def extract_json_object(text: str) -> dict | None:
     """Извлекает первый валидный JSON-объект из мусорного ответа модели.
 
     Поддерживает варианты:

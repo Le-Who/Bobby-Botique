@@ -11,12 +11,11 @@ to store the salt separately.
 """
 
 import base64
-import hashlib
 import logging
 
 from cryptography.fernet import Fernet, InvalidToken
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 # Fixed salt for deterministic key derivation — changing this
 # invalidates all previously encrypted keys.
@@ -68,7 +67,7 @@ def decrypt_api_key(ciphertext: str) -> str:
     try:
         return f.decrypt(ciphertext.encode("ascii")).decode("utf-8")
     except InvalidToken:
-        raise ValueError("Failed to decrypt API key — ADMIN_SECRET may have changed")
+        raise ValueError("Failed to decrypt API key — ADMIN_SECRET may have changed") from None
 
 
 def is_encrypted(value: str) -> bool:

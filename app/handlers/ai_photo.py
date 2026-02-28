@@ -3,35 +3,30 @@ AI Photo & Media Group handlers — single photo processing, media groups,
 concurrent image downloads, and complex media group search.
 """
 
-import logging
-import io
 import asyncio
-from typing import List
+import logging
 
 from PIL import Image
-from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from app import prompts
 from app.config import settings
 from app.database import ChatState
-from app.repos.chats import get_user_chat, update_user_chat
-from app.utils.messaging import send_long_message
-from app import prompts
-from app.metrics import metrics_collector
-
-from app.utils.stage_indicators import update_stage, STAGES_PHOTO
-
 from app.handlers.ai_core import (
-    handle_ai_response_error,
     _get_ai_response_with_routing,
+    handle_ai_response_error,
 )
 from app.handlers.ai_search import (
     _handle_qna_search,
     _handle_research_agent,
 )
+from app.repos.chats import get_user_chat, update_user_chat
+from app.utils.messaging import send_long_message
+from app.utils.stage_indicators import STAGES_PHOTO, update_stage
 
 
 async def _handle_photo(
-    placeholder_message: Message, original_message: Message, chat_state: db.ChatState
+    placeholder_message: Message, original_message: Message, chat_state: ChatState
 ):
     try:
         photo_file = await original_message.photo[-1].get_file()
@@ -202,7 +197,7 @@ async def process_media_group_request(
     placeholder_message: Message,
     update,
     context,
-    messages: List[Message],
+    messages: list[Message],
     caption: str,
 ) -> None:
     # context используется for совместимости с другими функциями
@@ -236,8 +231,8 @@ async def process_media_group_request(
 
 
 async def _download_images_concurrently(
-    messages: List[Message], log_context: str = ""
-) -> List[Image.Image]:
+    messages: list[Message], log_context: str = ""
+) -> list[Image.Image]:
     """
     Downloads images from a list of messages concurrently.
     """
@@ -268,7 +263,7 @@ async def _download_images_concurrently(
 
 async def _handle_media_group_photos(
     placeholder_message: Message,
-    messages: List[Message],
+    messages: list[Message],
     caption: str,
     chat_state: ChatState,
 ):
@@ -422,7 +417,7 @@ _Изображение 2:_ *Современное здание* с иннов�
 
 async def _handle_complex_media_group_search(
     placeholder_message: Message,
-    messages: List[Message],
+    messages: list[Message],
     caption: str,
     search_prefix: str,
     chat_state: ChatState,

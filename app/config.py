@@ -1,11 +1,13 @@
-import os
-import pytz
-import time
 import asyncio
-import logging
-import json
 import hashlib
-from typing import List, Dict, Callable, Any, Optional
+import json
+import logging
+import os
+import time
+from collections.abc import Callable
+from typing import Any
+
+import pytz
 from pydantic import BaseModel, ValidationError
 
 
@@ -21,7 +23,7 @@ def _load_int_env(env_var_name: str, required: bool = True):
     return int(cleaned)
 
 
-def _load_and_clean_keys(env_var_name: str, required: bool = True) -> List[str]:
+def _load_and_clean_keys(env_var_name: str, required: bool = True) -> list[str]:
     """
     Manually loads a comma-separated string from env, cleans it, and returns a list.
     This is the most robust way to handle env vars from hosting providers.
@@ -48,7 +50,7 @@ def _load_and_clean_keys(env_var_name: str, required: bool = True) -> List[str]:
     return keys
 
 
-def _load_daily_limits() -> Dict[str, int]:
+def _load_daily_limits() -> dict[str, int]:
     """
     Загружает DAILY_LIMITS from env переменной to formatе JSON or компактном формате.
 
@@ -90,7 +92,7 @@ def _load_daily_limits() -> Dict[str, int]:
             if result:
                 return result
             else:
-                raise ValueError("No valid limits found")
+                raise ValueError("No valid limits found") from None
     except (ValueError, AttributeError, json.JSONDecodeError) as e:
         logging.warning("Failed to parse DAILY_LIMITS from env: %s. Using defaults.", e)
         return default_limits
@@ -118,10 +120,10 @@ class Settings(BaseModel):
 
     # --- CORE ---
     TELEGRAM_BOT_TOKEN: str
-    ADMIN_SECRET: Optional[str] = None
-    GEMINI_API_KEYS: List[str]
-    TAVILY_API_KEYS: List[str]
-    OPENROUTER_API_KEYS: List[str] = []  # Optional, by default empty list
+    ADMIN_SECRET: str | None = None
+    GEMINI_API_KEYS: list[str]
+    TAVILY_API_KEYS: list[str]
+    OPENROUTER_API_KEYS: list[str] = []  # Optional, by default empty list
     DATABASE_URL: str
     ADMIN_ID: int
     PORT: int
@@ -133,7 +135,7 @@ class Settings(BaseModel):
 
     # --- MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
-    AVAILABLE_MODELS: List[str] = [
+    AVAILABLE_MODELS: list[str] = [
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-flash-latest",
@@ -147,7 +149,7 @@ class Settings(BaseModel):
 
     # --- OPENROUTER MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
-    OPENROUTER_AVAILABLE_MODELS: List[str] = []
+    OPENROUTER_AVAILABLE_MODELS: list[str] = []
     OPENROUTER_DEFAULT_MODEL: str = "stepfun/step-3.5-flash:free"
     OPENROUTER_QNA_MODEL: str = "stepfun/step-3.5-flash:free"
     OPENROUTER_RESEARCH_MODEL: str = "stepfun/step-3.5-flash:free"
@@ -165,7 +167,7 @@ class Settings(BaseModel):
     TAVILY_ADVANCED_SEARCH_COST: int = 2
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     # DAILY_LIMITS загружается from env переменной DAILY_LIMITS to formatе JSON
-    DAILY_LIMITS: Dict[str, int] = {
+    DAILY_LIMITS: dict[str, int] = {
         "gemini-2.5-flash": 15,
         "gemini-flash-latest": 15,
         "gemini-2.5-flash-lite": 15,
@@ -176,7 +178,7 @@ class Settings(BaseModel):
     MAX_DOCUMENTS_PER_USER: int = 5
 
     # --- SAFETY ---
-    SAFETY_SETTINGS: List[Dict[str, str]] = [
+    SAFETY_SETTINGS: list[dict[str, str]] = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
@@ -369,7 +371,7 @@ def load_settings() -> Settings:
         # Catch errors from both Pydantic and our manual functions.
         error_msg = f"FATAL: Could not load settings. Please check your environment variables. Error: {e}"
         print(error_msg)
-        raise ValueError(error_msg)
+        raise ValueError(error_msg) from e
 
 
 # --- TIMEZONES ---
@@ -379,7 +381,7 @@ KYIV_TZ = pytz.timezone("Europe/Kyiv")
 UTC_TZ = pytz.UTC  # Используем константу instead of pytz.utc
 
 # --- LAZY LOADING SETTINGS ---
-_settings_instance: Optional[Settings] = None
+_settings_instance: Settings | None = None
 
 
 def get_settings() -> Settings:
@@ -398,7 +400,7 @@ def get_settings() -> Settings:
 
 
 # Backward compatibility - use lazy loading
-def get_settings_safe() -> Optional[Settings]:
+def get_settings_safe() -> Settings | None:
     """
     Safe version that returns None if settings cannot be loaded.
     Useful for testing and development.
@@ -426,9 +428,9 @@ class ConfigManager:
         self._settings = get_settings_safe()
         self._last_reload = time.time()
         self._reload_interval = 300  # 5 minutes
-        self._watchers: List[Callable] = []
+        self._watchers: list[Callable] = []
         self._lock = asyncio.Lock()
-        self._reload_task: Optional[asyncio.Task] = None
+        self._reload_task: asyncio.Task | None = None
 
     @property
     def settings(self) -> Settings:
@@ -572,17 +574,17 @@ def get_admin_id() -> int:
     return int(config_manager.get_setting("ADMIN_ID"))
 
 
-def get_gemini_keys() -> List[str]:
+def get_gemini_keys() -> list[str]:
     """Returns Gemini API keys."""
     return config_manager.get_setting("GEMINI_API_KEYS", [])
 
 
-def get_tavily_keys() -> List[str]:
+def get_tavily_keys() -> list[str]:
     """Returns Tavily API keys."""
     return config_manager.get_setting("TAVILY_API_KEYS", [])
 
 
-def get_openrouter_keys() -> List[str]:
+def get_openrouter_keys() -> list[str]:
     """Returns OpenRouter API keys."""
     return config_manager.get_setting("OPENROUTER_API_KEYS", [])
 

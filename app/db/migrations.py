@@ -13,6 +13,7 @@ Extracted from app/database.py to reduce monolith size.
 
 import logging
 import pathlib
+
 import asyncpg
 
 
@@ -56,13 +57,12 @@ async def run_migrations(db_query, db_manager):
                 sql_content = sql_file.read_text(encoding="utf-8")
 
                 # Execute inside a transaction
-                async with db_manager.pool.acquire() as conn:
-                    async with conn.transaction():
-                        await conn.execute(sql_content)
-                        await conn.execute(
-                            "INSERT INTO schema_migrations (version, filename) VALUES ($1, $2)",
-                            version, sql_file.name,
-                        )
+                async with db_manager.pool.acquire() as conn, conn.transaction():
+                    await conn.execute(sql_content)
+                    await conn.execute(
+                        "INSERT INTO schema_migrations (version, filename) VALUES ($1, $2)",
+                        version, sql_file.name,
+                    )
 
                 logging.info("Migration %s applied successfully.", version)
                 applied_versions.add(version)

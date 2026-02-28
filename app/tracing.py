@@ -1,19 +1,19 @@
 import contextvars
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Dict, Iterator, Optional
 
 from app.request_context import get_request_id
 
-_trace_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+_trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "trace_id", default=None
 )
-_span_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+_span_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "span_id", default=None
 )
 
 
-def get_trace_context() -> Dict[str, Optional[str]]:
+def get_trace_context() -> dict[str, str | None]:
     return {
         "request_id": get_request_id(),
         "trace_id": _trace_id_var.get(),
@@ -23,8 +23,8 @@ def get_trace_context() -> Dict[str, Optional[str]]:
 
 @contextmanager
 def bind_request_span(
-    request_id: Optional[str] = None, span_name: str = "request"
-) -> Iterator[Dict[str, str]]:
+    request_id: str | None = None, span_name: str = "request"
+) -> Iterator[dict[str, str]]:
     """Bind a lightweight trace/span context that is correlated with request_id.
 
     Contract:

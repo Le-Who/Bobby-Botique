@@ -2,7 +2,7 @@
 Repository for per-user statistics queries.
 """
 
-from typing import List, Dict, Any
+from typing import Any
 
 from app import database as db
 
@@ -17,7 +17,7 @@ async def get_user_today_request_count(user_id: int) -> int:
     return result[0]["cnt"] if result else 0
 
 
-async def get_user_weekly_stats(user_id: int) -> List[Dict[str, Any]]:
+async def get_user_weekly_stats(user_id: int) -> list[dict[str, Any]]:
     """Returns per-day request counts for the last 7 days."""
     return await db.db_query(
         "SELECT metric_date, request_count as cnt "
@@ -27,7 +27,7 @@ async def get_user_weekly_stats(user_id: int) -> List[Dict[str, Any]]:
     )
 
 
-async def get_user_model_usage_today(user_id: int) -> List[Dict[str, Any]]:
+async def get_user_model_usage_today(user_id: int) -> list[dict[str, Any]]:
     """Returns model usage breakdown for today."""
     return await db.db_query(
         "SELECT key as model_name, value::int as cnt "

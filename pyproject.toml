@@ -1,0 +1,29 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "F",      # Pyflakes (unused imports, undefined names, etc.)
+    "B",      # flake8-bugbear (common Python bugs)
+    "I",      # isort (import ordering)
+    "UP",     # pyupgrade (Python 3.11+ syntax modernization)
+    "RUF006", # asyncio dangling tasks
+    "RUF059", # unused unpacked variables
+]
+
+# Rules that are informational but not enforced yet
+# To enable later: "SIM" (simplify), "E" (pycodestyle errors)
+
+ignore = [
+    "F401",   # Handled by noqa comments on intentional re-exports
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files may use broad exceptions, assert, etc.
+"tests/**" = ["B", "RUF"]
+# _cleanup_task is a module-level var; F823 is a false positive in nested async
+"app/handlers/messages.py" = ["F823"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

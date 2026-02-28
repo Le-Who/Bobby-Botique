@@ -1,10 +1,12 @@
 import asyncio
 import logging
-from telegram import Message, InlineKeyboardMarkup
+
+from telegram import Message
 from telegram.error import BadRequest
-from app.utils.text_format import format_text, split_text_safe, strip_formatting
+
+from app.circuit_breaker import TELEGRAM_API_CONFIG, get_circuit_breaker
 from app.utils.keyboards import ai_response_keyboard, deep_dive_keyboard
-from app.circuit_breaker import get_circuit_breaker, TELEGRAM_API_CONFIG
+from app.utils.text_format import format_text, split_text_safe, strip_formatting
 
 
 def _get_telegram_cb():
@@ -82,7 +84,7 @@ async def send_long_message(
                 )
             else:
                 # Reply for subsequent parts
-                current_message = await telegram_cb.call(
+                current_message = await _get_telegram_cb().call(
                     current_message.reply_text,
                     part,
                     parse_mode=parse_mode,

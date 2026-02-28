@@ -9,18 +9,16 @@ import concurrent.futures
 import io
 import logging
 import math
-from typing import Optional, Union
 
 from PIL import Image
-
 
 # Global process pool for image processing outside the GIL
 _image_process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=2)
 
 
 def _image_worker(
-    image_data: Union[bytes, Image.Image], max_size_mb: int = 10
-) -> Optional[bytes]:
+    image_data: bytes | Image.Image, max_size_mb: int = 10
+) -> bytes | None:
     """Synchronous image compression worker (runs in process pool)."""
     from PIL import Image
 
@@ -52,8 +50,8 @@ def _image_worker(
 
 
 async def save_image_as_bytes(
-    image_data: Union[bytes, Image.Image], timeout: float = 5.0, max_size_mb: int = 10
-) -> Optional[bytes]:
+    image_data: bytes | Image.Image, timeout: float = 5.0, max_size_mb: int = 10
+) -> bytes | None:
     """Save image as bytes with timeout and compression outside the GIL."""
     loop = asyncio.get_running_loop()
     try:

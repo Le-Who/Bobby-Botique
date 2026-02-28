@@ -1,15 +1,16 @@
+import logging
 from datetime import datetime
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.utils.formatting import TelegramFormatter, format_key_for_display
-from app.repos.roles import get_user_custom_roles, get_custom_role_count, get_user_custom_roles_full
-from app.repos.user_stats import get_user_today_request_count
-from app.repos.conversations import get_conversation_count, get_user_conversations, get_role_data
-from app.config import settings, get_model_hash, get_openrouter_keys
 from app import prompts
-from app.metrics import get_system_status_data
+from app.config import get_model_hash, get_openrouter_keys, settings
 from app.document_processor import get_user_documents
-import logging
+from app.metrics import get_system_status_data
+from app.repos.conversations import get_conversation_count, get_role_data, get_user_conversations
+from app.repos.roles import get_custom_role_count, get_user_custom_roles, get_user_custom_roles_full
+from app.repos.user_stats import get_user_today_request_count
+from app.utils.formatting import TelegramFormatter, format_key_for_display
 
 
 async def get_start_menu_content(chat_state, user_id=None) -> None:
@@ -199,7 +200,7 @@ def get_model_menu_content(chat_state, context) -> None:
     is_current_openrouter = "/" in current_model if current_model else False
     provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
 
-    text = f"🧠 **Выбор модели**\n\n"
+    text = "🧠 **Выбор модели**\n\n"
     text += f"Текущая: `{current_model}`\n"
 
     # Show hint for current model

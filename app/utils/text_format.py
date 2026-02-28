@@ -1,12 +1,11 @@
-import re
 import html
-from typing import List, Tuple
+import re
 
 # Constants
 MAX_MESSAGE_LENGTH = 4096
 
 
-def format_text(text: str, parse_mode: str = "HTML") -> Tuple[str, str]:
+def format_text(text: str, parse_mode: str = "HTML") -> tuple[str, str]:
     """
     Formats text for Telegram safely.
 
@@ -139,7 +138,7 @@ def markdown_to_html(text: str) -> str:
     return "".join(html_parts)
 
 
-def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> List[str]:
+def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[str]:
     """
     Splits text into chunks safe for Telegram, respecting HTML structure.
     Tries to split by newlines, then spaces, avoiding splitting inside tags.

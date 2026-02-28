@@ -182,6 +182,7 @@ While primarily a Telegram bot, the project includes a web frontend for administ
 | **AI SDKs**        | `google-genai`, OpenAI (compat) | Interaction with LLMs            |
 | **Search**         | `tavily-python`                 | AI-optimized web search          |
 | **Doc Processing** | `pypdf`, `python-docx`          | Text extraction from files       |
+| **Linting**        | Ruff (`pyproject.toml`)         | F, B, I, UP, RUF rules enforced  |
 | **Container**      | Docker                          | Standardization and deployment   |
 
 ---

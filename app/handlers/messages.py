@@ -1,34 +1,33 @@
 # /app/handlers/messages.py
 
 import asyncio
-import types
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, MessageHandler, filters, Application
-from telegram.error import BadRequest, NetworkError
+import types
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest, NetworkError
+from telegram.ext import Application, ContextTypes, MessageHandler, filters
+
+from app import prompts, state
 from app.config import settings
-from app.repos.users import is_authorized
+from app.document_processor import process_uploaded_document
+from app.handlers import agent, menus
+from app.metrics import metrics_collector, role_conv_metrics
 from app.repos.chats import get_user_chat
 from app.repos.conversations import rename_conversation
-from app import state
-from app.document_processor import process_uploaded_document
-from app.metrics import metrics_collector, role_conv_metrics
-from app.utils.formatting import TelegramFormatter
-from app.utils.api_logger import api_logger
-from app import prompts
-from app.handlers import agent
+from app.repos.users import is_authorized
+from app.request_context import set_request_id
+from app.security import check_user_rate_limit
 from app.state import (
+    clear_custom_role_state,
     is_awaiting_custom_role_input,
     set_generated_role,
-    clear_custom_role_state,
-    set_last_custom_role_prompt,
     set_generating_custom_role,
+    set_last_custom_role_prompt,
 )
-from app.security import check_user_rate_limit
-from app.handlers import menus
-from app.request_context import set_request_id
 from app.tracing import bind_request_span
+from app.utils.api_logger import api_logger
+from app.utils.formatting import TelegramFormatter
 
 # Глобальный limitер for тяжёлых AI-задач, чтобы fromбежать перегрузки event loop/провайдеров
 _HEAVY_REQUEST_LIMIT = max(
@@ -138,15 +137,14 @@ async def _handle_manual_role_input(
     user_id: int,
 ) -> bool:
     """Handle text input during manual role creation (title → prompt → preview).
-    
+
     Returns True if the message was consumed by manual role creation flow.
     """
     from app.state import (
-        is_awaiting_manual_role_title,
-        is_awaiting_manual_role_prompt,
-        set_manual_role_title,
         get_manual_role_title,
-        clear_manual_role_state,
+        is_awaiting_manual_role_prompt,
+        is_awaiting_manual_role_title,
+        set_manual_role_title,
     )
 
     message_text = (update.message.text or "").strip() if update.message else ""
@@ -178,7 +176,7 @@ async def _handle_manual_role_input(
         title = get_manual_role_title(user_id)
         # Store prompt in state (NOT context.user_data — it doesn't
         # survive between the text-message Update and the button callback).
-        from app.state import set_manual_role_prompt, finish_manual_role_input
+        from app.state import finish_manual_role_input, set_manual_role_prompt
         set_manual_role_prompt(user_id, message_text)
         # Mark input phase as done, but KEEP title+prompt for save callback
         finish_manual_role_input(user_id)
@@ -224,7 +222,7 @@ async def _handle_custom_role_generation(
         model_for_role = chat_state.model or settings.DEFAULT_MODEL
 
         # Используем универсальную функцию for получения keyа
-        key_data, model_used, resolution = await agent._resolve_ai_request(
+        key_data, model_used, _ = await agent._resolve_ai_request(
             model_for_role
         )
 
@@ -463,7 +461,7 @@ async def _process_media_group_update(
                 MEDIA_GROUPS_TTL[media_group_id] = current_time
                 # Запускаем очистку on первом создании groups
                 if _cleanup_task is None or _cleanup_task.done():
-                    asyncio.create_task(start_media_groups_cleanup())
+                    _cleanup_task = asyncio.create_task(start_media_groups_cleanup())  # noqa: RUF006
 
             # Add message в группу
             MEDIA_GROUPS[media_group_id]["messages"].append(update.message)
@@ -485,9 +483,11 @@ async def _process_media_group_update(
                 async with _media_groups_lock:
                     if media_group_id in MEDIA_GROUPS:
                         MEDIA_GROUPS[media_group_id]["processing_scheduled"] = True
-                asyncio.create_task(
+                _process_task = asyncio.create_task(
                     delayed_process_media_group(media_group_id, context, 1.0)
                 )
+                _background_tasks.add(_process_task)
+                _process_task.add_done_callback(_background_tasks.discard)
 
         return True
     return False
@@ -497,7 +497,7 @@ async def _handle_document_mode_interaction(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ) -> bool:
     """Обрабатывает взаимодействие в режиме документов. Возвращает True, если обработано."""
-    from app.state import is_in_document_mode, get_selected_document_id
+    from app.state import get_selected_document_id, is_in_document_mode
 
     if is_in_document_mode(user_id):
         document_id = get_selected_document_id(user_id)
@@ -662,7 +662,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     try:
                         await asyncio.wait_for(done_event.wait(), timeout=wait_for)
                         return  # Main task finished — stop heartbeat
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         pass
                     elapsed = threshold
                     try:
@@ -856,23 +856,22 @@ async def process_media_group(media_group_id: str, context: ContextTypes.DEFAULT
         return
 
     try:
-        async with _HEAVY_REQUEST_SEMAPHORE:
-            async with state.get_user_lock(user_id):
-                # SimpleNamespace provides attribute access compatible with agent
-                mock_update = types.SimpleNamespace(
-                    message=messages[0],
-                    effective_user=messages[0].from_user,
-                    effective_chat=messages[0].chat,
-                    update_id=None,
-                    callback_query=None,
-                )
+        async with _HEAVY_REQUEST_SEMAPHORE, state.get_user_lock(user_id):
+            # SimpleNamespace provides attribute access compatible with agent
+            mock_update = types.SimpleNamespace(
+                message=messages[0],
+                effective_user=messages[0].from_user,
+                effective_chat=messages[0].chat,
+                update_id=None,
+                callback_query=None,
+            )
 
-                # Process группу via agent
-                from app.handlers.agent import process_media_group_request
+            # Process группу via agent
+            from app.handlers.agent import process_media_group_request
 
-                await process_media_group_request(
-                    placeholder_message, mock_update, context, messages, caption
-                )
+            await process_media_group_request(
+                placeholder_message, mock_update, context, messages, caption
+            )
 
     except Exception as e:
         logging.error(
@@ -896,7 +895,7 @@ async def handle_document_question(
     user_message = update.message.text
 
     try:
-        from app.document_processor import get_document_content, get_document_by_id
+        from app.document_processor import get_document_by_id, get_document_content
 
         # Get информацию о documentе
         document = await get_document_by_id(document_id, user_id)
@@ -980,8 +979,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     try:
         # Скачиваем file во temporary file на диске instead of ОЗУ
-        import tempfile
         import os
+        import tempfile
 
         file = await document.get_file()
 

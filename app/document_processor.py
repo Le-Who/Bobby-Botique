@@ -1,21 +1,21 @@
-import logging
-import hashlib
-import tempfile
 import asyncio
-import asyncpg
-import io
+import hashlib
+import logging
+import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Any
+
+import asyncpg
 import httpx
 import pypdf
-from docx import Document
-# PyMuPDF removed for free tier optimization
 
-from app.config import settings
 from app import database
+
+# PyMuPDF removed for free tier optimization
+from app.config import settings
+from app.metrics import metrics_collector
 from app.repos.users import is_admin
 from app.utils.network import NetworkErrorHandler
-from app.metrics import metrics_collector
 
 # Maximum characters to extract from a document to prevent OOM and performance issues
 MAX_DOCUMENT_TEXT_LENGTH = 100000
@@ -49,7 +49,7 @@ class DocumentProcessor:
             return temp_file.name
 
     @staticmethod
-    def _calculate_file_hash_sync(file_path_or_data: Union[str, bytes]) -> str:
+    def _calculate_file_hash_sync(file_path_or_data: str | bytes) -> str:
         """Вычисляет SHA-256 хэш файла (потоково, если это путь)"""
         if isinstance(file_path_or_data, bytes):
             return hashlib.sha256(file_path_or_data).hexdigest()
@@ -62,7 +62,7 @@ class DocumentProcessor:
 
     async def _check_duplicate_file(
         self, user_id: int, file_hash: str, filename: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Проверяет, есть ли уже такой файл у пользователя"""
         try:
             result = await database.db_query(
@@ -126,7 +126,7 @@ class DocumentProcessor:
 
     async def process_document(
         self, file_data, filename: str, user_id: int, is_path: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Обрабатывает документ и возвращает извлеченный текст. file_data может быть путем (str) или bytes"""
         if not DOCUMENT_SUPPORT:
             return {"error": "Document processing is not available"}
@@ -201,7 +201,7 @@ class DocumentProcessor:
 
     async def process_document_force(
         self, file_data, filename: str, user_id: int, is_path: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Обрабатывает документ принудительно (игнорируя дубликаты)"""
         if not DOCUMENT_SUPPORT:
             return {"error": "Document processing is not available"}
@@ -252,7 +252,7 @@ class DocumentProcessor:
     async def _process_pdf_unified(
         self, file_data, filename: str, user_id: int, file_hash: str,
         is_path: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Обрабатывает PDF документ (bytes или path)."""
         try:
             if not is_path:
@@ -307,7 +307,7 @@ class DocumentProcessor:
     async def _process_word_unified(
         self, file_data, filename: str, user_id: int, file_hash: str,
         is_path: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Обрабатывает Word документ (bytes или path)."""
         if not is_path:
             # Validate magic bytes for ZIP (all .docx files are ZIPs)
@@ -376,7 +376,7 @@ class DocumentProcessor:
 
     async def get_document_by_id(
         self, document_id: int, user_id: int
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Получает документ по ID"""
         try:
             result = await database.db_query(
@@ -402,7 +402,7 @@ class DocumentProcessor:
             logging.error("Error getting document by ID: %s", e, exc_info=True)
             return None
 
-    async def get_user_documents(self, user_id: int) -> List[Dict[str, Any]]:
+    async def get_user_documents(self, user_id: int) -> list[dict[str, Any]]:
         """Получает список документов пользователя"""
         try:
             # Устанавливаем context user for RLS
@@ -437,7 +437,7 @@ class DocumentProcessor:
 
     async def get_document_content(
         self, document_id: int, user_id: int
-    ) -> Optional[str]:
+    ) -> str | None:
         """Получает содержимое документа"""
         try:
             # Устанавливаем context user for RLS
@@ -509,12 +509,12 @@ class DocumentProcessor:
             logging.error("Error cleaning up old documents: %s", e, exc_info=True)
             return 0
 
-    async def get_document_stats(self) -> Dict[str, Any]:
+    async def get_document_stats(self) -> dict[str, Any]:
         """Получает статистику документов"""
         try:
             # Размер БД (onблfromительно)
             size_result = await database.db_query("""
-                SELECT 
+                SELECT
                     COUNT(*) as doc_count,
                     COALESCE(SUM(file_size), 0) as total_size,
                     COALESCE(AVG(file_size), 0) as avg_size
@@ -548,7 +548,7 @@ class DocumentProcessor:
                 "total_size_mb": 0,
             }
 
-    async def get_user_document_stats(self, user_id: int) -> Dict[str, Any]:
+    async def get_user_document_stats(self, user_id: int) -> dict[str, Any]:
         """Получает статистику документов конкретного пользователя"""
         try:
             # Количество documentов user
@@ -561,10 +561,10 @@ class DocumentProcessor:
             # Размер documentов user
             size_result = await database.db_query(
                 """
-                SELECT 
+                SELECT
                     COALESCE(SUM(file_size), 0) as total_size,
                     COALESCE(AVG(file_size), 0) as avg_size
-                FROM user_documents 
+                FROM user_documents
                 WHERE user_id = $1
             """,
                 (user_id,),
@@ -610,7 +610,7 @@ document_processor = DocumentProcessor()
 
 async def process_uploaded_document(
     file_data, filename: str, user_id: int, is_path: bool = False
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Обрабатывает загруженный документ"""
     return await document_processor.process_document(
         file_data, filename, user_id, is_path
@@ -619,19 +619,19 @@ async def process_uploaded_document(
 
 async def process_uploaded_document_force(
     file_data, filename: str, user_id: int, is_path: bool = False
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Обрабатывает загруженный документ принудительно (игнорируя дубликаты)"""
     return await document_processor.process_document_force(
         file_data, filename, user_id, is_path
     )
 
 
-async def get_user_documents(user_id: int) -> List[Dict[str, Any]]:
+async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
     """Получает документы пользователя"""
     return await document_processor.get_user_documents(user_id)
 
 
-async def get_document_content(document_id: int, user_id: int) -> Optional[str]:
+async def get_document_content(document_id: int, user_id: int) -> str | None:
     """Получает содержимое документа"""
     return await document_processor.get_document_content(document_id, user_id)
 
@@ -646,7 +646,7 @@ async def delete_all_user_documents(user_id: int) -> int:
     return await document_processor.delete_all_user_documents(user_id)
 
 
-async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
+async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> str | None:
     """Internal function for uploading file to x0.at with retry logic."""
     timeout_config = httpx.Timeout(
         connect=10.0,  # 10 секунд на подkeyение
@@ -674,7 +674,7 @@ async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> Optional[str
             return None
 
 
-async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
+async def upload_to_x0_at(file_data: bytes, filename: str) -> str | None:
     """Загружает файл на внешний сервис x0.at и возвращает URL с автоматическими повторами"""
     try:
         return await NetworkErrorHandler.retry_with_backoff(
@@ -691,6 +691,6 @@ async def upload_to_x0_at(file_data: bytes, filename: str) -> Optional[str]:
 
 async def get_document_by_id(
     document_id: int, user_id: int
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Получает документ по ID"""
     return await document_processor.get_document_by_id(document_id, user_id)

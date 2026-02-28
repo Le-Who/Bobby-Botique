@@ -14,17 +14,17 @@ import base64
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, List, Dict, Any, Set
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any
 
+import httpx
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 from PIL import Image
-import httpx
 
 from app.config import settings
-from app.errors import user_friendly_error, is_error_message, is_key_related_error
+from app.errors import is_error_message, is_key_related_error, user_friendly_error
 from app.metrics import metrics_collector
 from app.request_context import get_request_id
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
@@ -40,7 +40,7 @@ class AIResponse:
     text: str
     token_count: int
     success: bool
-    error_message: Optional[str] = None
+    error_message: str | None = None
     provider: str = ""
     model: str = ""
 
@@ -69,11 +69,11 @@ class BaseAIProvider(ABC):
 
     async def get_response(
         self,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
         model_name: str,
-        system_instruction: Optional[str] = None,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
+        system_instruction: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
         max_retries: int = 3,
         timeout: float = 120.0,
     ) -> AIResponse:
@@ -131,10 +131,10 @@ class BaseAIProvider(ABC):
 
     def _validate_inputs(
         self,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
         model_name: str,
-        user_id: Optional[int],
-        chat_id: Optional[int],
+        user_id: int | None,
+        chat_id: int | None,
     ) -> None:
         """Validate common input parameters."""
         if not isinstance(history, list) or not history:
@@ -166,11 +166,11 @@ class BaseAIProvider(ABC):
     @abstractmethod
     async def _execute_request(
         self,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
         model_name: str,
-        system_instruction: Optional[str],
-        user_id: Optional[int],
-        chat_id: Optional[int],
+        system_instruction: str | None,
+        user_id: int | None,
+        chat_id: int | None,
         timeout: float,
     ) -> AIResponse:
         """
@@ -210,11 +210,11 @@ class GeminiProvider(BaseAIProvider):
 
     async def _execute_request(
         self,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
         model_name: str,
-        system_instruction: Optional[str],
-        user_id: Optional[int],
-        chat_id: Optional[int],
+        system_instruction: str | None,
+        user_id: int | None,
+        chat_id: int | None,
         timeout: float,
     ) -> AIResponse:
         start_time = None
@@ -305,8 +305,10 @@ class GeminiProvider(BaseAIProvider):
 
             response_text = response.text if response.text else ""
             if not response_text:
+                # Inspect WHY the response is empty — safety block, prompt block, etc.
+                block_reason = self._diagnose_empty_response(response)
                 return self._error_response(
-                    "Gemini API returned empty response text",
+                    block_reason,
                     model_name, start_time, user_id, chat_id,
                 )
 
@@ -324,7 +326,7 @@ class GeminiProvider(BaseAIProvider):
                 success=True, provider=self.provider_name, model=model_name,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             msg = f"Gemini API request timed out for model {model_name}"
             logging.error(msg)
             await metrics_collector.record_error("gemini_timeout", msg)
@@ -376,7 +378,7 @@ class GeminiProvider(BaseAIProvider):
 
     # ── Gemini helpers ───────────────────────────────────────────────────
 
-    async def _build_contents(self, history: list) -> Optional[list]:
+    async def _build_contents(self, history: list) -> list | None:
         """Convert history dicts → list[types.Content]. Returns None on total failure."""
         contents = []
         try:
@@ -427,6 +429,73 @@ class GeminiProvider(BaseAIProvider):
 
         return contents if contents else None
 
+    def _diagnose_empty_response(self, response) -> str:
+        """Inspect Gemini response to determine why text is empty."""
+        # 1. Check prompt-level block (input was blocked)
+        try:
+            pf = getattr(response, "prompt_feedback", None)
+            if pf:
+                block_reason = getattr(pf, "block_reason", None)
+                if block_reason:
+                    logging.warning(
+                        "Gemini prompt blocked: reason=%s, feedback=%s",
+                        block_reason, pf,
+                    )
+                    return (
+                        "Запрос заблокирован фильтром безопасности Google. "
+                        "Попробуйте переформулировать сообщение."
+                    )
+        except Exception as e:
+            logging.debug("prompt_feedback inspection error: %s", e)
+
+        # 2. Check candidate-level finish reason
+        try:
+            candidates = getattr(response, "candidates", None)
+            if candidates:
+                candidate = candidates[0]
+                finish_reason = getattr(candidate, "finish_reason", None)
+                safety_ratings = getattr(candidate, "safety_ratings", None)
+
+                if finish_reason and str(finish_reason).upper() in (
+                    "SAFETY", "2", "FINISH_REASON_SAFETY",
+                ):
+                    ratings_str = ""
+                    if safety_ratings:
+                        ratings_str = ", ".join(
+                            f"{getattr(r, 'category', '?')}={getattr(r, 'probability', '?')}"
+                            for r in safety_ratings
+                        )
+                    logging.warning(
+                        "Gemini response safety-blocked: finish_reason=%s, ratings=[%s]",
+                        finish_reason, ratings_str,
+                    )
+                    return (
+                        "Ответ заблокирован фильтром безопасности Google. "
+                        "Попробуйте переформулировать сообщение."
+                    )
+
+                if finish_reason and str(finish_reason).upper() in (
+                    "MAX_TOKENS", "3", "FINISH_REASON_MAX_TOKENS",
+                ):
+                    logging.warning("Gemini response truncated: MAX_TOKENS")
+                    return "Ответ превысил максимальную длину. Попробуйте более короткий запрос."
+
+                if finish_reason and str(finish_reason).upper() in (
+                    "RECITATION", "4", "FINISH_REASON_RECITATION",
+                ):
+                    logging.warning("Gemini response blocked: RECITATION")
+                    return "Ответ заблокирован из-за совпадения с защищённым контентом."
+
+                logging.warning(
+                    "Gemini empty response with finish_reason=%s", finish_reason,
+                )
+            else:
+                logging.warning("Gemini response has no candidates")
+        except Exception as e:
+            logging.debug("candidate inspection error: %s", e)
+
+        return "Gemini API вернул пустой ответ. Попробуйте ещё раз."
+
     def _error_response(
         self, msg: str, model: str, start_time, user_id, chat_id,
     ) -> AIResponse:
@@ -467,11 +536,11 @@ class OpenRouterProvider(BaseAIProvider):
 
     async def _execute_request(
         self,
-        history: List[Dict[str, Any]],
+        history: list[dict[str, Any]],
         model_name: str,
-        system_instruction: Optional[str],
-        user_id: Optional[int],
-        chat_id: Optional[int],
+        system_instruction: str | None,
+        user_id: int | None,
+        chat_id: int | None,
         timeout: float,
     ) -> AIResponse:
         start_time = None
@@ -516,7 +585,7 @@ class OpenRouterProvider(BaseAIProvider):
                 response_data = response.json()
             except httpx.HTTPStatusError as e:
                 return await self._handle_http_error(e, model_name, start_time, user_id, chat_id)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 msg = f"OpenRouter API request timed out for model {model_name}"
                 logging.error(msg)
                 await metrics_collector.record_error("openrouter_timeout", msg)
@@ -589,7 +658,7 @@ class OpenRouterProvider(BaseAIProvider):
     # ── OpenRouter helpers ───────────────────────────────────────────────
 
     async def _build_messages(
-        self, history: list, system_instruction: Optional[str]
+        self, history: list, system_instruction: str | None
     ) -> list:
         """Convert Gemini-format history → OpenAI-format messages."""
         messages = []
@@ -732,7 +801,7 @@ class ProviderRouter:
     """
 
     def __init__(self, rate_limit_per_minute: int = 20) -> None:
-        self._key_health: Dict[str, KeyHealth] = {}
+        self._key_health: dict[str, KeyHealth] = {}
         # Use the consolidated RateLimiter from security.py (includes periodic cleanup)
         from app.security import RateLimiter
         self._rate_limiter = RateLimiter(
@@ -748,12 +817,12 @@ class ProviderRouter:
         self,
         preferred_model: str,
         history: list,
-        system_instruction: Optional[str] = None,
-        user_id: Optional[int] = None,
-        chat_id: Optional[int] = None,
-        use_openrouter: Optional[bool] = None,
+        system_instruction: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
+        use_openrouter: bool | None = None,
         max_key_retries: int = 3,
-    ) -> Tuple[str, Optional[int]]:
+    ) -> tuple[str, int | None]:
         """
         Get AI response with automatic key rotation and health-aware selection.
 
@@ -774,7 +843,7 @@ class ProviderRouter:
             use_openrouter = False
 
         use_case = AgentRequestUseCase()
-        failed_keys: Set[str] = set()
+        failed_keys: set[str] = set()
 
         for attempt in range(max_key_retries):
             key_data, model_used, resolution = await use_case.resolve_ai_request(
@@ -867,7 +936,7 @@ class ProviderRouter:
             None,
         )
 
-    def get_key_stats(self) -> Dict[str, Dict[str, Any]]:
+    def get_key_stats(self) -> dict[str, dict[str, Any]]:
         """Return health stats for all tracked keys (for diagnostics)."""
         return {
             kh.key_hash[:8]: {
@@ -882,7 +951,7 @@ class ProviderRouter:
 
 
 # Module-level singleton
-_provider_router: Optional[ProviderRouter] = None
+_provider_router: ProviderRouter | None = None
 
 
 def get_provider_router() -> ProviderRouter:
@@ -895,13 +964,13 @@ def get_provider_router() -> ProviderRouter:
 
 async def get_ai_response(
     api_key: str,
-    history: List[Dict[str, Any]],
+    history: list[dict[str, Any]],
     model_name: str,
-    system_instruction: Optional[str] = None,
-    user_id: Optional[int] = None,
-    chat_id: Optional[int] = None,
+    system_instruction: str | None = None,
+    user_id: int | None = None,
+    chat_id: int | None = None,
     max_retries: int = 3,
-) -> Tuple[str, Optional[int]]:
+) -> tuple[str, int | None]:
     """
     Unified entry point for AI responses.
 

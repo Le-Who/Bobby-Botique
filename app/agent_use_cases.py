@@ -1,6 +1,6 @@
 import logging
-from typing import List, Optional, Set, Tuple
 
+from app.config import get_openrouter_keys, get_use_openrouter, settings
 from app.repos.keys import (
     get_available_gemini_key,
     get_available_openrouter_key,
@@ -9,16 +9,13 @@ from app.repos.keys import (
     invalidate_key_cache,
 )
 
-from app.config import get_openrouter_keys, get_use_openrouter, settings
-from app.errors import is_error_message, is_key_related_error
-
 
 class AgentRequestUseCase:
     async def resolve_ai_request(
         self,
         preferred_model: str,
-        use_openrouter: Optional[bool] = None,
-        excluded_key_hashes: Optional[Set[str]] = None,
+        use_openrouter: bool | None = None,
+        excluded_key_hashes: set[str] | None = None,
     ):
         excluded = excluded_key_hashes or set()
 
@@ -40,8 +37,8 @@ class AgentRequestUseCase:
         self,
         preferred_model: str,
         get_key_func,
-        fallback_priority: List[str],
-        excluded_key_hashes: Optional[Set[str]] = None,
+        fallback_priority: list[str],
+        excluded_key_hashes: set[str] | None = None,
         invalidate_cache_func=None,
         provider_name: str = "Unknown",
     ):
@@ -105,7 +102,7 @@ class AgentRequestUseCase:
         return None, None, "all_exhausted"
 
     async def _resolve_gemini_request(
-        self, preferred_model: str, excluded_key_hashes: Optional[Set[str]] = None
+        self, preferred_model: str, excluded_key_hashes: set[str] | None = None
     ):
         fallback_priority = [
             settings.RESEARCH_MODEL,
@@ -122,7 +119,7 @@ class AgentRequestUseCase:
         )
 
     async def _resolve_openrouter_request(
-        self, preferred_model: str, excluded_key_hashes: Optional[Set[str]] = None
+        self, preferred_model: str, excluded_key_hashes: set[str] | None = None
     ):
         model_mapping = {
             settings.DEFAULT_MODEL: settings.OPENROUTER_DEFAULT_MODEL,
@@ -204,7 +201,7 @@ class AgentRequestUseCase:
         chat_id: int = None,
         use_openrouter: bool = None,
         max_key_retries: int = 3,
-    ) -> Tuple[str, Optional[int]]:
+    ) -> tuple[str, int | None]:
         """Delegate to ProviderRouter for health-aware key rotation.
 
         This method exists for backward compatibility. All new code should

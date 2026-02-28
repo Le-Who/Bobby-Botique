@@ -16,9 +16,7 @@ def mock_deps():
     with patch.object(conv, "db_query", new_callable=AsyncMock) as m_query, \
          patch.object(conv, "db_execute_many", new_callable=AsyncMock) as m_exec, \
          patch.object(conv, "db_manager") as m_mgr, \
-         patch.object(conv, "reconnect_database", new_callable=AsyncMock), \
-         patch.object(conv, "set_user_context", new_callable=AsyncMock), \
-         patch.object(conv, "clear_user_context", new_callable=AsyncMock):
+         patch.object(conv, "reconnect_database", new_callable=AsyncMock):
         m_mgr._cache_lock = mock_lock
         m_mgr._active_chats_cache = {}
         m_mgr.is_connected = True

@@ -1,17 +1,17 @@
 # /app/handlers/cmd_conversations.py
 """Conversation management commands: save, list, switch, rename, delete."""
 
-import logging
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.repos.chats import get_user_chat
-from app.repos.conversations import save_conversation, switch_to_conversation, rename_conversation
 from app import prompts
-from app.metrics import role_conv_metrics
-from app.utils.decorators import authorized_only
 from app.handlers import menus
+from app.metrics import role_conv_metrics
+from app.repos.chats import get_user_chat
+from app.repos.conversations import rename_conversation, save_conversation, switch_to_conversation
+from app.utils.decorators import authorized_only
 
 
 @authorized_only

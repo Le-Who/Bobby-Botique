@@ -3,22 +3,23 @@ Document management callbacks — upload, select, delete, clear, cancel.
 """
 
 import logging
+
 import telegram
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.utils.formatting import TelegramFormatter
-from app.handlers import menus
 from app.document_processor import (
-    get_user_documents,
+    delete_all_user_documents,
     delete_user_document,
     get_document_by_id,
-    delete_all_user_documents,
+    get_user_documents,
 )
-from app.state import clear_document_state, set_document_mode, get_selected_document_id
+from app.handlers import menus
+from app.state import clear_document_state, get_selected_document_id, set_document_mode
+from app.utils.formatting import TelegramFormatter
 from app.utils.keyboards import (
-    build_keyboard,
     back_button,
+    build_keyboard,
     cancel_button,
     confirm_cancel_row,
 )

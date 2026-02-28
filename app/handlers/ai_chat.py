@@ -3,22 +3,19 @@ AI Chat handler — regular conversational chat with context management.
 """
 
 import logging
-from typing import Optional
 
-from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app.config import settings
-from app.database import ChatState
-from app.repos.chats import update_user_chat
 from app import prompts
-from app.utils.messaging import send_long_message
-from app.utils.stage_indicators import update_stage, STAGES_CHAT
-
+from app.database import ChatState
 from app.handlers.ai_core import (
-    handle_ai_response_error,
-    _resolve_ai_request,
     _get_ai_response_with_routing,
+    _resolve_ai_request,
+    handle_ai_response_error,
 )
+from app.repos.chats import update_user_chat
+from app.utils.messaging import send_long_message
+from app.utils.stage_indicators import STAGES_CHAT, update_stage
 
 
 async def _handle_regular_chat(
@@ -26,11 +23,11 @@ async def _handle_regular_chat(
     user_id: int,
     user_message: str,
     chat_state: ChatState,
-    model_override: Optional[str] = None,
+    model_override: str | None = None,
 ):
     # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
-    ai_key, model_used, resolution = await _resolve_ai_request(model_for_this_request)
+    _, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
     if resolution == "all_exhausted":
         # Определяем провайдер на основе models

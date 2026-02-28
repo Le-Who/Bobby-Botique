@@ -6,19 +6,20 @@ The ChatState dataclass remains in app/database.py for backward compatibility
 and is re-exported here for convenience.
 """
 
-import json
 import logging
-from typing import Dict, Any, List, Optional
 
+from cachetools import TTLCache
+
+from app.config import settings
 from app.database import (
     ChatState,
+    clear_user_context,
+    db_execute_many,
     db_manager,
     db_query,
     reconnect_database,
     set_user_context,
-    clear_user_context,
 )
-from app.config import settings
 from app.utils.logging_config import timed_operation
 
 
@@ -40,7 +41,7 @@ def _extract_message_content(msg: dict) -> str:
 
 
 @timed_operation("get_user_chat")
-async def get_user_chat(user_id: int) -> Optional[ChatState]:
+async def get_user_chat(user_id: int) -> ChatState | None:
     """Load the active chat state for a user from the database."""
     # Check cache first
     async with db_manager._cache_lock:
@@ -102,7 +103,6 @@ async def get_user_chat(user_id: int) -> Optional[ChatState]:
             # Update cache
             async with db_manager._cache_lock:
                 if not hasattr(db_manager, "_active_chats_cache"):
-                    from cachetools import TTLCache
                     db_manager._active_chats_cache = TTLCache(maxsize=1000, ttl=900)
                 db_manager._active_chats_cache[user_id] = chat_state
 
@@ -123,7 +123,6 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
             # Update cache
             async with db_manager._cache_lock:
                 if not hasattr(db_manager, "_active_chats_cache"):
-                    from cachetools import TTLCache
                     db_manager._active_chats_cache = TTLCache(maxsize=1000, ttl=900)
                 db_manager._active_chats_cache[user_id] = chat_state
 
@@ -140,7 +139,6 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
             elif current_length > original_length:
                 # New messages appended — insert only the new ones
                 new_msgs = chat_state.history[original_length:]
-                from app.database import db_execute_many
 
                 insert_data = []
                 for msg in new_msgs:
@@ -161,7 +159,6 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                     (user_id,),
                     conn=conn,
                 )
-                from app.database import db_execute_many
 
                 insert_data = []
                 for msg in chat_state.history:

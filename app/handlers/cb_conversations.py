@@ -4,15 +4,16 @@ Also includes admin-only metrics refresh callback.
 """
 
 import logging
+
 import telegram
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app.repos.conversations import get_user_conversations, switch_to_conversation, delete_conversation
-from app.utils.formatting import TelegramFormatter
-from app.utils.decorators import admin_only
-from app.metrics import role_conv_metrics
 from app.handlers import menus
+from app.metrics import role_conv_metrics
+from app.repos.conversations import delete_conversation, get_user_conversations, switch_to_conversation
+from app.utils.decorators import admin_only
+from app.utils.formatting import TelegramFormatter
 
 
 async def send_conversation_selection(

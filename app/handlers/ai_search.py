@@ -2,29 +2,25 @@
 AI Search handlers — QnA quick answers, research agent, and complex agent search.
 """
 
-import logging
-import json
 import asyncio
-from typing import Optional
+import json
+import logging
 
-from telegram import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest, NetworkError
 
-from app.config import settings, get_openrouter_keys
+from app import prompts, search_services
+from app.config import get_openrouter_keys, settings
 from app.database import ChatState
-from app.repos.chats import get_user_chat, update_user_chat
-from app import search_services
-from app.utils.messaging import send_long_message
-from app import prompts
-from app.metrics import metrics_collector, track_metrics
-from app.utils.formatting import escape_format_chars
-from app.utils.stage_indicators import update_stage, STAGES_SEARCH_QUICK, STAGES_SEARCH_DEEP
-
 from app.handlers.ai_core import (
-    handle_ai_response_error,
-    _resolve_ai_request,
     _get_ai_response_with_routing,
+    handle_ai_response_error,
 )
+from app.metrics import metrics_collector, track_metrics
+from app.repos.chats import get_user_chat, update_user_chat
+from app.utils.formatting import escape_format_chars
+from app.utils.messaging import send_long_message
+from app.utils.stage_indicators import STAGES_SEARCH_DEEP, STAGES_SEARCH_QUICK, update_stage
 
 
 @track_metrics("qna_search")
@@ -141,7 +137,7 @@ async def _handle_research_agent(
     user_id: int,
     user_message: str,
     chat_state: ChatState,
-    model_override: Optional[str] = None,
+    model_override: str | None = None,
     search_query: str = None,
 ):
     # If beforeан search_query, use его for searchа, а user_message for локалfromации
@@ -277,9 +273,9 @@ async def _handle_research_agent(
 
         # Check, является ли response ошибкой
         from app.errors import (
+            build_retry_and_roles_keyboard,
             is_error_message,
             is_retryable_error,
-            build_retry_and_roles_keyboard,
         )
 
         if selected_urls_str and is_error_message(selected_urls_str):
@@ -465,9 +461,9 @@ async def _handle_research_agent(
     if response_text and response_text.strip():
         # Check, является ли response ошибкой
         from app.errors import (
+            build_retry_and_roles_keyboard,
             is_error_message,
             is_retryable_error,
-            build_retry_and_roles_keyboard,
         )
 
         # Используем универсальную функцию обработки ошибок
@@ -543,8 +539,9 @@ async def _handle_complex_agent_search(
 
     photo_file = await original_message.photo[-1].get_file()
     photo_data = await photo_file.download_as_bytearray()
-    from PIL import Image
     import io
+
+    from PIL import Image
     img = Image.open(io.BytesIO(photo_data))
 
     analysis_prompt = prompts.IMAGE_ANALYSIS_PROMPT

@@ -1,7 +1,8 @@
 import asyncio
 import random
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Optional, Tuple, TypeVar
+from typing import TypeVar
 
 from app.circuit_breaker import get_circuit_breaker
 
@@ -37,13 +38,13 @@ def is_transient_error(error_text: str) -> bool:
 
 async def run_with_resilience(
     operation: Callable[[], Awaitable[T]],
-    policy: Optional[ResiliencePolicy] = None,
+    policy: ResiliencePolicy | None = None,
     *,
-    circuit_name: Optional[str] = None,
+    circuit_name: str | None = None,
     is_retryable: Callable[[Exception], bool] = lambda e: is_transient_error(str(e)),
-) -> Tuple[T, int]:
+) -> tuple[T, int]:
     effective = policy or ResiliencePolicy()
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
 
     async def _call_once() -> T:
         return await asyncio.wait_for(operation(), timeout=effective.timeout_s)

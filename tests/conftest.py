@@ -5,6 +5,7 @@ Settings object for tests that import the production modules directly.
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,11 +16,34 @@ if _env_path.exists():
     load_dotenv(_env_path, override=False)
 
 
+def _quiet_exception_handler(loop, context):
+    """Suppress asyncpg 'connection was closed' noise during test teardown.
+
+    asyncpg emits 'Future exception was never retrieved' via
+    loop.call_exception_handler when a connection is GC'd with a pending op.
+    This is cosmetic and harmless — silence it to keep test output clean.
+    """
+    exception = context.get("exception")
+    if exception:
+        exc_name = type(exception).__name__
+        if exc_name in ("ConnectionDoesNotExistError", "InterfaceError"):
+            return  # silently ignore
+    # Fall through to default handler for other exceptions
+    loop.default_exception_handler(context)
+
+
 def pytest_configure(config):
-    """Suppress cosmetic 'Task was destroyed' warnings from asyncio cleanup."""
+    """Suppress cosmetic warnings from asyncio/asyncpg cleanup."""
     config.addinivalue_line(
         "filterwarnings", "ignore::RuntimeWarning:asyncio"
     )
+    # Install quiet exception handler on the default event loop policy
+    # This suppresses asyncpg "Future exception was never retrieved" noise
+    try:
+        loop = asyncio.get_event_loop()
+        loop.set_exception_handler(_quiet_exception_handler)
+    except RuntimeError:
+        pass  # No running event loop yet — will be set by pytest-asyncio
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -35,5 +59,3 @@ def _cancel_db_background_tasks():
                 task.cancel()
     except Exception:
         pass
-
-

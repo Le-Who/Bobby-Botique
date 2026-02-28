@@ -4,11 +4,13 @@ Provides automatic failure detection and recovery mechanisms.
 """
 
 import asyncio
-import time
 import logging
-from typing import Callable, Any, Optional, Dict
-from enum import Enum
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
 from app.errors import CircuitBreakerOpenError
 
 
@@ -41,7 +43,7 @@ class CircuitBreaker:
     - HALF_OPEN: Testing if service recovered, limited requests allowed
     """
 
-    def __init__(self, name: str, config: Optional[CircuitBreakerConfig] = None):
+    def __init__(self, name: str, config: CircuitBreakerConfig | None = None):
         self.name = name
         self.config = config or CircuitBreakerConfig()
 
@@ -60,7 +62,7 @@ class CircuitBreaker:
         self._lock = asyncio.Lock()
 
         # Start monitoring task
-        self._monitor_task: Optional[asyncio.Task] = None
+        self._monitor_task: asyncio.Task | None = None
         self._start_monitoring()
 
         logging.info("Circuit Breaker '%s' initialized with config: %s", name, self.config)
@@ -200,7 +202,7 @@ class CircuitBreaker:
         """Returns current circuit breaker state."""
         return self._state
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Returns circuit breaker statistics."""
         return {
             "name": self.name,
@@ -250,11 +252,11 @@ class CircuitBreaker:
 
 
 # Global circuit breaker instances
-_circuit_breakers: Dict[str, CircuitBreaker] = {}
+_circuit_breakers: dict[str, CircuitBreaker] = {}
 
 
 def get_circuit_breaker(
-    name: str, config: Optional[CircuitBreakerConfig] = None
+    name: str, config: CircuitBreakerConfig | None = None
 ) -> CircuitBreaker:
     """
     Gets or creates a circuit breaker instance.

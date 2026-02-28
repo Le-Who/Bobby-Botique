@@ -5,6 +5,34 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.8] – 2026-02-28 – Ruff Integration & Code Modernization
+
+### 🐛 Bug Fixes (Ruff-identified)
+
+- **B026 (silent data loss)**: `*args` passed after keyword `exceptions=` in `network.py` — reordered to prevent silent argument loss.
+- **B904 (10 fixes)**: Missing `from e`/`from None` in exception `raise` statements across `database.py`, `cache.py`, `crypto.py`, `security.py`, `config.py` — restores exception chaining for proper traceback analysis.
+- **RUF006 (5 fixes)**: Dangling `asyncio.create_task()` calls without stored references (GC risk) in `callbacks.py`, `messages.py`, `prompts.py` — stored in `_background_tasks` set with `add_done_callback` cleanup.
+
+### 🧹 Code Modernization (598 auto-fixes)
+
+- **isort (I)**: 75 files — import ordering normalized.
+- **pyupgrade (UP)**: 502 fixes — type annotations modernized to PEP 585/604 (`List[str]` → `list[str]`, `Optional[X]` → `X | None`), deprecated `typing` imports removed, `super()` calls simplified.
+- **SIM117**: 6 files — nested `with` statements merged.
+- **W291/W293**: 23 trailing whitespace fixes.
+- **RUF059 (5)**: Unused unpacked variables (`ai_key`, `resolution`, `parse_mode`, `priority`) replaced with `_`.
+- **F541 (1)**: f-string without placeholders in `menus.py` → plain string.
+- **B905 (1)**: `zip()` → `zip(strict=False)` in `web.py`.
+
+### ⚙️ Tooling
+
+- **`pyproject.toml`**: New Ruff configuration — enforces `F` (Pyflakes), `B` (Bugbear), `I` (isort), `UP` (pyupgrade), `RUF006`, `RUF059`. Per-file ignores for tests and false positives.
+- **`conftest.py`**: Custom event loop exception handler to suppress cosmetic asyncpg `ConnectionDoesNotExistError` during test teardown GC.
+
+### 🧪 Tests (485 passed, 1 skipped)
+
+- All pre-existing tests pass after 622 total code changes across 40+ files.
+- Flaky `test_execute_gemini_request_other_error` resolved (stale patch from prior sessions).
+
 ## [2.6.7] – 2026-02-28 – Codebase Audit Phase 2-3: Hardening, DRY & Cleanup
 
 ### 🛡️ Security & Reliability (Phase 2)

@@ -3,15 +3,17 @@ Memory management system for optimizing resource usage.
 Provides automatic memory cleanup and monitoring.
 """
 
-import gc
-import logging
 import asyncio
-import time
-import psutil
+import gc
 import inspect
-from typing import Dict, Any, List, Optional, Callable
+import logging
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
+
+import psutil
 
 
 @dataclass
@@ -26,11 +28,11 @@ class MemoryThreshold:
 class MemoryManager:
     """Manages memory usage and provides automatic cleanup."""
 
-    def __init__(self, thresholds: Optional[MemoryThreshold] = None):
+    def __init__(self, thresholds: MemoryThreshold | None = None):
         self.thresholds = thresholds or MemoryThreshold()
-        self._monitoring_task: Optional[asyncio.Task] = None
-        self._cleanup_callbacks: List[Callable] = []
-        self._memory_history: List[Dict[str, Any]] = []
+        self._monitoring_task: asyncio.Task | None = None
+        self._cleanup_callbacks: list[Callable] = []
+        self._memory_history: list[dict[str, Any]] = []
         self._max_history_size = 100
         self._monitor_interval = 60  # seconds
         self._last_cleanup = time.time()
@@ -115,7 +117,7 @@ class MemoryManager:
         except Exception as e:
             logging.error("Memory check error: %s", e, exc_info=True)
 
-    def _get_memory_info(self) -> Dict[str, Any]:
+    def _get_memory_info(self) -> dict[str, Any]:
         """Gets current memory usage information."""
         try:
             process = psutil.Process()
@@ -158,7 +160,7 @@ class MemoryManager:
                         await asyncio.wait_for(callback(), timeout=5.0)
                     else:
                         callback()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logging.warning("Cleanup callback timed out")
                 except Exception as e:
                     logging.error("Cleanup callback error: %s", e, exc_info=True)
@@ -199,7 +201,7 @@ class MemoryManager:
                         await asyncio.wait_for(callback(), timeout=2.0)
                     else:
                         callback()
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logging.warning("Cleanup callback timed out")
                 except Exception as e:
                     logging.error("Cleanup callback error: %s", e, exc_info=True)
@@ -237,7 +239,7 @@ class MemoryManager:
         if callback in self._cleanup_callbacks:
             self._cleanup_callbacks.remove(callback)
 
-    def get_memory_stats(self) -> Dict[str, Any]:
+    def get_memory_stats(self) -> dict[str, Any]:
         """Returns current memory statistics."""
         try:
             memory_info = self._get_memory_info()
@@ -294,12 +296,12 @@ memory_manager = MemoryManager()
 
 
 # Convenience functions
-async def cleanup_memory() -> Dict[str, Any]:
+async def cleanup_memory() -> dict[str, Any]:
     """Forces memory cleanup."""
     return await memory_manager.force_cleanup()
 
 
-def get_memory_stats() -> Dict[str, Any]:
+def get_memory_stats() -> dict[str, Any]:
     """Gets memory statistics."""
     return memory_manager.get_memory_stats()
 
