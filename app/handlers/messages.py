@@ -692,6 +692,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                                 "🤔 Обрабатываю ваш запрос... (упрощенный режим)"
                             )
 
+                        # Stop heartbeat IMMEDIATELY after response is sent
+                        # to prevent it from overwriting the AI answer.
+                        done_event.set()
+                        heartbeat_task.cancel()
+
                         logging.info("Completed task processing for user %s", user_id)
 
                     # Log успешный response Telegram API
@@ -736,8 +741,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "handle_message", elapsed, success=False, user_id=user_id
                 )
             finally:
-                done_event.set()  # Signal heartbeat to stop
-                heartbeat_task.cancel()
+                # Ensure heartbeat is stopped even on exception paths
+                if not done_event.is_set():
+                    done_event.set()
+                    heartbeat_task.cancel()
 
         # Запускаем обработку в фоне (tracked to prevent 'exception never retrieved')
         task = asyncio.create_task(task_wrapper())
