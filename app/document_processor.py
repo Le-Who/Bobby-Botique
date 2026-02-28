@@ -13,6 +13,7 @@ from docx import Document
 
 from app.config import settings
 from app import database
+from app.repos.users import is_admin
 from app.utils.network import NetworkErrorHandler
 from app.metrics import metrics_collector
 
@@ -405,7 +406,7 @@ class DocumentProcessor:
         """Получает список документов пользователя"""
         try:
             # Устанавливаем context user for RLS
-            await database.set_user_context(user_id, database.is_admin(user_id))
+            await database.set_user_context(user_id, is_admin(user_id))
 
             try:
                 result = await database.db_query(
@@ -440,7 +441,7 @@ class DocumentProcessor:
         """Получает содержимое документа"""
         try:
             # Устанавливаем context user for RLS
-            await database.set_user_context(user_id, database.is_admin(user_id))
+            await database.set_user_context(user_id, is_admin(user_id))
 
             try:
                 result = await database.db_query(

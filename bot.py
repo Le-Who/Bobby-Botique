@@ -408,6 +408,14 @@ async def main():
             _use_json = bool(os.environ.get("DATABASE_URL"))
 
         setup_detailed_logging(enable_structured_logging=_use_json)
+
+        if _use_json and os.environ.get("LOG_PRETTY", "").lower() in ("1", "true", "yes"):
+            logging.warning(
+                "LOG_PRETTY is set but structured JSON logging is active — "
+                "Rich output is disabled. Unset LOG_PRETTY or set STRUCTURED_LOGGING=0 "
+                "to enable pretty mode."
+            )
+
         logging.info(
             "Bot starting up — %s logging enabled",
             "structured JSON" if _use_json else "text",

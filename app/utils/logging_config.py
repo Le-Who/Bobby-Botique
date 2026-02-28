@@ -358,11 +358,11 @@ def setup_detailed_logging(
     # Choose handler: Rich > DevFormatter > DEFAULT_FORMATTER
     if enable_pretty and HAS_RICH and not enable_structured_logging:
         # Rich provides its own formatting — no need for our formatter
-        install_rich_tracebacks(show_locals=True, width=120)
+        install_rich_tracebacks(show_locals=False, width=200)
         stdout_handler = RichHandler(
-            console=Console(stderr=False),
+            console=Console(stderr=False, width=200),
             rich_tracebacks=True,
-            tracebacks_show_locals=True,
+            tracebacks_show_locals=False,
             show_path=True,
             markup=True,
         )

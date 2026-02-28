@@ -24,17 +24,9 @@ class APILogger:
             "true",
             "yes",
         )
-
-        # Create форматтер for детального логирования
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-
-        # Add handler if его нет
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+        # No handler added here — api_logger propagates through the root
+        # logger's handler so all output goes to a single stream (stdout)
+        # with consistent formatting (Rich / JSON / plain).
 
     def _format_log(self, data: dict) -> str:
         """Format log payload — pretty-printed in dev, compact in prod."""
