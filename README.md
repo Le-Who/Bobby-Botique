@@ -82,6 +82,12 @@ Located in `app/handlers/` as modular sub-handlers (`ai_core.py`, `ai_chat.py`, 
   - Maintains conversation history in PostgreSQL.
   - Injects system instructions and user preferences into every prompt.
   - Supports "New Topic" to reset context while keeping long-term memory.
+  - **Context Summarization** (v2.6.9+): Two-tier summarization system for long conversations:
+    - **Local tier**: Snippet-based truncation for conversations under 30K dropped tokens.
+    - **LLM tier**: Asynchronous refine-chain summarization (chunked 10K × 6 max) for conversations above 30K dropped tokens.
+    - 128K token budget with 12K response reserve and 4K summary budget.
+    - Summaries persisted in `chats.context_summary` column across sessions.
+    - Tier-specific metrics (triggered, LLM/local counts, tokens saved) surfaced in the dashboard.
 - **Group Chat Mode**: Specialized handlers for admin-only or reply-only interactions in groups.
 - **Customizable Roles**: Browse system role catalog, generate AI roles, or write custom roles manually — all manageable via an AIDA-structured roles hub.
 
@@ -164,9 +170,10 @@ While primarily a Telegram bot, the project includes a web frontend for administ
 
 - **Technology**: Quart (async Flask-compatible), Jinja2 Templates (`app/templates`), Vanilla CSS (`app/static`).
 - **Endpoints**:
-  - `/`: Visual dashboard showing generic system status (CPU, RAM, Uptime).
+  - `/`: Visual dashboard showing system status (CPU, RAM, Uptime), performance metrics, and context summarization stats.
   - `/health`: JSON endpoint for docker healthchecks.
-  - `/keys`: **(Secured)** Detailed view of API key usage, active keys, and remaining quotas per model.
+  - `/api/overview`: **(Secured)** System health, performance metrics, and summarization tier stats.
+  - `/api/keys`: **(Secured)** Detailed view of API key usage, active keys, and remaining quotas per model.
 - **Security**: Protected by `ADMIN_SECRET` with cookie-session auth, CSRF tokens, IP-based brute-force protection (5 attempts → 429), and nonce-based Content-Security-Policy.
 
 ---
@@ -293,18 +300,18 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (485 tests, 1 skipped)
+### Suite Structure (554 tests, 1 skipped)
 
-| Category           | Files                                                                                                                                                                        | What They Cover                                                                                       |
-| :----------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------- |
-| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`, `test_ai_chat`, `test_ai_search`, `test_ai_document`, `test_ai_photo`                  | AI routing, health scoring, fallback chains, errors, AI handler coverage, photo processing            |
-| **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_cmd_admin`, `test_cmd_conversations`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators` | Callback dispatch, request flow, commands, admin commands, conversation CRUD, menu rendering, role UI |
-| **Integration**    | `test_integration_flow`, `test_callback_responsiveness_scenario`                                                                                                             | End-to-end request flow (auth, rate limit, agent, error recovery), callback responsiveness            |
-| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                                                                        | Tavily key management, query optimization, cleanup                                                    |
-| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                                                                       | Circuit breaker, TTL cache, race conditions                                                           |
-| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling                       |
-| **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                                                             | Batched metric saves, system status data                                                              |
-| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`, `test_audit_fixes`                                                                               | Text formatting, keyboard builders, timezone math, audit regression tests                             |
+| Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                                     |
+| :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------- |
+| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`, `test_ai_chat`, `test_ai_search`, `test_ai_document`, `test_ai_photo`, `test_context_assembler`, `test_prompt_registry` | AI routing, health scoring, fallback chains, errors, AI handler coverage, photo processing, context summarization, prompt templates |
+| **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_cmd_admin`, `test_cmd_conversations`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators`                                  | Callback dispatch, request flow, commands, admin commands, conversation CRUD, menu rendering, role UI                               |
+| **Integration**    | `test_integration_flow`, `test_callback_responsiveness_scenario`                                                                                                                                              | End-to-end request flow (auth, rate limit, agent, error recovery), callback responsiveness                                          |
+| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                                                                                                         | Tavily key management, query optimization, cleanup                                                                                  |
+| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                                                                                                        | Circuit breaker, TTL cache, race conditions                                                                                         |
+| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                                                 | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling                                                     |
+| **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                                                                                              | Batched metric saves, system status data                                                                                            |
+| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`, `test_audit_fixes`                                                                                                                | Text formatting, keyboard builders, timezone math, audit regression tests                                                           |
 
 ### Mock Isolation Rule
 

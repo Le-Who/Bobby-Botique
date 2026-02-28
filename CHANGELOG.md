@@ -5,6 +5,68 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.6.9] – 2026-02-28 – Context Summarization System
+
+### ✨ New Feature: Two-Tier Context Summarization
+
+Intelligent conversation summarization for long multi-turn conversations, preventing context window overflow while preserving conversational quality.
+
+#### Architecture
+
+- **128K token budget** with 12K response reserve and 4K summary budget.
+- **Local tier** (< 30K dropped tokens): Fast snippet-based truncation — first/last lines of dropped messages.
+- **LLM tier** (≥ 30K dropped tokens): Asynchronous refine-chain summarization via Gemini. Chunks up to 10K tokens × 6 max. Fires as a background `asyncio.create_task`, persists result via callback.
+- **`ContextAssembler`** class (`context_assembler.py`): Token budgeting, two-tier decision logic, `AssembledContext` dataclass with `dropped_messages`, `was_truncated`, `llm_summarization_scheduled` fields.
+
+#### Summarization Prompts
+
+- `SUMMARIZATION_SYSTEM` and `SUMMARIZATION_CHUNK` templates in `prompt_registry.py`.
+- Prompt-engineering best practices: structured output, explicit instructions, anti-hallucination guardrails.
+
+#### Integration
+
+- **`ai_chat.py`**: Checks `assembled.llm_summarization_scheduled`, fires `schedule_llm_summarization()`, callback persists summary via `update_user_chat()`. Records tier-specific metrics.
+- **`ai_search.py`**: Same pattern — LLM scheduling + metrics for search handler context assembly.
+- **`callbacks.py`**: 3 chat-clearing handlers (`new_topic_callback`, `deep_dive_callback:new_topic`, `new_chat_callback`) now clear `context_summary = None` to prevent stale summaries.
+
+#### Database
+
+- **Migration `013_add_context_summary.sql`**: Adds `context_summary TEXT` column to `chats` table.
+- **`ChatState.context_summary`** field in `database.py` — replaces prior `_context_summary` dynamic attribute hack.
+- **`repos/chats.py`**: `get_user_chat` / `update_user_chat` load and persist `context_summary`.
+
+#### Metrics & Dashboard
+
+- **`SummarizationMetrics`** in `metrics.py`: New fields `llm_summarizations`, `local_summarizations`, `llm_summarization_failures`. `record_summarization()` auto-detects tier from `llm:`/`local:` prefix.
+- **`/api/overview`** in `web.py`: Includes `summarization` object with `triggered`, `llm_tier`, `local_tier`, `tokens_saved`, `avg_summary_length`, `llm_failures`.
+- **Dashboard** (`dashboard.html`): New "Context Summarization" card in the Overview tab — 4 stat cards (Triggered, LLM Tier, Local Tier, Tokens Saved) with live polling.
+
+### 🧪 Tests (554 passed, 1 skipped)
+
+- `test_context_assembler.py`: Comprehensive tests for constants, chunk splitting, LLM scheduling, `AssembledContext` fields.
+- `test_prompt_registry.py`: Updated expected template count (7 → 9) for new summarization templates.
+- `test_ai_chat.py`: Updated `make_chat_state` mock with `context_summary=None`.
+- All pre-existing tests pass — 1 pre-existing skip, 0 new failures.
+
+### Files Changed
+
+| File                                             | Change                                    |
+| ------------------------------------------------ | ----------------------------------------- |
+| `app/context_assembler.py`                       | New — two-tier summarization engine       |
+| `app/prompt_registry.py`                         | +2 summarization prompt templates         |
+| `app/database.py`                                | `ChatState.context_summary` field         |
+| `app/repos/chats.py`                             | DB load/save of `context_summary`         |
+| `app/handlers/ai_chat.py`                        | LLM scheduling + metrics                  |
+| `app/handlers/ai_search.py`                      | LLM scheduling + metrics                  |
+| `app/handlers/callbacks.py`                      | Clear summary on topic reset (3 handlers) |
+| `app/metrics.py`                                 | LLM/local tier tracking                   |
+| `app/web.py`                                     | `/api/overview` includes summarization    |
+| `app/templates/dashboard.html`                   | Summarization stats card                  |
+| `scripts/migrations/013_add_context_summary.sql` | DB migration                              |
+| `tests/test_context_assembler.py`                | New test file                             |
+
+---
+
 ## [2.6.8] – 2026-02-28 – Ruff Integration & Code Modernization
 
 ### 🐛 Bug Fixes (Ruff-identified)
