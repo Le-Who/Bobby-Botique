@@ -174,11 +174,23 @@ def _record_login_attempt(ip: str) -> None:
     _login_attempts[ip].append(time.time())
 
 
+def _get_client_ip() -> str:
+    """Extracts the real client IP, respecting X-Forwarded-For if behind proxy."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        # The rightmost IP is the one appended by the immediate upstream proxy
+        # which we trust. This prevents IP spoofing attacks where attackers
+        # inject a fake IP at the start of the X-Forwarded-For list.
+        ips = [ip.strip() for ip in forwarded.split(",")]
+        return ips[-1] if ips else (request.remote_addr or "unknown")
+    return request.remote_addr or "unknown"
+
+
 @flask_app.route("/login", methods=["GET", "POST"])
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
-    client_ip = request.remote_addr or "unknown"
+    client_ip = _get_client_ip()
 
     if request.method == "POST":
         # Check brute-force rate limit
