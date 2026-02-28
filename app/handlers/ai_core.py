@@ -9,6 +9,7 @@ import asyncio
 import logging
 
 from telegram import Message
+from app.utils.heartbeat import stop_heartbeat
 
 from app.agent_use_cases import AgentRequestUseCase
 
@@ -30,6 +31,7 @@ async def handle_ai_response_error(
     Returns:
         True if это была ошибка и она была обработана, False if это не ошибка
     """
+    stop_heartbeat(placeholder_message.message_id)
     from app.errors import (
         build_retry_and_roles_keyboard,
         build_roles_keyboard,
