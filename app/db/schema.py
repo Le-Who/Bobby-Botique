@@ -15,7 +15,7 @@ async def create_tables(db_query):
         "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, is_authorized INTEGER DEFAULT 0, is_deep_dive BOOLEAN DEFAULT FALSE)"
     )
     await db_query(
-        "CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY, history TEXT, model TEXT, token_count INTEGER DEFAULT 0, search_enabled INTEGER DEFAULT 0, system_prompt TEXT)"
+        "CREATE TABLE IF NOT EXISTS chats (user_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE, history JSONB DEFAULT '[]', model TEXT, token_count INTEGER DEFAULT 0, search_enabled BOOLEAN DEFAULT FALSE, system_prompt TEXT)"
     )
 
     await db_query("""
@@ -31,7 +31,7 @@ async def create_tables(db_query):
     await db_query("""
         CREATE TABLE IF NOT EXISTS user_roles (
             id SERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
             title TEXT NOT NULL,
             prompt TEXT NOT NULL,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -40,7 +40,7 @@ async def create_tables(db_query):
     await db_query("""
         CREATE TABLE IF NOT EXISTS conversations (
             id SERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
             title TEXT NOT NULL,
             role_type TEXT NULL,
             role_id INTEGER NULL,
@@ -54,10 +54,11 @@ async def create_tables(db_query):
     await db_query("""
         CREATE TABLE IF NOT EXISTS conversation_messages (
             id SERIAL PRIMARY KEY,
-            conversation_id INTEGER NOT NULL,
+            conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
             token_estimate BIGINT DEFAULT 0,
+            owner_user_id BIGINT REFERENCES users(user_id) ON DELETE SET NULL,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -66,7 +67,7 @@ async def create_tables(db_query):
         "CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)"
     )
     await db_query(
-        "CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))"
+        "CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT REFERENCES api_keys(key_hash) ON DELETE CASCADE, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))"
     )
     await db_query("""
         CREATE TABLE IF NOT EXISTS metrics (
@@ -80,8 +81,8 @@ async def create_tables(db_query):
             cache_misses INTEGER DEFAULT 0,
             api_calls JSONB DEFAULT '{}',
             model_usage JSONB DEFAULT '{}',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(metric_date)
         )
     """)
@@ -91,26 +92,26 @@ async def create_tables(db_query):
             error_type TEXT NOT NULL,
             error_message TEXT NOT NULL,
             request_id TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         )
     """)
     await db_query(
         "CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)"
     )
     await db_query(
-        "CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))"
+        "CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT REFERENCES tavily_api_keys(key_hash) ON DELETE CASCADE, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))"
     )
     await db_query(
         "CREATE TABLE IF NOT EXISTS openrouter_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)"
     )
     await db_query(
-        "CREATE TABLE IF NOT EXISTS openrouter_key_usage (key_hash TEXT, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))"
+        "CREATE TABLE IF NOT EXISTS openrouter_key_usage (key_hash TEXT REFERENCES openrouter_api_keys(key_hash) ON DELETE CASCADE, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))"
     )
 
     await db_query("""
         CREATE TABLE IF NOT EXISTS user_documents (
             id SERIAL PRIMARY KEY,
-            user_id BIGINT,
+            user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
             filename TEXT,
             content TEXT,
             pages INTEGER,
@@ -123,7 +124,7 @@ async def create_tables(db_query):
 
     await db_query("""
         CREATE TABLE IF NOT EXISTS user_state (
-            user_id BIGINT PRIMARY KEY,
+            user_id BIGINT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
             document_mode BOOLEAN DEFAULT FALSE,
             selected_document_id INTEGER,
             awaiting_custom_role_input BOOLEAN DEFAULT FALSE,
@@ -142,7 +143,7 @@ async def create_tables(db_query):
     await db_query("""
         CREATE TABLE IF NOT EXISTS feedback (
             id SERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
             message_id BIGINT,
             rating TEXT NOT NULL CHECK (rating IN ('up', 'down')),
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP

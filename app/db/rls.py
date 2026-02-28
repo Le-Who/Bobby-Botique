@@ -14,7 +14,7 @@ import asyncpg
 RLS_POLICY_USER = """
 CREATE POLICY {policy_name} ON {table_name}
 FOR ALL USING (
-    user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint OR
+    user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint) OR
     (select current_setting('app.is_admin', true)) = 'true'
 );
 """
@@ -31,7 +31,7 @@ FOR ALL USING (
     EXISTS (
         SELECT 1 FROM group_members gm
         WHERE gm.chat_id = {table_name}.chat_id
-        AND gm.user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
+        AND gm.user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint)
     )
 );
 """
@@ -40,11 +40,7 @@ RLS_POLICY_CONVERSATION_MESSAGES = """
 CREATE POLICY {policy_name} ON {table_name}
 FOR ALL USING (
     (select current_setting('app.is_admin', true)) = 'true'
-    OR EXISTS (
-        SELECT 1 FROM conversations c
-        WHERE c.id = {table_name}.conversation_id
-        AND c.user_id = NULLIF((select current_setting('app.user_id', true)), '')::bigint
-    )
+    OR owner_user_id = (select NULLIF(current_setting('app.user_id', true), '')::bigint)
 );
 """
 
@@ -53,9 +49,11 @@ FOR ALL USING (
 RLS_CONFIG = {
     "users": [{"name": "users_policy", "template": RLS_POLICY_USER}],
     "chats": [{"name": "chats_policy", "template": RLS_POLICY_USER}],
+    "active_chat_messages": [{"name": "active_chat_messages_policy", "template": RLS_POLICY_USER}],
     "user_documents": [{"name": "user_documents_policy", "template": RLS_POLICY_USER}],
     "user_roles": [{"name": "user_roles_policy", "template": RLS_POLICY_USER}],
     "user_state": [{"name": "user_state_policy", "template": RLS_POLICY_USER}],
+    "user_metrics": [{"name": "user_metrics_policy", "template": RLS_POLICY_USER}],
     "feedback": [{"name": "feedback_policy", "template": RLS_POLICY_USER}],
     "conversations": [{"name": "conversations_policy", "template": RLS_POLICY_USER}],
     "roles": [
@@ -82,6 +80,7 @@ RLS_CONFIG = {
             "template": RLS_POLICY_CONVERSATION_MESSAGES,
         }
     ],
+    "schema_migrations": [{"name": "schema_migrations_policy", "template": RLS_POLICY_ADMIN}],
     "group_chats": [{"name": "group_chats_policy", "template": RLS_POLICY_GROUP}],
     "group_members": [{"name": "group_members_policy", "template": RLS_POLICY_GROUP}],
     "group_messages": [{"name": "group_messages_policy", "template": RLS_POLICY_GROUP}],

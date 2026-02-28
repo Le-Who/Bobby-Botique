@@ -89,7 +89,7 @@ async def get_user_chat(user_id: int) -> Optional[ChatState]:
                     history=history,
                     model=row["model"],
                     token_count=row["token_count"],
-                    search_enabled=bool(row["search_enabled"]),
+                    search_enabled=row["search_enabled"],
                     system_prompt=row["system_prompt"],
                 )
 
@@ -191,7 +191,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                     user_id,
                     chat_state.model,
                     chat_state.token_count,
-                    int(chat_state.search_enabled),
+                    chat_state.search_enabled,
                     chat_state.system_prompt,
                 ),
                 conn=conn,

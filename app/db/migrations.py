@@ -1,6 +1,13 @@
 """
 Database migrations — SQL file runner + legacy inline migrations.
 
+Migration Workflow:
+    1. ALL schema changes MUST have a numbered SQL file in scripts/migrations/.
+    2. Changes applied via Supabase MCP/dashboard MUST be mirrored as a local
+       SQL file so the app-level schema_migrations tracker stays in sync.
+    3. The SQL files are the source of truth — they run on startup via this module.
+    4. Legacy inline migrations (below) handle pre-existing environments only.
+
 Extracted from app/database.py to reduce monolith size.
 """
 
