@@ -107,6 +107,31 @@
           </div>
         </div>
       </section>
+
+      <!-- ROW 3: Context Summarization -->
+      <section class="dash-section">
+        <h2 class="section-title">Context Summarization</h2>
+        <div class="card-row quad">
+          <div class="card">
+            <div class="card-label">Triggered</div>
+            <div class="card-value mono" id="sum-triggered">—</div>
+          </div>
+          <div class="card">
+            <div class="card-label">LLM Tier</div>
+            <div class="card-value mono" id="sum-llm">—</div>
+            <div class="card-sub" id="sum-llm-fail"></div>
+          </div>
+          <div class="card">
+            <div class="card-label">Local Tier</div>
+            <div class="card-value mono" id="sum-local">—</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Tokens Saved</div>
+            <div class="card-value mono" id="sum-tokens">—</div>
+            <div class="card-sub" id="sum-avg"></div>
+          </div>
+        </div>
+      </section>
       </div><!-- end panel-overview -->
 
       <!-- TAB: AI Providers -->
@@ -430,6 +455,19 @@
           $("cache-hit").textContent =
             (typeof cacheRate === "number" ? cacheRate.toFixed(1) : cacheRate) +
             "%";
+        }
+
+        // Summarization
+        const sm = d.summarization;
+        if (sm) {
+          $("sum-triggered").textContent = (sm.triggered || 0).toLocaleString();
+          $("sum-llm").textContent = (sm.llm_tier || 0).toLocaleString();
+          const llmFail = sm.llm_failures || 0;
+          $("sum-llm-fail").textContent = llmFail > 0 ? llmFail + " failures" : "";
+          $("sum-local").textContent = (sm.local_tier || 0).toLocaleString();
+          $("sum-tokens").textContent = (sm.tokens_saved || 0).toLocaleString();
+          const avg = sm.avg_summary_length || 0;
+          $("sum-avg").textContent = avg > 0 ? "avg " + Math.round(avg) + " tok" : "";
         }
 
         $("last-update").textContent =

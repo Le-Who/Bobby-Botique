@@ -64,44 +64,64 @@ async def _handle_regular_chat(
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
-    # Подготавливаем context с учётом limitов tokenов
+    # Assemble context with token-budget awareness
+    from app.context_assembler import get_assembler
 
-    # Extract суммарfromацию from истории, if есть
-    summary = None
-    if (
-        chat_state.history
-        and isinstance(chat_state.history, list)
-        and len(chat_state.history) > 0
-    ):
-        # Check, есть ли суммарfromация в первом сообщении
-        first_msg = chat_state.history[0]
-        if (
-            isinstance(first_msg, dict)
-            and "role" in first_msg
-            and "parts" in first_msg
-            and len(first_msg["parts"]) > 0
-            and isinstance(first_msg["parts"][0], str)
-            and "[Суммаризация предыдущего контекста]" in first_msg["parts"][0]
-        ):
-            summary = first_msg["parts"][0]
-            # Убираем суммарfromацию from истории for обработки
-            chat_state.history = chat_state.history[1:]
+    assembler = get_assembler()
 
-    # Подготавливаем context с limitами
-    prepared_history, new_summary = prompts.prepare_context_with_limits(
-        chat_state.history, user_message, summary
-    )
+    # Use persisted summary from chat state (survives restarts)
+    existing_summary = chat_state.context_summary
 
-    # Строим финальный context
-    final_context = prompts.build_context_with_summary(
-        prepared_history, new_summary, user_message
-    )
-
-    # Update history в chat_state
-    chat_state.history = final_context
-
-    # Используем системную инструкцию user or инструкцию by default
+    # Compose system instruction first (needed for budget calculation)
     system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
+
+    # Assemble context within token budget
+    assembled = assembler.assemble(
+        history=chat_state.history,
+        user_message=user_message,
+        system_instruction=system_instruction,
+        existing_summary=existing_summary,
+    )
+
+    # Update chat state with assembled context
+    chat_state.history = assembled.history
+    chat_state.context_summary = assembled.summary
+
+    if assembled.was_truncated:
+        logging.info(
+            "Context trimmed for user %s: dropped %d msgs, audit=%s, llm_scheduled=%s",
+            user_id, assembled.messages_dropped, assembled.audit_hash,
+            assembled.llm_summarization_scheduled,
+        )
+
+        # Record summarization metrics
+        from app.metrics import role_conv_metrics
+        from app.prompt_registry import estimate_tokens_cyrillic
+
+        tokens_saved = sum(
+            estimate_tokens_cyrillic(assembler._extract_text(msg))
+            for msg in assembled.dropped_messages
+        )
+        summary_len = estimate_tokens_cyrillic(assembled.summary) if assembled.summary else 0
+        tier = "llm" if assembled.llm_summarization_scheduled else "local"
+        await role_conv_metrics.record_summarization(
+            reason=f"{tier}: dropped {assembled.messages_dropped} msgs",
+            tokens_saved=tokens_saved,
+            summary_length=summary_len,
+        )
+
+        # Schedule async LLM summarization for NEXT request
+        if assembled.llm_summarization_scheduled and assembled.dropped_messages:
+            async def _store_llm_summary(summary: str) -> None:
+                chat_state.context_summary = summary
+                await update_user_chat(user_id, chat_state)
+                logging.info("LLM summary persisted for user %s", user_id)
+
+            assembler.schedule_llm_summarization(
+                dropped_messages=assembled.dropped_messages,
+                existing_summary=existing_summary,
+                callback=_store_llm_summary,
+            )
 
     try:
         await update_stage(placeholder_message, STAGES_CHAT, 0)

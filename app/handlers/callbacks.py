@@ -299,6 +299,7 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         chat_state.history = []
         chat_state.token_count = 0
         chat_state.system_prompt = None
+        chat_state.context_summary = None
         chat_state.is_deep_dive = False
         await update_user_chat(user_id, chat_state)
         await query.message.reply_text(
@@ -325,6 +326,7 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_state.history = []
     chat_state.token_count = 0
     chat_state.system_prompt = None
+    chat_state.context_summary = None
     await update_user_chat(user_id, chat_state)
 
     # Remove the old inline keyboard
@@ -388,6 +390,7 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     chat_state.history = []
     chat_state.token_count = 0
     chat_state.system_prompt = None
+    chat_state.context_summary = None
     await update_user_chat(user_id, chat_state)
 
     text = (

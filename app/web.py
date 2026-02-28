@@ -332,11 +332,22 @@ async def api_overview():
     except Exception:
         redis_ok = False
 
+    # Summarization metrics
+    summarization = {}
+    try:
+        from app.metrics import role_conv_metrics
+
+        rcm = await role_conv_metrics.get_metrics_summary()
+        summarization = rcm.get("summarization", {})
+    except Exception:
+        pass
+
     return jsonify(
         {
             "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
             "system": system,
             "metrics": metrics,
+            "summarization": summarization,
             "services": {
                 "database": "connected" if db_status else "disconnected",
                 "redis": "connected" if redis_ok else "disconnected",

@@ -611,6 +611,9 @@ class SummarizationMetrics:
     summarizations_triggered: int = 0
     summarizations_soft_limit: int = 0
     summarizations_hard_limit: int = 0
+    llm_summarizations: int = 0
+    local_summarizations: int = 0
+    llm_summarization_failures: int = 0
     total_tokens_saved: int = 0
     average_summary_length: float = 0.0
 
@@ -681,9 +684,15 @@ class RoleConversationMetricsCollector:
         elif "жёсткий лимит" in reason:
             self.summarization_metrics.summarizations_hard_limit += 1
 
+        # Track LLM vs local tier
+        if reason.startswith("llm:"):
+            self.summarization_metrics.llm_summarizations += 1
+        elif reason.startswith("local:"):
+            self.summarization_metrics.local_summarizations += 1
+
         self.summarization_metrics.total_tokens_saved += tokens_saved
 
-        # Update среднюю длину суммарfromации
+        # Update average summary length
         current_avg = self.summarization_metrics.average_summary_length
         count = self.summarization_metrics.summarizations_triggered
         self.summarization_metrics.average_summary_length = (
@@ -691,7 +700,7 @@ class RoleConversationMetricsCollector:
         ) / count
 
         logging.info(
-            f"Summarization triggered: {reason}, tokens saved: {tokens_saved}"
+            "Summarization triggered: %s, tokens saved: %d", reason, tokens_saved
         )
 
     async def get_metrics_summary(self) -> dict[str, Any]:
@@ -714,6 +723,9 @@ class RoleConversationMetricsCollector:
                 "triggered": self.summarization_metrics.summarizations_triggered,
                 "soft_limit": self.summarization_metrics.summarizations_soft_limit,
                 "hard_limit": self.summarization_metrics.summarizations_hard_limit,
+                "llm_tier": self.summarization_metrics.llm_summarizations,
+                "local_tier": self.summarization_metrics.local_summarizations,
+                "llm_failures": self.summarization_metrics.llm_summarization_failures,
                 "tokens_saved": self.summarization_metrics.total_tokens_saved,
                 "avg_summary_length": self.summarization_metrics.average_summary_length,
             },

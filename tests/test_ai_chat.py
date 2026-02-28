@@ -15,6 +15,7 @@ def make_chat_state(history=None, model="gemini-2.0-flash", system_prompt=None,
         token_count=token_count,
         is_deep_dive=is_deep_dive,
         search_enabled=False,
+        context_summary=None,
     )
     return cs
 

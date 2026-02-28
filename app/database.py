@@ -23,6 +23,7 @@ class ChatState:
     system_prompt: str | None
     is_deep_dive: bool = False
     deep_dive_thread_id: str | None = None
+    context_summary: str | None = None  # LLM-generated conversation summary
     _original_length: int = 0
 
 
