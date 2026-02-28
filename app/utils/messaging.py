@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from telegram import Message
+from app.utils.heartbeat import stop_heartbeat
 from telegram.error import BadRequest
 
 from app.circuit_breaker import TELEGRAM_API_CONFIG, get_circuit_breaker
@@ -25,6 +26,7 @@ async def send_long_message(
     Отправляет длинное message, разбивая его на части, if необходимо.
     Использует safe HTML форматирование.
     """
+    stop_heartbeat(message.message_id)
     # Validation состояния deep dive (legacy logic preserved)
     if is_deep_dive:
         try:
@@ -126,6 +128,7 @@ async def send_long_message(
 
 async def send_formatted_message(message: Message, text: str, parse_mode: str = "HTML"):
     """Wrapper for sending formatted messages."""
+    stop_heartbeat(message.message_id)
     try:
         formatted, mode = format_text(text, parse_mode=parse_mode)
         await message.reply_text(formatted, parse_mode=mode)
@@ -136,6 +139,7 @@ async def send_formatted_message(message: Message, text: str, parse_mode: str = 
 
 async def edit_formatted_message(message: Message, text: str, parse_mode: str = "HTML"):
     """Wrapper for editing formatted messages."""
+    stop_heartbeat(message.message_id)
     try:
         formatted, mode = format_text(text, parse_mode=parse_mode)
         await message.edit_text(formatted, parse_mode=mode)

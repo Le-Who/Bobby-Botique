@@ -16,6 +16,7 @@ Sub-modules:
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+from app.utils.heartbeat import stop_heartbeat
 from telegram.ext import ContextTypes
 
 # ── Re-exports from ai_chat ──────────────────────────────────────────────────
@@ -82,6 +83,7 @@ async def process_long_request(
 
             # Не удаляем placeholder message, а редактируем его
             try:
+                stop_heartbeat(placeholder_message.message_id)
                 await placeholder_message.edit_text(
                     "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
                     reply_markup=InlineKeyboardMarkup(keyboard),
@@ -125,6 +127,7 @@ async def process_long_request(
             from app.errors import build_retry_and_roles_keyboard, user_friendly_error
 
             friendly = user_friendly_error(e)
+            stop_heartbeat(placeholder_message.message_id)
             await placeholder_message.edit_text(
                 friendly, reply_markup=build_retry_and_roles_keyboard()
             )

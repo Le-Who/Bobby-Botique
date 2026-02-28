@@ -9,6 +9,7 @@ from telegram.error import BadRequest, NetworkError
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from app import prompts, state
+from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 from app.config import settings
 from app.document_processor import process_uploaded_document
 from app.handlers import agent, menus
@@ -651,6 +652,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             (50, "⏳ Запрос обрабатывается дольше обычного. Пожалуйста, подождите..."),
         ]
         done_event = asyncio.Event()
+        register_heartbeat(placeholder_message.message_id, done_event)
 
         async def _heartbeat() -> None:
             try:
@@ -664,6 +666,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         return  # Main task finished — stop heartbeat
                     except TimeoutError:
                         pass
+
+                    if done_event.is_set():
+                        return  # Stop heartbeat right before edit if task just finished
+
                     elapsed = threshold
                     try:
                         await placeholder_message.edit_text(text)
@@ -688,6 +694,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             await process_long_request(placeholder_message, update, context)
                         except ImportError:
                             # Fallback if agent недоступен
+                            stop_heartbeat(placeholder_message.message_id)
                             await placeholder_message.edit_text(
                                 "🤔 Обрабатываю ваш запрос... (упрощенный режим)"
                             )
@@ -718,6 +725,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "Error in task wrapper for user %s: %s", user_id, e, exc_info=True
                 )
                 try:
+                    stop_heartbeat(placeholder_message.message_id)
                     from app.errors import build_retry_and_roles_keyboard
                     await placeholder_message.edit_text(
                         "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз.",
@@ -742,6 +750,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
             finally:
                 # Ensure heartbeat is stopped even on exception paths
+                unregister_heartbeat(placeholder_message.message_id)
                 if not done_event.is_set():
                     done_event.set()
                     heartbeat_task.cancel()
