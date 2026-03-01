@@ -67,8 +67,9 @@ def _load_daily_limits() -> dict[str, int]:
 
     # Значения by default
     default_limits = {
+        "gemini-3-flash-preview": 15,
         "gemini-2.5-flash": 15,
-        "gemini-2.5-flash-latest": 15,
+        "gemini-flash-latest": 15,
         "gemini-2.5-flash-lite": 15,
         "gemini-flash-lite-latest": 15,
     }
@@ -136,11 +137,11 @@ class Settings(BaseModel):
     # --- MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
     AVAILABLE_MODELS: list[str] = [
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-flash-latest",
-        "gemini-flash-lite-latest",
         "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash-lite",
+        "gemini-flash-lite-latest",
     ]
     DEFAULT_MODEL: str = "gemini-flash-latest"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
@@ -312,7 +313,7 @@ def load_settings() -> Settings:
             or default_openrouter_models,
             "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gemini-flash-latest"),
             "QNA_MODEL": os.getenv("QNA_MODEL", "gemini-2.5-flash-lite"),
-            "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-2.5-pro"),
+            "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-2.5-flash"),
             "URL_SELECTION_MODEL": os.getenv(
                 "URL_SELECTION_MODEL", "gemini-flash-latest"
             ),
