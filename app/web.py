@@ -178,7 +178,14 @@ def _record_login_attempt(ip: str) -> None:
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
-    client_ip = request.remote_addr or "unknown"
+
+    # Securely extract client IP behind proxy (Northflank)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        # Use rightmost IP from X-Forwarded-For to prevent spoofing
+        client_ip = forwarded_for.split(",")[-1].strip()
+    else:
+        client_ip = request.remote_addr or "unknown"
 
     if request.method == "POST":
         # Check brute-force rate limit

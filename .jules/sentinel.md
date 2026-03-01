@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-24 - [Rate Limiting Bypass] Insecure Client IP Resolution
+**Vulnerability:** The login rate limiter in `app/web.py` relied solely on `request.remote_addr` or the first value of `X-Forwarded-For` (if it was using a naive proxy setup). Behind a reverse proxy (Northflank), `remote_addr` is the proxy's IP, and reading the leftmost value of `X-Forwarded-For` allows attackers to bypass rate limits by spoofing the header.
+**Learning:** When deployed behind a reverse proxy, client IP resolution for security mechanisms must be done carefully. The leftmost IP in `X-Forwarded-For` is easily spoofed by the client. The proxy appends the true client IP to the rightmost end of the header list.
+**Prevention:** Extract the rightmost IP from the `X-Forwarded-For` header to ensure the IP was actually set by the trusted reverse proxy, preventing spoofing and global rate-limiting DoS.
