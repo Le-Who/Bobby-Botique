@@ -1,15 +1,17 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+
 from app.memory_manager import (
-    MemoryManager,
-    MemoryThreshold,
     AutoCleanupResource,
     DocumentCache,
-    cleanup_memory,
-    shutdown_memory_manager,
-    get_memory_stats,
+    MemoryManager,
+    MemoryThreshold,
     add_memory_cleanup_callback,
+    cleanup_memory,
+    get_memory_stats,
     remove_memory_cleanup_callback,
+    shutdown_memory_manager,
 )
 
 

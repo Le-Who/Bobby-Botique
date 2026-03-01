@@ -1,9 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from app.ai_provider import OpenRouterProvider
 from app.request_context import clear_request_id, set_request_id
 from app.search_services import _tavily_api_call
-from app.ai_provider import OpenRouterProvider
 
 
 @pytest.mark.asyncio

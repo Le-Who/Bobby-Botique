@@ -1,8 +1,9 @@
 """Tests for app.handlers.ai_search — QnA and research agent search."""
 
-import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def make_chat_state(model="gemini-2.0-flash", system_prompt=None,

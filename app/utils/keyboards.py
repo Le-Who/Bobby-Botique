@@ -279,7 +279,7 @@ def ai_response_keyboard() -> InlineKeyboardMarkup:
         [
             feedback_row(),
             [InlineKeyboardButton("✨ Новая тема", callback_data="new_topic")],
-            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
         ]
     )
 
@@ -303,7 +303,7 @@ def deep_dive_keyboard(is_last_part: bool = True) -> InlineKeyboardMarkup:
             ]
         )
     buttons.append(
-        [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
+        [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")]
     )
     return InlineKeyboardMarkup(buttons)
 

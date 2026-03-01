@@ -9,7 +9,6 @@ from telegram.error import BadRequest, NetworkError
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from app import prompts, state
-from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 from app.config import settings
 from app.document_processor import process_uploaded_document
 from app.handlers import agent, menus
@@ -29,6 +28,7 @@ from app.state import (
 from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
 from app.utils.formatting import TelegramFormatter
+from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 
 # Глобальный limitер for тяжёлых AI-задач, чтобы fromбежать перегрузки event loop/провайдеров
 _HEAVY_REQUEST_LIMIT = max(

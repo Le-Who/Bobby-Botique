@@ -12,8 +12,8 @@ from app.context_assembler import (
     MAX_CHUNKS,
     MIN_HISTORY_MESSAGES,
     RESPONSE_RESERVE,
-    SUMMARY_BUDGET,
     SUMMARIZATION_MODEL,
+    SUMMARY_BUDGET,
     AssembledContext,
     ContextAssembler,
     TokenBudget,
@@ -21,7 +21,6 @@ from app.context_assembler import (
     should_summarize,
 )
 from app.prompt_registry import estimate_tokens_cyrillic
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

@@ -1,8 +1,9 @@
 """Tests for app.handlers.ai_chat — regular conversational AI chat."""
 
-import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def make_chat_state(history=None, model="gemini-2.0-flash", system_prompt=None,

@@ -1,8 +1,9 @@
 """Tests for app.handlers.cmd_admin — admin-only commands."""
 
-import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def make_admin_update(user_id=1, args=None):

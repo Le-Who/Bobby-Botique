@@ -1,6 +1,9 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
-from app.group_chat import GroupChatManager, GroupChat
+
+from app.group_chat import GroupChat, GroupChatManager
+
 
 @pytest.fixture
 def group_chat_manager():

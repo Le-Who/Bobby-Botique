@@ -640,7 +640,7 @@ def register(application: Application) -> None:
     _add_fast_callback(application, help_callback, "^help$")
     _add_fast_callback(application, start_menu_callback, "^start_menu$")
     _add_fast_callback(application, model_button_callback, "^model")
-    _add_fast_callback(application, open_roles_callback, "^open_roles$")
+    _add_fast_callback(application, open_roles_callback, r"^open_roles(:from_response)?$")
     _add_fast_callback(application, role_apply_callback, "^role_apply:")
     _add_fast_callback(application, role_clear_callback, "^role_clear$")
     _add_fast_callback(application, role_nav_callback, "^role_nav:")

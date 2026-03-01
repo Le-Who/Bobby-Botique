@@ -1,7 +1,9 @@
-import pytest
-import re
 import html
-from app.utils.text_format import split_text_safe, format_text
+import re
+
+import pytest
+
+from app.utils.text_format import format_text, split_text_safe
 
 
 @pytest.fixture

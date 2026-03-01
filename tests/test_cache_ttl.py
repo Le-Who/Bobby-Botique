@@ -1,6 +1,7 @@
-import unittest
 import asyncio
-from unittest.mock import patch, MagicMock
+import unittest
+from unittest.mock import MagicMock, patch
+
 from app.cache import MultiLayerCache
 
 

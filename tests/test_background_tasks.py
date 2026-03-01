@@ -1,11 +1,11 @@
 """Tests for app.utils.background_tasks — shared task start/cancel utilities."""
 
 import asyncio
-import pytest
 from unittest.mock import MagicMock
 
-from app.utils.background_tasks import start_background_task, cancel_background_task
+import pytest
 
+from app.utils.background_tasks import cancel_background_task, start_background_task
 
 # ── start_background_task ─────────────────────────────────────────────────────
 

@@ -1,11 +1,13 @@
 """
 Tests for GeminiProvider._execute_request via the Provider class directly.
 """
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
-from app.ai_provider import GeminiProvider
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from google.genai.errors import APIError
+
+from app.ai_provider import GeminiProvider
 
 
 @pytest.mark.asyncio
@@ -123,10 +125,10 @@ async def test_execute_gemini_request_timeout():
 
     def timeout_side_effect(coro, timeout=None):
         coro.close()
-        raise asyncio.TimeoutError("Timeout")
+        raise TimeoutError("Timeout")
 
     with (
-        patch("app.ai_provider.genai.Client") as MockClient,
+        patch("app.ai_provider.genai.Client") as _MockClient,
         patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
         patch("app.ai_provider.api_logger", new_callable=MagicMock),
         patch("app.ai_provider.settings") as mock_settings,

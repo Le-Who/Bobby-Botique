@@ -5,10 +5,10 @@ These tests mock only external boundaries (database, AI APIs, Telegram)
 and verify that the internal business logic chain works end-to-end.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import date, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ── Flow 1: AI response lifecycle ──────────────────────────────────────────
 
@@ -19,7 +19,7 @@ class TestAIResponseLifecycle:
     @pytest.mark.asyncio
     async def test_gemini_response_lifecycle(self) -> None:
         """Gemini model routes through GeminiProvider and returns AIResponse."""
-        from app.ai_provider import get_ai_response, AIResponse
+        from app.ai_provider import AIResponse, get_ai_response
 
         mock_response = AIResponse(
             text="Hello from Gemini!",
@@ -48,7 +48,7 @@ class TestAIResponseLifecycle:
     @pytest.mark.asyncio
     async def test_openrouter_response_lifecycle(self) -> None:
         """OpenRouter model (contains /) routes through OpenRouterProvider."""
-        from app.ai_provider import get_ai_response, AIResponse
+        from app.ai_provider import AIResponse, get_ai_response
 
         mock_response = AIResponse(
             text="Hello from GPT-4!",
@@ -75,7 +75,7 @@ class TestAIResponseLifecycle:
     @pytest.mark.asyncio
     async def test_error_response_returns_none_tokens(self) -> None:
         """On error, text is error message and tokens is None."""
-        from app.ai_provider import get_ai_response, AIResponse
+        from app.ai_provider import AIResponse, get_ai_response
 
         mock_response = AIResponse(
             text="❌ API error",
@@ -155,13 +155,13 @@ class TestKeyRotationFlow:
     @pytest.mark.asyncio
     async def test_daily_key_manager_is_available_under_limit(self, mock_db) -> None:
         """Key is available when usage < threshold."""
-        from app.repos.keys import DailyKeyManager
         from app.config import settings
+        from app.repos.keys import DailyKeyManager
 
         km = DailyKeyManager("api_keys", "key_usage")
         mock_db.return_value = [{"request_count": 10}]
         daily_limit = 100
-        threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
+        _threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
 
         result = await km.is_key_available("abc123", "gemini-2.0-flash", daily_limit)
         # 10 < threshold (e.g., 90% of 100 = 90)
@@ -170,8 +170,8 @@ class TestKeyRotationFlow:
     @pytest.mark.asyncio
     async def test_daily_key_manager_is_available_over_limit(self, mock_db) -> None:
         """Key is NOT available when usage >= threshold."""
-        from app.repos.keys import DailyKeyManager
         from app.config import settings
+        from app.repos.keys import DailyKeyManager
 
         km = DailyKeyManager("api_keys", "key_usage")
         mock_db.return_value = [{"request_count": 95}]
@@ -245,7 +245,7 @@ class TestConversationLifecycle:
     @pytest.mark.asyncio
     async def test_create_then_list(self, mock_db) -> None:
         """After saving a conversation, listing returns it."""
-        from app.repos.conversations import save_conversation, get_user_conversations
+        from app.repos.conversations import get_user_conversations, save_conversation
 
         # Mock get_user_chat (imported from chats module)
         mock_chat = MagicMock()
@@ -282,7 +282,7 @@ class TestConversationLifecycle:
         from app.repos.conversations import rename_conversation
 
         mock_db.return_value = None
-        result = await rename_conversation(1, 42, "New Title")
+        _result = await rename_conversation(1, 42, "New Title")
         sql = mock_db.call_args[0][0]
         assert "UPDATE conversations" in sql
         assert "title" in sql.lower()
@@ -358,8 +358,8 @@ class TestUserAuthChain:
     @pytest.mark.asyncio
     async def test_admin_always_authorized(self, mock_db) -> None:
         """Admin user bypasses DB check."""
-        from app.repos.users import is_authorized
         from app.config import settings
+        from app.repos.users import is_authorized
 
         result = await is_authorized(settings.ADMIN_ID)
         assert result is True

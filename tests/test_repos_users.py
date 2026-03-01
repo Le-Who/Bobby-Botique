@@ -1,8 +1,9 @@
 """Tests for app.repos.users — auth, state, feedback."""
 
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock, PropertyMock
 from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+
+import pytest
 
 
 @dataclass

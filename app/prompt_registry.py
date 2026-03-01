@@ -421,7 +421,7 @@ class PromptRegistry:
         """List all registered templates."""
         return list(self._templates.values())
 
-    @functools.lru_cache(maxsize=128)
+    @functools.lru_cache(maxsize=128)  # noqa: B019 — singleton, cache cleared in register()
     def compose_system_prompt(
         self, role_prompt: str | None = None, use_compact: bool = True
     ) -> str:

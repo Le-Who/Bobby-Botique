@@ -1,7 +1,7 @@
 import json
-import unittest
-import sys
 import os
+import sys
+import unittest
 
 sys.path.append(os.getcwd())
 from unittest.mock import MagicMock, patch

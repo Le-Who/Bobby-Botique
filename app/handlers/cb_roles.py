@@ -588,10 +588,20 @@ async def open_roles_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state
     )
+
+    # When triggered from an AI response, send as a new message
+    # to preserve the original response text.
+    from_response = query.data == "open_roles:from_response"
+
     try:
-        await query.edit_message_text(
-            text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        if from_response:
+            await query.message.reply_text(
+                text, parse_mode=parse_mode, reply_markup=reply_markup
+            )
+        else:
+            await query.edit_message_text(
+                text, parse_mode=parse_mode, reply_markup=reply_markup
+            )
     except telegram.error.BadRequest:
         pass
 

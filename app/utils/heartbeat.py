@@ -6,10 +6,9 @@ when the real response is ready to be sent.
 
 import asyncio
 import logging
-from typing import Dict
 
 # Dictionary mapping Telegram message_id to its heartbeat termination Event
-_HEARTBEAT_EVENTS: Dict[int, asyncio.Event] = {}
+_HEARTBEAT_EVENTS: dict[int, asyncio.Event] = {}
 
 def register_heartbeat(message_id: int, event: asyncio.Event) -> None:
     """Registers a heartbeat cancellation event for a given placeholder message_id."""

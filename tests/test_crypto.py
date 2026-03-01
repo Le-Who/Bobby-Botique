@@ -1,8 +1,9 @@
 """Tests for app.crypto – Fernet-based API key encryption."""
 
-import pytest
-from unittest.mock import patch, MagicMock
 from dataclasses import dataclass
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 @dataclass
@@ -39,7 +40,7 @@ def _mock_settings():
 class TestEncryptDecryptRoundtrip:
 
     def test_roundtrip_simple_key(self, _mock_settings):
-        from app.crypto import encrypt_api_key, decrypt_api_key
+        from app.crypto import decrypt_api_key, encrypt_api_key
 
         plaintext = "AIzaSyB_test_key_1234567890"
         ciphertext = encrypt_api_key(plaintext)
@@ -49,13 +50,13 @@ class TestEncryptDecryptRoundtrip:
         assert decrypt_api_key(ciphertext) == plaintext
 
     def test_roundtrip_empty_string(self, _mock_settings):
-        from app.crypto import encrypt_api_key, decrypt_api_key
+        from app.crypto import decrypt_api_key, encrypt_api_key
 
         ciphertext = encrypt_api_key("")
         assert decrypt_api_key(ciphertext) == ""
 
     def test_roundtrip_unicode(self, _mock_settings):
-        from app.crypto import encrypt_api_key, decrypt_api_key
+        from app.crypto import decrypt_api_key, encrypt_api_key
 
         plaintext = "key-with-ünïcödé-чары"
         assert decrypt_api_key(encrypt_api_key(plaintext)) == plaintext
@@ -118,10 +119,8 @@ class TestSafeDecrypt:
 
     def test_raises_on_corrupted_ciphertext(self, _mock_settings):
         """If decryption fails (e.g. wrong key), safe_decrypt raises DecryptionError."""
-        from app.crypto import safe_decrypt, reset_fernet
-
         # Encrypt with one secret
-        from app.crypto import encrypt_api_key
+        from app.crypto import encrypt_api_key, reset_fernet, safe_decrypt
         from app.errors import DecryptionError
         ciphertext = encrypt_api_key("secret-key")
 
@@ -148,7 +147,7 @@ class TestErrorCases:
                 encrypt_api_key("test")
 
     def test_decrypt_wrong_secret_raises_value_error(self, _mock_settings):
-        from app.crypto import encrypt_api_key, decrypt_api_key, reset_fernet
+        from app.crypto import decrypt_api_key, encrypt_api_key, reset_fernet
 
         ciphertext = encrypt_api_key("secret-key")
 

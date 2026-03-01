@@ -16,7 +16,6 @@ Sub-modules:
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
-from app.utils.heartbeat import stop_heartbeat
 from telegram.ext import ContextTypes
 
 # ── Re-exports from ai_chat ──────────────────────────────────────────────────
@@ -50,6 +49,7 @@ from app.handlers.ai_search import (  # noqa: F401
     _handle_research_agent,
 )
 from app.repos.chats import get_user_chat
+from app.utils.heartbeat import stop_heartbeat
 
 # ── Orchestration (stays here — thin dispatcher) ─────────────────────────────
 

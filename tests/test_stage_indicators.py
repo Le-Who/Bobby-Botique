@@ -2,16 +2,17 @@
 Tests for stage_indicators utility module.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from app.utils.stage_indicators import (
-    update_stage,
     STAGES_CHAT,
-    STAGES_SEARCH_QUICK,
-    STAGES_SEARCH_DEEP,
-    STAGES_PHOTO,
     STAGES_DOCUMENT,
+    STAGES_PHOTO,
+    STAGES_SEARCH_DEEP,
+    STAGES_SEARCH_QUICK,
+    update_stage,
 )
 
 

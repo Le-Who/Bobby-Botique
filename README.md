@@ -111,6 +111,7 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 - **Stage Indicators** (v2.5+): Animated processing stages (🤔→💭→✅) keep users informed during multi-step AI operations.
 - **Heartbeat Feedback** (v2.6.4+): 3-stage progressive updates (15s → 30s → 50s) reassure users during long-running requests.
 - **Manual Role Persistence** (v2.6.4+): In-progress manual role creation survives bot restarts via DB-backed `user_state` columns.
+- **Origin-Aware Role Buttons** (v2.7.0+): "🎭 Выбрать роль ИИ" under AI responses sends the roles menu as a **new message** (preserving the response); from menus it edits in-place. Controlled via `callback_data` suffix (`open_roles:from_response` vs `open_roles`).
 
 ### Document Processing
 

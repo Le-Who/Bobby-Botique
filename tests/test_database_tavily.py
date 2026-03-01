@@ -1,13 +1,13 @@
-import pytest
 import hashlib
-from unittest.mock import patch, AsyncMock, MagicMock
-from typing import List
 from dataclasses import dataclass, field
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @dataclass
 class MockSettings:
-    TAVILY_API_KEYS: List[str] = field(default_factory=list)
+    TAVILY_API_KEYS: list[str] = field(default_factory=list)
     ADMIN_ID: int = 123
     DATABASE_URL: str = "postgres://"
     DAILY_LIMITS: dict = field(default_factory=dict)

@@ -1,9 +1,10 @@
 import unittest
+
 from app.utils.formatting import (
     TelegramFormatter,
-    strip_markdown,
-    format_key_for_display,
     escape_format_chars,
+    format_key_for_display,
+    strip_markdown,
 )
 
 

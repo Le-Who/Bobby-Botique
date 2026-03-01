@@ -2,8 +2,9 @@
 Tests for the unified AI call path through AgentRequestUseCase.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from app.ai_provider import AIResponse
 

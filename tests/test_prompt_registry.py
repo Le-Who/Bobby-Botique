@@ -21,7 +21,6 @@ from app.prompt_registry import (
     reset_registry,
 )
 
-
 # ── Token estimation ─────────────────────────────────────────────────────────
 
 
@@ -33,7 +32,7 @@ class TestEstimateTokensCyrillic:
         tokens = estimate_tokens_cyrillic("Hello world")
         assert tokens > 0
         # ASCII: ~11 bytes UTF-8 // 3 ≈ 3
-        assert tokens == len("Hello world".encode("utf-8")) // 3
+        assert tokens == len(b"Hello world") // 3
 
     def test_cyrillic_text(self):
         text = "Привет мир"
@@ -90,7 +89,7 @@ class TestPromptTemplate:
             PROMPT_ENGINEER,
         ):
             assert tmpl.version, f"{tmpl.name} has no version"
-            assert tmpl.name, f"Template has no name"
+            assert tmpl.name, "Template has no name"
             assert tmpl.purpose, f"{tmpl.name} has no purpose"
 
 

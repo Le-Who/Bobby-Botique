@@ -1,16 +1,16 @@
-import unittest
 import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
-import sys
 import os
+import sys
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.append(os.getcwd())
 
 
 class TestMetricsIntegration(unittest.TestCase):
     def setUp(self):
-        import app.metrics as metrics_module
         import app.database as db_module
+        import app.metrics as metrics_module
 
         self.metrics_module = metrics_module
         self.db_module = db_module

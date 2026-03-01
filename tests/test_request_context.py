@@ -2,11 +2,10 @@ import asyncio
 import logging
 import threading
 
+import pytest
+
 from app.request_context import clear_request_id, get_request_id, set_request_id
 from app.utils.logging_config import RequestContextFilter
-
-
-import pytest
 
 
 @pytest.fixture(autouse=True)

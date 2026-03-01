@@ -1,7 +1,8 @@
-import pytest
-import sys
 import importlib
+import sys
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Store mocked keys to clean up later
 _mock_keys = [

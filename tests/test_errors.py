@@ -2,8 +2,9 @@
 Tests for app/errors.py - Error handling utilities.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from app.errors import (
     # Constants
@@ -11,17 +12,17 @@ from app.errors import (
     OVERLOADED_ERROR,
     QUOTA_ERROR,
     TIMEOUT_ERROR,
-    # Functions
-    user_friendly_error,
-    is_error_message,
-    is_retryable_error,
-    is_key_related_error,
-    build_retry_and_roles_keyboard,
-    build_roles_keyboard,
     # Classes
     APIError,
+    build_retry_and_roles_keyboard,
+    build_roles_keyboard,
     # Context manager - tested in async tests
     handle_api_errors,
+    is_error_message,
+    is_key_related_error,
+    is_retryable_error,
+    # Functions
+    user_friendly_error,
 )
 
 
@@ -157,7 +158,7 @@ class TestKeyboardBuilders:
         kb = build_retry_and_roles_keyboard(include_roles=True)
         assert len(kb.inline_keyboard) == 2
         assert kb.inline_keyboard[0][0].callback_data == "retry_last"
-        assert kb.inline_keyboard[1][0].callback_data == "open_roles"
+        assert kb.inline_keyboard[1][0].callback_data == "open_roles:from_response"
 
     def test_retry_only_keyboard(self):
         kb = build_retry_and_roles_keyboard(include_roles=False)
@@ -167,7 +168,7 @@ class TestKeyboardBuilders:
     def test_roles_keyboard(self):
         kb = build_roles_keyboard()
         assert len(kb.inline_keyboard) == 1
-        assert kb.inline_keyboard[0][0].callback_data == "open_roles"
+        assert kb.inline_keyboard[0][0].callback_data == "open_roles:from_response"
 
 
 @pytest.mark.asyncio

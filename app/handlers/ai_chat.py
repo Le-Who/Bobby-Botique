@@ -163,7 +163,7 @@ async def _handle_regular_chat(
                 ],
                 [
                     InlineKeyboardButton(
-                        "🎭 Выбрать роль ИИ", callback_data="open_roles"
+                        "🎭 Выбрать роль ИИ", callback_data="open_roles:from_response"
                     )
                 ],
                 [

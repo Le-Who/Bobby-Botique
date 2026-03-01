@@ -2,8 +2,9 @@
 Integration tests for the ProviderRouter — full chain from router → provider → response.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from app.ai_provider import AIResponse
 
@@ -119,8 +120,9 @@ class TestProviderRouterIntegration:
     @pytest.mark.asyncio
     async def test_multimodal_forces_gemini(self):
         """When history contains images and use_openrouter=None, force Gemini."""
-        from app.ai_provider import ProviderRouter
         from PIL import Image
+
+        from app.ai_provider import ProviderRouter
 
         router = ProviderRouter()
 

@@ -1,8 +1,8 @@
-import unittest
 import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
-import sys
 import os
+import sys
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Ensure app can be imported
 sys.path.append(os.getcwd())
@@ -10,8 +10,8 @@ sys.path.append(os.getcwd())
 
 class TestSystemStatus(unittest.TestCase):
     def setUp(self):
-        import sys
         import importlib
+        import sys
 
         self.mock_config = MagicMock()
         self.mock_database = MagicMock()

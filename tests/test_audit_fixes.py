@@ -3,12 +3,12 @@
 This module validates the bug fixes from the codebase audit to prevent regressions.
 """
 
-import pytest
 import asyncio
 import time
-from unittest.mock import patch, AsyncMock, MagicMock
 from dataclasses import dataclass
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ===========================================================================
 # M4 — is_encrypted hardening (base64url validation)
@@ -247,7 +247,7 @@ class TestUserStateStoreSetdefault:
     def test_setdefault_pattern_in_source(self):
         """Verify that __getitem__ uses setdefault instead of check-and-create."""
         import app.state as state_mod
-        source = open(state_mod.__file__, "r", encoding="utf-8").read()
+        source = open(state_mod.__file__, encoding="utf-8").read()
         assert "setdefault" in source, "H1 fix: __getitem__ should use setdefault"
 
 
@@ -261,7 +261,7 @@ class TestHttpxLoggerSuppression:
 
     def test_httpx_in_specialized_loggers(self):
         import app.utils.logging_config as lc
-        source = open(lc.__file__, "r", encoding="utf-8").read()
+        source = open(lc.__file__, encoding="utf-8").read()
         assert '"httpx"' in source
         assert '"httpcore"' in source
 
@@ -282,10 +282,10 @@ class TestHttpClientClose:
     @pytest.mark.asyncio
     async def test_double_close_is_idempotent(self):
         """Closing twice should not raise."""
-        from app.ai_provider import close_http_clients
         import app.ai_provider as aip
+        from app.ai_provider import close_http_clients
 
-        original_client = aip._openrouter_http_client
+        _original_client = aip._openrouter_http_client
 
         # Close
         await close_http_clients()
@@ -397,7 +397,7 @@ class TestDatabaseCleanImports:
 
     def test_no_unused_imports(self):
         import app.database as db_mod
-        source = open(db_mod.__file__, "r", encoding="utf-8").read()
+        source = open(db_mod.__file__, encoding="utf-8").read()  # noqa: SIM115
         # These should no longer appear in the imports
         lines = source.split("\n")
         import_lines = [l.strip() for l in lines[:20] if l.strip().startswith("import ") or l.strip().startswith("from ")]

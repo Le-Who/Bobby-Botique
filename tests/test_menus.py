@@ -1,9 +1,10 @@
 # ruff: noqa: E402
-import pytest
-import sys
 import importlib
-from unittest.mock import MagicMock, AsyncMock, patch
-from typing import List, Tuple, Any, Optional
+import sys
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # ==============================================================================
 # PYTEST MARKERS - для разделения типов тестов
@@ -56,7 +57,7 @@ def setup_mocks():
     class MockInlineKeyboardButton:
         """Mock for Telegram InlineKeyboardButton."""
 
-        def __init__(self, text: str, callback_data: Optional[str] = None):
+        def __init__(self, text: str, callback_data: str | None = None):
             self.text = text
             self.callback_data = callback_data
 
@@ -66,7 +67,7 @@ def setup_mocks():
     class MockInlineKeyboardMarkup:
         """Mock for Telegram InlineKeyboardMarkup."""
 
-        def __init__(self, inline_keyboard: List[List[MockInlineKeyboardButton]]):
+        def __init__(self, inline_keyboard: list[list[MockInlineKeyboardButton]]):
             self.inline_keyboard = inline_keyboard
 
         def __repr__(self):
@@ -153,7 +154,7 @@ class ChatState:
         self,
         model: str,
         search_enabled: bool = False,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
     ):
         self.model = model
         self.search_enabled = search_enabled
@@ -203,7 +204,7 @@ def menus_module():
 
 
 def verify_button(
-    keyboard: List[List[Any]],
+    keyboard: list[list[Any]],
     row: int,
     col: int,
     expected_text: str,
@@ -238,7 +239,7 @@ def verify_button(
 
 
 def verify_response_structure(
-    response: Tuple[str, str, Any],
+    response: tuple[str, str, Any],
     expected_parse_mode: str = "HTML",
     allow_none_markup: bool = False,
 ) -> None:
@@ -255,8 +256,8 @@ def verify_response_structure(
 
 
 def find_button_by_text(
-    keyboard: List[List[Any]], text_substring: str
-) -> Tuple[int, int]:
+    keyboard: list[list[Any]], text_substring: str
+) -> tuple[int, int]:
     """Find button position by text substring."""
     for row_idx, row in enumerate(keyboard):
         for col_idx, button in enumerate(row):
@@ -267,7 +268,7 @@ def find_button_by_text(
     )
 
 
-def extract_button_texts(keyboard: List[List[Any]]) -> List[str]:
+def extract_button_texts(keyboard: list[list[Any]]) -> list[str]:
     """Extract all button texts from keyboard for easier assertions."""
     return [btn.text for row in keyboard for btn in row]
 
@@ -279,7 +280,7 @@ def extract_button_texts(keyboard: List[List[Any]]) -> List[str]:
 
 # Import after mocks are set up
 def get_menu_methods():
-    from app.handlers.menus import get_start_menu_content, get_model_menu_content
+    from app.handlers.menus import get_model_menu_content, get_start_menu_content
 
     return get_start_menu_content, get_model_menu_content
 

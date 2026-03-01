@@ -1,5 +1,7 @@
 import unittest
+
 from PIL import Image
+
 from app.utils.image import estimate_image_size_in_bytes
 
 

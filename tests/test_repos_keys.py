@@ -1,15 +1,15 @@
 """Tests for app.repos.keys — DailyKeyManager, MonthlyKeyManager, key rotation."""
 
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 from dataclasses import dataclass, field
-from typing import Dict
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @dataclass
 class _MockSettings:
     ADMIN_ID: int = 123
-    DAILY_LIMITS: Dict[str, int] = field(default_factory=lambda: {"test-model": 100})
+    DAILY_LIMITS: dict[str, int] = field(default_factory=lambda: {"test-model": 100})
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     TAVILY_MONTHLY_CREDIT_LIMIT: int = 1000
     TAVILY_LIMIT_THRESHOLD_PERCENT: float = 0.97

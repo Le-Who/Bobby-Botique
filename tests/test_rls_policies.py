@@ -1,12 +1,14 @@
-import pytest
-from unittest.mock import AsyncMock, patch
-import sys
 import os
+import sys
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app import database
+
 
 @pytest.mark.asyncio
 async def test_create_rls_policies_users():

@@ -2,10 +2,10 @@ import asyncio
 import logging
 
 from telegram import Message
-from app.utils.heartbeat import stop_heartbeat
 from telegram.error import BadRequest
 
 from app.circuit_breaker import TELEGRAM_API_CONFIG, get_circuit_breaker
+from app.utils.heartbeat import stop_heartbeat
 from app.utils.keyboards import ai_response_keyboard, deep_dive_keyboard
 from app.utils.text_format import format_text, split_text_safe, strip_formatting
 

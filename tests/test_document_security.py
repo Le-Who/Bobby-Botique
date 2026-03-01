@@ -1,8 +1,9 @@
 # ruff: noqa: E402
-import pytest
 import os
 import sys
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 # Patching environment variables and sys.modules at module level
 os.environ["TELEGRAM_BOT_TOKEN"] = "123:test"

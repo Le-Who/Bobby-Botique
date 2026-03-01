@@ -137,7 +137,7 @@ _Особенности:_
             buttons = [
                 [
                     InlineKeyboardButton(
-                        "🎭 Выбрать роль ИИ", callback_data="open_roles"
+                        "🎭 Выбрать роль ИИ", callback_data="open_roles:from_response"
                     )
                 ],
                 [
@@ -159,7 +159,7 @@ _Особенности:_
             buttons = [
                 [
                     InlineKeyboardButton(
-                        "🎭 Выбрать роль ИИ", callback_data="open_roles"
+                        "🎭 Выбрать роль ИИ", callback_data="open_roles:from_response"
                     )
                 ],
                 [
@@ -391,7 +391,7 @@ _Изображение 2:_ *Современное здание* с иннов�
 
         # Add role button and new topic button to media group responses
         buttons = [
-            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
         ]
         reply_markup = InlineKeyboardMarkup(buttons)

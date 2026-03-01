@@ -1,8 +1,9 @@
 """Tests for app.handlers.ai_photo — single photo processing."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+
+import pytest
 
 
 def make_placeholder():

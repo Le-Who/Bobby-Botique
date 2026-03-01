@@ -1,8 +1,7 @@
 # ruff: noqa: E402
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from typing import Optional, List
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ==============================================================================
 # FIXTURES
@@ -16,7 +15,7 @@ class ChatState:
         self,
         model: str,
         search_enabled: bool = False,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
     ):
         self.model = model
         self.search_enabled = search_enabled

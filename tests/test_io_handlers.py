@@ -1,9 +1,10 @@
 """Tests for document I/O handlers: PDF, Word processing via physical file paths."""
 
-import pytest
 import os
 import tempfile
 from unittest.mock import patch
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -50,7 +51,7 @@ async def test_save_image_as_bytes_uses_executor(mock_pool):
     from app.utils.image_utils import save_image_as_bytes
 
     raw_image_data = b"fake image bytes"
-    result = await save_image_as_bytes(raw_image_data)
+    _result = await save_image_as_bytes(raw_image_data)
 
     from app.utils.image_utils import _image_worker
     assert _image_worker is not None

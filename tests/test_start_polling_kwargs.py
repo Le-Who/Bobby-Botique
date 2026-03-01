@@ -20,7 +20,7 @@ def test_start_polling_kwargs_are_valid():
     removed_v22 = {"read_timeout", "write_timeout", "connect_timeout", "pool_timeout"}
 
     # Parse bot.py source
-    with open("bot.py", "r", encoding="utf-8") as f:
+    with open("bot.py", encoding="utf-8") as f:
         tree = ast.parse(f.read(), filename="bot.py")
 
     # Find all calls to start_polling

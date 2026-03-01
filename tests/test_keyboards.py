@@ -3,31 +3,32 @@ Tests for app/utils/keyboards.py - Keyboard builder utilities.
 """
 
 import pytest
+
 from app.utils.keyboards import (
+    after_response_keyboard,
+    ai_response_keyboard,
     # Button builders
     back_button,
+    build_item_list_keyboard,
+    # Keyboard builders
+    build_keyboard,
+    build_paginated_keyboard,
     cancel_button,
     confirm_button,
     confirm_cancel_row,
+    deep_dive_keyboard,
+    error_with_back_keyboard,
+    # Common patterns
+    feedback_row,
     new_topic_retry_row,
     # Pagination
     pagination_row,
-    # Keyboard builders
-    build_keyboard,
-    build_item_list_keyboard,
-    build_paginated_keyboard,
-    # Common patterns
-    feedback_row,
-    after_response_keyboard,
-    ai_response_keyboard,
-    deep_dive_keyboard,
-    error_with_back_keyboard,
 )
 
 
 def setup_module(module):
-    import sys
     import importlib
+    import sys
     from unittest.mock import MagicMock
 
     # Reload telegram to flush mocks

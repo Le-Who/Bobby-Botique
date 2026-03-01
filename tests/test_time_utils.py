@@ -1,6 +1,7 @@
 import unittest
-from unittest.mock import patch
 from datetime import datetime
+from unittest.mock import patch
+
 import pytz
 
 from app.utils.time import get_kyiv_reset_time

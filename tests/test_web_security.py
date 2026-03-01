@@ -1,8 +1,9 @@
-import pytest
+import importlib
 import re
 import sys
-import importlib
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Define keys but do not override them yet
 _mock_keys = [
@@ -159,7 +160,7 @@ async def test_header_auth_still_works(client):
 @pytest.mark.asyncio
 async def test_invalid_header_token_redirects(client):
     """Test that invalid token falls through to redirect."""
-    headers = {"X-Auth-Token": "wrong_token"}
+    headers = {"X-Auth-Token": "wrong_token"}  # noqa: F841
     response = await client.get("/")
     assert response.status_code == 302
 

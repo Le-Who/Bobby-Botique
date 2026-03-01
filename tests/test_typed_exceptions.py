@@ -10,30 +10,30 @@ Verifies:
 - convert_to_typed_exception utility
 """
 
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+
 import asyncpg
+import pytest
 
 from app.errors import (
-    GemaibotBaseException,
-    DatabaseError,
-    DatabaseConnectionError,
-    DatabaseQueryError,
-    DatabaseRateLimitError,
-    DatabasePoolError,
-    GemaibotAPIError,
     APIError,
-    NetworkError,
-    ConnectionTimeoutError,
+    CacheError,
     CircuitBreakerOpenError,
     ConfigurationError,
-    RedisConnectionError,
-    CacheError,
-    SecurityError,
+    ConnectionTimeoutError,
+    DatabaseConnectionError,
+    DatabaseError,
+    DatabasePoolError,
+    DatabaseQueryError,
+    DatabaseRateLimitError,
+    GemaibotAPIError,
+    GemaibotBaseException,
     InputSanitizationError,
+    NetworkError,
+    RedisConnectionError,
+    SecurityError,
     convert_to_typed_exception,
 )
-
 
 # ─── Hierarchy Tests ─────────────────────────────────────────────────────────
 

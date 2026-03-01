@@ -1,7 +1,7 @@
 # ruff: noqa: E402
-import sys
 import asyncio
-from unittest.mock import MagicMock, AsyncMock
+import sys
+from unittest.mock import AsyncMock, MagicMock
 
 # Mock all dependencies (executed only during module execution, not collection)
 _mock_keys = [

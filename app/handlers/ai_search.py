@@ -111,7 +111,7 @@ async def _handle_qna_search(
     elif final_answer:
         # Успешный response
         buttons = [
-            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")],
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
         ]
         reply_markup = InlineKeyboardMarkup(buttons)

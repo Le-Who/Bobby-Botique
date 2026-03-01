@@ -1,8 +1,11 @@
-import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import asyncpg
-from unittest.mock import patch, AsyncMock, MagicMock
+import pytest
+
 from app.database import ChatState
 from app.repos import conversations as conv_repo
+
 
 @pytest.fixture
 def mock_chat_state():

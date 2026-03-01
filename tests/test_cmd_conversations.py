@@ -1,8 +1,9 @@
 """Tests for app.handlers.cmd_conversations — conversation CRUD commands."""
 
-import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def make_update(user_id=123, args=None):

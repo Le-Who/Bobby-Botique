@@ -1,7 +1,10 @@
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
-from app.queue import TaskQueue, TaskPriority, TaskStatus, Task
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.queue import Task, TaskPriority, TaskQueue, TaskStatus
+
 
 @pytest.fixture
 def task_queue():

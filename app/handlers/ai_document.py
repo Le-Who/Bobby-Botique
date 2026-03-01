@@ -247,7 +247,7 @@ _Основные сервисы:_
                     ],
                     [
                         InlineKeyboardButton(
-                            "🎭 Выбрать роль ИИ", callback_data="open_roles"
+                            "🎭 Выбрать роль ИИ", callback_data="open_roles:from_response"
                         )
                     ],
                     [

@@ -50,6 +50,32 @@ Replaces the in-memory `KeyHealth` dataclass with a persistent, per-model key he
 - `test_provider_router.py`: 7 tests — successful response, exhausted keys, key failure + suspend, quota category, excluded keys propagation, OpenRouter detection, transient non-suspension.
 - `test_decryption_error_handling.py`: Fixed mock assertions for `excluded_hashes` parameter.
 
+### 🎭 UX Fix: "Выбрать роль ИИ" No Longer Destroys AI Response
+
+**Problem**: Clicking "🎭 Выбрать роль ИИ" under an AI response called `edit_message_text`, replacing the response with the roles menu and losing the AI-generated content.
+
+**Solution**: Origin-aware callback routing via `callback_data` suffix:
+
+- AI response keyboards use `open_roles:from_response` → roles menu sent as **new message** (`reply_text`)
+- Menu keyboards keep `open_roles` → in-place edit (existing behavior)
+
+| File                                                          | Change                                                                             |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `keyboards.py`                                                | `ai_response_keyboard()`, `deep_dive_keyboard()` → `from_response`                 |
+| `ai_chat.py`, `ai_search.py`, `ai_photo.py`, `ai_document.py` | Ad-hoc keyboards → `from_response`                                                 |
+| `errors.py`                                                   | `build_retry_and_roles_keyboard()`, `build_roles_keyboard()`                       |
+| `cb_roles.py`                                                 | `open_roles_callback`: `reply_text` when `from_response`, else `edit_message_text` |
+| `callbacks.py`                                                | Regex: `^open_roles(:from_response)?$`                                             |
+| `test_errors.py`                                              | 2 assertions updated                                                               |
+
+### 🧹 Full Codebase Lint Cleanup (126 errors → 0)
+
+- **105 auto-fixed** via `ruff check --fix`: `I001` (import sorting), `UP006/UP045` (modern type annotations), `UP015/UP012/F541` (misc)
+- **5 `UP035`**: Removed deprecated `typing.Dict/List/Tuple/Optional` imports in `heartbeat.py`, `test_database_tavily.py`, `test_repos_keys.py`, `test_roles_menu.py`, `test_menus.py`
+- **12 `F841`**: Prefixed unused mock variables with `_` in 6 test files
+- **1 `RUF006`**: Stored fire-and-forget task reference in `context_assembler.py`
+- **1 `B019`**: Suppressed with `noqa` in `prompt_registry.py` (singleton lru_cache by design)
+
 ---
 
 ## [2.6.9] – 2026-02-28 – Context Summarization System

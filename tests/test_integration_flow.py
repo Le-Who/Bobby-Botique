@@ -6,10 +6,10 @@ handle_request → process_long_request → AI response → send_long_message.
 """
 
 import asyncio
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
+import pytest
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

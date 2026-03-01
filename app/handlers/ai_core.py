@@ -9,9 +9,9 @@ import asyncio
 import logging
 
 from telegram import Message
-from app.utils.heartbeat import stop_heartbeat
 
 from app.agent_use_cases import AgentRequestUseCase
+from app.utils.heartbeat import stop_heartbeat
 
 _agent_use_case = AgentRequestUseCase()
 

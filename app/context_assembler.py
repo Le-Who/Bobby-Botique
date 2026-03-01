@@ -333,9 +333,11 @@ class ContextAssembler:
         """
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(
+            task = loop.create_task(
                 self._run_llm_summarization(dropped_messages, existing_summary, callback)
             )
+            # prevent GC of fire-and-forget task
+            task.add_done_callback(lambda t: None)
             logger.info(
                 "LLM summarization scheduled for %d dropped messages",
                 len(dropped_messages),

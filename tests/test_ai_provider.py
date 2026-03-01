@@ -2,16 +2,17 @@
 Tests for the AI provider abstraction layer.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from app.ai_provider import (
-    BaseAIProvider,
     AIResponse,
+    BaseAIProvider,
     GeminiProvider,
     OpenRouterProvider,
-    is_openrouter_model,
     get_ai_response,
+    is_openrouter_model,
 )
 
 

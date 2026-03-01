@@ -460,7 +460,7 @@ def build_retry_and_roles_keyboard(include_roles: bool = True) -> InlineKeyboard
     ]
     if include_roles:
         buttons.append(
-            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")]
         )
     return InlineKeyboardMarkup(buttons)
 
@@ -468,7 +468,7 @@ def build_retry_and_roles_keyboard(include_roles: bool = True) -> InlineKeyboard
 def build_roles_keyboard() -> InlineKeyboardMarkup:
     """Builds keyboard with only roles button."""
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles")]]
+        [[InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")]]
     )
 
 
