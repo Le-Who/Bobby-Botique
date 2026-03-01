@@ -541,8 +541,10 @@ class ContextAssembler:
             content = msg.get("content", "")
             if isinstance(content, str):
                 return content
+            if isinstance(content, bytes):
+                return ""
             if isinstance(content, list):
-                return " ".join(str(p) for p in content)
+                return " ".join(p if isinstance(p, str) else ("" if isinstance(p, bytes) else str(p)) for p in content)
             return str(content)
 
         text_parts: list[str] = []
@@ -602,8 +604,13 @@ def _extract_msg_text(msg: dict[str, Any]) -> str:
     """Quick text extraction for token counting."""
     parts = msg.get("parts", [])
     if isinstance(parts, list):
-        return " ".join(str(p) for p in parts if isinstance(p, str))
-    return str(msg.get("content", ""))
+        return " ".join(p for p in parts if isinstance(p, str))
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, bytes):
+        return ""
+    return str(content)
 
 
 # Singleton assembler instance

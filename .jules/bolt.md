@@ -13,3 +13,7 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+
+## 2025-03-01 - O(N) String Conversion Overhead for Image Payloads
+**Learning:** Converting binary data (like images stored as `bytes`) to strings via `str(bytes_obj)` in performance-critical loops (e.g., iterating over conversation history) causes massive O(N) memory allocation overhead and dramatically slows down execution. For a 10MB image payload, this naive conversion takes over a second per call instead of milliseconds.
+**Action:** When extracting text from mixed-content lists (like `parts` or `content` containing text and image bytes), always use an explicit type check (`isinstance(p, bytes)`) and avoid `str()` conversion for binary data. Either return an empty string or a placeholder string indicating the payload size (`len(p)`).
