@@ -9,3 +9,7 @@
 ## 2025-05-29 - [Confirm Destructive Actions]
 **Learning:** Destructive actions like "Clear All Documents" executed immediately on a single click can lead to significant user frustration and data loss. Users expect a safety net.
 **Action:** Implement a two-step confirmation process for all bulk delete or irreversible actions, replacing the button with a clear "Confirm/Cancel" choice.
+
+## 2025-06-03 - [Global Focus Visible for Keyboard Accessibility]
+**Learning:** Custom components and embedded CSS styles often miss standard keyboard focus indicators, making the application inaccessible to users navigating via keyboard. A global `:focus-visible` utility alongside component-specific adjustments is required to ensure consistent focus rings without negatively impacting the mouse user experience.
+**Action:** Always include a global `:focus-visible` utility in the base CSS and ensure any custom interactive elements (like tabs or topbar links) and embedded CSS (like on login pages) also define clear `:focus-visible` states.

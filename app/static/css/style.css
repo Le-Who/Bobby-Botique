@@ -30,6 +30,12 @@
   box-sizing: border-box;
 }
 
+/* Base focus styles for keyboard navigation */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 body {
   font-family: "Work Sans", system-ui, sans-serif;
   background: var(--bg);
@@ -136,6 +142,11 @@ body {
 .topbar-logout:hover {
   color: var(--rose);
   background: rgba(244, 63, 94, 0.1);
+}
+
+.topbar-logout:focus-visible {
+  outline: 2px solid var(--rose);
+  outline-offset: 2px;
 }
 
 /* ================================================================
@@ -583,6 +594,12 @@ body {
 .tab.active {
   color: var(--teal);
   border-bottom-color: var(--teal);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px; /* Inset to look better with tabs */
+  border-radius: 4px;
 }
 
 .tab-badge {
