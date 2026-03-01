@@ -24,7 +24,12 @@ from google.genai.errors import APIError
 from PIL import Image
 
 from app.config import settings
-from app.errors import is_error_message, is_key_related_error, user_friendly_error
+from app.errors import (
+    classify_key_error,
+    is_error_message,
+    is_key_related_error,
+    user_friendly_error,
+)
 from app.metrics import metrics_collector
 from app.request_context import get_request_id
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
@@ -737,46 +742,8 @@ class OpenRouterProvider(BaseAIProvider):
             )
 
 
+# ── ProviderRouter ───────────────────────────────────────────────────────────────────
 
-
-# ── ProviderRouter ───────────────────────────────────────────────────────────
-
-
-@dataclass
-class KeyHealth:
-    """Health score for an individual API key."""
-
-    key_hash: str
-    score: float = 1.0  # 1.0 = perfect health, 0.0 = dead
-    consecutive_failures: int = 0
-    last_failure_time: float = 0.0
-    total_successes: int = 0
-    total_failures: int = 0
-
-    # Tuning knobs
-    _DECAY_PER_FAILURE: float = 0.4  # multiplicative penalty per failure
-    _RECOVERY_PER_SUCCESS: float = 0.15  # additive recovery per success
-    _COOLDOWN_SECONDS: float = 30.0  # time before deprioritized key is retried
-
-    def record_failure(self) -> None:
-        self.consecutive_failures += 1
-        self.total_failures += 1
-        self.score = max(0.0, self.score * (1. - self._DECAY_PER_FAILURE))
-        self.last_failure_time = time.monotonic()
-
-    def record_success(self) -> None:
-        self.consecutive_failures = 0
-        self.total_successes += 1
-        self.score = min(1.0, self.score + self._RECOVERY_PER_SUCCESS)
-
-    @property
-    def is_healthy(self) -> bool:
-        """Key is healthy enough to try."""
-        if self.score >= 0.3:
-            return True
-        # Allow retry after cooldown even if score is low
-        elapsed = time.monotonic() - self.last_failure_time
-        return elapsed >= self._COOLDOWN_SECONDS
 
 def _has_multimodal_content(history: list) -> bool:
     """Detect if history contains multimodal (image) parts."""
@@ -794,24 +761,17 @@ class ProviderRouter:
     """
     Routes AI requests to the right provider with key rotation and health scoring.
 
-    Wraps the existing AgentRequestUseCase logic while adding:
-    - Per-key health tracking (exponential decay on failure, linear recovery)
-    - Automatic key skipping for unhealthy keys
-    - Cooldown-based recovery for deprioritized keys
+    Uses DB-backed KeyStatusManager for persistent per-model key health tracking.
+    Keys are suspended with error-category-aware cooldowns and automatically
+    recover after their cooldown expires (two-tier selection in SQL).
     """
 
     def __init__(self, rate_limit_per_minute: int = 20) -> None:
-        self._key_health: dict[str, KeyHealth] = {}
         # Use the consolidated RateLimiter from security.py (includes periodic cleanup)
         from app.security import RateLimiter
         self._rate_limiter = RateLimiter(
             max_requests=rate_limit_per_minute, window_seconds=60
         )
-
-    def _get_health(self, key_hash: str) -> KeyHealth:
-        if key_hash not in self._key_health:
-            self._key_health[key_hash] = KeyHealth(key_hash=key_hash)
-        return self._key_health[key_hash]
 
     async def get_response(
         self,
@@ -826,10 +786,13 @@ class ProviderRouter:
         """
         Get AI response with automatic key rotation and health-aware selection.
 
-        Delegates to AgentRequestUseCase for key resolution, but wraps it
-        with health tracking so persistently-failing keys are deprioritized.
+        Delegates to AgentRequestUseCase for key resolution, which uses
+        two-tier SQL (active first, then cooldown-expired) to pick keys.
+        On failure, classifies the error and suspends the key with appropriate
+        cooldown. On success, promotes the key back to active.
         """
         from app.agent_use_cases import AgentRequestUseCase
+        from app.repos.keys import get_key_status_manager
 
         # Per-user rate limiting (async — RateLimiter from security.py)
         if user_id and not await self._rate_limiter.check_rate_limit(user_id):
@@ -843,6 +806,7 @@ class ProviderRouter:
             use_openrouter = False
 
         use_case = AgentRequestUseCase()
+        status_mgr = get_key_status_manager()
         failed_keys: set[str] = set()
 
         for attempt in range(max_key_retries):
@@ -879,16 +843,6 @@ class ProviderRouter:
                     None,
                 )
 
-            # Skip unhealthy keys unless this is our last resort
-            health = self._get_health(key_data["key_hash"])
-            if not health.is_healthy and attempt < max_key_retries - 1:
-                failed_keys.add(key_data["key_hash"])
-                logging.debug(
-                    f"Skipping unhealthy key {key_data['key_hash'][:8]}... "
-                    f"(score={health.score:.2f})"
-                )
-                continue
-
             # Execute the request
             response_text, token_count = await use_case.get_ai_response(
                 key_data["api_key"],
@@ -906,18 +860,38 @@ class ProviderRouter:
                 and is_error_message(response_text)
                 and is_key_related_error(response_text)
             ):
-                health.record_failure()
                 failed_keys.add(key_data["key_hash"])
+                error_category = classify_key_error(response_text)
+
+                if error_category != "transient":
+                    try:
+                        await status_mgr.suspend_key(
+                            key_data["key_hash"], model_used,
+                            error_category, response_text[:200],
+                        )
+                    except Exception as e:
+                        logging.warning(
+                            "Non-critical: failed to suspend key: %s", e,
+                        )
+
                 logging.warning(
-                    f"Key {key_data['key_hash'][:8]}... failed "
-                    f"(score={health.score:.2f}, attempt {attempt + 1}/{max_key_retries}). "
-                    f"Error: {response_text[:100]}..."
+                    "Key %s… failed (category=%s, attempt %d/%d). "
+                    "Error: %s",
+                    key_data["key_hash"][:8], error_category,
+                    attempt + 1, max_key_retries,
+                    response_text[:100],
                 )
                 continue
 
             # Success — update health and increment usage
             if response_text and not is_error_message(response_text):
-                health.record_success()
+                try:
+                    await status_mgr.record_success(
+                        key_data["key_hash"], model_used,
+                    )
+                except Exception as e:
+                    logging.debug("Non-critical: record_success failed: %s", e)
+
                 try:
                     await use_case.increment_key_usage(
                         key_data["key_hash"], model_used, use_openrouter
@@ -936,18 +910,11 @@ class ProviderRouter:
             None,
         )
 
-    def get_key_stats(self) -> dict[str, dict[str, Any]]:
+    async def get_key_stats(self) -> list[dict[str, Any]]:
         """Return health stats for all tracked keys (for diagnostics)."""
-        return {
-            kh.key_hash[:8]: {
-                "score": round(kh.score, 3),
-                "consecutive_failures": kh.consecutive_failures,
-                "total_successes": kh.total_successes,
-                "total_failures": kh.total_failures,
-                "is_healthy": kh.is_healthy,
-            }
-            for kh in self._key_health.values()
-        }
+        from app.repos.keys import get_key_status_manager
+        return await get_key_status_manager().get_all_statuses()
+
 
 
 # Module-level singleton

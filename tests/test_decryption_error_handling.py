@@ -7,11 +7,12 @@ Verifies that:
 3. DecryptionError in fallback models is also caught
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
-from app.errors import DecryptionError
+import pytest
+
 from app.agent_use_cases import AgentRequestUseCase
+from app.errors import DecryptionError
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ async def test_resolve_key_generic_catches_decryption_error(use_case):
     assert key is None
     assert model is None
     assert resolution == "decryption_failed"
-    get_key.assert_awaited_once_with("gemini-2.5-flash")
+    get_key.assert_awaited_once_with("gemini-2.5-flash", excluded_hashes=set())
 
 
 @pytest.mark.asyncio
@@ -60,10 +61,13 @@ async def test_resolve_key_generic_catches_decryption_error_in_fallback(use_case
 @pytest.mark.asyncio
 async def test_get_ai_response_with_key_rotation_decryption_message(use_case):
     """User sees a friendly message (not traceback) when DecryptionError occurs."""
-    with patch.object(
-        use_case, "resolve_ai_request",
+    with patch(
+        "app.ai_provider.ProviderRouter.get_response",
         new_callable=AsyncMock,
-        return_value=(None, None, "decryption_failed"),
+        return_value=(
+            "\U0001f510 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
+            None,
+        ),
     ):
         text, token_count = await use_case.get_ai_response_with_key_rotation(
             preferred_model="gemini-2.5-flash",

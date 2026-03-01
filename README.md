@@ -98,8 +98,9 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 - **Multi-Provider Support**: Seamlessly switches between **Google Gemini** (Flash, Pro) and **OpenRouter** (GPT-4, Claude 3, etc.).
 - **ProviderRouter** (v2.6+):
   - Unified AI call path — both `ProviderRouter` and `AgentRequestUseCase` route through Provider classes (`GeminiProvider` / `OpenRouterProvider`).
-  - Per-key health scoring (exponential decay on failure, linear recovery).
-  - Automatic key skipping for unhealthy keys with cooldown-based recovery.
+  - **DB-backed `KeyStatusManager`** (v2.7.0+): Persistent per-model key health tracking with error-category-aware cooldowns. Replaces the in-memory `KeyHealth` class.
+  - **Two-tier key selection**: SQL prioritizes active keys first, then probes cooldown-expired keys for recovery.
+  - **Error-aware suspension**: `API_KEY_INVALID` → 24h, `quota` → midnight PT, `rate_limit` → 60s, transient errors → no suspension. Exponential backoff on repeated failures (capped at 7 days).
   - **Multimodal auto-detection**: Detects PIL Image / bytes in history and forces Gemini automatically.
   - **Per-user rate limiting**: Consolidated `RateLimiter` with periodic cleanup, stats, and admin reset.
   - **`DailyKeyManager`**: Generic key rotation engine shared by Gemini and OpenRouter, parameterized by table names.
@@ -129,7 +130,7 @@ The bot implements a sophisticated "Smart Router" for AI requests:
   - RLS Denormalization indexing (`owner_user_id`) to optimize security policies
   - Transaction-local RLS context (`set_config(..., true)`) preventing context leaks
 - **Repository Layer** (`app/repos/`): Canonical location for domain logic:
-  - `keys.py` — API key rotation (DailyKeyManager, MonthlyKeyManager)
+  - `keys.py` — API key rotation (DailyKeyManager, MonthlyKeyManager, KeyStatusManager)
   - `users.py` — Auth, user state, feedback
   - `chats.py` — Chat state management
   - `conversations.py` — Saved conversations CRUD
@@ -145,7 +146,7 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 
 ### Resilience & Circuit Breakers (v2.6.6+)
 
-- **Gemini/OpenRouter**: Provider-level circuit breakers with health scoring (exponential decay on failure, linear recovery).
+- **Gemini/OpenRouter**: DB-backed per-model key health tracking (`key_model_status` table) with error-category-aware cooldowns and automatic recovery probing.
 - **Tavily API**: Circuit breaker in `search_services.py` — trips after consecutive failures, auto-recovers.
 - **Telegram API**: Lazy circuit breaker in `messaging.py` — prevents flooding Telegram servers during outages.
 - **Response time tracking**: `MetricsMiddleware` wired into `handle_request` and `@track_metrics` decorator on all search handlers for per-operation latency dashboards.
@@ -300,18 +301,18 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (554 tests, 1 skipped)
+### Suite Structure (548 tests, 1 skipped)
 
-| Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                                     |
-| :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------- |
-| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`, `test_ai_chat`, `test_ai_search`, `test_ai_document`, `test_ai_photo`, `test_context_assembler`, `test_prompt_registry` | AI routing, health scoring, fallback chains, errors, AI handler coverage, photo processing, context summarization, prompt templates |
-| **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_cmd_admin`, `test_cmd_conversations`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators`                                  | Callback dispatch, request flow, commands, admin commands, conversation CRUD, menu rendering, role UI                               |
-| **Integration**    | `test_integration_flow`, `test_callback_responsiveness_scenario`                                                                                                                                              | End-to-end request flow (auth, rate limit, agent, error recovery), callback responsiveness                                          |
-| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                                                                                                         | Tavily key management, query optimization, cleanup                                                                                  |
-| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                                                                                                        | Circuit breaker, TTL cache, race conditions                                                                                         |
-| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                                                 | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling                                                     |
-| **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                                                                                              | Batched metric saves, system status data                                                                                            |
-| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`, `test_audit_fixes`                                                                                                                | Text formatting, keyboard builders, timezone math, audit regression tests                                                           |
+| Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                      |
+| :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |
+| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`, `test_ai_chat`, `test_ai_search`, `test_ai_document`, `test_ai_photo`, `test_context_assembler`, `test_prompt_registry` | AI routing, key status management, fallback chains, error classification, AI handler coverage, context summarization |
+| **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_cmd_admin`, `test_cmd_conversations`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators`                                  | Callback dispatch, request flow, commands, admin commands, conversation CRUD, menu rendering, role UI                |
+| **Integration**    | `test_integration_flow`, `test_callback_responsiveness_scenario`                                                                                                                                              | End-to-end request flow (auth, rate limit, agent, error recovery), callback responsiveness                           |
+| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                                                                                                         | Tavily key management, query optimization, cleanup                                                                   |
+| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                                                                                                        | Circuit breaker, TTL cache, race conditions                                                                          |
+| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                                                 | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling                                      |
+| **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                                                                                              | Batched metric saves, system status data                                                                             |
+| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`, `test_audit_fixes`                                                                                                                | Text formatting, keyboard builders, timezone math, audit regression tests                                            |
 
 ### Mock Isolation Rule
 

@@ -5,6 +5,53 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.7.0] – 2026-03-01 – Persistent Per-Model Key Health System
+
+### 🔴 Critical Fix: "All Gemini keys exhausted" False Positive
+
+**Root cause**: An invalid key (`API_KEY_INVALID`) with `request_count=0` was perpetually re-selected by the `ORDER BY request_count ASC` query because failed requests never increment usage. The `excluded_key_hashes` set was only checked client-side — the DB query had no exclusion filter.
+
+### ✨ New: DB-Backed `KeyStatusManager`
+
+Replaces the in-memory `KeyHealth` dataclass with a persistent, per-model key health system.
+
+- **`key_model_status` table**: Tracks `(key_hash, model_name)` with `status`, `suspended_until`, `failure_count`, and `last_error`.
+- **Error-category-aware cooldowns** (`classify_key_error()` in `errors.py`):
+  - `API_KEY_INVALID` → 24h suspension (not forever — recovery probe after cooldown)
+  - `quota_exceeded` → suspend until midnight Pacific time
+  - `rate_limit` → 60s suspension
+  - `503/timeout/overloaded` → no suspension (transient)
+- **Two-tier SQL key selection**: Active keys (Tier 1) are tried first; cooldown-expired keys (Tier 2) are probed for recovery.
+- **Exponential backoff**: Repeated failures double the cooldown (capped at 7 days).
+- **Auto-recovery**: On successful probe, key promoted back to `active`, `failure_count` reset to 0.
+- **SQL-level exclusion**: `excluded_key_hashes` now passed to the DB query via `WHERE ak.key_hash != ALL($excluded)`.
+
+### 🏗️ Architecture Changes
+
+- **Removed `KeyHealth` dataclass** from `ai_provider.py` — all health tracking is now DB-backed.
+- **Simplified `_resolve_key_generic`** in `agent_use_cases.py` — removed 5-attempt client-side loops; DB query handles exclusion and status filtering directly.
+- **`get_available_gemini_key` / `get_available_openrouter_key`**: Accept `excluded_hashes` parameter; skip cache when exclusions exist.
+
+### Files Changed
+
+| File                                              | Change                                                        |
+| ------------------------------------------------- | ------------------------------------------------------------- |
+| `scripts/migrations/014_add_key_model_status.sql` | New migration: `key_model_status` table + RLS + index         |
+| `app/db/schema.py`                                | Added `key_model_status` to `create_tables()`                 |
+| `app/errors.py`                                   | New `classify_key_error()` function                           |
+| `app/repos/keys.py`                               | `KeyStatusManager` class, two-tier SQL queries                |
+| `app/agent_use_cases.py`                          | Simplified `_resolve_key_generic` (DB-level filter)           |
+| `app/ai_provider.py`                              | Removed `KeyHealth`, `ProviderRouter` uses `KeyStatusManager` |
+| `tests/test_provider_router.py`                   | Rewritten: 7 tests for suspend/recover/categories             |
+| `tests/test_decryption_error_handling.py`         | Fixed for new `excluded_hashes` parameter                     |
+
+### 🧪 Tests (548 passed, 1 skipped)
+
+- `test_provider_router.py`: 7 tests — successful response, exhausted keys, key failure + suspend, quota category, excluded keys propagation, OpenRouter detection, transient non-suspension.
+- `test_decryption_error_handling.py`: Fixed mock assertions for `excluded_hashes` parameter.
+
+---
+
 ## [2.6.9] – 2026-02-28 – Context Summarization System
 
 ### ✨ New Feature: Two-Tier Context Summarization
@@ -450,7 +497,7 @@ Full scan of 21 core modules, 13 handlers, 7 repos confirmed:
 ### 🧪 Test Coverage (+28 tests → 291 total)
 
 - `test_stage_indicators.py`: 15 tests (definitions, update behavior, capping, sequential, error handling).
-- `test_provider_router.py`: 13 tests (KeyHealth scoring, ProviderRouter retry/skip/detection).
+- `test_provider_router.py`: 13 tests (KeyHealth scoring, ProviderRouter retry/skip/detection). _Note: rewritten in v2.7.0 for DB-backed KeyStatusManager._
 
 ### 🧹 Cleanup
 

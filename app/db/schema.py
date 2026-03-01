@@ -109,6 +109,20 @@ async def create_tables(db_query):
     )
 
     await db_query("""
+        CREATE TABLE IF NOT EXISTS key_model_status (
+            key_hash       TEXT NOT NULL REFERENCES api_keys(key_hash) ON DELETE CASCADE,
+            model_name     TEXT NOT NULL,
+            status         TEXT NOT NULL DEFAULT 'active'
+                               CHECK (status IN ('active', 'suspended')),
+            suspended_until TIMESTAMPTZ,
+            failure_count  INTEGER NOT NULL DEFAULT 0,
+            last_error     TEXT,
+            updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (key_hash, model_name)
+        )
+    """)
+
+    await db_query("""
         CREATE TABLE IF NOT EXISTS user_documents (
             id SERIAL PRIMARY KEY,
             user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,

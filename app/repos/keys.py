@@ -10,7 +10,7 @@ Extracted from app/database.py to isolate key-management domain logic.
 import hashlib
 import logging
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import asyncpg
@@ -100,32 +100,64 @@ class DailyKeyManager:
         return current_usage < daily_limit * settings.LIMIT_THRESHOLD_PERCENT
 
     async def get_fresh_available_key(
-        self, model_name: str, daily_limit: int | None, conn=None
+        self, model_name: str, daily_limit: int | None,
+        excluded_hashes: set[str] | None = None, conn=None,
     ) -> dict[str, Any] | None:
-        """Find the least-used key that is still under the daily limit."""
+        """Find the least-used key that is still under the daily limit.
+
+        Two-tier selection:
+            Tier 1 — active keys (status='active' or no status row)
+            Tier 2 — suspended keys whose cooldown has expired
+
+        Keys in *excluded_hashes* are filtered at the SQL level.
+        """
         today = self._today()
+        excluded = list(excluded_hashes) if excluded_hashes else []
 
         if not daily_limit:
-            keys = await db_query(
-                f"SELECT key_hash, api_key FROM {self.keys_table} LIMIT 1", conn=conn
-            )
+            query = f"""
+                SELECT ak.key_hash, ak.api_key
+                FROM {self.keys_table} ak
+                LEFT JOIN key_model_status kms
+                    ON ak.key_hash = kms.key_hash AND kms.model_name = $1
+                WHERE ak.key_hash != ALL($2)
+                  AND (
+                      COALESCE(kms.status, 'active') = 'active'
+                      OR kms.suspended_until < NOW()
+                  )
+                ORDER BY
+                    CASE WHEN COALESCE(kms.status, 'active') = 'active' THEN 0 ELSE 1 END
+                LIMIT 1
+            """
+            keys = await db_query(query, (model_name, excluded), conn=conn)
             if keys:
                 return {"key_hash": keys[0]["key_hash"], "api_key": safe_decrypt(keys[0]["api_key"])}
             return None
 
+        threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
         query = f"""
             SELECT ak.key_hash, ak.api_key,
-                   COALESCE(ku.request_count, 0) as request_count
+                   COALESCE(ku.request_count, 0) AS request_count,
+                   COALESCE(kms.status, 'active') AS key_status
             FROM {self.keys_table} ak
-            LEFT JOIN {self.usage_table} ku ON ak.key_hash = ku.key_hash
+            LEFT JOIN {self.usage_table} ku
+                ON ak.key_hash = ku.key_hash
                 AND ku.model_name = $1 AND ku.usage_date = $2
-            ORDER BY COALESCE(ku.request_count, 0) ASC
+            LEFT JOIN key_model_status kms
+                ON ak.key_hash = kms.key_hash AND kms.model_name = $1
+            WHERE ak.key_hash != ALL($3)
+              AND (
+                  COALESCE(kms.status, 'active') = 'active'
+                  OR kms.suspended_until < NOW()
+              )
+            ORDER BY
+                CASE WHEN COALESCE(kms.status, 'active') = 'active' THEN 0 ELSE 1 END,
+                COALESCE(ku.request_count, 0) ASC
         """
-        results = await db_query(query, (model_name, today), conn=conn)
+        results = await db_query(query, (model_name, today, excluded), conn=conn)
         if not results:
             return None
 
-        threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
         for row in results:
             if row["request_count"] < threshold:
                 return {"key_hash": row["key_hash"], "api_key": safe_decrypt(row["api_key"])}
@@ -175,10 +207,12 @@ async def _is_key_available(key_hash: str, model_name: str, conn=None) -> bool:
 
 
 async def _get_fresh_available_key(
-    model_name: str, conn=None
+    model_name: str, excluded_hashes: set[str] | None = None, conn=None,
 ) -> dict[str, Any] | None:
     daily_limit = await get_model_daily_limit(model_name)
-    return await _gemini_km.get_fresh_available_key(model_name, daily_limit, conn=conn)
+    return await _gemini_km.get_fresh_available_key(
+        model_name, daily_limit, excluded_hashes=excluded_hashes, conn=conn,
+    )
 
 
 async def invalidate_key_cache(model_name: str = None) -> None:
@@ -190,15 +224,17 @@ async def invalidate_key_cache(model_name: str = None) -> None:
             db_manager._active_keys_cache.clear()
 
 
-async def get_available_gemini_key(model_name: str) -> dict[str, Any] | None:
-    # Optimistic cache check (no DB lock needed)
-    cached_key = None
-    async with db_manager._cache_lock:
-        if model_name in db_manager._active_keys_cache:
-            cached_key = db_manager._active_keys_cache[model_name]
-
-    if cached_key:
-        return cached_key
+async def get_available_gemini_key(
+    model_name: str, excluded_hashes: set[str] | None = None,
+) -> dict[str, Any] | None:
+    # When exclusions are requested, skip cache (caller wants a *different* key)
+    if not excluded_hashes:
+        cached_key = None
+        async with db_manager._cache_lock:
+            if model_name in db_manager._active_keys_cache:
+                cached_key = db_manager._active_keys_cache[model_name]
+        if cached_key:
+            return cached_key
 
     if not db_manager.is_connected:
         await reconnect_database()
@@ -206,9 +242,11 @@ async def get_available_gemini_key(model_name: str) -> dict[str, Any] | None:
     async with db_manager.pool.acquire() as conn:
         await set_user_context(settings.ADMIN_ID, True, conn=conn)
         try:
-            new_key = await _get_fresh_available_key(model_name, conn=conn)
+            new_key = await _get_fresh_available_key(
+                model_name, excluded_hashes=excluded_hashes, conn=conn,
+            )
 
-            if new_key:
+            if new_key and not excluded_hashes:
                 async with db_manager._cache_lock:
                     db_manager._active_keys_cache[model_name] = new_key
 
@@ -237,6 +275,132 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
 
         if current_usage >= threshold:
             await invalidate_key_cache(model_name)
+
+
+# ─── KeyStatusManager (per-model key health, DB-backed) ─────────────────────
+
+
+# Cooldown durations per error category
+_PENALTY_DURATIONS: dict[str, timedelta] = {
+    "permanent": timedelta(hours=24),
+    "rate_limit": timedelta(seconds=60),
+    # "quota" is handled specially (until midnight PT)
+}
+_MAX_SUSPENSION = timedelta(days=7)
+
+
+def _compute_suspended_until(
+    category: str, failure_count: int,
+) -> datetime:
+    """Return the UTC timestamp until which the key should be suspended."""
+    now = datetime.now(UTC_TZ)
+
+    if category == "quota":
+        # Suspend until midnight Pacific time
+        pacific = get_pacific_tz()
+        pacific_now = datetime.now(pacific)
+        next_midnight_pt = pacific_now.replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        ) + timedelta(days=1)
+        return next_midnight_pt.astimezone(UTC_TZ)
+
+    base = _PENALTY_DURATIONS.get(category, timedelta(seconds=60))
+
+    # Exponential backoff on repeated failures (capped)
+    multiplier = min(2 ** (failure_count - 1), 128) if failure_count > 1 else 1
+    cooldown = min(base * multiplier, _MAX_SUSPENSION)
+    return now + cooldown
+
+
+class KeyStatusManager:
+    """DB-backed per-model key health tracker.
+
+    Replaces the in-memory KeyHealth dataclass with persistent state.
+    Write-through on status changes; cached reads via _active_keys_cache TTL.
+    """
+
+    async def suspend_key(
+        self, key_hash: str, model_name: str,
+        error_category: str, error_text: str = "",
+    ) -> None:
+        """Suspend a key for a specific model with category-aware cooldown."""
+        # Read current failure_count to compute backoff
+        rows = await db_query(
+            "SELECT failure_count FROM key_model_status "
+            "WHERE key_hash = $1 AND model_name = $2",
+            (key_hash, model_name),
+        )
+        prev_failures = rows[0]["failure_count"] if rows else 0
+        new_failures = prev_failures + 1
+        suspended_until = _compute_suspended_until(error_category, new_failures)
+
+        await db_query(
+            """
+            INSERT INTO key_model_status
+                (key_hash, model_name, status, suspended_until,
+                 failure_count, last_error, updated_at)
+            VALUES ($1, $2, 'suspended', $3, $4, $5, NOW())
+            ON CONFLICT (key_hash, model_name)
+            DO UPDATE SET
+                status = 'suspended',
+                suspended_until = $3,
+                failure_count = $4,
+                last_error = $5,
+                updated_at = NOW()
+            """,
+            (key_hash, model_name, suspended_until, new_failures,
+             error_text[:500]),
+        )
+
+        await invalidate_key_cache(model_name)
+
+        logging.warning(
+            "Key %s… suspended for model %s until %s "
+            "(category=%s, failures=%d)",
+            key_hash[:8], model_name,
+            suspended_until.isoformat(), error_category, new_failures,
+        )
+
+    async def record_success(
+        self, key_hash: str, model_name: str,
+    ) -> None:
+        """Reset key to active after a successful request."""
+        await db_query(
+            """
+            INSERT INTO key_model_status
+                (key_hash, model_name, status, suspended_until,
+                 failure_count, last_error, updated_at)
+            VALUES ($1, $2, 'active', NULL, 0, NULL, NOW())
+            ON CONFLICT (key_hash, model_name)
+            DO UPDATE SET
+                status = 'active',
+                suspended_until = NULL,
+                failure_count = 0,
+                last_error = NULL,
+                updated_at = NOW()
+            """,
+            (key_hash, model_name),
+        )
+
+    async def get_all_statuses(self) -> list[dict[str, Any]]:
+        """Return all key statuses for diagnostics / dashboard."""
+        return await db_query(
+            "SELECT key_hash, model_name, status, suspended_until, "
+            "failure_count, last_error, updated_at "
+            "FROM key_model_status ORDER BY updated_at DESC"
+        )
+
+
+# Singleton
+_key_status_manager: KeyStatusManager | None = None
+
+
+def get_key_status_manager() -> KeyStatusManager:
+    """Get the singleton KeyStatusManager instance."""
+    global _key_status_manager
+    if _key_status_manager is None:
+        _key_status_manager = KeyStatusManager()
+    return _key_status_manager
 
 
 # ─── Generic monthly-credit key manager ─────────────────────────────────────
@@ -346,7 +510,9 @@ async def force_update_tavily_keys() -> bool:
 # ─── OpenRouter key helpers (delegates to DailyKeyManager) ───────────────────
 
 
-async def get_available_openrouter_key(model_name: str) -> dict[str, Any] | None:
+async def get_available_openrouter_key(
+    model_name: str, excluded_hashes: set[str] | None = None,
+) -> dict[str, Any] | None:
     if not db_manager.is_connected:
         await reconnect_database()
 

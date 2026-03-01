@@ -396,6 +396,58 @@ def is_key_related_error(text: str) -> bool:
     )
 
 
+def classify_key_error(text: str) -> str:
+    """Classify a key-related error into a penalty category.
+
+    Returns one of:
+        "permanent"  – API_KEY_INVALID, auth errors → long cooldown (24 h)
+        "quota"      – daily quota exhausted → suspend until midnight PT
+        "rate_limit" – per-second/minute rate limit → short cooldown (60 s)
+        "transient"  – not key-related at all (503, timeout) → no suspension
+    """
+    if not text:
+        return "transient"
+
+    text_lower = text.lower()
+
+    # Transient / non-key errors — highest priority
+    transient_patterns = [
+        "⏰", "🔄", "503", "unavailable", "overloaded",
+        "timeout", "timed out", "превышено время ожидания",
+        "перегружен", "некорректный запрос", "invalid request",
+        "malformed",
+    ]
+    if any(p.lower() in text_lower or text.startswith(p) for p in transient_patterns):
+        return "transient"
+
+    # Permanent key errors — invalid key / auth
+    permanent_patterns = [
+        "🔑", "api_key_invalid", "invalid api key",
+        "authentication", "unauthorized", "forbidden",
+        "неверный api ключ",
+    ]
+    if any(p.lower() in text_lower or text.startswith(p) for p in permanent_patterns):
+        return "permanent"
+
+    # Quota / daily limit errors
+    quota_patterns = [
+        "🚫", "quota", "quota exceeded", "daily limit",
+        "limit exceeded", "достигнут лимит",
+    ]
+    if any(p.lower() in text_lower or text.startswith(p) for p in quota_patterns):
+        return "quota"
+
+    # Rate-limit errors
+    rate_patterns = [
+        "⏱️", "rate limit", "rate_limit",
+        "превышен лимит", "лимит запросов",
+    ]
+    if any(p.lower() in text_lower or text.startswith(p) for p in rate_patterns):
+        return "rate_limit"
+
+    return "transient"
+
+
 # =============================================================================
 # KEYBOARD BUILDERS
 # =============================================================================

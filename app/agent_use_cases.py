@@ -45,13 +45,37 @@ class AgentRequestUseCase:
         from app.errors import DecryptionError
 
         excluded = excluded_key_hashes or set()
+
+        # Invalidate cache when exclusions exist (caller retrying after failure)
         if excluded and invalidate_cache_func:
             await invalidate_cache_func(preferred_model)
 
-        max_attempts = 5
-        for _ in range(max_attempts):
+        # Try preferred model — DB query already filters excluded + suspended
+        try:
+            key = await get_key_func(preferred_model, excluded_hashes=excluded)
+        except DecryptionError as e:
+            logging.error(
+                "Cannot decrypt %s API key: %s — check ADMIN_SECRET",
+                provider_name, e,
+            )
+            return None, None, "decryption_failed"
+
+        if key:
+            return key, preferred_model, None
+
+        logging.warning(
+            f"All keys for preferred model {preferred_model} are exhausted or excluded. Attempting fallback."
+        )
+
+        # Try fallback models
+        for fallback_model in fallback_priority:
+            if fallback_model == preferred_model:
+                continue
+            if excluded and invalidate_cache_func:
+                await invalidate_cache_func(fallback_model)
+
             try:
-                key = await get_key_func(preferred_model)
+                key = await get_key_func(fallback_model, excluded_hashes=excluded)
             except DecryptionError as e:
                 logging.error(
                     "Cannot decrypt %s API key: %s — check ADMIN_SECRET",
@@ -59,42 +83,11 @@ class AgentRequestUseCase:
                 )
                 return None, None, "decryption_failed"
 
-            if key and key["key_hash"] not in excluded:
-                return key, preferred_model, None
-            if key and key["key_hash"] in excluded and invalidate_cache_func:
-                await invalidate_cache_func(preferred_model)
-                continue
-            break
-
-        logging.warning(
-            f"All keys for preferred model {preferred_model} are exhausted or excluded. Attempting fallback."
-        )
-
-        for fallback_model in fallback_priority:
-            if fallback_model == preferred_model:
-                continue
-            if excluded and invalidate_cache_func:
-                await invalidate_cache_func(fallback_model)
-
-            for _ in range(max_attempts):
-                try:
-                    key = await get_key_func(fallback_model)
-                except DecryptionError as e:
-                    logging.error(
-                        "Cannot decrypt %s API key: %s — check ADMIN_SECRET",
-                        provider_name, e,
-                    )
-                    return None, None, "decryption_failed"
-
-                if key and key["key_hash"] not in excluded:
-                    logging.info(
-                        f"Found available fallback key for model {fallback_model}."
-                    )
-                    return key, fallback_model, "confirm_fallback"
-                if key and key["key_hash"] in excluded and invalidate_cache_func:
-                    await invalidate_cache_func(fallback_model)
-                    continue
-                break
+            if key:
+                logging.info(
+                    f"Found available fallback key for model {fallback_model}."
+                )
+                return key, fallback_model, "confirm_fallback"
 
         logging.error(
             f"All {provider_name} API keys for all models are exhausted or excluded."
