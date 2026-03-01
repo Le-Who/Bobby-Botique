@@ -110,7 +110,7 @@ async def create_tables(db_query):
 
     await db_query("""
         CREATE TABLE IF NOT EXISTS key_model_status (
-            key_hash       TEXT NOT NULL REFERENCES api_keys(key_hash) ON DELETE CASCADE,
+            key_hash       TEXT NOT NULL,  -- validated by trg_key_model_status_check_key trigger
             model_name     TEXT NOT NULL,
             status         TEXT NOT NULL DEFAULT 'active'
                                CHECK (status IN ('active', 'suspended')),
