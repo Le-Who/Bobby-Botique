@@ -1,6 +1,6 @@
 import re
 
-with open('app/handlers/messages.py', 'r') as f:
+with open('app/handlers/messages.py') as f:
     content = f.read()
 
 # 1. Add import

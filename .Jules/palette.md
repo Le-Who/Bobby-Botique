@@ -9,3 +9,7 @@
 ## 2025-05-29 - [Confirm Destructive Actions]
 **Learning:** Destructive actions like "Clear All Documents" executed immediately on a single click can lead to significant user frustration and data loss. Users expect a safety net.
 **Action:** Implement a two-step confirmation process for all bulk delete or irreversible actions, replacing the button with a clear "Confirm/Cancel" choice.
+
+## 2025-06-05 - [Accessible Custom Tabs]
+**Learning:** Custom tab implementations using JavaScript often break screen reader experiences by only toggling visual classes (like `active`) without updating underlying semantic state. Screen reader users can't tell which tab is currently selected.
+**Action:** When building or modifying custom tab systems, ensure to use ARIA roles (`tablist`, `tab`, `tabpanel`) and explicitly toggle the `aria-selected` attribute (`true`/`false`) synchronously with the visual active class via JavaScript.

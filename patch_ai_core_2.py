@@ -1,4 +1,4 @@
-with open('app/handlers/ai_core.py', 'r') as f:
+with open('app/handlers/ai_core.py') as f:
     content = f.read()
 
 content = content.replace(

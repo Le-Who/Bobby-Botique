@@ -6,11 +6,11 @@ import sys
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
-import logging
 import asyncio
+import logging
 import signal
-import time
 import threading
+import time
 
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
@@ -34,18 +34,19 @@ async def global_error_handler(
             pass
 
 
-from hypercorn.config import Config as HypercornConfig
 from hypercorn.asyncio import serve
+from hypercorn.config import Config as HypercornConfig
+
+from app import database
 
 # Import custom modules
 from app.config import settings
-from app import database
-from app.handlers import commands, messages, callbacks
+from app.group_chat import initialize_group_chats
+from app.handlers import callbacks, commands, messages
 from app.handlers.callbacks import new_topic_callback
 from app.metrics import metrics_collector
-from app.utils.logging_config import setup_detailed_logging
 from app.queue import start_task_queue, stop_task_queue
-from app.group_chat import initialize_group_chats
+from app.utils.logging_config import setup_detailed_logging
 
 # Import extracted modules
 from app.web import flask_app

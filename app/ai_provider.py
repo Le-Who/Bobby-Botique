@@ -37,7 +37,6 @@ from app.utils.api_logger import api_logger
 from app.utils.image_utils import save_image_as_bytes
 from app.utils.network import NetworkErrorHandler
 
-
 # ── Thinking config helpers ──────────────────────────────────────────
 
 _THINKING_BUDGET_MAP = {"off": 0, "low": 1024, "medium": 8192, "high": 24576}
@@ -991,7 +990,7 @@ class ProviderRouter:
             if fallback_model == failed_model:
                 continue
 
-            key_data, model_used, resolution = await use_case.resolve_ai_request(
+            key_data, model_used, _resolution = await use_case.resolve_ai_request(
                 fallback_model, use_openrouter=use_openrouter,
             )
             if not key_data:

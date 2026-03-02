@@ -1,4 +1,4 @@
-with open('app/utils/messaging.py', 'r') as f:
+with open('app/utils/messaging.py') as f:
     content = f.read()
 
 content = content.replace(
@@ -34,7 +34,7 @@ with open('app/utils/messaging.py', 'w') as f:
     f.write(content)
 
 # Patch ai_core.py
-with open('app/handlers/ai_core.py', 'r') as f:
+with open('app/handlers/ai_core.py') as f:
     content = f.read()
 
 content = content.replace(
@@ -57,7 +57,7 @@ with open('app/handlers/ai_core.py', 'w') as f:
     f.write(content)
 
 # Patch agent.py
-with open('app/handlers/agent.py', 'r') as f:
+with open('app/handlers/agent.py') as f:
     content = f.read()
 
 content = content.replace(

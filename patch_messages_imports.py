@@ -1,4 +1,4 @@
-with open('app/handlers/messages.py', 'r') as f:
+with open('app/handlers/messages.py') as f:
     content = f.read()
 
 # I used a bad replace before since I assumed from app.utils.text_format import split_text_safe was there.
