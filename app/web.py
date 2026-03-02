@@ -174,11 +174,20 @@ def _record_login_attempt(ip: str) -> None:
     _login_attempts[ip].append(time.time())
 
 
+def _get_client_ip() -> str:
+    """Securely resolve client IP behind Northflank proxy from X-Forwarded-For."""
+    x_forwarded_for = request.headers.get("X-Forwarded-For")
+    if x_forwarded_for:
+        # Take the rightmost IP as Northflank appends it securely at the end
+        return x_forwarded_for.split(",")[-1].strip()
+    return request.remote_addr or "unknown"
+
+
 @flask_app.route("/login", methods=["GET", "POST"])
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
-    client_ip = request.remote_addr or "unknown"
+    client_ip = _get_client_ip()
 
     if request.method == "POST":
         # Check brute-force rate limit

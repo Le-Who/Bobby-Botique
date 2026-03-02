@@ -220,3 +220,81 @@ async def test_error_leakage_prevented(client):
 
         response_text = (await response.get_data()).decode()
         assert secret_message not in response_text
+
+
+@pytest.mark.asyncio
+async def test_login_rate_limiting_with_x_forwarded_for(client):
+    """Test that login rate limiting correctly extracts IP from X-Forwarded-For."""
+    # Reset rate limiting state
+    from app.web import _login_attempts
+    _login_attempts.clear()
+
+    # Get a CSRF token for the attempts
+    get_response = await client.get("/login")
+    data = (await get_response.get_data()).decode()
+    m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
+    csrf_token = m.group(1)
+
+    # First attempt with an X-Forwarded-For header containing multiple IPs
+    # The rightmost IP "203.0.113.1" is the one added by the last proxy
+    headers = {"X-Forwarded-For": "192.168.1.1, 10.0.0.1, 203.0.113.1"}
+
+    for _ in range(5):
+        res = await client.post(
+            "/login",
+            form={"password": "wrong_password", "csrf_token": csrf_token},
+            headers=headers
+        )
+        data = (await res.get_data()).decode()
+        m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
+        csrf_token = m.group(1)
+
+    # The 6th attempt should be rate limited
+    response = await client.post(
+        "/login",
+        form={"password": "wrong_password", "csrf_token": csrf_token},
+        headers=headers
+    )
+    assert response.status_code == 429
+
+    # Check that the rate limit was recorded against the correct IP
+    assert "203.0.113.1" in _login_attempts
+    assert len(_login_attempts["203.0.113.1"]) == 5
+
+    # Another IP should still be allowed
+    headers_other = {"X-Forwarded-For": "192.168.1.1, 203.0.113.2"}
+    response_other = await client.post(
+        "/login",
+        form={"password": "wrong_password", "csrf_token": csrf_token},
+        headers=headers_other
+    )
+    assert response_other.status_code == 200
+
+@pytest.mark.asyncio
+async def test_login_rate_limiting_fallback_remote_addr(client):
+    """Test that login rate limiting falls back to remote_addr if no header is present."""
+    from app.web import _login_attempts
+    _login_attempts.clear()
+
+    get_response = await client.get("/login")
+    data = (await get_response.get_data()).decode()
+    m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
+    csrf_token = m.group(1)
+
+    # Note: Quart's test client uses "127.0.0.1" as default remote_addr
+    # or "None" if unset, but we mock the Quart request implicitly
+
+    for _ in range(5):
+        res = await client.post(
+            "/login",
+            form={"password": "wrong_password", "csrf_token": csrf_token},
+        )
+        data = (await res.get_data()).decode()
+        m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
+        csrf_token = m.group(1)
+
+    response = await client.post(
+        "/login",
+        form={"password": "wrong_password", "csrf_token": csrf_token},
+    )
+    assert response.status_code == 429
