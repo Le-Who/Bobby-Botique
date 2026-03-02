@@ -41,16 +41,38 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("Запрашиваю список моделей у Google API...")
     try:
         client = genai.Client(api_key=key_data["api_key"])
-        models_list = [
-            f"- `{m.name}`"
-            for m in client.models.list()
-            if "generateContent" in m.supported_generation_methods
-        ]
 
-        # Используем TelegramFormatter for правильного экранирования
-        formatted_text, parse_mode = TelegramFormatter.format_text(
-            "✅ *Доступные модели:*\n" + "\n".join(models_list)
-        )
+        # google-genai SDK: Model has .name and .supported_actions (list of str)
+        api_models = set()
+        models_list = []
+        for m in client.models.list():
+            # Filter to models that support generateContent
+            actions = getattr(m, "supported_actions", None) or []
+            if actions and "generateContent" not in actions:
+                continue
+            short_name = m.name.replace("models/", "") if m.name else str(m.name)
+            api_models.add(short_name)
+            models_list.append(f"- `{short_name}`")
+
+        # Cross-reference with configured models
+        configured = set(settings.AVAILABLE_MODELS)
+        available = configured & api_models
+        missing = configured - api_models
+
+        header = f"✅ *Доступные модели ({len(models_list)}):*\n"
+        body = "\n".join(models_list[:50])  # Cap output
+
+        # Show config validation
+        validation = "\n\n*🔍 Проверка конфигурации:*\n"
+        validation += f"✅ Доступны: `{', '.join(sorted(available)) or 'нет'}`\n"
+        if missing:
+            validation += f"❌ НЕ найдены в API: `{', '.join(sorted(missing))}`\n"
+            validation += "⚠️ Запросы к этим моделям будут вызывать ошибки ключей!\n"
+        else:
+            validation += "✅ Все настроенные модели доступны в API\n"
+
+        full_text = header + body + validation
+        formatted_text, parse_mode = TelegramFormatter.format_text(full_text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
