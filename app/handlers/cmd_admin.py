@@ -32,7 +32,7 @@ from app.utils.formatting import TelegramFormatter
 @admin_only
 async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
-    key_data = await get_available_gemini_key(settings.DEFAULT_MODEL)
+    key_data = await get_available_gemini_key(settings.RESEARCH_MODEL)
     if not key_data:
         await update.message.reply_text(
             "Нет доступных API ключей для выполнения запроса."
