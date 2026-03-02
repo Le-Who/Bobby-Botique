@@ -138,6 +138,7 @@ async def _handle_regular_chat(
         system_instruction=system_instruction,
         user_id=user_id,
         chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
+        thinking_level=chat_state.thinking_level,
     )
 
     if response_text:

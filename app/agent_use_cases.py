@@ -150,6 +150,7 @@ class AgentRequestUseCase:
         user_id: int = None,
         chat_id: int = None,
         use_openrouter: bool = None,
+        thinking_level: str = None,
     ):
         if use_openrouter is None:
             use_openrouter = "/" in model_name or get_use_openrouter()
@@ -170,6 +171,7 @@ class AgentRequestUseCase:
             system_instruction=system_instruction,
             user_id=user_id,
             chat_id=chat_id,
+            thinking_level=thinking_level,
         )
 
         token_count = response.token_count if response.success else None

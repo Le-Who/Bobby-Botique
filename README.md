@@ -88,6 +88,7 @@ Located in `app/handlers/` as modular sub-handlers (`ai_core.py`, `ai_chat.py`, 
     - 128K token budget with 12K response reserve and 4K summary budget.
     - Summaries persisted in `chats.context_summary` column across sessions.
     - Tier-specific metrics (triggered, LLM/local counts, tokens saved) surfaced in the dashboard.
+- **Thinking Level Control** (v2.7.2+): Per-user configurable reasoning depth via `/thinking` command (`off`/`low`/`medium`/`high`/`auto`). Auto-detects model family: `thinkingBudget` for Gemini 2.5, `thinkingLevel` for Gemini 3. OpenRouter models unaffected.
 - **Group Chat Mode**: Specialized handlers for admin-only or reply-only interactions in groups.
 - **Customizable Roles**: Browse system role catalog, generate AI roles, or write custom roles manually — all manageable via an AIDA-structured roles hub.
 
@@ -303,7 +304,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (550 tests, 1 skipped)
+### Suite Structure (552 tests, 1 skipped)
 
 | Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                      |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |

@@ -5,6 +5,35 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.7.2] – 2026-03-02 – User-Configurable Thinking Levels
+
+### ✨ New: `/thinking` Command
+
+Per-user control of Gemini's reasoning depth. Auto-detects model family and sends the correct API parameter:
+
+- **Gemini 2.5** (`gemini-2.5-flash`, `gemini-2.5-flash-lite`) → `thinkingBudget` (int: 0–24576)
+- **Gemini 3** (`gemini-3-flash-preview`, `gemini-flash-latest`) → `thinkingLevel` (minimal/low/medium/high)
+- **OpenRouter** → ignored (no ThinkingConfig sent)
+
+User-facing levels: `off`, `low`, `medium`, `high`, `auto` (reset to model default).
+
+### Files Changed
+
+| File                       | Change                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------ |
+| `app/ai_provider.py`       | `_build_thinking_config()`, `_is_gemini3_model()`, `thinking_level` param through provider chain |
+| `app/agent_use_cases.py`   | `get_ai_response()` accepts `thinking_level`                                                     |
+| `app/handlers/ai_core.py`  | `_get_ai_response_with_routing()` accepts `thinking_level`                                       |
+| `app/handlers/ai_chat.py`  | Reads `chat_state.thinking_level`, passes to router                                              |
+| `app/handlers/commands.py` | `/thinking` command + registration                                                               |
+| `app/database.py`          | `ChatState.thinking_level` field                                                                 |
+| `app/repos/chats.py`       | `update_thinking_level()`, DB read/write of column                                               |
+| `tests/test_ai_chat.py`    | Test fixture updated with `thinking_level=None`                                                  |
+
+### 🧪 Tests (552 passed, 1 skipped)
+
+---
+
 ## [2.7.1] – 2026-03-02 – OpenRouter Key Rotation Fix & Supabase Advisory
 
 ### 🔴 Critical Fix: OpenRouter Retries Using Same Suspended Key

@@ -58,7 +58,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
         await set_user_context(user_id, False, conn=conn)
         try:
             chat_result = await db_query(
-                "SELECT model, token_count, search_enabled, system_prompt, context_summary FROM chats WHERE user_id = $1",
+                "SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level FROM chats WHERE user_id = $1",
                 (user_id,),
                 conn=conn,
             )
@@ -93,6 +93,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                     search_enabled=row["search_enabled"],
                     system_prompt=row["system_prompt"],
                     context_summary=row.get("context_summary"),
+                    thinking_level=row.get("thinking_level"),
                 )
 
             if user_result:
@@ -176,13 +177,13 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
             chat_state._original_length = current_length
 
             chat_query = """
-            INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt, context_summary)
-            VALUES ($1, '[]', $2, $3, $4, $5, $6)
+            INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt, context_summary, thinking_level)
+            VALUES ($1, '[]', $2, $3, $4, $5, $6, $7)
             ON CONFLICT (user_id)
             DO UPDATE SET
                 model = EXCLUDED.model, token_count = EXCLUDED.token_count,
                 search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt,
-                context_summary = EXCLUDED.context_summary;
+                context_summary = EXCLUDED.context_summary, thinking_level = EXCLUDED.thinking_level;
             """
             await db_query(
                 chat_query,
@@ -193,6 +194,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                     chat_state.search_enabled,
                     chat_state.system_prompt,
                     chat_state.context_summary,
+                    chat_state.thinking_level,
                 ),
                 conn=conn,
             )
@@ -245,3 +247,15 @@ async def migrate_invalid_models(
     if migrated:
         logging.warning("Migrated %d users to default models after config reload", migrated)
     return migrated
+
+
+async def update_thinking_level(user_id: int, level: str | None) -> None:
+    """Update thinking level for a user's chat. None resets to default."""
+    await db_query(
+        "UPDATE chats SET thinking_level = $1 WHERE user_id = $2",
+        (level, user_id),
+    )
+    # Invalidate cache
+    async with db_manager._cache_lock:
+        if hasattr(db_manager, "_active_chats_cache"):
+            db_manager._active_chats_cache.pop(user_id, None)

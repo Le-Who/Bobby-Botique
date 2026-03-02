@@ -38,6 +38,36 @@ from app.utils.image_utils import save_image_as_bytes
 from app.utils.network import NetworkErrorHandler
 
 
+# ── Thinking config helpers ──────────────────────────────────────────
+
+_THINKING_BUDGET_MAP = {"off": 0, "low": 1024, "medium": 8192, "high": 24576}
+_THINKING_LEVEL_MAP = {"off": "minimal", "low": "low", "medium": "medium", "high": "high"}
+
+
+def _is_gemini3_model(model_name: str) -> bool:
+    """Detect Gemini 3.x models that require thinkingLevel instead of thinkingBudget."""
+    return "gemini-3" in model_name or model_name == "gemini-flash-latest"
+
+
+def _build_thinking_config(model_name: str, thinking_level: str | None) -> types.ThinkingConfig | None:
+    """Build ThinkingConfig for the appropriate model family.
+
+    - Gemini 3.x → thinkingLevel (minimal/low/medium/high)
+    - Gemini 2.5  → thinkingBudget (int: 0-24576)
+    - Other models (OpenRouter, etc.) → None (not supported)
+
+    Returns None if thinking_level is None or model doesn't support thinking.
+    """
+    if not thinking_level or thinking_level not in _THINKING_BUDGET_MAP:
+        return None
+    # Only Gemini models support thinking
+    if is_openrouter_model(model_name):
+        return None
+    if _is_gemini3_model(model_name):
+        return types.ThinkingConfig(thinking_level=_THINKING_LEVEL_MAP[thinking_level])
+    return types.ThinkingConfig(thinking_budget=_THINKING_BUDGET_MAP[thinking_level])
+
+
 @dataclass
 class AIResponse:
     """Standardized response from any AI provider."""
@@ -81,6 +111,7 @@ class BaseAIProvider(ABC):
         chat_id: int | None = None,
         max_retries: int = 3,
         timeout: float = 120.0,
+        thinking_level: str | None = None,
     ) -> AIResponse:
         """
         Get response from AI provider with retry logic.
@@ -111,6 +142,7 @@ class BaseAIProvider(ABC):
                 user_id=user_id,
                 chat_id=chat_id,
                 timeout=timeout,
+                thinking_level=thinking_level,
             )
 
         try:
@@ -221,6 +253,7 @@ class GeminiProvider(BaseAIProvider):
         user_id: int | None,
         chat_id: int | None,
         timeout: float,
+        thinking_level: str | None = None,
     ) -> AIResponse:
         start_time = None
 
@@ -274,6 +307,10 @@ class GeminiProvider(BaseAIProvider):
             config = types.GenerateContentConfig(
                 safety_settings=settings.SAFETY_SETTINGS
             )
+            # Apply thinking config if user requested a specific level
+            tc = _build_thinking_config(model_name, thinking_level)
+            if tc:
+                config.thinking_config = tc
             if system_instruction:
                 try:
                     config.system_instruction = str(system_instruction)
@@ -782,6 +819,7 @@ class ProviderRouter:
         chat_id: int | None = None,
         use_openrouter: bool | None = None,
         max_key_retries: int = 3,
+        thinking_level: str | None = None,
     ) -> tuple[str, int | None]:
         """
         Get AI response with automatic key rotation and health-aware selection.
@@ -853,6 +891,7 @@ class ProviderRouter:
                 user_id,
                 chat_id,
                 use_openrouter,
+                thinking_level=thinking_level,
             )
 
             # Track health based on response

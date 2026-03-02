@@ -278,6 +278,62 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     logging.info("Stats command completed for user %s", user_id)
 
 
+_VALID_THINKING_LEVELS = {"off", "low", "medium", "high"}
+_THINKING_LABELS = {
+    None: "🔄 Авто (по умолчанию модели)",
+    "off": "⚡ Выключен — быстрые ответы",
+    "low": "💡 Низкий — минимальное рассуждение",
+    "medium": "🧠 Средний — сбалансированный",
+    "high": "🔬 Высокий — глубокий анализ",
+}
+
+
+@authorized_only
+async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set or show the thinking level for AI reasoning."""
+    user_id = update.effective_user.id
+    chat_state = await get_user_chat(user_id)
+
+    if not context.args:
+        # Show current level
+        current = chat_state.thinking_level
+        label = _THINKING_LABELS.get(current, current)
+        text = (
+            f"🧠 *Текущий уровень мышления:* {label}\n\n"
+            "*Доступные уровни:*\n"
+            "• `/thinking off` — ⚡ быстрые ответы без рассуждений\n"
+            "• `/thinking low` — 💡 минимальное рассуждение\n"
+            "• `/thinking medium` — 🧠 сбалансированный\n"
+            "• `/thinking high` — 🔬 максимальная глубина\n"
+            "• `/thinking auto` — 🔄 вернуть авто-режим\n\n"
+            f"Текущая модель: `{chat_state.model}`"
+        )
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        return
+
+    level = context.args[0].lower()
+
+    if level in ("auto", "default", "reset"):
+        level = None
+    elif level not in _VALID_THINKING_LEVELS:
+        await update.message.reply_text(
+            f"❌ Неизвестный уровень `{level}`.\n"
+            "Допустимые: `off`, `low`, `medium`, `high`, `auto`"
+        )
+        return
+
+    from app.repos.chats import update_thinking_level
+    await update_thinking_level(user_id, level)
+    chat_state.thinking_level = level
+
+    label = _THINKING_LABELS.get(level, level)
+    formatted_text, parse_mode = TelegramFormatter.format_text(
+        f"✅ Уровень мышления: {label}"
+    )
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+
+
 def register(application: Application) -> None:
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
@@ -289,6 +345,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("documents", documents_command))
     application.add_handler(CommandHandler("roles", roles_command))
+    application.add_handler(CommandHandler("thinking", thinking_command))
 
     # Admin commands (from cmd_admin)
     from app.handlers.cmd_admin import (

@@ -24,6 +24,7 @@ class ChatState:
     is_deep_dive: bool = False
     deep_dive_thread_id: str | None = None
     context_summary: str | None = None  # LLM-generated conversation summary
+    thinking_level: str | None = None  # User-configurable: off, low, medium, high
     _original_length: int = 0
 
 
