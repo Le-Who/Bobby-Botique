@@ -51,9 +51,7 @@ class DailyKeyManager:
     def _today(self) -> date:
         return datetime.now(get_pacific_tz()).date()
 
-    async def get_available_key(
-        self, model_name: str, conn=None
-    ) -> dict[str, Any] | None:
+    async def get_available_key(self, model_name: str, conn=None) -> dict[str, Any] | None:
         """Get the least-used key for the given model today."""
         today = self._today()
         query = f"""
@@ -83,9 +81,7 @@ class DailyKeyManager:
         """
         return await db_query(query, (key_hash, model_name, today))
 
-    async def is_key_available(
-        self, key_hash: str, model_name: str, daily_limit: int | None, conn=None
-    ) -> bool:
+    async def is_key_available(self, key_hash: str, model_name: str, daily_limit: int | None, conn=None) -> bool:
         """Check if a key is under its daily threshold."""
         if not daily_limit:
             return True
@@ -100,8 +96,11 @@ class DailyKeyManager:
         return current_usage < daily_limit * settings.LIMIT_THRESHOLD_PERCENT
 
     async def get_fresh_available_key(
-        self, model_name: str, daily_limit: int | None,
-        excluded_hashes: set[str] | None = None, conn=None,
+        self,
+        model_name: str,
+        daily_limit: int | None,
+        excluded_hashes: set[str] | None = None,
+        conn=None,
     ) -> dict[str, Any] | None:
         """Find the least-used key that is still under the daily limit.
 
@@ -174,10 +173,7 @@ _openrouter_km = DailyKeyManager("openrouter_api_keys", "openrouter_key_usage")
 
 async def get_model_daily_limit(model_name: str) -> int | None:
     async with db_manager._cache_lock:
-        if (
-            hasattr(db_manager, "_model_config_cache")
-            and model_name in db_manager._model_config_cache
-        ):
+        if hasattr(db_manager, "_model_config_cache") and model_name in db_manager._model_config_cache:
             return db_manager._model_config_cache[model_name]
 
     try:
@@ -207,11 +203,16 @@ async def _is_key_available(key_hash: str, model_name: str, conn=None) -> bool:
 
 
 async def _get_fresh_available_key(
-    model_name: str, excluded_hashes: set[str] | None = None, conn=None,
+    model_name: str,
+    excluded_hashes: set[str] | None = None,
+    conn=None,
 ) -> dict[str, Any] | None:
     daily_limit = await get_model_daily_limit(model_name)
     return await _gemini_km.get_fresh_available_key(
-        model_name, daily_limit, excluded_hashes=excluded_hashes, conn=conn,
+        model_name,
+        daily_limit,
+        excluded_hashes=excluded_hashes,
+        conn=conn,
     )
 
 
@@ -225,7 +226,8 @@ async def invalidate_key_cache(model_name: str = None) -> None:
 
 
 async def get_available_gemini_key(
-    model_name: str, excluded_hashes: set[str] | None = None,
+    model_name: str,
+    excluded_hashes: set[str] | None = None,
 ) -> dict[str, Any] | None:
     # When exclusions are requested, skip cache (caller wants a *different* key)
     if not excluded_hashes:
@@ -243,7 +245,9 @@ async def get_available_gemini_key(
         await set_user_context(settings.ADMIN_ID, True, conn=conn)
         try:
             new_key = await _get_fresh_available_key(
-                model_name, excluded_hashes=excluded_hashes, conn=conn,
+                model_name,
+                excluded_hashes=excluded_hashes,
+                conn=conn,
             )
 
             if new_key and not excluded_hashes:
@@ -290,7 +294,8 @@ _MAX_SUSPENSION = timedelta(days=7)
 
 
 def _compute_suspended_until(
-    category: str, failure_count: int,
+    category: str,
+    failure_count: int,
 ) -> datetime:
     """Return the UTC timestamp until which the key should be suspended."""
     now = datetime.now(UTC_TZ)
@@ -300,7 +305,10 @@ def _compute_suspended_until(
         pacific = get_pacific_tz()
         pacific_now = datetime.now(pacific)
         next_midnight_pt = pacific_now.replace(
-            hour=0, minute=0, second=0, microsecond=0,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
         ) + timedelta(days=1)
         return next_midnight_pt.astimezone(UTC_TZ)
 
@@ -320,14 +328,16 @@ class KeyStatusManager:
     """
 
     async def suspend_key(
-        self, key_hash: str, model_name: str,
-        error_category: str, error_text: str = "",
+        self,
+        key_hash: str,
+        model_name: str,
+        error_category: str,
+        error_text: str = "",
     ) -> None:
         """Suspend a key for a specific model with category-aware cooldown."""
         # Read current failure_count to compute backoff
         rows = await db_query(
-            "SELECT failure_count FROM key_model_status "
-            "WHERE key_hash = $1 AND model_name = $2",
+            "SELECT failure_count FROM key_model_status WHERE key_hash = $1 AND model_name = $2",
             (key_hash, model_name),
         )
         prev_failures = rows[0]["failure_count"] if rows else 0
@@ -348,21 +358,24 @@ class KeyStatusManager:
                 last_error = $5,
                 updated_at = NOW()
             """,
-            (key_hash, model_name, suspended_until, new_failures,
-             error_text[:500]),
+            (key_hash, model_name, suspended_until, new_failures, error_text[:500]),
         )
 
         await invalidate_key_cache(model_name)
 
         logging.warning(
-            "Key %s… suspended for model %s until %s "
-            "(category=%s, failures=%d)",
-            key_hash[:8], model_name,
-            suspended_until.isoformat(), error_category, new_failures,
+            "Key %s… suspended for model %s until %s (category=%s, failures=%d)",
+            key_hash[:8],
+            model_name,
+            suspended_until.isoformat(),
+            error_category,
+            new_failures,
         )
 
     async def record_success(
-        self, key_hash: str, model_name: str,
+        self,
+        key_hash: str,
+        model_name: str,
     ) -> None:
         """Reset key to active after a successful request."""
         await db_query(
@@ -511,15 +524,22 @@ async def force_update_tavily_keys() -> bool:
 
 
 async def get_available_openrouter_key(
-    model_name: str, excluded_hashes: set[str] | None = None,
+    model_name: str,
+    excluded_hashes: set[str] | None = None,
 ) -> dict[str, Any] | None:
     if not db_manager.is_connected:
         await reconnect_database()
 
+    daily_limit = await get_model_daily_limit(model_name)
     async with db_manager.pool.acquire() as conn:
         await set_user_context(settings.ADMIN_ID, True, conn=conn)
         try:
-            return await _openrouter_km.get_available_key(model_name, conn=conn)
+            return await _openrouter_km.get_fresh_available_key(
+                model_name,
+                daily_limit,
+                excluded_hashes=excluded_hashes,
+                conn=conn,
+            )
         finally:
             await clear_user_context(conn=conn)
 

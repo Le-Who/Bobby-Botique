@@ -5,6 +5,32 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.7.1] – 2026-03-02 – OpenRouter Key Rotation Fix & Supabase Advisory
+
+### 🔴 Critical Fix: OpenRouter Retries Using Same Suspended Key
+
+**Root cause**: `get_available_openrouter_key()` accepted `excluded_hashes` but ignored it — called `get_available_key()` (simple least-used query, no status/exclusion filtering) instead of `get_fresh_available_key()` (two-tier SQL with exclusions + status checks). The retry loop always re-selected the same rate-limited key, guaranteeing all 3 attempts failed identically.
+
+**Fix**: Rewired to `_openrouter_km.get_fresh_available_key()` with `excluded_hashes` and `daily_limit` forwarding — now mirrors the Gemini key path.
+
+### 🔒 Security: Supabase `search_path` Advisory
+
+- `check_key_hash_exists()` trigger function now has `SET search_path = public`, resolving the Supabase security advisor lint about mutable search_path.
+
+### Files Changed
+
+| File                                                        | Change                                                                         |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `app/repos/keys.py`                                         | `get_available_openrouter_key()` → `get_fresh_available_key()` with exclusions |
+| `scripts/migrations/016_fix_check_key_hash_search_path.sql` | New migration: `SET search_path = public` on trigger function                  |
+| `tests/test_repos_keys.py`                                  | +2 regression tests: exclusion forwarding, no-keys case                        |
+
+### 🧪 Tests (550 passed, 1 skipped)
+
+- `TestGetAvailableOpenrouterKey`: 2 new tests verifying exclusion forwarding and empty result handling.
+
+---
+
 ## [2.7.0] – 2026-03-01 – Persistent Per-Model Key Health System
 
 ### 🔴 Critical Fix: "All Gemini keys exhausted" False Positive

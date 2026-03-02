@@ -104,6 +104,7 @@ The bot implements a sophisticated "Smart Router" for AI requests:
   - **Multimodal auto-detection**: Detects PIL Image / bytes in history and forces Gemini automatically.
   - **Per-user rate limiting**: Consolidated `RateLimiter` with periodic cleanup, stats, and admin reset.
   - **`DailyKeyManager`**: Generic key rotation engine shared by Gemini and OpenRouter, parameterized by table names.
+  - **OpenRouter exclusion fix** (v2.7.1): `get_available_openrouter_key()` now properly forwards `excluded_hashes` to the two-tier SQL query, ensuring failed keys are rotated out.
 - **Key Rotation System**:
   - Rotates through a pool of API keys to avoid rate limits.
   - Tracks usage stats (requests/tokens) per key.
@@ -302,7 +303,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (548 tests, 1 skipped)
+### Suite Structure (550 tests, 1 skipped)
 
 | Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                      |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |
