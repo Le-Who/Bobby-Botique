@@ -808,6 +808,7 @@ class ProviderRouter:
         use_case = AgentRequestUseCase()
         status_mgr = get_key_status_manager()
         failed_keys: set[str] = set()
+        all_permanent: bool = True  # Track if ALL failures are permanent (model-level)
 
         for attempt in range(max_key_retries):
             key_data, model_used, resolution = await use_case.resolve_ai_request(
@@ -863,6 +864,9 @@ class ProviderRouter:
                 failed_keys.add(key_data["key_hash"])
                 error_category = classify_key_error(response_text)
 
+                if error_category != "permanent":
+                    all_permanent = False
+
                 if error_category != "transient":
                     try:
                         await status_mgr.suspend_key(
@@ -901,6 +905,19 @@ class ProviderRouter:
 
             return response_text, token_count
 
+        # ── Model-level fallback ─────────────────────────────────────────
+        # All keys failed for the preferred model. If every failure was
+        # "permanent" (API_KEY_INVALID — Google rejects the key for this
+        # specific model), try alternative models before giving up.
+        if all_permanent and failed_keys:
+            fallback_result = await self._try_model_fallback(
+                preferred_model, history, system_instruction,
+                user_id, chat_id, use_openrouter,
+                use_case, status_mgr,
+            )
+            if fallback_result is not None:
+                return fallback_result
+
         is_or = (
             use_openrouter if use_openrouter is not None else ("/" in preferred_model)
         )
@@ -909,6 +926,70 @@ class ProviderRouter:
             f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",
             None,
         )
+
+    async def _try_model_fallback(
+        self,
+        failed_model: str,
+        history: list,
+        system_instruction: str | None,
+        user_id: int | None,
+        chat_id: int | None,
+        use_openrouter: bool | None,
+        use_case,
+        status_mgr,
+    ) -> tuple[str, int | None] | None:
+        """Try fallback models when all keys fail with permanent errors for one model.
+
+        Returns (response_text, token_count) on success, or None if no fallback works.
+        """
+        is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model)
+        if is_or:
+            fallback_models = settings.OPENROUTER_AVAILABLE_MODELS
+        else:
+            fallback_models = settings.AVAILABLE_MODELS
+
+        for fallback_model in fallback_models:
+            if fallback_model == failed_model:
+                continue
+
+            key_data, model_used, resolution = await use_case.resolve_ai_request(
+                fallback_model, use_openrouter=use_openrouter,
+            )
+            if not key_data:
+                continue
+
+            logging.info(
+                "Model fallback: trying %s instead of %s (all keys rejected by API for original model)",
+                fallback_model, failed_model,
+            )
+
+            response_text, token_count = await use_case.get_ai_response(
+                key_data["api_key"], history, model_used,
+                system_instruction, user_id, chat_id, use_openrouter,
+            )
+
+            if response_text and not is_error_message(response_text):
+                logging.info(
+                    "Model fallback succeeded: %s → %s", failed_model, model_used,
+                )
+                try:
+                    await status_mgr.record_success(key_data["key_hash"], model_used)
+                except Exception as e:
+                    logging.debug("Non-critical: record_success failed: %s", e)
+                try:
+                    await use_case.increment_key_usage(
+                        key_data["key_hash"], model_used, use_openrouter,
+                    )
+                except Exception as e:
+                    logging.warning("Non-critical: failed to increment key usage: %s", e)
+                return response_text, token_count
+
+            logging.warning(
+                "Model fallback %s also failed: %s",
+                fallback_model, (response_text or "")[:100],
+            )
+
+        return None
 
     async def get_key_stats(self) -> list[dict[str, Any]]:
         """Return health stats for all tracked keys (for diagnostics)."""

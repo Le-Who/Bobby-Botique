@@ -219,3 +219,96 @@ class TestProviderRouter:
 
         # Timeout is NOT key-related, so suspend_key should NOT be called
         mock_status_mgr.suspend_key.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_model_fallback_on_all_keys_permanent_failure(self):
+        """When all keys fail with permanent errors for one model,
+        the router should try fallback models from AVAILABLE_MODELS."""
+        router = ProviderRouter()
+
+        mock_use_case = MagicMock()
+
+        # Main loop: 3 keys all fail with permanent errors
+        # Then fallback: resolve succeeds for fallback model
+        mock_use_case.resolve_ai_request = AsyncMock(
+            side_effect=[
+                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3-flash-preview", None),
+                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3-flash-preview", None),
+                ({"api_key": "key3", "key_hash": "hash3"}, "gemini-3-flash-preview", None),
+                # Fallback call for "gemini-2.5-flash"
+                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-2.5-flash", None),
+            ]
+        )
+        mock_use_case.get_ai_response = AsyncMock(
+            side_effect=[
+                ("🔑 Неверный API ключ.", None),  # key1 permanent fail
+                ("🔑 Неверный API ключ.", None),  # key2 permanent fail
+                ("🔑 Неверный API ключ.", None),  # key3 permanent fail
+                ("Fallback response!", 15),         # fallback model succeeds
+            ]
+        )
+        mock_use_case.increment_key_usage = AsyncMock()
+
+        mock_status_mgr = MagicMock()
+        mock_status_mgr.suspend_key = AsyncMock()
+        mock_status_mgr.record_success = AsyncMock()
+
+        mock_settings = MagicMock()
+        mock_settings.AVAILABLE_MODELS = [
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash",
+            "gemini-flash-latest",
+        ]
+
+        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
+             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr), \
+             patch("app.ai_provider.settings", mock_settings):
+            text, tokens = await router.get_response(
+                "gemini-3-flash-preview",
+                [{"role": "user", "parts": ["hi"]}],
+                max_key_retries=3,
+            )
+
+        assert text == "Fallback response!"
+        assert tokens == 15
+        # All 3 original keys should have been suspended
+        assert mock_status_mgr.suspend_key.call_count == 3
+        # Fallback key should have been recorded as success
+        mock_status_mgr.record_success.assert_called_once_with("hash1", "gemini-2.5-flash")
+
+    @pytest.mark.asyncio
+    async def test_no_model_fallback_on_non_permanent_errors(self):
+        """Model fallback should NOT trigger for quota/rate-limit errors."""
+        router = ProviderRouter()
+
+        mock_use_case = MagicMock()
+        mock_use_case.resolve_ai_request = AsyncMock(
+            side_effect=[
+                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-2.0-flash", None),
+                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-2.0-flash", None),
+                ({"api_key": "key3", "key_hash": "hash3"}, "gemini-2.0-flash", None),
+            ]
+        )
+        mock_use_case.get_ai_response = AsyncMock(
+            side_effect=[
+                ("🔑 Неверный API ключ.", None),   # permanent
+                ("🚫 Достигнут лимит запросов к API (Quota Exceeded).", None),  # quota (NOT permanent)
+                ("🔑 Неверный API ключ.", None),   # permanent
+            ]
+        )
+
+        mock_status_mgr = MagicMock()
+        mock_status_mgr.suspend_key = AsyncMock()
+
+        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
+             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr):
+            text, tokens = await router.get_response(
+                "gemini-2.0-flash",
+                [{"role": "user", "parts": ["hi"]}],
+                max_key_retries=3,
+            )
+
+        # Should NOT have fallen back — quota error means model is fine, key is the problem
+        assert "🚫" in text
+        assert "не сработали" in text
+        assert tokens is None
