@@ -265,19 +265,10 @@ class DocumentProcessor:
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
 
-    # ── Delegated repository methods (backward compat) ───────────────────────
-
-    async def _check_duplicate_file(self, user_id, file_hash, filename):
-        return await check_duplicate_file(user_id, file_hash, filename)
-
-    async def _check_document_limit(self, user_id):
-        return await check_document_limit(user_id)
+    # ── Delegated repository methods (backward compat for external callers) ──
 
     async def _cleanup_oldest_documents(self, user_id, keep_count=4):
         return await cleanup_oldest_documents(user_id, keep_count)
-
-    async def _save_document_content(self, user_id, filename, content, pages, file_hash):
-        return await save_document_content(user_id, filename, content, pages, file_hash)
 
     async def get_document_by_id(self, document_id, user_id):
         from app.documents.repository import get_document_by_id

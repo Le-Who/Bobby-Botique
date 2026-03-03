@@ -12,7 +12,10 @@ from typing import Any
 
 from app.prompt_registry import estimate_tokens_cyrillic
 
-from .summarizer import schedule_llm_summarization  # noqa: F401 – re-exported
+from .summarizer import (
+    _extract_text as extract_text,  # canonical implementation
+    schedule_llm_summarization,  # noqa: F401 – re-exported
+)
 from .token_budget import (
     DEFAULT_TOKEN_BUDGET,
     LLM_SUMMARY_TOKEN_THRESHOLD,
@@ -312,24 +315,10 @@ class ContextAssembler:
 
     # ── Utilities ────────────────────────────────────────────────────────────
 
-    def _extract_text(self, msg: dict[str, Any]) -> str:
+    @staticmethod
+    def _extract_text(msg: dict[str, Any]) -> str:
         """Extract text content from a message dict."""
-        parts = msg.get("parts", [])
-        if not parts:
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                return " ".join(str(p) for p in content)
-            return str(content)
-
-        text_parts: list[str] = []
-        for part in parts:
-            if isinstance(part, str):
-                text_parts.append(part)
-            elif isinstance(part, dict) and "text" in part:
-                text_parts.append(part["text"])
-        return " ".join(text_parts)
+        return extract_text(msg)
 
     def _compute_audit_hash(
         self, history: list[dict[str, Any]], system_instruction: str
@@ -376,12 +365,8 @@ def should_summarize(
     return False, ""
 
 
-def _extract_msg_text(msg: dict[str, Any]) -> str:
-    """Quick text extraction for token counting."""
-    parts = msg.get("parts", [])
-    if isinstance(parts, list):
-        return " ".join(str(p) for p in parts if isinstance(p, str))
-    return str(msg.get("content", ""))
+# Use the shared implementation from summarizer
+_extract_msg_text = extract_text
 
 
 # Singleton assembler instance

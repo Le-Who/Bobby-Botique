@@ -6,11 +6,7 @@ from database persistence and orchestration.
 """
 
 import hashlib
-import logging
 import tempfile
-from typing import Any
-
-logger = logging.getLogger(__name__)
 
 # Maximum characters to extract from a document to prevent OOM
 MAX_DOCUMENT_TEXT_LENGTH = 100000
