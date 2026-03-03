@@ -131,10 +131,6 @@ async def role_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Save state
     await update_user_chat(user_id, chat_state)
 
-    # Update menu
-    # Save state
-    await update_user_chat(user_id, chat_state)
-
     # Update menu - возвращаемся в Hub
     text, parse_mode, reply_markup = await menus.get_roles_menu_content(
         user_id, chat_state, view_mode="hub"
@@ -294,9 +290,10 @@ async def role_custom_save_callback(update: Update, context: ContextTypes.DEFAUL
             "💾 Роль сохранена и применена.", reply_markup=kb
         )
     except Exception as e:
+        logging.error("Error saving custom role: %s", e, exc_info=True)
         from app.utils.keyboards import error_with_back_keyboard
         await query.edit_message_text(
-            f"❌ Ошибка сохранения роли: {e}",
+            "❌ Ошибка сохранения роли. Попробуйте позже.",
             reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
         )
 
@@ -689,8 +686,9 @@ async def role_manual_save_callback(
             reply_markup=kb,
         )
     except Exception as e:
+        logging.error("Error saving manual role: %s", e, exc_info=True)
         from app.utils.keyboards import error_with_back_keyboard
         await query.edit_message_text(
-            f"❌ Ошибка сохранения: {e}",
+            "❌ Ошибка сохранения роли. Попробуйте позже.",
             reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
         )

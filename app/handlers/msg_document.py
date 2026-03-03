@@ -184,8 +184,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
                 return
             else:
+                logging.warning("Document processing error: %s", result['error'])
                 await processing_msg.edit_text(
-                    f"❌ Ошибка обработки: {result['error']}"
+                    "❌ Не удалось обработать документ. Попробуйте другой файл."
                 )
                 return
 
@@ -229,13 +230,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await metrics_collector.record_api_call("document_processing")
 
     except Exception as e:
-        error_msg = f"❌ Произошла ошибка при обработке документа: {str(e)[:100]}"
         logging.error(
-            f"Error processing document for user {user_id}: {e}", exc_info=True
+            "Error processing document for user %s: %s", user_id, e, exc_info=True
         )
         from app.utils.keyboards import error_with_back_keyboard
         await processing_msg.edit_text(
-            error_msg,
+            "❌ Произошла ошибка при обработке документа. Попробуйте другой файл.",
             reply_markup=error_with_back_keyboard("open_documents", "📄 К документам")
         )
         await metrics_collector.record_error("document_processing", str(e))
