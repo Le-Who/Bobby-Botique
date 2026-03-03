@@ -189,21 +189,22 @@ class GroupChatManager:
                 return False
 
             async with self._lock:
-                # Add в базу данных
-                await db.db_query(
-                    "INSERT INTO group_members (chat_id, user_id) VALUES ($1, $2) ON CONFLICT (chat_id, user_id) DO NOTHING",
+                # Add в базу данных — RETURNING confirms actual insert
+                result = await db.db_query(
+                    "INSERT INTO group_members (chat_id, user_id) VALUES ($1, $2) ON CONFLICT (chat_id, user_id) DO NOTHING RETURNING user_id",
                     (chat_id, user_id),
                 )
 
-                # Атомарно обновляем количество участников
-                await db.db_query(
-                    "UPDATE group_chats SET member_count = member_count + 1 WHERE chat_id = $1",
-                    (chat_id,),
-                )
+                if result:
+                    # Атомарно обновляем количество участников
+                    await db.db_query(
+                        "UPDATE group_chats SET member_count = member_count + 1 WHERE chat_id = $1",
+                        (chat_id,),
+                    )
 
                 # Update в памяти
                 self.user_groups[user_id].add(chat_id)
-                if chat_id in self.active_groups:
+                if result and chat_id in self.active_groups:
                     self.active_groups[chat_id].member_count += 1
 
                 return True

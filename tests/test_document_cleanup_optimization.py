@@ -50,7 +50,7 @@ def test_cleanup_oldest_documents_single_query_behavior(
         assert "WHERE id IN" in sql_norm
         assert "SELECT id FROM user_documents" in sql_norm
         assert "WHERE user_id = $1" in sql_norm
-        assert "ORDER BY created_at ASC" in sql_norm
+        assert "ORDER BY created_at DESC" in sql_norm
         assert "OFFSET $2" in sql_norm
         assert "RETURNING id" in sql_norm  # Ensure we return IDs for count
 

@@ -74,14 +74,14 @@ async def check_system_health() -> SystemHealth:
 
     # ── AI Provider ──────────────────────────────────────────────────────
     try:
-        from app.circuit_breaker import _circuit_breakers
+        from app.circuit_breaker import CircuitState, _circuit_breakers
         ai_circuits = {
             name: cb for name, cb in _circuit_breakers.items()
             if "ai_provider" in name
         }
         open_count = sum(
             1 for cb in ai_circuits.values()
-            if getattr(cb, "_state", None) == "open"
+            if getattr(cb, "_state", None) == CircuitState.OPEN
         )
         if open_count > 0:
             health.ai_provider = ServiceStatus.DEGRADED

@@ -66,7 +66,7 @@ async def cleanup_oldest_documents(user_id: int, keep_count: int = 4) -> int:
             WHERE id IN (
                 SELECT id FROM user_documents
                 WHERE user_id = $1
-                ORDER BY created_at ASC
+                ORDER BY created_at DESC
                 OFFSET $2
             )
             RETURNING id
