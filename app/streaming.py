@@ -317,8 +317,8 @@ async def stream_and_display(
         if partial:
             await writer.finalize()
             return partial + "\n\n⚠️ _(ответ был прерван из-за ошибки API)_", True, writer.last_message
-        return f"❌ Ошибка API: {e}", False, placeholder_message
+        return "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.", False, placeholder_message
 
     except Exception as e:
         logging.error("Streaming failed: %s", e, exc_info=True)
-        return f"❌ Ошибка при потоковой генерации: {e}", False, placeholder_message
+        return "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.", False, placeholder_message

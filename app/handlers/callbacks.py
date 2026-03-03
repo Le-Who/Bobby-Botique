@@ -254,8 +254,17 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     if task_to_run:
 
         async def task_wrapper() -> None:
-            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
-                await task_to_run
+            try:
+                async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                    await task_to_run
+            except Exception as e:
+                logging.error("complex_search task failed: %s", e, exc_info=True)
+                try:
+                    await placeholder_message.edit_text(
+                        "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз."
+                    )
+                except Exception:
+                    pass
 
         _task = asyncio.create_task(task_wrapper())
         _background_tasks.add(_task)
@@ -267,7 +276,9 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     await query.answer()
 
-    _, action, model_override = query.data.split(":")
+    parts = query.data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+    model_override = parts[2] if len(parts) > 2 else ""
     placeholder_message = query.message
 
     if action == "cancel":
@@ -296,17 +307,26 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     async def task_wrapper() -> None:
-        async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
-            if action == "confirm":
-                chat_state = await get_user_chat(user_id)
-                user_message = original_message.text
-                await agent._handle_regular_chat(
-                    placeholder_message,
-                    user_id,
-                    user_message,
-                    chat_state,
-                    model_override=model_override,
+        try:
+            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                if action == "confirm":
+                    chat_state = await get_user_chat(user_id)
+                    user_message = original_message.text
+                    await agent._handle_regular_chat(
+                        placeholder_message,
+                        user_id,
+                        user_message,
+                        chat_state,
+                        model_override=model_override,
+                    )
+        except Exception as e:
+            logging.error("fallback task failed: %s", e, exc_info=True)
+            try:
+                await placeholder_message.edit_text(
+                    "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз."
                 )
+            except Exception:
+                pass
 
     _task = asyncio.create_task(task_wrapper())
     _background_tasks.add(_task)
@@ -394,18 +414,29 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     from app.handlers.agent import _handle_regular_chat
 
-    try:
-        await _handle_regular_chat(placeholder_message, user_id, last_text, chat_state)
-    except Exception as e:
-        logging.error("retry_last_callback failed: %s", e, exc_info=True)
+    user_lock = state.get_user_lock(user_id)
+    if user_lock.locked():
+        await placeholder_message.edit_text("⏳ Предыдущий запрос ещё обрабатывается. Подождите.")
+        return
+
+    async def _retry_wrapper() -> None:
         try:
-            from app.utils.keyboards import error_with_back_keyboard
-            await placeholder_message.edit_text(
-                "❌ Произошла ошибка при повторе запроса.",
-                reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
-            )
-        except Exception:
-            pass
+            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                await _handle_regular_chat(placeholder_message, user_id, last_text, chat_state)
+        except Exception as e:
+            logging.error("retry_last_callback failed: %s", e, exc_info=True)
+            try:
+                from app.utils.keyboards import error_with_back_keyboard
+                await placeholder_message.edit_text(
+                    "❌ Произошла ошибка при повторе запроса.",
+                    reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+                )
+            except Exception:
+                pass
+
+    _task = asyncio.create_task(_retry_wrapper())
+    _background_tasks.add(_task)
+    _task.add_done_callback(_background_tasks.discard)
 
 
 async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
