@@ -379,12 +379,12 @@ class TestMigrateInvalidModels:
             assert count == 2
             # Verify the update calls
             calls = mock_query.call_args_list
-            # First call is the SELECT, next 2 are UPDATEs
+            # First call is the SELECT, next 2 are batch UPDATEs
             assert len(calls) == 3
-            # User 1 (no "/" → gemini default)
-            assert calls[1][0][1] == ("gemini-flash", 1)
-            # User 2 ("/" present → openrouter default)
-            assert calls[2][0][1] == ("vendor/gpt-4", 2)
+            # Gemini batch (user 1, no "/" → gemini default)
+            assert calls[1][0][1] == ("gemini-flash", [1])
+            # OpenRouter batch (user 2, "/" present → openrouter default)
+            assert calls[2][0][1] == ("vendor/gpt-4", [2])
 
 
 # ===========================================================================

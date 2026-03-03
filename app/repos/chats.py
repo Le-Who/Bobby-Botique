@@ -233,16 +233,30 @@ async def migrate_invalid_models(
     )
 
     migrated = 0
+    gemini_users = []
+    openrouter_users = []
     for chat in invalid_chats:
         user_id = chat["user_id"]
         old_model = chat["model"]
-        target = default_openrouter_model if "/" in old_model else default_gemini_model
+        if "/" in old_model:
+            openrouter_users.append(user_id)
+        else:
+            gemini_users.append(user_id)
+        logging.info("Migrating user %s from %s", user_id, old_model)
+
+    if gemini_users:
         await db_query(
-            "UPDATE chats SET model = $1 WHERE user_id = $2",
-            (target, user_id),
+            "UPDATE chats SET model = $1 WHERE user_id = ANY($2)",
+            (default_gemini_model, gemini_users),
         )
-        migrated += 1
-        logging.info("Migrated user %s from %s to %s", user_id, old_model, target)
+        migrated += len(gemini_users)
+
+    if openrouter_users:
+        await db_query(
+            "UPDATE chats SET model = $1 WHERE user_id = ANY($2)",
+            (default_openrouter_model, openrouter_users),
+        )
+        migrated += len(openrouter_users)
 
     if migrated:
         logging.warning("Migrated %d users to default models after config reload", migrated)

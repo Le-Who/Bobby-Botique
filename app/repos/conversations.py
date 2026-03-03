@@ -121,7 +121,9 @@ async def get_user_conversations(
         return []
 
 
-async def get_conversation_messages(conversation_id: int, user_id: int) -> list[dict[str, Any]] | None:
+async def get_conversation_messages(
+    conversation_id: int, user_id: int, *, conn=None
+) -> list[dict[str, Any]] | None:
     try:
         query = """
             SELECT cm.role, cm.content, cm.created_at
@@ -130,7 +132,7 @@ async def get_conversation_messages(conversation_id: int, user_id: int) -> list[
             WHERE c.id = $1 AND c.user_id = $2
             ORDER BY cm.created_at ASC
         """
-        result = await db_query(query, (conversation_id, user_id))
+        result = await db_query(query, (conversation_id, user_id), conn=conn)
 
         if not result:
             return None
@@ -169,7 +171,7 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                 conv_data[0]["role_id"],
                 conv_data[0]["summary"],
             )
-            messages = await get_conversation_messages(conversation_id, user_id)
+            messages = await get_conversation_messages(conversation_id, user_id, conn=conn)
             if messages is None:
                 return False
 
@@ -184,6 +186,7 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                 await db_execute_many(
                     "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
                     insert_data,
+                    conn=conn,
                 )
 
             await db_query(
