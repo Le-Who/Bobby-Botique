@@ -55,10 +55,10 @@ def client():
             importlib.reload(sys.modules["app.web"])
 
         with patch("app.web.settings", mock_settings):
-            from app.web import flask_app
+            from app.web import quart_app
 
-            flask_app.config["TESTING"] = True
-            yield flask_app.test_client()
+            quart_app.config["TESTING"] = True
+            yield quart_app.test_client()
 
 
 @pytest.mark.asyncio

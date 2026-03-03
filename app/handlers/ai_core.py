@@ -81,40 +81,6 @@ async def _resolve_ai_request(
     )
 
 
-async def _resolve_key_generic(
-    preferred_model: str,
-    get_key_func,
-    fallback_priority: list[str],
-    excluded_key_hashes: set = None,
-    invalidate_cache_func=None,
-    provider_name: str = "Unknown",
-):
-    return await _agent_use_case._resolve_key_generic(
-        preferred_model,
-        get_key_func,
-        fallback_priority,
-        excluded_key_hashes,
-        invalidate_cache_func,
-        provider_name,
-    )
-
-
-async def _resolve_gemini_request(
-    preferred_model: str, excluded_key_hashes: set = None
-):
-    return await _agent_use_case._resolve_gemini_request(
-        preferred_model, excluded_key_hashes
-    )
-
-
-async def _resolve_openrouter_request(
-    preferred_model: str, excluded_key_hashes: set = None
-):
-    return await _agent_use_case._resolve_openrouter_request(
-        preferred_model, excluded_key_hashes
-    )
-
-
 async def _get_ai_response(
     api_key: str,
     history: list,
@@ -132,26 +98,6 @@ async def _get_ai_response(
         user_id,
         chat_id,
         use_openrouter,
-    )
-
-
-async def _get_ai_response_with_key_rotation(
-    preferred_model: str,
-    history: list,
-    system_instruction: str = None,
-    user_id: int = None,
-    chat_id: int = None,
-    use_openrouter: bool = None,
-    max_key_retries: int = 3,
-):
-    return await _agent_use_case.get_ai_response_with_key_rotation(
-        preferred_model,
-        history,
-        system_instruction,
-        user_id,
-        chat_id,
-        use_openrouter,
-        max_key_retries,
     )
 
 

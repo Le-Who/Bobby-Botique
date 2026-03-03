@@ -26,12 +26,13 @@ async def test_execute_gemini_request_success():
         mock_client_instance = MockClient.return_value
         mock_response = MagicMock()
         mock_response.text = "Generated Text"
-        mock_token_count = MagicMock()
-        mock_token_count.total_tokens = 50
+        # Token count from usage_metadata (not separate count_tokens call)
+        mock_usage = MagicMock()
+        mock_usage.total_token_count = 50
+        mock_response.usage_metadata = mock_usage
 
         mock_aio_models = MagicMock()
         mock_aio_models.generate_content = AsyncMock(return_value=mock_response)
-        mock_aio_models.count_tokens = AsyncMock(return_value=mock_token_count)
         mock_client_instance.aio.models = mock_aio_models
 
         resp = await provider._execute_request(

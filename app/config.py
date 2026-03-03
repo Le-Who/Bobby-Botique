@@ -11,6 +11,18 @@ import pytz
 from pydantic import BaseModel, ValidationError
 
 
+# Single source of truth for default Gemini models.
+# Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
+DEFAULT_GEMINI_MODELS: list[str] = [
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-lite-latest",
+]
+DEFAULT_DAILY_LIMIT_PER_MODEL: int = 15
+
+
 def _load_int_env(env_var_name: str, required: bool = True):
     raw = os.getenv(env_var_name)
     if raw is None or raw == "":
@@ -65,14 +77,8 @@ def _load_daily_limits() -> dict[str, int]:
     """
     value = os.getenv("DAILY_LIMITS")
 
-    # Значения by default
-    default_limits = {
-        "gemini-3-flash-preview": 15,
-        "gemini-2.5-flash": 15,
-        "gemini-flash-latest": 15,
-        "gemini-2.5-flash-lite": 15,
-        "gemini-flash-lite-latest": 15,
-    }
+    # Reuse module-level constant for defaults
+    default_limits = {m: DEFAULT_DAILY_LIMIT_PER_MODEL for m in DEFAULT_GEMINI_MODELS}
 
     if not value:
         return default_limits
@@ -95,7 +101,10 @@ def _load_daily_limits() -> dict[str, int]:
             else:
                 raise ValueError("No valid limits found") from None
     except (ValueError, AttributeError, json.JSONDecodeError) as e:
-        logging.warning("Failed to parse DAILY_LIMITS from env: %s. Using defaults.", e)
+        logging.warning(
+            "Failed to parse DAILY_LIMITS from env (raw=%r): %s. Using defaults.",
+            value, e,
+        )
         return default_limits
 
 
@@ -109,7 +118,7 @@ def get_model_hash(model_name: str) -> str:
     Returns:
         str: 8-символьный хэш models
     """
-    return hashlib.md5(model_name.encode()).hexdigest()[:8]
+    return hashlib.sha256(model_name.encode()).hexdigest()[:8]
 
 
 # We use BaseModel, NOT BaseSettings. We are not auto-loading from the environment.
@@ -136,13 +145,7 @@ class Settings(BaseModel):
 
     # --- MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
-    AVAILABLE_MODELS: list[str] = [
-        "gemini-3-flash-preview",
-        "gemini-2.5-flash",
-        "gemini-flash-latest",
-        "gemini-2.5-flash-lite",
-        "gemini-flash-lite-latest",
-    ]
+    AVAILABLE_MODELS: list[str] = DEFAULT_GEMINI_MODELS.copy()
     DEFAULT_MODEL: str = "gemini-flash-latest"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
     RESEARCH_MODEL: str = "gemini-2.5-flash"
@@ -169,11 +172,7 @@ class Settings(BaseModel):
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     # DAILY_LIMITS загружается from env переменной DAILY_LIMITS to formatе JSON
     DAILY_LIMITS: dict[str, int] = {
-        "gemini-2.5-flash": 15,
-        "gemini-flash-latest": 15,
-        "gemini-2.5-flash-lite": 15,
-        "gemini-flash-lite-latest": 15,
-        "gemini-3-flash-preview": 15,
+        m: DEFAULT_DAILY_LIMIT_PER_MODEL for m in DEFAULT_GEMINI_MODELS
     }
     ALERT_COOLDOWN_SECONDS: int = 3600
     MAX_DOCUMENTS_PER_USER: int = 5
@@ -186,90 +185,8 @@ class Settings(BaseModel):
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     ]
 
-    # --- DEFAULT SYSTEM PROMPT ---
-    DEFAULT_SYSTEM_PROMPT: str = r"""# РОЛЬ И ЗАДАЧА
-Ты — полезный ИИ-ассистент for Telegram. Твоя задача — отвеchatь на вопросы user, используя правильное форматирование и предоставляя точную, полезную информацию.
-
-# КОНТЕКСТ
-Ты работаешь в Telegram-боте. Твои responseы должны быть отформатированы в **стандартном Markdown** (не MarkdownV2!).
-
-# ПОШАГОВЫЕ ИНСТРУКЦИИ
-1. **Проаналfromируй вопрос user**
-2. **Сформулируй четкий, структурированный response**
-3. **Примени стандартное Markdown форматирование**
-4. **Проверь корректность математических выражений**
-5. **Убедись, что НЕТ лишнего экранирования**
-
-# FEW-SHOT ПРИМЕРЫ
-## Пример 1: Технический вопрос
-**Вопрос:** "Что такое Python?"
-**Правильный response:**
-**Python** — это высокоуровневый язык программирования.
-
-_Основные особенности:_
-- Простой синтаксис
-- Большая библиотека
-
-[Подробнее](https://python.org)
-
-## Пример 2: Математический вопрос
-**Вопрос:** "Как решить x² + 2x + 1 = 0?"
-**Правильный response:**
-Решение уравнения `x² + 2x + 1 = 0`:
-1. Дискриминант: `D = 0`
-2. Корень: `x = -1`
-
-# ПРАВИЛА ФОРМАТИРОВАНИЯ
-## ✅ РАЗРЕШЕНО (Стандартный Markdown)
-- `**жирный text**` or `__жирный text__`
-- `*курсив*` or `_курсив_`
-- `` `код` `` for технических терминов
-- `[text ссылки](URL)` for ссылок
-- `- ` for списков
-- `> ` for цитат
-
-## ❌ ЗАПРЕЩЕНО
-- **MarkdownV2 экранирование**: НЕ пиши `\.`, `\-`, `\!`, `\(`, `\)`. Пиши просто `.`, `-`, `!`, `(`, `)`.
-- **HTML теги**: НЕ используй `<b>`, `<i>`, `<br>`.
-- **LaTeX**: НЕ используй `$...$`.
-
-# ФОРМАТИРОВАНИЕ МАТЕМАТИКИ
-Пиши формулы как обычный text or код:
-- `2 * 2 = 4`
-- `x^2`
-- `sqrt(4) = 2`
-
-# СТИЛЬ ОБЩЕНИЯ
-- Будь полезным и точным
-- Структурируй информацию логично
-- Используй onмеры
-- Будь дружелюбным
-
-# ФИНАЛЬНАЯ ПРОВЕРКА
-Перед отправкой убедись, что:
-- [ ] Использован стандартный Markdown
-- [ ] НЕТ экранирования спецсимволов обратным слешем
-- [ ] Нет HTML тегов
-- [ ] Ответ полезен и структурирован"""
-
-    # COMPACT_SYSTEM_PROMPT (оптимfromированная версия) ---
-    # Компактная версия базового промпта for экономии tokenов
-    # Используется on наличии roles or for простых requestов
-    COMPACT_SYSTEM_PROMPT: str = r"""# РОЛЬ
-ИИ-ассистент for Telegram. Отвечай точно, используя **Standard Markdown**.
-
-# ФОРМАТИРОВАНИЕ
-✅ `**жирный**`, `_курсив_`, `` `код` ``, `[ссылка](URL)`, `- списки`
-❌ HTML теги, MarkdownV2 (`\.`, `\-`), LaTeX
-
-# МАТЕМАТИКА
-Обычный text: `2 * 3 = 6`, `x^2`, `sqrt(2)`
-
-# ЭКРАНИРОВАНИЕ
-⛔️ **НЕ ЭКРАНИРУЙ** знаки препинания! Пиши `.` `!` `(` `)` как есть.
-
-# СТИЛЬ
-Полезный, структурированный, дружелюбный."""
+    # System prompts are managed by app.prompts.compose_system_instruction()
+    # and app.prompt_registry — not duplicated here.
 
 
 def load_settings() -> Settings:
@@ -279,13 +196,7 @@ def load_settings() -> Settings:
     """
     try:
         # Значения by default for моделей
-        default_gemini_models = [
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-flash-latest",
-            "gemini-flash-lite-latest",
-            "gemini-3-flash-preview",
-        ]
+        default_gemini_models = DEFAULT_GEMINI_MODELS.copy()
         default_openrouter_models = []
 
         # Manually load all values from the environment.

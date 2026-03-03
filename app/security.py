@@ -575,6 +575,52 @@ class RateLimiter:
                 logging.info("Rate limit reset for user %s", user_id)
 
 
+class SyncRateLimiter:
+    """Synchronous sliding-window rate limiter keyed by arbitrary string (IP, token, etc.).
+
+    Mirrors the algorithm of the async ``RateLimiter`` above but uses a
+    ``threading.Lock`` so it can be called from non-async Quart helpers.
+    """
+
+    def __init__(
+        self, max_requests: int = 5, window_seconds: int = 300, cleanup_every: int = 50
+    ):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self._requests: dict[str, list[float]] = defaultdict(list)
+        self._cleanup_every = cleanup_every
+        self._call_count = 0
+
+    # ------------------------------------------------------------------
+
+    def check(self, key: str) -> bool:
+        """Return *True* if the request is allowed, *False* if rate-limited.
+
+        Does **not** record the attempt — call :meth:`record` separately so
+        that successful vs. failed events can be tracked independently.
+        """
+        now = time.time()
+        cutoff = now - self.window_seconds
+        self._requests[key] = [t for t in self._requests[key] if t > cutoff]
+        self._maybe_cleanup(cutoff)
+        return len(self._requests[key]) < self.max_requests
+
+    def record(self, key: str) -> None:
+        """Record one event against *key*."""
+        self._requests[key].append(time.time())
+
+    # ------------------------------------------------------------------
+
+    def _maybe_cleanup(self, cutoff: float) -> None:
+        self._call_count += 1
+        if self._call_count < self._cleanup_every:
+            return
+        self._call_count = 0
+        stale = [k for k, v in self._requests.items() if not v or v[-1] <= cutoff]
+        for k in stale:
+            del self._requests[k]
+
+
 # Global rate limiter instance
 # Settings: 30 requests per minute by default
 rate_limiter = RateLimiter(max_requests=30, window_seconds=60)

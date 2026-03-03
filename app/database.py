@@ -48,9 +48,16 @@ class DatabaseManager:
             cls._instance._monitor_task = None
         return cls._instance
 
+    def _is_pool_closed(self) -> bool:
+        """Check if the connection pool is closed, wrapping asyncpg internals."""
+        try:
+            return self.pool._closed
+        except AttributeError:
+            return True
+
     @property
     def is_connected(self):
-        return bool(self.pool and not self.pool._closed)
+        return bool(self.pool and not self._is_pool_closed())
 
     async def create_pool(self):
         """Создает пул соединений с базой данных"""
@@ -131,7 +138,7 @@ class DatabaseManager:
     async def monitor_connection_pool(self):
         while True:
             try:
-                if not self.pool or self.pool._closed:
+                if not self.pool or self._is_pool_closed():
                     logging.info("Pool is closed or invalid, stopping monitoring")
                     break
 
@@ -188,12 +195,12 @@ class DatabaseManager:
         last_exception = None
         for attempt in range(retries + 1):
             try:
-                if not self.pool or self.pool._closed:
+                if not self.pool or self._is_pool_closed():
                     logging.warning(
                         "Database pool not initialized or closed – attempting reconnect..."
                     )
                     await self.reconnect()
-                    if not self.pool or self.pool._closed:
+                    if not self.pool or self._is_pool_closed():
                         raise Exception("Database pool is closed")
 
                 async with self.pool.acquire() as connection:
@@ -295,7 +302,7 @@ async def db_execute_many(
 async def check_database_health():
     if not db_manager.pool:
         return False
-    if db_manager.pool._closed:
+    if db_manager._is_pool_closed():
         return False
     try:
         async with db_manager.pool.acquire() as conn:

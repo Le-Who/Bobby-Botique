@@ -105,7 +105,7 @@ The bot implements a sophisticated "Smart Router" for AI requests:
   - **Two-tier key selection**: SQL prioritizes active keys first, then probes cooldown-expired keys for recovery.
   - **Error-aware suspension**: `API_KEY_INVALID` → 24h, `quota` → midnight PT, `rate_limit` → 60s, transient errors → no suspension. Exponential backoff on repeated failures (capped at 7 days).
   - **Multimodal auto-detection**: Detects PIL Image / bytes in history and forces Gemini automatically.
-  - **Per-user rate limiting**: Consolidated `RateLimiter` with periodic cleanup, stats, and admin reset.
+  - **Per-user rate limiting**: Consolidated `RateLimiter` (async) + `SyncRateLimiter` (sync, login) with periodic cleanup, stats, and admin reset.
   - **`DailyKeyManager`**: Generic key rotation engine shared by Gemini and OpenRouter, parameterized by table names.
   - **OpenRouter exclusion fix** (v2.7.1): `get_available_openrouter_key()` now properly forwards `excluded_hashes` to the two-tier SQL query, ensuring failed keys are rotated out.
 - **Key Rotation System**:
@@ -159,7 +159,7 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 ### Security Hardening (v2.6.5+)
 
 - **Nonce-based CSP**: Per-request `secrets.token_urlsafe(16)` nonce replaces `'unsafe-inline'` in `script-src` and `style-src` directives.
-- **Brute-force protection**: IP-based login rate limiter on `/login` (5 attempts per 5 min → 429), with periodic eviction of stale IPs.
+- **Brute-force protection**: `SyncRateLimiter` on `/login` (5 attempts per 5 min → 429), with periodic eviction of stale IPs.
 - **`DecryptionError` handling**: API key decryption failures produce user-friendly messages instead of raw Python tracebacks.
 - **Error response sanitization**: API endpoints return generic `"internal_error"` instead of exception class names.
 - **SQL injection prevention**: Regex validation for dynamic table names in `DailyKeyManager`.
@@ -306,7 +306,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (552 tests, 1 skipped)
+### Suite Structure (572 tests, 1 skipped)
 
 | Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                      |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |

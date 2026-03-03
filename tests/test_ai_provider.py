@@ -162,8 +162,10 @@ class TestProviders:
 
         mock_response = MagicMock()
         mock_response.text = "Hello!"
-        mock_token = MagicMock()
-        mock_token.total_tokens = 15
+        # New: token count comes from usage_metadata on the response
+        mock_usage = MagicMock()
+        mock_usage.total_token_count = 15
+        mock_response.usage_metadata = mock_usage
 
         with (
             patch("app.ai_provider.genai.Client") as MockClient,
@@ -174,7 +176,6 @@ class TestProviders:
             mock_settings.SAFETY_SETTINGS = []
             mock_aio = MagicMock()
             mock_aio.generate_content = AsyncMock(return_value=mock_response)
-            mock_aio.count_tokens = AsyncMock(return_value=mock_token)
             MockClient.return_value.aio.models = mock_aio
 
             response = await wrapper._execute_request(
@@ -208,9 +209,6 @@ class TestProviders:
             mock_settings.SAFETY_SETTINGS = []
             mock_aio = MagicMock()
             mock_aio.generate_content = AsyncMock(return_value=mock_response)
-            mock_token = MagicMock()
-            mock_token.total_tokens = 0
-            mock_aio.count_tokens = AsyncMock(return_value=mock_token)
             MockClient.return_value.aio.models = mock_aio
 
             response = await wrapper._execute_request(

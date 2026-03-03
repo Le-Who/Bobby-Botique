@@ -19,7 +19,6 @@ import logging
 import os
 import secrets
 import time
-from collections import defaultdict
 from functools import wraps
 
 from quart import (
@@ -43,7 +42,7 @@ from app.repos.metrics_repo import (
 )
 
 # --- QUART APP SETUP ---
-flask_app = Quart(__name__)  # kept as `flask_app` for backward compat with bot.py
+quart_app = Quart(__name__)  # kept as `quart_app` for backward compat with bot.py
 
 
 # Derive a secret key for sessions from ADMIN_SECRET
@@ -53,25 +52,25 @@ def _get_admin_secret():
 
 
 # Placeholder — overridden at server startup via @before_serving
-flask_app.secret_key = os.urandom(32)  # Secure fallback — overridden at startup
+quart_app.secret_key = os.urandom(32)  # Secure fallback — overridden at startup
 
 
-@flask_app.before_serving
+@quart_app.before_serving
 async def _init_secret_key():
     """Compute session secret_key at startup when ADMIN_SECRET is definitely available."""
     admin_secret = _get_admin_secret() or ""
-    flask_app.secret_key = hashlib.sha256(
+    quart_app.secret_key = hashlib.sha256(
         f"gemaibotv2-session-{admin_secret}".encode()
     ).hexdigest()
     if not admin_secret:
         logging.warning("ADMIN_SECRET is empty — session secret_key is weak")
 
 # Session configuration
-flask_app.config["SESSION_COOKIE_NAME"] = "gembot_session"
-flask_app.config["SESSION_COOKIE_HTTPONLY"] = True
-flask_app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-flask_app.config["SESSION_COOKIE_SECURE"] = bool(os.environ.get("DATABASE_URL"))  # True in production
-flask_app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=7)
+quart_app.config["SESSION_COOKIE_NAME"] = "gembot_session"
+quart_app.config["SESSION_COOKIE_HTTPONLY"] = True
+quart_app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+quart_app.config["SESSION_COOKIE_SECURE"] = bool(os.environ.get("DATABASE_URL"))  # True in production
+quart_app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=7)
 
 
 # =============================================================================
@@ -79,13 +78,13 @@ flask_app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(days=7)
 # =============================================================================
 
 
-@flask_app.before_request
+@quart_app.before_request
 async def generate_csp_nonce():
     """Generate a per-request CSP nonce for inline scripts/styles."""
     g.csp_nonce = secrets.token_urlsafe(16)
 
 
-@flask_app.after_request
+@quart_app.after_request
 async def add_security_headers(response):
     """Add security headers to all responses."""
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -143,38 +142,13 @@ def require_auth(f):
     return decorated_function
 
 
-# Simple IP-based login rate limiter (brute-force protection)
-_login_attempts: dict[str, list] = defaultdict(list)
-_LOGIN_MAX_ATTEMPTS = 5
-_LOGIN_WINDOW_SECONDS = 300  # 5 minutes
-_login_cleanup_counter = 0
+# Brute-force login protection using shared SyncRateLimiter
+from app.security import SyncRateLimiter  # noqa: E402
+
+_login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
 
 
-def _check_login_rate_limit(ip: str) -> bool:
-    """Returns True if allowed, False if rate limited."""
-    global _login_cleanup_counter
-    now = time.time()
-    cutoff = now - _LOGIN_WINDOW_SECONDS
-    _login_attempts[ip] = [t for t in _login_attempts[ip] if t > cutoff]
-
-    # Periodic cleanup: evict stale IPs every 50 checks
-    _login_cleanup_counter += 1
-    if _login_cleanup_counter >= 50:
-        _login_cleanup_counter = 0
-        stale = [k for k, v in _login_attempts.items() if not v or v[-1] <= cutoff]
-        for k in stale:
-            del _login_attempts[k]
-
-    if len(_login_attempts[ip]) >= _LOGIN_MAX_ATTEMPTS:
-        return False
-    return True
-
-
-def _record_login_attempt(ip: str) -> None:
-    _login_attempts[ip].append(time.time())
-
-
-@flask_app.route("/login", methods=["GET", "POST"])
+@quart_app.route("/login", methods=["GET", "POST"])
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
@@ -182,7 +156,7 @@ async def login_page():
 
     if request.method == "POST":
         # Check brute-force rate limit
-        if not _check_login_rate_limit(client_ip):
+        if not _login_limiter.check(client_ip):
             logging.warning("Login rate limit exceeded for IP %s", client_ip)
             error = "Слишком много попыток входа. Повторите через 5 минут."
             csrf_token = secrets.token_hex(32)
@@ -206,7 +180,7 @@ async def login_page():
             session.permanent = True
             return redirect(url_for("dashboard"))
         else:
-            _record_login_attempt(client_ip)
+            _login_limiter.record(client_ip)
             error = "Invalid password."
 
     # Generate fresh CSRF token for the form
@@ -216,7 +190,7 @@ async def login_page():
     return await render_template("login.html", error=error, csrf_token=csrf_token)
 
 
-@flask_app.route("/logout")
+@quart_app.route("/logout")
 async def logout():
     """Clear session and redirect to login."""
     session.clear()
@@ -228,7 +202,7 @@ async def logout():
 # =============================================================================
 
 
-@flask_app.route("/")
+@quart_app.route("/")
 @require_auth
 async def dashboard():
     """Main Dashboard — serves the HTML shell. Data loaded via JS fetch."""
@@ -244,7 +218,7 @@ async def dashboard():
 # =============================================================================
 
 
-@flask_app.route("/health")
+@quart_app.route("/health")
 async def health_check_endpoint():
     """Health check endpoint for Northflank monitoring."""
     try:
@@ -281,7 +255,7 @@ async def health_check_endpoint():
         return jsonify({"status": "unhealthy", "error": "internal_error"}), 500
 
 
-@flask_app.route("/metrics")
+@quart_app.route("/metrics")
 async def prometheus_metrics():
     """Prometheus text exposition endpoint (unauthenticated for scraping)."""
     try:
@@ -299,7 +273,7 @@ async def prometheus_metrics():
 # =============================================================================
 
 
-@flask_app.route("/api/overview")
+@quart_app.route("/api/overview")
 @require_auth
 async def api_overview():
     """High-level system overview: system health, bot uptime, key counts."""
@@ -370,7 +344,7 @@ async def api_overview():
     )
 
 
-@flask_app.route("/api/keys")
+@quart_app.route("/api/keys")
 @require_auth
 async def api_keys():
     """API key usage statistics for all models."""
@@ -419,7 +393,7 @@ async def api_keys():
         return jsonify({"error": "internal_error"}), 500
 
 
-@flask_app.route("/api/errors")
+@quart_app.route("/api/errors")
 @require_auth
 async def api_errors():
     """Recent errors from metrics collector."""
@@ -442,7 +416,7 @@ async def api_errors():
         return jsonify({"error": "internal_error"}), 500
 
 
-@flask_app.route("/api/cache")
+@quart_app.route("/api/cache")
 @require_auth
 async def api_cache():
     """Cache performance statistics."""
@@ -463,7 +437,7 @@ async def api_cache():
         return jsonify({"error": "internal_error"}), 500
 
 
-@flask_app.route("/api/queue")
+@quart_app.route("/api/queue")
 @require_auth
 async def api_queue():
     """Task queue statistics."""
@@ -482,7 +456,7 @@ async def api_queue():
         return jsonify({"error": "internal_error"}), 500
 
 
-@flask_app.route("/api/database")
+@quart_app.route("/api/database")
 @require_auth
 async def api_database():
     """Database connection pool and health stats."""
@@ -499,7 +473,7 @@ async def api_database():
         return jsonify({"error": "internal_error"}), 500
 
 
-@flask_app.route("/api/circuit-breakers")
+@quart_app.route("/api/circuit-breakers")
 @require_auth
 async def api_circuit_breakers():
     """Circuit breaker states."""
@@ -521,7 +495,7 @@ async def api_circuit_breakers():
         return jsonify({"error": "internal_error"}), 500
 
 
-@flask_app.route("/api/memory")
+@quart_app.route("/api/memory")
 @require_auth
 async def api_memory():
     """Memory manager statistics."""

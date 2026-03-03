@@ -49,7 +49,7 @@ from app.queue import start_task_queue, stop_task_queue
 from app.utils.logging_config import setup_detailed_logging
 
 # Import extracted modules
-from app.web import flask_app
+from app.web import quart_app
 
 # Global shutdown event
 shutdown_event = asyncio.Event()
@@ -216,7 +216,7 @@ async def run_bot_with_retry():
             full_url = f"{webhook_url.rstrip('/')}{webhook_path}"
 
             # Register webhook route on Quart app
-            @flask_app.route(webhook_path, methods=["POST"])
+            @quart_app.route(webhook_path, methods=["POST"])
             async def webhook_handler():
                 from quart import request as quart_request
                 json_data = await quart_request.get_json()
@@ -314,7 +314,7 @@ async def run_bot_and_server():
 
     server_task = None
     if settings.ENABLE_WEB_SERVER:
-        server_task = asyncio.create_task(serve(flask_app, hypercorn_config))
+        server_task = asyncio.create_task(serve(quart_app, hypercorn_config))
         logging.info(f"Web server started on port {settings.PORT}")
     else:
         logging.info("Web server is DISABLED by configuration")

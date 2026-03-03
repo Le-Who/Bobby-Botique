@@ -25,9 +25,11 @@ from PIL import Image
 
 from app.config import settings
 from app.errors import (
+    ErrorCode,
     classify_key_error,
     is_error_message,
     is_key_related_error,
+    tag_error,
     user_friendly_error,
 )
 from app.metrics import metrics_collector
@@ -209,6 +211,7 @@ class BaseAIProvider(ABC):
         user_id: int | None,
         chat_id: int | None,
         timeout: float,
+        thinking_level: str | None = None,
     ) -> AIResponse:
         """
         Execute the actual API request. Must be implemented by subclasses.
@@ -244,6 +247,8 @@ class GeminiProvider(BaseAIProvider):
     """Google Gemini AI provider — self-contained execution logic."""
 
     provider_name = "gemini"
+    _client: Any = None  # Lazily-cached genai.Client
+    _client_api_key: str | None = None  # Track which key the cached client uses
 
     async def _execute_request(
         self,
@@ -287,14 +292,16 @@ class GeminiProvider(BaseAIProvider):
                 chat_id=chat_id,
             )
 
-            # Build client with SDK-level HTTP timeout
+            # Reuse client across requests (connection pooling, TLS caching).
+            # Rebuild only when api_key changes or on first call.
             request_id = get_request_id()
-            client_kwargs = {"api_key": self.api_key}
-            http_opts = {"timeout": 90_000}  # 90s SDK deadline
-            if request_id:
-                http_opts["headers"] = {"X-Request-ID": request_id}
-            client_kwargs["http_options"] = types.HttpOptions(**http_opts)
-            client = genai.Client(**client_kwargs)
+            if self._client is None or self._client_api_key != self.api_key:
+                client_kwargs = {"api_key": self.api_key}
+                http_opts = {"timeout": 90_000}  # 90s SDK deadline
+                client_kwargs["http_options"] = types.HttpOptions(**http_opts)
+                self._client = genai.Client(**client_kwargs)
+                self._client_api_key = self.api_key
+            client = self._client
 
             # Convert history → types.Content
             contents = await self._build_contents(history)
@@ -325,17 +332,17 @@ class GeminiProvider(BaseAIProvider):
                 timeout=100.0,
             )
 
-            # Token counting
+            # Extract token count from response metadata (free, no extra API call).
+            # Falls back to 0 if usage_metadata is unavailable.
             try:
-                token_resp = await asyncio.wait_for(
-                    client.aio.models.count_tokens(
-                        model=model_name, contents=contents
-                    ),
-                    timeout=10.0,
+                usage = getattr(response, "usage_metadata", None)
+                token_count = (
+                    getattr(usage, "total_token_count", 0)
+                    or getattr(usage, "candidates_token_count", 0)
+                    or 0
                 )
-                token_count = token_resp.total_tokens
-            except (APIError, httpx.HTTPError) as e:
-                logging.warning("Failed to count tokens: %s, using 0", e)
+            except Exception as e:
+                logging.debug("Token count from usage_metadata failed: %s", e)
                 token_count = 0
 
             # Validate response
@@ -374,7 +381,7 @@ class GeminiProvider(BaseAIProvider):
             await metrics_collector.record_error("gemini_timeout", msg)
             self._log_failure(start_time, model_name, msg, user_id, chat_id)
             return AIResponse(
-                text="⏰ Превышено время ожидания ответа от API. Попробуйте позже.",
+                text=tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API. Попробуйте позже."),
                 token_count=0, success=False, error_message=msg,
                 provider=self.provider_name, model=model_name,
             )
@@ -386,22 +393,22 @@ class GeminiProvider(BaseAIProvider):
 
             if "quota" in err_lower:
                 await metrics_collector.record_error("gemini_quota", str(e))
-                text = "🚫 Достигнут лимит запросов к API (Quota Exceeded)."
+                text = tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API (Quota Exceeded).")
             elif "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower:
                 await metrics_collector.record_error("gemini_overloaded", str(e))
                 raise  # Trigger retry in BaseAIProvider
             elif "api key" in err_lower or "api_key_invalid" in err_lower:
                 await metrics_collector.record_error("gemini_invalid_key", str(e))
-                text = "🔑 Неверный API ключ."
+                text = tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
             elif "invalid" in err_lower or "malformed" in err_lower:
                 await metrics_collector.record_error("gemini_invalid_request", str(e))
-                text = "❌ Некорректный запрос к API. Проверьте параметры."
+                text = tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос к API. Проверьте параметры.")
             elif "rate limit" in err_lower:
                 await metrics_collector.record_error("gemini_rate_limit", str(e))
-                text = "⏱️ Превышен лимит запросов в секунду. Подождите немного."
+                text = tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов в секунду. Подождите немного.")
             else:
                 await metrics_collector.record_error("gemini_api_call", str(e))
-                text = f"Произошла ошибка вызова API: {e}"
+                text = tag_error(ErrorCode.GENERIC, f"Произошла ошибка вызова API: {e}")
 
             return AIResponse(
                 text=text, token_count=0, success=False,
@@ -413,7 +420,7 @@ class GeminiProvider(BaseAIProvider):
             logging.error("Gemini HTTP error: %s", e, exc_info=True)
             await metrics_collector.record_error("gemini_http", str(e))
             return AIResponse(
-                text=f"Произошла непредвиденная ошибка HTTP: {e}",
+                text=tag_error(ErrorCode.NETWORK, f"Произошла непредвиденная ошибка HTTP: {e}"),
                 token_count=0, success=False, error_message=str(e),
                 provider=self.provider_name, model=model_name,
             )
@@ -584,6 +591,7 @@ class OpenRouterProvider(BaseAIProvider):
         user_id: int | None,
         chat_id: int | None,
         timeout: float,
+        thinking_level: str | None = None,
     ) -> AIResponse:
         start_time = None
 
@@ -607,7 +615,7 @@ class OpenRouterProvider(BaseAIProvider):
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/your-repo",
+                "HTTP-Referer": "https://t.me/gemaibotv2",
                 "X-Title": "GeminiBot v2",
             }
             request_id = get_request_id()
@@ -633,7 +641,7 @@ class OpenRouterProvider(BaseAIProvider):
                 await metrics_collector.record_error("openrouter_timeout", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
-                    text="⏰ Превышено время ожидания ответа от API. Попробуйте позже.",
+                    text=tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API. Попробуйте позже."),
                     token_count=0, success=False, error_message=msg,
                     provider=self.provider_name, model=model_name,
                 )
@@ -643,7 +651,7 @@ class OpenRouterProvider(BaseAIProvider):
                 await metrics_collector.record_error("openrouter_api", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
-                    text=f"❌ Ошибка API: {msg}", token_count=0, success=False,
+                    text=tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {msg}"), token_count=0, success=False,
                     error_message=msg, provider=self.provider_name, model=model_name,
                 )
 
@@ -654,7 +662,7 @@ class OpenRouterProvider(BaseAIProvider):
                 await metrics_collector.record_error("openrouter_invalid_response", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
-                    text="❌ API вернул некорректный ответ. Попробуйте еще раз.",
+                    text=tag_error(ErrorCode.INVALID_RESPONSE, "❌ API вернул некорректный ответ. Попробуйте еще раз."),
                     token_count=0, success=False, error_message=msg,
                     provider=self.provider_name, model=model_name,
                 )
@@ -666,7 +674,7 @@ class OpenRouterProvider(BaseAIProvider):
                 await metrics_collector.record_error("openrouter_empty_response", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
-                    text="❌ API вернул пустой ответ. Попробуйте еще раз.",
+                    text=tag_error(ErrorCode.EMPTY_RESPONSE, "❌ API вернул пустой ответ. Попробуйте еще раз."),
                     token_count=0, success=False, error_message=msg,
                     provider=self.provider_name, model=model_name,
                 )
@@ -692,7 +700,7 @@ class OpenRouterProvider(BaseAIProvider):
             await metrics_collector.record_error("openrouter_api", str(e))
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
             return AIResponse(
-                text=f"❌ Произошла непредвиденная ошибка API: {e}",
+                text=tag_error(ErrorCode.GENERIC, f"❌ Произошла непредвиденная ошибка API: {e}"),
                 token_count=0, success=False, error_message=str(e),
                 provider=self.provider_name, model=model_name,
             )
@@ -864,21 +872,21 @@ class ProviderRouter:
                     )
                     provider_name = "OpenRouter" if is_or else "Gemini"
                     return (
-                        f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже.",
+                        tag_error(ErrorCode.KEYS_EXHAUSTED, f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже."),
                         None,
                     )
                 if resolution == "no_keys":
                     return (
-                        "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.",
+                        tag_error(ErrorCode.NO_KEYS, "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки."),
                         None,
                     )
                 if resolution == "decryption_failed":
                     return (
-                        "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
+                        tag_error(ErrorCode.DECRYPTION_FAILED, "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET)."),
                         None,
                     )
                 return (
-                    "🚫 Не удалось получить доступный ключ API. Попробуйте позже.",
+                    tag_error(ErrorCode.KEYS_EXHAUSTED, "🚫 Не удалось получить доступный ключ API. Попробуйте позже."),
                     None,
                 )
 

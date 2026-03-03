@@ -5,6 +5,44 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.1] – 2026-03-03 – Code Quality Audit: Error Codes, Cleanup & Hardening
+
+### 🏗️ Structured Error Codes (MED-03)
+
+- **`ErrorCode` enum** (16 codes) + `_ERROR_PROPERTIES` registry in `errors.py` — each code maps to `(retryable, key_related, penalty_category)`.
+- **`tag_error()` / `extract_error_code()`** helpers — zero-width-space prefix for O(1) classification.
+- 15+ error strings tagged across `ai_provider.py` (GeminiProvider, OpenRouterProvider, ProviderRouter).
+- 4 classifiers (`is_error_message`, `is_retryable_error`, `is_key_related_error`, `classify_key_error`) refactored: code-based fast path + text-parsing fallback for backward compatibility.
+
+### 🧹 Architecture Cleanup
+
+- **HIGH-05**: Removed 4 unused forwarders from `ai_core.py` — 3 accessed private methods of `AgentRequestUseCase` (`_resolve_key_generic`, `_resolve_gemini_request`, `_resolve_openrouter_request`) + 1 superseded (`_get_ai_response_with_key_rotation`). File: 187 → 131 lines.
+- **HIGH-03**: Removed ~82 lines of dead `DEFAULT_SYSTEM_PROMPT` / `COMPACT_SYSTEM_PROMPT` from `config.py`. Actual sole source: `prompts.py` + `prompt_registry.py`.
+- **MED-08**: Added `__init__.py` to `app/handlers/` and `app/utils/` for explicit package namespaces.
+
+### 🔒 Security & Reliability
+
+- **SEC-02**: `get_model_hash()` now uses SHA-256 instead of MD5 (drop-in replacement, ephemeral UI hashes only).
+- **MED-04**: Wrapped all 7 `pool._closed` accesses with `_is_pool_closed()` helper in `database.py` / `metrics_repo.py`, decoupling from asyncpg internals.
+- **MED-01**: Extracted `SyncRateLimiter` class in `security.py` — reused by `web.py` login protection, replacing 30-line ad-hoc implementation.
+
+### Files Changed
+
+| File                        | Change                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------- |
+| `app/errors.py`             | `ErrorCode` enum, `_ERROR_PROPERTIES`, `tag_error`, `extract_error_code`, `strip_error_tag` |
+| `app/ai_provider.py`        | 15+ error strings tagged with `ErrorCode`                                                   |
+| `app/handlers/ai_core.py`   | Removed 4 unused forwarders (187→131 lines)                                                 |
+| `app/config.py`             | Removed dead prompts (82 lines), MD5→SHA256                                                 |
+| `app/database.py`           | `_is_pool_closed()` helper, replaced 6 `pool._closed`                                       |
+| `app/repos/metrics_repo.py` | `pool._closed` → `_is_pool_closed()`                                                        |
+| `app/security.py`           | [NEW] `SyncRateLimiter` class                                                               |
+| `app/web.py`                | Replaced ad-hoc rate limiter with `SyncRateLimiter`                                         |
+| `app/handlers/__init__.py`  | [NEW] Empty init                                                                            |
+| `app/utils/__init__.py`     | [NEW] Empty init                                                                            |
+
+### 🧪 Tests (572 passed, 1 skipped)
+
 ## [2.8.0] – 2026-03-03 – Production Audit: Phases 1–4
 
 ### ✨ Phase 1: Foundation & CI

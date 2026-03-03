@@ -13,6 +13,7 @@ This module provides:
 import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from enum import StrEnum
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -272,19 +273,112 @@ def convert_to_typed_exception(
 
 
 # =============================================================================
-# USER-FRIENDLY ERROR MESSAGES (единая точка кастомизации)
+# ERROR CODES — structured classification (replaces emoji-based text parsing)
 # =============================================================================
-GENERIC_ERROR = "❌ Произошла ошибка. Попробуйте ещё раз."
-OVERLOADED_ERROR = "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд."
-QUOTA_ERROR = "🚫 Достигнут лимит запросов к API."
-PROCESSING_ERROR = "❌ Ошибка обработки запроса."
-DOCUMENT_ERROR = "❌ Ошибка обработки содержимого документа."
-TIMEOUT_ERROR = "⏰ Превышено время ожидания. Попробуйте ещё раз."
-NETWORK_ERROR_MSG = "🌐 Ошибка сети. Проверьте подключение."
+
+
+class ErrorCode(StrEnum):
+    """Structured error codes for deterministic classification.
+
+    Each code maps to fixed properties (retryable, key-related, penalty category)
+    via _ERROR_PROPERTIES, eliminating fragile emoji/text pattern matching.
+    """
+    # Transient / retryable
+    TIMEOUT = "TIMEOUT"
+    OVERLOADED = "OVERLOADED"        # 503, server busy
+    NETWORK = "NETWORK"              # connection errors
+    RATE_LIMIT = "RATE_LIMIT"        # per-second/minute throttle
+
+    # Key-related
+    QUOTA_EXCEEDED = "QUOTA_EXCEEDED"  # daily quota exhausted
+    INVALID_KEY = "INVALID_KEY"        # API key rejected
+    KEYS_EXHAUSTED = "KEYS_EXHAUSTED"  # all keys tried, none worked
+    DECRYPTION_FAILED = "DECRYPTION_FAILED"  # ADMIN_SECRET mismatch
+    NO_KEYS = "NO_KEYS"                # provider not configured
+
+    # Non-retryable
+    INVALID_REQUEST = "INVALID_REQUEST"  # malformed input
+    INVALID_RESPONSE = "INVALID_RESPONSE"  # API returned garbage
+    EMPTY_RESPONSE = "EMPTY_RESPONSE"  # API returned nothing
+    PROCESSING = "PROCESSING"          # general processing failure
+    DOCUMENT = "DOCUMENT"              # document parsing failure
+    GENERIC = "GENERIC"                # catch-all
+    USER_RATE_LIMIT = "USER_RATE_LIMIT"  # per-user throttle (not key-related)
+
+
+# Properties: (retryable, key_related, penalty_category)
+_ERROR_PROPERTIES: dict[ErrorCode, tuple[bool, bool, str]] = {
+    ErrorCode.TIMEOUT:            (True,  False, "transient"),
+    ErrorCode.OVERLOADED:         (True,  False, "transient"),
+    ErrorCode.NETWORK:            (True,  False, "transient"),
+    ErrorCode.RATE_LIMIT:         (True,  True,  "rate_limit"),
+    ErrorCode.QUOTA_EXCEEDED:     (False, True,  "quota"),
+    ErrorCode.INVALID_KEY:        (False, True,  "permanent"),
+    ErrorCode.KEYS_EXHAUSTED:     (False, True,  "quota"),
+    ErrorCode.DECRYPTION_FAILED:  (False, False, "permanent"),
+    ErrorCode.NO_KEYS:            (False, False, "permanent"),
+    ErrorCode.INVALID_REQUEST:    (False, False, "transient"),
+    ErrorCode.INVALID_RESPONSE:   (False, False, "transient"),
+    ErrorCode.EMPTY_RESPONSE:     (False, False, "transient"),
+    ErrorCode.PROCESSING:         (False, False, "transient"),
+    ErrorCode.DOCUMENT:           (False, False, "transient"),
+    ErrorCode.GENERIC:            (False, False, "transient"),
+    ErrorCode.USER_RATE_LIMIT:    (False, False, "transient"),
+}
+
+# Invisible tag prefix: Zero-Width Space + code in brackets.
+# Invisible to users in Telegram but extractable by code.
+_TAG_PREFIX = "\u200b["  # ​[
+_TAG_SUFFIX = "]"
+
+
+def tag_error(code: ErrorCode, message: str) -> str:
+    """Tag a user-facing error message with a machine-readable error code.
+
+    The code is embedded as an invisible prefix (zero-width space + brackets)
+    so it doesn't affect display in Telegram but enables O(1) classification.
+    """
+    return f"{_TAG_PREFIX}{code.value}{_TAG_SUFFIX}{message}"
+
+
+def extract_error_code(text: str) -> ErrorCode | None:
+    """Extract the ErrorCode from a tagged error message, or None if untagged."""
+    if not text or not text.startswith(_TAG_PREFIX):
+        return None
+    end = text.find(_TAG_SUFFIX, len(_TAG_PREFIX))
+    if end == -1:
+        return None
+    code_str = text[len(_TAG_PREFIX):end]
+    try:
+        return ErrorCode(code_str)
+    except ValueError:
+        return None
+
+
+def strip_error_tag(text: str) -> str:
+    """Remove the invisible error code tag, returning clean user-facing text."""
+    if not text or not text.startswith(_TAG_PREFIX):
+        return text
+    end = text.find(_TAG_SUFFIX, len(_TAG_PREFIX))
+    if end == -1:
+        return text
+    return text[end + len(_TAG_SUFFIX):]
 
 
 # =============================================================================
-# ERROR CLASSIFICATION FUNCTIONS
+# USER-FRIENDLY ERROR MESSAGES (tagged with codes)
+# =============================================================================
+GENERIC_ERROR = tag_error(ErrorCode.GENERIC, "❌ Произошла ошибка. Попробуйте ещё раз.")
+OVERLOADED_ERROR = tag_error(ErrorCode.OVERLOADED, "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.")
+QUOTA_ERROR = tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
+PROCESSING_ERROR = tag_error(ErrorCode.PROCESSING, "❌ Ошибка обработки запроса.")
+DOCUMENT_ERROR = tag_error(ErrorCode.DOCUMENT, "❌ Ошибка обработки содержимого документа.")
+TIMEOUT_ERROR = tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания. Попробуйте ещё раз.")
+NETWORK_ERROR_MSG = tag_error(ErrorCode.NETWORK, "🌐 Ошибка сети. Проверьте подключение.")
+
+
+# =============================================================================
+# ERROR CLASSIFICATION FUNCTIONS — code-based with text fallback
 # =============================================================================
 
 
@@ -302,9 +396,13 @@ def user_friendly_error(raw_error: Exception | str) -> str:
 
 
 def is_error_message(text: str) -> bool:
-    """Определяет, является ли сообщение ошибкой по наличию эмодзи ошибок."""
+    """Определяет, является ли сообщение ошибкой."""
     if not text:
         return False
+    # Fast path: tagged error
+    if extract_error_code(text) is not None:
+        return True
+    # Legacy fallback: emoji prefix check
     error_indicators = ["⏰", "❌", "🔄", "🚫", "⏱️", "💳", "🌐", "🔑"]
     return any(text.startswith(indicator) for indicator in error_indicators)
 
@@ -313,20 +411,16 @@ def is_retryable_error(text: str) -> bool:
     """Определяет, можно ли повторить запрос при этой ошибке."""
     if not text:
         return False
-    # Временные ошибки, которые можно повторить
+    # Fast path: tagged error
+    code = extract_error_code(text)
+    if code is not None:
+        return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[0]
+    # Legacy fallback: text pattern matching
     retryable_patterns = [
-        "⏰",  # Таймаут
-        "🔄",  # Перегрузка сервера
-        "⏱️",  # Rate limit
-        "🌐",  # Сетевая ошибка
-        "Превышено время ожидания",
-        "перегружен",
-        "rate limit",
-        "503",
-        "unavailable",
-        "overloaded",
-        "timeout",
-        "timed out",
+        "⏰", "🔄", "⏱️", "🌐",
+        "Превышено время ожидания", "перегружен",
+        "rate limit", "503", "unavailable", "overloaded",
+        "timeout", "timed out",
     ]
     text_lower = text.lower()
     return any(
@@ -336,115 +430,57 @@ def is_retryable_error(text: str) -> bool:
 
 
 def is_key_related_error(text: str) -> bool:
-    """
-    Определяет, является ли ошибка связанной с ключом API.
-    Такие ошибки требуют попытки с другим ключом.
-    """
+    """Определяет, является ли ошибка связанной с ключом API."""
     if not text:
         return False
-
+    # Fast path: tagged error
+    code = extract_error_code(text)
+    if code is not None:
+        return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[1]
+    # Legacy fallback: text pattern matching
     text_lower = text.lower()
-
-    # Ошибки, связанные с ключом - пробуем другой ключ
-    key_related_patterns = [
-        "🚫",  # Quota/лимит
-        "⏱️",  # Rate limit
-        "🔑",  # Invalid API key
-        "quota",
-        "quota exceeded",
-        "rate limit",
-        "rate_limit",
-        "daily limit",
-        "limit exceeded",
-        "invalid api key",
-        "authentication",
-        "unauthorized",
-        "forbidden",
-        "api key",
-        "api_key",
-        "достигнут лимит",
-        "превышен лимит",
-        "лимит запросов",
+    not_key_patterns = [
+        "⏰", "🔄", "503", "unavailable", "overloaded", "timeout",
+        "превышено время ожидания", "перегружен", "некорректный запрос",
+        "invalid request", "malformed",
     ]
-
-    # Ошибки, НЕ связанные с ключом - не меняем ключ
-    not_key_related_patterns = [
-        "⏰",  # Timeout
-        "🔄",  # Service unavailable (503)
-        "503",
-        "unavailable",
-        "overloaded",
-        "timeout",
-        "превышено время ожидания",
-        "перегружен",
-        "некорректный запрос",
-        "invalid request",
-        "malformed",
-    ]
-
-    # Сначала проверяем на ошибки, НЕ связанные с ключом (приоритет выше)
-    if any(
-        pattern.lower() in text_lower or text.startswith(pattern)
-        for pattern in not_key_related_patterns
-    ):
+    if any(p.lower() in text_lower or text.startswith(p) for p in not_key_patterns):
         return False
-
-    # Проверка на ошибки, связанные с ключом
-    return any(
-        pattern.lower() in text_lower or text.startswith(pattern)
-        for pattern in key_related_patterns
-    )
+    key_patterns = [
+        "🚫", "⏱️", "🔑", "quota", "rate limit", "rate_limit",
+        "daily limit", "limit exceeded", "invalid api key",
+        "authentication", "unauthorized", "forbidden", "api key",
+        "api_key", "достигнут лимит", "превышен лимит", "лимит запросов",
+    ]
+    return any(p.lower() in text_lower or text.startswith(p) for p in key_patterns)
 
 
 def classify_key_error(text: str) -> str:
-    """Classify a key-related error into a penalty category.
-
-    Returns one of:
-        "permanent"  – API_KEY_INVALID, auth errors → long cooldown (24 h)
-        "quota"      – daily quota exhausted → suspend until midnight PT
-        "rate_limit" – per-second/minute rate limit → short cooldown (60 s)
-        "transient"  – not key-related at all (503, timeout) → no suspension
-    """
+    """Classify error into penalty category: permanent/quota/rate_limit/transient."""
     if not text:
         return "transient"
-
+    # Fast path: tagged error
+    code = extract_error_code(text)
+    if code is not None:
+        return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[2]
+    # Legacy fallback: text pattern matching
     text_lower = text.lower()
-
-    # Transient / non-key errors — highest priority
-    transient_patterns = [
-        "⏰", "🔄", "503", "unavailable", "overloaded",
-        "timeout", "timed out", "превышено время ожидания",
-        "перегружен", "некорректный запрос", "invalid request",
-        "malformed",
-    ]
-    if any(p.lower() in text_lower or text.startswith(p) for p in transient_patterns):
+    transient = ["⏰", "🔄", "503", "unavailable", "overloaded", "timeout",
+                 "timed out", "превышено время ожидания", "перегружен",
+                 "некорректный запрос", "invalid request", "malformed"]
+    if any(p.lower() in text_lower or text.startswith(p) for p in transient):
         return "transient"
-
-    # Permanent key errors — invalid key / auth
-    permanent_patterns = [
-        "🔑", "api_key_invalid", "invalid api key",
-        "authentication", "unauthorized", "forbidden",
-        "неверный api ключ",
-    ]
-    if any(p.lower() in text_lower or text.startswith(p) for p in permanent_patterns):
+    permanent = ["🔑", "api_key_invalid", "invalid api key", "authentication",
+                 "unauthorized", "forbidden", "неверный api ключ"]
+    if any(p.lower() in text_lower or text.startswith(p) for p in permanent):
         return "permanent"
-
-    # Quota / daily limit errors
-    quota_patterns = [
-        "🚫", "quota", "quota exceeded", "daily limit",
-        "limit exceeded", "достигнут лимит",
-    ]
-    if any(p.lower() in text_lower or text.startswith(p) for p in quota_patterns):
+    quota = ["🚫", "quota", "quota exceeded", "daily limit",
+             "limit exceeded", "достигнут лимит"]
+    if any(p.lower() in text_lower or text.startswith(p) for p in quota):
         return "quota"
-
-    # Rate-limit errors
-    rate_patterns = [
-        "⏱️", "rate limit", "rate_limit",
-        "превышен лимит", "лимит запросов",
-    ]
-    if any(p.lower() in text_lower or text.startswith(p) for p in rate_patterns):
+    rate = ["⏱️", "rate limit", "rate_limit", "превышен лимит", "лимит запросов"]
+    if any(p.lower() in text_lower or text.startswith(p) for p in rate):
         return "rate_limit"
-
     return "transient"
 
 

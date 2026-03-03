@@ -96,9 +96,11 @@ estimate_tokens = estimate_tokens_cyrillic
 
 
 # ============================================================================
-# CUSTOM ROLE CACHE
+# CUSTOM ROLE CACHE — bounded with TTL
 # ============================================================================
-_custom_role_cache = {}  # Простой кэш в памяти
+from cachetools import TTLCache
+
+_custom_role_cache: TTLCache = TTLCache(maxsize=256, ttl=3600)  # 256 entries, 1h TTL
 
 
 def get_cached_custom_role(prompt: str) -> dict | None:
@@ -107,13 +109,8 @@ def get_cached_custom_role(prompt: str) -> dict | None:
 
 
 def cache_custom_role(prompt: str, role: dict):
-    """Сохранить кастомную роль в кэш"""
+    """Сохранить кастомную роль в кэш (auto-evicts oldest on overflow)."""
     _custom_role_cache[prompt] = role
-    # Ограничиваем размер кэша
-    if len(_custom_role_cache) > 100:
-        # Удаляем самые старые записи
-        oldest_key = next(iter(_custom_role_cache))
-        del _custom_role_cache[oldest_key]
 
 
 # ============================================================================

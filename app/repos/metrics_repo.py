@@ -42,7 +42,7 @@ async def get_supabase_metrics() -> dict[str, Any]:
         pool_size = getattr(pool, "_size", 0)
         free_size = getattr(pool, "_free_size", 0)
         pool_stats = {
-            "status": "connected" if not pool._closed else "closed",
+            "status": "connected" if not db_manager._is_pool_closed() else "closed",
             "pool_size": pool_size,
             "free_size": free_size,
             "active_connections": pool_size - free_size,

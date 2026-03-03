@@ -52,9 +52,9 @@ def client():
         if "app.web" in sys.modules:
             del sys.modules["app.web"]
 
-        from app.web import flask_app
+        from app.web import quart_app
 
-        flask_app.config["TESTING"] = True
+        quart_app.config["TESTING"] = True
 
         # Mock psutil for endpoints that use it
         # Mock database health check to prevent 503 from dead DB pool
@@ -67,7 +67,7 @@ def client():
             mock_vm.return_value.percent = 20
             mock_du.return_value.percent = 30
 
-            yield flask_app.test_client()
+            yield quart_app.test_client()
 
 
 @pytest.mark.asyncio
