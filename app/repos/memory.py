@@ -20,15 +20,24 @@ from app.database import clear_user_context, db_execute_many, db_manager, db_que
 # ── Constants ────────────────────────────────────────────────────────────────
 
 EMBEDDING_MODEL = "gemini-embedding-001"
-EMBEDDING_DIMENSION = 768
+EMBEDDING_DIMENSION = 3072
 MAX_MEMORIES_PER_USER = 500
 DEFAULT_MEMORY_TTL_DAYS = 90
 
 
-async def _get_embedding(text: str, api_key: str) -> list[float] | None:
-    """Generate a 768-dimensional embedding for the given text.
+async def _get_embedding(
+    text: str,
+    api_key: str,
+    *,
+    task_type: str = "RETRIEVAL_DOCUMENT",
+) -> list[float] | None:
+    """Generate an embedding for the given text.
 
-    Uses Gemini's gemini-embedding-001 model through the genai SDK.
+    Uses Gemini's gemini-embedding-001 model (3072-dim, pre-normalized).
+    The task_type should be:
+      - RETRIEVAL_DOCUMENT when storing content for later retrieval
+      - RETRIEVAL_QUERY when searching for similar content
+
     Returns None on failure (non-critical — memory just won't be stored).
     """
     try:
@@ -36,7 +45,7 @@ async def _get_embedding(text: str, api_key: str) -> list[float] | None:
         result = await client.aio.models.embed_content(
             model=EMBEDDING_MODEL,
             contents=text[:8000],  # Truncate to model limit
-            config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSION),
+            config=types.EmbedContentConfig(task_type=task_type),
         )
         if result and result.embeddings:
             return result.embeddings[0].values
@@ -142,7 +151,7 @@ async def search_memories(
     Returns:
         List of dicts with 'id', 'content', 'similarity', 'source_type', 'created_at'.
     """
-    query_embedding = await _get_embedding(query, api_key)
+    query_embedding = await _get_embedding(query, api_key, task_type="RETRIEVAL_QUERY")
     if query_embedding is None:
         return []
 
