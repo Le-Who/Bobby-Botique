@@ -19,11 +19,7 @@ from app.database import clear_user_context, db_execute_many, db_manager, db_que
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-<<<<<<< HEAD
 EMBEDDING_MODEL = "gemini-embedding-001"
-=======
-EMBEDDING_MODEL = "models/text-embedding-004"
->>>>>>> d6fe4d98cdda8717d15b070c5c598b66c0a51709
 EMBEDDING_DIMENSION = 768
 MAX_MEMORIES_PER_USER = 500
 DEFAULT_MEMORY_TTL_DAYS = 90
