@@ -20,6 +20,7 @@ from app.utils.formatting import TelegramFormatter
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_CHAT, update_stage
 
+_background_tasks: set = set()
 
 async def _handle_regular_chat(
     placeholder_message: Message,
@@ -359,7 +360,9 @@ async def _handle_regular_chat(
                         except Exception:
                             pass
 
-                    asyncio.get_running_loop().create_task(_bg_store())
+                    _task = asyncio.get_running_loop().create_task(_bg_store())
+                    _background_tasks.add(_task)
+                    _task.add_done_callback(_background_tasks.discard)
             except Exception:
                 pass
 

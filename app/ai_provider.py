@@ -484,13 +484,7 @@ class GeminiProvider(BaseAIProvider):
                         logging.warning("Failed to create Content object: %s", e)
         except Exception as e:
             logging.error("Error processing history: %s", e, exc_info=True)
-            try:
-                contents.append(types.Content(
-                    role="user",
-                    parts=[types.Part.from_text("Error processing request")],
-                ))
-            except Exception:
-                return None
+            return None
 
         return contents if contents else None
 
@@ -699,7 +693,7 @@ class OpenRouterProvider(BaseAIProvider):
 
             # Log success
             if start_time is not None:
-                api_logger.log_gemini_response(
+                api_logger.log_openrouter_response(
                     start_time=start_time, model=model_name,
                     response_length=len(response_text),
                     token_count=token_count, success=True,
@@ -779,15 +773,15 @@ class OpenRouterProvider(BaseAIProvider):
 
         status = e.response.status_code
         if status == 429:
-            text = "⏱️ Превышен лимит запросов. Подождите немного."
+            text = tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов. Подождите немного.")
         elif status == 401:
-            text = "🔑 Неверный API ключ. Проверьте настройки."
+            text = tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ. Проверьте настройки.")
         elif status == 402:
-            text = "💳 Недостаточно средств на счету OpenRouter."
+            text = tag_error(ErrorCode.QUOTA_EXCEEDED, "💳 Недостаточно средств на счету OpenRouter.")
         elif status == 503:
-            text = "🔄 Сервер OpenRouter перегружен. Попробуйте позже."
+            text = tag_error(ErrorCode.OVERLOADED, "🔄 Сервер OpenRouter перегружен. Попробуйте позже.")
         else:
-            text = f"❌ Ошибка API: {status}"
+            text = tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {status}")
 
         return AIResponse(
             text=text, token_count=0, success=False,
@@ -859,7 +853,7 @@ class ProviderRouter:
         # Per-user rate limiting (async — RateLimiter from security.py)
         if user_id and not await self._rate_limiter.check_rate_limit(user_id):
             return (
-                "⏳ Слишком много запросов. Пожалуйста, подождите минуту.",
+                tag_error(ErrorCode.RATE_LIMIT, "⏳ Слишком много запросов. Пожалуйста, подождите минуту."),
                 None,
             )
 
@@ -986,7 +980,7 @@ class ProviderRouter:
         )
         provider_name = "OpenRouter" if is_or else "Gemini"
         return (
-            f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",
+            tag_error(ErrorCode.KEYS_EXHAUSTED, f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже."),
             None,
         )
 
