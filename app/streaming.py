@@ -1,3 +1,5 @@
+import telegram
+
 # /app/streaming.py
 """Streaming response layer — progressive message updates from AI providers.
 
@@ -263,7 +265,7 @@ async def stream_and_display(
     contents: list,
     config: types.GenerateContentConfig,
     timeout: float = 100.0,
-) -> tuple[str, bool, "Message | None"]:
+) -> tuple[str, bool, "telegram.Message | None"]:
     """High-level: stream Gemini response and progressively update Telegram message.
 
     Supports multi-message streaming: when a single message exceeds

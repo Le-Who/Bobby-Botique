@@ -11,7 +11,7 @@ from typing import Any
 
 from app.prompt_registry import estimate_tokens_cyrillic
 
-from .token_budget import CHUNK_SIZE, MAX_CHUNKS, SUMMARY_BUDGET, SUMMARIZATION_MODEL
+from .token_budget import CHUNK_SIZE, MAX_CHUNKS, SUMMARIZATION_MODEL, SUMMARY_BUDGET
 
 logger = logging.getLogger(__name__)
 
@@ -172,14 +172,20 @@ def split_into_chunks(messages: list[dict[str, Any]]) -> list[str]:
 
 
 def _extract_text(msg: dict[str, Any]) -> str:
-    """Extract text content from a message dict."""
+    """Extract text content from a message dict.
+
+    ⚡ Bolt Optimization: Avoid O(N) memory allocation from str(bytes_obj) by
+    skipping binary data when iterating over message parts.
+    """
     parts = msg.get("parts", [])
     if not parts:
         content = msg.get("content", "")
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            return " ".join(str(p) for p in content if not isinstance(p, bytes))
+        if isinstance(content, bytes):
+            return ""
         return str(content)
 
     text_parts: list[str] = []
@@ -187,5 +193,7 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(part, str):
             text_parts.append(part)
         elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+            text_parts.append(str(part["text"]))
+        elif not isinstance(part, bytes) and not isinstance(part, dict):
+            text_parts.append(str(part))
     return " ".join(text_parts)

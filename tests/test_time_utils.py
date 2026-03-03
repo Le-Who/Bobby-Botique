@@ -1,7 +1,6 @@
 import unittest
 from datetime import datetime
 from unittest.mock import patch
-
 from zoneinfo import ZoneInfo
 
 from app.utils.time import get_kyiv_reset_time

@@ -13,8 +13,8 @@ from app.handlers.ai_core import (
     handle_ai_response_error,
 )
 from app.metrics import metrics_collector
-from app.utils.messaging import send_long_message
 from app.utils.heartbeat import stop_heartbeat
+from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_DOCUMENT, update_stage
 
 

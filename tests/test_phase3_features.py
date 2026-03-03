@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ============================================================================
 # MODEL SELECTOR TESTS
 # ============================================================================
@@ -262,7 +261,6 @@ class TestGDPRCommands:
             await deleteme_command.__wrapped__.__wrapped__(mock_update, MagicMock())
 
         mock_update.message.reply_text.assert_called_once()
-        args = mock_update.message.reply_text.call_args
         assert "CONFIRM" in str(mock_fmt.format_text.call_args)
 
 

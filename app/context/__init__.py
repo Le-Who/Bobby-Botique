@@ -7,17 +7,11 @@ Re-exports everything for backward compatibility with::
 """
 
 # --- Data structures & constants ---
-from app.context.token_budget import (  # noqa: F401
-    DEFAULT_TOKEN_BUDGET,
-    RESPONSE_RESERVE,
-    SUMMARY_BUDGET,
-    MIN_HISTORY_MESSAGES,
-    LLM_SUMMARY_TOKEN_THRESHOLD,
-    CHUNK_SIZE,
-    MAX_CHUNKS,
-    SUMMARIZATION_MODEL,
-    TokenBudget,
-    AssembledContext,
+# --- Core assembler ---
+from app.context.assembler import (  # noqa: F401
+    ContextAssembler,
+    get_assembler,
+    should_summarize,
 )
 
 # --- Summarizer ---
@@ -25,10 +19,15 @@ from app.context.summarizer import (  # noqa: F401
     schedule_llm_summarization,
     split_into_chunks,
 )
-
-# --- Core assembler ---
-from app.context.assembler import (  # noqa: F401
-    ContextAssembler,
-    get_assembler,
-    should_summarize,
+from app.context.token_budget import (  # noqa: F401
+    CHUNK_SIZE,
+    DEFAULT_TOKEN_BUDGET,
+    LLM_SUMMARY_TOKEN_THRESHOLD,
+    MAX_CHUNKS,
+    MIN_HISTORY_MESSAGES,
+    RESPONSE_RESERVE,
+    SUMMARIZATION_MODEL,
+    SUMMARY_BUDGET,
+    AssembledContext,
+    TokenBudget,
 )
