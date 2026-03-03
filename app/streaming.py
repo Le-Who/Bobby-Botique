@@ -59,9 +59,10 @@ async def stream_gemini_response(
     client = genai.Client(**client_kwargs)
 
     async def _stream():
-        async for chunk in client.aio.models.generate_content_stream(
+        response_stream = await client.aio.models.generate_content_stream(
             model=model_name, contents=contents, config=config,
-        ):
+        )
+        async for chunk in response_stream:
             if chunk.text:
                 yield chunk.text
 
