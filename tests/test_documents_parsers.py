@@ -10,7 +10,6 @@ from app.documents.parsers import (
     write_temp_file_sync,
 )
 
-
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 

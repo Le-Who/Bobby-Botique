@@ -9,3 +9,7 @@
 ## 2025-05-29 - [Confirm Destructive Actions]
 **Learning:** Destructive actions like "Clear All Documents" executed immediately on a single click can lead to significant user frustration and data loss. Users expect a safety net.
 **Action:** Implement a two-step confirmation process for all bulk delete or irreversible actions, replacing the button with a clear "Confirm/Cancel" choice.
+
+## 2025-06-03 - [Custom Tab ARIA Implementations]
+**Learning:** Custom tab navigation built with basic divs and buttons often lacks semantic meaning for screen readers. Simply adding 'active' classes visually works, but leaves assistive technologies unaware of the structure or state.
+**Action:** When creating custom tabs, always implement the full ARIA pattern: `role="tablist"` on the container, `role="tab"` and dynamic `aria-selected` on buttons, and `role="tabpanel"` on content areas, explicitly linking them with `aria-controls` and `aria-labelledby`.

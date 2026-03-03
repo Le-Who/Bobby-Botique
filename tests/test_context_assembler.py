@@ -3,10 +3,9 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.context.summarizer import schedule_llm_summarization, split_into_chunks, _run_llm_summarization
-
 import pytest
 
+from app.context.summarizer import _run_llm_summarization, schedule_llm_summarization, split_into_chunks
 from app.context_assembler import (
     CHUNK_SIZE,
     DEFAULT_TOKEN_BUDGET,

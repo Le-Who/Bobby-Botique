@@ -543,7 +543,6 @@ metrics_collector = MetricsCollector()
 # Re-export middleware for backward compatibility
 from app.utils.metrics_middleware import MetricsMiddleware, track_metrics  # noqa: F401,E402
 
-
 # ============================================================================
 # ROLE AND CONVERSATION METRICS
 # ============================================================================

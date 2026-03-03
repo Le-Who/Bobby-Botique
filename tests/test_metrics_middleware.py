@@ -7,7 +7,6 @@ import pytest
 
 from app.utils.metrics_middleware import MetricsMiddleware, track_metrics
 
-
 # ── MetricsMiddleware ────────────────────────────────────────────────────────
 # metrics_collector is lazily imported inside __aexit__ from app.metrics,
 # so we must patch at app.metrics.metrics_collector level.

@@ -39,7 +39,6 @@ from app.utils.api_logger import api_logger
 from app.utils.image_utils import save_image_as_bytes
 from app.utils.network import NetworkErrorHandler
 
-
 # ── Thinking config helpers ──────────────────────────────────────────
 
 _THINKING_BUDGET_MAP = {"off": 0, "low": 1024, "medium": 8192, "high": 24576}

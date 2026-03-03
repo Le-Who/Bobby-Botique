@@ -14,6 +14,8 @@ from app.prompt_registry import estimate_tokens_cyrillic
 
 from .summarizer import (
     _extract_text as extract_text,  # canonical implementation
+)
+from .summarizer import (
     schedule_llm_summarization,  # noqa: F401 – re-exported
 )
 from .token_budget import (

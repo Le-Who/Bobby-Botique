@@ -5,12 +5,11 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from datetime import UTC, timezone
 from typing import Any
-
-from datetime import timezone
 from zoneinfo import ZoneInfo
-from pydantic import BaseModel, ValidationError
 
+from pydantic import BaseModel, ValidationError
 
 # Single source of truth for default Gemini models.
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
@@ -290,7 +289,7 @@ def load_settings() -> Settings:
 # Кэшируем временные зоны for предотвращения requestов к pg_timezone_names
 PACIFIC_TZ = ZoneInfo("US/Pacific")
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
-UTC_TZ = timezone.utc
+UTC_TZ = UTC
 
 # --- LAZY LOADING SETTINGS ---
 _settings_instance: Settings | None = None
