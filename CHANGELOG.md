@@ -5,6 +5,30 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.7] – 2026-03-03 – Pipeline Audit, Lint Cleanup & Comprehensive Audit
+
+### 🔴 Pipeline Bugs Fixed (4)
+
+| Bug                                               | File             | Fix                                                                |
+| ------------------------------------------------- | ---------------- | ------------------------------------------------------------------ |
+| Untagged error strings (7 sites)                  | `ai_provider.py` | Wrapped with `tag_error(ErrorCode.*)` for fast-path classification |
+| Fire-and-forget `create_task` (RUF006)            | `ai_chat.py`     | Added `_background_tasks` set + done callback                      |
+| `_build_contents` injected fake user msg on error | `ai_provider.py` | Return `None` to abort cleanly                                     |
+| OpenRouter logged as Gemini                       | `ai_provider.py` | `log_gemini_response` → `log_openrouter_response`                  |
+
+### 🟡 Ruff: 21 → 0 Errors
+
+- 17 auto-fixed (import sorting `I001`, `UP017`)
+- 4 manual fixes: `F821` (Message import), `F841`×3 (unused vars), `RUF059`, `UP037`
+
+### ✅ Comprehensive Audit Results
+
+- **Performance:** No bottlenecks — DB cached (TTLCache), IO uses executors, ProcessPoolExecutor for images
+- **MyPy:** 852 annotation-noise errors, 0 runtime type bugs
+- **Security:** All SQL parameterized, no eval/exec, RLS on 21 tables, secrets sanitized, context cleanup paired
+
+---
+
 ## [2.8.6] – 2026-03-03 – Dependency Audit & Critical Bug Fixes
 
 ### 🔍 Full Dependency & Codebase Audit
