@@ -6,12 +6,15 @@ DROP INDEX IF EXISTS idx_chats_user_id_rls;
 DROP INDEX IF EXISTS idx_users_user_id_rls;
 DROP INDEX IF EXISTS idx_user_documents_user_id_rls;
 
--- 2. Drop all old unoptimized policies
+-- 2. Drop all policies (both old AND new names for idempotency on re-run)
 DROP POLICY IF EXISTS users_policy ON users;
 DROP POLICY IF EXISTS chats_policy ON chats;
 DROP POLICY IF EXISTS user_documents_policy ON user_documents;
 DROP POLICY IF EXISTS roles_read_policy ON roles;
 DROP POLICY IF EXISTS roles_write_policy ON roles;
+DROP POLICY IF EXISTS roles_insert_policy ON roles;
+DROP POLICY IF EXISTS roles_update_policy ON roles;
+DROP POLICY IF EXISTS roles_delete_policy ON roles;
 DROP POLICY IF EXISTS user_roles_policy ON user_roles;
 DROP POLICY IF EXISTS conversations_policy ON conversations;
 DROP POLICY IF EXISTS conversation_messages_policy ON conversation_messages;
