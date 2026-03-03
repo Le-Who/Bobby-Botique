@@ -40,6 +40,8 @@ The project is built with a **monolithic asyncio architecture**, integrating a h
 
 ## 🏗 Architecture Overview
 
+> 📖 **For the full module map, design patterns, and dependency graph, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).**
+
 The system runs as a single containerized application performing two parallel asyncio tasks:
 
 1.  **Telegram Bot (`bot.py`)**:
