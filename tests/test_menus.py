@@ -44,11 +44,7 @@ def setup_mocks():
     mock_doc_processor.get_user_documents = AsyncMock(return_value=[])
     sys.modules["app.document_processor"] = mock_doc_processor
 
-    # Mock time utils and pytz
-    mock_pytz = MagicMock()
-    mock_pytz.timezone.return_value = MagicMock()
-    mock_pytz.UTC = MagicMock()
-    sys.modules["pytz"] = mock_pytz
+    # Mock time utils
     sys.modules["app.utils.time"] = MagicMock()
 
     # Mock telegram
@@ -104,7 +100,6 @@ _mocked_module_keys = [
     "app.config",
     "app.metrics",
     "app.document_processor",
-    "pytz",
     "app.utils.time",
     "telegram",
     "telegram.ext",

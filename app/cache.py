@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Any
 
-from redis import Redis
+from redis.asyncio import Redis
 from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
 from app.errors import RedisConnectionError
@@ -41,9 +41,22 @@ async def ping_safe() -> bool:
     if not redis_client:
         return False
     try:
-        return bool(await asyncio.to_thread(redis_client.ping))
+        return bool(await redis_client.ping())
     except Exception:
         return False
+
+
+async def shutdown_redis() -> None:
+    """Close the async Redis client connection pool during graceful shutdown."""
+    global redis_client
+    if redis_client:
+        try:
+            await redis_client.aclose()
+            logging.info("Redis client closed successfully")
+        except Exception as e:
+            logging.warning("Error closing Redis client: %s", e)
+        finally:
+            redis_client = None
 
 
 def _generate_cache_key(query: str, search_type: str) -> str:
@@ -84,7 +97,7 @@ def _safe_decode_redis_response(
 
 
 async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs):
-    """Executes Redis operation with improved retry logic."""
+    """Executes async Redis operation with improved retry logic."""
     if not redis_client:
         raise RedisConnectionError("Redis client not configured")
 
@@ -94,7 +107,7 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
             # Check connection health before operation (starting from 2nd attempt)
             if attempt > 0:
                 try:
-                    await asyncio.to_thread(redis_client.ping)
+                    await redis_client.ping()
                 except Exception:
                     logging.warning(
                         f"Redis connection check failed, attempt {attempt + 1}"
@@ -102,8 +115,8 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
                     # Continue to retry even if ping fails
                     pass
 
-            # Execute operation
-            result = await asyncio.to_thread(operation, *args, **kwargs)
+            # Execute async Redis operation directly
+            result = await operation(*args, **kwargs)
             return result
 
         except (ConnectionError, TimeoutError) as e:

@@ -5,6 +5,55 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.6] – 2026-03-03 – Dependency Audit & Critical Bug Fixes
+
+### 🔍 Full Dependency & Codebase Audit
+
+Audited all 17 project dependencies against official documentation. Systematic codebase scan for 15+ anti-patterns. Found and fixed **7 issues across 6 files**.
+
+### 🔴 Critical: Restored Missing Document Processor Methods
+
+`_process_pdf_sync` and `_process_word_sync` were accidentally deleted in REFACTOR commit (`e176c82`) but still called at runtime. **All PDF/Word document uploads crashed with `AttributeError`.**
+
+Both methods restored as `@staticmethod`s from git history.
+
+### Dependency Fixes
+
+| #   | Fix                         | Files Changed                                      |
+| --- | --------------------------- | -------------------------------------------------- |
+| 1   | Redis `sync→async` client   | `app/cache.py`                                     |
+| 2   | `pytz→zoneinfo` migration   | `app/config.py`, `app/utils/time.py`, 4 test files |
+| 3   | Removed unused `orjson`     | `requirements.txt`                                 |
+| 4   | `"PyPDF2"→"pypdf"` log refs | `app/document_processor.py`                        |
+| 5   | Added `tzdata` fallback     | `requirements.txt`                                 |
+
+### Codebase Fixes
+
+| #   | Fix                                                 | Severity | Files Changed               |
+| --- | --------------------------------------------------- | -------- | --------------------------- |
+| 1   | Restored `_process_pdf_sync` / `_process_word_sync` | 🔴       | `app/document_processor.py` |
+| 2   | `DOCUMENT_SUPPORT` dead code → proper import gating | 🟡       | `app/document_processor.py` |
+| 3   | Redis `aclose()` on shutdown                        | 🟡       | `app/cache.py`, `bot.py`    |
+
+### Files Changed
+
+| File                         | Change                                                                 |
+| ---------------------------- | ---------------------------------------------------------------------- |
+| `app/cache.py`               | `redis.asyncio.Redis`, `shutdown_redis()`, removed `asyncio.to_thread` |
+| `app/config.py`              | `pytz.timezone()` → `ZoneInfo()`, `pytz.UTC` → `datetime.timezone.utc` |
+| `app/utils/time.py`          | `.localize()` → `datetime.combine(..., tzinfo=...)`                    |
+| `app/document_processor.py`  | Restored `_process_pdf_sync`/`_process_word_sync`, import gating       |
+| `bot.py`                     | `shutdown_redis()` in `_cleanup_application()`                         |
+| `requirements.txt`           | Removed `orjson`, `pytz`; added `tzdata`                               |
+| `tests/test_time_utils.py`   | `pytz` → `zoneinfo`                                                    |
+| `tests/test_menus.py`        | Removed `pytz` mock                                                    |
+| `tests/test_web_security.py` | Removed `pytz` from mock list                                          |
+| `tests/test_auth_headers.py` | Removed `pytz` from mock list                                          |
+
+### 🧪 Tests: 619 passed, 0 failures
+
+---
+
 ## [2.8.5] – 2026-03-03 – Logic Audit: 7 Bug Fixes
 
 ### 🔍 Systematic Cross-Module Logic Audit

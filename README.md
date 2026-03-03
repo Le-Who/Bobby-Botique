@@ -58,7 +58,7 @@ The system runs as a single containerized application performing two parallel as
 **Data Persistence**:
 
 - **PostgreSQL**: Stores user preferences, chat history (short-term & long-term), API key usage statistics, and **long-term memory** (pgvector embeddings for semantic recall).
-- **Redis** (Optional): Used for high-speed caching and temporary state management.
+- **Redis** (Optional): Async `redis.asyncio.Redis` client for high-speed caching and temporary state management. Properly closed via `aclose()` on shutdown.
 
 **Database Package** (`app/db/`):
 

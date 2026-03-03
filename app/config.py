@@ -7,7 +7,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-import pytz
+from datetime import timezone
+from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ValidationError
 
 
@@ -287,9 +288,9 @@ def load_settings() -> Settings:
 
 # --- TIMEZONES ---
 # Кэшируем временные зоны for предотвращения requestов к pg_timezone_names
-PACIFIC_TZ = pytz.timezone("US/Pacific")
-KYIV_TZ = pytz.timezone("Europe/Kyiv")
-UTC_TZ = pytz.UTC  # Используем константу instead of pytz.utc
+PACIFIC_TZ = ZoneInfo("US/Pacific")
+KYIV_TZ = ZoneInfo("Europe/Kyiv")
+UTC_TZ = timezone.utc
 
 # --- LAZY LOADING SETTINGS ---
 _settings_instance: Settings | None = None

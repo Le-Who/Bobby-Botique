@@ -31,8 +31,8 @@ def get_kyiv_reset_time() -> str:
 
     now_pt = datetime.now(pacific_tz)
     tomorrow_pt = now_pt.date() + timedelta(days=1)
-    reset_time_pt = pacific_tz.localize(
-        datetime.combine(tomorrow_pt, datetime.min.time())
+    reset_time_pt = datetime.combine(
+        tomorrow_pt, datetime.min.time(), tzinfo=pacific_tz
     )
     reset_time_kyiv = reset_time_pt.astimezone(kyiv_tz)
     return reset_time_kyiv.strftime("%H:%M %d.%m.%Y")

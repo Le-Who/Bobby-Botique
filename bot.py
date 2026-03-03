@@ -165,6 +165,12 @@ async def _cleanup_application(application):
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (Tavily http client): {cleanup_error}")
 
+    try:
+        from app.cache import shutdown_redis
+        await shutdown_redis()
+    except Exception as cleanup_error:
+        logging.warning(f"Cleanup error (Redis client): {cleanup_error}")
+
 
 async def run_bot_with_retry():
     """Запускает бота с устойчивостью к ошибкам"""

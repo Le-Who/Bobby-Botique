@@ -17,7 +17,6 @@ _mock_keys = [
     "telegram.error",
     "hypercorn.config",
     "hypercorn.asyncio",
-    "pytz",
     "app.database",
 ]
 _original_modules = {}

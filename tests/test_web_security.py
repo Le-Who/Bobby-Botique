@@ -18,7 +18,6 @@ _mock_keys = [
     "telegram.error",
     "hypercorn.config",
     "hypercorn.asyncio",
-    "pytz",
     "psutil",
     "app.database",
 ]

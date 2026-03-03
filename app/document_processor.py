@@ -10,6 +10,7 @@ parsing), the singleton instance, and backward-compatible facade functions.
 """
 
 import asyncio
+import io
 import logging
 import tempfile
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import Any
 
 import httpx
 import pypdf
+from docx import Document as DocxDocument
 
 from app.metrics import metrics_collector
 from app.utils.network import NetworkErrorHandler
@@ -33,8 +35,10 @@ from app.documents.repository import (
     save_document_content,
 )
 
-# Check document support
+# Verify document processing libraries are available
 try:
+    import pypdf as _pypdf_check  # noqa: F811,F401
+    from docx import Document as _docx_check  # noqa: F811,F401
     DOCUMENT_SUPPORT = True
 except ImportError:
     DOCUMENT_SUPPORT = False
@@ -165,6 +169,103 @@ class DocumentProcessor:
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
 
+    # ── Synchronous parsing helpers (run via run_in_executor) ─────────────
+
+    @staticmethod
+    def _process_pdf_sync(
+        input_data: str | io.BytesIO, max_pages: int
+    ) -> dict[str, Any]:
+        """Synchronous PDF text extraction — runs in a thread executor."""
+        pdf_file = None
+        should_close = False
+
+        try:
+            if isinstance(input_data, str):
+                pdf_file = open(input_data, "rb")  # noqa: SIM115
+                should_close = True
+                stream = pdf_file
+            else:
+                stream = input_data
+
+            pdf_reader = pypdf.PdfReader(stream)
+
+            if len(pdf_reader.pages) > max_pages:
+                return {"error": f"PDF too large. Maximum {max_pages} pages allowed"}
+
+            text_content: list[str] = []
+            current_length = 0
+
+            for page_num, page in enumerate(pdf_reader.pages):
+                try:
+                    text = page.extract_text()
+                    if text.strip():
+                        chunk = f"--- Page {page_num + 1} ---\n{text}"
+                        text_content.append(chunk)
+                        current_length += len(chunk)
+                except Exception as page_error:
+                    logging.warning(
+                        "Error extracting text from page %d: %s",
+                        page_num + 1, page_error,
+                    )
+                    chunk = f"--- Page {page_num + 1} ---\n[Error extracting text from this page]"
+                    text_content.append(chunk)
+                    current_length += len(chunk)
+
+                if current_length > MAX_DOCUMENT_TEXT_LENGTH:
+                    text_content.append(
+                        f"\n--- Document truncated at page {page_num + 1} ---"
+                    )
+                    break
+
+            full_text = "\n\n".join(text_content)
+            return {
+                "success": True,
+                "pages": len(pdf_reader.pages),
+                "content": full_text,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+        finally:
+            if should_close and pdf_file:
+                pdf_file.close()
+
+    @staticmethod
+    def _process_word_sync(input_data: str | io.BytesIO) -> dict[str, Any]:
+        """Synchronous Word text extraction — runs in a thread executor."""
+        try:
+            doc = DocxDocument(input_data)
+
+            text_content: list[str] = []
+            paragraph_count = 0
+
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    text_content.append(para.text)
+                    paragraph_count += 1
+
+            table_count = 0
+            for table in doc.tables:
+                table_count += 1
+                text_content.append(f"\n--- Table {table_count} ---")
+                for row in table.rows:
+                    row_text = [
+                        cell.text.strip() for cell in row.cells if cell.text.strip()
+                    ]
+                    if row_text:
+                        text_content.append(" | ".join(row_text))
+
+            full_text = "\n\n".join(text_content)
+            return {
+                "success": True,
+                "pages": 1,
+                "paragraphs": paragraph_count,
+                "tables": table_count,
+                "text_length": len(full_text),
+                "content": full_text,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
     # ── PDF parsing ──────────────────────────────────────────────────────────
 
     async def _process_pdf_unified(
@@ -178,7 +279,7 @@ class DocumentProcessor:
                     logging.warning("Invalid PDF format for %s", filename)
                     return {"error": "Invalid PDF file format"}
 
-            logging.info("Processing PDF %s with PyPDF2", filename)
+            logging.info("Processing PDF %s with pypdf", filename)
 
             if is_path:
                 sync_input = file_data
@@ -209,7 +310,7 @@ class DocumentProcessor:
                 "pages": pages_count,
                 "text_length": len(full_text),
                 "content": full_text,
-                "method": "PyPDF2",
+                "method": "pypdf",
             }
 
         except (ValueError, OSError, pypdf.errors.PdfReadError) as e:
