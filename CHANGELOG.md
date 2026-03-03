@@ -5,7 +5,24 @@ Format is optimized for agent-parseable context.
 
 ---
 
-## [2.8.9] – 2026-03-03 – Concurrency Tests & CI/CD Pipeline
+## [2.8.10] – 2026-03-03 – E2E Smoke Tests
+
+### 🧪 End-to-End Smoke Tests (11 new)
+
+| Area                 | Tests | What it verifies                                 |
+| -------------------- | ----- | ------------------------------------------------ |
+| Health endpoint      | 2     | `/health` JSON structure, Redis status           |
+| Metrics endpoint     | 2     | `/metrics` Prometheus text format                |
+| Prometheus generator | 1     | Line format validation (HELP/TYPE/value)         |
+| Handler registration | 3     | commands/callbacks/messages register on mock app |
+| Admin alerts E2E     | 2     | Startup health report + shutdown notification    |
+| Full pipeline        | 1     | tag_error → is_error_message → metrics_collector |
+
+> **Note:** Monitoring dashboard, Prometheus `/metrics`, and `/health` endpoints were already fully implemented. No new monitoring infrastructure needed.
+
+**Total tests: 648 → 0 failures**
+
+---
 
 ### 🧪 Concurrency Stress Tests (6 new)
 
