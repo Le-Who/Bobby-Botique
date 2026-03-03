@@ -5,6 +5,66 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.0] – 2026-03-03 – Production Audit: Phases 1–4
+
+### ✨ Phase 1: Foundation & CI
+
+- **GitHub Actions CI** (`.github/workflows/ci.yml`): lint → test → Docker build pipeline.
+- **Structured JSON logging**: Auto-enabled in production with `request_id` propagation via `contextvars`.
+- **`/export` command**: Export current chat history as Markdown document.
+- **`ChatAction.TYPING`**: Sent immediately on message receipt, before any processing.
+
+### 🏗️ Phase 2: Architecture Cleanup
+
+- **Handler extraction**: `messages.py` from 1163 → ~260 lines. Logic split into:
+  - `msg_media.py` — media group accumulation, image processing
+  - `msg_roles.py` — role/conversation rename state machines
+  - `msg_document.py` — document upload, duplicate detection
+- **`/settings` command**: Unified view of user preferences with inline navigation.
+
+### ✨ Phase 3: Product Features
+
+- **Streaming responses** (`streaming.py`): Gemini `generate_content_stream` + debounced `edit_message_text` (1.2s, 80-char minimum). Falls back to non-streaming for OpenRouter.
+- **pgvector long-term memory** (`repos/memory.py`): `text-embedding-004` (768-dim), HNSW index, cosine similarity search, 500/user limit, 90-day TTL. Semantically recalled during context assembly, stored after each exchange.
+- **Smart model selection** (`model_selector.py`): Regex heuristics classify messages (code/reasoning/simple/creative) → non-intrusive inline button suggestions when mismatch detected. `switch_model:` callback handler for one-tap switching.
+
+### 🔧 Phase 4: Production Hardening
+
+- **Webhook mode** (`bot.py`): Set `WEBHOOK_URL` env var → auto-registers `/webhook/<token>` route, replaces long-polling. Graceful cleanup on shutdown.
+- **Prometheus `/metrics`** (`prometheus.py` + `web.py`): Zero-dependency text format exporter — uptime, API calls, errors, active users, memory. Unauthenticated for scraping.
+- **GDPR commands** (`commands.py`):
+  - `/mydata` — exports all user data as JSON (GDPR Article 20)
+  - `/deleteme CONFIRM` — deletes all user data with confirmation gate (GDPR Article 17)
+- **Degradation matrix** (`degradation.py`): `check_system_health()` checks DB/Redis/AI status. `can_process_message()` returns fallback decisions with user-facing messages.
+
+### Files Changed
+
+| File                            | Change                                         |
+| ------------------------------- | ---------------------------------------------- |
+| `.github/workflows/ci.yml`      | [NEW] CI pipeline                              |
+| `app/streaming.py`              | [NEW] Streaming responses                      |
+| `app/repos/memory.py`           | [NEW] pgvector long-term memory                |
+| `app/model_selector.py`         | [NEW] Smart model auto-selection               |
+| `app/prometheus.py`             | [NEW] Prometheus text exporter                 |
+| `app/degradation.py`            | [NEW] Service degradation matrix               |
+| `app/handlers/msg_media.py`     | [NEW] Media handling (extracted)               |
+| `app/handlers/msg_roles.py`     | [NEW] Role FSMs (extracted)                    |
+| `app/handlers/msg_document.py`  | [NEW] Document handling (extracted)            |
+| `app/handlers/messages.py`      | Thin router (~260 lines, was 1163)             |
+| `app/handlers/ai_chat.py`       | Memory recall, model suggestions, streaming    |
+| `app/handlers/callbacks.py`     | `switch_model:` callback handler               |
+| `app/handlers/commands.py`      | `/export`, `/settings`, `/mydata`, `/deleteme` |
+| `app/web.py`                    | `/metrics` endpoint                            |
+| `bot.py`                        | Webhook mode (WEBHOOK_URL env var)             |
+| `app/utils/logging_config.py`   | Structured JSON logging                        |
+| `tests/test_phase3_features.py` | [NEW] 20 integration tests                     |
+
+### 🧪 Tests (572 passed, 1 skipped)
+
+- `test_phase3_features.py`: 20 new tests — model selector (6), streaming (4), Prometheus (2), GDPR (2), degradation (6).
+
+---
+
 ## [2.7.2] – 2026-03-02 – User-Configurable Thinking Levels
 
 ### ✨ New: `/thinking` Command

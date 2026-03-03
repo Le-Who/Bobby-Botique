@@ -169,6 +169,33 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer(f"✅ Модель изменена на {display_name}")
 
 
+async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle model switch from smart suggestion hint."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    model_name = query.data.split(":", 1)[1] if ":" in query.data else None
+    if not model_name:
+        return
+
+    # Verify model is available
+    all_models = list(settings.AVAILABLE_MODELS or [])
+    if settings.OPENROUTER_AVAILABLE_MODELS:
+        all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+
+    if model_name not in all_models:
+        await query.edit_message_text("⚠️ Эта модель больше недоступна.")
+        return
+
+    chat_state = await get_user_chat(user_id)
+    chat_state.model = model_name
+    await update_user_chat(user_id, chat_state)
+
+    display_name = model_name.split("/")[-1] if "/" in model_name else model_name
+    await query.edit_message_text(f"✅ Модель переключена на **{display_name}**")
+
+
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
@@ -640,6 +667,7 @@ def register(application: Application) -> None:
     _add_fast_callback(application, help_callback, "^help$")
     _add_fast_callback(application, start_menu_callback, "^start_menu$")
     _add_fast_callback(application, model_button_callback, "^model")
+    _add_fast_callback(application, switch_model_callback, "^switch_model:")
     _add_fast_callback(application, open_roles_callback, r"^open_roles(:from_response)?$")
     _add_fast_callback(application, role_apply_callback, "^role_apply:")
     _add_fast_callback(application, role_clear_callback, "^role_clear$")

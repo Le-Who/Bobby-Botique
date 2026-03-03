@@ -43,17 +43,19 @@ The project is built with a **monolithic asyncio architecture**, integrating a h
 The system runs as a single containerized application performing two parallel asyncio tasks:
 
 1.  **Telegram Bot (`bot.py`)**:
-    - Uses `python-telegram-bot` for long-polling.
+    - Uses `python-telegram-bot` with **dual mode**: long-polling (default) or **webhook** (set `WEBHOOK_URL` env var).
     - Manages user interactions, message queues, and AI responses.
     - Handles "Agentic" workflows (Research, Q&A).
+    - **Streaming responses**: Gemini models stream via `edit_message_text` with debounced updates.
+    - **Smart model suggestions**: Regex heuristics detect message type and suggest optimal model.
 2.  **Web Server (`app/web.py`)**:
     - A lightweight Quart + Hypercorn server (fully async-native).
-    - Exposes Health Check endpoints for cloud platforms (Northflank).
+    - Exposes Health Check (`/health`) and **Prometheus metrics** (`/metrics`) endpoints.
     - Serves a secure Monitoring Dashboard with cookie-session auth.
 
 **Data Persistence**:
 
-- **PostgreSQL**: Stores user preferences, chat history (short-term & long-term), and API key usage statistics.
+- **PostgreSQL**: Stores user preferences, chat history (short-term & long-term), API key usage statistics, and **long-term memory** (pgvector embeddings for semantic recall).
 - **Redis** (Optional): Used for high-speed caching and temporary state management.
 
 **Database Package** (`app/db/`):

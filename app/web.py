@@ -281,6 +281,19 @@ async def health_check_endpoint():
         return jsonify({"status": "unhealthy", "error": "internal_error"}), 500
 
 
+@flask_app.route("/metrics")
+async def prometheus_metrics():
+    """Prometheus text exposition endpoint (unauthenticated for scraping)."""
+    try:
+        from app.prometheus import generate_metrics_text
+
+        text = generate_metrics_text()
+        return text, 200, {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}
+    except Exception as e:
+        logging.error("Metrics endpoint error: %s", e, exc_info=True)
+        return "# error generating metrics\n", 500
+
+
 # =============================================================================
 # API ENDPOINTS — JSON data for dashboard (native async, no bridge needed)
 # =============================================================================

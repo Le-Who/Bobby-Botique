@@ -314,24 +314,48 @@ def _setup_logger(
     logger.propagate = False
 
 
+def _is_production_environment() -> bool:
+    """Detect if we're running in a production container environment."""
+    indicators = ("DYNO", "RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME")
+    if any(os.environ.get(k) for k in indicators):
+        return True
+    # Northflank / generic Docker: PORT is set and HOSTNAME looks like a container ID
+    hostname = os.environ.get("HOSTNAME", "")
+    if os.environ.get("PORT") and len(hostname) >= 12 and hostname.isalnum():
+        return True
+    return False
+
+
 def setup_detailed_logging(
     log_level: str = "INFO",
     log_to_file: bool = False,
     log_file_path: str = "/tmp/bot_detailed.log",
-    enable_structured_logging: bool = False,
+    enable_structured_logging: bool | None = None,
     enable_pretty: bool | None = None,
 ) -> None:
     """
-    Настраивает детальное логирование for всех компонентов бота.
+    Configure logging for all bot components.
 
     Args:
-        log_level: Уровень логирования (INFO, WARNING, ERROR, CRITICAL)
-        log_to_file: Логировать ли в file
-        log_file_path: Путь к fileу логов
-        enable_structured_logging: Вkeysть JSON логирование for production
+        log_level: Logging level (INFO, WARNING, ERROR, CRITICAL).
+        log_to_file: Whether to also log to a file.
+        log_file_path: Path to the log file.
+        enable_structured_logging: Force JSON logging. When *None* (default),
+            auto-enables in production or honours the STRUCTURED_LOGGING env var.
         enable_pretty: Enable human-readable dev logging. Auto-detects
                        from LOG_PRETTY env var when None.
     """
+    # Auto-resolve structured logging if not explicitly passed
+    if enable_structured_logging is None:
+        env_val = os.environ.get("STRUCTURED_LOGGING", "").lower()
+        if env_val in ("1", "true", "yes"):
+            enable_structured_logging = True
+        elif env_val in ("0", "false", "no"):
+            enable_structured_logging = False
+        else:
+            # Auto-detect: enable in production containers
+            enable_structured_logging = _is_production_environment()
+
     # Resolve pretty mode from env if not explicitly set
     if enable_pretty is None:
         enable_pretty = os.environ.get("LOG_PRETTY", "").lower() in (

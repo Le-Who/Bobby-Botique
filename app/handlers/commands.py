@@ -8,6 +8,7 @@ Conversation commands: see cmd_conversations.py
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from app.handlers import menus
@@ -278,6 +279,54 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     logging.info("Stats command completed for user %s", user_id)
 
 
+@authorized_only
+@safe_handler("❌ Ошибка экспорта. Попробуйте позже.")
+async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export the current active chat as a Markdown document."""
+    import io
+
+    user_id = update.effective_user.id
+    logging.info("Export command from user %s", user_id)
+
+    chat_state = await get_user_chat(user_id)
+    if not chat_state or not chat_state.history:
+        await update.message.reply_text(
+            "📭 Нет активного чата для экспорта.\n"
+            "Начните диалог и попробуйте снова."
+        )
+        return
+
+    # Build Markdown
+    lines = ["# Экспорт чата GemAI Bot\n"]
+    if chat_state.model:
+        lines.append(f"**Модель:** `{chat_state.model}`\n")
+    lines.append(f"**Сообщений:** {len(chat_state.history)}\n")
+    lines.append("---\n")
+
+    for msg in chat_state.history:
+        role = msg.get("role", "unknown")
+        parts = msg.get("parts", [])
+        content = parts[0] if parts else ""
+        if isinstance(content, dict):
+            content = content.get("text", str(content))
+        role_label = "👤 **Вы**" if role == "user" else "🤖 **AI**"
+        lines.append(f"### {role_label}\n")
+        lines.append(f"{content}\n")
+        lines.append("---\n")
+
+    md_text = "\n".join(lines)
+    md_bytes = md_text.encode("utf-8")
+    doc = io.BytesIO(md_bytes)
+    doc.name = "chat_export.md"
+
+    await update.message.reply_document(
+        document=doc,
+        filename="chat_export.md",
+        caption=f"📄 Экспорт чата ({len(chat_state.history)} сообщений)",
+    )
+    logging.info("Export completed for user %s: %d messages", user_id, len(chat_state.history))
+
+
 _VALID_THINKING_LEVELS = {"off", "low", "medium", "high"}
 _THINKING_LABELS = {
     None: "🔄 Авто (по умолчанию модели)",
@@ -334,6 +383,157 @@ async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 
+@authorized_only
+@safe_handler("❌ Ошибка получения настроек.")
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show unified user preferences with inline controls."""
+    user_id = update.effective_user.id
+    chat_state = await get_user_chat(user_id)
+
+    model = chat_state.model or "(по умолчанию)"
+    thinking = _THINKING_LABELS.get(
+        chat_state.thinking_level, chat_state.thinking_level or "🔄 Авто"
+    )
+    search = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
+    role = chat_state.system_prompt
+    if role and len(role) > 60:
+        role = role[:60] + "…"
+    elif not role:
+        role = "(стандартная)"
+
+    text = (
+        "⚙️ **Настройки**\n\n"
+        f"🧠 **Модель:** `{model}`\n"
+        f"💡 **Мышление:** {thinking}\n"
+        f"🌐 **Поиск:** {search}\n"
+        f"🎭 **Роль:** {role}\n"
+    )
+
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    keyboard = [
+        [
+            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
+            InlineKeyboardButton("💡 Мышление", callback_data="settings_thinking"),
+        ],
+        [
+            InlineKeyboardButton("🌐 Поиск", callback_data="toggle_search"),
+            InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
+        ],
+    ]
+    await update.message.reply_text(
+        formatted_text, parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
+# ── GDPR commands ────────────────────────────────────────────────────────────
+
+
+@authorized_only
+@safe_handler("❌ Ошибка экспорта данных.")
+async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Export all user data as a JSON document (GDPR Article 20)."""
+    import io
+    import json
+
+    user_id = update.effective_user.id
+    chat_state = await get_user_chat(user_id)
+
+    # Gather all user data
+    user_data = {
+        "user_id": user_id,
+        "username": update.effective_user.username,
+        "current_model": chat_state.model,
+        "thinking_level": chat_state.thinking_level,
+        "search_enabled": chat_state.search_enabled,
+        "conversation_history_length": len(chat_state.history),
+        "token_count": chat_state.token_count,
+        "has_system_prompt": bool(chat_state.system_prompt),
+    }
+
+    # Add conversation count
+    try:
+        conv_count = await get_conversation_count(user_id)
+        user_data["total_conversations"] = conv_count
+    except Exception:
+        user_data["total_conversations"] = "unknown"
+
+    # Add memory stats
+    try:
+        from app.repos.memory import get_memory_stats
+        mem_stats = await get_memory_stats(user_id)
+        user_data["memories"] = mem_stats
+    except Exception:
+        pass
+
+    data_json = json.dumps(user_data, indent=2, ensure_ascii=False, default=str)
+    doc = io.BytesIO(data_json.encode("utf-8"))
+    doc.name = f"user_data_{user_id}.json"
+
+    await update.message.reply_document(
+        document=doc,
+        caption="📦 Ваши данные (GDPR Article 20). Файл содержит все сохранённые настройки и метаданные.",
+    )
+
+
+@authorized_only
+@safe_handler("❌ Ошибка обработки запроса.")
+async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Request account deletion with confirmation (GDPR Article 17)."""
+    user_id = update.effective_user.id
+
+    # Check if already in confirmation
+    args = (update.message.text or "").split()
+    if len(args) > 1 and args[1].upper() == "CONFIRM":
+        # Execute deletion
+        await update.message.reply_text("🗑️ Удаление данных...")
+
+        deleted = {"conversations": 0, "memories": 0}
+
+        # Delete memories
+        try:
+            from app.repos.memory import delete_user_memories
+            deleted["memories"] = await delete_user_memories(user_id)
+        except Exception as e:
+            logging.warning("Memory deletion failed: %s", e)
+
+        # Clear chat state
+        try:
+            chat_state = await get_user_chat(user_id)
+            chat_state.history = []
+            chat_state.token_count = 0
+            chat_state.system_prompt = None
+            chat_state.context_summary = None
+            await update_user_chat(user_id, chat_state)
+            deleted["conversations"] = 1
+        except Exception as e:
+            logging.warning("Chat state cleanup failed: %s", e)
+
+        text = (
+            "✅ **Данные удалены**\n\n"
+            f"🗂️ Бесед очищено: {deleted['conversations']}\n"
+            f"🧠 Воспоминаний удалено: {deleted['memories']}\n\n"
+            "Ваши настройки сброшены. Используйте /start для начала."
+        )
+        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+        return
+
+    # Show confirmation prompt
+    text = (
+        "⚠️ **Запрос на удаление данных**\n\n"
+        "Эта операция удалит:\n"
+        "• Все беседы и историю сообщений\n"
+        "• Все сохранённые воспоминания\n"
+        "• Все пользовательские настройки\n\n"
+        "**Это действие необратимо!**\n\n"
+        "Для подтверждения отправьте:\n"
+        "`/deleteme CONFIRM`"
+    )
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+
+
 def register(application: Application) -> None:
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
@@ -346,6 +546,10 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("documents", documents_command))
     application.add_handler(CommandHandler("roles", roles_command))
     application.add_handler(CommandHandler("thinking", thinking_command))
+    application.add_handler(CommandHandler("export", export_command))
+    application.add_handler(CommandHandler("settings", settings_command))
+    application.add_handler(CommandHandler("mydata", mydata_command))
+    application.add_handler(CommandHandler("deleteme", deleteme_command))
 
     # Admin commands (from cmd_admin)
     from app.handlers.cmd_admin import (

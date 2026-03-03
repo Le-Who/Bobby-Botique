@@ -23,5 +23,10 @@ def test_heavy_callback_semaphore_present_and_used():
 def test_heavy_message_semaphore_present_and_used():
     source = Path("app/handlers/messages.py").read_text(encoding="utf-8")
     assert "_HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore" in source
-    # regular long request path + media-group heavy path
-    assert source.count("async with _HEAVY_REQUEST_SEMAPHORE") >= 2
+    # regular long request path (messages.py) + media-group heavy path (msg_media.py)
+    media_source = Path("app/handlers/msg_media.py").read_text(encoding="utf-8")
+    combined_count = (
+        source.count("async with _HEAVY_REQUEST_SEMAPHORE")
+        + media_source.count("async with _HEAVY_REQUEST_SEMAPHORE")
+    )
+    assert combined_count >= 2

@@ -7,6 +7,8 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app import prompts
+from app.ai_provider import GeminiProvider, is_openrouter_model
+from app.config import settings
 from app.database import ChatState
 from app.handlers.ai_core import (
     _get_ai_response_with_routing,
@@ -14,6 +16,7 @@ from app.handlers.ai_core import (
     handle_ai_response_error,
 )
 from app.repos.chats import update_user_chat
+from app.utils.formatting import TelegramFormatter
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_CHAT, update_stage
 
@@ -87,6 +90,33 @@ async def _handle_regular_chat(
     chat_state.history = assembled.history
     chat_state.context_summary = assembled.summary
 
+    # ── Inject long-term memories (semantic recall) ──────────────────────
+    try:
+        from app.repos.memory import search_memories
+
+        key_data_for_mem, _, _ = await _resolve_ai_request(model_used)
+        if key_data_for_mem and user_message and len(user_message) > 15:
+            memories = await search_memories(
+                user_id, user_message, key_data_for_mem["api_key"],
+                limit=3, min_similarity=0.55,
+            )
+            if memories:
+                mem_texts = [m["content"][:300] for m in memories]
+                mem_block = "\n".join(f"- {t}" for t in mem_texts)
+                # Insert as context preamble (user/model pair for role alternation)
+                memory_msg = {
+                    "role": "user",
+                    "parts": [f"[Релевантные воспоминания из прошлых бесед]\n{mem_block}"],
+                }
+                ack_msg = {
+                    "role": "model",
+                    "parts": ["Учитываю контекст из прошлых бесед."],
+                }
+                chat_state.history = [memory_msg, ack_msg] + chat_state.history
+                logging.info("Injected %d memories for user %s", len(memories), user_id)
+    except Exception as mem_err:
+        logging.debug("Memory recall skipped: %s", mem_err)
+
     if assembled.was_truncated:
         logging.info(
             "Context trimmed for user %s: dropped %d msgs, audit=%s, llm_scheduled=%s",
@@ -131,31 +161,83 @@ async def _handle_regular_chat(
             f"🧠 Модель {model_used} думает..."
         )
 
-    # Используем обертку с ротацией keyей и health-scoring
-    response_text, new_token_count = await _get_ai_response_with_routing(
-        model_used,
-        chat_state.history,
-        system_instruction=system_instruction,
-        user_id=user_id,
-        chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
-        thinking_level=chat_state.thinking_level,
-    )
+    # ── Try streaming for Gemini models first ────────────────────────────
+    response_text = None
+    new_token_count = 0
+    streamed = False
+
+    if not is_openrouter_model(model_used):
+        try:
+            from google.genai import types as genai_types
+
+            from app.ai_provider import _build_thinking_config
+            from app.streaming import stream_and_display
+
+            # Resolve an API key for streaming
+            key_data, _, _ = await _resolve_ai_request(model_used)
+            if key_data:
+                # Build contents using GeminiProvider helper
+                provider = GeminiProvider(key_data["api_key"])
+                contents = await provider._build_contents(chat_state.history)
+
+                if contents:
+                    config = genai_types.GenerateContentConfig(
+                        safety_settings=settings.SAFETY_SETTINGS
+                    )
+                    tc = _build_thinking_config(model_used, chat_state.thinking_level)
+                    if tc:
+                        config.thinking_config = tc
+                    if system_instruction:
+                        try:
+                            config.system_instruction = str(system_instruction)
+                        except (TypeError, ValueError):
+                            pass
+
+                    response_text, success = await stream_and_display(
+                        placeholder_message,
+                        key_data["api_key"],
+                        model_used,
+                        contents,
+                        config,
+                    )
+                    if success and response_text:
+                        streamed = True
+                        # Count tokens
+                        from app.prompt_registry import estimate_tokens_cyrillic
+                        new_token_count = estimate_tokens_cyrillic(response_text)
+                        # Increment key usage
+                        from app.handlers.ai_core import _increment_key_usage
+                        await _increment_key_usage(key_data["key_hash"], model_used)
+                    else:
+                        response_text = None  # Fall through to non-streaming
+        except Exception as e:
+            logging.warning("Streaming failed, falling back to non-streaming: %s", e)
+            response_text = None
+
+    # ── Fallback to non-streaming (OpenRouter or stream failure) ─────────
+    if not streamed:
+        response_text, new_token_count = await _get_ai_response_with_routing(
+            model_used,
+            chat_state.history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
+            thinking_level=chat_state.thinking_level,
+        )
 
     if response_text:
-        # Check, является ли response ошибкой
+        # Check if response is an error
         from app.errors import build_retry_and_roles_keyboard
 
-        # Используем универсальную функцию обработки ошибок
         async def cleanup_on_error() -> None:
-            chat_state.history.pop()  # Убираем добавленный промпт
+            chat_state.history.pop()
             await update_user_chat(user_id, chat_state)
 
         if await handle_ai_response_error(
             response_text, placeholder_message, on_error_callback=cleanup_on_error
         ):
-            return  # Error обработана, выходим
+            return
         else:
-            # Успешный response - добавляем в history и показываем обычные buttons
             buttons = [
                 [
                     InlineKeyboardButton(
@@ -178,30 +260,88 @@ async def _handle_regular_chat(
             ]
             reply_markup = InlineKeyboardMarkup(buttons)
 
-            try:
-                await send_long_message(
-                    placeholder_message, response_text, reply_markup=reply_markup
-                )
-            except Exception as send_err:
-                logging.warning(
-                    f"send_long_message failed, fallback to reply_text: {send_err}"
-                )
+            if not streamed:
+                # Non-streaming: send_long_message as before
                 try:
-                    from app.utils.formatting import TelegramFormatter
-
+                    await send_long_message(
+                        placeholder_message, response_text, reply_markup=reply_markup
+                    )
+                except Exception as send_err:
+                    logging.warning(
+                        f"send_long_message failed, fallback to reply_text: {send_err}"
+                    )
+                    try:
+                        formatted_text, parse_mode = TelegramFormatter.format_text(
+                            response_text
+                        )
+                        await placeholder_message.reply_text(
+                            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
+                        )
+                    except Exception:
+                        await placeholder_message.reply_text(
+                            response_text, reply_markup=reply_markup
+                        )
+            else:
+                # Streaming: message is already displayed, just add buttons
+                try:
                     formatted_text, parse_mode = TelegramFormatter.format_text(
                         response_text
                     )
-                    await placeholder_message.reply_text(
+                    await placeholder_message.edit_text(
                         formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
                     )
-                except Exception:
-                    await placeholder_message.reply_text(
-                        response_text, reply_markup=reply_markup
-                    )
+                except Exception as e:
+                    if "not modified" not in str(e).lower():
+                        logging.warning("Final edit with buttons failed: %s", e)
+
             chat_state.history.append({"role": "model", "parts": [response_text]})
             chat_state.token_count = new_token_count
             await update_user_chat(user_id, chat_state)
+
+            # ── Store exchange as memory (background, non-blocking) ──────
+            try:
+                key_data_for_store, _, _ = await _resolve_ai_request(model_used)
+                if key_data_for_store and len(user_message) > 30:
+                    import asyncio
+
+                    from app.repos.memory import store_memory
+
+                    exchange = f"Q: {user_message[:500]}\nA: {response_text[:500]}"
+
+                    async def _bg_store():
+                        try:
+                            await store_memory(
+                                user_id, exchange, key_data_for_store["api_key"],
+                                source_type="conversation",
+                            )
+                        except Exception:
+                            pass
+
+                    asyncio.get_event_loop().create_task(_bg_store())
+            except Exception:
+                pass
+
+            # ── Model suggestion (non-intrusive hint) ────────────────────
+            try:
+                from app.model_selector import select_model
+
+                suggestion = select_model(
+                    user_message, current_model=model_used,
+                )
+                if suggestion and suggestion.confidence >= 0.6:
+                    hint_keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(
+                            f"⚡ Попробовать {suggestion.model}",
+                            callback_data=f"switch_model:{suggestion.model}",
+                        )],
+                    ])
+                    await placeholder_message.reply_text(
+                        f"💡 _{suggestion.reason}_",
+                        parse_mode="Markdown",
+                        reply_markup=hint_keyboard,
+                    )
+            except Exception:
+                pass  # Non-critical
     else:
         chat_state.history.pop()
         await update_user_chat(user_id, chat_state)

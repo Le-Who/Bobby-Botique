@@ -6,11 +6,11 @@ import sys
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
-import logging
 import asyncio
+import logging
 import signal
-import time
 import threading
+import time
 
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
@@ -34,18 +34,19 @@ async def global_error_handler(
             pass
 
 
-from hypercorn.config import Config as HypercornConfig
 from hypercorn.asyncio import serve
+from hypercorn.config import Config as HypercornConfig
+
+from app import database
 
 # Import custom modules
 from app.config import settings
-from app import database
-from app.handlers import commands, messages, callbacks
+from app.group_chat import initialize_group_chats
+from app.handlers import callbacks, commands, messages
 from app.handlers.callbacks import new_topic_callback
 from app.metrics import metrics_collector
-from app.utils.logging_config import setup_detailed_logging
 from app.queue import start_task_queue, stop_task_queue
-from app.group_chat import initialize_group_chats
+from app.utils.logging_config import setup_detailed_logging
 
 # Import extracted modules
 from app.web import flask_app
@@ -206,20 +207,46 @@ async def run_bot_with_retry():
         await application.initialize()
         await application.start()
 
-        # Start polling with built-in resilience
-        await application.updater.start_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
-            timeout=30,
-        )
+        # Choose polling or webhook based on WEBHOOK_URL
+        webhook_url = os.environ.get("WEBHOOK_URL", "").strip()
 
-        logging.info("Bot started successfully and polling")
+        if webhook_url:
+            # ── Webhook mode ─────────────────────────────────────────────
+            webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
+            full_url = f"{webhook_url.rstrip('/')}{webhook_path}"
+
+            # Register webhook route on Quart app
+            @flask_app.route(webhook_path, methods=["POST"])
+            async def webhook_handler():
+                from quart import request as quart_request
+                json_data = await quart_request.get_json()
+                update_obj = Update.de_json(json_data, application.bot)
+                await application.process_update(update_obj)
+                return "", 200
+
+            await application.bot.set_webhook(
+                url=full_url,
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+            )
+            logging.info("Bot started in WEBHOOK mode: %s", full_url)
+        else:
+            # ── Long-polling mode ────────────────────────────────────────
+            await application.updater.start_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                timeout=30,
+            )
+            logging.info("Bot started in POLLING mode")
 
         # Wait for shutdown event
         await shutdown_event.wait()
 
         logging.info("Stopping bot...")
-        await application.updater.stop()
+        if webhook_url:
+            await application.bot.delete_webhook()
+        else:
+            await application.updater.stop()
         await application.stop()
         logging.info("Bot stopped.")
 
@@ -375,7 +402,7 @@ async def startup_health_check():
                 raise Exception(f"Telegram API HTTP error: {response.status_code}")
     except Exception as e:
         logging.error(f"✗ Telegram API check failed: {e}")
-        raise Exception(f"Telegram API health check failed: {e}")
+        raise Exception(f"Telegram API health check failed: {e}") from e
 
     if await database.check_database_health():
         try:
