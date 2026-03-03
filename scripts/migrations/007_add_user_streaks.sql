@@ -10,7 +10,7 @@ ALTER TABLE user_metrics
 CREATE INDEX IF NOT EXISTS idx_user_metrics_date
     ON user_metrics (metric_date);
 
--- Partial index for "active today" fast-path
-CREATE INDEX IF NOT EXISTS idx_user_metrics_today_active
-    ON user_metrics (user_id)
-    WHERE metric_date = CURRENT_DATE AND request_count > 0;
+-- Composite index for "active on date" queries (replaces broken CURRENT_DATE partial index)
+CREATE INDEX IF NOT EXISTS idx_user_metrics_date_user
+    ON user_metrics (metric_date, user_id)
+    WHERE request_count > 0;
