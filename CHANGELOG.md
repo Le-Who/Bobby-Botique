@@ -5,7 +5,49 @@ Format is optimized for agent-parseable context.
 
 ---
 
-## [2.8.3] – 2026-03-03 – Streaming Stability Fixes
+## [2.8.4] – 2026-03-03 – Full AI Logic Audit
+
+### 🔍 Comprehensive Handler & Repos Audit
+
+Systematic audit of all AI handlers, callbacks, streaming, repos, security, state, and document processing layers. **18 fixes across 10 files**, 5 commits.
+
+#### Handler & Streaming Fixes
+
+- **Heartbeat race conditions**: Added `stop_heartbeat()` before streaming loops in `ai_photo.py`, `ai_search.py`, `ai_document.py`
+- **Assembler `None` handling**: Fixed double user message in `assembler.py` when `user_message=""` passed from search handler
+- **Error sanitization**: Replaced `str(e)` leaks with generic messages in `ai_document.py`, `streaming.py`, `cb_roles.py` (×2), `msg_document.py` (×2)
+
+#### Callback Concurrency & Safety
+
+- **Retry race condition**: Added semaphore + user lock to `retry_last_callback` in `callbacks.py`
+- **Callback parsing**: Changed `split(":")` → `split(":", 2)` in `fallback_callback` to handle model names with colons
+- **Exception handling**: Wrapped background task wrappers in try/except to prevent silent exception swallowing
+- **Duplicate DB write**: Removed redundant `update_user_chat` call in `role_apply_callback`
+
+#### Database & Performance
+
+- **Transaction isolation bug**: `switch_to_conversation` called `get_conversation_messages` and `db_execute_many` outside the transaction connection — now passes `conn=conn`
+- **N+1 query**: `migrate_invalid_models` replaced per-user UPDATE loop with 2 batch `UPDATE ... WHERE user_id = ANY($2)` statements
+
+### Files Changed
+
+| File                           | Changes                                         |
+| ------------------------------ | ----------------------------------------------- |
+| `app/handlers/ai_chat.py`      | `stop_heartbeat`, empty-history guard           |
+| `app/handlers/ai_search.py`    | `stop_heartbeat`, `None` user_message           |
+| `app/handlers/ai_photo.py`     | `stop_heartbeat`                                |
+| `app/handlers/ai_document.py`  | `stop_heartbeat`, sanitize `str(e)`             |
+| `app/handlers/callbacks.py`    | Semaphore/lock, safe split, exception handling  |
+| `app/handlers/cb_roles.py`     | Sanitize `str(e)` ×2, remove duplicate DB write |
+| `app/handlers/msg_document.py` | Sanitize `str(e)` and `result['error']`         |
+| `app/streaming.py`             | Sanitize error messages                         |
+| `app/context/assembler.py`     | Skip `None` user message                        |
+| `app/repos/conversations.py`   | Transaction isolation fix (`conn` param)        |
+| `app/repos/chats.py`           | Batch N+1 migration                             |
+
+### 🧪 Tests: 619 passed, 0 failures
+
+---
 
 ### 🔴 Fix: `ValueError: history must be a non-empty list` after 503 failures
 
