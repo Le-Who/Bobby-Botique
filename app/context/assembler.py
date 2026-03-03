@@ -281,9 +281,9 @@ class ContextAssembler:
         # Add trimmed history
         context.extend(trimmed_history)
 
-        # Add current user message
-        if user_message:
-            context.append({"role": "user", "parts": [user_message]})
+        # Add current user message (always append to guarantee non-empty history)
+        msg_text = user_message.strip() if user_message else ""
+        context.append({"role": "user", "parts": [msg_text or "..."]})
 
         # Validate role alternation
         context = self._fix_role_alternation(context)

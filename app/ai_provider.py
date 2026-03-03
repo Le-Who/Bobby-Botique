@@ -130,8 +130,18 @@ class BaseAIProvider(ABC):
         Returns:
             AIResponse with text and metadata
         """
-        # Validate inputs
-        self._validate_inputs(history, model_name, user_id, chat_id)
+        # Validate inputs — returns error string on failure, None on success
+        validation_error = self._validate_inputs(history, model_name, user_id, chat_id)
+        if validation_error:
+            logging.error("Input validation failed: %s", validation_error)
+            return AIResponse(
+                text=f"❌ {validation_error}",
+                token_count=0,
+                success=False,
+                error_message=validation_error,
+                provider=self.provider_name,
+                model=model_name or "unknown",
+            )
 
         policy = ResiliencePolicy(max_retries=max_retries, timeout_s=timeout)
         last_error = None
@@ -174,19 +184,25 @@ class BaseAIProvider(ABC):
         model_name: str,
         user_id: int | None,
         chat_id: int | None,
-    ) -> None:
-        """Validate common input parameters."""
+    ) -> str | None:
+        """Validate common input parameters.
+
+        Returns:
+            None if valid, or an error message string if invalid.
+        """
         if not isinstance(history, list) or not history:
-            raise ValueError("history must be a non-empty list")
+            return "history must be a non-empty list"
 
         if not isinstance(model_name, str) or not model_name.strip():
-            raise ValueError("model_name must be a non-empty string")
+            return "model_name must be a non-empty string"
 
         if user_id is not None and not isinstance(user_id, int):
-            raise ValueError("user_id must be an integer")
+            return "user_id must be an integer"
 
         if chat_id is not None and not isinstance(chat_id, int):
-            raise ValueError("chat_id must be an integer")
+            return "chat_id must be an integer"
+
+        return None
 
     def _is_transient_error(self, error_text: str) -> bool:
         """Check if error is transient and can be retried."""

@@ -101,7 +101,7 @@ class TestBaseAIProvider:
             TestProvider("   ")
 
     def test_validate_inputs_empty_history(self):
-        """Should raise ValueError for empty history."""
+        """Should return error string for empty history (no longer raises)."""
 
         class TestProvider(BaseAIProvider):
             provider_name = "test"
@@ -110,11 +110,11 @@ class TestBaseAIProvider:
                 pass
 
         provider = TestProvider("key")
-        with pytest.raises(ValueError, match="history must be a non-empty list"):
-            provider._validate_inputs([], "model", None, None)
+        result = provider._validate_inputs([], "model", None, None)
+        assert result == "history must be a non-empty list"
 
     def test_validate_inputs_invalid_model(self):
-        """Should raise ValueError for invalid model name."""
+        """Should return error string for invalid model name."""
 
         class TestProvider(BaseAIProvider):
             provider_name = "test"
@@ -123,10 +123,10 @@ class TestBaseAIProvider:
                 pass
 
         provider = TestProvider("key")
-        with pytest.raises(ValueError, match="model_name must be a non-empty string"):
-            provider._validate_inputs(
-                [{"role": "user", "parts": ["hi"]}], "", None, None
-            )
+        result = provider._validate_inputs(
+            [{"role": "user", "parts": ["hi"]}], "", None, None
+        )
+        assert result == "model_name must be a non-empty string"
 
     def test_is_transient_error(self):
         """Should correctly identify transient errors."""

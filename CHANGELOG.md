@@ -5,6 +5,39 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.3] – 2026-03-03 – Streaming Stability Fixes
+
+### 🔴 Fix: `ValueError: history must be a non-empty list` after 503 failures
+
+**Root cause**: When all streaming attempts failed (503 UNAVAILABLE × 3), the non-streaming fallback received an empty `chat_state.history`. The assembler's `_build_final_history` skipped appending the user message when it was falsy (`if user_message:`), and `_validate_inputs` raised an unhandled `ValueError`.
+
+**Three-layer fix**:
+
+| Layer               | File                       | Change                                                                  |
+| ------------------- | -------------------------- | ----------------------------------------------------------------------- |
+| Root cause          | `app/context/assembler.py` | Always append user message (fallback to `"..."` if empty)               |
+| Graceful validation | `app/ai_provider.py`       | `_validate_inputs` returns error string instead of raising `ValueError` |
+| Defensive guard     | `app/handlers/ai_chat.py`  | Check for empty history before non-streaming fallback, show retry UI    |
+
+### 🔴 Fix: Heartbeat overwrites streaming content
+
+**Root cause**: The heartbeat (`⏳ Обрабатываю ваш запрос...` at 15/30/50s intervals) was never stopped before `stream_and_display` began editing the same placeholder message. When streaming attempt 1 failed fast (~2s) and attempt 2 took ~74s, the heartbeat overwrote the stage indicator mid-retry.
+
+**Fix**: `stop_heartbeat(placeholder_message.message_id)` called before entering the streaming retry loop.
+
+### Files Changed
+
+| File                        | Change                                                  |
+| --------------------------- | ------------------------------------------------------- | ------------------------ |
+| `app/context/assembler.py`  | `_build_final_history`: always append user message      |
+| `app/ai_provider.py`        | `_validate_inputs` → returns `str                       | None` instead of raising |
+| `app/handlers/ai_chat.py`   | Empty-history guard + `stop_heartbeat` before streaming |
+| `tests/test_ai_provider.py` | Updated validation tests for new return-value API       |
+
+### 🧪 Tests (93 passed, 0 failures)
+
+---
+
 ## [2.8.2] – 2026-03-03 – Streaming Resilience, Embedding Upgrade & Model Selector Fix
 
 ### ✨ Continuous Multi-Message Streaming

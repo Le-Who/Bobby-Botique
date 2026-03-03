@@ -169,6 +169,10 @@ async def _handle_regular_chat(
     MAX_STREAM_RETRIES = 3
 
     if not is_openrouter_model(model_used):
+        # Stop the heartbeat before streaming — streaming edits the same
+        # placeholder message, so the heartbeat would race with it.
+        from app.utils.heartbeat import stop_heartbeat
+        stop_heartbeat(placeholder_message.message_id)
         from google.genai import types as genai_types
 
         from app.ai_provider import _build_thinking_config
@@ -240,6 +244,22 @@ async def _handle_regular_chat(
 
     # ── Fallback to non-streaming (OpenRouter or stream failure) ─────────
     if not streamed:
+        # Guard: ensure history is non-empty before calling the provider
+        if not chat_state.history:
+            logging.error(
+                "Empty history for user %s after streaming failure — cannot call non-streaming fallback",
+                user_id,
+            )
+            try:
+                from app.errors import build_retry_and_roles_keyboard
+                await placeholder_message.edit_text(
+                    "❌ Произошла ошибка при формировании запроса. Попробуйте ещё раз.",
+                    reply_markup=build_retry_and_roles_keyboard(),
+                )
+            except Exception as edit_error:
+                logging.error("Could not edit placeholder message: %s", edit_error)
+            return
+
         response_text, new_token_count = await _get_ai_response_with_routing(
             model_used,
             chat_state.history,
