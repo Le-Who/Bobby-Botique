@@ -6,6 +6,11 @@ Analyzes user input characteristics to recommend the optimal model:
 - Complex reasoning → thinking models (e.g. gemini-2.5-pro)
 - Image analysis → multimodal models
 - Code tasks → code-optimized models
+
+Design rules:
+- NEVER suggest a downgrade (e.g. flash → flash-lite).
+- Only suggest upgrades or lateral moves to a better-fit model.
+- Suggestions should be non-intrusive hints, not commands.
 """
 
 import logging
@@ -21,6 +26,34 @@ class SelectionResult:
     model: str
     reason: str
     confidence: float  # 0.0 - 1.0
+
+
+# ── Model tier ranking (higher = more capable) ──────────────────────────────
+
+# Order matters: first match wins within _find_model.
+# Models are ranked roughly by capability tier.
+_MODEL_TIER = {
+    "pro": 4,          # gemini-2.5-pro
+    "2.5-flash": 3,    # gemini-2.5-flash (thinking-capable)
+    "3-flash": 3,      # gemini-3-flash-preview
+    "flash-latest": 2, # gemini-flash-latest (2.0 flash alias)
+    "flash-lite": 1,   # gemini-2.5-flash-lite / flash-lite-latest
+}
+
+
+def _get_tier(model_name: str) -> int:
+    """Get capability tier for a model. Higher = more capable."""
+    name = model_name.lower()
+    # Check from most specific to least specific
+    if "flash-lite" in name:
+        return 1
+    if "pro" in name:
+        return 4
+    if "2.5-flash" in name or "3-flash" in name:
+        return 3
+    if "flash" in name:
+        return 2
+    return 2  # Unknown models get middle tier
 
 
 # ── Heuristics ───────────────────────────────────────────────────────────────
@@ -63,28 +96,19 @@ def select_model(
     """Analyze message and suggest an optimal model.
 
     Returns None if the current model is already suitable (no change needed).
-    Only suggests changes when there's a clear mismatch.
+    Only suggests UPGRADES — never downgrades to a weaker model.
     """
-    available = set(settings.AVAILABLE_MODELS or [])
+    available = list(settings.AVAILABLE_MODELS or [])
     if not available:
         return None
 
+    current_tier = _get_tier(current_model) if current_model else 0
     msg_len = len(user_message)
-
-    # ── Short / trivial messages → fast model ────────────────────────────
-    if _SIMPLE_PATTERNS.match(user_message) or msg_len < 20:
-        fast_model = _find_model(available, ["flash", "2.0-flash"])
-        if fast_model and current_model != fast_model:
-            return SelectionResult(
-                model=fast_model,
-                reason="Короткий запрос — используем быструю модель",
-                confidence=0.7,
-            )
 
     # ── Code tasks → best available model ────────────────────────────────
     if _CODE_PATTERNS.search(user_message):
-        code_model = _find_model(available, ["2.5-pro", "pro", "2.5-flash"])
-        if code_model and current_model != code_model:
+        code_model = _find_model(available, ["2.5-pro", "pro"])
+        if code_model and code_model != current_model and _get_tier(code_model) > current_tier:
             return SelectionResult(
                 model=code_model,
                 reason="Задача с кодом — используем мощную модель",
@@ -93,20 +117,29 @@ def select_model(
 
     # ── Deep reasoning → thinking model ──────────────────────────────────
     if _REASONING_PATTERNS.search(user_message) or msg_len > 1000:
-        reasoning_model = _find_model(available, ["2.5-pro", "2.5-flash", "pro"])
-        if reasoning_model and current_model != reasoning_model:
+        reasoning_model = _find_model(available, ["2.5-pro", "pro", "2.5-flash", "3-flash"])
+        if reasoning_model and reasoning_model != current_model and _get_tier(reasoning_model) > current_tier:
             return SelectionResult(
                 model=reasoning_model,
                 reason="Сложный аналитический запрос — используем продвинутую модель",
                 confidence=0.5,
             )
 
+    # ── Short / trivial messages: NO suggestion
+    # Rationale: suggesting a downgrade (flash → flash-lite) hurts quality.
+    # Suggesting the same tier (flash → flash) is pointless.
+    # Short messages are fast on any model — no need to switch.
+
     # No strong signal — keep current model
     return None
 
 
-def _find_model(available: set, preferences: list[str]) -> str | None:
-    """Find the first preferred model that's available."""
+def _find_model(available: list, preferences: list[str]) -> str | None:
+    """Find the first preferred model that's available.
+
+    Uses a list (not set) to preserve ordering.
+    Checks preferences in priority order, then available models in config order.
+    """
     for pref in preferences:
         for model in available:
             if pref in model.lower():

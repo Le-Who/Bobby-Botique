@@ -17,7 +17,8 @@ import pytest
 class TestModelSelector:
     """Tests for app.model_selector."""
 
-    def test_simple_message_suggests_flash(self):
+    def test_simple_message_no_downgrade(self):
+        """Simple messages should NOT suggest a downgrade (e.g. pro → flash)."""
         from app.model_selector import select_model
 
         with patch("app.model_selector.settings") as mock_settings:
@@ -26,9 +27,8 @@ class TestModelSelector:
                 "gemini-2.5-pro",
             ]
             result = select_model("Привет!", current_model="gemini-2.5-pro")
-            assert result is not None
-            assert "flash" in result.model.lower()
-            assert result.confidence > 0
+            # No downgrade suggestion — pro → flash is a downgrade
+            assert result is None
 
     def test_code_message_suggests_pro(self):
         from app.model_selector import select_model
