@@ -1,28 +1,40 @@
+"""
+Document processor — orchestration layer for document upload and processing.
+
+The heavy lifting is delegated to submodules:
+- ``app.documents.parsers``:    sync file I/O and hashing
+- ``app.documents.repository``: async database CRUD and stats
+
+This file keeps the ``DocumentProcessor`` class (orchestrator + PDF/DOCX
+parsing), the singleton instance, and backward-compatible facade functions.
+"""
+
 import asyncio
-import hashlib
 import logging
 import tempfile
 from pathlib import Path
 from typing import Any
 
-import asyncpg
 import httpx
 import pypdf
 
-from app import database
-
-# PyMuPDF removed for free tier optimization
-from app.config import settings
 from app.metrics import metrics_collector
-from app.repos.users import is_admin
 from app.utils.network import NetworkErrorHandler
 
-# Maximum characters to extract from a document to prevent OOM and performance issues
-MAX_DOCUMENT_TEXT_LENGTH = 100000
+# Submodule imports
+from app.documents.parsers import (
+    MAX_DOCUMENT_TEXT_LENGTH,  # noqa: F401 — re-exported
+    calculate_file_hash_sync,
+)
+from app.documents.repository import (
+    check_document_limit,
+    check_duplicate_file,
+    cleanup_oldest_documents,
+    save_document_content,
+)
 
-# Check поддержку documentов
+# Check document support
 try:
-    # PyMuPDF removed for free tier optimization
     DOCUMENT_SUPPORT = True
 except ImportError:
     DOCUMENT_SUPPORT = False
@@ -32,107 +44,22 @@ except ImportError:
 
 
 class DocumentProcessor:
-    """Процессор для обработки документов"""
+    """Orchestrates document upload, validation, parsing, and persistence."""
 
     def __init__(self):
         self.supported_formats = [".pdf", ".docx", ".doc"]
-        # Optimized for free tier resource constraints
         self.max_file_size = 10 * 1024 * 1024  # 10MB for free tier
-        self.max_pages = 50  # Reduced page limit for performance
-
-    def _write_temp_file_sync(self, file_data: bytes, suffix: str) -> str:
-        """Synchronously write data to a temp file and return path.
-        This should be run in a separate thread to avoid blocking the event loop.
-        """
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-            temp_file.write(file_data)
-            return temp_file.name
-
-    @staticmethod
-    def _calculate_file_hash_sync(file_path_or_data: str | bytes) -> str:
-        """Вычисляет SHA-256 хэш файла (потоково, если это путь)"""
-        if isinstance(file_path_or_data, bytes):
-            return hashlib.sha256(file_path_or_data).hexdigest()
-
-        h = hashlib.sha256()
-        with open(file_path_or_data, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                h.update(chunk)
-        return h.hexdigest()
-
-    async def _check_duplicate_file(
-        self, user_id: int, file_hash: str, filename: str
-    ) -> dict[str, Any] | None:
-        """Проверяет, есть ли уже такой файл у пользователя"""
-        try:
-            result = await database.db_query(
-                "SELECT id, filename, created_at FROM user_documents WHERE user_id = $1 AND file_hash = $2",
-                (user_id, file_hash),
-            )
-            if result:
-                return {
-                    "id": result[0]["id"],
-                    "filename": result[0]["filename"],
-                    "created_at": result[0]["created_at"],
-                }
-            return None
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error checking duplicate file: %s", e, exc_info=True)
-            return None
-
-    async def _check_document_limit(self, user_id: int) -> bool:
-        """Проверяет, не превышен ли лимит документов для пользователя"""
-        try:
-            result = await database.db_query(
-                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
-                (user_id,),
-            )
-            doc_count = result[0]["doc_count"] if result else 0
-            return doc_count < settings.MAX_DOCUMENTS_PER_USER
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error checking document limit: %s", e, exc_info=True)
-            return True  # В случае ошибки разрешаем загрузку
-
-    async def _cleanup_oldest_documents(self, user_id: int, keep_count: int = 4) -> int:
-        """Удаляет старые документы пользователя, оставляя указанное количество"""
-        try:
-            # Оптимfromировано: удаляем old documents одним requestом с подrequestом
-            result = await database.db_query(
-                """
-                DELETE FROM user_documents
-                WHERE id IN (
-                    SELECT id FROM user_documents
-                    WHERE user_id = $1
-                    ORDER BY created_at ASC
-                    OFFSET $2
-                )
-                RETURNING id
-            """,
-                (user_id, keep_count),
-            )
-
-            if not result:
-                return 0
-
-            deleted_count = len(result)
-            logging.info(
-                f"Cleaned up {deleted_count} oldest documents for user {user_id}"
-            )
-            return deleted_count
-
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error cleaning up oldest documents: %s", e, exc_info=True)
-            return 0
+        self.max_pages = 50
 
     async def process_document(
         self, file_data, filename: str, user_id: int, is_path: bool = False
     ) -> dict[str, Any]:
-        """Обрабатывает документ и возвращает извлеченный текст. file_data может быть путем (str) или bytes"""
+        """Process a document and return extracted text."""
         if not DOCUMENT_SUPPORT:
             return {"error": "Document processing is not available"}
 
         try:
-            # Check размер fileа
+            # Check file size
             if is_path:
                 import os
 
@@ -145,35 +72,29 @@ class DocumentProcessor:
                     "error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"
                 }
 
-            # Определяем тип fileа
             file_ext = Path(filename).suffix.lower()
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-            # Check limit documentов
-            if not await self._check_document_limit(user_id):
-                # If limit превышен, удаляем самый old document
-                await self._cleanup_oldest_documents(user_id, 4)
+            # Check document limit
+            if not await check_document_limit(user_id):
+                await cleanup_oldest_documents(user_id, 4)
                 logging.info(
-                    f"Document limit exceeded for user {user_id}, removed oldest document"
+                    "Document limit exceeded for user %s, removed oldest document", user_id
                 )
 
-            # Вычисляем хэш fileа и проверяем дубликаты
-            # Offload hash calculation to executor to avoid blocking event loop
+            # Hash + duplicate check
             loop = asyncio.get_running_loop()
             file_hash = await loop.run_in_executor(
-                None, self._calculate_file_hash_sync, file_data
+                None, calculate_file_hash_sync, file_data
             )
-            duplicate = await self._check_duplicate_file(user_id, file_hash, filename)
+            duplicate = await check_duplicate_file(user_id, file_hash, filename)
 
             if duplicate:
-                # Правильно обрабатываем datetime
                 created_date = duplicate["created_at"]
                 if hasattr(created_date, "strftime"):
-                    # Это объект datetime
                     date_str = created_date.strftime("%Y-%m-%d")
                 else:
-                    # Это строка
                     date_str = str(created_date)[:10]
 
                 return {
@@ -182,7 +103,7 @@ class DocumentProcessor:
                     "duplicate_info": duplicate,
                 }
 
-            # Process document
+            # Dispatch to format-specific parser
             if file_ext == ".pdf":
                 return await self._process_pdf_unified(
                     file_data, filename, user_id, file_hash, is_path=is_path
@@ -202,12 +123,11 @@ class DocumentProcessor:
     async def process_document_force(
         self, file_data, filename: str, user_id: int, is_path: bool = False
     ) -> dict[str, Any]:
-        """Обрабатывает документ принудительно (игнорируя дубликаты)"""
+        """Process a document, ignoring duplicates."""
         if not DOCUMENT_SUPPORT:
             return {"error": "Document processing is not available"}
 
         try:
-            # Check размер fileа
             if is_path:
                 import os
 
@@ -220,19 +140,15 @@ class DocumentProcessor:
                     "error": f"File too large. Maximum size is {self.max_file_size // (1024 * 1024)}MB"
                 }
 
-            # Определяем тип fileа
             file_ext = Path(filename).suffix.lower()
             if file_ext not in self.supported_formats:
                 return {"error": f"Unsupported file format: {file_ext}"}
 
-            # Вычисляем хэш fileа (но не проверяем дубликаты)
-            # Offload hash calculation to executor to avoid blocking event loop
             loop = asyncio.get_running_loop()
             file_hash = await loop.run_in_executor(
-                None, self._calculate_file_hash_sync, file_data
+                None, calculate_file_hash_sync, file_data
             )
 
-            # Process document
             if file_ext == ".pdf":
                 return await self._process_pdf_unified(
                     file_data, filename, user_id, file_hash, is_path=is_path
@@ -249,31 +165,29 @@ class DocumentProcessor:
             await metrics_collector.record_error("document_processing", str(e))
             return {"error": f"Error processing document: {str(e)}"}
 
+    # ── PDF parsing ──────────────────────────────────────────────────────────
+
     async def _process_pdf_unified(
         self, file_data, filename: str, user_id: int, file_hash: str,
         is_path: bool = False
     ) -> dict[str, Any]:
-        """Обрабатывает PDF документ (bytes или path)."""
+        """Process a PDF document (bytes or path)."""
         try:
             if not is_path:
-                # Validate magic bytes
                 if not file_data.startswith(b"%PDF"):
                     logging.warning("Invalid PDF format for %s", filename)
                     return {"error": "Invalid PDF file format"}
 
             logging.info("Processing PDF %s with PyPDF2", filename)
 
-            # Prepare input for sync function
             if is_path:
-                sync_input = file_data  # str path
+                sync_input = file_data
             else:
-                import tempfile
                 stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b")
                 stream.write(file_data)
                 stream.seek(0)
                 sync_input = stream
 
-            # Run CPU-bound task in executor
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None, self._process_pdf_sync, sync_input, self.max_pages
@@ -285,8 +199,7 @@ class DocumentProcessor:
             full_text = result["content"]
             pages_count = result["pages"]
 
-            # Save в базу данных
-            await self._save_document_content(
+            await save_document_content(
                 user_id, filename, full_text, pages_count, file_hash
             )
 
@@ -304,13 +217,14 @@ class DocumentProcessor:
             await metrics_collector.record_error("pdf_processing", str(e))
             return {"error": f"Error processing PDF: {str(e)}"}
 
+    # ── Word parsing ─────────────────────────────────────────────────────────
+
     async def _process_word_unified(
         self, file_data, filename: str, user_id: int, file_hash: str,
         is_path: bool = False
     ) -> dict[str, Any]:
-        """Обрабатывает Word документ (bytes или path)."""
+        """Process a Word document (bytes or path)."""
         if not is_path:
-            # Validate magic bytes for ZIP (all .docx files are ZIPs)
             if not file_data.startswith(b"\x50\x4b\x03\x04"):
                 logging.warning("Invalid DOCX format for %s: Missing ZIP header", filename)
                 return {
@@ -319,299 +233,98 @@ class DocumentProcessor:
 
         try:
             if is_path:
-                sync_input = file_data  # str path
+                sync_input = file_data
             else:
-                import tempfile
                 stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b")
                 stream.write(file_data)
                 stream.seek(0)
                 sync_input = stream
 
-            # Offload CPU-bound task to executor
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, self._process_word_sync, sync_input)
 
             if "error" in result:
                 logging.error(
-                    f"Error processing Word document {filename}: {result['error']}"
+                    "Error processing Word document %s: %s", filename, result["error"]
                 )
                 return {"error": f"Error processing Word document: {result['error']}"}
 
             full_text = result["content"]
 
-            # Save в базу данных
-            await self._save_document_content(
+            await save_document_content(
                 user_id, filename, full_text, 1, file_hash
-            )  # Word documents count как 1 страницу
+            )
 
             result["filename"] = filename
             return result
 
         except (ValueError, UnicodeDecodeError, OSError) as e:
             logging.error(
-                f"Error processing Word document {filename}: {e}", exc_info=True
+                "Error processing Word document %s: %s", filename, e, exc_info=True
             )
             await metrics_collector.record_error("word_processing", str(e))
             return {"error": f"Error processing Word document: {str(e)}"}
 
-    async def _save_document_content(
-        self, user_id: int, filename: str, content: str, pages: int, file_hash: str
-    ):
-        """Сохраняет содержимое документа в базу данных"""
-        try:
-            # The table is created in database.py
+    # ── Delegated repository methods (backward compat) ───────────────────────
 
-            # NOTE: Schema migrations are now centralized in database.py
+    async def _check_duplicate_file(self, user_id, file_hash, filename):
+        return await check_duplicate_file(user_id, file_hash, filename)
 
-            # Save document
-            await database.db_query(
-                "INSERT INTO user_documents (user_id, filename, content, pages, file_size, file_hash) VALUES ($1, $2, $3, $4, $5, $6)",
-                (user_id, filename, content, pages, len(content), file_hash),
-            )
+    async def _check_document_limit(self, user_id):
+        return await check_document_limit(user_id)
 
-            logging.info("Saved document %s for user %s", filename, user_id)
+    async def _cleanup_oldest_documents(self, user_id, keep_count=4):
+        return await cleanup_oldest_documents(user_id, keep_count)
 
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error saving document to database: %s", e, exc_info=True)
+    async def _save_document_content(self, user_id, filename, content, pages, file_hash):
+        return await save_document_content(user_id, filename, content, pages, file_hash)
 
-    async def get_document_by_id(
-        self, document_id: int, user_id: int
-    ) -> dict[str, Any] | None:
-        """Получает документ по ID"""
-        try:
-            result = await database.db_query(
-                "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE id = $1 AND user_id = $2",
-                (document_id, user_id),
-            )
+    async def get_document_by_id(self, document_id, user_id):
+        from app.documents.repository import get_document_by_id
+        return await get_document_by_id(document_id, user_id)
 
-            if result:
-                row = result[0]
-                return {
-                    "id": row["id"],
-                    "filename": row["filename"],
-                    "pages": row["pages"],
-                    "created_at": row["created_at"].isoformat()
-                    if row["created_at"]
-                    else None,
-                    "file_size": row["file_size"],
-                    "file_hash": row["file_hash"],
-                }
-            return None
+    async def get_user_documents(self, user_id):
+        from app.documents.repository import get_user_documents
+        return await get_user_documents(user_id)
 
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting document by ID: %s", e, exc_info=True)
-            return None
+    async def get_document_content(self, document_id, user_id):
+        from app.documents.repository import get_document_content
+        return await get_document_content(document_id, user_id)
 
-    async def get_user_documents(self, user_id: int) -> list[dict[str, Any]]:
-        """Получает список документов пользователя"""
-        try:
-            # Устанавливаем context user for RLS
-            await database.set_user_context(user_id, is_admin(user_id))
+    async def delete_document(self, document_id, user_id):
+        from app.documents.repository import delete_document
+        return await delete_document(document_id, user_id)
 
-            try:
-                result = await database.db_query(
-                    "SELECT id, filename, pages, created_at, file_size, file_hash FROM user_documents WHERE user_id = $1 ORDER BY created_at DESC",
-                    (user_id,),
-                )
+    async def delete_all_user_documents(self, user_id):
+        from app.documents.repository import delete_all_user_documents
+        return await delete_all_user_documents(user_id)
 
-                return [
-                    {
-                        "id": row["id"],
-                        "filename": row["filename"],
-                        "pages": row["pages"],
-                        "created_at": row["created_at"].isoformat()
-                        if row["created_at"]
-                        else None,
-                        "file_size": row["file_size"],
-                        "file_hash": row["file_hash"],
-                    }
-                    for row in result
-                ]
-            finally:
-                # Clean up context user
-                await database.clear_user_context()
+    async def cleanup_old_documents(self, days_old=3):
+        from app.documents.repository import cleanup_old_documents
+        return await cleanup_old_documents(days_old)
 
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting user documents: %s", e, exc_info=True)
-            return []
+    async def get_document_stats(self):
+        from app.documents.repository import get_document_stats
+        return await get_document_stats()
 
-    async def get_document_content(
-        self, document_id: int, user_id: int
-    ) -> str | None:
-        """Получает содержимое документа"""
-        try:
-            # Устанавливаем context user for RLS
-            await database.set_user_context(user_id, is_admin(user_id))
-
-            try:
-                result = await database.db_query(
-                    "SELECT content FROM user_documents WHERE id = $1 AND user_id = $2",
-                    (document_id, user_id),
-                )
-
-                if result:
-                    return result[0]["content"]
-                return None
-            finally:
-                # Clean up context user
-                await database.clear_user_context()
-
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting document content: %s", e, exc_info=True)
-            return None
-
-    async def delete_document(self, document_id: int, user_id: int) -> bool:
-        """Удаляет документ"""
-        try:
-            await database.db_query(
-                "DELETE FROM user_documents WHERE id = $1 AND user_id = $2",
-                (document_id, user_id),
-            )
-            return True
-
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error deleting document: %s", e, exc_info=True)
-            return False
-
-    async def delete_all_user_documents(self, user_id: int) -> int:
-        """Удаляет все документы пользователя"""
-        try:
-            # Возвращает количество удаленных записей
-            result = await database.db_query(
-                "DELETE FROM user_documents WHERE user_id = $1 RETURNING id",
-                (user_id,),
-            )
-            return len(result) if result else 0
-
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error deleting all documents: %s", e, exc_info=True)
-            return 0
-
-    async def cleanup_old_documents(self, days_old: int = 3) -> int:
-        """Очищает документы старше указанного количества дней"""
-        try:
-            result = await database.db_query(
-                """
-                DELETE FROM user_documents
-                WHERE created_at < (CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day'))
-            """,
-                (days_old,),
-            )
-
-            # DELETE queries return the number of affected rows
-            deleted_count = len(result) if result else 0
-            logging.info(
-                f"Cleaned up {deleted_count} old documents (older than {days_old} days)"
-            )
-            return deleted_count
-
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error cleaning up old documents: %s", e, exc_info=True)
-            return 0
-
-    async def get_document_stats(self) -> dict[str, Any]:
-        """Получает статистику документов"""
-        try:
-            # Размер БД (onблfromительно)
-            size_result = await database.db_query("""
-                SELECT
-                    COUNT(*) as doc_count,
-                    COALESCE(SUM(file_size), 0) as total_size,
-                    COALESCE(AVG(file_size), 0) as avg_size
-                FROM user_documents
-            """)
-
-            if size_result:
-                stats = size_result[0]
-                return {
-                    "total_documents": stats["doc_count"],
-                    "total_size_chars": stats["total_size"],
-                    "average_size_chars": stats["avg_size"],
-                    "total_size_mb": stats["total_size"] / (1024 * 1024)
-                    if stats["total_size"]
-                    else 0,
-                }
-
-            return {
-                "total_documents": 0,
-                "total_size_chars": 0,
-                "average_size_chars": 0,
-                "total_size_mb": 0,
-            }
-
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting document stats: %s", e, exc_info=True)
-            return {
-                "total_documents": 0,
-                "total_size_chars": 0,
-                "average_size_chars": 0,
-                "total_size_mb": 0,
-            }
-
-    async def get_user_document_stats(self, user_id: int) -> dict[str, Any]:
-        """Получает статистику документов конкретного пользователя"""
-        try:
-            # Количество documentов user
-            count_result = await database.db_query(
-                "SELECT COUNT(*) as doc_count FROM user_documents WHERE user_id = $1",
-                (user_id,),
-            )
-            doc_count = count_result[0]["doc_count"] if count_result else 0
-
-            # Размер documentов user
-            size_result = await database.db_query(
-                """
-                SELECT
-                    COALESCE(SUM(file_size), 0) as total_size,
-                    COALESCE(AVG(file_size), 0) as avg_size
-                FROM user_documents
-                WHERE user_id = $1
-            """,
-                (user_id,),
-            )
-
-            if size_result:
-                stats = size_result[0]
-                return {
-                    "document_count": doc_count,
-                    "total_size_chars": stats["total_size"],
-                    "average_size_chars": stats["avg_size"],
-                    "total_size_mb": stats["total_size"] / (1024 * 1024)
-                    if stats["total_size"]
-                    else 0,
-                    "limit_reached": doc_count >= 5,
-                    "can_upload": doc_count < 5,
-                }
-
-            return {
-                "document_count": 0,
-                "total_size_chars": 0,
-                "average_size_chars": 0,
-                "total_size_mb": 0,
-                "limit_reached": False,
-                "can_upload": True,
-            }
-
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            logging.error("Error getting user document stats: %s", e, exc_info=True)
-            return {
-                "document_count": 0,
-                "total_size_chars": 0,
-                "average_size_chars": 0,
-                "total_size_mb": 0,
-                "limit_reached": False,
-                "can_upload": True,
-            }
+    async def get_user_document_stats(self, user_id):
+        from app.documents.repository import get_user_document_stats
+        return await get_user_document_stats(user_id)
 
 
-# Глобальный экземпляр процессора documentов
+# Singleton
 document_processor = DocumentProcessor()
+
+
+# ============================================================================
+# FACADE FUNCTIONS (backward compatibility)
+# ============================================================================
 
 
 async def process_uploaded_document(
     file_data, filename: str, user_id: int, is_path: bool = False
 ) -> dict[str, Any]:
-    """Обрабатывает загруженный документ"""
+    """Process an uploaded document."""
     return await document_processor.process_document(
         file_data, filename, user_id, is_path
     )
@@ -620,39 +333,39 @@ async def process_uploaded_document(
 async def process_uploaded_document_force(
     file_data, filename: str, user_id: int, is_path: bool = False
 ) -> dict[str, Any]:
-    """Обрабатывает загруженный документ принудительно (игнорируя дубликаты)"""
+    """Process an uploaded document, ignoring duplicates."""
     return await document_processor.process_document_force(
         file_data, filename, user_id, is_path
     )
 
 
 async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
-    """Получает документы пользователя"""
+    """Get user's documents."""
     return await document_processor.get_user_documents(user_id)
 
 
 async def get_document_content(document_id: int, user_id: int) -> str | None:
-    """Получает содержимое документа"""
+    """Get document content."""
     return await document_processor.get_document_content(document_id, user_id)
 
 
 async def delete_user_document(document_id: int, user_id: int) -> bool:
-    """Удаляет документ пользователя"""
+    """Delete a user document."""
     return await document_processor.delete_document(document_id, user_id)
 
 
 async def delete_all_user_documents(user_id: int) -> int:
-    """Удаляет все документы пользователя"""
+    """Delete all user documents."""
     return await document_processor.delete_all_user_documents(user_id)
 
 
 async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> str | None:
     """Internal function for uploading file to x0.at with retry logic."""
     timeout_config = httpx.Timeout(
-        connect=10.0,  # 10 секунд на подkeyение
-        read=60.0,  # 60 секунд на чтение (for загрузки fileов)
-        write=60.0,  # 60 секунд на запись (for загрузки fileов)
-        pool=30.0,  # 30 секунд на получение соединения from пула
+        connect=10.0,
+        read=60.0,
+        write=60.0,
+        pool=30.0,
     )
 
     async with httpx.AsyncClient(timeout=timeout_config) as client:
@@ -669,13 +382,13 @@ async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> str | None:
                 return None
         else:
             logging.error(
-                f"Failed to upload to x0.at: {response.status_code} - {response.text}"
+                "Failed to upload to x0.at: %s - %s", response.status_code, response.text
             )
             return None
 
 
 async def upload_to_x0_at(file_data: bytes, filename: str) -> str | None:
-    """Загружает файл на внешний сервис x0.at и возвращает URL с автоматическими повторами"""
+    """Upload file to x0.at with automatic retries."""
     try:
         return await NetworkErrorHandler.retry_with_backoff(
             _upload_file_to_x0_at,
@@ -692,5 +405,5 @@ async def upload_to_x0_at(file_data: bytes, filename: str) -> str | None:
 async def get_document_by_id(
     document_id: int, user_id: int
 ) -> dict[str, Any] | None:
-    """Получает документ по ID"""
+    """Get document by ID."""
     return await document_processor.get_document_by_id(document_id, user_id)

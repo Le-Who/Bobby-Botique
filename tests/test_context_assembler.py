@@ -3,6 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.context.summarizer import schedule_llm_summarization, split_into_chunks, _run_llm_summarization
+
 import pytest
 
 from app.context_assembler import (
@@ -305,16 +307,13 @@ class TestRoleAlternation:
 
 
 class TestChunkSplitting:
-    def setup_method(self):
-        self.assembler = ContextAssembler()
-
     def test_empty_messages_no_chunks(self):
-        chunks = self.assembler._split_into_chunks([])
+        chunks = split_into_chunks([])
         assert chunks == []
 
     def test_single_small_message(self):
         msgs = [make_msg("user", "Hello world")]
-        chunks = self.assembler._split_into_chunks(msgs)
+        chunks = split_into_chunks(msgs)
         assert len(chunks) == 1
         assert "Hello world" in chunks[0]
 
@@ -323,7 +322,7 @@ class TestChunkSplitting:
             make_msg("user", "Question"),
             make_msg("model", "Answer"),
         ]
-        chunks = self.assembler._split_into_chunks(msgs)
+        chunks = split_into_chunks(msgs)
         assert len(chunks) >= 1
         assert "user:" in chunks[0]
         assert "model:" in chunks[0]
@@ -331,13 +330,13 @@ class TestChunkSplitting:
     def test_respects_max_chunks(self):
         # Create many large messages that would exceed MAX_CHUNKS
         msgs = make_history(100, msg_size=5000)
-        chunks = self.assembler._split_into_chunks(msgs)
+        chunks = split_into_chunks(msgs)
         assert len(chunks) <= MAX_CHUNKS
 
     def test_splits_at_chunk_size(self):
         # Each message ~500 tokens, CHUNK_SIZE=10K → ~20 msgs per chunk
         msgs = make_history(60, msg_size=1500)
-        chunks = self.assembler._split_into_chunks(msgs)
+        chunks = split_into_chunks(msgs)
         assert len(chunks) > 1  # Should split into multiple chunks
 
 
@@ -345,9 +344,6 @@ class TestChunkSplitting:
 
 
 class TestLLMSummarizationScheduling:
-    def setup_method(self):
-        self.assembler = ContextAssembler()
-
     @pytest.mark.asyncio
     async def test_schedule_creates_task(self):
         """schedule_llm_summarization should create a background task."""
@@ -355,12 +351,11 @@ class TestLLMSummarizationScheduling:
         dropped = make_history(20, msg_size=500)
 
         # Use the event loop from the async test
-        with patch.object(
-            self.assembler,
-            "_run_llm_summarization",
+        with patch(
+            "app.context.summarizer._run_llm_summarization",
             new_callable=AsyncMock,
         ):
-            self.assembler.schedule_llm_summarization(dropped, None, callback)
+            schedule_llm_summarization(dropped, None, callback)
             # Allow the task to start
             await asyncio.sleep(0.01)
 
@@ -375,7 +370,7 @@ class TestLLMSummarizationScheduling:
         ]
 
         with patch(
-            "app.context_assembler.ContextAssembler._split_into_chunks",
+            "app.context.summarizer.split_into_chunks",
             return_value=["user: What is Python?\nmodel: Python is a language."],
         ):
             with patch(
@@ -383,7 +378,7 @@ class TestLLMSummarizationScheduling:
                 new_callable=AsyncMock,
                 return_value="## Факты\n- Python — это язык программирования",
             ) as mock_llm:
-                await self.assembler._run_llm_summarization(
+                await _run_llm_summarization(
                     dropped, None, callback
                 )
                 mock_llm.assert_called_once()
@@ -408,14 +403,14 @@ class TestLLMSummarizationScheduling:
             return responses[idx]
 
         with patch(
-            "app.context_assembler.ContextAssembler._split_into_chunks",
+            "app.context.summarizer.split_into_chunks",
             return_value=["chunk1_text", "chunk2_text"],
         ):
             with patch(
                 "app.handlers.ai_core._get_ai_response_with_routing",
                 side_effect=mock_llm,
             ):
-                await self.assembler._run_llm_summarization(
+                await _run_llm_summarization(
                     dropped, None, callback
                 )
                 assert call_count == 2  # Two chunks → two LLM calls
@@ -428,7 +423,7 @@ class TestLLMSummarizationScheduling:
         dropped = [make_msg("user", "test")]
 
         with patch(
-            "app.context_assembler.ContextAssembler._split_into_chunks",
+            "app.context.summarizer.split_into_chunks",
             return_value=["test chunk"],
         ):
             with patch(
@@ -437,7 +432,7 @@ class TestLLMSummarizationScheduling:
                 side_effect=Exception("API Error"),
             ):
                 # Should not raise
-                await self.assembler._run_llm_summarization(
+                await _run_llm_summarization(
                     dropped, None, callback
                 )
                 callback.assert_not_called()

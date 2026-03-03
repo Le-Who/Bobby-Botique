@@ -12,7 +12,7 @@ def document_processor():
     return processor
 
 
-@patch("app.document_processor.database")
+@patch("app.documents.repository.database")
 def test_cleanup_oldest_documents_single_query_behavior(
     mock_database, document_processor
 ):

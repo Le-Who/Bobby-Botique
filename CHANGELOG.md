@@ -5,7 +5,7 @@ Format is optimized for agent-parseable context.
 
 ---
 
-## [2.8.1] – 2026-03-03 – Code Quality Audit: Error Codes, Cleanup & Hardening
+## [2.8.1] – 2026-03-03 – Code Quality Audit: Complete (21/21 items resolved)
 
 ### 🏗️ Structured Error Codes (MED-03)
 
@@ -26,20 +26,49 @@ Format is optimized for agent-parseable context.
 - **MED-04**: Wrapped all 7 `pool._closed` accesses with `_is_pool_closed()` helper in `database.py` / `metrics_repo.py`, decoupling from asyncpg internals.
 - **MED-01**: Extracted `SyncRateLimiter` class in `security.py` — reused by `web.py` login protection, replacing 30-line ad-hoc implementation.
 
+### 📦 Module Splits (MED-07, MED-09, MED-11)
+
+- **MED-09**: Extracted `MetricsMiddleware` + `track_metrics` decorator → `app/utils/metrics_middleware.py`. Re-exports in `metrics.py` for backward compat.
+- **MED-07**: Split `context_assembler.py` (616 lines) → `app/context/` package:
+  - `token_budget.py` — constants, `TokenBudget`, `AssembledContext` dataclasses
+  - `summarizer.py` — LLM refine-chain summarization + chunk splitting
+  - `assembler.py` — `ContextAssembler` class, `should_summarize()`, singleton
+  - Original file → thin re-export facade (13 lines)
+- **MED-11**: Split `document_processor.py` (697 lines) → `app/documents/` package:
+  - `repository.py` — all DB CRUD, stats, duplicate/limit checks
+  - `parsers.py` — sync file I/O helpers (hash, temp file)
+  - Orchestrator class + facade functions remain in `document_processor.py`
+
+### ✅ Previously Resolved (verified this session)
+
+- **HIGH-04**: `DEFAULT_GEMINI_MODELS` constant de-duplicated (single definition, 3 references)
+- **HIGH-06**: `flask_app` → `quart_app` renamed in `web.py` + `bot.py`
+- **SEC-01**: OpenRouter referer updated to `https://t.me/gemaibotv2`
+- **PERF-01**: Removed extra `count_tokens` API call → uses `response.usage_metadata`
+- **MED-10**: `genai.Client` reuse per provider instance (lazy init + key check)
+- **MED-06**: `_custom_role_cache` → `TTLCache(maxsize=256, ttl=3600)`
+- **MED-12**: `_load_daily_limits` now logs raw malformed env var values
+
 ### Files Changed
 
-| File                        | Change                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------- |
-| `app/errors.py`             | `ErrorCode` enum, `_ERROR_PROPERTIES`, `tag_error`, `extract_error_code`, `strip_error_tag` |
-| `app/ai_provider.py`        | 15+ error strings tagged with `ErrorCode`                                                   |
-| `app/handlers/ai_core.py`   | Removed 4 unused forwarders (187→131 lines)                                                 |
-| `app/config.py`             | Removed dead prompts (82 lines), MD5→SHA256                                                 |
-| `app/database.py`           | `_is_pool_closed()` helper, replaced 6 `pool._closed`                                       |
-| `app/repos/metrics_repo.py` | `pool._closed` → `_is_pool_closed()`                                                        |
-| `app/security.py`           | [NEW] `SyncRateLimiter` class                                                               |
-| `app/web.py`                | Replaced ad-hoc rate limiter with `SyncRateLimiter`                                         |
-| `app/handlers/__init__.py`  | [NEW] Empty init                                                                            |
-| `app/utils/__init__.py`     | [NEW] Empty init                                                                            |
+| File                              | Change                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `app/errors.py`                   | `ErrorCode` enum, `_ERROR_PROPERTIES`, `tag_error`, `extract_error_code`, `strip_error_tag` |
+| `app/ai_provider.py`              | 15+ error strings tagged with `ErrorCode`                                                   |
+| `app/handlers/ai_core.py`         | Removed 4 unused forwarders (187→131 lines)                                                 |
+| `app/config.py`                   | Removed dead prompts (82 lines), MD5→SHA256                                                 |
+| `app/database.py`                 | `_is_pool_closed()` helper, replaced 6 `pool._closed`                                       |
+| `app/repos/metrics_repo.py`       | `pool._closed` → `_is_pool_closed()`                                                        |
+| `app/security.py`                 | [NEW] `SyncRateLimiter` class                                                               |
+| `app/web.py`                      | Replaced ad-hoc rate limiter with `SyncRateLimiter`                                         |
+| `app/handlers/__init__.py`        | [NEW] Empty init                                                                            |
+| `app/utils/__init__.py`           | [NEW] Empty init                                                                            |
+| `app/utils/metrics_middleware.py` | [NEW] `MetricsMiddleware`, `track_metrics`                                                  |
+| `app/metrics.py`                  | Slimmed — re-exports middleware from submodule                                              |
+| `app/context/`                    | [NEW] Package: `token_budget.py`, `summarizer.py`, `assembler.py`                           |
+| `app/context_assembler.py`        | → Thin re-export facade (616 → 13 lines)                                                    |
+| `app/documents/`                  | [NEW] Package: `repository.py`, `parsers.py`                                                |
+| `app/document_processor.py`       | Slimmed orchestrator (697 → ~310 lines)                                                     |
 
 ### 🧪 Tests (572 passed, 1 skipped)
 

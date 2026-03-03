@@ -540,42 +540,8 @@ class MetricsCollector:
 metrics_collector = MetricsCollector()
 
 
-class MetricsMiddleware:
-    """Middleware для автоматического сбора метрик"""
-
-    def __init__(self, func_name: str):
-        self.func_name = func_name
-
-    async def __aenter__(self):
-        self.start_time = time.time()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, _exc_tb):
-        response_time = time.time() - self.start_time
-        success = exc_type is None
-
-        await metrics_collector.record_request(self.func_name, response_time, success)
-
-        if not success:
-            await metrics_collector.record_error(
-                exc_type.__name__ if exc_type else "Unknown",
-                str(exc_val) if exc_val else "Unknown error",
-            )
-
-
-def track_metrics(func_name: str):
-    """Декоратор для отслеживания метрик функции"""
-    import functools
-
-    def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            async with MetricsMiddleware(func_name):
-                return await func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
+# Re-export middleware for backward compatibility
+from app.utils.metrics_middleware import MetricsMiddleware, track_metrics  # noqa: F401,E402
 
 
 # ============================================================================
