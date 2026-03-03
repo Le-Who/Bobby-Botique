@@ -17,7 +17,6 @@ DEFAULT_GEMINI_MODELS: list[str] = [
     "gemini-2.5-flash",
     "gemini-flash-latest",
     "gemini-2.5-flash-lite",
-    "gemini-flash-lite-latest",
 ]
 DEFAULT_DAILY_LIMIT_PER_MODEL: int = 15
 
@@ -145,10 +144,10 @@ class Settings(BaseModel):
     # --- MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
     AVAILABLE_MODELS: list[str] = DEFAULT_GEMINI_MODELS.copy()
-    DEFAULT_MODEL: str = "gemini-flash-latest"
+    DEFAULT_MODEL: str = "gemini-2.5-flash"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
     RESEARCH_MODEL: str = "gemini-2.5-flash"
-    URL_SELECTION_MODEL: str = "gemini-flash-latest"
+    URL_SELECTION_MODEL: str = "gemini-2.5-flash"
 
     # --- OPENROUTER MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
@@ -221,11 +220,11 @@ def load_settings() -> Settings:
                 "OPENROUTER_AVAILABLE_MODELS", required=False
             )
             or default_openrouter_models,
-            "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gemini-flash-latest"),
+            "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gemini-2.5-flash"),
             "QNA_MODEL": os.getenv("QNA_MODEL", "gemini-2.5-flash-lite"),
             "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-2.5-flash"),
             "URL_SELECTION_MODEL": os.getenv(
-                "URL_SELECTION_MODEL", "gemini-flash-latest"
+                "URL_SELECTION_MODEL", "gemini-2.5-flash"
             ),
             "OPENROUTER_DEFAULT_MODEL": os.getenv(
                 "OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"
