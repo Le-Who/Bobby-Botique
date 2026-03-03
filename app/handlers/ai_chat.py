@@ -165,54 +165,78 @@ async def _handle_regular_chat(
     response_text = None
     new_token_count = 0
     streamed = False
+    stream_last_msg = None
+    MAX_STREAM_RETRIES = 3
 
     if not is_openrouter_model(model_used):
-        try:
-            from google.genai import types as genai_types
+        from google.genai import types as genai_types
 
-            from app.ai_provider import _build_thinking_config
-            from app.streaming import stream_and_display
+        from app.ai_provider import _build_thinking_config
+        from app.streaming import stream_and_display
 
-            # Resolve an API key for streaming
-            key_data, _, _ = await _resolve_ai_request(model_used)
-            if key_data:
+        excluded_key_hashes: set[str] = set()
+
+        for stream_attempt in range(MAX_STREAM_RETRIES):
+            try:
+                # Resolve a key, excluding previously failed ones
+                key_data, _, _ = await _resolve_ai_request(
+                    model_used, excluded_key_hashes=excluded_key_hashes or None,
+                )
+                if not key_data:
+                    logging.warning("No API keys available for streaming (attempt %d)", stream_attempt + 1)
+                    break
+
                 # Build contents using GeminiProvider helper
                 provider = GeminiProvider(key_data["api_key"])
                 contents = await provider._build_contents(chat_state.history)
 
-                if contents:
-                    config = genai_types.GenerateContentConfig(
-                        safety_settings=settings.SAFETY_SETTINGS
-                    )
-                    tc = _build_thinking_config(model_used, chat_state.thinking_level)
-                    if tc:
-                        config.thinking_config = tc
-                    if system_instruction:
-                        try:
-                            config.system_instruction = str(system_instruction)
-                        except (TypeError, ValueError):
-                            pass
+                if not contents:
+                    break
 
-                    response_text, success, stream_last_msg = await stream_and_display(
-                        placeholder_message,
-                        key_data["api_key"],
-                        model_used,
-                        contents,
-                        config,
+                config = genai_types.GenerateContentConfig(
+                    safety_settings=settings.SAFETY_SETTINGS
+                )
+                tc = _build_thinking_config(model_used, chat_state.thinking_level)
+                if tc:
+                    config.thinking_config = tc
+                if system_instruction:
+                    try:
+                        config.system_instruction = str(system_instruction)
+                    except (TypeError, ValueError):
+                        pass
+
+                response_text, success, stream_last_msg = await stream_and_display(
+                    placeholder_message,
+                    key_data["api_key"],
+                    model_used,
+                    contents,
+                    config,
+                )
+                if success and response_text:
+                    streamed = True
+                    # Count tokens
+                    from app.prompt_registry import estimate_tokens_cyrillic
+                    new_token_count = estimate_tokens_cyrillic(response_text)
+                    # Increment key usage
+                    from app.handlers.ai_core import _increment_key_usage
+                    await _increment_key_usage(key_data["key_hash"], model_used)
+                    break  # Success — exit retry loop
+                else:
+                    # Stream returned but wasn't successful — try next key
+                    logging.warning(
+                        "Streaming attempt %d/%d failed (success=%s), trying next key",
+                        stream_attempt + 1, MAX_STREAM_RETRIES, success,
                     )
-                    if success and response_text:
-                        streamed = True
-                        # Count tokens
-                        from app.prompt_registry import estimate_tokens_cyrillic
-                        new_token_count = estimate_tokens_cyrillic(response_text)
-                        # Increment key usage
-                        from app.handlers.ai_core import _increment_key_usage
-                        await _increment_key_usage(key_data["key_hash"], model_used)
-                    else:
-                        response_text = None  # Fall through to non-streaming
-        except Exception as e:
-            logging.warning("Streaming failed, falling back to non-streaming: %s", e)
-            response_text = None
+                    excluded_key_hashes.add(key_data["key_hash"])
+                    response_text = None
+            except Exception as e:
+                logging.warning(
+                    "Streaming attempt %d/%d error: %s",
+                    stream_attempt + 1, MAX_STREAM_RETRIES, e,
+                )
+                if key_data:
+                    excluded_key_hashes.add(key_data["key_hash"])
+                response_text = None
 
     # ── Fallback to non-streaming (OpenRouter or stream failure) ─────────
     if not streamed:
