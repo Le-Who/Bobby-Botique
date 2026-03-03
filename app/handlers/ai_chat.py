@@ -359,7 +359,7 @@ async def _handle_regular_chat(
                         except Exception:
                             pass
 
-                    asyncio.get_event_loop().create_task(_bg_store())
+                    asyncio.get_running_loop().create_task(_bg_store())
             except Exception:
                 pass
 

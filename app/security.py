@@ -8,6 +8,7 @@ import html
 import ipaddress
 import logging
 import re
+import threading
 import time
 from collections import defaultdict
 from typing import Any
@@ -588,6 +589,7 @@ class SyncRateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._requests: dict[str, list[float]] = defaultdict(list)
+        self._lock = threading.Lock()
         self._cleanup_every = cleanup_every
         self._call_count = 0
 
@@ -599,15 +601,17 @@ class SyncRateLimiter:
         Does **not** record the attempt — call :meth:`record` separately so
         that successful vs. failed events can be tracked independently.
         """
-        now = time.time()
-        cutoff = now - self.window_seconds
-        self._requests[key] = [t for t in self._requests[key] if t > cutoff]
-        self._maybe_cleanup(cutoff)
-        return len(self._requests[key]) < self.max_requests
+        with self._lock:
+            now = time.time()
+            cutoff = now - self.window_seconds
+            self._requests[key] = [t for t in self._requests[key] if t > cutoff]
+            self._maybe_cleanup(cutoff)
+            return len(self._requests[key]) < self.max_requests
 
     def record(self, key: str) -> None:
         """Record one event against *key*."""
-        self._requests[key].append(time.time())
+        with self._lock:
+            self._requests[key].append(time.time())
 
     # ------------------------------------------------------------------
 

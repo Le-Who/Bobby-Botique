@@ -98,34 +98,39 @@ async def _ensure_loaded(state: UserState) -> UserState:
     if state._loaded_from_db or state._user_id == 0:
         return state
 
-    try:
-        from app.repos.users import load_user_state
+    async with state.lock:
+        # Double-check after acquiring lock to avoid redundant loads
+        if state._loaded_from_db:
+            return state
 
-        data = await load_user_state(state._user_id)
-        if data:
-            state.document_mode = data.get("document_mode", False)
-            state.selected_document_id = data.get("selected_document_id")
-            state.awaiting_custom_role_input = data.get(
-                "awaiting_custom_role_input", False
-            )
-            state.generated_role = data.get("generated_role")
-            state.last_custom_role_prompt = data.get("last_custom_role_prompt")
-            state.generating_custom_role = data.get(
-                "generating_custom_role", False
-            )
-            state.last_sent_message_text = data.get("last_sent_message_text")
-            state.awaiting_manual_role_title = data.get(
-                "awaiting_manual_role_title", False
-            )
-            state.awaiting_manual_role_prompt = data.get(
-                "awaiting_manual_role_prompt", False
-            )
-            state.manual_role_title = data.get("manual_role_title", "")
-            state.manual_role_prompt = data.get("manual_role_prompt", "")
-    except Exception as e:
-        logging.warning("Could not load state for %s: %s", state._user_id, e)
+        try:
+            from app.repos.users import load_user_state
 
-    state._loaded_from_db = True
+            data = await load_user_state(state._user_id)
+            if data:
+                state.document_mode = data.get("document_mode", False)
+                state.selected_document_id = data.get("selected_document_id")
+                state.awaiting_custom_role_input = data.get(
+                    "awaiting_custom_role_input", False
+                )
+                state.generated_role = data.get("generated_role")
+                state.last_custom_role_prompt = data.get("last_custom_role_prompt")
+                state.generating_custom_role = data.get(
+                    "generating_custom_role", False
+                )
+                state.last_sent_message_text = data.get("last_sent_message_text")
+                state.awaiting_manual_role_title = data.get(
+                    "awaiting_manual_role_title", False
+                )
+                state.awaiting_manual_role_prompt = data.get(
+                    "awaiting_manual_role_prompt", False
+                )
+                state.manual_role_title = data.get("manual_role_title", "")
+                state.manual_role_prompt = data.get("manual_role_prompt", "")
+        except Exception as e:
+            logging.warning("Could not load state for %s: %s", state._user_id, e)
+
+        state._loaded_from_db = True
     return state
 
 

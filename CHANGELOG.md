@@ -5,6 +5,37 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.5] – 2026-03-03 – Logic Audit: 7 Bug Fixes
+
+### 🔍 Systematic Cross-Module Logic Audit
+
+Reviewed 25+ modules. Found and fixed **7 logic bugs** across 6 files. Cross-pattern search confirmed no additional instances of any bug pattern codebase-wide.
+
+| #   | File                          | Bug                                                                                      | Severity |
+| --- | ----------------------------- | ---------------------------------------------------------------------------------------- | -------- |
+| 1   | `app/documents/repository.py` | `cleanup_old_documents` DELETE missing `RETURNING id` — always returned 0                | 🔴       |
+| 2   | `app/documents/repository.py` | `get_user_document_stats` hardcoded limit=5 instead of `settings.MAX_DOCUMENTS_PER_USER` | 🟡       |
+| 3   | `app/handlers/ai_chat.py`     | Deprecated `asyncio.get_event_loop()` — error in Python 3.14                             | 🟡       |
+| 4   | `app/state.py`                | `_ensure_loaded` race: concurrent handlers double-load from DB                           | 🔴       |
+| 5   | `app/security.py`             | `SyncRateLimiter` documented a `threading.Lock` but never created one — data race        | 🔴       |
+| 6   | `app/circuit_breaker.py`      | `__init__` created asyncio task at import time — crashes without event loop              | 🟡       |
+| 7   | `app/context/assembler.py`    | `_fix_role_alternation` mutated input dicts in-place, corrupting `chat_state.history`    | 🟡       |
+
+### Files Changed
+
+| File                          | Change                                                       |
+| ----------------------------- | ------------------------------------------------------------ |
+| `app/documents/repository.py` | Added `RETURNING id`, config-based limit                     |
+| `app/handlers/ai_chat.py`     | `get_running_loop()` replaces `get_event_loop()`             |
+| `app/state.py`                | Double-check locking in `_ensure_loaded`                     |
+| `app/security.py`             | `threading.Lock` added to `SyncRateLimiter`                  |
+| `app/circuit_breaker.py`      | Guarded `_start_monitoring()` with `try/except RuntimeError` |
+| `app/context/assembler.py`    | Shallow copies in `_fix_role_alternation`                    |
+
+### 🧪 Tests: 619 passed, 0 failures
+
+---
+
 ## [2.8.4] – 2026-03-03 – Full AI Logic Audit
 
 ### 🔍 Comprehensive Handler & Repos Audit

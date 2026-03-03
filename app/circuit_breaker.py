@@ -61,9 +61,13 @@ class CircuitBreaker:
         # Async lock for thread safety
         self._lock = asyncio.Lock()
 
-        # Start monitoring task
+        # Start monitoring task (deferred if no event loop is running)
         self._monitor_task: asyncio.Task | None = None
-        self._start_monitoring()
+        try:
+            asyncio.get_running_loop()
+            self._start_monitoring()
+        except RuntimeError:
+            pass  # No running event loop — monitoring deferred to first call()
 
         logging.info("Circuit Breaker '%s' initialized with config: %s", name, self.config)
 

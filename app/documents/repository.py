@@ -227,6 +227,7 @@ async def cleanup_old_documents(days_old: int = 3) -> int:
             """
             DELETE FROM user_documents
             WHERE created_at < (CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day'))
+            RETURNING id
         """,
             (days_old,),
         )
@@ -315,8 +316,8 @@ async def get_user_document_stats(user_id: int) -> dict[str, Any]:
                 "total_size_mb": stats["total_size"] / (1024 * 1024)
                 if stats["total_size"]
                 else 0,
-                "limit_reached": doc_count >= 5,
-                "can_upload": doc_count < 5,
+                "limit_reached": doc_count >= settings.MAX_DOCUMENTS_PER_USER,
+                "can_upload": doc_count < settings.MAX_DOCUMENTS_PER_USER,
             }
 
         return {

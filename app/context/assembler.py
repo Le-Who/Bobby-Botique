@@ -297,20 +297,20 @@ class ContextAssembler:
         """Ensure proper user/model role alternation.
 
         Gemini requires strict alternation. This merges consecutive
-        same-role messages.
+        same-role messages.  Works on shallow copies to avoid mutating
+        the caller's data structures.
         """
         if len(history) <= 1:
             return history
 
-        fixed: list[dict[str, Any]] = [history[0]]
+        fixed: list[dict[str, Any]] = [{**history[0], "parts": list(history[0].get("parts", []))}]
         for msg in history[1:]:
             if msg.get("role") == fixed[-1].get("role"):
                 # Merge consecutive same-role messages
-                existing_parts = fixed[-1].get("parts", [])
                 new_parts = msg.get("parts", [])
-                fixed[-1]["parts"] = existing_parts + new_parts
+                fixed[-1]["parts"] = fixed[-1]["parts"] + new_parts
             else:
-                fixed.append(msg)
+                fixed.append({**msg, "parts": list(msg.get("parts", []))})
 
         return fixed
 
