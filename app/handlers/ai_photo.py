@@ -21,6 +21,7 @@ from app.handlers.ai_search import (
     _handle_research_agent,
 )
 from app.repos.chats import get_user_chat, update_user_chat
+from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_PHOTO, update_stage
 
@@ -28,6 +29,7 @@ from app.utils.stage_indicators import STAGES_PHOTO, update_stage
 async def _handle_photo(
     placeholder_message: Message, original_message: Message, chat_state: ChatState
 ):
+    stop_heartbeat(placeholder_message.message_id)
     try:
         photo_file = await original_message.photo[-1].get_file()
         photo_data = await photo_file.download_as_bytearray()

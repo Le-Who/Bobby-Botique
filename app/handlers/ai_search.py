@@ -19,6 +19,7 @@ from app.handlers.ai_core import (
 from app.metrics import metrics_collector, track_metrics
 from app.repos.chats import get_user_chat, update_user_chat
 from app.utils.formatting import escape_format_chars
+from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_SEARCH_DEEP, STAGES_SEARCH_QUICK, update_stage
 
@@ -34,6 +35,7 @@ async def _handle_qna_search(
     actual_search_query = search_query if search_query else user_message
     # chat_state используется for совместимости с другими функциями
 
+    stop_heartbeat(placeholder_message.message_id)
     await metrics_collector.record_search_query()
 
     try:
@@ -143,6 +145,7 @@ async def _handle_research_agent(
     # If beforeан search_query, use его for searchа, а user_message for локалfromации
     actual_search_query = search_query if search_query else user_message
 
+    stop_heartbeat(placeholder_message.message_id)
     await metrics_collector.record_search_query()
 
     try:
@@ -399,7 +402,7 @@ async def _handle_research_agent(
     system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
     assembled = assembler.assemble(
         history=chat_state.history,
-        user_message="",
+        user_message=None,  # already appended augmented_prompt to history above
         system_instruction=system_instruction,
         existing_summary=existing_summary,
     )

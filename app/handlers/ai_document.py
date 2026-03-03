@@ -14,6 +14,7 @@ from app.handlers.ai_core import (
 )
 from app.metrics import metrics_collector
 from app.utils.messaging import send_long_message
+from app.utils.heartbeat import stop_heartbeat
 from app.utils.stage_indicators import STAGES_DOCUMENT, update_stage
 
 
@@ -24,6 +25,7 @@ async def _handle_document_question(
     chat_state: ChatState,
 ):
     """Обрабатывает вопросы по загруженным документам"""
+    stop_heartbeat(placeholder_message.message_id)
     try:
         # Get afterдний document user
         from app.document_processor import get_document_content, get_user_documents
@@ -289,11 +291,11 @@ _Основные сервисы:_
         logging.error("Error processing document question: %s", e, exc_info=True)
         try:
             await placeholder_message.edit_text(
-                f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}"
+                "❌ Произошла ошибка при обработке вопроса по документу. Попробуйте ещё раз."
             )
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
             # Fallback на new message
             await placeholder_message.reply_text(
-                f"❌ Произошла ошибка при обработке вопроса по документу: {str(e)}"
+                "❌ Произошла ошибка при обработке вопроса по документу. Попробуйте ещё раз."
             )
