@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from app.config import get_openrouter_keys, get_use_openrouter, settings
 from app.repos.keys import (
@@ -16,7 +17,7 @@ class AgentRequestUseCase:
         preferred_model: str,
         use_openrouter: bool | None = None,
         excluded_key_hashes: set[str] | None = None,
-    ):
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
         excluded = excluded_key_hashes or set()
 
         if use_openrouter is None:
@@ -36,12 +37,12 @@ class AgentRequestUseCase:
     async def _resolve_key_generic(
         self,
         preferred_model: str,
-        get_key_func,
+        get_key_func: Any,
         fallback_priority: list[str],
         excluded_key_hashes: set[str] | None = None,
-        invalidate_cache_func=None,
+        invalidate_cache_func: Any = None,
         provider_name: str = "Unknown",
-    ):
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
         from app.errors import DecryptionError
 
         excluded = excluded_key_hashes or set()
@@ -96,7 +97,7 @@ class AgentRequestUseCase:
 
     async def _resolve_gemini_request(
         self, preferred_model: str, excluded_key_hashes: set[str] | None = None
-    ):
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
         fallback_priority = [
             settings.RESEARCH_MODEL,
             settings.DEFAULT_MODEL,
@@ -113,7 +114,7 @@ class AgentRequestUseCase:
 
     async def _resolve_openrouter_request(
         self, preferred_model: str, excluded_key_hashes: set[str] | None = None
-    ):
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
         model_mapping = {
             settings.DEFAULT_MODEL: settings.OPENROUTER_DEFAULT_MODEL,
             settings.QNA_MODEL: settings.OPENROUTER_QNA_MODEL,
@@ -144,14 +145,14 @@ class AgentRequestUseCase:
     async def get_ai_response(
         self,
         api_key: str,
-        history: list,
+        history: list[dict[str, Any]],
         model_name: str,
-        system_instruction: str = None,
-        user_id: int = None,
-        chat_id: int = None,
-        use_openrouter: bool = None,
-        thinking_level: str = None,
-    ):
+        system_instruction: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
+        use_openrouter: bool | None = None,
+        thinking_level: str | None = None,
+    ) -> tuple[str, int | None]:
         if use_openrouter is None:
             use_openrouter = "/" in model_name or get_use_openrouter()
 
@@ -178,8 +179,8 @@ class AgentRequestUseCase:
         return response.text, token_count
 
     async def increment_key_usage(
-        self, key_hash: str, model_name: str, use_openrouter: bool = None
-    ):
+        self, key_hash: str, model_name: str, use_openrouter: bool | None = None
+    ) -> None:
         if use_openrouter is None:
             use_openrouter = "/" in model_name or get_use_openrouter()
         if use_openrouter:

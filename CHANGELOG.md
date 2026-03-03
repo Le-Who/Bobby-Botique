@@ -5,7 +5,32 @@ Format is optimized for agent-parseable context.
 
 ---
 
-## [2.8.7] – 2026-03-03 – Pipeline Audit, Lint Cleanup & Comprehensive Audit
+## [2.8.8] – 2026-03-03 – Admin Alerts, Type Annotations & Integration Tests
+
+### 🔔 Admin Alert System
+
+New `app/admin_alerts.py` module — rate-limited Telegram notifications (5/5min) for:
+
+- 🚨 Critical: unhandled exceptions in `global_error_handler`
+- 🟢 Startup: health check report (DB, Redis, AI status)
+- 🔴 Shutdown: graceful stop notification
+
+### 📝 Type Annotations
+
+Added return types to `agent_use_cases.py` (7 methods), `cache.py` (2 functions). Repos layer already fully typed.
+
+### 🧪 Integration Tests (12 new)
+
+| Area            | Tests | Coverage                                          |
+| --------------- | ----- | ------------------------------------------------- |
+| StreamingWriter | 2     | Debouncing, finalize                              |
+| Error pipeline  | 5     | tag→detect→handle chain, retryable classification |
+| Admin alerts    | 3     | Send, rate limit, traceback                       |
+| Key rotation    | 2     | Exhausted keys, exclusion retry                   |
+
+**Total tests: 631 → 0 failures**
+
+---
 
 ### 🔴 Pipeline Bugs Fixed (4)
 

@@ -24,6 +24,18 @@ async def global_error_handler(
         f"Exception while handling an update: {context.error}", exc_info=context.error
     )
 
+    # Alert admin about unhandled exceptions
+    try:
+        from app.admin_alerts import AlertSeverity, alert_admin
+        await alert_admin(
+            context.application,
+            f"Unhandled exception in update handler:\n`{type(context.error).__name__}: {str(context.error)[:200]}`",
+            severity=AlertSeverity.CRITICAL,
+            exc=context.error,
+        )
+    except Exception:
+        pass  # Never let alerting crash error handling
+
     # Send message to user if possible
     if isinstance(update, Update) and update.effective_message:
         try:
@@ -135,10 +147,17 @@ async def basic_monitoring():
     logging.info("Monitoring task stopped due to shutdown signal")
 
 
-async def _cleanup_application(application):
+async def _cleanup_application(application, reason: str = "cleanup"):
     """Очищает ресурсы application при ошибках"""
     if not application:
         return
+
+    # Send shutdown alert to admin
+    try:
+        from app.admin_alerts import alert_admin_shutdown
+        await alert_admin_shutdown(application, reason=reason)
+    except Exception:
+        pass  # Best-effort
 
     try:
         if hasattr(application, "updater") and application.updater:
@@ -244,6 +263,13 @@ async def run_bot_with_retry():
                 timeout=30,
             )
             logging.info("Bot started in POLLING mode")
+
+        # Send startup alert to admin
+        try:
+            from app.admin_alerts import alert_admin_startup
+            await alert_admin_startup(application)
+        except Exception:
+            pass  # Non-critical
 
         # Wait for shutdown event
         await shutdown_event.wait()

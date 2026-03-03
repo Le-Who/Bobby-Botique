@@ -156,7 +156,7 @@ async def get_cached_search_result(
         return None
 
 
-async def cache_search_result(query: str, search_type: str, result: dict[str, Any]):
+async def cache_search_result(query: str, search_type: str, result: dict[str, Any]) -> None:
     """Saves the search result to the multi-layer cache (Memory + Redis)."""
     try:
         await cache_search_result_ml(query, search_type, result)
@@ -193,7 +193,7 @@ async def get_cache_stats() -> dict[str, Any]:
         return {"error": str(e)}
 
 
-async def clear_cache():
+async def clear_cache() -> None:
     """Clears the entire cache."""
     if not redis_client:
         return
