@@ -152,7 +152,13 @@ _login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
-    client_ip = request.remote_addr or "unknown"
+
+    # Extract client IP securely (rightmost IP in X-Forwarded-For to prevent spoofing)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        client_ip = forwarded_for.split(",")[-1].strip()
+    else:
+        client_ip = request.remote_addr or "unknown"
 
     if request.method == "POST":
         # Check brute-force rate limit

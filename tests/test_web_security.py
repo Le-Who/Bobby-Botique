@@ -219,3 +219,41 @@ async def test_error_leakage_prevented(client):
 
         response_text = (await response.get_data()).decode()
         assert secret_message not in response_text
+
+
+@pytest.mark.asyncio
+async def test_login_rate_limit_ip_extraction(client):
+    """Test that X-Forwarded-For is correctly used for rate limiting."""
+    from app.web import _login_limiter
+    _login_limiter._requests.clear()  # Reset internal state
+
+    get_response = await client.get("/login")
+    data = (await get_response.get_data()).decode()
+    m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
+    csrf_token = m.group(1)
+
+    # First attempt from a spoofed IP (1.1.1.1), real IP is 2.2.2.2
+    headers = {"X-Forwarded-For": "1.1.1.1, 2.2.2.2"}
+
+    # We will simulate 6 failed attempts to trigger rate limit for 2.2.2.2
+    for _ in range(5):
+        res = await client.post("/login", form={"password": "wrong", "csrf_token": csrf_token}, headers=headers)
+        assert res.status_code == 200
+        # Re-extract CSRF token for next post
+        data = (await res.get_data()).decode()
+        m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
+        csrf_token = m.group(1)
+
+    # 6th attempt should be rate limited
+    response = await client.post("/login", form={"password": "wrong", "csrf_token": csrf_token}, headers=headers)
+    assert response.status_code == 429
+
+    # Get a fresh CSRF token from the rate limited response to use for the next IP test
+    data = (await response.get_data()).decode()
+    m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
+    csrf_token = m.group(1)
+
+    # 1.1.1.1 should still have capacity, assuming we're routing by the correct IP
+    headers2 = {"X-Forwarded-For": "1.1.1.1"}
+    response2 = await client.post("/login", form={"password": "wrong", "csrf_token": csrf_token}, headers=headers2)
+    assert response2.status_code == 200 # Still allowed
