@@ -111,7 +111,7 @@ async def store_memory(
 
                 result = await db_query(
                     "INSERT INTO long_term_memory (user_id, content, embedding, source_type, metadata, expires_at) "
-                    "VALUES ($1, $2, $3::vector, $4, $5::jsonb, $6) RETURNING id",
+                    "VALUES ($1, $2, $3::halfvec, $4, $5::jsonb, $6) RETURNING id",
                     (
                         user_id,
                         content[:10000],  # Truncate
@@ -164,11 +164,11 @@ async def search_memories(
                 results = await db_query(
                     """
                     SELECT id, content, source_type, metadata, created_at,
-                           1 - (embedding <=> $2::vector) AS similarity
+                           1 - (embedding <=> $2::halfvec) AS similarity
                     FROM long_term_memory
                     WHERE user_id = $1
                       AND (expires_at IS NULL OR expires_at > now())
-                      AND 1 - (embedding <=> $2::vector) >= $3
+                      AND 1 - (embedding <=> $2::halfvec) >= $3
                     ORDER BY similarity DESC
                     LIMIT $4
                     """,
