@@ -48,8 +48,8 @@ The system runs as a single containerized application performing two parallel as
     - Uses `python-telegram-bot` with **dual mode**: long-polling (default) or **webhook** (set `WEBHOOK_URL` env var).
     - Manages user interactions, message queues, and AI responses.
     - Handles "Agentic" workflows (Research, Q&A).
-    - **Streaming responses**: Gemini models stream via `edit_message_text` with debounced updates.
-    - **Smart model suggestions**: Regex heuristics detect message type and suggest optimal model.
+    - **Streaming responses** (`streaming.py`): Gemini `generate_content_stream` + debounced `edit_message_text` (1.2s, 80-char minimum). **Multi-message overflow**: auto-splits at natural break points when exceeding 4096 chars. **Retry with key rotation** (up to 3 keys) before non-streaming fallback. Falls back to non-streaming for OpenRouter.
+    - **Smart model suggestions**: Regex heuristics classify message type (code/reasoning) and suggest upgrade to a more capable model. **No-downgrade policy** (v2.8.2+): only suggests models with higher capability tier.
 2.  **Web Server (`app/web.py`)**:
     - A lightweight Quart + Hypercorn server (fully async-native).
     - Exposes Health Check (`/health`) and **Prometheus metrics** (`/metrics`) endpoints.
@@ -93,6 +93,8 @@ Located in `app/handlers/` as modular sub-handlers (`ai_core.py`, `ai_chat.py`, 
     - Summaries persisted in `chats.context_summary` column across sessions.
     - Tier-specific metrics (triggered, LLM/local counts, tokens saved) surfaced in the dashboard.
 - **Thinking Level Control** (v2.7.2+): Per-user configurable reasoning depth via `/thinking` command (`off`/`low`/`medium`/`high`/`auto`). Auto-detects model family: `thinkingBudget` for Gemini 2.5, `thinkingLevel` for Gemini 3. OpenRouter models unaffected.
+- **pgvector long-term memory** (`repos/memory.py`): `gemini-embedding-001` (3072-dim `halfvec`), HNSW index, cosine similarity search, `task_type`-aware asymmetric embedding, 500/user limit, 90-day TTL. Semantically recalled during context assembly, stored after each exchange.
+- **Smart model selection** (`model_selector.py`): Regex heuristics classify messages (code/reasoning) → non-intrusive inline button suggestions for upgrades only. **No-downgrade policy**: `_get_tier()` ranks models (`lite=1 < flash=2 < 2.5-flash=3 < pro=4`); suggestions only when `tier(suggested) > tier(current)`. `switch_model:` callback handler for one-tap switching.
 - **Group Chat Mode**: Specialized handlers for admin-only or reply-only interactions in groups.
 - **Customizable Roles**: Browse system role catalog, generate AI roles, or write custom roles manually — all manageable via an AIDA-structured roles hub.
 
@@ -277,7 +279,7 @@ REDIS_URL=redis://...   # Optional — enables Redis caching layer
 | `QNA_MODEL`                      | ❌       | `gemini-2.5-flash-lite`       | Model for Q&A tasks                                         |
 | `RESEARCH_MODEL`                 | ❌       | `gemini-2.5-pro`              | Model for deep research                                     |
 | `URL_SELECTION_MODEL`            | ❌       | `gemini-flash-latest`         | Model for URL relevance scoring                             |
-| `GEMINI_AVAILABLE_MODELS`        | ❌       | 5 default models              | Comma-separated list of available Gemini models             |
+| `GEMINI_AVAILABLE_MODELS`        | ❌       | 4 default models              | Comma-separated list of available Gemini models             |
 | `OPENROUTER_DEFAULT_MODEL`       | ❌       | `stepfun/step-3.5-flash:free` | Default OpenRouter model                                    |
 | `OPENROUTER_QNA_MODEL`           | ❌       | `stepfun/step-3.5-flash:free` | OpenRouter Q&A model                                        |
 | `OPENROUTER_RESEARCH_MODEL`      | ❌       | `stepfun/step-3.5-flash:free` | OpenRouter research model                                   |
@@ -308,7 +310,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (572 tests, 1 skipped)
+### Suite Structure (619 tests, 1 skipped)
 
 | Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                      |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |

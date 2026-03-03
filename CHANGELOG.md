@@ -5,7 +5,66 @@ Format is optimized for agent-parseable context.
 
 ---
 
-## [2.8.1] – 2026-03-03 – Code Quality Audit: Complete (21/21 items resolved)
+## [2.8.2] – 2026-03-03 – Streaming Resilience, Embedding Upgrade & Model Selector Fix
+
+### ✨ Continuous Multi-Message Streaming
+
+Replaces response truncation with seamless multi-message streaming. When a response exceeds Telegram's 4096-char limit:
+
+1. **Auto-overflow**: Freezes the current message at a natural break point (paragraph, sentence, word boundary via `_find_split_point()`).
+2. **New message creation**: Calls `reply_text` (not `chat.send_message`) to start a new message in the thread.
+3. **Continues streaming**: New tokens flow into the new message. Repeats indefinitely for very long responses.
+4. **Correct button placement**: `stream_and_display` returns `(text, success, last_message)`. Post-stream buttons (Retry, Role) are attached to `last_message` via `edit_reply_markup`, not `edit_text`.
+
+### 🔄 Streaming Retry with Key Rotation
+
+**Root cause fixed**: On 503/APIError, streaming fell through to non-streaming `_get_ai_response_with_routing` — users lost the streaming UX.
+
+**Solution**: Retry loop (up to 3 attempts) with `excluded_key_hashes`:
+
+```
+stream(key_A) → 503 → exclude A → stream(key_B) → ✅ streaming preserved
+```
+
+Only falls to non-streaming if ALL streaming keys are exhausted.
+
+### 🧠 Model Selector: No-Downgrade Policy
+
+**3 bugs fixed** in `model_selector.py`:
+
+| #   | Bug                                                             | Fix                                                                   |
+| --- | --------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 1   | `available = set(...)` — random iteration order                 | Changed to `list` for deterministic ordering                          |
+| 2   | Substring `"flash"` matched all 5 models (including flash-lite) | Added `_get_tier()` capability ranking                                |
+| 3   | No upgrade/downgrade check — suggested flash-lite from flash    | Only suggests models with `_get_tier(suggested) > _get_tier(current)` |
+
+Tier system: `lite=1 < flash=2 < 2.5-flash=3 < pro=4`. Removed "short message → fast model" rule (all flash models are fast enough).
+
+### 🔬 Embedding Upgrade: `gemini-embedding-001` @ 3072 dims
+
+- **Model**: `text-embedding-004` → `gemini-embedding-001` with `task_type` parameter (`RETRIEVAL_DOCUMENT` / `RETRIEVAL_QUERY`).
+- **Dimensions**: 768 → 3072 via `halfvec(3072)` (16-bit float) for HNSW index compatibility.
+- **Migration**: `017_upgrade_embeddings_3072_halfvec.sql` — drops old index/column, creates new `halfvec(3072)` column + HNSW index.
+
+### 🧹 Config Cleanup
+
+- **Removed `gemini-3-flash-preview`** from `DEFAULT_GEMINI_MODELS` — it's an alias of `gemini-flash-latest`. Synced with production env.
+- **Migration 007 fix**: `CURRENT_DATE` is volatile, invalid in index predicate — replaced with safe alternative.
+- **Migration 006**: Made idempotent, deleted redundant 007.
+
+### Files Changed
+
+| File                            | Change                                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------- |
+| `app/streaming.py`              | `StreamingWriter` overflow logic, `_find_split_point()`, `last_message` property |
+| `app/handlers/ai_chat.py`       | 3-tuple unpacking, `edit_reply_markup` on `last_message`, streaming retry loop   |
+| `app/model_selector.py`         | `_get_tier()`, no-downgrade policy, `set` → `list`, removed short-msg rule       |
+| `app/config.py`                 | Removed `gemini-3-flash-preview` from defaults                                   |
+| `app/repos/memory.py`           | `gemini-embedding-001`, `halfvec(3072)`, `task_type` parameter                   |
+| `scripts/migrations/017_*.sql`  | Embedding column upgrade migration                                               |
+| `tests/test_phase3_features.py` | Updated model selector + streaming tests                                         |
+
+### 🧪 Tests (619 passed, 1 skipped)
 
 ### 🏗️ Structured Error Codes (MED-03)
 
