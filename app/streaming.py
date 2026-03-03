@@ -23,6 +23,7 @@ from app.config import settings
 from app.metrics import metrics_collector
 from app.request_context import get_request_id
 from app.utils.formatting import TelegramFormatter
+from app.utils.text_format import split_text_safe
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -32,6 +33,8 @@ EDIT_DEBOUNCE_S = 1.2
 MIN_CHUNK_SIZE = 80
 # Indicator appended while streaming is in progress.
 STREAMING_INDICATOR = " ▍"
+# Safe limit for Telegram messages (leaves margin for HTML tag overhead).
+STREAM_MSG_LIMIT = 4000
 
 
 async def stream_gemini_response(
@@ -85,6 +88,10 @@ class StreamingWriter:
 
     Progressively edits a placeholder message as text chunks arrive,
     with flood-control debouncing and a cursor indicator.
+
+    When the formatted text exceeds STREAM_MSG_LIMIT, the writer stops
+    editing the current message and accumulates the overflow. On finalize(),
+    overflow text is sent as one or more new messages via split_text_safe.
     """
 
     def __init__(self, placeholder_message, *, debounce_s: float = EDIT_DEBOUNCE_S):
@@ -94,11 +101,17 @@ class StreamingWriter:
         self._last_edit_time = 0.0
         self._pending_chars = 0
         self._edit_count = 0
+        self._overflow = False  # True once we've hit the message limit
+        self._frozen_text = ""   # Last text that fit in the first message
 
     async def write(self, delta: str) -> None:
         """Accumulate a text delta and flush to Telegram if debounce allows."""
         self._buffer += delta
         self._pending_chars += len(delta)
+
+        # Don't attempt edits once we've overflowed — just accumulate
+        if self._overflow:
+            return
 
         now = time.monotonic()
         elapsed = now - self._last_edit_time
@@ -109,10 +122,18 @@ class StreamingWriter:
     async def finalize(self) -> str:
         """Send the final version of the message (no cursor indicator).
 
+        If there's overflow text, sends it as additional message(s).
+
         Returns:
-            The complete accumulated text.
+            The complete accumulated text (across all messages).
         """
-        await self._flush(final=True)
+        if not self._overflow:
+            # Everything fits in one message
+            await self._flush(final=True)
+        else:
+            # First message is already frozen; send the rest as new message(s)
+            await self._send_overflow()
+
         return self._buffer
 
     async def _flush(self, *, final: bool = False) -> None:
@@ -121,22 +142,78 @@ class StreamingWriter:
         if not text.strip():
             return
 
-        if not final:
-            text += STREAMING_INDICATOR
+        display_text = text if final else text + STREAMING_INDICATOR
 
         try:
-            formatted_text, parse_mode = TelegramFormatter.format_text(text)
-            # Telegram message limit is 4096 chars; truncate to prevent Message_too_long
-            if len(formatted_text) > 4096:
-                formatted_text = formatted_text[:4080] + "\n\n… _(обрезано)_"
+            formatted_text, parse_mode = TelegramFormatter.format_text(display_text)
+
+            if len(formatted_text) > STREAM_MSG_LIMIT:
+                # Overflow! Freeze the current message and stop editing.
+                await self._freeze_message()
+                return
+
             await self._msg.edit_text(formatted_text, parse_mode=parse_mode)
             self._last_edit_time = time.monotonic()
             self._pending_chars = 0
             self._edit_count += 1
+            # Snapshot the raw buffer at this point — last known good state
+            self._frozen_text = self._buffer
         except Exception as e:
             # "Message is not modified" is expected if text hasn't changed enough
             if "not modified" not in str(e).lower():
                 logging.warning("Streaming edit failed (attempt %d): %s", self._edit_count, e)
+
+    async def _freeze_message(self) -> None:
+        """Freeze the first message at the last content that fit, then switch to overflow mode."""
+        self._overflow = True
+
+        # Find the largest prefix of buffer whose formatted version fits
+        # Use the frozen snapshot from the last successful edit
+        # (we know it was under the limit because it was successfully sent)
+        if self._frozen_text:
+            freeze_text = self._frozen_text
+        else:
+            freeze_text = self._buffer
+
+        try:
+            formatted, parse_mode = TelegramFormatter.format_text(freeze_text)
+            if len(formatted) <= STREAM_MSG_LIMIT:
+                await self._msg.edit_text(formatted, parse_mode=parse_mode)
+        except Exception as e:
+            if "not modified" not in str(e).lower():
+                logging.warning("Failed to freeze stream message: %s", e)
+
+        logging.info(
+            "Streaming overflow at %d chars, switching to multi-message",
+            len(self._buffer),
+        )
+
+    async def _send_overflow(self) -> None:
+        """Send the portion of the buffer that didn't fit as new message(s)."""
+        # The frozen text is already displayed in message #1.
+        # Send everything after the freeze point as new messages.
+        frozen_len = len(self._frozen_text) if self._frozen_text else 0
+        overflow_text = self._buffer[frozen_len:].strip()
+
+        if not overflow_text:
+            return
+
+        try:
+            formatted, parse_mode = TelegramFormatter.format_text(overflow_text)
+            chunks = split_text_safe(formatted)
+
+            for chunk in chunks:
+                await self._msg.reply_text(
+                    text=chunk,
+                    parse_mode=parse_mode,
+                )
+
+            logging.info(
+                "Sent %d overflow message(s) (%d chars)",
+                len(chunks), len(overflow_text),
+            )
+        except Exception as e:
+            logging.error("Failed to send overflow messages: %s", e)
 
     @property
     def text(self) -> str:
