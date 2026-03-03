@@ -126,6 +126,9 @@ class StreamingWriter:
 
         try:
             formatted_text, parse_mode = TelegramFormatter.format_text(text)
+            # Telegram message limit is 4096 chars; truncate to prevent Message_too_long
+            if len(formatted_text) > 4096:
+                formatted_text = formatted_text[:4080] + "\n\n… _(обрезано)_"
             await self._msg.edit_text(formatted_text, parse_mode=parse_mode)
             self._last_edit_time = time.monotonic()
             self._pending_chars = 0

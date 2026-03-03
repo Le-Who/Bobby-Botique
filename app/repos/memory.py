@@ -28,7 +28,7 @@ DEFAULT_MEMORY_TTL_DAYS = 90
 async def _get_embedding(text: str, api_key: str) -> list[float] | None:
     """Generate a 768-dimensional embedding for the given text.
 
-    Uses Gemini's text-embedding-004 model through the genai SDK.
+    Uses Gemini's gemini-embedding-001 model through the genai SDK.
     Returns None on failure (non-critical — memory just won't be stored).
     """
     try:
@@ -36,6 +36,7 @@ async def _get_embedding(text: str, api_key: str) -> list[float] | None:
         result = await client.aio.models.embed_content(
             model=EMBEDDING_MODEL,
             contents=text[:8000],  # Truncate to model limit
+            config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSION),
         )
         if result and result.embeddings:
             return result.embeddings[0].values
