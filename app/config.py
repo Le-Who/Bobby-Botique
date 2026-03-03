@@ -14,7 +14,6 @@ from pydantic import BaseModel, ValidationError
 # Single source of truth for default Gemini models.
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
 DEFAULT_GEMINI_MODELS: list[str] = [
-    "gemini-3-flash-preview",
     "gemini-2.5-flash",
     "gemini-flash-latest",
     "gemini-2.5-flash-lite",

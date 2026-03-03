@@ -35,7 +35,6 @@ class SelectionResult:
 _MODEL_TIER = {
     "pro": 4,          # gemini-2.5-pro
     "2.5-flash": 3,    # gemini-2.5-flash (thinking-capable)
-    "3-flash": 3,      # gemini-3-flash-preview
     "flash-latest": 2, # gemini-flash-latest (2.0 flash alias)
     "flash-lite": 1,   # gemini-2.5-flash-lite / flash-lite-latest
 }
@@ -49,7 +48,7 @@ def _get_tier(model_name: str) -> int:
         return 1
     if "pro" in name:
         return 4
-    if "2.5-flash" in name or "3-flash" in name:
+    if "2.5-flash" in name:
         return 3
     if "flash" in name:
         return 2
@@ -117,7 +116,7 @@ def select_model(
 
     # ── Deep reasoning → thinking model ──────────────────────────────────
     if _REASONING_PATTERNS.search(user_message) or msg_len > 1000:
-        reasoning_model = _find_model(available, ["2.5-pro", "pro", "2.5-flash", "3-flash"])
+        reasoning_model = _find_model(available, ["2.5-pro", "pro", "2.5-flash"])
         if reasoning_model and reasoning_model != current_model and _get_tier(reasoning_model) > current_tier:
             return SelectionResult(
                 model=reasoning_model,
