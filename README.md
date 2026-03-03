@@ -58,7 +58,7 @@ The system runs as a single containerized application performing two parallel as
 **Data Persistence**:
 
 - **PostgreSQL**: Stores user preferences, chat history (short-term & long-term), API key usage statistics, and **long-term memory** (pgvector embeddings for semantic recall).
-- **Redis** (Optional): Async `redis.asyncio.Redis` client for high-speed caching and temporary state management. Properly closed via `aclose()` on shutdown.
+- **Redis** (Optional): Async `redis.asyncio.Redis` client for high-speed caching and temporary state management. Connection pool sized to `max_connections=10` (matching `concurrent_updates=True` handler capacity; Upstash free tier allows 100). Properly closed via `aclose()` on shutdown.
 
 **Database Package** (`app/db/`):
 
@@ -153,6 +153,13 @@ The bot implements a sophisticated "Smart Router" for AI requests:
 - **Micro-GC Pauses**: Fine-tuned `gc.collect(1)` macro-invocations preventing full stop-the-world application pauses during heavy traffic spikes.
 - **Robust TCP Pooling**: Scaled (yet strictly constrained) HTTPX connection pools (50 concurrent external HTTP connections) with Circuit Breaker tracking for external AI Providers to defend against socket exhaustion.
 
+### Admin Alerts (v2.8.8+)
+
+- **`app/admin_alerts.py`**: Rate-limited Telegram notifications to `ADMIN_ID` (5 per 5 minutes).
+- **Severities**: `CRITICAL` (unhandled exceptions), `WARNING`, `INFO`.
+- **Triggers**: `global_error_handler` → critical alert with traceback; startup → health report (DB/Redis/AI); shutdown → stop notification.
+- Tracebacks auto-truncated to fit Telegram's 4096-character message limit.
+
 ### Resilience & Circuit Breakers (v2.6.6+)
 
 - **Gemini/OpenRouter**: DB-backed per-model key health tracking (`key_model_status` table) with error-category-aware cooldowns and automatic recovery probing.
@@ -181,9 +188,11 @@ While primarily a Telegram bot, the project includes a web frontend for administ
 - **Technology**: Quart (async Flask-compatible), Jinja2 Templates (`app/templates`), Vanilla CSS (`app/static`).
 - **Endpoints**:
   - `/`: Visual dashboard showing system status (CPU, RAM, Uptime), performance metrics, and context summarization stats.
-  - `/health`: JSON endpoint for docker healthchecks.
+  - `/health`: JSON endpoint for docker healthchecks (DB, Redis, bot status).
+  - `/metrics`: Prometheus text exposition endpoint (zero-dep `app/prometheus.py` — uptime, API calls, errors, active users, memory).
   - `/api/overview`: **(Secured)** System health, performance metrics, and summarization tier stats.
   - `/api/keys`: **(Secured)** Detailed view of API key usage, active keys, and remaining quotas per model.
+  - `/api/errors`, `/api/cache`, `/api/queue`, `/api/database`, `/api/circuit-breakers`, `/api/memory`: **(Secured)** Operational data endpoints.
 - **Security**: Protected by `ADMIN_SECRET` with cookie-session auth, CSRF tokens, IP-based brute-force protection (5 attempts → 429), and nonce-based Content-Security-Policy.
 
 ---
@@ -196,10 +205,13 @@ While primarily a Telegram bot, the project includes a web frontend for administ
 | **Bot Framework**  | `python-telegram-bot` (v22+)    | Async Telegram API wrapper       |
 | **Web Server**     | Quart + Hypercorn               | Async-native web server          |
 | **Database**       | `asyncpg` (PostgreSQL)          | High-performance async DB driver |
+| **Caching**        | `redis.asyncio` + `cachetools`  | Multi-layer cache (Redis + TTL)  |
 | **AI SDKs**        | `google-genai`, OpenAI (compat) | Interaction with LLMs            |
 | **Search**         | `tavily-python`                 | AI-optimized web search          |
 | **Doc Processing** | `pypdf`, `python-docx`          | Text extraction from files       |
+| **Monitoring**     | Custom Prometheus exporter      | Zero-dep `/metrics` endpoint     |
 | **Linting**        | Ruff (`pyproject.toml`)         | F, B, I, UP, RUF rules enforced  |
+| **CI/CD**          | GitHub Actions                  | Lint → Test → Docker Build       |
 | **Container**      | Docker                          | Standardization and deployment   |
 
 ---
@@ -228,6 +240,7 @@ Implements graceful shutdown handling (SIGINT/SIGTERM) to ensure:
 - Database connections are closed properly.
 - Pending Telegram updates are dropped or processed.
 - Web server unbinds ports immediately.
+- Admin shutdown notification sent to `ADMIN_ID`.
 
 ---
 
@@ -292,7 +305,7 @@ REDIS_URL=redis://...   # Optional — enables Redis caching layer
 
 ## 🧪 Testing
 
-The project has a comprehensive test suite covering unit, integration, and performance validation.
+The project has a comprehensive test suite covering unit, integration, concurrency, and end-to-end validation.
 
 ### Running Tests
 
@@ -310,18 +323,30 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (619 tests, 1 skipped)
+### Suite Structure (648 tests, 1 skipped)
 
 | Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                      |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |
 | **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`, `test_ai_chat`, `test_ai_search`, `test_ai_document`, `test_ai_photo`, `test_context_assembler`, `test_prompt_registry` | AI routing, key status management, fallback chains, error classification, AI handler coverage, context summarization |
 | **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_cmd_admin`, `test_cmd_conversations`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators`                                  | Callback dispatch, request flow, commands, admin commands, conversation CRUD, menu rendering, role UI                |
-| **Integration**    | `test_integration_flow`, `test_callback_responsiveness_scenario`                                                                                                                                              | End-to-end request flow (auth, rate limit, agent, error recovery), callback responsiveness                           |
+| **Integration**    | `test_integration_flow`, `test_integration`, `test_callback_responsiveness_scenario`                                                                                                                          | E2E request flow, streaming/error/alert/key-rotation integration, callback responsiveness                            |
+| **Concurrency**    | `test_concurrency`, `test_concurrency_hardening`                                                                                                                                                              | Cache stampede (50 concurrent), rate limiter under load, key resolution contention, thread-safe error classification |
+| **E2E Smoke**      | `test_smoke`                                                                                                                                                                                                  | Quart health/metrics endpoints, handler registration, admin alerts startup/shutdown, full error pipeline             |
 | **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                                                                                                         | Tavily key management, query optimization, cleanup                                                                   |
-| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_concurrency_hardening`                                                                                                                                        | Circuit breaker, TTL cache, race conditions                                                                          |
+| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`                                                                                                                                                                      | Circuit breaker, TTL cache                                                                                           |
 | **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                                                 | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling                                      |
 | **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                                                                                              | Batched metric saves, system status data                                                                             |
 | **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`, `test_audit_fixes`                                                                                                                | Text formatting, keyboard builders, timezone math, audit regression tests                                            |
+
+### CI/CD Pipeline
+
+GitHub Actions (`.github/workflows/ci.yml`) runs automatically on push to `main`/`TEST_gemaibotv2` and on PRs:
+
+1. **Lint** — `ruff format --check` + `ruff check` with GitHub inline annotations
+2. **Test** — `pytest tests/ -x -q` with all env vars mocked
+3. **Docker Build** — Verifies `Dockerfile.northflank` builds successfully
+
+Features: pip caching, concurrency groups (auto-cancels outdated runs), job timeouts.
 
 ### Mock Isolation Rule
 

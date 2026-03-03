@@ -24,6 +24,8 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.9] – 2026-03-03 – Concurrency Tests, CI/CD & Redis Fix
+
 ### 🧪 Concurrency Stress Tests (6 new)
 
 | Test                    | Concurrency     | What it proves                            |
@@ -53,6 +55,8 @@ Format is optimized for agent-parseable context.
 **Total tests: 637 → 0 failures**
 
 ---
+
+## [2.8.8] – 2026-03-03 – Admin Alerts, Type Annotations & Integration Tests
 
 ### 🔔 Admin Alert System
 
