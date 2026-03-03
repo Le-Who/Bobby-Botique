@@ -5,7 +5,37 @@ Format is optimized for agent-parseable context.
 
 ---
 
-## [2.8.8] – 2026-03-03 – Admin Alerts, Type Annotations & Integration Tests
+## [2.8.9] – 2026-03-03 – Concurrency Tests & CI/CD Pipeline
+
+### 🧪 Concurrency Stress Tests (6 new)
+
+| Test                    | Concurrency     | What it proves                            |
+| ----------------------- | --------------- | ----------------------------------------- |
+| Cache stampede reads    | 50 concurrent   | No data corruption under concurrent reads |
+| Cache concurrent writes | 50 concurrent   | In-memory cache integrity                 |
+| Alert rate limiter      | 20 concurrent   | ≤5 sent despite 20 simultaneous fires     |
+| StreamingWriter         | 20 rapid writes | All chunks appear in final output         |
+| Key resolution          | 10 concurrent   | Each gets valid key, no interference      |
+| Error classification    | 100 concurrent  | Thread-safe classification                |
+
+### 🔧 CI/CD Pipeline (improved)
+
+- Added `TEST_gemaibotv2` branch trigger
+- Concurrency group (auto-cancels outdated runs)
+- pip dependency caching via `actions/setup-python`
+- Job timeouts (5min lint, 10min test/build)
+- `ADMIN_SECRET` env var for CI test isolation
+- GitHub-format ruff output for inline annotations
+
+### 🐛 Redis Connection Pool Exhaustion (bug fix)
+
+- **Root cause:** `max_connections=2` + `concurrent_updates=True` = pool exhaustion when ≥3 users send messages simultaneously
+- **Fix:** Increased `max_connections` 2→10 (Upstash free tier allows 100)
+- **Fix:** Removed `ping()` before retry — it consumed a pool slot, causing deadlock under load
+
+**Total tests: 637 → 0 failures**
+
+---
 
 ### 🔔 Admin Alert System
 

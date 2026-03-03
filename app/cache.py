@@ -18,13 +18,15 @@ if not redis_url:
     redis_client = None
 else:
     try:
-        # Minimal Redis configuration for Upstash.com free tier compatibility
-        # Removed problematic parameters that cause connection issues
+        # Redis configuration for Upstash.com
+        # Upstash free tier allows 100 concurrent connections.
+        # max_connections=10 allows concurrent handlers (bot uses concurrent_updates=True)
+        # while staying well within Upstash limits.
         redis_client = Redis.from_url(
             redis_url,
             socket_timeout=5,  # Fast timeout for quick failure detection
             socket_connect_timeout=5,  # Fast connect timeout
-            max_connections=2,  # Allow ping + one operation concurrently
+            max_connections=10,  # Match concurrent handler capacity
             retry_on_timeout=True,  # Only retry on timeout, not all errors
             decode_responses=False,  # Keep as bytes for manual handling
             health_check_interval=0,  # Disable built-in health-check pings
@@ -104,17 +106,6 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
     last_error = None
     for attempt in range(max_retries):
         try:
-            # Check connection health before operation (starting from 2nd attempt)
-            if attempt > 0:
-                try:
-                    await redis_client.ping()
-                except Exception:
-                    logging.warning(
-                        f"Redis connection check failed, attempt {attempt + 1}"
-                    )
-                    # Continue to retry even if ping fails
-                    pass
-
             # Execute async Redis operation directly
             result = await operation(*args, **kwargs)
             return result
