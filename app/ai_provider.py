@@ -39,7 +39,6 @@ from app.utils.api_logger import api_logger
 from app.utils.image_utils import save_image_as_bytes
 from app.utils.network import NetworkErrorHandler
 
-
 # ── Thinking config helpers ──────────────────────────────────────────
 
 _THINKING_BUDGET_MAP = {"off": 0, "low": 1024, "medium": 8192, "high": 24576}
@@ -310,7 +309,6 @@ class GeminiProvider(BaseAIProvider):
 
             # Reuse client across requests (connection pooling, TLS caching).
             # Rebuild only when api_key changes or on first call.
-            request_id = get_request_id()
             if self._client is None or self._client_api_key != self.api_key:
                 client_kwargs = {"api_key": self.api_key}
                 http_opts = {"timeout": 90_000}  # 90s SDK deadline
@@ -1009,7 +1007,7 @@ class ProviderRouter:
             if fallback_model == failed_model:
                 continue
 
-            key_data, model_used, resolution = await use_case.resolve_ai_request(
+            key_data, model_used, _ = await use_case.resolve_ai_request(
                 fallback_model, use_openrouter=use_openrouter,
             )
             if not key_data:

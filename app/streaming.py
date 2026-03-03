@@ -10,10 +10,13 @@ Architecture:
     StreamingWriter            →  debounced Telegram message updater (multi-message)
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
 from google import genai
 from google.genai import types
@@ -23,6 +26,10 @@ from app.config import settings
 from app.metrics import metrics_collector
 from app.request_context import get_request_id
 from app.utils.formatting import TelegramFormatter
+
+if TYPE_CHECKING:
+    from telegram import Message
+
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -263,7 +270,7 @@ async def stream_and_display(
     contents: list,
     config: types.GenerateContentConfig,
     timeout: float = 100.0,
-) -> tuple[str, bool, "Message | None"]:
+) -> tuple[str, bool, Message | None]:
     """High-level: stream Gemini response and progressively update Telegram message.
 
     Supports multi-message streaming: when a single message exceeds

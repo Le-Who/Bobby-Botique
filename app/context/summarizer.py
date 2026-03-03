@@ -11,7 +11,7 @@ from typing import Any
 
 from app.prompt_registry import estimate_tokens_cyrillic
 
-from .token_budget import CHUNK_SIZE, MAX_CHUNKS, SUMMARY_BUDGET, SUMMARIZATION_MODEL
+from .token_budget import CHUNK_SIZE, MAX_CHUNKS, SUMMARIZATION_MODEL, SUMMARY_BUDGET
 
 logger = logging.getLogger(__name__)
 

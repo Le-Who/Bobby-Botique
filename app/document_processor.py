@@ -20,9 +20,6 @@ import httpx
 import pypdf
 from docx import Document as DocxDocument
 
-from app.metrics import metrics_collector
-from app.utils.network import NetworkErrorHandler
-
 # Submodule imports
 from app.documents.parsers import (
     MAX_DOCUMENT_TEXT_LENGTH,  # noqa: F401 — re-exported
@@ -34,6 +31,8 @@ from app.documents.repository import (
     cleanup_oldest_documents,
     save_document_content,
 )
+from app.metrics import metrics_collector
+from app.utils.network import NetworkErrorHandler
 
 # Verify document processing libraries are available
 try:

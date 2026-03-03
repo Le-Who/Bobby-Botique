@@ -7,7 +7,6 @@ import pytest
 
 from app.utils.metrics_middleware import MetricsMiddleware, track_metrics
 
-
 # ── MetricsMiddleware ────────────────────────────────────────────────────────
 # metrics_collector is lazily imported inside __aexit__ from app.metrics,
 # so we must patch at app.metrics.metrics_collector level.
@@ -18,7 +17,7 @@ class TestMetricsMiddleware:
     @patch("app.metrics.metrics_collector")
     async def test_records_success(self, mock_mc):
         mock_mc.record_request = AsyncMock()
-        async with MetricsMiddleware("test_op") as m:
+        async with MetricsMiddleware("test_op"):
             pass  # Success path
         mock_mc.record_request.assert_called_once()
         args, kwargs = mock_mc.record_request.call_args
