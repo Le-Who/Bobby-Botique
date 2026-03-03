@@ -158,11 +158,12 @@ class TestStreamingWriter:
         with patch("app.streaming.stream_gemini_response", side_effect=mock_stream):
             with patch("app.streaming.metrics_collector") as mock_mc:
                 mock_mc.record_api_call = AsyncMock()
-                text, success = await stream_and_display(
+                text, success, last_msg = await stream_and_display(
                     mock_msg, "key", "model", [], MagicMock()
                 )
                 assert success
                 assert "HelloWorld" in text.replace(" ", "")
+                assert last_msg is not None
 
 
 # ============================================================================

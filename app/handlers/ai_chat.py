@@ -193,7 +193,7 @@ async def _handle_regular_chat(
                         except (TypeError, ValueError):
                             pass
 
-                    response_text, success = await stream_and_display(
+                    response_text, success, stream_last_msg = await stream_and_display(
                         placeholder_message,
                         key_data["api_key"],
                         model_used,
@@ -283,16 +283,14 @@ async def _handle_regular_chat(
                         )
             else:
                 # Streaming: message is already displayed, just add buttons
+                # Use stream_last_msg (final message in chain) for button attachment
+                button_msg = stream_last_msg if stream_last_msg else placeholder_message
                 try:
-                    formatted_text, parse_mode = TelegramFormatter.format_text(
-                        response_text
-                    )
-                    await placeholder_message.edit_text(
-                        formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-                    )
+                    # Simply attach buttons to the last message without re-rendering
+                    await button_msg.edit_reply_markup(reply_markup=reply_markup)
                 except Exception as e:
                     if "not modified" not in str(e).lower():
-                        logging.warning("Final edit with buttons failed: %s", e)
+                        logging.warning("Final button edit failed: %s", e)
 
             chat_state.history.append({"role": "model", "parts": [response_text]})
             chat_state.token_count = new_token_count
