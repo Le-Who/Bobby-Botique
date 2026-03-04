@@ -1,0 +1,3 @@
+## 2026-03-04 - Accessible Custom Tabs
+**Learning:** Custom tabs implemented with vanilla HTML/JS often break screen reader navigation because they lack structural semantics. WAI-ARIA roles (`tablist`, `tab`, `tabpanel`) and relationship attributes (`aria-controls`, `aria-labelledby`, `aria-selected`) are strictly required to ensure the interface is perceived as a cohesive tabbed component rather than loose buttons and divs.
+**Action:** When creating or maintaining custom tabs, always implement the full WAI-ARIA pattern, ensuring that dynamic state (`aria-selected`) is properly toggled in JavaScript alongside visual CSS classes.

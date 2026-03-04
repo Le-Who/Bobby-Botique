@@ -69,8 +69,8 @@ async def _handle_regular_chat(
         return
 
     # Assemble context with token-budget awareness
-    from app.context_assembler import get_assembler
     from app.context.summarizer import schedule_llm_summarization
+    from app.context_assembler import get_assembler
 
     assembler = get_assembler()
 
