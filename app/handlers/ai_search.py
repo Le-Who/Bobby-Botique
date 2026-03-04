@@ -335,8 +335,8 @@ async def _handle_research_agent(
     augmented_prompt = prompts.SYNTHESIS_PROMPT.format(full_context=safe_full_context, user_message=safe_user_message)
 
     # Assemble context with token-budget awareness
-    from app.context_assembler import get_assembler
     from app.context.summarizer import schedule_llm_summarization
+    from app.context_assembler import get_assembler
 
     assembler = get_assembler()
     existing_summary = chat_state.context_summary

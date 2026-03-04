@@ -30,13 +30,13 @@ def _extract_message_content(msg: dict) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            return " ".join(str(p) for p in content if not isinstance(p, bytes))
+        return "" if isinstance(content, bytes) else str(content)
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
-        return str(parts)
+            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts if not isinstance(p, bytes))
+        return "" if isinstance(parts, bytes) else str(parts)
     return ""
 
 

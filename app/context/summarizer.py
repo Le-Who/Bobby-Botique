@@ -171,8 +171,8 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            return " ".join(str(p) for p in content if not isinstance(p, bytes))
+        return "" if isinstance(content, bytes) else str(content)
 
     text_parts: list[str] = []
     for part in parts:

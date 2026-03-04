@@ -13,3 +13,7 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+
+## 2025-03-04 - Skipping bytes during text extraction
+**Learning:** Calling `str()` on binary data (like images or document payloads) within `app/context/summarizer.py` and `app/repos/chats.py` creates massive strings, wasting CPU time and causing significant memory bloat, while producing useless output.
+**Action:** When extracting text from message parts (`parts` or `content`), always explicitly check and skip `bytes` objects (`if not isinstance(p, bytes)`) to prevent O(N) memory allocations and CPU overhead.
