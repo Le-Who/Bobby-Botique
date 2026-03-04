@@ -26,6 +26,7 @@ from app.config import settings
 from app.metrics import metrics_collector
 from app.request_context import get_request_id
 from app.utils.formatting import TelegramFormatter
+from app.utils.text_format import sanitize_html_tags
 
 if TYPE_CHECKING:
     from telegram import Message
@@ -42,6 +43,9 @@ STREAMING_INDICATOR = " ▍"
 # Safe limit for Telegram messages (leaves margin for HTML tag overhead).
 STREAM_MSG_LIMIT = 4000
 
+_last_finish_reason: str | None = None
+"""Side-channel: finish_reason from the last ``stream_gemini_response`` call."""
+
 
 async def stream_gemini_response(
     api_key: str,
@@ -51,6 +55,9 @@ async def stream_gemini_response(
     timeout: float = 100.0,
 ) -> AsyncGenerator[str, None]:
     """Async generator that yields progressive text chunks from Gemini streaming API.
+
+    After iteration completes, check the module-level ``_last_finish_reason``
+    for the model's finish reason (e.g. 'STOP', 'SAFETY', 'RECITATION', 'MAX_TOKENS').
 
     Yields:
         Text delta strings as they arrive from the model.
@@ -67,11 +74,24 @@ async def stream_gemini_response(
     client_kwargs["http_options"] = types.HttpOptions(**http_opts)
     client = genai.Client(**client_kwargs)
 
+    # Side-channel: store finish_reason after iteration
+    finish_reason_holder: list[str | None] = [None]
+
     async def _stream():
         response_stream = await client.aio.models.generate_content_stream(
             model=model_name, contents=contents, config=config,
         )
         async for chunk in response_stream:
+            # Inspect finish_reason on each chunk (usually set on the last one)
+            try:
+                candidates = getattr(chunk, "candidates", None)
+                if candidates:
+                    fr = getattr(candidates[0], "finish_reason", None)
+                    if fr:
+                        finish_reason_holder[0] = str(fr)
+            except (IndexError, AttributeError):
+                pass
+
             if chunk.text:
                 yield chunk.text
 
@@ -87,6 +107,21 @@ async def stream_gemini_response(
     except Exception as e:
         logging.error("Streaming error: %s", e, exc_info=True)
         raise
+    finally:
+        # Expose finish_reason via module-level variable (read by stream_and_display)
+        global _last_finish_reason
+        _last_finish_reason = finish_reason_holder[0]
+
+
+# Finish reasons that indicate the model was blocked mid-response
+_BLOCKED_FINISH_REASONS = frozenset({
+    "SAFETY", "2", "FINISH_REASON_SAFETY",
+    "RECITATION", "4", "FINISH_REASON_RECITATION",
+})
+
+_TRUNCATED_FINISH_REASONS = frozenset({
+    "MAX_TOKENS", "3", "FINISH_REASON_MAX_TOKENS",
+})
 
 
 class StreamingWriter:
@@ -143,6 +178,10 @@ class StreamingWriter:
         try:
             formatted_text, parse_mode = TelegramFormatter.format_text(display_text)
 
+            # Mid-stream flushes may have unclosed HTML tags from incomplete markdown
+            if not final:
+                formatted_text = sanitize_html_tags(formatted_text)
+
             if len(formatted_text) > STREAM_MSG_LIMIT and not final:
                 # Mid-stream overflow: finalize current, start new message
                 await self._overflow_to_new_message()
@@ -181,6 +220,7 @@ class StreamingWriter:
         # Edit current message with frozen text (no cursor)
         try:
             formatted_frozen, parse_mode = TelegramFormatter.format_text(frozen_text)
+            formatted_frozen = sanitize_html_tags(formatted_frozen)
             await self._msg.edit_text(formatted_frozen, parse_mode=parse_mode)
             self._edit_count += 1
         except Exception as e:
@@ -304,9 +344,34 @@ async def stream_and_display(
         if not final_text.strip():
             return "", False, placeholder_message
 
+        # Check finish_reason for blocked/truncated responses
+        fr = _last_finish_reason
+        fr_upper = (fr or "").upper()
+
+        if fr_upper in _BLOCKED_FINISH_REASONS:
+            logging.warning(
+                "Streaming response blocked by model (finish_reason=%s, %d chars generated)",
+                fr, len(final_text),
+            )
+            # User still gets what was generated, plus a note
+            final_text += "\n\n⚠️ _Ответ был прерван фильтром безопасности._"
+
+        elif fr_upper in _TRUNCATED_FINISH_REASONS:
+            logging.warning(
+                "Streaming response truncated (finish_reason=%s, %d chars generated)",
+                fr, len(final_text),
+            )
+            final_text += "\n\n⚠️ _Ответ был обрезан из-за ограничения длины._"
+
+        elif len(final_text) < 150 and fr_upper not in ("STOP", "1", "FINISH_REASON_STOP", ""):
+            logging.warning(
+                "Suspiciously short streaming response: %d chars, finish_reason=%s",
+                len(final_text), fr,
+            )
+
         logging.info(
-            "Streaming complete: %d chars, %d edits, %d message(s)",
-            len(final_text), writer.edit_count, writer.message_count,
+            "Streaming complete: %d chars, %d edits, %d message(s), finish_reason=%s",
+            len(final_text), writer.edit_count, writer.message_count, fr,
         )
         await metrics_collector.record_api_call("gemini_streaming", model_name)
         return final_text, True, writer.last_message
@@ -329,3 +394,4 @@ async def stream_and_display(
     except Exception as e:
         logging.error("Streaming failed: %s", e, exc_info=True)
         return "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.", False, placeholder_message
+

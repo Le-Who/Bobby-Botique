@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from app.utils.text_format import format_text, split_text_safe
+from app.utils.text_format import format_text, sanitize_html_tags, split_text_safe
 
 
 @pytest.fixture
@@ -214,3 +214,70 @@ def test_markdown_to_html_nested():
     text = "**_bold italic_**"
     result, _ = format_text(text)
     assert result == "<b><i>bold italic</i></b>"
+
+
+# --- Tests for sanitize_html_tags (streaming HTML balancer) ---
+
+
+def test_sanitize_already_balanced():
+    """Balanced HTML passes through unchanged."""
+    html = "<b>hello</b> <i>world</i>"
+    assert sanitize_html_tags(html) == html
+
+
+def test_sanitize_unclosed_bold():
+    """Unclosed <b> tag gets closed at the end."""
+    assert sanitize_html_tags("<b>hello") == "<b>hello</b>"
+
+
+def test_sanitize_unclosed_nested():
+    """Multiple unclosed tags closed in correct nesting order."""
+    result = sanitize_html_tags("<b><i>text")
+    assert result == "<b><i>text</i></b>"
+
+
+def test_sanitize_code_italic_mismatch():
+    """Reproduces the exact error from production logs:
+    <code>...<i>text</code> where <i> crosses <code> boundary.
+    The sanitizer should ensure all tags are balanced.
+    """
+    html = "<code>some code <i>italic text</code>"
+    result = sanitize_html_tags(html)
+    # <i> should be closed (misnesting resolved by appending </i>)
+    assert "</i>" in result
+    # All tags should be balanced
+    assert result.count("<code>") == result.count("</code>")
+    assert result.count("<i>") == result.count("</i>")
+
+
+def test_sanitize_empty_and_none():
+    """Empty/falsy input passes through."""
+    assert sanitize_html_tags("") == ""
+    assert sanitize_html_tags(None) is None
+
+
+def test_sanitize_plain_text():
+    """Plain text without tags passes through unchanged."""
+    assert sanitize_html_tags("hello world") == "hello world"
+
+
+def test_sanitize_pre_code_unclosed():
+    """Unclosed <pre><code> from incomplete streaming code block."""
+    html = '<pre><code class="language-python">def hello():'
+    result = sanitize_html_tags(html)
+    assert result.endswith("</code></pre>")
+
+
+def test_markdown_to_html_partial_streaming():
+    """Simulate incomplete markdown during streaming: bold open, italic open."""
+    # This is what happens mid-stream when AI sends "Hello **bold and *italic"
+    text = "Hello **bold and *italic"
+    result, _ = format_text(text)
+    # After markdown_to_html, bold becomes <b> but italic * stays as text
+    # The result may have unclosed tags — sanitize should fix them
+    sanitized = sanitize_html_tags(result)
+    # Count open and close tags
+    open_count = sanitized.count("<b>") + sanitized.count("<i>") + sanitized.count("<code>")
+    close_count = sanitized.count("</b>") + sanitized.count("</i>") + sanitized.count("</code>")
+    assert open_count == close_count, f"Unbalanced tags in: {sanitized}"
+

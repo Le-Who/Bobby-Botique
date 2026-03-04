@@ -51,7 +51,10 @@ _background_tasks: set = set()
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Main message router — dispatches to specialized sub-modules."""
     if not update or not update.effective_user:
-        logging.error("Invalid update object received")
+        logging.debug(
+            "Skipping update without effective_user (update_id=%s)",
+            getattr(update, "update_id", "?"),
+        )
         return
 
     user_id = update.effective_user.id

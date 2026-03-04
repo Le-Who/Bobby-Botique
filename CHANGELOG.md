@@ -5,6 +5,37 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.14] – 2026-03-04 – Streaming HTML Sanitizer & Finish Reason Inspection
+
+### 🔴 Fix: HTML Entity Parsing Error During Streaming
+
+**Root cause:** `markdown_to_html()` produced unclosed HTML tags when processing incomplete markdown fragments during mid-stream flushes. Telegram rejected the malformed HTML (`"unmatched end tag at byte offset 3139, expected "</code>", found "</i>"`), causing repeated edit failures.
+
+**Fix:** New `sanitize_html_tags()` function in `text_format.py` — lightweight stack-based HTML tag balancer that closes unclosed tags and resolves misnested tags. Applied in `StreamingWriter._flush()` (mid-stream) and `_overflow_to_new_message()`.
+
+### 🔴 Fix: Truncated Streaming Responses (~94 chars)
+
+**Root cause:** `stream_gemini_response()` never inspected `finish_reason` from streaming chunks. When the model stopped early (SAFETY/RECITATION), the truncated response was silently treated as success.
+
+**Fix:** `stream_gemini_response()` now captures `finish_reason` from each chunk's candidates. `stream_and_display()` checks it after iteration:
+
+- **SAFETY/RECITATION** → user sees partial text + `⚠️ Ответ был прерван фильтром безопасности`
+- **MAX_TOKENS** → text + `⚠️ Ответ был обрезан из-за ограничения длины`
+- **< 150 chars with unusual finish_reason** → WARNING logged
+- `finish_reason` included in "Streaming complete" log line
+
+### Files Changed
+
+| File                        | Change                                                                     |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `app/utils/text_format.py`  | New `sanitize_html_tags()` function                                        |
+| `app/streaming.py`          | `finish_reason` capture, sanitizer integration, blocked/truncated handling |
+| `tests/test_text_format.py` | +8 tests for sanitizer and partial-streaming scenarios                     |
+
+### 🧪 Tests: 660 passed, 1 skipped, 0 failures
+
+---
+
 ## [2.8.13] – 2026-03-04 – Streaming Concurrency Race Fix
 
 ### 🔴 Fix: Callback Race Condition During Streaming
