@@ -32,6 +32,13 @@ _HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore(_HEAVY_CALLBACK_LIMIT)
 # ── Background task tracking (prevents GC of fire-and-forget tasks) ──────────
 _background_tasks: set = set()
 
+_BUSY_TOAST = "⏳ Дождитесь завершения текущего запроса"
+
+
+def _is_user_busy(user_id: int) -> bool:
+    """Check if user has an active AI request (lock held by streaming/processing)."""
+    return state.get_user_lock(user_id).locked()
+
 
 # ── Re-exports from domain modules ──────────────────────────────────────────
 import contextlib
@@ -90,6 +97,10 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     user_id = query.from_user.id
+
+    if _is_user_busy(user_id):
+        await query.answer(_BUSY_TOAST, show_alert=True)
+        return
 
     # Get model from индекса (new формат с хэшем) or from полного имени (old формат for совместимости)
     if query.data.startswith("model:"):
@@ -177,6 +188,11 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
 
     user_id = query.from_user.id
+
+    if _is_user_busy(user_id):
+        await query.answer(_BUSY_TOAST, show_alert=True)
+        return
+
     model_name = query.data.split(":", 1)[1] if ":" in query.data else None
     if not model_name:
         return
@@ -339,6 +355,10 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     action = query.data.split(":")[1]
     user_id = query.from_user.id
 
+    if action == "new_topic" and _is_user_busy(user_id):
+        await query.answer(_BUSY_TOAST, show_alert=True)
+        return
+
     if action == "new_topic":
         chat_state = await get_user_chat(user_id)
         chat_state.history = []
@@ -365,6 +385,10 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer("Начинаем новую тему...")
 
     user_id = query.from_user.id
+
+    if _is_user_busy(user_id):
+        await query.answer(_BUSY_TOAST, show_alert=True)
+        return
 
     # Clear chat history and system prompt, similar to /newchat command
     chat_state = await get_user_chat(user_id)
@@ -441,6 +465,10 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     """Inline new chat — edits current message, no flooding."""
     query = update.callback_query
     user_id = query.from_user.id
+
+    if _is_user_busy(user_id):
+        await query.answer(_BUSY_TOAST, show_alert=True)
+        return
 
     chat_state = await get_user_chat(user_id)
     chat_state.history = []
@@ -599,6 +627,10 @@ async def open_conversations_callback(update: Update, context: ContextTypes.DEFA
 async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
+
+    if _is_user_busy(user_id):
+        await query.answer(_BUSY_TOAST, show_alert=True)
+        return
 
     chat_state = await get_user_chat(user_id)
     chat_state.search_enabled = not chat_state.search_enabled

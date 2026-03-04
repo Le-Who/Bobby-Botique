@@ -5,6 +5,25 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.13] – 2026-03-04 – Streaming Concurrency Race Fix
+
+### 🔴 Fix: Callback Race Condition During Streaming
+
+**Root cause:** 6 callback handlers (`model_button`, `switch_model`, `new_topic`, `new_chat`, `deep_dive:new_topic`, `toggle_search`) performed Read-Modify-Write on `chat_state` **without checking the per-user lock**. When triggered during active streaming, their changes were silently overwritten by the streaming handler's final `update_user_chat`.
+
+**Fix:** Added `_is_user_busy(user_id)` lock-check guard — shows "⏳ Дождитесь завершения" toast and skips mutation when the user lock is held.
+
+### Files Changed
+
+| File                                  | Change                                                 |
+| ------------------------------------- | ------------------------------------------------------ |
+| `app/handlers/callbacks.py`           | `_is_user_busy` helper + 6 handler guards              |
+| `tests/test_concurrency_hardening.py` | +2 regression tests (guard presence, AST verification) |
+
+### 🧪 Tests: 652 passed, 1 skipped, 0 failures
+
+---
+
 ## [2.8.12] – 2026-03-04 – Code & Logic Audit + Ruff Expansion
 
 ### 🔍 Full Code & Logic Audit
