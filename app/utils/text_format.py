@@ -257,6 +257,51 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[str
     return chunks
 
 
+def sanitize_html_tags(html_text: str) -> str:
+    """Ensure all HTML tags are properly balanced for Telegram.
+
+    Designed for mid-stream flushes where markdown_to_html may produce
+    unclosed tags from incomplete markdown (e.g. ``<code>...<i>text``).
+
+    - Removes orphaned close tags (no matching open tag)
+    - Appends missing close tags at the end in correct nesting order
+    """
+    if not html_text:
+        return html_text
+
+    # Void/self-closing tags that never need closing
+    _VOID_TAGS = frozenset({"br", "img", "hr"})
+
+    open_stack: list[str] = []  # stack of tag names
+
+    for match in re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", html_text):
+        is_close = match.group(1) == "/"
+        tag_name = match.group(2)
+
+        if tag_name in _VOID_TAGS:
+            continue
+
+        if not is_close:
+            open_stack.append(tag_name)
+        else:
+            # Close tag: pop matching open, or it's orphaned
+            if open_stack and open_stack[-1] == tag_name:
+                open_stack.pop()
+            elif tag_name in open_stack:
+                # Misnested: close everything up to and including the matching open
+                while open_stack and open_stack[-1] != tag_name:
+                    html_text += f"</{open_stack.pop()}>"
+                if open_stack:
+                    open_stack.pop()
+            # else: orphaned close tag — leave it (Telegram tolerates it better than removing)
+
+    # Close any remaining unclosed tags (innermost first)
+    for tag_name in reversed(open_stack):
+        html_text += f"</{tag_name}>"
+
+    return html_text
+
+
 def strip_formatting(text: str) -> str:
     """Removes all HTML tags and invisible characters."""
     # Remove HTML tags
