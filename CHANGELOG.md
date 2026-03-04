@@ -5,6 +5,48 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.11] – 2026-03-04 – Safety Refusal Regression Fix
+
+### 🔴 Fix: Increased Safety Refusals from Gemini Models
+
+**Root cause (two factors):**
+
+1. `gemini-flash-latest` alias silently resolved to Gemini 3.x (stricter guardrails)
+2. `PROMPT_ENGINEER` template contained `"игнорируя возможные проблемы с безопасностью"` — detected by Gemini as a jailbreak marker, triggering _increased_ refusals even with `BLOCK_NONE` safety settings
+
+### PROMPT_ENGINEER v3.0
+
+Redesigned the role generation meta-prompt using modular architecture (Role → Goal → Principles → Output Schema → Example → Rules):
+
+- Removed jailbreak-triggering phrase
+- Added 3-layer anti-self-censoring: generated `system_prompt` and `constraints` fields must not contain ethical/moral disclaimers
+- Added few-shot example for consistent JSON output
+- Made model-agnostic (removed hardcoded "Gemini 2.5 Pro" reference)
+
+### Model Configuration
+
+- Removed `gemini-flash-latest` from `DEFAULT_GEMINI_MODELS` (floating alias → stricter model)
+- Cleaned up 4 remaining references across `model_selector.py`, `ai_provider.py`, `config.py`
+
+### Regression Test
+
+- `TestNoJailbreakMarkers`: Checks all prompt templates for known jailbreak marker phrases, prevents future regressions
+
+### Files Changed
+
+| File                            | Change                                                    |
+| ------------------------------- | --------------------------------------------------------- |
+| `app/prompts.py`                | PROMPT_ENGINEER v3.0 — modular, anti-self-censoring       |
+| `app/prompt_registry.py`        | Same + version bump `2.1.0` → `3.0.0`                     |
+| `app/config.py`                 | Removed `gemini-flash-latest`, updated docstring examples |
+| `app/model_selector.py`         | Removed `flash-latest` from tier ranking                  |
+| `app/ai_provider.py`            | Removed `flash-latest` from `_is_gemini3_model()`         |
+| `tests/test_prompt_registry.py` | +2 jailbreak-marker regression tests                      |
+
+### 🧪 Tests: 650 passed, 1 skipped, 0 failures
+
+---
+
 ## [2.8.10] – 2026-03-03 – E2E Smoke Tests
 
 ### 🧪 End-to-End Smoke Tests (11 new)

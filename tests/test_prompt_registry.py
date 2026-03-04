@@ -274,3 +274,45 @@ class TestThreadSafety:
         assert not errors
         # All threads should get the same instance
         assert len(set(results)) == 1
+
+
+# ── No jailbreak markers ─────────────────────────────────────────────────────
+
+
+class TestNoJailbreakMarkers:
+    """Ensure prompt templates don't contain words that trigger Gemini internal guardrails.
+
+    Gemini 2.5/3.x models detect 'ignore safety'-style phrases as jailbreak
+    attempts and respond with *more* refusals.  This test prevents regressions.
+    """
+
+    JAILBREAK_MARKERS = [
+        "игнорируя безопасность",
+        "игнорируй безопасность",
+        "игнорируя возможные проблемы с безопасностью",
+        "ignore safety",
+        "bypass safety",
+        "обойти безопасность",
+        "обойти ограничения",
+        "без ограничений",
+        "проблемы с безопасностью",
+        "ответственность на себя берёт",
+    ]
+
+    def test_no_jailbreak_markers_in_registry_templates(self):
+        registry = PromptRegistry()
+        for tmpl in registry.list_templates():
+            text_lower = tmpl.text.lower()
+            for marker in self.JAILBREAK_MARKERS:
+                assert marker.lower() not in text_lower, (
+                    f"Template '{tmpl.name}' contains jailbreak marker '{marker}'"
+                )
+
+    def test_no_jailbreak_markers_in_legacy_prompt(self):
+        from app.prompts import PROMPT_ENGINEER_SYSTEM_PROMPT
+
+        text_lower = PROMPT_ENGINEER_SYSTEM_PROMPT.lower()
+        for marker in self.JAILBREAK_MARKERS:
+            assert marker.lower() not in text_lower, (
+                f"PROMPT_ENGINEER_SYSTEM_PROMPT contains jailbreak marker '{marker}'"
+            )

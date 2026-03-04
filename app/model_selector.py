@@ -35,7 +35,6 @@ class SelectionResult:
 _MODEL_TIER = {
     "pro": 4,          # gemini-2.5-pro
     "2.5-flash": 3,    # gemini-2.5-flash (thinking-capable)
-    "flash-latest": 2, # gemini-flash-latest (2.0 flash alias)
     "flash-lite": 1,   # gemini-2.5-flash-lite / flash-lite-latest
 }
 

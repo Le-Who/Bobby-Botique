@@ -47,7 +47,7 @@ _THINKING_LEVEL_MAP = {"off": "minimal", "low": "low", "medium": "medium", "high
 
 def _is_gemini3_model(model_name: str) -> bool:
     """Detect Gemini 3.x models that require thinkingLevel instead of thinkingBudget."""
-    return "gemini-3" in model_name or model_name == "gemini-flash-latest"
+    return "gemini-3" in model_name
 
 
 def _build_thinking_config(model_name: str, thinking_level: str | None) -> types.ThinkingConfig | None:

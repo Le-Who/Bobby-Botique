@@ -15,7 +15,6 @@ from pydantic import BaseModel, ValidationError
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
 DEFAULT_GEMINI_MODELS: list[str] = [
     "gemini-2.5-flash",
-    "gemini-flash-latest",
     "gemini-2.5-flash-lite",
 ]
 DEFAULT_DAILY_LIMIT_PER_MODEL: int = 15
@@ -65,10 +64,10 @@ def _load_daily_limits() -> dict[str, int]:
     Загружает DAILY_LIMITS from env переменной to formatе JSON or компактном формате.
 
     Формат в env (JSON, рекомендуется):
-    DAILY_LIMITS='{"gemini-exp-1206": 250, "gemini-flash-latest": 15}'
+    DAILY_LIMITS='{"gemini-2.5-flash": 250, "gemini-2.5-flash-lite": 15}'
 
     Или компактный формат:
-    DAILY_LIMITS='gemini-exp-1206:250,gemini-flash-latest:15'
+    DAILY_LIMITS='gemini-2.5-flash:250,gemini-2.5-flash-lite:15'
 
     Returns:
         Dict[str, int]: Словарь с limitами for моделей
