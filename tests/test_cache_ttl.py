@@ -78,7 +78,7 @@ class TestCacheTTL(unittest.TestCase):
 
             # Because clear_cache utilizes the global multi_layer_cache instance,
             # we need to manually emulate it here or test the module-level method
-            pass  # Module-level global tests are generally brittle, but direct validation is sound
+            # Module-level global tests are generally brittle, but direct validation is sound
 
         self.loop.run_until_complete(run_test())
 

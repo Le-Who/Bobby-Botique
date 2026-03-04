@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -219,10 +220,8 @@ class DatabaseManager:
                 )
                 if attempt < retries:
                     await asyncio.sleep(min(2**attempt, 10))
-                    try:
+                    with contextlib.suppress(Exception):
                         await self.reconnect()
-                    except Exception:
-                        pass
                     continue
 
             except asyncpg.PostgresError as e:

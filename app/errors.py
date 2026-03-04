@@ -42,27 +42,22 @@ class GemaibotBaseException(Exception):
 
 class DatabaseError(GemaibotBaseException):
     """Base class for database-related errors."""
-    pass
 
 
 class DatabaseConnectionError(DatabaseError):
     """Raised when database connection fails."""
-    pass
 
 
 class DatabaseQueryError(DatabaseError):
     """Raised when database query execution fails."""
-    pass
 
 
 class DatabaseRateLimitError(DatabaseError):
     """Raised when database rate limit is exceeded."""
-    pass
 
 
 class DatabasePoolError(DatabaseError):
     """Raised when database connection pool issues occur."""
-    pass
 
 
 # --- API Exceptions ---
@@ -70,32 +65,26 @@ class DatabasePoolError(DatabaseError):
 
 class GemaibotAPIError(GemaibotBaseException):
     """Base class for API-related errors. Renamed to avoid collision with google.genai.errors.APIError."""
-    pass
 
 
 class GeminiAPIError(GemaibotAPIError):
     """Raised when Gemini API calls fail."""
-    pass
 
 
 class TavilyAPIError(GemaibotAPIError):
     """Raised when Tavily API calls fail."""
-    pass
 
 
 class TelegramAPIError(GemaibotAPIError):
     """Raised when Telegram Bot API calls fail."""
-    pass
 
 
 class APIQuotaExceededError(GemaibotAPIError):
     """Raised when API quota is exceeded."""
-    pass
 
 
 class APIInvalidResponseError(GemaibotAPIError):
     """Raised when API returns invalid response."""
-    pass
 
 
 # --- Network Exceptions ---
@@ -103,22 +92,18 @@ class APIInvalidResponseError(GemaibotAPIError):
 
 class NetworkError(GemaibotBaseException):
     """Base class for network-related errors."""
-    pass
 
 
 class ConnectionTimeoutError(NetworkError):
     """Raised when connection times out."""
-    pass
 
 
 class ServiceConnectionRefusedError(NetworkError):
     """Raised when connection is refused. Renamed to avoid shadowing built-in."""
-    pass
 
 
 class CircuitBreakerOpenError(NetworkError):
     """Raised when circuit breaker is open."""
-    pass
 
 
 # --- Validation Exceptions ---
@@ -126,17 +111,14 @@ class CircuitBreakerOpenError(NetworkError):
 
 class ValidationError(GemaibotBaseException):
     """Base class for validation errors."""
-    pass
 
 
 class InputValidationError(ValidationError):
     """Raised when input validation fails."""
-    pass
 
 
 class ConfigurationError(ValidationError):
     """Raised when configuration is invalid."""
-    pass
 
 
 # --- Business Logic Exceptions ---
@@ -144,22 +126,18 @@ class ConfigurationError(ValidationError):
 
 class BusinessLogicError(GemaibotBaseException):
     """Base class for business logic errors."""
-    pass
 
 
 class UserLimitExceededError(BusinessLogicError):
     """Raised when user limits are exceeded."""
-    pass
 
 
 class DocumentProcessingError(BusinessLogicError):
     """Raised when document processing fails."""
-    pass
 
 
 class ChatStateError(BusinessLogicError):
     """Raised when chat state operations fail."""
-    pass
 
 
 # --- Cache Exceptions ---
@@ -167,17 +145,14 @@ class ChatStateError(BusinessLogicError):
 
 class CacheError(GemaibotBaseException):
     """Base class for cache-related errors."""
-    pass
 
 
 class RedisConnectionError(CacheError):
     """Raised when Redis connection fails."""
-    pass
 
 
 class CacheKeyError(CacheError):
     """Raised when cache key operations fail."""
-    pass
 
 
 # --- Security Exceptions ---
@@ -185,22 +160,18 @@ class CacheKeyError(CacheError):
 
 class SecurityError(GemaibotBaseException):
     """Base class for security-related errors."""
-    pass
 
 
 class InputSanitizationError(SecurityError):
     """Raised when input sanitization fails."""
-    pass
 
 
 class AuthenticationError(SecurityError):
     """Raised when authentication fails."""
-    pass
 
 
 class DecryptionError(SecurityError):
     """Raised when API key decryption fails (e.g. ADMIN_SECRET mismatch)."""
-    pass
 
 
 # =============================================================================

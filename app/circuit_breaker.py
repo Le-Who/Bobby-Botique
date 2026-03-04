@@ -4,6 +4,7 @@ Provides automatic failure detection and recovery mechanisms.
 """
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -142,12 +143,11 @@ class CircuitBreaker:
         )
 
         # Check if we should open the circuit
-        if self._failure_count >= self.config.failure_threshold:
-            if self._state != CircuitState.OPEN:
-                await self._set_state(CircuitState.OPEN)
-                logging.error(
-                    f"Circuit Breaker '{self.name}' opened after {self._failure_count} failures"
-                )
+        if self._failure_count >= self.config.failure_threshold and self._state != CircuitState.OPEN:
+            await self._set_state(CircuitState.OPEN)
+            logging.error(
+                f"Circuit Breaker '{self.name}' opened after {self._failure_count} failures"
+            )
 
     async def _set_state(self, new_state: CircuitState) -> None:
         """Changes circuit breaker state."""
@@ -249,10 +249,8 @@ class CircuitBreaker:
         """Shuts down the circuit breaker."""
         if self._monitor_task and not self._monitor_task.done():
             self._monitor_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._monitor_task
-            except asyncio.CancelledError:
-                pass
 
 
 # Global circuit breaker instances

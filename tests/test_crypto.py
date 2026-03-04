@@ -127,9 +127,8 @@ class TestSafeDecrypt:
         # Reset and use different secret
         reset_fernet()
         different_mock = _MockSettings(ADMIN_SECRET="completely-different-secret")
-        with patch("app.config.settings", different_mock):
-            with pytest.raises(DecryptionError):
-                safe_decrypt(ciphertext)
+        with patch("app.config.settings", different_mock), pytest.raises(DecryptionError):
+            safe_decrypt(ciphertext)
 
 
 # ---------------------------------------------------------------------------
@@ -142,9 +141,8 @@ class TestErrorCases:
         from app.crypto import encrypt_api_key
 
         mock = _MockSettings(ADMIN_SECRET="")
-        with patch("app.config.settings", mock):
-            with pytest.raises(RuntimeError, match="ADMIN_SECRET must be set"):
-                encrypt_api_key("test")
+        with patch("app.config.settings", mock), pytest.raises(RuntimeError, match="ADMIN_SECRET must be set"):
+            encrypt_api_key("test")
 
     def test_decrypt_wrong_secret_raises_value_error(self, _mock_settings):
         from app.crypto import decrypt_api_key, encrypt_api_key, reset_fernet
@@ -154,9 +152,8 @@ class TestErrorCases:
         # Switch to different secret
         reset_fernet()
         different_mock = _MockSettings(ADMIN_SECRET="wrong-secret")
-        with patch("app.config.settings", different_mock):
-            with pytest.raises(ValueError, match="Failed to decrypt"):
-                decrypt_api_key(ciphertext)
+        with patch("app.config.settings", different_mock), pytest.raises(ValueError, match="Failed to decrypt"):
+            decrypt_api_key(ciphertext)
 
     def test_decrypt_garbage_raises_value_error(self, _mock_settings):
         from app.crypto import decrypt_api_key

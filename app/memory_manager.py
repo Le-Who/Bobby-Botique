@@ -4,6 +4,7 @@ Provides automatic memory cleanup and monitoring.
 """
 
 import asyncio
+import contextlib
 import gc
 import inspect
 import logging
@@ -268,10 +269,8 @@ class MemoryManager:
         self._running = False
         if self._monitoring_task and not self._monitoring_task.done():
             self._monitoring_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._monitoring_task
-            except asyncio.CancelledError:
-                pass
 
         # Final cleanup
         self._cleanup_callbacks.clear()
@@ -345,15 +344,12 @@ class AutoCleanupResource:
 
     def _perform_cleanup(self):
         """Override this method to implement specific cleanup logic."""
-        pass
 
     def __del__(self):
         """Ensures cleanup callback is removed."""
         if self._cleanup_registered:
-            try:
+            with contextlib.suppress(Exception):
                 memory_manager.remove_cleanup_callback(self._cleanup)
-            except Exception:
-                pass
 
 
 # Example usage for document processing

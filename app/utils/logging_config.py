@@ -321,9 +321,7 @@ def _is_production_environment() -> bool:
         return True
     # Northflank / generic Docker: PORT is set and HOSTNAME looks like a container ID
     hostname = os.environ.get("HOSTNAME", "")
-    if os.environ.get("PORT") and len(hostname) >= 12 and hostname.isalnum():
-        return True
-    return False
+    return bool(os.environ.get("PORT") and len(hostname) >= 12 and hostname.isalnum())
 
 
 def setup_detailed_logging(
@@ -412,8 +410,8 @@ def setup_detailed_logging(
                 _get_formatter(enable_structured_logging, enable_pretty=False)
             )
             root_logger.addHandler(file_handler)
-        except Exception as e:
-            print(f"Warning: Could not create file handler: {e}", flush=True)
+        except Exception:
+            pass
 
     # Configure specialized loggers
     # httpx is suppressed to WARNING+ to prevent Bearer tokens from request headers

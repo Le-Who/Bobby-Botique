@@ -5,6 +5,47 @@ Format is optimized for agent-parseable context.
 
 ---
 
+## [2.8.12] – 2026-03-04 – Code & Logic Audit + Ruff Expansion
+
+### 🔍 Full Code & Logic Audit
+
+Systematic audit of 30+ modules (~12K lines), 19 handlers, 10 repos. **Ruff: 0 violations.**
+
+### 🔴 Fix: Missing RLS_CONFIG Entries
+
+`long_term_memory` and `key_model_status` tables were missing from `RLS_CONFIG` in `db/rls.py`. Their RLS policies existed only via manual DB migrations — deploying to a fresh DB would have left them unprotected.
+
+### ⚙️ Ruff Expansion (86 auto-fixes)
+
+Expanded lint rules from 5 to 10 categories:
+
+| Rule | Category              | Violations Fixed                                    |
+| ---- | --------------------- | --------------------------------------------------- |
+| SIM  | flake8-simplify       | 23 (suppressible-exception, collapsible-if, etc.)   |
+| PIE  | flake8-pie            | 33 (unnecessary-placeholder, reimplemented-builtin) |
+| C4   | flake8-comprehensions | 2 (unnecessary-dict-comprehension)                  |
+| E    | pycodestyle           | 0 new (E501/E402 ignored by design)                 |
+| T20  | flake8-print          | 0 new (config.py print exempted)                    |
+
+### 🔧 Configurable Concurrency Limit
+
+`MAX_CONCURRENT_HEAVY_REQUESTS` added to `Settings` and `load_settings()` — now configurable via env variable (default: 4). Previously hardcoded via `getattr` with fallback.
+
+### Files Changed
+
+| File                       | Change                                                        |
+| -------------------------- | ------------------------------------------------------------- |
+| `app/db/rls.py`            | Added `long_term_memory` + `key_model_status` to `RLS_CONFIG` |
+| `pyproject.toml`           | +5 ruff rule categories (SIM, E, C4, PIE, T20), tuned ignores |
+| `app/config.py`            | `MAX_CONCURRENT_HEAVY_REQUESTS` field + env loading           |
+| `app/handlers/messages.py` | Uses `settings.MAX_CONCURRENT_HEAVY_REQUESTS` directly        |
+| `app/utils/text_format.py` | `noqa: SIM102` on intentionally nested if                     |
+| 86 files                   | Auto-fixed by ruff (PIE790, SIM103, SIM108, C420, etc.)       |
+
+### 🧪 Tests: 650 passed, 1 skipped, 0 failures
+
+---
+
 ## [2.8.11] – 2026-03-04 – Safety Refusal Regression Fix
 
 ### 🔴 Fix: Increased Safety Refusals from Gemini Models

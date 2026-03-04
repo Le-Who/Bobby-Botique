@@ -34,6 +34,8 @@ _background_tasks: set = set()
 
 
 # ── Re-exports from domain modules ──────────────────────────────────────────
+import contextlib
+
 from app.handlers.cb_conversations import (  # noqa: F401
     conv_delete_ask_callback,
     conv_delete_callback,
@@ -259,12 +261,10 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
                     await task_to_run
             except Exception as e:
                 logging.error("complex_search task failed: %s", e, exc_info=True)
-                try:
+                with contextlib.suppress(Exception):
                     await placeholder_message.edit_text(
                         "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз."
                     )
-                except Exception:
-                    pass
 
         _task = asyncio.create_task(task_wrapper())
         _background_tasks.add(_task)
@@ -321,12 +321,10 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     )
         except Exception as e:
             logging.error("fallback task failed: %s", e, exc_info=True)
-            try:
+            with contextlib.suppress(Exception):
                 await placeholder_message.edit_text(
                     "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз."
                 )
-            except Exception:
-                pass
 
     _task = asyncio.create_task(task_wrapper())
     _background_tasks.add(_task)
@@ -462,13 +460,11 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
         ]
     ]
-    try:
+    with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
             formatted_text, parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    except telegram.error.BadRequest:
-        pass
     await query.answer("✨ Чат очищен!")
 
 
@@ -481,12 +477,10 @@ async def model_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(
         chat_state, context
     )
-    try:
+    with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
             formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
         )
-    except telegram.error.BadRequest:
-        pass
 
 
 async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -514,13 +508,11 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         ],
         [InlineKeyboardButton("⬅️ Меню", callback_data="start_menu")],
     ]
-    try:
+    with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
             formatted_text, parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    except telegram.error.BadRequest:
-        pass
 
 
 # ── Help sub-topic handlers ──────────────────────────────────────────────────
@@ -573,13 +565,11 @@ async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     keyboard = [
         [InlineKeyboardButton("⬅️ К справке", callback_data="help")],
     ]
-    try:
+    with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
             formatted_text, parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    except telegram.error.BadRequest:
-        pass
 
 
 async def open_documents_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -588,12 +578,10 @@ async def open_documents_callback(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     user_id = query.from_user.id
     formatted_text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
-    try:
+    with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
             formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
         )
-    except telegram.error.BadRequest:
-        pass
 
 
 async def open_conversations_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -602,12 +590,10 @@ async def open_conversations_callback(update: Update, context: ContextTypes.DEFA
     await query.answer()
     user_id = query.from_user.id
     text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id)
-    try:
+    with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
             text, parse_mode=parse_mode, reply_markup=reply_markup
         )
-    except telegram.error.BadRequest:
-        pass
 
 
 async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

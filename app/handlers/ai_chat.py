@@ -2,6 +2,7 @@
 AI Chat handler — regular conversational chat with context management.
 """
 
+import contextlib
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -205,10 +206,8 @@ async def _handle_regular_chat(
                 if tc:
                     config.thinking_config = tc
                 if system_instruction:
-                    try:
+                    with contextlib.suppress(TypeError, ValueError):
                         config.system_instruction = str(system_instruction)
-                    except (TypeError, ValueError):
-                        pass
 
                 response_text, success, stream_last_msg = await stream_and_display(
                     placeholder_message,
@@ -352,13 +351,11 @@ async def _handle_regular_chat(
                     exchange = f"Q: {user_message[:500]}\nA: {response_text[:500]}"
 
                     async def _bg_store():
-                        try:
+                        with contextlib.suppress(Exception):
                             await store_memory(
                                 user_id, exchange, key_data_for_store["api_key"],
                                 source_type="conversation",
                             )
-                        except Exception:
-                            pass
 
                     _task = asyncio.get_running_loop().create_task(_bg_store())
                     _background_tasks.add(_task)

@@ -172,10 +172,7 @@ class ContextAssembler:
         kept_indices.reverse()
 
         # Determine dropped messages
-        if kept_indices:
-            first_kept = kept_indices[0]
-        else:
-            first_kept = len(history)
+        first_kept = kept_indices[0] if kept_indices else len(history)
 
         dropped_messages = history[:first_kept]
         trimmed_history = [history[i] for i in kept_indices]

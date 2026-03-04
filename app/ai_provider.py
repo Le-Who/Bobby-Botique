@@ -231,7 +231,6 @@ class BaseAIProvider(ABC):
         """
         Execute the actual API request. Must be implemented by subclasses.
         """
-        pass
 
 
 
@@ -998,10 +997,7 @@ class ProviderRouter:
         Returns (response_text, token_count) on success, or None if no fallback works.
         """
         is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model)
-        if is_or:
-            fallback_models = settings.OPENROUTER_AVAILABLE_MODELS
-        else:
-            fallback_models = settings.AVAILABLE_MODELS
+        fallback_models = settings.OPENROUTER_AVAILABLE_MODELS if is_or else settings.AVAILABLE_MODELS
 
         for fallback_model in fallback_models:
             if fallback_model == failed_model:

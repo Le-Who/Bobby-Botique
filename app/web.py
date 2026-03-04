@@ -121,9 +121,7 @@ def _is_authenticated():
     # Fallback: check X-Auth-Token header (for API/monitoring tools)
     token = request.headers.get("X-Auth-Token")
     expected = _get_admin_secret()
-    if token and expected and hmac.compare_digest(token, expected):
-        return True
-    return False
+    return bool(token and expected and hmac.compare_digest(token, expected))
 
 
 def require_auth(f):
@@ -143,6 +141,8 @@ def require_auth(f):
 
 
 # Brute-force login protection using shared SyncRateLimiter
+import contextlib
+
 from app.security import SyncRateLimiter  # noqa: E402
 
 _login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
@@ -355,10 +355,8 @@ async def api_keys():
 
         # Get Tavily key stats
         tavily_stats = []
-        try:
+        with contextlib.suppress(Exception):
             tavily_stats = await get_tavily_key_usage_stats()
-        except Exception:
-            pass
 
         # Get active keys per model (batched to avoid N+1)
         active_keys = {}

@@ -8,22 +8,31 @@ select = [
     "B",      # flake8-bugbear (common Python bugs)
     "I",      # isort (import ordering)
     "UP",     # pyupgrade (Python 3.11+ syntax modernization)
+    "SIM",    # flake8-simplify (simplifiable code)
+    "E",      # pycodestyle (style errors)
+    "C4",     # flake8-comprehensions (unnecessary list/dict/set comprehensions)
+    "PIE",    # flake8-pie (misc. antipatterns)
+    "T20",    # flake8-print (stray print() calls)
     "RUF006", # asyncio dangling tasks
     "RUF059", # unused unpacked variables
 ]
 
-# Rules that are informational but not enforced yet
-# To enable later: "SIM" (simplify), "E" (pycodestyle errors)
-
 ignore = [
     "F401",   # Handled by noqa comments on intentional re-exports
+    "E501",   # Line length — enforced by formatter, not linter (line-length=120)
+    "E402",   # Module-level imports not at top — guarded/conditional imports are intentional
+    "SIM105", # contextlib.suppress — try/except pass is clearer in this codebase
+    "SIM115", # open-file-with-context-handler — not applicable to all use cases
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Test files may use broad exceptions, assert, etc.
-"tests/**" = ["B", "RUF"]
+# Test files may use broad exceptions, assert, short var names, etc.
+"tests/**" = ["B", "RUF", "SIM", "E741", "T20"]
 # _cleanup_task is a module-level var; F823 is a false positive in nested async
 "app/handlers/messages.py" = ["F823"]
+# config.py uses print() for fatal startup errors before logging is configured
+"app/config.py" = ["T201"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
+

@@ -371,17 +371,16 @@ class TestLLMSummarizationScheduling:
         with patch(
             "app.context.summarizer.split_into_chunks",
             return_value=["user: What is Python?\nmodel: Python is a language."],
-        ):
-            with patch(
-                "app.handlers.ai_core._get_ai_response_with_routing",
-                new_callable=AsyncMock,
-                return_value="## Факты\n- Python — это язык программирования",
-            ) as mock_llm:
-                await _run_llm_summarization(
-                    dropped, None, callback
-                )
-                mock_llm.assert_called_once()
-                callback.assert_called_once()
+        ), patch(
+            "app.handlers.ai_core._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value="## Факты\n- Python — это язык программирования",
+        ) as mock_llm:
+            await _run_llm_summarization(
+                dropped, None, callback
+            )
+            mock_llm.assert_called_once()
+            callback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_refine_chain_sequential(self):
@@ -404,16 +403,15 @@ class TestLLMSummarizationScheduling:
         with patch(
             "app.context.summarizer.split_into_chunks",
             return_value=["chunk1_text", "chunk2_text"],
+        ), patch(
+            "app.handlers.ai_core._get_ai_response_with_routing",
+            side_effect=mock_llm,
         ):
-            with patch(
-                "app.handlers.ai_core._get_ai_response_with_routing",
-                side_effect=mock_llm,
-            ):
-                await _run_llm_summarization(
-                    dropped, None, callback
-                )
-                assert call_count == 2  # Two chunks → two LLM calls
-                callback.assert_called_once()
+            await _run_llm_summarization(
+                dropped, None, callback
+            )
+            assert call_count == 2  # Two chunks → two LLM calls
+            callback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_llm_failure_handled_gracefully(self):
@@ -424,17 +422,16 @@ class TestLLMSummarizationScheduling:
         with patch(
             "app.context.summarizer.split_into_chunks",
             return_value=["test chunk"],
+        ), patch(
+            "app.handlers.ai_core._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            side_effect=Exception("API Error"),
         ):
-            with patch(
-                "app.handlers.ai_core._get_ai_response_with_routing",
-                new_callable=AsyncMock,
-                side_effect=Exception("API Error"),
-            ):
-                # Should not raise
-                await _run_llm_summarization(
-                    dropped, None, callback
-                )
-                callback.assert_not_called()
+            # Should not raise
+            await _run_llm_summarization(
+                dropped, None, callback
+            )
+            callback.assert_not_called()
 
 
 # ── ContextAssembler — audit ──────────────────────────────────────────────────
@@ -452,7 +449,7 @@ class TestAudit:
         assert len(result.audit_hash) == 12
 
     def test_audit_hash_deterministic(self):
-        kwargs = dict(history=[], user_message="Hi", system_instruction="S")
+        kwargs = {"history": [], "user_message": "Hi", "system_instruction": "S"}
         result1 = self.assembler.assemble(**kwargs)
         result2 = self.assembler.assemble(**kwargs)
         assert result1.audit_hash == result2.audit_hash

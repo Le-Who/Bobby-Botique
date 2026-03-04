@@ -273,10 +273,9 @@ class DocumentProcessor:
     ) -> dict[str, Any]:
         """Process a PDF document (bytes or path)."""
         try:
-            if not is_path:
-                if not file_data.startswith(b"%PDF"):
-                    logging.warning("Invalid PDF format for %s", filename)
-                    return {"error": "Invalid PDF file format"}
+            if not is_path and not file_data.startswith(b"%PDF"):
+                logging.warning("Invalid PDF format for %s", filename)
+                return {"error": "Invalid PDF file format"}
 
             logging.info("Processing PDF %s with pypdf", filename)
 
@@ -324,12 +323,11 @@ class DocumentProcessor:
         is_path: bool = False
     ) -> dict[str, Any]:
         """Process a Word document (bytes or path)."""
-        if not is_path:
-            if not file_data.startswith(b"\x50\x4b\x03\x04"):
-                logging.warning("Invalid DOCX format for %s: Missing ZIP header", filename)
-                return {
-                    "error": "Invalid Word document format. File must be a valid .docx file."
-                }
+        if not is_path and not file_data.startswith(b"\x50\x4b\x03\x04"):
+            logging.warning("Invalid DOCX format for %s: Missing ZIP header", filename)
+            return {
+                "error": "Invalid Word document format. File must be a valid .docx file."
+            }
 
         try:
             if is_path:

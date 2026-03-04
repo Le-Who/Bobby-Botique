@@ -6,6 +6,7 @@ used across DatabaseManager, TaskQueue, and other components.
 """
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -35,9 +36,7 @@ async def cancel_background_task(owner: object, attr_name: str) -> None:
         return
 
     task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await task
-    except asyncio.CancelledError:
-        pass
 
     setattr(owner, attr_name, None)

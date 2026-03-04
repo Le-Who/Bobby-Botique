@@ -25,10 +25,7 @@ def _image_worker(
     try:
         from app.utils.image import estimate_image_size_in_bytes
 
-        if isinstance(image_data, bytes):
-            img_to_process = Image.open(io.BytesIO(image_data))
-        else:
-            img_to_process = image_data
+        img_to_process = Image.open(io.BytesIO(image_data)) if isinstance(image_data, bytes) else image_data
 
         # Use optimized estimation
         img_bytes_approx = estimate_image_size_in_bytes(img_to_process)

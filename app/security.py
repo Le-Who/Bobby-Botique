@@ -148,10 +148,7 @@ class InputSanitizer:
 
         # Extract extension
         extension = filename.lower()
-        if "." in extension:
-            extension = "." + extension.split(".")[-1]
-        else:
-            extension = ""
+        extension = "." + extension.split(".")[-1] if "." in extension else ""
 
         # Determine allowed extensions
         if allowed_types is None:

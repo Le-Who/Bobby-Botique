@@ -61,7 +61,7 @@ async def process_long_request(
         text = update.message.text or update.message.caption or ""
         chat_state = await get_user_chat(update.effective_user.id)
 
-        if is_photo and (text.startswith("?") or text.startswith("??")):
+        if is_photo and (text.startswith(("?", "??"))):
             keyboard = [
                 [
                     InlineKeyboardButton(

@@ -6,6 +6,7 @@ used by all domain-specific handler modules.
 """
 
 import asyncio
+import contextlib
 import logging
 
 from telegram import Message
@@ -53,22 +54,17 @@ async def handle_ai_response_error(
             logging.error("Error in on_error_callback: %s", e, exc_info=True)
 
     # Определяем тип клавиатуры в зависимости от типа ошибки
-    if is_retryable_error(response_text):
-        reply_markup = build_retry_and_roles_keyboard()
-    else:
-        reply_markup = build_roles_keyboard()
+    reply_markup = build_retry_and_roles_keyboard() if is_retryable_error(response_text) else build_roles_keyboard()
 
     # Пытаемся отредактировать message, if не получается - отправляем new
     try:
         await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
     except Exception as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
-        try:
+        with contextlib.suppress(Exception):
             await placeholder_message.reply_text(
                 response_text, reply_markup=reply_markup
             )
-        except Exception:
-            pass
 
     return True
 

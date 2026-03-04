@@ -199,20 +199,20 @@ While primarily a Telegram bot, the project includes a web frontend for administ
 
 ## 🛠 Technical Stack
 
-| Category           | Technology                      | Purpose                          |
-| :----------------- | :------------------------------ | :------------------------------- |
-| **Language**       | Python 3.14+                    | Core runtime                     |
-| **Bot Framework**  | `python-telegram-bot` (v22+)    | Async Telegram API wrapper       |
-| **Web Server**     | Quart + Hypercorn               | Async-native web server          |
-| **Database**       | `asyncpg` (PostgreSQL)          | High-performance async DB driver |
-| **Caching**        | `redis.asyncio` + `cachetools`  | Multi-layer cache (Redis + TTL)  |
-| **AI SDKs**        | `google-genai`, OpenAI (compat) | Interaction with LLMs            |
-| **Search**         | `tavily-python`                 | AI-optimized web search          |
-| **Doc Processing** | `pypdf`, `python-docx`          | Text extraction from files       |
-| **Monitoring**     | Custom Prometheus exporter      | Zero-dep `/metrics` endpoint     |
-| **Linting**        | Ruff (`pyproject.toml`)         | F, B, I, UP, RUF rules enforced  |
-| **CI/CD**          | GitHub Actions                  | Lint → Test → Docker Build       |
-| **Container**      | Docker                          | Standardization and deployment   |
+| Category           | Technology                      | Purpose                                |
+| :----------------- | :------------------------------ | :------------------------------------- |
+| **Language**       | Python 3.14+                    | Core runtime                           |
+| **Bot Framework**  | `python-telegram-bot` (v22+)    | Async Telegram API wrapper             |
+| **Web Server**     | Quart + Hypercorn               | Async-native web server                |
+| **Database**       | `asyncpg` (PostgreSQL)          | High-performance async DB driver       |
+| **Caching**        | `redis.asyncio` + `cachetools`  | Multi-layer cache (Redis + TTL)        |
+| **AI SDKs**        | `google-genai`, OpenAI (compat) | Interaction with LLMs                  |
+| **Search**         | `tavily-python`                 | AI-optimized web search                |
+| **Doc Processing** | `pypdf`, `python-docx`          | Text extraction from files             |
+| **Monitoring**     | Custom Prometheus exporter      | Zero-dep `/metrics` endpoint           |
+| **Linting**        | Ruff (`pyproject.toml`)         | F, B, I, UP, SIM, E, C4, PIE, T20, RUF |
+| **CI/CD**          | GitHub Actions                  | Lint → Test → Docker Build             |
+| **Container**      | Docker                          | Standardization and deployment         |
 
 ---
 
@@ -300,6 +300,7 @@ REDIS_URL=redis://...   # Optional — enables Redis caching layer
 | `OPENROUTER_AVAILABLE_MODELS`    | ❌       | `[]`                          | Comma-separated available OpenRouter models                 |
 | `DAILY_LIMITS`                   | ❌       | See `config.py`               | JSON or `model:limit,...` format for per-model daily limits |
 | `USE_OPENROUTER`                 | ❌       | `false`                       | Force OpenRouter as default provider                        |
+| `MAX_CONCURRENT_HEAVY_REQUESTS`  | ❌       | `4`                           | Max parallel AI request handlers                            |
 
 ---
 
@@ -323,7 +324,7 @@ python -m pytest tests/test_keyboards.py --tb=short
 python -m pytest tests/ -v --tb=long
 ```
 
-### Suite Structure (648 tests, 1 skipped)
+### Suite Structure (650 tests, 1 skipped)
 
 | Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                      |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |

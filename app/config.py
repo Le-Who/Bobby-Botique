@@ -75,7 +75,7 @@ def _load_daily_limits() -> dict[str, int]:
     value = os.getenv("DAILY_LIMITS")
 
     # Reuse module-level constant for defaults
-    default_limits = {m: DEFAULT_DAILY_LIMIT_PER_MODEL for m in DEFAULT_GEMINI_MODELS}
+    default_limits = dict.fromkeys(DEFAULT_GEMINI_MODELS, DEFAULT_DAILY_LIMIT_PER_MODEL)
 
     if not value:
         return default_limits
@@ -168,11 +168,10 @@ class Settings(BaseModel):
     TAVILY_ADVANCED_SEARCH_COST: int = 2
     LIMIT_THRESHOLD_PERCENT: float = 0.95
     # DAILY_LIMITS загружается from env переменной DAILY_LIMITS to formatе JSON
-    DAILY_LIMITS: dict[str, int] = {
-        m: DEFAULT_DAILY_LIMIT_PER_MODEL for m in DEFAULT_GEMINI_MODELS
-    }
+    DAILY_LIMITS: dict[str, int] = dict.fromkeys(DEFAULT_GEMINI_MODELS, DEFAULT_DAILY_LIMIT_PER_MODEL)
     ALERT_COOLDOWN_SECONDS: int = 3600
     MAX_DOCUMENTS_PER_USER: int = 5
+    MAX_CONCURRENT_HEAVY_REQUESTS: int = 4
 
     # --- SAFETY ---
     SAFETY_SETTINGS: list[dict[str, str]] = [
@@ -238,6 +237,9 @@ def load_settings() -> Settings:
                 "OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"
             ),
             "DAILY_LIMITS": _load_daily_limits(),
+            "MAX_CONCURRENT_HEAVY_REQUESTS": int(
+                os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")
+            ),
         }
 
         # Validation: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей
@@ -279,7 +281,6 @@ def load_settings() -> Settings:
         # Catch errors from both Pydantic and our manual functions.
         # Catch errors from both Pydantic and our manual functions.
         error_msg = f"FATAL: Could not load settings. Please check your environment variables. Error: {e}"
-        print(error_msg)
         raise ValueError(error_msg) from e
 
 

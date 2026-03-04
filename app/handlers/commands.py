@@ -79,10 +79,7 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not context.args:
         # UX Improvement: Show current status instead of clearing
         current_prompt = chat_state.system_prompt
-        if current_prompt:
-            prompt_display = f"`{current_prompt}`"
-        else:
-            prompt_display = "_(не задана, используется стандартная)_"
+        prompt_display = f"`{current_prompt}`" if current_prompt else "_(не задана, используется стандартная)_"
 
         help_text = (
             f"⚙️ **Текущая системная инструкция:**\n{prompt_display}\n\n"

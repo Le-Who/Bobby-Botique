@@ -199,7 +199,7 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[str
         last_open_angle = text.rfind("<", 0, cut_point)
         if last_open_angle != -1:
             last_close_angle_after_open = text.find(">", last_open_angle, cut_point)
-            if last_close_angle_after_open == -1:
+            if last_close_angle_after_open == -1:  # noqa: SIM102
                 # We are between '<' and '>'. We should cut BEFORE the '<' so we don't break the tag string itself.
                 # However, if last_open_angle is 0, setting cut_point to 0 will cause an infinite loop.
                 # In that case, the tag itself is longer than max_length, so we are forced to cut inside it.

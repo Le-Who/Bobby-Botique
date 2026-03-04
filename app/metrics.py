@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -518,10 +519,8 @@ class MetricsCollector:
             # Stop background task
             if self._bg_save_task:
                 self._bg_save_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._bg_save_task
-                except asyncio.CancelledError:
-                    pass
                 self._bg_save_task = None
 
             # Check, что база данных доступна before сохранением

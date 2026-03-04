@@ -8,6 +8,7 @@ Sub-modules:
 """
 
 import asyncio
+import contextlib
 import logging
 
 from telegram import Update
@@ -40,9 +41,7 @@ from app.utils.api_logger import api_logger
 from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 
 # Concurrency limiter for heavy AI tasks
-_HEAVY_REQUEST_LIMIT = max(
-    1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_REQUESTS", 4))
-)
+_HEAVY_REQUEST_LIMIT = max(1, settings.MAX_CONCURRENT_HEAVY_REQUESTS)
 _HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore(_HEAVY_REQUEST_LIMIT)
 
 # Track fire-and-forget tasks to prevent 'exception never retrieved'
@@ -193,10 +192,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         return
 
                     elapsed = threshold
-                    try:
+                    with contextlib.suppress(Exception):
                         await placeholder_message.edit_text(text)
-                    except Exception:
-                        pass
             except asyncio.CancelledError:
                 pass
 

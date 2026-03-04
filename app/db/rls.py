@@ -103,6 +103,12 @@ RLS_CONFIG = {
     "model_configuration": [
         {"name": "model_configuration_policy", "template": RLS_POLICY_ADMIN}
     ],
+    "long_term_memory": [
+        {"name": "memory_user_isolation", "template": RLS_POLICY_USER}
+    ],
+    "key_model_status": [
+        {"name": "key_model_status_admin_policy", "template": RLS_POLICY_ADMIN}
+    ],
 }
 
 VALID_TABLES = set(RLS_CONFIG.keys())
