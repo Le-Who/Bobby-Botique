@@ -48,9 +48,7 @@ class TestAIResponse:
 
     def test_is_error_with_error_message(self):
         """is_error should be True if error_message is set, even if success=True"""
-        response = AIResponse(
-            text="text", token_count=5, success=True, error_message="warning"
-        )
+        response = AIResponse(text="text", token_count=5, success=True, error_message="warning")
         assert response.is_error is True
 
 
@@ -123,9 +121,7 @@ class TestBaseAIProvider:
                 pass
 
         provider = TestProvider("key")
-        result = provider._validate_inputs(
-            [{"role": "user", "parts": ["hi"]}], "", None, None
-        )
+        result = provider._validate_inputs([{"role": "user", "parts": ["hi"]}], "", None, None)
         assert result == "model_name must be a non-empty string"
 
     def test_is_transient_error(self):
@@ -148,8 +144,6 @@ class TestBaseAIProvider:
         # Non-transient errors
         assert provider._is_transient_error("Invalid API key") is False
         assert provider._is_transient_error("Quota exceeded") is False
-
-
 
 
 class TestProviders:
@@ -266,9 +260,7 @@ class TestGetAIResponse:
         with patch("app.ai_provider.get_provider_for_model") as mock_factory:
             mock_provider = MagicMock()
             mock_provider.get_response = AsyncMock(
-                return_value=AIResponse(
-                    text="Gemini response", token_count=10, success=True
-                )
+                return_value=AIResponse(text="Gemini response", token_count=10, success=True)
             )
             mock_factory.return_value = mock_provider
 

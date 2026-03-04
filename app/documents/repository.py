@@ -22,9 +22,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 
-async def check_duplicate_file(
-    user_id: int, file_hash: str, filename: str
-) -> dict[str, Any] | None:
+async def check_duplicate_file(user_id: int, file_hash: str, filename: str) -> dict[str, Any] | None:
     """Check if a file with the same hash already exists for the user."""
     try:
         result = await database.db_query(
@@ -78,9 +76,7 @@ async def cleanup_oldest_documents(user_id: int, keep_count: int = 4) -> int:
             return 0
 
         deleted_count = len(result)
-        logger.info(
-            "Cleaned up %d oldest documents for user %s", deleted_count, user_id
-        )
+        logger.info("Cleaned up %d oldest documents for user %s", deleted_count, user_id)
         return deleted_count
 
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
@@ -93,9 +89,7 @@ async def cleanup_oldest_documents(user_id: int, keep_count: int = 4) -> int:
 # ============================================================================
 
 
-async def save_document_content(
-    user_id: int, filename: str, content: str, pages: int, file_hash: str
-) -> None:
+async def save_document_content(user_id: int, filename: str, content: str, pages: int, file_hash: str) -> None:
     """Persist parsed document content to the database."""
     try:
         await database.db_query(
@@ -107,9 +101,7 @@ async def save_document_content(
         logger.error("Error saving document to database: %s", e, exc_info=True)
 
 
-async def get_document_by_id(
-    document_id: int, user_id: int
-) -> dict[str, Any] | None:
+async def get_document_by_id(document_id: int, user_id: int) -> dict[str, Any] | None:
     """Retrieve document metadata by ID."""
     try:
         result = await database.db_query(
@@ -123,9 +115,7 @@ async def get_document_by_id(
                 "id": row["id"],
                 "filename": row["filename"],
                 "pages": row["pages"],
-                "created_at": row["created_at"].isoformat()
-                if row["created_at"]
-                else None,
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                 "file_size": row["file_size"],
                 "file_hash": row["file_hash"],
             }
@@ -152,9 +142,7 @@ async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
                     "id": row["id"],
                     "filename": row["filename"],
                     "pages": row["pages"],
-                    "created_at": row["created_at"].isoformat()
-                    if row["created_at"]
-                    else None,
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                     "file_size": row["file_size"],
                     "file_hash": row["file_hash"],
                 }
@@ -168,9 +156,7 @@ async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
         return []
 
 
-async def get_document_content(
-    document_id: int, user_id: int
-) -> str | None:
+async def get_document_content(document_id: int, user_id: int) -> str | None:
     """Retrieve the text content of a document (RLS-aware)."""
     try:
         await database.set_user_context(user_id, is_admin(user_id))
@@ -233,9 +219,7 @@ async def cleanup_old_documents(days_old: int = 3) -> int:
         )
 
         deleted_count = len(result) if result else 0
-        logger.info(
-            "Cleaned up %d old documents (older than %d days)", deleted_count, days_old
-        )
+        logger.info("Cleaned up %d old documents (older than %d days)", deleted_count, days_old)
         return deleted_count
 
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
@@ -265,9 +249,7 @@ async def get_document_stats() -> dict[str, Any]:
                 "total_documents": stats["doc_count"],
                 "total_size_chars": stats["total_size"],
                 "average_size_chars": stats["avg_size"],
-                "total_size_mb": stats["total_size"] / (1024 * 1024)
-                if stats["total_size"]
-                else 0,
+                "total_size_mb": stats["total_size"] / (1024 * 1024) if stats["total_size"] else 0,
             }
 
         return {
@@ -313,9 +295,7 @@ async def get_user_document_stats(user_id: int) -> dict[str, Any]:
                 "document_count": doc_count,
                 "total_size_chars": stats["total_size"],
                 "average_size_chars": stats["avg_size"],
-                "total_size_mb": stats["total_size"] / (1024 * 1024)
-                if stats["total_size"]
-                else 0,
+                "total_size_mb": stats["total_size"] / (1024 * 1024) if stats["total_size"] else 0,
                 "limit_reached": doc_count >= settings.MAX_DOCUMENTS_PER_USER,
                 "can_upload": doc_count < settings.MAX_DOCUMENTS_PER_USER,
             }

@@ -34,9 +34,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     # context используется for совместимости с другими командами
     key_data = await get_available_gemini_key(settings.RESEARCH_MODEL)
     if not key_data:
-        await update.message.reply_text(
-            "Нет доступных API ключей для выполнения запроса."
-        )
+        await update.message.reply_text("Нет доступных API ключей для выполнения запроса.")
         return
     await update.message.reply_text("Запрашиваю список моделей у Google API...")
     try:
@@ -82,7 +80,10 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     try:
-        user_to_add = int(context.args[0])
+        args = context.args
+        if not args:
+            raise IndexError
+        user_to_add = int(args[0])
         await authorize_user(user_to_add)
         await invalidate_user_auth_cache(user_to_add)
         await update.message.reply_text(f"Пользователь {user_to_add} добавлен.")
@@ -94,15 +95,16 @@ async def add_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     try:
-        user_to_del = int(context.args[0])
+        args = context.args
+        if not args:
+            raise IndexError
+        user_to_del = int(args[0])
         if user_to_del == settings.ADMIN_ID:
             await update.message.reply_text("Нельзя удалить администратора.")
             return
         await revoke_user(user_to_del)
         await invalidate_user_auth_cache(user_to_del)
-        await update.message.reply_text(
-            f"Доступ для пользователя {user_to_del} отозван."
-        )
+        await update.message.reply_text(f"Доступ для пользователя {user_to_del} отозван.")
     except (IndexError, ValueError):
         await update.message.reply_text("Использование: /deluser <user_id>")
 
@@ -111,9 +113,7 @@ async def del_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def list_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     user_ids = await list_authorized_users()
-    await update.message.reply_text(
-        "Авторизованные пользователи:\n" + "\n".join(str(uid) for uid in user_ids)
-    )
+    await update.message.reply_text("Авторизованные пользователи:\n" + "\n".join(str(uid) for uid in user_ids))
 
 
 @admin_only
@@ -126,9 +126,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Используем TelegramFormatter for надежного форматирования
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
-        keyboard = [
-            [InlineKeyboardButton("🔄 Обновить", callback_data="refresh_metrics")]
-        ]
+        keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_metrics")]]
 
         await update.message.reply_text(
             formatted_text,
@@ -141,7 +139,8 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(error_msg)
         logging.error(
             "Error in metrics command for user %s: %s",
-            update.effective_user.id, e,
+            update.effective_user.id,
+            e,
             exc_info=True,
         )
 
@@ -169,7 +168,8 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(error_msg)
         logging.error(
             "Error in cache_stats command for user %s: %s",
-            update.effective_user.id, e,
+            update.effective_user.id,
+            e,
             exc_info=True,
         )
 
@@ -200,7 +200,8 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(error_msg)
         logging.error(
             "Error in queue_stats command for user %s: %s",
-            update.effective_user.id, e,
+            update.effective_user.id,
+            e,
             exc_info=True,
         )
 
@@ -234,9 +235,7 @@ async def clear_old_metrics_command(update: Update, context: ContextTypes.DEFAUL
 
 
 @admin_only
-async def update_tavily_keys_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def update_tavily_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Команда для обновления ключей Tavily API"""
     try:
@@ -247,13 +246,11 @@ async def update_tavily_keys_command(
 
         if success:
             await update.message.reply_text(
-                "✅ Ключи Tavily API успешно обновлены!\n"
-                "💡 Система готова к работе с новыми ключами."
+                "✅ Ключи Tavily API успешно обновлены!\n💡 Система готова к работе с новыми ключами."
             )
         else:
             await update.message.reply_text(
-                "❌ Не удалось обновить ключи Tavily API.\n"
-                "🔍 Проверьте логи для получения дополнительной информации."
+                "❌ Не удалось обновить ключи Tavily API.\n🔍 Проверьте логи для получения дополнительной информации."
             )
 
     except Exception as e:
@@ -282,6 +279,7 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
         for i, row in enumerate(keys_result, 1):
             key_hash = row["key_hash"]
             from app.crypto import safe_decrypt
+
             api_key = safe_decrypt(row["api_key"])
             report += f"🔑 *Ключ {i}:*\n"
             report += f"   Хэш: `{key_hash[:16]}...`\n"
@@ -302,9 +300,7 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
 
         # Add информацию о limitах
         report += "\n⚡ *Лимиты:*\n"
-        report += (
-            f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n"
-        )
+        report += f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n"
         report += f"   Порог предупреждения: {settings.TAVILY_LIMIT_THRESHOLD_PERCENT * 100}%\n"
 
         await update.message.reply_text(report, parse_mode="Markdown")
@@ -323,21 +319,15 @@ async def register_group_command(update: Update, context: ContextTypes.DEFAULT_T
 
     chat = update.effective_chat
     if chat.type == "private":
-        await update.message.reply_text(
-            "Эта команда работает только в групповых чатах."
-        )
+        await update.message.reply_text("Эта команда работает только в групповых чатах.")
         return
 
     try:
-        success = await group_chat_manager.register_group(chat.id, chat.title, user_id)
+        success = await group_chat_manager.register_group(chat.id, chat.title or "", user_id)
         if success:
-            await update.message.reply_text(
-                f"✅ Группа '{chat.title}' зарегистрирована!"
-            )
+            await update.message.reply_text(f"✅ Группа '{chat.title}' зарегистрирована!")
         else:
-            await update.message.reply_text(
-                "❌ Группа уже зарегистрирована или произошла ошибка."
-            )
+            await update.message.reply_text("❌ Группа уже зарегистрирована или произошла ошибка.")
 
     except Exception as e:
         await update.message.reply_text(f"Ошибка регистрации группы: {e}")
@@ -350,9 +340,7 @@ async def group_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     chat = update.effective_chat
     if chat.type == "private":
-        await update.message.reply_text(
-            "Эта команда работает только в групповых чатах."
-        )
+        await update.message.reply_text("Эта команда работает только в групповых чатах.")
         return
 
     try:
@@ -403,9 +391,7 @@ async def document_stats_command(update: Update, context: ContextTypes.DEFAULT_T
 
 
 @admin_only
-async def clear_old_documents_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def clear_old_documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     """Очищает старые документы (старше 3 дней)"""
     try:
@@ -446,9 +432,7 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
 
         # Метрики ролей
         text += "*🎭 Роли:*\n"
-        text += (
-            f"• Применений ролей: `{sum(metrics['roles']['applications'].values())}`\n"
-        )
+        text += f"• Применений ролей: `{sum(metrics['roles']['applications'].values())}`\n"
         text += f"• Кастомных ролей создано: `{metrics['roles']['custom_created']}`\n"
         text += f"• Сбросов ролей: `{metrics['roles']['clears']}`\n"
         text += f"• Сохранений ролей: `{metrics['roles']['saves']}`\n\n"
@@ -462,9 +446,7 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
                 reverse=True,
             )
             for role_key, count in sorted_roles[:5]:
-                role_title = prompts.DEFAULT_ROLES.get(role_key, {}).get(
-                    "title", role_key
-                )
+                role_title = prompts.DEFAULT_ROLES.get(role_key, {}).get("title", role_key)
                 text += f"• {role_title}: `{count}`\n"
             text += "\n"
 
@@ -514,9 +496,7 @@ async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TY
         report += f"• OpenRouter: `{len(new_settings.OPENROUTER_API_KEYS)}` ключей\n\n"
         report += "🤖 *Модели:*\n"
         report += f"• Gemini: `{len(new_settings.AVAILABLE_MODELS)}` моделей\n"
-        report += (
-            f"• OpenRouter: `{len(new_settings.OPENROUTER_AVAILABLE_MODELS)}` моделей\n"
-        )
+        report += f"• OpenRouter: `{len(new_settings.OPENROUTER_AVAILABLE_MODELS)}` моделей\n"
         report += f"• По умолчанию: `{new_settings.DEFAULT_MODEL}`\n\n"
         report += "⚙️ *Настройки:*\n"
         report += f"• PORT: `{new_settings.PORT}`\n"
@@ -584,6 +564,4 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     except Exception as e:
         logging.error("Error in admin command for user %s: %s", user_id, e, exc_info=True)
-        await update.message.reply_text(
-            "❌ Произошла ошибка при обработке команды. Попробуйте позже."
-        )
+        await update.message.reply_text("❌ Произошла ошибка при обработке команды. Попробуйте позже.")

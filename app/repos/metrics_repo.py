@@ -95,7 +95,7 @@ async def get_tavily_key_usage_stats() -> list[dict[str, Any]]:
     )
 
 
-async def get_gemini_key_usage_stats(model_name: str = None) -> list[dict[str, Any]]:
+async def get_gemini_key_usage_stats(model_name: str | None = None) -> list[dict[str, Any]]:
     today_pacific: date = datetime.now(get_pacific_tz()).date()
     if model_name:
         query = """
@@ -148,9 +148,7 @@ async def get_gemini_key_usage_stats(model_name: str = None) -> list[dict[str, A
             WHERE ku.model_name IS NOT NULL
             ORDER BY ku.model_name, COALESCE(ku.request_count, 0) ASC
         """
-        results = await db_query(
-            query, (settings.LIMIT_THRESHOLD_PERCENT, today_pacific)
-        )
+        results = await db_query(query, (settings.LIMIT_THRESHOLD_PERCENT, today_pacific))
     return results
 
 
@@ -171,9 +169,7 @@ async def get_active_key_info(model_name: str) -> dict[str, Any] | None:
         try:
             from app.repos.keys import _is_key_available
 
-            is_available = await _is_key_available(
-                cached_key["key_hash"], model_name, conn=conn
-            )
+            is_available = await _is_key_available(cached_key["key_hash"], model_name, conn=conn)
             return {
                 "key_hash": cached_key["key_hash"],
                 "api_key_preview": cached_key["key_hash"][:8] + "***",

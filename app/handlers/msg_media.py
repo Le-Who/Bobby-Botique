@@ -27,15 +27,14 @@ _cleanup_task = None
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 
+
 async def cleanup_old_media_groups() -> None:
     """Remove stale media groups to prevent memory leaks."""
     current_time = _time_module.monotonic()
 
     async with _media_groups_lock:
         expired_groups = [
-            mg_id
-            for mg_id, created_at in MEDIA_GROUPS_TTL.items()
-            if current_time - created_at > MEDIA_GROUP_TIMEOUT
+            mg_id for mg_id, created_at in MEDIA_GROUPS_TTL.items() if current_time - created_at > MEDIA_GROUP_TIMEOUT
         ]
         for media_group_id in expired_groups:
             MEDIA_GROUPS.pop(media_group_id, None)
@@ -49,8 +48,8 @@ async def cleanup_old_media_groups() -> None:
 async def start_media_groups_cleanup() -> None:
     """Start the periodic cleanup loop for stale media groups."""
     global _cleanup_task
-    if _cleanup_task and not _cleanup_task.done():
-        return
+    if _cleanup_task and not _cleanup_task.done():  # type: ignore[unreachable]  # runtime Task state check
+        return  # type: ignore[unreachable]
 
     async def cleanup_loop() -> None:
         while True:
@@ -69,9 +68,8 @@ async def start_media_groups_cleanup() -> None:
 
 # ── Media group update handling ──────────────────────────────────────────────
 
-async def process_media_group_update(
-    update, context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int
-) -> bool:
+
+async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE, user_id: int, chat_id: int) -> bool:
     """Handle an update if it's part of a media group. Returns True if consumed."""
     is_photo = bool(update.message.photo)
     media_group_id = update.message.media_group_id if update.message else None
@@ -79,18 +77,18 @@ async def process_media_group_update(
     if is_photo and media_group_id:
         logging.info(
             "📸 Получено изображение с media_group_id %s от пользователя %s",
-            media_group_id, user_id,
+            media_group_id,
+            user_id,
         )
 
         async with _media_groups_lock:
             if media_group_id not in MEDIA_GROUPS and len(MEDIA_GROUPS) >= MEDIA_GROUPS_MAX_SIZE:
                 logging.warning(
                     "⚠️ MEDIA_GROUPS at capacity (%s), rejecting media_group_id %s",
-                    MEDIA_GROUPS_MAX_SIZE, media_group_id,
+                    MEDIA_GROUPS_MAX_SIZE,
+                    media_group_id,
                 )
-                await update.message.reply_text(
-                    "⚠️ Слишком много одновременных медиа-групп. Попробуйте позже."
-                )
+                await update.message.reply_text("⚠️ Слишком много одновременных медиа-групп. Попробуйте позже.")
                 return True
 
             if media_group_id not in MEDIA_GROUPS:
@@ -113,9 +111,7 @@ async def process_media_group_update(
             should_schedule = is_first and not MEDIA_GROUPS[media_group_id]["processing_scheduled"]
 
         if is_first:
-            placeholder_message = await update.message.reply_text(
-                "🖼️ Обрабатываю изображение..."
-            )
+            placeholder_message = await update.message.reply_text("🖼️ Обрабатываю изображение...")
             async with _media_groups_lock:
                 if media_group_id in MEDIA_GROUPS:
                     MEDIA_GROUPS[media_group_id]["placeholder_message"] = placeholder_message
@@ -125,9 +121,7 @@ async def process_media_group_update(
                 async with _media_groups_lock:
                     if media_group_id in MEDIA_GROUPS:
                         MEDIA_GROUPS[media_group_id]["processing_scheduled"] = True
-                _process_task = asyncio.create_task(
-                    delayed_process_media_group(media_group_id, context, 1.0)
-                )
+                _process_task = asyncio.create_task(delayed_process_media_group(media_group_id, context, 1.0))
                 _background_tasks.add(_process_task)
                 _process_task.add_done_callback(_background_tasks.discard)
 
@@ -137,9 +131,8 @@ async def process_media_group_update(
 
 # ── Deferred processing ─────────────────────────────────────────────────────
 
-async def delayed_process_media_group(
-    media_group_id: str, context: ContextTypes.DEFAULT_TYPE, delay: float
-) -> None:
+
+async def delayed_process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE, delay: float) -> None:
     """Deferred media group processing. Owns cleanup of MEDIA_GROUPS entry."""
     await asyncio.sleep(delay)
 
@@ -151,7 +144,8 @@ async def delayed_process_media_group(
 
     logging.info(
         "⏰ Отложенная обработка media_group_id %s: %s сообщений",
-        media_group_id, message_count,
+        media_group_id,
+        message_count,
     )
 
     try:
@@ -168,9 +162,7 @@ async def delayed_process_media_group(
         logging.info("🧹 Очищена обработанная группа изображений: %s", media_group_id)
 
 
-async def _process_single_image_from_group(
-    media_group_id: str, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def _process_single_image_from_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Process a single image that arrived via a media group."""
     if media_group_id not in MEDIA_GROUPS:
         return
@@ -189,22 +181,22 @@ async def _process_single_image_from_group(
 
     try:
         from app.handlers.agent import process_long_request
-        await process_long_request(placeholder_message, mock_update, context)
+
+        await process_long_request(placeholder_message, mock_update, context)  # type: ignore[arg-type]  # SimpleNamespace duck-types Update
     except Exception as e:
         logging.error("Error processing single image from group: %s", e, exc_info=True)
         try:
             from app.errors import build_retry_and_roles_keyboard
+
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при обработке изображения. Попробуйте ещё раз.",
-                reply_markup=build_retry_and_roles_keyboard(include_roles=False)
+                reply_markup=build_retry_and_roles_keyboard(include_roles=False),
             )
         except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
 
 
-async def _process_media_group(
-    media_group_id: str, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def _process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Process a group of images as a single unit."""
     from app.handlers.messages import _HEAVY_REQUEST_SEMAPHORE
 
@@ -221,13 +213,15 @@ async def _process_media_group(
     message_count = len(messages) if messages else 0
     logging.info(
         "🔄 Обрабатываю группу изображений %s: %s изображений",
-        media_group_id, message_count,
+        media_group_id,
+        message_count,
     )
 
     if message_count <= 1:
         logging.warning(
             "Media group %s содержит только %s сообщений, перенаправляю в одиночную обработку",
-            media_group_id, message_count,
+            media_group_id,
+            message_count,
         )
         await _process_single_image_from_group(media_group_id, context)
         return
@@ -243,19 +237,17 @@ async def _process_media_group(
             )
 
             from app.handlers.agent import process_media_group_request
-            await process_media_group_request(
-                placeholder_message, mock_update, context, messages, caption
-            )
+
+            await process_media_group_request(placeholder_message, mock_update, context, messages, caption)
 
     except Exception as e:
-        logging.error(
-            "Error processing media group %s: %s", media_group_id, e, exc_info=True
-        )
+        logging.error("Error processing media group %s: %s", media_group_id, e, exc_info=True)
         try:
             from app.errors import build_retry_and_roles_keyboard
+
             await placeholder_message.edit_text(
                 "❌ Произошла ошибка при обработке группы изображений. Попробуйте ещё раз.",
-                reply_markup=build_retry_and_roles_keyboard(include_roles=False)
+                reply_markup=build_retry_and_roles_keyboard(include_roles=False),
             )
         except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)

@@ -20,11 +20,13 @@ class TestProviderRouterIntegration:
         router = ProviderRouter()
 
         mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(return_value=(
-            {"key_hash": "abc", "api_key": "test-key"},
-            "gemini-2.0-flash",
-            "resolved",
-        ))
+        mock_use_case.resolve_ai_request = AsyncMock(
+            return_value=(
+                {"key_hash": "abc", "api_key": "test-key"},
+                "gemini-2.0-flash",
+                "resolved",
+            )
+        )
         mock_use_case.get_ai_response = AsyncMock(return_value=("Hello!", 42))
         mock_use_case.increment_key_usage = AsyncMock()
 
@@ -50,11 +52,13 @@ class TestProviderRouterIntegration:
         router = ProviderRouter()
 
         mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(return_value=(
-            {"key_hash": "xyz", "api_key": "or-key"},
-            "openai/gpt-4o",
-            "resolved",
-        ))
+        mock_use_case.resolve_ai_request = AsyncMock(
+            return_value=(
+                {"key_hash": "xyz", "api_key": "or-key"},
+                "openai/gpt-4o",
+                "resolved",
+            )
+        )
         mock_use_case.get_ai_response = AsyncMock(return_value=("GPT says hi", 37))
         mock_use_case.increment_key_usage = AsyncMock()
 
@@ -80,9 +84,13 @@ class TestProviderRouterIntegration:
         router = ProviderRouter()
 
         mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(return_value=(
-            None, None, "all_exhausted",
-        ))
+        mock_use_case.resolve_ai_request = AsyncMock(
+            return_value=(
+                None,
+                None,
+                "all_exhausted",
+            )
+        )
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
@@ -105,8 +113,10 @@ class TestProviderRouterIntegration:
         router = ProviderRouter()
 
         with patch.object(
-            router._rate_limiter, "check_rate_limit",
-            new_callable=AsyncMock, return_value=False,
+            router._rate_limiter,
+            "check_rate_limit",
+            new_callable=AsyncMock,
+            return_value=False,
         ):
             text, tokens = await router.get_response(
                 preferred_model="gemini-2.0-flash",
@@ -131,11 +141,13 @@ class TestProviderRouterIntegration:
         history = [{"role": "user", "parts": ["describe this", img]}]
 
         mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(return_value=(
-            {"key_hash": "abc", "api_key": "test-key"},
-            "gemini-2.0-flash",
-            "resolved",
-        ))
+        mock_use_case.resolve_ai_request = AsyncMock(
+            return_value=(
+                {"key_hash": "abc", "api_key": "test-key"},
+                "gemini-2.0-flash",
+                "resolved",
+            )
+        )
         mock_use_case.get_ai_response = AsyncMock(return_value=("Image desc", 50))
         mock_use_case.increment_key_usage = AsyncMock()
 
@@ -163,14 +175,18 @@ class TestProviderRouterIntegration:
 
         # First call: returns error → retry; second call: succeeds
         mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(side_effect=[
-            ({"key_hash": "bad_key", "api_key": "bad"}, "gemini-2.0-flash", "resolved"),
-            ({"key_hash": "good_key", "api_key": "good"}, "gemini-2.0-flash", "resolved"),
-        ])
-        mock_use_case.get_ai_response = AsyncMock(side_effect=[
-            ("❌ API key is invalid. Please check your API key.", None),
-            ("Success!", 55),
-        ])
+        mock_use_case.resolve_ai_request = AsyncMock(
+            side_effect=[
+                ({"key_hash": "bad_key", "api_key": "bad"}, "gemini-2.0-flash", "resolved"),
+                ({"key_hash": "good_key", "api_key": "good"}, "gemini-2.0-flash", "resolved"),
+            ]
+        )
+        mock_use_case.get_ai_response = AsyncMock(
+            side_effect=[
+                ("❌ API key is invalid. Please check your API key.", None),
+                ("Success!", 55),
+            ]
+        )
         mock_use_case.increment_key_usage = AsyncMock()
 
         with (

@@ -16,9 +16,7 @@ from PIL import Image
 _image_process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=2)
 
 
-def _image_worker(
-    image_data: bytes | Image.Image, max_size_mb: int = 10
-) -> bytes | None:
+def _image_worker(image_data: bytes | Image.Image, max_size_mb: int = 10) -> bytes | None:
     """Synchronous image compression worker (runs in process pool)."""
     from PIL import Image
 
@@ -32,8 +30,8 @@ def _image_worker(
 
         if img_bytes_approx > max_size_mb * 1024 * 1024:
             ratio = math.sqrt((max_size_mb * 1024 * 1024) / img_bytes_approx)
-            new_size = tuple(int(dim * ratio) for dim in img_to_process.size)
-            img_to_process = img_to_process.resize(new_size, Image.Resampling.LANCZOS)
+            new_dims = [int(dim * ratio) for dim in img_to_process.size]
+            img_to_process = img_to_process.resize((new_dims[0], new_dims[1]), Image.Resampling.LANCZOS)
 
         buf = io.BytesIO()
         if img_to_process.mode in ("RGBA", "P"):
@@ -53,9 +51,7 @@ async def save_image_as_bytes(
     loop = asyncio.get_running_loop()
     try:
         return await asyncio.wait_for(
-            loop.run_in_executor(
-                _image_process_pool, _image_worker, image_data, max_size_mb
-            ),
+            loop.run_in_executor(_image_process_pool, _image_worker, image_data, max_size_mb),
             timeout=timeout,
         )
     except Exception as e:

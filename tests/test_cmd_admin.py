@@ -20,6 +20,7 @@ def make_admin_update(user_id=1, args=None):
 
 # ── /admin ────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_admin_command_shows_help():
     """admin_command returns help text with list of commands."""
@@ -30,6 +31,7 @@ async def test_admin_command_shows_help():
         patch("app.utils.decorators.is_admin", return_value=True),
     ):
         from app.handlers.cmd_admin import admin_command
+
         await admin_command(update, context)
 
     update.message.reply_text.assert_awaited_once()
@@ -38,6 +40,7 @@ async def test_admin_command_shows_help():
 
 
 # ── /adduser ──────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_add_user_no_args():
@@ -49,6 +52,7 @@ async def test_add_user_no_args():
         patch("app.utils.decorators.is_admin", return_value=True),
     ):
         from app.handlers.cmd_admin import add_user_command
+
         await add_user_command(update, context)
 
     reply_text = update.message.reply_text.call_args[0][0]
@@ -67,6 +71,7 @@ async def test_add_user_success():
         patch("app.handlers.cmd_admin.invalidate_user_auth_cache", new_callable=AsyncMock),
     ):
         from app.handlers.cmd_admin import add_user_command
+
         await add_user_command(update, context)
 
     reply_text = update.message.reply_text.call_args[0][0]
@@ -75,6 +80,7 @@ async def test_add_user_success():
 
 
 # ── /deluser ──────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_del_user_no_args():
@@ -86,6 +92,7 @@ async def test_del_user_no_args():
         patch("app.utils.decorators.is_admin", return_value=True),
     ):
         from app.handlers.cmd_admin import del_user_command
+
         await del_user_command(update, context)
 
     reply_text = update.message.reply_text.call_args[0][0]
@@ -93,6 +100,7 @@ async def test_del_user_no_args():
 
 
 # ── /listusers ────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_list_users_command():
@@ -102,16 +110,17 @@ async def test_list_users_command():
     with (
         patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
         patch("app.utils.decorators.is_admin", return_value=True),
-        patch("app.handlers.cmd_admin.list_authorized_users",
-              new_callable=AsyncMock, return_value=[123, 456]),
+        patch("app.handlers.cmd_admin.list_authorized_users", new_callable=AsyncMock, return_value=[123, 456]),
     ):
         from app.handlers.cmd_admin import list_users_command
+
         await list_users_command(update, context)
 
     update.message.reply_text.assert_awaited_once()
 
 
 # ── /clearcache ───────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_clear_cache_command():
@@ -124,6 +133,7 @@ async def test_clear_cache_command():
         patch("app.handlers.cmd_admin.get_cache_stats", return_value={"size": 0}),
     ):
         from app.handlers.cmd_admin import clear_cache_command
+
         await clear_cache_command(update, context)
 
     reply_text = update.message.reply_text.call_args[0][0]
@@ -131,6 +141,7 @@ async def test_clear_cache_command():
 
 
 # ── Non-admin access ─────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_admin_command_denied_for_non_admin():
@@ -142,6 +153,7 @@ async def test_admin_command_denied_for_non_admin():
         patch("app.utils.decorators.is_admin", return_value=False),
     ):
         from app.handlers.cmd_admin import admin_command
+
         await admin_command(update, context)
 
     # Should reply with access denied
@@ -150,6 +162,7 @@ async def test_admin_command_denied_for_non_admin():
 
 
 # ── /reload ───────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_reload_config_command():
@@ -164,6 +177,7 @@ async def test_reload_config_command():
         mock_settings.reload = MagicMock()
 
         from app.handlers.cmd_admin import reload_config_command
+
         await reload_config_command(update, context)
 
     assert update.message.reply_text.await_count >= 1

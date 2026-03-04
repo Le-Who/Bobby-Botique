@@ -6,13 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def make_chat_state(model="gemini-2.0-flash", system_prompt=None,
-                    history=None, is_deep_dive=False):
+def make_chat_state(model="gemini-2.0-flash", system_prompt=None, history=None, is_deep_dive=False):
     return SimpleNamespace(
-        model=model, system_prompt=system_prompt,
+        model=model,
+        system_prompt=system_prompt,
         history=history if history is not None else [],
-        token_count=0, is_deep_dive=is_deep_dive,
-        search_enabled=True, deep_dive_thread_id=None,
+        token_count=0,
+        is_deep_dive=is_deep_dive,
+        search_enabled=True,
+        deep_dive_thread_id=None,
     )
 
 
@@ -27,6 +29,7 @@ def make_placeholder(user_id=123):
 
 # ── QnA search — happy path ──────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_qna_search_happy_path():
     """QnA search returns localized answer from Tavily."""
@@ -37,28 +40,30 @@ async def test_qna_search_happy_path():
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
         patch("app.handlers.ai_search.search_services") as mock_search,
-        patch("app.handlers.ai_search._get_ai_response_with_routing", new_callable=AsyncMock,
-              return_value=("Localized answer", 0)),
-        patch("app.handlers.ai_search.handle_ai_response_error", new_callable=AsyncMock,
-              return_value=False),
+        patch(
+            "app.handlers.ai_search._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value=("Localized answer", 0),
+        ),
+        patch("app.handlers.ai_search.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
         patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as mock_send,
         patch("app.handlers.ai_search.prompts") as mock_prompts,
         patch("app.handlers.ai_search.get_openrouter_keys", return_value=[]),
     ):
         mock_metrics.record_search_query = AsyncMock()
-        mock_search.tavily_search_agent = AsyncMock(return_value={
-            "answer": "Raw Tavily answer"
-        })
+        mock_search.tavily_search_agent = AsyncMock(return_value={"answer": "Raw Tavily answer"})
         mock_prompts.QNA_LOCALIZATION_PROMPT = "Q: {user_message} A: {tavily_answer}"
         mock_prompts.compose_system_instruction.return_value = "sys"
 
         from app.handlers.ai_search import _handle_qna_search
+
         await _handle_qna_search(placeholder, "What is Python?", chat_state)
 
     mock_send.assert_awaited_once()
 
 
 # ── QnA search — Tavily error ────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_qna_search_tavily_error():
@@ -75,6 +80,7 @@ async def test_qna_search_tavily_error():
         mock_search.tavily_search_agent = AsyncMock(return_value={"error": "API limit"})
 
         from app.handlers.ai_search import _handle_qna_search
+
         await _handle_qna_search(placeholder, "Query", chat_state)
 
     placeholder.edit_text.assert_awaited()
@@ -83,6 +89,7 @@ async def test_qna_search_tavily_error():
 
 
 # ── Research agent — search fails ─────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_research_agent_search_exception():
@@ -99,6 +106,7 @@ async def test_research_agent_search_exception():
         mock_search.tavily_search_agent = AsyncMock(side_effect=Exception("Network fail"))
 
         from app.handlers.ai_search import _handle_research_agent
+
         await _handle_research_agent(placeholder, 123, "Query", chat_state)
 
     placeholder.edit_text.assert_awaited()
@@ -107,6 +115,7 @@ async def test_research_agent_search_exception():
 
 
 # ── Research agent — no results ───────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_research_agent_no_results():
@@ -123,6 +132,7 @@ async def test_research_agent_no_results():
         mock_search.tavily_search_agent = AsyncMock(return_value={"results": []})
 
         from app.handlers.ai_search import _handle_research_agent
+
         await _handle_research_agent(placeholder, 123, "Query", chat_state)
 
     placeholder.edit_text.assert_awaited()
@@ -131,6 +141,7 @@ async def test_research_agent_no_results():
 
 
 # ── Research agent — Tavily returns error dict ────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_research_agent_tavily_error():
@@ -147,6 +158,7 @@ async def test_research_agent_tavily_error():
         mock_search.tavily_search_agent = AsyncMock(return_value={"error": "Rate limited"})
 
         from app.handlers.ai_search import _handle_research_agent
+
         await _handle_research_agent(placeholder, 123, "Query", chat_state)
 
     placeholder.edit_text.assert_awaited()

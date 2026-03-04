@@ -15,10 +15,12 @@ class _MockSettings:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _reset_fernet():
     """Ensure each test starts with a fresh Fernet instance."""
     from app.crypto import reset_fernet
+
     reset_fernet()
     yield
     reset_fernet()
@@ -28,8 +30,7 @@ def _reset_fernet():
 def _mock_settings():
     """Patch settings to provide ADMIN_SECRET."""
     mock = _MockSettings()
-    with patch("app.crypto.settings", mock, create=True), \
-         patch("app.config.settings", mock):
+    with patch("app.crypto.settings", mock, create=True), patch("app.config.settings", mock):
         yield mock
 
 
@@ -37,8 +38,8 @@ def _mock_settings():
 # Encrypt / Decrypt roundtrip
 # ---------------------------------------------------------------------------
 
-class TestEncryptDecryptRoundtrip:
 
+class TestEncryptDecryptRoundtrip:
     def test_roundtrip_simple_key(self, _mock_settings):
         from app.crypto import decrypt_api_key, encrypt_api_key
 
@@ -81,8 +82,8 @@ class TestEncryptDecryptRoundtrip:
 # is_encrypted heuristic
 # ---------------------------------------------------------------------------
 
-class TestIsEncrypted:
 
+class TestIsEncrypted:
     def test_fernet_token_detected(self, _mock_settings):
         from app.crypto import encrypt_api_key, is_encrypted
 
@@ -102,8 +103,8 @@ class TestIsEncrypted:
 # safe_decrypt
 # ---------------------------------------------------------------------------
 
-class TestSafeDecrypt:
 
+class TestSafeDecrypt:
     def test_decrypts_encrypted_value(self, _mock_settings):
         from app.crypto import encrypt_api_key, safe_decrypt
 
@@ -122,6 +123,7 @@ class TestSafeDecrypt:
         # Encrypt with one secret
         from app.crypto import encrypt_api_key, reset_fernet, safe_decrypt
         from app.errors import DecryptionError
+
         ciphertext = encrypt_api_key("secret-key")
 
         # Reset and use different secret
@@ -135,8 +137,8 @@ class TestSafeDecrypt:
 # Error cases
 # ---------------------------------------------------------------------------
 
-class TestErrorCases:
 
+class TestErrorCases:
     def test_missing_admin_secret_raises(self):
         from app.crypto import encrypt_api_key
 
@@ -166,8 +168,8 @@ class TestErrorCases:
 # reset_fernet
 # ---------------------------------------------------------------------------
 
-class TestResetFernet:
 
+class TestResetFernet:
     def test_reset_clears_cached_instance(self, _mock_settings):
         from app import crypto
 

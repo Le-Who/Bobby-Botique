@@ -23,6 +23,7 @@ from app.config import settings
 @dataclass
 class SelectionResult:
     """Result of model selection analysis."""
+
     model: str
     reason: str
     confidence: float  # 0.0 - 1.0
@@ -33,9 +34,9 @@ class SelectionResult:
 # Order matters: first match wins within _find_model.
 # Models are ranked roughly by capability tier.
 _MODEL_TIER = {
-    "pro": 4,          # gemini-2.5-pro
-    "2.5-flash": 3,    # gemini-2.5-flash (thinking-capable)
-    "flash-lite": 1,   # gemini-2.5-flash-lite / flash-lite-latest
+    "pro": 4,  # gemini-2.5-pro
+    "2.5-flash": 3,  # gemini-2.5-flash (thinking-capable)
+    "flash-lite": 1,  # gemini-2.5-flash-lite / flash-lite-latest
 }
 
 

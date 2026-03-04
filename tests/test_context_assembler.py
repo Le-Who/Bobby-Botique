@@ -244,10 +244,7 @@ class TestContextAssemblerSummary:
             existing_summary="Previous context about Python",
         )
         # Summary should appear in the history
-        found = any(
-            "контекст" in str(msg.get("parts", "")).lower()
-            for msg in result.history
-        )
+        found = any("контекст" in str(msg.get("parts", "")).lower() for msg in result.history)
         assert found
 
     def test_summary_not_as_orphan_user_message(self):
@@ -287,8 +284,7 @@ class TestRoleAlternation:
         # Check no consecutive same roles
         for i in range(1, len(result.history)):
             assert result.history[i]["role"] != result.history[i - 1]["role"], (
-                f"Consecutive same roles at index {i-1} and {i}: "
-                f"{result.history[i-1]['role']}"
+                f"Consecutive same roles at index {i - 1} and {i}: {result.history[i - 1]['role']}"
             )
 
     def test_proper_alternation_with_summary(self):
@@ -368,17 +364,18 @@ class TestLLMSummarizationScheduling:
             make_msg("model", "Python is a language."),
         ]
 
-        with patch(
-            "app.context.summarizer.split_into_chunks",
-            return_value=["user: What is Python?\nmodel: Python is a language."],
-        ), patch(
-            "app.handlers.ai_core._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value="## Факты\n- Python — это язык программирования",
-        ) as mock_llm:
-            await _run_llm_summarization(
-                dropped, None, callback
-            )
+        with (
+            patch(
+                "app.context.summarizer.split_into_chunks",
+                return_value=["user: What is Python?\nmodel: Python is a language."],
+            ),
+            patch(
+                "app.handlers.ai_core._get_ai_response_with_routing",
+                new_callable=AsyncMock,
+                return_value="## Факты\n- Python — это язык программирования",
+            ) as mock_llm,
+        ):
+            await _run_llm_summarization(dropped, None, callback)
             mock_llm.assert_called_once()
             callback.assert_called_once()
 
@@ -400,16 +397,17 @@ class TestLLMSummarizationScheduling:
             call_count += 1
             return responses[idx]
 
-        with patch(
-            "app.context.summarizer.split_into_chunks",
-            return_value=["chunk1_text", "chunk2_text"],
-        ), patch(
-            "app.handlers.ai_core._get_ai_response_with_routing",
-            side_effect=mock_llm,
+        with (
+            patch(
+                "app.context.summarizer.split_into_chunks",
+                return_value=["chunk1_text", "chunk2_text"],
+            ),
+            patch(
+                "app.handlers.ai_core._get_ai_response_with_routing",
+                side_effect=mock_llm,
+            ),
         ):
-            await _run_llm_summarization(
-                dropped, None, callback
-            )
+            await _run_llm_summarization(dropped, None, callback)
             assert call_count == 2  # Two chunks → two LLM calls
             callback.assert_called_once()
 
@@ -419,18 +417,19 @@ class TestLLMSummarizationScheduling:
         callback = AsyncMock()
         dropped = [make_msg("user", "test")]
 
-        with patch(
-            "app.context.summarizer.split_into_chunks",
-            return_value=["test chunk"],
-        ), patch(
-            "app.handlers.ai_core._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            side_effect=Exception("API Error"),
+        with (
+            patch(
+                "app.context.summarizer.split_into_chunks",
+                return_value=["test chunk"],
+            ),
+            patch(
+                "app.handlers.ai_core._get_ai_response_with_routing",
+                new_callable=AsyncMock,
+                side_effect=Exception("API Error"),
+            ),
         ):
             # Should not raise
-            await _run_llm_summarization(
-                dropped, None, callback
-            )
+            await _run_llm_summarization(dropped, None, callback)
             callback.assert_not_called()
 
 
@@ -442,9 +441,7 @@ class TestAudit:
         self.assembler = ContextAssembler()
 
     def test_audit_hash_generated(self):
-        result = self.assembler.assemble(
-            history=[], user_message="Hi", system_instruction="S"
-        )
+        result = self.assembler.assemble(history=[], user_message="Hi", system_instruction="S")
         assert result.audit_hash
         assert len(result.audit_hash) == 12
 
@@ -455,12 +452,8 @@ class TestAudit:
         assert result1.audit_hash == result2.audit_hash
 
     def test_audit_hash_changes_with_input(self):
-        result1 = self.assembler.assemble(
-            history=[], user_message="Hi", system_instruction="S"
-        )
-        result2 = self.assembler.assemble(
-            history=[], user_message="Bye", system_instruction="S"
-        )
+        result1 = self.assembler.assemble(history=[], user_message="Hi", system_instruction="S")
+        result2 = self.assembler.assemble(history=[], user_message="Bye", system_instruction="S")
         assert result1.audit_hash != result2.audit_hash
 
 
@@ -500,17 +493,13 @@ class TestBudgetAccounting:
 
     def test_budget_accounts_system_prompt(self):
         system = "A" * 300
-        result = self.assembler.assemble(
-            history=[], user_message="Hi", system_instruction=system
-        )
+        result = self.assembler.assemble(history=[], user_message="Hi", system_instruction=system)
         assert result.budget.system_prompt > 0
         assert result.budget.system_prompt == estimate_tokens_cyrillic(system)
 
     def test_budget_accounts_user_message(self):
         msg = "A long user message " * 20
-        result = self.assembler.assemble(
-            history=[], user_message=msg, system_instruction="S"
-        )
+        result = self.assembler.assemble(history=[], user_message=msg, system_instruction="S")
         assert result.budget.user_message > 0
         assert result.budget.user_message == estimate_tokens_cyrillic(msg)
 

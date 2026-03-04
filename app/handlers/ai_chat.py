@@ -23,6 +23,7 @@ from app.utils.stage_indicators import STAGES_CHAT, update_stage
 
 _background_tasks: set = set()
 
+
 async def _handle_regular_chat(
     placeholder_message: Message,
     user_id: int,
@@ -36,9 +37,7 @@ async def _handle_regular_chat(
 
     if resolution == "all_exhausted":
         # Определяем провайдер на основе models
-        is_openrouter = (
-            "/" in model_for_this_request if model_for_this_request else False
-        )
+        is_openrouter = "/" in model_for_this_request if model_for_this_request else False
         provider_name = "OpenRouter" if is_openrouter else "Gemini"
         try:
             await placeholder_message.edit_text(
@@ -71,6 +70,7 @@ async def _handle_regular_chat(
 
     # Assemble context with token-budget awareness
     from app.context_assembler import get_assembler
+    from app.context.summarizer import schedule_llm_summarization
 
     assembler = get_assembler()
 
@@ -99,8 +99,11 @@ async def _handle_regular_chat(
         key_data_for_mem, _, _ = await _resolve_ai_request(model_used)
         if key_data_for_mem and user_message and len(user_message) > 15:
             memories = await search_memories(
-                user_id, user_message, key_data_for_mem["api_key"],
-                limit=3, min_similarity=0.55,
+                user_id,
+                user_message,
+                key_data_for_mem["api_key"],
+                limit=3,
+                min_similarity=0.55,
             )
             if memories:
                 mem_texts = [m["content"][:300] for m in memories]
@@ -122,7 +125,9 @@ async def _handle_regular_chat(
     if assembled.was_truncated:
         logging.info(
             "Context trimmed for user %s: dropped %d msgs, audit=%s, llm_scheduled=%s",
-            user_id, assembled.messages_dropped, assembled.audit_hash,
+            user_id,
+            assembled.messages_dropped,
+            assembled.audit_hash,
             assembled.llm_summarization_scheduled,
         )
 
@@ -130,10 +135,7 @@ async def _handle_regular_chat(
         from app.metrics import role_conv_metrics
         from app.prompt_registry import estimate_tokens_cyrillic
 
-        tokens_saved = sum(
-            estimate_tokens_cyrillic(assembler._extract_text(msg))
-            for msg in assembled.dropped_messages
-        )
+        tokens_saved = sum(estimate_tokens_cyrillic(assembler._extract_text(msg)) for msg in assembled.dropped_messages)
         summary_len = estimate_tokens_cyrillic(assembled.summary) if assembled.summary else 0
         tier = "llm" if assembled.llm_summarization_scheduled else "local"
         await role_conv_metrics.record_summarization(
@@ -144,12 +146,13 @@ async def _handle_regular_chat(
 
         # Schedule async LLM summarization for NEXT request
         if assembled.llm_summarization_scheduled and assembled.dropped_messages:
+
             async def _store_llm_summary(summary: str) -> None:
                 chat_state.context_summary = summary
                 await update_user_chat(user_id, chat_state)
                 logging.info("LLM summary persisted for user %s", user_id)
 
-            assembler.schedule_llm_summarization(
+            schedule_llm_summarization(
                 dropped_messages=assembled.dropped_messages,
                 existing_summary=existing_summary,
                 callback=_store_llm_summary,
@@ -159,9 +162,7 @@ async def _handle_regular_chat(
         await update_stage(placeholder_message, STAGES_CHAT, 0)
     except Exception as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
-        placeholder_message = await placeholder_message.reply_text(
-            f"🧠 Модель {model_used} думает..."
-        )
+        placeholder_message = await placeholder_message.reply_text(f"🧠 Модель {model_used} думает...")
 
     # ── Try streaming for Gemini models first ────────────────────────────
     response_text = None
@@ -174,6 +175,7 @@ async def _handle_regular_chat(
         # Stop the heartbeat before streaming — streaming edits the same
         # placeholder message, so the heartbeat would race with it.
         from app.utils.heartbeat import stop_heartbeat
+
         stop_heartbeat(placeholder_message.message_id)
         from google.genai import types as genai_types
 
@@ -186,7 +188,8 @@ async def _handle_regular_chat(
             try:
                 # Resolve a key, excluding previously failed ones
                 key_data, _, _ = await _resolve_ai_request(
-                    model_used, excluded_key_hashes=excluded_key_hashes or None,
+                    model_used,
+                    excluded_key_hashes=excluded_key_hashes or None,
                 )
                 if not key_data:
                     logging.warning("No API keys available for streaming (attempt %d)", stream_attempt + 1)
@@ -199,9 +202,7 @@ async def _handle_regular_chat(
                 if not contents:
                     break
 
-                config = genai_types.GenerateContentConfig(
-                    safety_settings=settings.SAFETY_SETTINGS
-                )
+                config = genai_types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
                 tc = _build_thinking_config(model_used, chat_state.thinking_level)
                 if tc:
                     config.thinking_config = tc
@@ -220,23 +221,29 @@ async def _handle_regular_chat(
                     streamed = True
                     # Count tokens
                     from app.prompt_registry import estimate_tokens_cyrillic
+
                     new_token_count = estimate_tokens_cyrillic(response_text)
                     # Increment key usage
                     from app.handlers.ai_core import _increment_key_usage
+
                     await _increment_key_usage(key_data["key_hash"], model_used)
                     break  # Success — exit retry loop
                 else:
                     # Stream returned but wasn't successful — try next key
                     logging.warning(
                         "Streaming attempt %d/%d failed (success=%s), trying next key",
-                        stream_attempt + 1, MAX_STREAM_RETRIES, success,
+                        stream_attempt + 1,
+                        MAX_STREAM_RETRIES,
+                        success,
                     )
                     excluded_key_hashes.add(key_data["key_hash"])
                     response_text = None
             except Exception as e:
                 logging.warning(
                     "Streaming attempt %d/%d error: %s",
-                    stream_attempt + 1, MAX_STREAM_RETRIES, e,
+                    stream_attempt + 1,
+                    MAX_STREAM_RETRIES,
+                    e,
                 )
                 if key_data:
                     excluded_key_hashes.add(key_data["key_hash"])
@@ -252,6 +259,7 @@ async def _handle_regular_chat(
             )
             try:
                 from app.errors import build_retry_and_roles_keyboard
+
                 await placeholder_message.edit_text(
                     "❌ Произошла ошибка при формировании запроса. Попробуйте ещё раз.",
                     reply_markup=build_retry_and_roles_keyboard(),
@@ -277,28 +285,16 @@ async def _handle_regular_chat(
             chat_state.history.pop()
             await update_user_chat(user_id, chat_state)
 
-        if await handle_ai_response_error(
-            response_text, placeholder_message, on_error_callback=cleanup_on_error
-        ):
+        if await handle_ai_response_error(response_text, placeholder_message, on_error_callback=cleanup_on_error):
             return
         else:
             buttons = [
-                [
-                    InlineKeyboardButton(
-                        "🔄 Попробовать ещё раз", callback_data="retry_last"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🎭 Выбрать роль ИИ", callback_data="open_roles:from_response"
-                    )
-                ],
+                [InlineKeyboardButton("🔄 Попробовать ещё раз", callback_data="retry_last")],
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
                 [
                     InlineKeyboardButton(
                         "✨ Начать новую тему",
-                        callback_data="deepdive:new_topic"
-                        if chat_state.is_deep_dive
-                        else "new_topic",
+                        callback_data="deepdive:new_topic" if chat_state.is_deep_dive else "new_topic",
                     )
                 ],
             ]
@@ -307,24 +303,16 @@ async def _handle_regular_chat(
             if not streamed:
                 # Non-streaming: send_long_message as before
                 try:
-                    await send_long_message(
-                        placeholder_message, response_text, reply_markup=reply_markup
-                    )
+                    await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
                 except Exception as send_err:
-                    logging.warning(
-                        f"send_long_message failed, fallback to reply_text: {send_err}"
-                    )
+                    logging.warning(f"send_long_message failed, fallback to reply_text: {send_err}")
                     try:
-                        formatted_text, parse_mode = TelegramFormatter.format_text(
-                            response_text
-                        )
+                        formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
                         await placeholder_message.reply_text(
                             formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
                         )
                     except Exception:
-                        await placeholder_message.reply_text(
-                            response_text, reply_markup=reply_markup
-                        )
+                        await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
             else:
                 # Streaming: message is already displayed, just add buttons
                 # Use stream_last_msg (final message in chain) for button attachment
@@ -353,7 +341,9 @@ async def _handle_regular_chat(
                     async def _bg_store():
                         with contextlib.suppress(Exception):
                             await store_memory(
-                                user_id, exchange, key_data_for_store["api_key"],
+                                user_id,
+                                exchange,
+                                key_data_for_store["api_key"],
                                 source_type="conversation",
                             )
 
@@ -368,15 +358,20 @@ async def _handle_regular_chat(
                 from app.model_selector import select_model
 
                 suggestion = select_model(
-                    user_message, current_model=model_used,
+                    user_message,
+                    current_model=model_used,
                 )
                 if suggestion and suggestion.confidence >= 0.6:
-                    hint_keyboard = InlineKeyboardMarkup([
-                        [InlineKeyboardButton(
-                            f"⚡ Попробовать {suggestion.model}",
-                            callback_data=f"switch_model:{suggestion.model}",
-                        )],
-                    ])
+                    hint_keyboard = InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    f"⚡ Попробовать {suggestion.model}",
+                                    callback_data=f"switch_model:{suggestion.model}",
+                                )
+                            ],
+                        ]
+                    )
                     await placeholder_message.reply_text(
                         f"💡 _{suggestion.reason}_",
                         parse_mode="Markdown",

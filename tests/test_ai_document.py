@@ -17,13 +17,17 @@ def make_placeholder():
 
 def make_chat_state():
     return SimpleNamespace(
-        model="gemini-2.0-flash", system_prompt=None,
-        history=[], token_count=0, is_deep_dive=False,
+        model="gemini-2.0-flash",
+        system_prompt=None,
+        history=[],
+        token_count=0,
+        is_deep_dive=False,
         search_enabled=False,
     )
 
 
 # ── Happy path — AI answers question ─────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_document_question_success():
@@ -32,27 +36,37 @@ async def test_document_question_success():
     chat_state = make_chat_state()
 
     with (
-        patch("app.document_processor.get_user_documents", new_callable=AsyncMock,
-              return_value=[{"id": 1, "filename": "test.txt"}]),
-        patch("app.document_processor.get_document_content", new_callable=AsyncMock,
-              return_value="Python is a programming language."),
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            return_value=[{"id": 1, "filename": "test.txt"}],
+        ),
+        patch(
+            "app.document_processor.get_document_content",
+            new_callable=AsyncMock,
+            return_value="Python is a programming language.",
+        ),
         patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_document._get_ai_response_with_routing", new_callable=AsyncMock,
-              return_value=("Python is great!", 10)),
-        patch("app.handlers.ai_document.handle_ai_response_error", new_callable=AsyncMock,
-              return_value=False),
+        patch(
+            "app.handlers.ai_document._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value=("Python is great!", 10),
+        ),
+        patch("app.handlers.ai_document.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
         patch("app.handlers.ai_document.send_long_message", new_callable=AsyncMock) as mock_send,
         patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
     ):
         mock_metrics.record_api_call = AsyncMock()
 
         from app.handlers.ai_document import _handle_document_question
+
         await _handle_document_question(placeholder, 123, "What is Python?", chat_state)
 
     mock_send.assert_awaited_once()
 
 
 # ── No documents uploaded ─────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_document_question_no_documents():
@@ -61,10 +75,10 @@ async def test_document_question_no_documents():
     chat_state = make_chat_state()
 
     with (
-        patch("app.document_processor.get_user_documents", new_callable=AsyncMock,
-              return_value=[]),
+        patch("app.document_processor.get_user_documents", new_callable=AsyncMock, return_value=[]),
     ):
         from app.handlers.ai_document import _handle_document_question
+
         await _handle_document_question(placeholder, 123, "What is this?", chat_state)
 
     placeholder.edit_text.assert_awaited_once()
@@ -74,6 +88,7 @@ async def test_document_question_no_documents():
 
 # ── Document content retrieval fails ──────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_document_question_content_missing():
     """Handles case when document content cannot be retrieved."""
@@ -81,12 +96,15 @@ async def test_document_question_content_missing():
     chat_state = make_chat_state()
 
     with (
-        patch("app.document_processor.get_user_documents", new_callable=AsyncMock,
-              return_value=[{"id": 1, "filename": "test.txt"}]),
-        patch("app.document_processor.get_document_content", new_callable=AsyncMock,
-              return_value=None),
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            return_value=[{"id": 1, "filename": "test.txt"}],
+        ),
+        patch("app.document_processor.get_document_content", new_callable=AsyncMock, return_value=None),
     ):
         from app.handlers.ai_document import _handle_document_question
+
         await _handle_document_question(placeholder, 123, "Question", chat_state)
 
     placeholder.edit_text.assert_awaited_once()
@@ -96,6 +114,7 @@ async def test_document_question_content_missing():
 
 # ── AI returns empty response ─────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_document_question_empty_ai_response():
     """Shows error when AI returns empty response."""
@@ -103,15 +122,19 @@ async def test_document_question_empty_ai_response():
     chat_state = make_chat_state()
 
     with (
-        patch("app.document_processor.get_user_documents", new_callable=AsyncMock,
-              return_value=[{"id": 1, "filename": "test.txt"}]),
-        patch("app.document_processor.get_document_content", new_callable=AsyncMock,
-              return_value="Some document content"),
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            return_value=[{"id": 1, "filename": "test.txt"}],
+        ),
+        patch(
+            "app.document_processor.get_document_content", new_callable=AsyncMock, return_value="Some document content"
+        ),
         patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_document._get_ai_response_with_routing", new_callable=AsyncMock,
-              return_value=(None, 0)),
+        patch("app.handlers.ai_document._get_ai_response_with_routing", new_callable=AsyncMock, return_value=(None, 0)),
     ):
         from app.handlers.ai_document import _handle_document_question
+
         await _handle_document_question(placeholder, 123, "Question", chat_state)
 
     placeholder.edit_text.assert_awaited()
@@ -121,6 +144,7 @@ async def test_document_question_empty_ai_response():
 
 # ── Exception during processing ───────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_document_question_exception():
     """Handles general exception during document processing."""
@@ -128,10 +152,14 @@ async def test_document_question_exception():
     chat_state = make_chat_state()
 
     with (
-        patch("app.document_processor.get_user_documents", new_callable=AsyncMock,
-              side_effect=Exception("DB connection lost")),
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            side_effect=Exception("DB connection lost"),
+        ),
     ):
         from app.handlers.ai_document import _handle_document_question
+
         await _handle_document_question(placeholder, 123, "Question", chat_state)
 
     placeholder.edit_text.assert_awaited()

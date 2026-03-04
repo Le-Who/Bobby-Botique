@@ -36,8 +36,7 @@ async def record_daily_activity(user_id: int) -> dict[str, int]:
 
         # Check if user was active yesterday
         prev = await db.db_query(
-            "SELECT current_streak FROM user_metrics "
-            "WHERE user_id = $1 AND metric_date = $2",
+            "SELECT current_streak FROM user_metrics WHERE user_id = $1 AND metric_date = $2",
             (user_id, yesterday),
         )
         prev_streak = prev[0]["current_streak"] if prev else 0
@@ -76,8 +75,7 @@ async def get_user_streak(user_id: int) -> dict[str, int]:
     """Get the current and longest streak for a user."""
     try:
         result = await db.db_query(
-            "SELECT current_streak, longest_streak FROM user_metrics "
-            "WHERE user_id = $1 AND metric_date = CURRENT_DATE",
+            "SELECT current_streak, longest_streak FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
             (user_id,),
         )
         if result:
@@ -99,8 +97,7 @@ async def get_dau_count(target_date: date | None = None) -> int:
     d = target_date or date.today()
     try:
         result = await db.db_query(
-            "SELECT COUNT(DISTINCT user_id) AS cnt FROM user_metrics "
-            "WHERE metric_date = $1 AND request_count > 0",
+            "SELECT COUNT(DISTINCT user_id) AS cnt FROM user_metrics WHERE metric_date = $1 AND request_count > 0",
             (d,),
         )
         return result[0]["cnt"] if result else 0
@@ -198,9 +195,7 @@ async def get_engagement_summary(user_id: int) -> dict[str, Any]:
             return {
                 "total_requests_7d": row["total_requests"],
                 "active_days_7d": row["active_days"],
-                "avg_requests_per_day": round(
-                    row["total_requests"] / max(row["active_days"], 1), 1
-                ),
+                "avg_requests_per_day": round(row["total_requests"] / max(row["active_days"], 1), 1),
                 "current_streak": row["current_streak"],
                 "longest_streak": row["longest_streak"],
             }

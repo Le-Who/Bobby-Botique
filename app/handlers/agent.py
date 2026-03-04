@@ -53,6 +53,7 @@ from app.utils.heartbeat import stop_heartbeat
 
 # ── Orchestration (stays here — thin dispatcher) ─────────────────────────────
 
+
 async def process_long_request(
     placeholder_message: Message, update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
@@ -63,23 +64,16 @@ async def process_long_request(
 
         if is_photo and (text.startswith(("?", "??"))):
             keyboard = [
-                [
-                    InlineKeyboardButton(
-                        "🖼️ Только описать фото", callback_data="complex:vision_only"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🔎 Выполнить сложный поиск", callback_data="complex:confirm"
-                    )
-                ],
+                [InlineKeyboardButton("🖼️ Только описать фото", callback_data="complex:vision_only")],
+                [InlineKeyboardButton("🔎 Выполнить сложный поиск", callback_data="complex:confirm")],
                 [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")],
             ]
 
             # Save оригинальное message в contextе
             if not hasattr(context, "user_data"):
                 context.user_data = {}
-            context.user_data["original_message"] = update.message
+            if context.user_data is not None:
+                context.user_data["original_message"] = update.message
 
             # Не удаляем placeholder message, а редактируем его
             try:
@@ -98,10 +92,9 @@ async def process_long_request(
                 )
             return
 
-        if is_photo:
+        if is_photo and update.message:
             await _handle_photo(placeholder_message, update.message, chat_state)
             return
-
 
         if text.startswith("??"):
             await _handle_research_agent(
@@ -113,13 +106,9 @@ async def process_long_request(
         elif text.startswith("?"):
             await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
         elif chat_state.search_enabled:
-            await _handle_research_agent(
-                placeholder_message, update.effective_user.id, text, chat_state
-            )
+            await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
         else:
-            await _handle_regular_chat(
-                placeholder_message, update.effective_user.id, text, chat_state
-            )
+            await _handle_regular_chat(placeholder_message, update.effective_user.id, text, chat_state)
 
     except Exception as e:
         logging.error("Error in background task dispatcher: %s", e, exc_info=True)
@@ -128,8 +117,6 @@ async def process_long_request(
 
             friendly = user_friendly_error(e)
             stop_heartbeat(placeholder_message.message_id)
-            await placeholder_message.edit_text(
-                friendly, reply_markup=build_retry_and_roles_keyboard()
-            )
+            await placeholder_message.edit_text(friendly, reply_markup=build_retry_and_roles_keyboard())
         except Exception as inner_e:
             logging.error("Could not edit placeholder message: %s", inner_e)

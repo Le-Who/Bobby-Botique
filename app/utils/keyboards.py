@@ -5,7 +5,6 @@ This module provides reusable keyboard components to reduce duplication
 and ensure consistent UI patterns across the bot.
 """
 
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 # =============================================================================
@@ -13,23 +12,17 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 # =============================================================================
 
 
-def back_button(
-    callback: str = "start_menu", text: str = "⬅️ Назад"
-) -> list[InlineKeyboardButton]:
+def back_button(callback: str = "start_menu", text: str = "⬅️ Назад") -> list[InlineKeyboardButton]:
     """Creates a back button row."""
     return [InlineKeyboardButton(text, callback_data=callback)]
 
 
-def cancel_button(
-    callback: str = "cancel", text: str = "❌ Отмена"
-) -> list[InlineKeyboardButton]:
+def cancel_button(callback: str = "cancel", text: str = "❌ Отмена") -> list[InlineKeyboardButton]:
     """Creates a cancel button row."""
     return [InlineKeyboardButton(text, callback_data=callback)]
 
 
-def confirm_button(
-    callback: str, text: str = "✅ Подтвердить"
-) -> list[InlineKeyboardButton]:
+def confirm_button(callback: str, text: str = "✅ Подтвердить") -> list[InlineKeyboardButton]:
     """Creates a confirm button row."""
     return [InlineKeyboardButton(text, callback_data=callback)]
 
@@ -87,29 +80,17 @@ def pagination_row(
 
     # Previous button
     if current_page > 0:
-        buttons.append(
-            InlineKeyboardButton(
-                "⬅️", callback_data=f"{callback_prefix}:{current_page - 1}"
-            )
-        )
+        buttons.append(InlineKeyboardButton("⬅️", callback_data=f"{callback_prefix}:{current_page - 1}"))
     else:
         buttons.append(InlineKeyboardButton("⏺️", callback_data="noop"))
 
     # Page counter
     if show_page_number:
-        buttons.append(
-            InlineKeyboardButton(
-                f"{current_page + 1}/{total_pages}", callback_data="noop"
-            )
-        )
+        buttons.append(InlineKeyboardButton(f"{current_page + 1}/{total_pages}", callback_data="noop"))
 
     # Next button
     if current_page < total_pages - 1:
-        buttons.append(
-            InlineKeyboardButton(
-                "➡️", callback_data=f"{callback_prefix}:{current_page + 1}"
-            )
-        )
+        buttons.append(InlineKeyboardButton("➡️", callback_data=f"{callback_prefix}:{current_page + 1}"))
     else:
         buttons.append(InlineKeyboardButton("⏺️", callback_data="noop"))
 
@@ -270,7 +251,7 @@ def after_response_keyboard(
     if custom_buttons:
         keyboard.append(list(custom_buttons))
 
-    return InlineKeyboardMarkup(keyboard) if keyboard else None
+    return InlineKeyboardMarkup(keyboard) if keyboard else None  # type: ignore[return-value]  # callers handle None
 
 
 def ai_response_keyboard() -> InlineKeyboardMarkup:
@@ -288,23 +269,11 @@ def deep_dive_keyboard(is_last_part: bool = True) -> InlineKeyboardMarkup:
     """Keyboard for deep dive mode responses."""
     buttons = [
         feedback_row(),
-        [
-            InlineKeyboardButton(
-                "✨ Начать новую тему", callback_data="deepdive:new_topic"
-            )
-        ],
+        [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
     ]
     if is_last_part:
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    "🔬 Исследовать глубже", callback_data="deepdive:deeper_dive"
-                )
-            ]
-        )
-    buttons.append(
-        [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")]
-    )
+        buttons.append([InlineKeyboardButton("🔬 Исследовать глубже", callback_data="deepdive:deeper_dive")])
+    buttons.append([InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -324,4 +293,3 @@ def error_with_back_keyboard(
     keyboard = list(extra_buttons) if extra_buttons else []
     keyboard.append(back_button(back_callback, back_text))
     return InlineKeyboardMarkup(keyboard)
-

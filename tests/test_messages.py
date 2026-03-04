@@ -102,9 +102,7 @@ async def test_handle_request_rate_limit_exceeded():
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
         patch("app.handlers.messages.settings") as mock_settings,
-        patch(
-            "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
-        ) as mock_rate_limit,
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
         patch("app.handlers.messages.api_logger") as _mock_logger,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -131,12 +129,8 @@ async def test_handle_request_unauthorized():
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
         patch("app.handlers.messages.settings") as mock_settings,
-        patch(
-            "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
-        ) as mock_rate_limit,
-        patch(
-            "app.handlers.messages.is_authorized", new_callable=AsyncMock
-        ) as mock_is_auth,
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -164,17 +158,11 @@ async def test_handle_request_text_message_happy_path():
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
         patch("app.handlers.messages.settings") as mock_settings,
-        patch(
-            "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
-        ) as mock_rate_limit,
-        patch(
-            "app.handlers.messages.is_authorized", new_callable=AsyncMock
-        ) as mock_is_auth,
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
-        patch(
-            "app.handlers.agent.process_long_request", new_callable=AsyncMock
-        ) as _mock_agent_process,
+        patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as _mock_agent_process,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -209,17 +197,11 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
         patch("app.handlers.messages.settings") as mock_settings,
-        patch(
-            "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
-        ) as mock_rate_limit,
-        patch(
-            "app.handlers.messages.is_authorized", new_callable=AsyncMock
-        ) as mock_is_auth,
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
-        patch(
-            "app.handlers.agent.process_long_request", new_callable=AsyncMock
-        ) as mock_agent_process,
+        patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("asyncio.create_task", side_effect=side_effect_create_task),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -268,17 +250,11 @@ async def test_handle_request_photo_message():
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
         patch("app.handlers.messages.settings") as mock_settings,
-        patch(
-            "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
-        ) as mock_rate_limit,
-        patch(
-            "app.handlers.messages.is_authorized", new_callable=AsyncMock
-        ) as mock_is_auth,
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
-        patch(
-            "app.handlers.agent.process_long_request", new_callable=AsyncMock
-        ) as mock_agent_process,
+        patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("asyncio.create_task", side_effect=side_effect_create_task),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -313,15 +289,9 @@ async def test_handle_request_document():
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
         patch("app.handlers.messages.settings") as mock_settings,
-        patch(
-            "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
-        ) as mock_rate_limit,
-        patch(
-            "app.handlers.messages.is_authorized", new_callable=AsyncMock
-        ) as mock_is_auth,
-        patch(
-            "app.handlers.messages.handle_document", new_callable=AsyncMock
-        ) as mock_handle_doc,
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
+        patch("app.handlers.messages.handle_document", new_callable=AsyncMock) as mock_handle_doc,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -354,17 +324,11 @@ async def test_handle_request_exception_handling():
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
         patch("app.handlers.messages.settings") as mock_settings,
-        patch(
-            "app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock
-        ) as mock_rate_limit,
-        patch(
-            "app.handlers.messages.is_authorized", new_callable=AsyncMock
-        ) as mock_is_auth,
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
-        patch(
-            "app.handlers.agent.process_long_request", new_callable=AsyncMock
-        ) as mock_agent_process,
+        patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("asyncio.create_task", side_effect=side_effect_create_task),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096

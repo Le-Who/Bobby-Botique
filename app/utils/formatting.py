@@ -1,4 +1,3 @@
-
 from app.utils.text_format import (
     format_text as new_format_text,
 )
@@ -33,9 +32,7 @@ class TelegramFormatter:
     """
 
     @classmethod
-    def format_text(
-        cls, text: str, preserve_formatting: bool = True
-    ) -> tuple[str, str | None]:
+    def format_text(cls, text: str, preserve_formatting: bool = True) -> tuple[str, str | None]:
         """
         Форматирует text for отправки в Telegram.
 

@@ -34,9 +34,7 @@ def _quiet_exception_handler(loop, context):
 
 def pytest_configure(config):
     """Suppress cosmetic warnings from asyncio/asyncpg cleanup."""
-    config.addinivalue_line(
-        "filterwarnings", "ignore::RuntimeWarning:asyncio"
-    )
+    config.addinivalue_line("filterwarnings", "ignore::RuntimeWarning:asyncio")
     # Install quiet exception handler on the default event loop policy
     # This suppresses asyncpg "Future exception was never retrieved" noise
     try:

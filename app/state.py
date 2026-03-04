@@ -87,7 +87,6 @@ class _UserStateStore:
 USER_STATES = _UserStateStore()
 
 
-
 # =============================================================================
 # DB PERSISTENCE — load/save helpers
 # =============================================================================
@@ -101,7 +100,7 @@ async def _ensure_loaded(state: UserState) -> UserState:
     async with state.lock:
         # Double-check after acquiring lock to avoid redundant loads
         if state._loaded_from_db:
-            return state
+            return state  # type: ignore[unreachable]  # double-check lock pattern
 
         try:
             from app.repos.users import load_user_state
@@ -110,21 +109,13 @@ async def _ensure_loaded(state: UserState) -> UserState:
             if data:
                 state.document_mode = data.get("document_mode", False)
                 state.selected_document_id = data.get("selected_document_id")
-                state.awaiting_custom_role_input = data.get(
-                    "awaiting_custom_role_input", False
-                )
+                state.awaiting_custom_role_input = data.get("awaiting_custom_role_input", False)
                 state.generated_role = data.get("generated_role")
                 state.last_custom_role_prompt = data.get("last_custom_role_prompt")
-                state.generating_custom_role = data.get(
-                    "generating_custom_role", False
-                )
+                state.generating_custom_role = data.get("generating_custom_role", False)
                 state.last_sent_message_text = data.get("last_sent_message_text")
-                state.awaiting_manual_role_title = data.get(
-                    "awaiting_manual_role_title", False
-                )
-                state.awaiting_manual_role_prompt = data.get(
-                    "awaiting_manual_role_prompt", False
-                )
+                state.awaiting_manual_role_title = data.get("awaiting_manual_role_title", False)
+                state.awaiting_manual_role_prompt = data.get("awaiting_manual_role_prompt", False)
                 state.manual_role_title = data.get("manual_role_title", "")
                 state.manual_role_prompt = data.get("manual_role_prompt", "")
         except Exception as e:
@@ -162,6 +153,7 @@ async def _persist(state: UserState) -> None:
 
 def _schedule_persist(state: UserState) -> None:
     """Schedule a non-blocking persistence task on the running event loop."""
+
     def _on_done(task):
         exc = task.exception() if not task.cancelled() else None
         if exc:
@@ -191,7 +183,6 @@ def get_user_lock(user_id: int) -> asyncio.Lock:
     return get_user_state(user_id).lock
 
 
-
 # --- Async load API (call once per handler, early) ---
 
 
@@ -208,9 +199,7 @@ async def ensure_state_loaded(user_id: int) -> UserState:
 # --- Document mode ---
 
 
-def set_document_mode(
-    user_id: int, enabled: bool, document_id: int | None = None
-):
+def set_document_mode(user_id: int, enabled: bool, document_id: int | None = None):
     """Set document mode for a user and persist to DB."""
     state = get_user_state(user_id)
     state.document_mode = enabled

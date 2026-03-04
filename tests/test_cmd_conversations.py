@@ -20,6 +20,7 @@ def make_update(user_id=123, args=None):
 
 # ── /save ─────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_save_conversation_with_title():
     """save_conversation_command with explicit title."""
@@ -27,12 +28,15 @@ async def test_save_conversation_with_title():
 
     with (
         patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.cmd_conversations.get_user_chat", new_callable=AsyncMock,
-              return_value=SimpleNamespace(history=[], system_prompt=None)),
-        patch("app.handlers.cmd_conversations.save_conversation", new_callable=AsyncMock,
-              return_value=42),
+        patch(
+            "app.handlers.cmd_conversations.get_user_chat",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(history=[], system_prompt=None),
+        ),
+        patch("app.handlers.cmd_conversations.save_conversation", new_callable=AsyncMock, return_value=42),
     ):
         from app.handlers.cmd_conversations import save_conversation_command
+
         await save_conversation_command(update, context)
 
     update.message.reply_text.assert_awaited_once()
@@ -48,12 +52,15 @@ async def test_save_conversation_failure():
 
     with (
         patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.cmd_conversations.get_user_chat", new_callable=AsyncMock,
-              return_value=SimpleNamespace(history=[], system_prompt=None)),
-        patch("app.handlers.cmd_conversations.save_conversation", new_callable=AsyncMock,
-              return_value=None),
+        patch(
+            "app.handlers.cmd_conversations.get_user_chat",
+            new_callable=AsyncMock,
+            return_value=SimpleNamespace(history=[], system_prompt=None),
+        ),
+        patch("app.handlers.cmd_conversations.save_conversation", new_callable=AsyncMock, return_value=None),
     ):
         from app.handlers.cmd_conversations import save_conversation_command
+
         await save_conversation_command(update, context)
 
     reply_text = update.message.reply_text.call_args[0][0]
@@ -61,6 +68,7 @@ async def test_save_conversation_failure():
 
 
 # ── /conversations ────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_conversations_command_empty():
@@ -71,17 +79,17 @@ async def test_conversations_command_empty():
         patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
         patch("app.handlers.cmd_conversations.menus") as mock_menus,
     ):
-        mock_menus.get_conversations_menu_content = AsyncMock(
-            return_value=("📂 Нет бесед", None, None)
-        )
+        mock_menus.get_conversations_menu_content = AsyncMock(return_value=("📂 Нет бесед", None, None))
 
         from app.handlers.cmd_conversations import conversations_command
+
         await conversations_command(update, context)
 
     update.message.reply_text.assert_awaited_once_with("📂 Нет бесед")
 
 
 # ── /switch ───────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_switch_conversation_no_args():
@@ -90,6 +98,7 @@ async def test_switch_conversation_no_args():
 
     with patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True):
         from app.handlers.cmd_conversations import switch_conversation_command
+
         await switch_conversation_command(update, context)
 
     reply_text = update.message.reply_text.call_args[0][0]
@@ -103,13 +112,13 @@ async def test_switch_conversation_success():
 
     with (
         patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.cmd_conversations.switch_to_conversation", new_callable=AsyncMock,
-              return_value=True),
+        patch("app.handlers.cmd_conversations.switch_to_conversation", new_callable=AsyncMock, return_value=True),
         patch("app.handlers.cmd_conversations.role_conv_metrics") as mock_metrics,
     ):
         mock_metrics.record_conversation_switched = AsyncMock()
 
         from app.handlers.cmd_conversations import switch_conversation_command
+
         await switch_conversation_command(update, context)
 
     reply_text = update.message.reply_text.call_args[0][0]
@@ -118,6 +127,7 @@ async def test_switch_conversation_success():
 
 # ── /delete ───────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_delete_conversation_no_args():
     """delete_conversation_command without args shows usage."""
@@ -125,6 +135,7 @@ async def test_delete_conversation_no_args():
 
     with patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True):
         from app.handlers.cmd_conversations import delete_conversation_command
+
         await delete_conversation_command(update, context)
 
     reply_text = update.message.reply_text.call_args[0][0]
@@ -138,6 +149,7 @@ async def test_delete_conversation_shows_confirmation():
 
     with patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True):
         from app.handlers.cmd_conversations import delete_conversation_command
+
         await delete_conversation_command(update, context)
 
     call_kwargs = update.message.reply_text.call_args[1]

@@ -108,9 +108,7 @@ def test_split_text_safe_code_block():
     # Check if tags are preserved in first chunk
     assert chunks[0].startswith("<pre><code")
     # It should close tags
-    assert "</code></pre>" in chunks[0] or (
-        "</pre>" in chunks[0] and "</code>" in chunks[0]
-    )
+    assert "</code></pre>" in chunks[0] or ("</pre>" in chunks[0] and "</code>" in chunks[0])
 
     # Check subsequent chunks have context (reopened tags)
     # The implementation attempts to reconstruct tags.
@@ -171,10 +169,7 @@ def test_markdown_to_html_formatting():
     # Inline code
     assert format_text("`code`")[0] == "<code>code</code>"
     # Link
-    assert (
-        format_text("[link](http://example.com)")[0]
-        == '<a href="http://example.com">link</a>'
-    )
+    assert format_text("[link](http://example.com)")[0] == '<a href="http://example.com">link</a>'
 
 
 def test_markdown_to_html_escaping():
@@ -280,4 +275,3 @@ def test_markdown_to_html_partial_streaming():
     open_count = sanitized.count("<b>") + sanitized.count("<i>") + sanitized.count("<code>")
     close_count = sanitized.count("</b>") + sanitized.count("</i>") + sanitized.count("</code>")
     assert open_count == close_count, f"Unbalanced tags in: {sanitized}"
-

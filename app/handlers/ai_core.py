@@ -17,9 +17,7 @@ from app.utils.heartbeat import stop_heartbeat
 _agent_use_case = AgentRequestUseCase()
 
 
-async def handle_ai_response_error(
-    response_text: str, placeholder_message: Message, on_error_callback=None
-) -> bool:
+async def handle_ai_response_error(response_text: str, placeholder_message: Message, on_error_callback=None) -> bool:
     """
     Универсальная обработка ошибок AI responseов.
     Убирает дублирование кода обработки ошибок.
@@ -62,29 +60,25 @@ async def handle_ai_response_error(
     except Exception as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
         with contextlib.suppress(Exception):
-            await placeholder_message.reply_text(
-                response_text, reply_markup=reply_markup
-            )
+            await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
 
     return True
 
 
 async def _resolve_ai_request(
-    preferred_model: str, use_openrouter: bool = None, excluded_key_hashes: set = None
+    preferred_model: str, use_openrouter: bool | None = None, excluded_key_hashes: set | None = None
 ):
-    return await _agent_use_case.resolve_ai_request(
-        preferred_model, use_openrouter, excluded_key_hashes
-    )
+    return await _agent_use_case.resolve_ai_request(preferred_model, use_openrouter, excluded_key_hashes)
 
 
 async def _get_ai_response(
     api_key: str,
     history: list,
     model_name: str,
-    system_instruction: str = None,
-    user_id: int = None,
-    chat_id: int = None,
-    use_openrouter: bool = None,
+    system_instruction: str | None = None,
+    user_id: int | None = None,
+    chat_id: int | None = None,
+    use_openrouter: bool | None = None,
 ):
     return await _agent_use_case.get_ai_response(
         api_key,
@@ -97,24 +91,23 @@ async def _get_ai_response(
     )
 
 
-async def _increment_key_usage(
-    key_hash: str, model_name: str, use_openrouter: bool = None
-):
+async def _increment_key_usage(key_hash: str, model_name: str, use_openrouter: bool | None = None):
     await _agent_use_case.increment_key_usage(key_hash, model_name, use_openrouter)
 
 
 async def _get_ai_response_with_routing(
     preferred_model: str,
     history: list,
-    system_instruction: str = None,
-    user_id: int = None,
-    chat_id: int = None,
-    use_openrouter: bool = None,
+    system_instruction: str | None = None,
+    user_id: int | None = None,
+    chat_id: int | None = None,
+    use_openrouter: bool | None = None,
     max_key_retries: int = 3,
-    thinking_level: str = None,
+    thinking_level: str | None = None,
 ):
     """Health-aware key rotation via ProviderRouter (preferred over plain key rotation)."""
     from app.ai_provider import get_provider_router
+
     router = get_provider_router()
     return await router.get_response(
         preferred_model,

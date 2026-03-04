@@ -16,17 +16,13 @@ from app.repos.chats import get_user_chat
 from app.utils.formatting import TelegramFormatter
 
 
-async def handle_document_mode_interaction(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-) -> bool:
+async def handle_document_mode_interaction(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     """Handle text input while user is in document mode. Returns True if consumed."""
     from app.state import get_selected_document_id, is_in_document_mode
 
     if is_in_document_mode(user_id):
         document_id = get_selected_document_id(user_id)
-        logging.info(
-            "User %s is in document mode, document_id: %s", user_id, document_id
-        )
+        logging.info("User %s is in document mode, document_id: %s", user_id, document_id)
         if document_id:
             await handle_document_question(update, context, document_id)
         else:
@@ -44,9 +40,7 @@ async def handle_document_mode_interaction(
     return False
 
 
-async def handle_document_question(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, document_id: int
-) -> None:
+async def handle_document_question(update: Update, context: ContextTypes.DEFAULT_TYPE, document_id: int) -> None:
     """Process a user's question about a specific document."""
     user_id = update.effective_user.id
     user_message = update.message.text
@@ -60,9 +54,10 @@ async def handle_document_question(
                 "❌ Документ не найден.",
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton("📄 К документам", callback_data="open_documents")]]
-                )
+                ),
             )
             from app.state import clear_document_state
+
             clear_document_state(user_id)
             return
 
@@ -72,15 +67,14 @@ async def handle_document_question(
                 "❌ Не удалось получить содержимое документа.",
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton("📄 К документам", callback_data="open_documents")]]
-                )
+                ),
             )
             return
 
         from app.handlers.agent import _handle_document_question
+
         chat_state = await get_user_chat(user_id)
-        await _handle_document_question(
-            update.message, user_id, user_message, chat_state
-        )
+        await _handle_document_question(update.message, user_id, user_message or "", chat_state)  # type: ignore[arg-type]  # message exists in this path
 
     except Exception as e:
         logging.error("Error handling document question: %s", e, exc_info=True)
@@ -88,7 +82,7 @@ async def handle_document_question(
             "❌ Произошла ошибка при обработке вопроса. Попробуйте переформулировать.",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("📄 К документам", callback_data="open_documents")]]
-            )
+            ),
         )
 
 
@@ -102,24 +96,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     document = update.message.document
 
     # Check file size (max 50MB)
-    if document.file_size > 50 * 1024 * 1024:
+    if document.file_size and document.file_size > 50 * 1024 * 1024:
         await update.message.reply_text(
-            "❌ Файл слишком большой. Максимальный размер: 50MB.\n"
-            "Попробуйте файл меньшего размера."
+            "❌ Файл слишком большой. Максимальный размер: 50MB.\nПопробуйте файл меньшего размера."
         )
         return
 
     # Check file type
     supported_formats = [".pdf", ".docx", ".doc"]
-    file_ext = (
-        document.file_name.lower().split(".")[-1] if "." in document.file_name else ""
-    )
+    file_ext = document.file_name.lower().split(".")[-1] if document.file_name and "." in document.file_name else ""
 
     if f".{file_ext}" not in supported_formats:
-        await update.message.reply_text(
-            f"❌ Неподдерживаемый формат файла `.{file_ext}`.\n"
-            f"Отправьте PDF или DOCX."
-        )
+        await update.message.reply_text(f"❌ Неподдерживаемый формат файла `.{file_ext}`.\nОтправьте PDF или DOCX.")
         return
 
     processing_msg = await update.message.reply_text("📄 Обрабатываю документ...")
@@ -134,17 +122,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         try:
             await file.download_to_drive(custom_path=tmp_path)
-            result = await process_uploaded_document(
-                tmp_path, document.file_name, user_id, is_path=True
-            )
+            result = await process_uploaded_document(tmp_path, document.file_name or f"document.{file_ext}", user_id, is_path=True)
         finally:
             if os.path.exists(tmp_path):
                 try:
                     os.unlink(tmp_path)
                 except OSError as cleanup_error:
-                    logging.warning(
-                        f"Failed to cleanup temp doc file {tmp_path}: {cleanup_error}"
-                    )
+                    logging.warning(f"Failed to cleanup temp doc file {tmp_path}: {cleanup_error}")
 
         if result.get("error"):
             if result.get("error") == "duplicate":
@@ -153,11 +137,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 if hasattr(created_date, "strftime"):
                     date_str = created_date.strftime("%Y-%m-%d")
                 else:
-                    date_str = (
-                        str(created_date)[:10]
-                        if created_date != "Unknown"
-                        else "Unknown"
-                    )
+                    date_str = str(created_date)[:10] if created_date != "Unknown" else "Unknown"
 
                 duplicate_text = (
                     f"⚠️ *Файл уже загружен*\n\n"
@@ -168,10 +148,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
 
                 keyboard = [
-                    [InlineKeyboardButton(
-                        "✅ Использовать существующий",
-                        callback_data=f"doc:use_existing:{duplicate_info.get('id')}",
-                    )],
+                    [
+                        InlineKeyboardButton(
+                            "✅ Использовать существующий",
+                            callback_data=f"doc:use_existing:{duplicate_info.get('id')}",
+                        )
+                    ],
                     [InlineKeyboardButton("📄 Загрузить как новый", callback_data="doc:force_upload")],
                     [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")],
                 ]
@@ -184,13 +166,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 )
                 return
             else:
-                logging.warning("Document processing error: %s", result['error'])
-                await processing_msg.edit_text(
-                    "❌ Не удалось обработать документ. Попробуйте другой файл."
-                )
+                logging.warning("Document processing error: %s", result["error"])
+                await processing_msg.edit_text("❌ Не удалось обработать документ. Попробуйте другой файл.")
                 return
 
         from app.document_processor import document_processor
+
         user_stats = await document_processor.get_user_document_stats(user_id)
 
         success_text = (
@@ -226,16 +207,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
         from app.state import set_document_mode
+
         set_document_mode(user_id, True)
         await metrics_collector.record_api_call("document_processing")
 
     except Exception as e:
-        logging.error(
-            "Error processing document for user %s: %s", user_id, e, exc_info=True
-        )
+        logging.error("Error processing document for user %s: %s", user_id, e, exc_info=True)
         from app.utils.keyboards import error_with_back_keyboard
+
         await processing_msg.edit_text(
             "❌ Произошла ошибка при обработке документа. Попробуйте другой файл.",
-            reply_markup=error_with_back_keyboard("open_documents", "📄 К документам")
+            reply_markup=error_with_back_keyboard("open_documents", "📄 К документам"),
         )
         await metrics_collector.record_error("document_processing", str(e))

@@ -94,22 +94,14 @@ class ContextAssembler:
             # Compute what was dropped (first N messages not in trimmed)
             kept_count = len(trimmed_history)
             dropped_msgs = list(history[: len(history) - kept_count])
-            dropped_tokens = sum(
-                estimate_tokens_cyrillic(self._extract_text(msg))
-                for msg in dropped_msgs
-            )
+            dropped_tokens = sum(estimate_tokens_cyrillic(self._extract_text(msg)) for msg in dropped_msgs)
             if dropped_tokens >= LLM_SUMMARY_TOKEN_THRESHOLD:
                 llm_scheduled = True
 
         # 5. Build final history with proper structure
-        final_history = self._build_final_history(
-            trimmed_history, new_summary, user_message
-        )
+        final_history = self._build_final_history(trimmed_history, new_summary, user_message)
 
-        budget.history = sum(
-            estimate_tokens_cyrillic(self._extract_text(msg))
-            for msg in trimmed_history
-        )
+        budget.history = sum(estimate_tokens_cyrillic(self._extract_text(msg)) for msg in trimmed_history)
 
         # 6. Generate audit hash
         audit_hash = self._compute_audit_hash(final_history, system_instruction)
@@ -160,7 +152,7 @@ class ContextAssembler:
 
         # Need to truncate — keep most recent messages
         # Work backwards from the end, accumulating tokens
-        kept_indices = []
+        kept_indices: list[int] = []
         accumulated = 0
         for i in range(len(history) - 1, -1, -1):
             msg_tokens = message_tokens[i]
@@ -268,14 +260,18 @@ class ContextAssembler:
 
         # Insert summary as context preamble (user/model pair)
         if summary:
-            context.append({
-                "role": "user",
-                "parts": [f"[Контекст предыдущей беседы]\n{summary}"],
-            })
-            context.append({
-                "role": "model",
-                "parts": ["Понял, учитываю контекст предыдущей беседы."],
-            })
+            context.append(
+                {
+                    "role": "user",
+                    "parts": [f"[Контекст предыдущей беседы]\n{summary}"],
+                }
+            )
+            context.append(
+                {
+                    "role": "model",
+                    "parts": ["Понял, учитываю контекст предыдущей беседы."],
+                }
+            )
 
         # Add trimmed history
         context.extend(trimmed_history)
@@ -290,9 +286,7 @@ class ContextAssembler:
 
         return context
 
-    def _fix_role_alternation(
-        self, history: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _fix_role_alternation(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Ensure proper user/model role alternation.
 
         Gemini requires strict alternation. This merges consecutive
@@ -320,9 +314,7 @@ class ContextAssembler:
         """Extract text content from a message dict."""
         return extract_text(msg)
 
-    def _compute_audit_hash(
-        self, history: list[dict[str, Any]], system_instruction: str
-    ) -> str:
+    def _compute_audit_hash(self, history: list[dict[str, Any]], system_instruction: str) -> str:
         """Compute a hash of the assembled prompt for audit/debugging."""
         content = system_instruction
         for msg in history:
@@ -333,6 +325,7 @@ class ContextAssembler:
 # ============================================================================
 # CONVENIENCE FUNCTIONS
 # ============================================================================
+
 
 def should_summarize(
     history: list[dict[str, Any]],
@@ -348,10 +341,7 @@ def should_summarize(
         return False, ""
 
     # Count tokens in history
-    total_tokens = sum(
-        estimate_tokens_cyrillic(_extract_msg_text(msg))
-        for msg in history
-    )
+    total_tokens = sum(estimate_tokens_cyrillic(_extract_msg_text(msg)) for msg in history)
 
     available = token_budget - system_prompt_tokens - RESPONSE_RESERVE
     threshold = int(available * 0.8)  # Trigger at 80% utilization

@@ -4,6 +4,7 @@ python-telegram-bot v22.0 removed read_timeout, write_timeout,
 connect_timeout, pool_timeout from Updater.start_polling().
 This test uses AST inspection to catch regressions statically.
 """
+
 import ast
 import inspect
 

@@ -59,9 +59,7 @@ async def async_test_document_callback_structure():
     # BUT, because we mocked it as a module, `callbacks.menus` will be that mock.
     # However, `from app.handlers import menus` in callbacks.py might resolve to the mock.
 
-    callbacks.menus.get_documents_menu_content = AsyncMock(
-        return_value=("text", "mode", "markup")
-    )
+    callbacks.menus.get_documents_menu_content = AsyncMock(return_value=("text", "mode", "markup"))
 
     # Call the function
     await callbacks.document_callback(update, context)

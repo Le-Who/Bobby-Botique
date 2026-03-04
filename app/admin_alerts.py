@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 class AlertSeverity(Enum):
     """Alert severity levels."""
+
     INFO = "ℹ️"
     WARNING = "⚠️"
     CRITICAL = "🚨"
@@ -29,7 +30,7 @@ class AlertSeverity(Enum):
 # ── Rate limiter ─────────────────────────────────────────────────────────────
 
 _alert_timestamps: list[float] = []
-_MAX_ALERTS = 5          # max alerts per window
+_MAX_ALERTS = 5  # max alerts per window
 _WINDOW_SECONDS = 300.0  # 5 minutes
 
 
@@ -47,6 +48,7 @@ def _record_alert() -> None:
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
+
 
 async def alert_admin(
     app: Application,
@@ -132,6 +134,7 @@ async def alert_admin_startup(app: Application) -> None:
         return
 
     from app.degradation import check_system_health
+
     health = await check_system_health()
 
     status_emoji = "🟢" if health.overall.value == "healthy" else "🟡"

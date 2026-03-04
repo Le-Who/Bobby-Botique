@@ -51,6 +51,7 @@ def generate_metrics_text() -> str:
     _add("# TYPE gembot_active_users gauge")
     try:
         from app import state
+
         active = len(state._user_locks) if hasattr(state, "_user_locks") else 0
         _add(f"gembot_active_users {active}")
     except Exception:
@@ -64,6 +65,7 @@ def generate_metrics_text() -> str:
         import os
 
         import psutil
+
         proc = psutil.Process(os.getpid())
         mem = proc.memory_info().rss
         _add(f"gembot_process_memory_bytes {mem}")

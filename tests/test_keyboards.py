@@ -34,9 +34,7 @@ def setup_module(module):
     # Reload telegram to flush mocks
     if "telegram" in sys.modules and isinstance(sys.modules["telegram"], MagicMock):
         del sys.modules["telegram"]
-    if "telegram.ext" in sys.modules and isinstance(
-        sys.modules["telegram.ext"], MagicMock
-    ):
+    if "telegram.ext" in sys.modules and isinstance(sys.modules["telegram.ext"], MagicMock):
         del sys.modules["telegram.ext"]
 
     import telegram
@@ -225,6 +223,7 @@ class TestCommonKeyboards:
 
     def test_error_with_back_keyboard_extra_buttons(self):
         from telegram import InlineKeyboardButton
+
         extra = [[InlineKeyboardButton("Retry", callback_data="retry")]]
         kb = error_with_back_keyboard("back", extra_buttons=extra)
         assert len(kb.inline_keyboard) == 2

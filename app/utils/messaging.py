@@ -36,14 +36,9 @@ async def send_long_message(
             if user_id:
                 chat_state = await get_user_chat(user_id)
                 if not chat_state.is_deep_dive:
-                    logging.warning(
-                        f"Deep dive flag set but user {user_id} not in deep dive mode"
-                    )
+                    logging.warning(f"Deep dive flag set but user {user_id} not in deep dive mode")
                     is_deep_dive = False
-                elif (
-                    not hasattr(chat_state, "deep_dive_thread_id")
-                    or not chat_state.deep_dive_thread_id
-                ):
+                elif not hasattr(chat_state, "deep_dive_thread_id") or not chat_state.deep_dive_thread_id:
                     is_deep_dive = False
         except Exception as e:
             logging.error("Error validating deep dive state: %s", e, exc_info=True)
@@ -95,27 +90,21 @@ async def send_long_message(
                 )
 
         except BadRequest as e:
-            logging.warning(
-                f"Failed to send/edit message (parse_mode={parse_mode}): {e}"
-            )
+            logging.warning(f"Failed to send/edit message (parse_mode={parse_mode}): {e}")
 
             # Retry without formatting if HTML fails (should be rare with our validator)
             try:
                 plain_text = strip_formatting(part)
                 if is_first_part:
                     try:
-                        await current_message.edit_text(
-                            plain_text, reply_markup=current_reply_markup
-                        )
+                        await current_message.edit_text(plain_text, reply_markup=current_reply_markup)
                     except BadRequest:
                         # If edit fails (e.g. content same), try sending new
                         current_message = await current_message.reply_text(
                             plain_text, reply_markup=current_reply_markup
                         )
                 else:
-                    current_message = await current_message.reply_text(
-                        plain_text, reply_markup=current_reply_markup
-                    )
+                    current_message = await current_message.reply_text(plain_text, reply_markup=current_reply_markup)
             except Exception as final_error:
                 logging.error("Critical error sending message: %s", final_error)
 

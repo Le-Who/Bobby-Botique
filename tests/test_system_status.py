@@ -66,9 +66,7 @@ class TestSystemStatus(unittest.TestCase):
 
         # Setup DB responses
         mock_gemini_keys = [{"api_key": "key1", "key_hash": "hash1"}]
-        mock_gemini_usage = [
-            {"key_hash": "hash1", "model_name": "gemini-pro", "request_count": 10}
-        ]
+        mock_gemini_usage = [{"key_hash": "hash1", "model_name": "gemini-pro", "request_count": 10}]
         mock_tavily_keys = [{"api_key": "tav1", "key_hash": "thash1"}]
         mock_tavily_usage = [{"key_hash": "thash1", "credit_usage": 5}]
 
@@ -90,9 +88,7 @@ class TestSystemStatus(unittest.TestCase):
             mock_db.db_query = mock_db_query
 
             # Run function
-            result = self.loop.run_until_complete(
-                self.metrics_module.get_system_status_data()
-            )
+            result = self.loop.run_until_complete(self.metrics_module.get_system_status_data())
 
         # Assertions
         self.assertEqual(result["metrics_summary"], mock_metrics_summary)

@@ -54,4 +54,5 @@ async def test_save_image_as_bytes_uses_executor(mock_pool):
     _result = await save_image_as_bytes(raw_image_data)
 
     from app.utils.image_utils import _image_worker
+
     assert _image_worker is not None

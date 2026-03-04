@@ -21,6 +21,7 @@ class ServiceStatus(Enum):
 @dataclass
 class SystemHealth:
     """Snapshot of all service health statuses."""
+
     database: ServiceStatus = ServiceStatus.HEALTHY
     redis: ServiceStatus = ServiceStatus.HEALTHY
     ai_provider: ServiceStatus = ServiceStatus.HEALTHY
@@ -52,6 +53,7 @@ async def check_system_health() -> SystemHealth:
     # ── Database ─────────────────────────────────────────────────────────
     try:
         from app.database import check_database_health
+
         db_ok = await check_database_health()
         health.database = ServiceStatus.HEALTHY if db_ok else ServiceStatus.UNAVAILABLE
     except Exception as e:
@@ -61,6 +63,7 @@ async def check_system_health() -> SystemHealth:
     # ── Redis ────────────────────────────────────────────────────────────
     try:
         from app.cache import ping_safe, redis_client
+
         if redis_client is None:
             health.redis = ServiceStatus.DEGRADED
             health.details["redis"] = "not_configured"
@@ -75,14 +78,9 @@ async def check_system_health() -> SystemHealth:
     # ── AI Provider ──────────────────────────────────────────────────────
     try:
         from app.circuit_breaker import CircuitState, _circuit_breakers
-        ai_circuits = {
-            name: cb for name, cb in _circuit_breakers.items()
-            if "ai_provider" in name
-        }
-        open_count = sum(
-            1 for cb in ai_circuits.values()
-            if getattr(cb, "_state", None) == CircuitState.OPEN
-        )
+
+        ai_circuits = {name: cb for name, cb in _circuit_breakers.items() if "ai_provider" in name}
+        open_count = sum(1 for cb in ai_circuits.values() if getattr(cb, "_state", None) == CircuitState.OPEN)
         if open_count > 0:
             health.ai_provider = ServiceStatus.DEGRADED
             health.details["ai_circuits_open"] = open_count
@@ -107,9 +105,6 @@ def can_process_message(health: SystemHealth) -> tuple[bool, str | None]:
         )
 
     if health.ai_provider == ServiceStatus.UNAVAILABLE:
-        return False, (
-            "⚠️ AI-сервис временно недоступен. "
-            "Попробуйте через несколько минут."
-        )
+        return False, ("⚠️ AI-сервис временно недоступен. Попробуйте через несколько минут.")
 
     return True, None

@@ -45,10 +45,7 @@ class InputSanitizer:
     MAX_LENGTHS = {"message": 4096, "filename": 255, "url": 2048, "query": 1000}
 
     def __init__(self):
-        self.compiled_patterns = [
-            re.compile(pattern, re.IGNORECASE | re.DOTALL)
-            for pattern in self.DANGEROUS_PATTERNS
-        ]
+        self.compiled_patterns = [re.compile(pattern, re.IGNORECASE | re.DOTALL) for pattern in self.DANGEROUS_PATTERNS]
 
     def sanitize_text(self, text: str, max_length: int | None = None) -> str:
         """
@@ -102,15 +99,11 @@ class InputSanitizer:
             InputSanitizationError: If filename is invalid
         """
         if not isinstance(filename, str):
-            raise InputSanitizationError(
-                f"Expected string, got {type(filename).__name__}"
-            )
+            raise InputSanitizationError(f"Expected string, got {type(filename).__name__}")
 
         # Check length
         if len(filename) > self.MAX_LENGTHS["filename"]:
-            raise InputSanitizationError(
-                f"Filename too long: {len(filename)} > {self.MAX_LENGTHS['filename']}"
-            )
+            raise InputSanitizationError(f"Filename too long: {len(filename)} > {self.MAX_LENGTHS['filename']}")
 
         # Remove path separators and dangerous characters
         dangerous_chars = r'[<>:"/\\|?*\x00-\x1f]'
@@ -127,9 +120,7 @@ class InputSanitizer:
 
         return sanitized
 
-    def validate_file_extension(
-        self, filename: str, allowed_types: list[str] | None = None
-    ) -> bool:
+    def validate_file_extension(self, filename: str, allowed_types: list[str] | None = None) -> bool:
         """
         Validates file extension against allowed types.
 
@@ -151,12 +142,11 @@ class InputSanitizer:
         extension = "." + extension.split(".")[-1] if "." in extension else ""
 
         # Determine allowed extensions
+        allowed_extensions: set[str] = set()
         if allowed_types is None:
-            allowed_extensions = set()
-            for file_type in self.ALLOWED_EXTENSIONS.values():
-                allowed_extensions.update(file_type)
+            for ext_set in self.ALLOWED_EXTENSIONS.values():
+                allowed_extensions.update(ext_set)
         else:
-            allowed_extensions = set()
             for file_type in allowed_types:
                 if file_type in self.ALLOWED_EXTENSIONS:
                     allowed_extensions.update(self.ALLOWED_EXTENSIONS[file_type])
@@ -186,9 +176,7 @@ class InputSanitizer:
 
         # Check length
         if len(url) > self.MAX_LENGTHS["url"]:
-            raise InputSanitizationError(
-                f"URL too long: {len(url)} > {self.MAX_LENGTHS['url']}"
-            )
+            raise InputSanitizationError(f"URL too long: {len(url)} > {self.MAX_LENGTHS['url']}")
 
         # Parse URL
         try:
@@ -227,9 +215,7 @@ class InputSanitizer:
             ipaddress.ip_address(hostname)
             # If we are here, it IS an IP address.
             # Current policy: Block ALL IP addresses.
-            raise InputSanitizationError(
-                f"IP addresses not allowed in URLs: {hostname}"
-            )
+            raise InputSanitizationError(f"IP addresses not allowed in URLs: {hostname}")
         except ValueError:
             # Not an IP address, continue
             pass
@@ -254,9 +240,7 @@ class InputSanitizer:
 
         # Check length
         if len(query) > self.MAX_LENGTHS["query"]:
-            raise InputSanitizationError(
-                f"Query too long: {len(query)} > {self.MAX_LENGTHS['query']}"
-            )
+            raise InputSanitizationError(f"Query too long: {len(query)} > {self.MAX_LENGTHS['query']}")
 
         # Remove dangerous patterns
         sanitized = query
@@ -312,17 +296,11 @@ class InputSanitizer:
             if not isinstance(user, dict):
                 raise InputSanitizationError("Invalid user data")
 
-            sanitized["from"] = {
+            sanitized["from"] = {  # type: ignore[assignment]  # mixed value types in dict
                 "id": user.get("id"),
-                "username": self.sanitize_text(user.get("username", ""), 32)
-                if user.get("username")
-                else None,
-                "first_name": self.sanitize_text(user.get("first_name", ""), 64)
-                if user.get("first_name")
-                else None,
-                "last_name": self.sanitize_text(user.get("last_name", ""), 64)
-                if user.get("last_name")
-                else None,
+                "username": self.sanitize_text(user.get("username", ""), 32) if user.get("username") else None,
+                "first_name": self.sanitize_text(user.get("first_name", ""), 64) if user.get("first_name") else None,
+                "last_name": self.sanitize_text(user.get("last_name", ""), 64) if user.get("last_name") else None,
             }
 
         # Validate chat data
@@ -331,15 +309,11 @@ class InputSanitizer:
             if not isinstance(chat, dict):
                 raise InputSanitizationError("Invalid chat data")
 
-            sanitized["chat"] = {
+            sanitized["chat"] = {  # type: ignore[assignment]  # mixed value types in dict
                 "id": chat.get("id"),
                 "type": chat.get("type"),
-                "title": self.sanitize_text(chat.get("title", ""), 255)
-                if chat.get("title")
-                else None,
-                "username": self.sanitize_text(chat.get("username", ""), 32)
-                if chat.get("username")
-                else None,
+                "title": self.sanitize_text(chat.get("title", ""), 255) if chat.get("title") else None,
+                "username": self.sanitize_text(chat.get("username", ""), 32) if chat.get("username") else None,
             }
 
         # Copy other safe fields
@@ -370,9 +344,7 @@ class InputSanitizer:
             InputSanitizationError: If metadata is invalid
         """
         if not isinstance(metadata, dict):
-            raise InputSanitizationError(
-                f"Expected dict, got {type(metadata).__name__}"
-            )
+            raise InputSanitizationError(f"Expected dict, got {type(metadata).__name__}")
 
         validated = {}
 
@@ -387,7 +359,7 @@ class InputSanitizer:
                 raise InputSanitizationError("Invalid file size")
             if file_size > 50 * 1024 * 1024:  # 50MB limit
                 raise InputSanitizationError("File too large")
-            validated["file_size"] = file_size
+            validated["file_size"] = file_size  # type: ignore[assignment]  # dynamic dict value
 
         # Validate MIME type
         if "mime_type" in metadata:
@@ -504,15 +476,12 @@ class RateLimiter:
 
             # Remove requests older than the window
             cutoff_time = current_time - self.window_seconds
-            user_requests[:] = [
-                req_time for req_time in user_requests if req_time > cutoff_time
-            ]
+            user_requests[:] = [req_time for req_time in user_requests if req_time > cutoff_time]
 
             # Check limit
             if len(user_requests) >= self.max_requests:
                 logging.warning(
-                    "Rate limit exceeded for user %s: %s/%s requests",
-                    user_id, len(user_requests), self.max_requests
+                    "Rate limit exceeded for user %s: %s/%s requests", user_id, len(user_requests), self.max_requests
                 )
                 return False
 
@@ -527,9 +496,7 @@ class RateLimiter:
 
         for user_id, requests in self._user_requests.items():
             # Remove stale requests
-            self._user_requests[user_id] = [
-                req_time for req_time in requests if req_time > cutoff_time
-            ]
+            self._user_requests[user_id] = [req_time for req_time in requests if req_time > cutoff_time]
 
             # Mark users with no active requests for removal
             if not self._user_requests[user_id]:
@@ -539,9 +506,7 @@ class RateLimiter:
             del self._user_requests[user_id]
 
         if users_to_remove:
-            logging.debug(
-                f"Cleaned up {len(users_to_remove)} inactive users from rate limiter"
-            )
+            logging.debug(f"Cleaned up {len(users_to_remove)} inactive users from rate limiter")
 
     async def get_user_stats(self, user_id: int) -> dict[str, Any]:
         """Return request statistics for a user."""
@@ -550,9 +515,7 @@ class RateLimiter:
 
         async with self._lock:
             user_requests = self._user_requests.get(user_id, [])
-            recent_requests = [
-                req_time for req_time in user_requests if req_time > cutoff_time
-            ]
+            recent_requests = [req_time for req_time in user_requests if req_time > cutoff_time]
 
             return {
                 "user_id": user_id,
@@ -560,9 +523,7 @@ class RateLimiter:
                 "max_requests": self.max_requests,
                 "window_seconds": self.window_seconds,
                 "remaining": max(0, self.max_requests - len(recent_requests)),
-                "reset_at": min(recent_requests) + self.window_seconds
-                if recent_requests
-                else current_time,
+                "reset_at": min(recent_requests) + self.window_seconds if recent_requests else current_time,
             }
 
     async def reset_user_limit(self, user_id: int):
@@ -580,9 +541,7 @@ class SyncRateLimiter:
     ``threading.Lock`` so it can be called from non-async Quart helpers.
     """
 
-    def __init__(
-        self, max_requests: int = 5, window_seconds: int = 300, cleanup_every: int = 50
-    ):
+    def __init__(self, max_requests: int = 5, window_seconds: int = 300, cleanup_every: int = 50):
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._requests: dict[str, list[float]] = defaultdict(list)

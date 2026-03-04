@@ -36,3 +36,24 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
 
+# ── Mypy ───────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+explicit_package_bases = true
+ignore_missing_imports = true
+warn_return_any = false
+warn_unused_configs = true
+warn_unreachable = true
+show_error_codes = true
+# Not yet strict — tighten as codebase matures
+disallow_untyped_defs = false
+disable_error_code = ["no-any-return", "import-untyped"]
+
+[[tool.mypy.overrides]]
+# Telegram handler modules: suppress union-attr / has-type noise
+# from python-telegram-bot's pervasive Optional[…] types
+module = [
+    "app.handlers.*",
+]
+disable_error_code = ["union-attr", "has-type"]
+

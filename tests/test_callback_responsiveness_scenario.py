@@ -41,9 +41,7 @@ async def test_user_b_settings_callback_not_blocked_by_user_a_long_request(monke
     monkeypatch.setattr(
         callbacks,
         "settings",
-        SimpleNamespace(
-            AVAILABLE_MODELS=["gemini-2.5-flash"], OPENROUTER_AVAILABLE_MODELS=[]
-        ),
+        SimpleNamespace(AVAILABLE_MODELS=["gemini-2.5-flash"], OPENROUTER_AVAILABLE_MODELS=[]),
     )
     monkeypatch.setattr(callbacks, "get_openrouter_keys", list)
     monkeypatch.setattr(callbacks, "get_model_hash", lambda model_name: "hash-ok")

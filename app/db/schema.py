@@ -63,9 +63,7 @@ async def create_tables(db_query):
         )
     """)
 
-    await db_query(
-        "CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)"
-    )
+    await db_query("CREATE TABLE IF NOT EXISTS api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)")
     await db_query(
         "CREATE TABLE IF NOT EXISTS key_usage (key_hash TEXT REFERENCES api_keys(key_hash) ON DELETE CASCADE, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))"
     )
@@ -95,15 +93,11 @@ async def create_tables(db_query):
             created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    await db_query(
-        "CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)"
-    )
+    await db_query("CREATE TABLE IF NOT EXISTS tavily_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)")
     await db_query(
         "CREATE TABLE IF NOT EXISTS tavily_key_usage (key_hash TEXT REFERENCES tavily_api_keys(key_hash) ON DELETE CASCADE, usage_month TEXT, credit_usage INTEGER DEFAULT 0, PRIMARY KEY (key_hash, usage_month))"
     )
-    await db_query(
-        "CREATE TABLE IF NOT EXISTS openrouter_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)"
-    )
+    await db_query("CREATE TABLE IF NOT EXISTS openrouter_api_keys (key_hash TEXT PRIMARY KEY, api_key TEXT NOT NULL)")
     await db_query(
         "CREATE TABLE IF NOT EXISTS openrouter_key_usage (key_hash TEXT REFERENCES openrouter_api_keys(key_hash) ON DELETE CASCADE, model_name TEXT, usage_date DATE, request_count INTEGER DEFAULT 0, PRIMARY KEY (key_hash, model_name, usage_date))"
     )

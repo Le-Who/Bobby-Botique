@@ -13,9 +13,7 @@ def test_optimization_logic():
     for url in selected_urls:
         res = results_map.get(url)
         if res:
-            source_info = (
-                f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
-            )
+            source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
             final_context_list.append(source_info)
 
     assert len(final_context_list) == 2
@@ -38,9 +36,7 @@ def test_optimization_logic_with_duplicates():
     for url in selected_urls:
         res = results_map.get(url)
         if res:
-            source_info = (
-                f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
-            )
+            source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
             final_context_list.append(source_info)
 
     assert len(final_context_list) == 3
@@ -62,9 +58,7 @@ def test_optimization_logic_with_duplicate_results():
     for url in selected_urls:
         res = results_map.get(url)
         if res:
-            source_info = (
-                f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
-            )
+            source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
             final_context_list.append(source_info)
 
     assert len(final_context_list) == 1

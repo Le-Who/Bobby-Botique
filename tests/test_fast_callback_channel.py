@@ -9,11 +9,7 @@ def _parse_module(path: str):
 def test_fast_callback_channel_uses_non_blocking_handlers():
     tree = _parse_module("app/handlers/callbacks.py")
 
-    register_fn = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "register"
-    )
+    register_fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "register")
 
     fast_calls = [
         node
@@ -30,9 +26,7 @@ def test_fast_callback_channel_uses_non_blocking_handlers():
 def test_fast_callback_helper_sets_block_false_and_priority_group():
     tree = _parse_module("app/handlers/callbacks.py")
     helper_fn = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_add_fast_callback"
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_add_fast_callback"
     )
 
     add_handler_call = next(
@@ -50,9 +44,7 @@ def test_fast_callback_helper_sets_block_false_and_priority_group():
     assert callback_handler_call.func.id == "CallbackQueryHandler"
 
     has_block_false = any(
-        kw.arg == "block"
-        and isinstance(kw.value, ast.Constant)
-        and kw.value.value is False
+        kw.arg == "block" and isinstance(kw.value, ast.Constant) and kw.value.value is False
         for kw in callback_handler_call.keywords
     )
     assert has_block_false, "fast callback helper must use block=False"

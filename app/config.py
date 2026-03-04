@@ -24,9 +24,7 @@ def _load_int_env(env_var_name: str, required: bool = True):
     raw = os.getenv(env_var_name)
     if raw is None or raw == "":
         if required:
-            raise ValueError(
-                f"Required environment variable '{env_var_name}' is not set."
-            )
+            raise ValueError(f"Required environment variable '{env_var_name}' is not set.")
         return None
     cleaned = raw.strip().strip('"').strip("'").strip()
     return int(cleaned)
@@ -44,18 +42,14 @@ def _load_and_clean_keys(env_var_name: str, required: bool = True) -> list[str]:
     value = os.getenv(env_var_name)
     if not value:
         if required:
-            raise ValueError(
-                f"Required environment variable '{env_var_name}' is not set."
-            )
+            raise ValueError(f"Required environment variable '{env_var_name}' is not set.")
         return []
 
     # Clean the string from quotes and whitespace, then split.
     cleaned_v = value.strip().strip('"').strip("'")
     keys = [key.strip() for key in cleaned_v.split(",") if key.strip()]
     if required and not keys:
-        raise ValueError(
-            f"Environment variable '{env_var_name}' is set but contains no valid keys."
-        )
+        raise ValueError(f"Environment variable '{env_var_name}' is set but contains no valid keys.")
     return keys
 
 
@@ -100,7 +94,8 @@ def _load_daily_limits() -> dict[str, int]:
     except (ValueError, AttributeError, json.JSONDecodeError) as e:
         logging.warning(
             "Failed to parse DAILY_LIMITS from env (raw=%r): %s. Using defaults.",
-            value, e,
+            value,
+            e,
         )
         return default_limits
 
@@ -157,9 +152,7 @@ class Settings(BaseModel):
     OPENROUTER_URL_SELECTION_MODEL: str = "stepfun/step-3.5-flash:free"
 
     # --- API PROVIDER SELECTION ---
-    USE_OPENROUTER: bool = (
-        False  # По умолчанию use Gemini, можно переkeysть на OpenRouter
-    )
+    USE_OPENROUTER: bool = False  # По умолчанию use Gemini, можно переkeysть на OpenRouter
 
     # --- LIMITS ---
     TAVILY_MONTHLY_CREDIT_LIMIT: int = 1000
@@ -193,7 +186,7 @@ def load_settings() -> Settings:
     try:
         # Значения by default for моделей
         default_gemini_models = DEFAULT_GEMINI_MODELS.copy()
-        default_openrouter_models = []
+        default_openrouter_models: list[str] = []
 
         # Manually load all values from the environment.
         raw_settings = {
@@ -202,44 +195,27 @@ def load_settings() -> Settings:
             "DATABASE_URL": os.getenv("DATABASE_URL"),
             "ADMIN_ID": _load_int_env("ADMIN_ID"),
             "PORT": os.getenv("PORT", "10000"),  # Provide a default for PORT
-            "ENABLE_WEB_SERVER": os.getenv("ENABLE_WEB_SERVER", "true").lower()
-            == "true",
+            "ENABLE_WEB_SERVER": os.getenv("ENABLE_WEB_SERVER", "true").lower() == "true",
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
-            "OPENROUTER_API_KEYS": _load_and_clean_keys(
-                "OPENROUTER_API_KEYS", required=False
-            ),
+            "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
             # Load models from env or use значения by default
-            "AVAILABLE_MODELS": _load_and_clean_keys(
-                "GEMINI_AVAILABLE_MODELS", required=False
-            )
+            "AVAILABLE_MODELS": _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False)
             or default_gemini_models,
-            "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys(
-                "OPENROUTER_AVAILABLE_MODELS", required=False
-            )
+            "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False)
             or default_openrouter_models,
             "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gemini-2.5-flash"),
             "QNA_MODEL": os.getenv("QNA_MODEL", "gemini-2.5-flash-lite"),
             "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-2.5-flash"),
-            "URL_SELECTION_MODEL": os.getenv(
-                "URL_SELECTION_MODEL", "gemini-2.5-flash"
-            ),
-            "OPENROUTER_DEFAULT_MODEL": os.getenv(
-                "OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"
-            ),
-            "OPENROUTER_QNA_MODEL": os.getenv(
-                "OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"
-            ),
-            "OPENROUTER_RESEARCH_MODEL": os.getenv(
-                "OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"
-            ),
+            "URL_SELECTION_MODEL": os.getenv("URL_SELECTION_MODEL", "gemini-2.5-flash"),
+            "OPENROUTER_DEFAULT_MODEL": os.getenv("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
+            "OPENROUTER_QNA_MODEL": os.getenv("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
+            "OPENROUTER_RESEARCH_MODEL": os.getenv("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_URL_SELECTION_MODEL": os.getenv(
                 "OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"
             ),
             "DAILY_LIMITS": _load_daily_limits(),
-            "MAX_CONCURRENT_HEAVY_REQUESTS": int(
-                os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")
-            ),
+            "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
         }
 
         # Validation: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей
@@ -247,34 +223,23 @@ def load_settings() -> Settings:
 
         # Check Gemini models
         if settings_obj.DEFAULT_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning(
-                f"DEFAULT_MODEL '{settings_obj.DEFAULT_MODEL}' not in AVAILABLE_MODELS. Adding it."
-            )
+            logging.warning(f"DEFAULT_MODEL '{settings_obj.DEFAULT_MODEL}' not in AVAILABLE_MODELS. Adding it.")
             settings_obj.AVAILABLE_MODELS.append(settings_obj.DEFAULT_MODEL)
 
         if settings_obj.QNA_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning(
-                f"QNA_MODEL '{settings_obj.QNA_MODEL}' not in AVAILABLE_MODELS. Adding it."
-            )
+            logging.warning(f"QNA_MODEL '{settings_obj.QNA_MODEL}' not in AVAILABLE_MODELS. Adding it.")
             settings_obj.AVAILABLE_MODELS.append(settings_obj.QNA_MODEL)
 
         if settings_obj.RESEARCH_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning(
-                f"RESEARCH_MODEL '{settings_obj.RESEARCH_MODEL}' not in AVAILABLE_MODELS. Adding it."
-            )
+            logging.warning(f"RESEARCH_MODEL '{settings_obj.RESEARCH_MODEL}' not in AVAILABLE_MODELS. Adding it.")
             settings_obj.AVAILABLE_MODELS.append(settings_obj.RESEARCH_MODEL)
 
         # Check OpenRouter models
-        if (
-            settings_obj.OPENROUTER_DEFAULT_MODEL
-            not in settings_obj.OPENROUTER_AVAILABLE_MODELS
-        ):
+        if settings_obj.OPENROUTER_DEFAULT_MODEL not in settings_obj.OPENROUTER_AVAILABLE_MODELS:
             logging.warning(
                 f"OPENROUTER_DEFAULT_MODEL '{settings_obj.OPENROUTER_DEFAULT_MODEL}' not in OPENROUTER_AVAILABLE_MODELS. Adding it."
             )
-            settings_obj.OPENROUTER_AVAILABLE_MODELS.append(
-                settings_obj.OPENROUTER_DEFAULT_MODEL
-            )
+            settings_obj.OPENROUTER_AVAILABLE_MODELS.append(settings_obj.OPENROUTER_DEFAULT_MODEL)
 
         return settings_obj
     except (ValidationError, ValueError) as e:
@@ -328,7 +293,7 @@ try:
     settings = get_settings()
 except Exception:
     # During development/testing, allow None settings
-    settings = None
+    settings = None  # type: ignore[assignment]  # Settings is expected, None only in dev
 
 
 class ConfigManager:
@@ -373,9 +338,7 @@ class ConfigManager:
                 )
 
                 if critical_changed:
-                    logging.warning(
-                        "Critical configuration changed, restart may be required"
-                    )
+                    logging.warning("Critical configuration changed, restart may be required")
 
                 # === ВАЛИДАЦИЯ И МИГРАЦИЯ АКТИВНЫХ ПОЛЬЗОВАТЕЛЕЙ ===
                 try:
@@ -385,9 +348,7 @@ class ConfigManager:
                     if new_settings.AVAILABLE_MODELS:
                         all_available_models.update(new_settings.AVAILABLE_MODELS)
                     if new_settings.OPENROUTER_AVAILABLE_MODELS:
-                        all_available_models.update(
-                            new_settings.OPENROUTER_AVAILABLE_MODELS
-                        )
+                        all_available_models.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
 
                     migrated_count = await migrate_invalid_models(
                         available_models=all_available_models,
@@ -404,14 +365,10 @@ class ConfigManager:
                 if new_settings.AVAILABLE_MODELS:
                     all_available_models_check.update(new_settings.AVAILABLE_MODELS)
                 if new_settings.OPENROUTER_AVAILABLE_MODELS:
-                    all_available_models_check.update(
-                        new_settings.OPENROUTER_AVAILABLE_MODELS
-                    )
+                    all_available_models_check.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
 
                 if new_settings.DEFAULT_MODEL not in all_available_models_check:
-                    logging.error(
-                        f"DEFAULT_MODEL '{new_settings.DEFAULT_MODEL}' not in AVAILABLE_MODELS!"
-                    )
+                    logging.error(f"DEFAULT_MODEL '{new_settings.DEFAULT_MODEL}' not in AVAILABLE_MODELS!")
                     raise ValueError("DEFAULT_MODEL must be in AVAILABLE_MODELS")
 
                 # Update settings
@@ -422,9 +379,7 @@ class ConfigManager:
                 # Notify watchers
                 await self._notify_watchers(old_settings, new_settings)
 
-                logging.info(
-                    f"Configuration reloaded successfully. Migrated {migrated_count} users."
-                )
+                logging.info(f"Configuration reloaded successfully. Migrated {migrated_count} users.")
 
             except Exception as e:
                 logging.error("Failed to reload configuration: %s", e, exc_info=True)
@@ -435,9 +390,7 @@ class ConfigManager:
         """Adds a configuration change watcher."""
         self._watchers.append(callback)
 
-    async def _notify_watchers(
-        self, old_settings: Settings, new_settings: Settings
-    ) -> None:
+    async def _notify_watchers(self, old_settings: Settings, new_settings: Settings) -> None:
         """Notifies all watchers of configuration changes."""
         for watcher in self._watchers:
             try:

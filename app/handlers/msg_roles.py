@@ -25,9 +25,7 @@ from app.state import (
 from app.utils.formatting import TelegramFormatter
 
 
-async def handle_conversation_rename(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-) -> bool:
+async def handle_conversation_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     """Handle text input for conversation rename. Returns True if consumed."""
     rename_conv_id = context.user_data.get("rename_conv_id")
     if rename_conv_id and update.message and update.message.text:
@@ -38,24 +36,16 @@ async def handle_conversation_rename(
                 context.user_data.pop("rename_conv_id", None)
                 await role_conv_metrics.record_conversation_renamed()
 
-                text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
-                    user_id, 1
-                )
+                text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
                 await update.message.reply_text(f"✅ Беседа переименована в: {new_title}")
-                await update.message.reply_text(
-                    text, parse_mode=parse_mode, reply_markup=reply_markup
-                )
+                await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
                 return True
             else:
-                await update.message.reply_text(
-                    "❌ Название должно быть от 1 до 100 символов. Попробуйте снова."
-                )
+                await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")
                 return True
         except Exception as e:
             logging.error("Error renaming conversation: %s", e, exc_info=True)
-            await update.message.reply_text(
-                "❌ Не удалось переименовать беседу. Попробуйте позже."
-            )
+            await update.message.reply_text("❌ Не удалось переименовать беседу. Попробуйте позже.")
             context.user_data.pop("rename_conv_id", None)
             return True
     return False
@@ -84,14 +74,10 @@ async def handle_manual_role_input(
     # Step 1: User sends title
     if is_awaiting_manual_role_title(user_id):
         if len(message_text) > 100:
-            await update.message.reply_text(
-                "⚠️ Название слишком длинное (макс. 100 символов). Попробуйте короче."
-            )
+            await update.message.reply_text("⚠️ Название слишком длинное (макс. 100 символов). Попробуйте короче.")
             return True
         set_manual_role_title(user_id, message_text)
-        kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")]]
-        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")]])
         await update.message.reply_text(
             f"✅ Название: **{message_text}**\n\n"
             f"Теперь введите **системный промпт** (инструкцию для бота).\n"
@@ -105,12 +91,11 @@ async def handle_manual_role_input(
     if is_awaiting_manual_role_prompt(user_id):
         title = get_manual_role_title(user_id)
         from app.state import finish_manual_role_input, set_manual_role_prompt
+
         set_manual_role_prompt(user_id, message_text)
         finish_manual_role_input(user_id)
         preview_len = 200
-        prompt_preview = (
-            message_text[:preview_len] + "..." if len(message_text) > preview_len else message_text
-        )
+        prompt_preview = message_text[:preview_len] + "..." if len(message_text) > preview_len else message_text
         kb = InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("💾 Сохранить и применить", callback_data="role_manual_save")],
@@ -148,13 +133,14 @@ async def handle_custom_role_generation(
         key_data, model_used, _ = await agent._resolve_ai_request(model_for_role)
 
         if not key_data:
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")],
-                [InlineKeyboardButton("⬅️ Меню", callback_data="start_menu")],
-            ])
+            kb = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")],
+                    [InlineKeyboardButton("⬅️ Меню", callback_data="start_menu")],
+                ]
+            )
             await update.message.reply_text(
-                "❌ Нет доступных ключей API для генерации роли.\n"
-                "Попробуйте позже или создайте роль вручную.",
+                "❌ Нет доступных ключей API для генерации роли.\nПопробуйте позже или создайте роль вручную.",
                 reply_markup=kb,
             )
             clear_custom_role_state(user_id)
@@ -176,9 +162,7 @@ async def handle_custom_role_generation(
             )
             await agent._increment_key_usage(key_data["key_hash"], model_used)
 
-            logging.info(
-                f"Model response for role generation: {response_text[:500]}..."
-            )
+            logging.info(f"Model response for role generation: {response_text[:500]}...")
 
             role_obj = prompts.extract_json_object(response_text)
 
@@ -189,18 +173,13 @@ async def handle_custom_role_generation(
                         [InlineKeyboardButton("❌ Отмена", callback_data="role_create_cancel")],
                     ]
                 )
-                if (
-                    "503" in (response_text or "")
-                    or "unavailable" in (response_text or "").lower()
-                ):
+                if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
                     await progress_msg.edit_text(
                         "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.",
                         reply_markup=error_kb,
                     )
                 else:
-                    logging.error(
-                        f"Failed to parse role JSON. Response: {response_text}"
-                    )
+                    logging.error(f"Failed to parse role JSON. Response: {response_text}")
                     await progress_msg.edit_text(
                         "❌ Не удалось сгенерировать роль. Попробуйте изменить описание.",
                         reply_markup=error_kb,
@@ -216,13 +195,10 @@ async def handle_custom_role_generation(
             style = ", ".join(role_obj.get("style", [])[:3])
 
             preview = (
-                f"🆕 *Новая роль:* {title}\n\n"
-                f"🎯 Цель: {purpose}\n"
-                f"🧭 Стиль: {style}\n\n"
-                f"Применить сейчас или сохранить?"
+                f"🆕 *Новая роль:* {title}\n\n🎯 Цель: {purpose}\n🧭 Стиль: {style}\n\nПрименить сейчас или сохранить?"
             )
 
-            kb = [
+            kb_rows = [
                 [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
                 [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
                 [InlineKeyboardButton("🔄 Попробовать ещё раз", callback_data="role_custom_retry")],
@@ -233,7 +209,7 @@ async def handle_custom_role_generation(
             await progress_msg.edit_text(
                 formatted_text,
                 parse_mode=parse_mode,
-                reply_markup=InlineKeyboardMarkup(kb),
+                reply_markup=InlineKeyboardMarkup(kb_rows),
             )
 
         except Exception as e:
@@ -255,20 +231,16 @@ async def handle_custom_role_generation(
     return False
 
 
-async def handle_role_rename(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-) -> bool:
+async def handle_role_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     """Handle text input for role renaming. Returns True if consumed."""
-    if (
-        context.user_data.get("rename_role_id")
-        and update.message
-        and update.message.text
-    ):
+    rename_role_raw = context.user_data.get("rename_role_id") if context.user_data else None
+    if rename_role_raw and update.message and update.message.text:
         try:
             new_title = update.message.text.strip()
-            role_id = int(context.user_data.get("rename_role_id"))
+            role_id = int(rename_role_raw)
             if 1 <= len(new_title) <= 100:
                 from app.repos.roles import rename_custom_role
+
                 await rename_custom_role(role_id, user_id, new_title)
                 context.user_data.pop("rename_role_id", None)
                 await update.message.reply_text(f"✅ Роль переименована в: {new_title}")
@@ -279,20 +251,14 @@ async def handle_role_rename(
                     view_mode="role_details",
                     role_key=f"user_role:{role_id}",
                 )
-                await update.message.reply_text(
-                    text, parse_mode=parse_mode, reply_markup=reply_markup
-                )
+                await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
                 return True
             else:
-                await update.message.reply_text(
-                    "❌ Название должно быть от 1 до 100 символов. Попробуйте снова."
-                )
+                await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")
                 return True
         except Exception as e:
             logging.error("Error renaming role: %s", e, exc_info=True)
-            await update.message.reply_text(
-                "❌ Не удалось переименовать роль. Попробуйте позже."
-            )
+            await update.message.reply_text("❌ Не удалось переименовать роль. Попробуйте позже.")
             context.user_data.pop("rename_role_id", None)
             return True
     return False

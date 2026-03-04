@@ -13,9 +13,7 @@ def document_processor():
 
 
 @patch("app.documents.repository.database")
-def test_cleanup_oldest_documents_single_query_behavior(
-    mock_database, document_processor
-):
+def test_cleanup_oldest_documents_single_query_behavior(mock_database, document_processor):
     """
     Verifies that the optimized implementation uses a single query.
     """
@@ -28,9 +26,7 @@ def test_cleanup_oldest_documents_single_query_behavior(
         # We expect it to return the deleted ID(s)
         mock_database.db_query = AsyncMock(return_value=[{"id": 105}])
 
-        deleted_count = await document_processor._cleanup_oldest_documents(
-            user_id, keep_count
-        )
+        deleted_count = await document_processor._cleanup_oldest_documents(user_id, keep_count)
 
         assert deleted_count == 1
 

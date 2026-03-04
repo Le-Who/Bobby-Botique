@@ -67,6 +67,7 @@ class TestExceptionHierarchy:
 
     def test_configuration_error_inherits_from_validation(self):
         from app.errors import ValidationError
+
         assert issubclass(ConfigurationError, ValidationError)
         assert issubclass(ConfigurationError, GemaibotBaseException)
 

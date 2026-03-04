@@ -23,6 +23,7 @@ class TestHealthEndpoint:
     @pytest.fixture
     def app(self):
         from app.web import quart_app
+
         quart_app.config["TESTING"] = True
         return quart_app
 
@@ -49,9 +50,7 @@ class TestHealthEndpoint:
             data = await resp.get_json()
 
             assert "redis" in data["services"]
-            assert data["services"]["redis"] in (
-                "connected", "disconnected", "not_configured", "unknown"
-            )
+            assert data["services"]["redis"] in ("connected", "disconnected", "not_configured", "unknown")
 
 
 # ============================================================================
@@ -65,6 +64,7 @@ class TestMetricsEndpoint:
     @pytest.fixture
     def app(self):
         from app.web import quart_app
+
         quart_app.config["TESTING"] = True
         return quart_app
 
@@ -231,13 +231,15 @@ class TestFullPipelineSmoke:
         assert is_error_message(error_text) is True
 
         # 3. Record directly via _process_event (queue consumer is a background task)
-        metrics_collector._process_event({
-            "type": "error",
-            "error_type": "rate_limit",
-            "error_message": "Test rate limit",
-            "request_id": "smoke-test",
-            "timestamp": __import__("time").time(),
-        })
+        metrics_collector._process_event(
+            {
+                "type": "error",
+                "error_type": "rate_limit",
+                "error_message": "Test rate limit",
+                "request_id": "smoke-test",
+                "timestamp": __import__("time").time(),
+            }
+        )
 
         # 4. Verify error was logged
         assert len(metrics_collector.error_log) > 0

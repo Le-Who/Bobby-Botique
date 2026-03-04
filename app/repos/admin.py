@@ -18,9 +18,7 @@ async def authorize_user(user_id: int) -> None:
 
 async def revoke_user(user_id: int) -> None:
     """Revokes authorization for a user."""
-    await db.db_query(
-        "UPDATE users SET is_authorized = 0 WHERE user_id = $1", (user_id,)
-    )
+    await db.db_query("UPDATE users SET is_authorized = 0 WHERE user_id = $1", (user_id,))
 
 
 async def list_authorized_users() -> list[int]:

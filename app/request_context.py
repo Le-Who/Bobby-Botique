@@ -1,9 +1,7 @@
 import contextvars
 import uuid
 
-_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "request_id", default=None
-)
+_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 
 
 def get_request_id() -> str | None:

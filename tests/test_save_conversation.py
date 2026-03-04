@@ -17,8 +17,9 @@ def mock_chat_state():
         system_prompt=None,
         is_deep_dive=False,
         deep_dive_thread_id=None,
-        _original_length=0
+        _original_length=0,
     )
+
 
 @pytest.mark.asyncio
 async def test_save_conversation_success(mock_chat_state):
@@ -26,9 +27,10 @@ async def test_save_conversation_success(mock_chat_state):
     title = "Test Conversation"
     expected_conv_id = 1
 
-    with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
-         patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query:
-
+    with (
+        patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat,
+        patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query,
+    ):
         mock_get_user_chat.return_value = mock_chat_state
 
         # Setup db_query side effects
@@ -56,6 +58,7 @@ async def test_save_conversation_success(mock_chat_state):
         assert "CALL save_chat_to_conversation" in proc_call[0][0]
         assert proc_call[0][1] == (user_id, expected_conv_id)
 
+
 @pytest.mark.asyncio
 async def test_save_conversation_no_chat_state():
     user_id = 123
@@ -69,20 +72,23 @@ async def test_save_conversation_no_chat_state():
         assert result is None
         mock_get_user_chat.assert_called_once_with(user_id)
 
+
 @pytest.mark.asyncio
 async def test_save_conversation_insert_failure(mock_chat_state):
     user_id = 123
     title = "Test Conversation"
 
-    with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
-         patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query:
-
+    with (
+        patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat,
+        patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query,
+    ):
         mock_get_user_chat.return_value = mock_chat_state
-        mock_db_query.return_value = [] # Return empty list simulating failure to return ID
+        mock_db_query.return_value = []  # Return empty list simulating failure to return ID
 
         result = await conv_repo.save_conversation(user_id, title)
 
         assert result is None
+
 
 @pytest.mark.asyncio
 async def test_save_conversation_no_history():
@@ -98,12 +104,13 @@ async def test_save_conversation_no_history():
         system_prompt=None,
         is_deep_dive=False,
         deep_dive_thread_id=None,
-        _original_length=0
+        _original_length=0,
     )
 
-    with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
-         patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query:
-
+    with (
+        patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat,
+        patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query,
+    ):
         mock_get_user_chat.return_value = mock_chat_state_empty
         mock_db_query.return_value = [{"id": expected_conv_id}]
 
@@ -115,16 +122,18 @@ async def test_save_conversation_no_history():
         assert mock_db_query.call_count == 1
         assert "INSERT INTO conversations" in mock_db_query.call_args[0][0]
 
+
 @pytest.mark.asyncio
 async def test_save_conversation_procedure_failure(mock_chat_state):
     user_id = 123
     title = "Test Conversation"
     expected_conv_id = 3
 
-    with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat, \
-         patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query, \
-         patch("app.repos.conversations.logging.error") as mock_logging_error:
-
+    with (
+        patch("app.repos.chats.get_user_chat", new_callable=AsyncMock) as mock_get_user_chat,
+        patch("app.repos.conversations.db_query", new_callable=AsyncMock) as mock_db_query,
+        patch("app.repos.conversations.logging.error") as mock_logging_error,
+    ):
         mock_get_user_chat.return_value = mock_chat_state
 
         # Setup db_query side effects

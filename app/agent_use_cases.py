@@ -24,9 +24,7 @@ class AgentRequestUseCase:
             use_openrouter = "/" in preferred_model or get_use_openrouter()
 
         if use_openrouter and not get_openrouter_keys():
-            logging.warning(
-                f"OpenRouter model {preferred_model} selected but no keys available"
-            )
+            logging.warning(f"OpenRouter model {preferred_model} selected but no keys available")
             return None, None, "no_keys"
 
         if use_openrouter or "/" in preferred_model:
@@ -57,7 +55,8 @@ class AgentRequestUseCase:
         except DecryptionError as e:
             logging.error(
                 "Cannot decrypt %s API key: %s — check ADMIN_SECRET",
-                provider_name, e,
+                provider_name,
+                e,
             )
             return None, None, "decryption_failed"
 
@@ -80,19 +79,16 @@ class AgentRequestUseCase:
             except DecryptionError as e:
                 logging.error(
                     "Cannot decrypt %s API key: %s — check ADMIN_SECRET",
-                    provider_name, e,
+                    provider_name,
+                    e,
                 )
                 return None, None, "decryption_failed"
 
             if key:
-                logging.info(
-                    f"Found available fallback key for model {fallback_model}."
-                )
+                logging.info(f"Found available fallback key for model {fallback_model}.")
                 return key, fallback_model, "confirm_fallback"
 
-        logging.error(
-            f"All {provider_name} API keys for all models are exhausted or excluded."
-        )
+        logging.error(f"All {provider_name} API keys for all models are exhausted or excluded.")
         return None, None, "all_exhausted"
 
     async def _resolve_gemini_request(
@@ -178,9 +174,7 @@ class AgentRequestUseCase:
         token_count = response.token_count if response.success else None
         return response.text, token_count
 
-    async def increment_key_usage(
-        self, key_hash: str, model_name: str, use_openrouter: bool | None = None
-    ) -> None:
+    async def increment_key_usage(self, key_hash: str, model_name: str, use_openrouter: bool | None = None) -> None:
         if use_openrouter is None:
             use_openrouter = "/" in model_name or get_use_openrouter()
         if use_openrouter:
@@ -192,10 +186,10 @@ class AgentRequestUseCase:
         self,
         preferred_model: str,
         history: list,
-        system_instruction: str = None,
-        user_id: int = None,
-        chat_id: int = None,
-        use_openrouter: bool = None,
+        system_instruction: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
+        use_openrouter: bool | None = None,
         max_key_retries: int = 3,
     ) -> tuple[str, int | None]:
         """Delegate to ProviderRouter for health-aware key rotation.

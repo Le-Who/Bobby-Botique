@@ -32,9 +32,10 @@ async def send_conversation_selection(
     conversations = await get_user_conversations(user_id, 10, 0)
     if not conversations:
         from app.utils.keyboards import error_with_back_keyboard
+
         await query.edit_message_text(
             "📝 У вас нет сохранённых бесед.\n\nИспользуйте /save <название> для сохранения текущей беседы.",
-            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
         )
         return
 
@@ -43,11 +44,7 @@ async def send_conversation_selection(
 
     for conv in conversations:
         role_info = f" | {conv['role_title']}" if conv["role_title"] else ""
-        created = (
-            conv["created_at"].strftime("%d.%m %H:%M")
-            if conv["created_at"]
-            else "Неизвестно"
-        )
+        created = conv["created_at"].strftime("%d.%m %H:%M") if conv["created_at"] else "Неизвестно"
         text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
         text += f"📅 {created}\n\n"
 
@@ -62,9 +59,7 @@ async def send_conversation_selection(
 
     buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")])
 
-    await query.edit_message_text(
-        text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -75,21 +70,18 @@ async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     page = int(query.data.split(":")[1])
     user_id = query.from_user.id
 
-    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
-        user_id, page
-    )
+    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, page)
 
     if reply_markup is None:
         await query.edit_message_text(text)
     else:
-        await query.edit_message_text(
-            text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
 async def conv_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Переключение на беседу"""
     query = update.callback_query
+    assert query is not None
     await query.answer()
     await send_conversation_selection(
         query,
@@ -111,26 +103,23 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
         if success:
             await role_conv_metrics.record_conversation_switched()
             # Показываем list бесед с тостом
-            text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
-                user_id, 1
-            )
-            await query.edit_message_text(
-                text, parse_mode=parse_mode, reply_markup=reply_markup
-            )
+            text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
+            await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
             await query.answer(f"✅ Переключились на беседу ID: {conv_id}")
         else:
             from app.utils.keyboards import error_with_back_keyboard
+
             await query.edit_message_text(
                 "❌ Ошибка при переключении на беседу.",
-                reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
+                reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам"),
             )
             await query.answer("❌ Ошибка при переключении на беседу.")
     except Exception as e:
         logging.error("Error switching to conversation %s: %s", conv_id, e, exc_info=True)
         from app.utils.keyboards import error_with_back_keyboard
+
         await query.edit_message_text(
-            "❌ Ошибка при переключении на беседу.",
-            reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
+            "❌ Ошибка при переключении на беседу.", reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
         )
         await query.answer("❌ Ошибка при переключении на беседу.")
 
@@ -138,6 +127,7 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
 async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Переименование беседы"""
     query = update.callback_query
+    assert query is not None
     await query.answer()
     await send_conversation_selection(
         query,
@@ -150,6 +140,7 @@ async def conv_rename_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def conv_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Удаление беседы"""
     query = update.callback_query
+    assert query is not None
     await query.answer()
     await send_conversation_selection(
         query,
@@ -167,17 +158,12 @@ async def conv_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT
     conv_id = int(query.data.split(":")[1])
 
     keyboard = [
-        [
-            InlineKeyboardButton(
-                "✅ Да, удалить", callback_data=f"conv_delete_confirm:{conv_id}"
-            )
-        ],
+        [InlineKeyboardButton("✅ Да, удалить", callback_data=f"conv_delete_confirm:{conv_id}")],
         [InlineKeyboardButton("❌ Отмена", callback_data="conv_delete_cancel")],
     ]
 
     await query.edit_message_text(
-        f"⚠️ **Удалить беседу {conv_id}?**\n\n"
-        f"🚨 **Вся история сообщений будет потеряна безвозвратно.**",
+        f"⚠️ **Удалить беседу {conv_id}?**\n\n🚨 **Вся история сообщений будет потеряна безвозвратно.**",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
@@ -189,7 +175,8 @@ async def conv_rename_ask_callback(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
 
     conv_id = int(query.data.split(":")[1])
-    context.user_data["rename_conv_id"] = conv_id
+    if context.user_data is not None:
+        context.user_data["rename_conv_id"] = conv_id
 
     keyboard = [[InlineKeyboardButton("↩️ Отмена", callback_data="conv_rename_cancel")]]
 
@@ -199,15 +186,15 @@ async def conv_rename_ask_callback(update: Update, context: ContextTypes.DEFAULT
     )
 
 
-async def conv_rename_cancel_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def conv_rename_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отмена переименования"""
     query = update.callback_query
     await query.answer("❌ Переименование отменено")
 
-    context.user_data.pop("rename_conv_id", None)
+    if context.user_data is not None:
+        context.user_data.pop("rename_conv_id", None)
 
+    assert query is not None
     await send_conversation_selection(
         query,
         query.from_user.id,
@@ -216,9 +203,7 @@ async def conv_rename_cancel_callback(
     )
 
 
-async def conv_delete_confirm_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Подтверждение удаления беседы"""
     query = update.callback_query
 
@@ -231,35 +216,25 @@ async def conv_delete_confirm_callback(
         await role_conv_metrics.record_conversation_deleted()
 
         # Update list
-        text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
-            user_id, 1
-        )
-        await query.edit_message_text(
-            text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
 
         await query.answer(f"✅ Беседа {conv_id} удалена")
     else:
         from app.utils.keyboards import error_with_back_keyboard
+
         await query.edit_message_text(
-            "❌ Ошибка при удалении беседы.",
-            reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
+            "❌ Ошибка при удалении беседы.", reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
         )
         await query.answer("❌ Ошибка при удалении беседы")
 
 
-async def conv_delete_cancel_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def conv_delete_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отмена удаления беседы"""
     query = update.callback_query
 
-    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
-        query.from_user.id, 1
-    )
-    await query.edit_message_text(
-        text, parse_mode=parse_mode, reply_markup=reply_markup
-    )
+    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(query.from_user.id, 1)
+    await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
     await query.answer("❌ Удаление отменено")
 
 
@@ -272,9 +247,7 @@ async def refresh_metrics_callback(update: Update, context: ContextTypes.DEFAULT
         text = await menus.get_metrics_content()
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
-        keyboard = [
-            [InlineKeyboardButton("🔄 Обновить", callback_data="refresh_metrics")]
-        ]
+        keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_metrics")]]
 
         await query.edit_message_text(
             formatted_text,

@@ -10,8 +10,7 @@ from app import database as db
 async def get_user_today_request_count(user_id: int) -> int:
     """Returns today's request count for a user."""
     result = await db.db_query(
-        "SELECT COALESCE(request_count, 0) as cnt FROM user_metrics "
-        "WHERE user_id = $1 AND metric_date = CURRENT_DATE",
+        "SELECT COALESCE(request_count, 0) as cnt FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE",
         (user_id,),
     )
     return result[0]["cnt"] if result else 0

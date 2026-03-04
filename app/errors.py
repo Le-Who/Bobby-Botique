@@ -179,9 +179,7 @@ class DecryptionError(SecurityError):
 # =============================================================================
 
 
-def convert_to_typed_exception(
-    exception: Exception, context: str = ""
-) -> GemaibotBaseException:
+def convert_to_typed_exception(exception: Exception, context: str = "") -> GemaibotBaseException:
     """Converts generic exceptions to typed exceptions based on context."""
 
     error_message = str(exception)
@@ -254,47 +252,48 @@ class ErrorCode(StrEnum):
     Each code maps to fixed properties (retryable, key-related, penalty category)
     via _ERROR_PROPERTIES, eliminating fragile emoji/text pattern matching.
     """
+
     # Transient / retryable
     TIMEOUT = "TIMEOUT"
-    OVERLOADED = "OVERLOADED"        # 503, server busy
-    NETWORK = "NETWORK"              # connection errors
-    RATE_LIMIT = "RATE_LIMIT"        # per-second/minute throttle
+    OVERLOADED = "OVERLOADED"  # 503, server busy
+    NETWORK = "NETWORK"  # connection errors
+    RATE_LIMIT = "RATE_LIMIT"  # per-second/minute throttle
 
     # Key-related
     QUOTA_EXCEEDED = "QUOTA_EXCEEDED"  # daily quota exhausted
-    INVALID_KEY = "INVALID_KEY"        # API key rejected
+    INVALID_KEY = "INVALID_KEY"  # API key rejected
     KEYS_EXHAUSTED = "KEYS_EXHAUSTED"  # all keys tried, none worked
     DECRYPTION_FAILED = "DECRYPTION_FAILED"  # ADMIN_SECRET mismatch
-    NO_KEYS = "NO_KEYS"                # provider not configured
+    NO_KEYS = "NO_KEYS"  # provider not configured
 
     # Non-retryable
     INVALID_REQUEST = "INVALID_REQUEST"  # malformed input
     INVALID_RESPONSE = "INVALID_RESPONSE"  # API returned garbage
     EMPTY_RESPONSE = "EMPTY_RESPONSE"  # API returned nothing
-    PROCESSING = "PROCESSING"          # general processing failure
-    DOCUMENT = "DOCUMENT"              # document parsing failure
-    GENERIC = "GENERIC"                # catch-all
+    PROCESSING = "PROCESSING"  # general processing failure
+    DOCUMENT = "DOCUMENT"  # document parsing failure
+    GENERIC = "GENERIC"  # catch-all
     USER_RATE_LIMIT = "USER_RATE_LIMIT"  # per-user throttle (not key-related)
 
 
 # Properties: (retryable, key_related, penalty_category)
 _ERROR_PROPERTIES: dict[ErrorCode, tuple[bool, bool, str]] = {
-    ErrorCode.TIMEOUT:            (True,  False, "transient"),
-    ErrorCode.OVERLOADED:         (True,  False, "transient"),
-    ErrorCode.NETWORK:            (True,  False, "transient"),
-    ErrorCode.RATE_LIMIT:         (True,  True,  "rate_limit"),
-    ErrorCode.QUOTA_EXCEEDED:     (False, True,  "quota"),
-    ErrorCode.INVALID_KEY:        (False, True,  "permanent"),
-    ErrorCode.KEYS_EXHAUSTED:     (False, True,  "quota"),
-    ErrorCode.DECRYPTION_FAILED:  (False, False, "permanent"),
-    ErrorCode.NO_KEYS:            (False, False, "permanent"),
-    ErrorCode.INVALID_REQUEST:    (False, False, "transient"),
-    ErrorCode.INVALID_RESPONSE:   (False, False, "transient"),
-    ErrorCode.EMPTY_RESPONSE:     (False, False, "transient"),
-    ErrorCode.PROCESSING:         (False, False, "transient"),
-    ErrorCode.DOCUMENT:           (False, False, "transient"),
-    ErrorCode.GENERIC:            (False, False, "transient"),
-    ErrorCode.USER_RATE_LIMIT:    (False, False, "transient"),
+    ErrorCode.TIMEOUT: (True, False, "transient"),
+    ErrorCode.OVERLOADED: (True, False, "transient"),
+    ErrorCode.NETWORK: (True, False, "transient"),
+    ErrorCode.RATE_LIMIT: (True, True, "rate_limit"),
+    ErrorCode.QUOTA_EXCEEDED: (False, True, "quota"),
+    ErrorCode.INVALID_KEY: (False, True, "permanent"),
+    ErrorCode.KEYS_EXHAUSTED: (False, True, "quota"),
+    ErrorCode.DECRYPTION_FAILED: (False, False, "permanent"),
+    ErrorCode.NO_KEYS: (False, False, "permanent"),
+    ErrorCode.INVALID_REQUEST: (False, False, "transient"),
+    ErrorCode.INVALID_RESPONSE: (False, False, "transient"),
+    ErrorCode.EMPTY_RESPONSE: (False, False, "transient"),
+    ErrorCode.PROCESSING: (False, False, "transient"),
+    ErrorCode.DOCUMENT: (False, False, "transient"),
+    ErrorCode.GENERIC: (False, False, "transient"),
+    ErrorCode.USER_RATE_LIMIT: (False, False, "transient"),
 }
 
 # Invisible tag prefix: Zero-Width Space + code in brackets.
@@ -319,7 +318,7 @@ def extract_error_code(text: str) -> ErrorCode | None:
     end = text.find(_TAG_SUFFIX, len(_TAG_PREFIX))
     if end == -1:
         return None
-    code_str = text[len(_TAG_PREFIX):end]
+    code_str = text[len(_TAG_PREFIX) : end]
     try:
         return ErrorCode(code_str)
     except ValueError:
@@ -333,7 +332,7 @@ def strip_error_tag(text: str) -> str:
     end = text.find(_TAG_SUFFIX, len(_TAG_PREFIX))
     if end == -1:
         return text
-    return text[end + len(_TAG_SUFFIX):]
+    return text[end + len(_TAG_SUFFIX) :]
 
 
 # =============================================================================
@@ -388,16 +387,21 @@ def is_retryable_error(text: str) -> bool:
         return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[0]
     # Legacy fallback: text pattern matching
     retryable_patterns = [
-        "⏰", "🔄", "⏱️", "🌐",
-        "Превышено время ожидания", "перегружен",
-        "rate limit", "503", "unavailable", "overloaded",
-        "timeout", "timed out",
+        "⏰",
+        "🔄",
+        "⏱️",
+        "🌐",
+        "Превышено время ожидания",
+        "перегружен",
+        "rate limit",
+        "503",
+        "unavailable",
+        "overloaded",
+        "timeout",
+        "timed out",
     ]
     text_lower = text.lower()
-    return any(
-        pattern.lower() in text_lower or text.startswith(pattern)
-        for pattern in retryable_patterns
-    )
+    return any(pattern.lower() in text_lower or text.startswith(pattern) for pattern in retryable_patterns)
 
 
 def is_key_related_error(text: str) -> bool:
@@ -411,17 +415,38 @@ def is_key_related_error(text: str) -> bool:
     # Legacy fallback: text pattern matching
     text_lower = text.lower()
     not_key_patterns = [
-        "⏰", "🔄", "503", "unavailable", "overloaded", "timeout",
-        "превышено время ожидания", "перегружен", "некорректный запрос",
-        "invalid request", "malformed",
+        "⏰",
+        "🔄",
+        "503",
+        "unavailable",
+        "overloaded",
+        "timeout",
+        "превышено время ожидания",
+        "перегружен",
+        "некорректный запрос",
+        "invalid request",
+        "malformed",
     ]
     if any(p.lower() in text_lower or text.startswith(p) for p in not_key_patterns):
         return False
     key_patterns = [
-        "🚫", "⏱️", "🔑", "quota", "rate limit", "rate_limit",
-        "daily limit", "limit exceeded", "invalid api key",
-        "authentication", "unauthorized", "forbidden", "api key",
-        "api_key", "достигнут лимит", "превышен лимит", "лимит запросов",
+        "🚫",
+        "⏱️",
+        "🔑",
+        "quota",
+        "rate limit",
+        "rate_limit",
+        "daily limit",
+        "limit exceeded",
+        "invalid api key",
+        "authentication",
+        "unauthorized",
+        "forbidden",
+        "api key",
+        "api_key",
+        "достигнут лимит",
+        "превышен лимит",
+        "лимит запросов",
     ]
     return any(p.lower() in text_lower or text.startswith(p) for p in key_patterns)
 
@@ -436,17 +461,34 @@ def classify_key_error(text: str) -> str:
         return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[2]
     # Legacy fallback: text pattern matching
     text_lower = text.lower()
-    transient = ["⏰", "🔄", "503", "unavailable", "overloaded", "timeout",
-                 "timed out", "превышено время ожидания", "перегружен",
-                 "некорректный запрос", "invalid request", "malformed"]
+    transient = [
+        "⏰",
+        "🔄",
+        "503",
+        "unavailable",
+        "overloaded",
+        "timeout",
+        "timed out",
+        "превышено время ожидания",
+        "перегружен",
+        "некорректный запрос",
+        "invalid request",
+        "malformed",
+    ]
     if any(p.lower() in text_lower or text.startswith(p) for p in transient):
         return "transient"
-    permanent = ["🔑", "api_key_invalid", "invalid api key", "authentication",
-                 "unauthorized", "forbidden", "неверный api ключ"]
+    permanent = [
+        "🔑",
+        "api_key_invalid",
+        "invalid api key",
+        "authentication",
+        "unauthorized",
+        "forbidden",
+        "неверный api ключ",
+    ]
     if any(p.lower() in text_lower or text.startswith(p) for p in permanent):
         return "permanent"
-    quota = ["🚫", "quota", "quota exceeded", "daily limit",
-             "limit exceeded", "достигнут лимит"]
+    quota = ["🚫", "quota", "quota exceeded", "daily limit", "limit exceeded", "достигнут лимит"]
     if any(p.lower() in text_lower or text.startswith(p) for p in quota):
         return "quota"
     rate = ["⏱️", "rate limit", "rate_limit", "превышен лимит", "лимит запросов"]
@@ -462,13 +504,9 @@ def classify_key_error(text: str) -> str:
 
 def build_retry_and_roles_keyboard(include_roles: bool = True) -> InlineKeyboardMarkup:
     """Builds keyboard with retry button and optional roles button."""
-    buttons = [
-        [InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="retry_last")]
-    ]
+    buttons = [[InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="retry_last")]]
     if include_roles:
-        buttons.append(
-            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")]
-        )
+        buttons.append([InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -514,9 +552,7 @@ class APIError(GemaibotAPIError):
         retryable: bool = False,
         key_related: bool = False,
     ):
-        self.raw_error = (
-            str(raw_error) if isinstance(raw_error, Exception) else raw_error
-        )
+        self.raw_error = str(raw_error) if isinstance(raw_error, Exception) else raw_error
         self.retryable = retryable
         self.key_related = key_related
         self.user_message = user_friendly_error(self.raw_error)

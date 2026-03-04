@@ -50,6 +50,7 @@ class TestCacheStampede:
 
         # Patch redis_client to None to test only in-memory layer
         with patch("app.cache.redis_client", None):
+
             async def write(i: int):
                 await cache.set(f"key_{i}", "search", {"value": i})
 
@@ -83,10 +84,7 @@ class TestAlertRateLimiterConcurrent:
 
         with patch("app.config.settings", MagicMock(ADMIN_ID=12345)):
             # Fire 20 concurrent alerts
-            tasks = [
-                alert_admin(mock_app, f"Alert {i}", AlertSeverity.WARNING)
-                for i in range(20)
-            ]
+            tasks = [alert_admin(mock_app, f"Alert {i}", AlertSeverity.WARNING) for i in range(20)]
             await asyncio.gather(*tasks)
 
         # Should have sent at most _MAX_ALERTS (5)
@@ -154,7 +152,9 @@ class TestKeyResolutionConcurrent:
         # Fire 10 concurrent key resolutions
         tasks = [
             use_case._resolve_key_generic(
-                "gemini-2.0-flash", mock_get_key, [],
+                "gemini-2.0-flash",
+                mock_get_key,
+                [],
             )
             for _ in range(10)
         ]
@@ -183,10 +183,7 @@ class TestErrorPipelineConcurrent:
         """is_error_message and is_retryable_error should work correctly under concurrent calls."""
         from app.errors import ErrorCode, is_error_message, is_retryable_error, tag_error
 
-        tagged_errors = [
-            tag_error(ErrorCode.RATE_LIMIT, f"Rate limit {i}")
-            for i in range(50)
-        ]
+        tagged_errors = [tag_error(ErrorCode.RATE_LIMIT, f"Rate limit {i}") for i in range(50)]
         normal_texts = [f"Normal response {i}" for i in range(50)]
 
         async def classify_error(text):

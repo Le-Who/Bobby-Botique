@@ -44,9 +44,7 @@ def setup_module(module):
     mock_db.is_database_connected.return_value = True
     mock_db.get_gemini_key_usage_stats = AsyncMock(return_value=[])
     mock_db.get_active_key_info = AsyncMock(return_value={})
-    mock_db.get_supabase_metrics = AsyncMock(
-        return_value={"status": "connected", "pool_size": 5}
-    )
+    mock_db.get_supabase_metrics = AsyncMock(return_value={"status": "connected", "pool_size": 5})
     sys.modules["app.database"] = mock_db
 
 

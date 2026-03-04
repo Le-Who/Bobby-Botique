@@ -51,6 +51,7 @@ class JSONFormatter(logging.Formatter):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         import socket
+
         self._hostname = os.environ.get("HOSTNAME", socket.gethostname())
         self._service = os.environ.get("SERVICE_NAME", "gemaibotv2")
 
@@ -112,10 +113,10 @@ class DevFormatter(logging.Formatter):
 
     # ANSI color codes
     COLORS = {
-        "DEBUG": "\033[36m",     # cyan
-        "INFO": "\033[32m",      # green
-        "WARNING": "\033[33m",   # yellow
-        "ERROR": "\033[31m",     # red
+        "DEBUG": "\033[36m",  # cyan
+        "INFO": "\033[32m",  # green
+        "WARNING": "\033[33m",  # yellow
+        "ERROR": "\033[31m",  # red
         "CRITICAL": "\033[1;31m",  # bold red
     }
     RESET = "\033[0m"
@@ -215,7 +216,7 @@ def log_with_context(
     Usage:
         log_with_context(logger, logging.INFO, "User action", user_id=123)
     """
-    extra_dict = {}
+    extra_dict: dict[str, Any] = {}
     if user_id is not None:
         extra_dict["user_id"] = user_id
     if chat_id is not None:
@@ -234,6 +235,7 @@ def timed_operation(operation_name: str = ""):
         async def get_user(user_id: int):
             ...
     """
+
     def decorator(fn):
         name = operation_name or fn.__qualname__
 
@@ -263,6 +265,7 @@ def timed_operation(operation_name: str = ""):
                 raise
 
         return wrapper
+
     return decorator
 
 
@@ -271,9 +274,7 @@ def timed_operation(operation_name: str = ""):
 # =============================================================================
 
 
-def _get_formatter(
-    enable_structured_logging: bool, enable_pretty: bool = False
-) -> logging.Formatter:
+def _get_formatter(enable_structured_logging: bool, enable_pretty: bool = False) -> logging.Formatter:
     """Get appropriate formatter based on configuration."""
     if enable_structured_logging:
         return JSONFormatter()
@@ -305,9 +306,7 @@ def _setup_logger(
         handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(level)
         handler.addFilter(RequestContextFilter())
-        handler.setFormatter(
-            _get_formatter(enable_structured_logging, enable_pretty)
-        )
+        handler.setFormatter(_get_formatter(enable_structured_logging, enable_pretty))
         logger.addHandler(handler)
 
     # Disable propagation to avoid duplicate logs
@@ -406,9 +405,7 @@ def setup_detailed_logging(
             file_handler.setLevel(numeric_level)
             file_handler.addFilter(RequestContextFilter())
             # File always uses plain formatter (no ANSI colors)
-            file_handler.setFormatter(
-                _get_formatter(enable_structured_logging, enable_pretty=False)
-            )
+            file_handler.setFormatter(_get_formatter(enable_structured_logging, enable_pretty=False))
             root_logger.addHandler(file_handler)
         except Exception:
             pass
@@ -418,13 +415,13 @@ def setup_detailed_logging(
     # leaking into debug-level logs (H5 security fix).
     for logger_name in ["api_logger", "telegram", "asyncpg", "httpx", "httpcore"]:
         _setup_logger(
-            logger_name, max(numeric_level, logging.WARNING) if logger_name in ("httpx", "httpcore") else numeric_level,
-            enable_structured_logging, enable_pretty
+            logger_name,
+            max(numeric_level, logging.WARNING) if logger_name in ("httpx", "httpcore") else numeric_level,
+            enable_structured_logging,
+            enable_pretty,
         )
 
-    pretty_mode = "rich" if (enable_pretty and HAS_RICH) else (
-        "dev" if enable_pretty else "off"
-    )
+    pretty_mode = "rich" if (enable_pretty and HAS_RICH) else ("dev" if enable_pretty else "off")
     logging.info(
         "Logging setup complete — level=%s, structured=%s, pretty=%s, file=%s",
         log_level,
@@ -457,6 +454,4 @@ def is_pretty_logging() -> bool:
 
 def log_api_summary() -> None:
     """Выводит краткую сводку по API логированию."""
-    logging.info(
-        "API logging active — Gemini, Tavily, Telegram request/response + error tracing"
-    )
+    logging.info("API logging active — Gemini, Tavily, Telegram request/response + error tracing")

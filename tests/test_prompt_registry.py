@@ -56,9 +56,7 @@ class TestEstimateTokensCyrillic:
 
 class TestPromptTemplate:
     def test_auto_token_estimation(self):
-        tmpl = PromptTemplate(
-            name="test", version="1.0", text="Hello world", purpose="test"
-        )
+        tmpl = PromptTemplate(name="test", version="1.0", text="Hello world", purpose="test")
         assert tmpl.estimated_tokens > 0
 
     def test_explicit_token_count(self):
@@ -72,9 +70,7 @@ class TestPromptTemplate:
         assert tmpl.estimated_tokens == 42
 
     def test_immutable(self):
-        tmpl = PromptTemplate(
-            name="test", version="1.0", text="Hello", purpose="test"
-        )
+        tmpl = PromptTemplate(name="test", version="1.0", text="Hello", purpose="test")
         with pytest.raises(AttributeError):
             tmpl.name = "changed"
 
@@ -128,12 +124,8 @@ class TestPromptRegistry:
 
     def test_register_overwrite(self):
         registry = PromptRegistry()
-        custom_v1 = PromptTemplate(
-            name="custom", version="1.0", text="v1", purpose="test"
-        )
-        custom_v2 = PromptTemplate(
-            name="custom", version="2.0", text="v2", purpose="test"
-        )
+        custom_v1 = PromptTemplate(name="custom", version="1.0", text="v1", purpose="test")
+        custom_v2 = PromptTemplate(name="custom", version="2.0", text="v2", purpose="test")
         registry.register(custom_v1)
         registry.register(custom_v2)
         assert registry.get("custom").version == "2.0"
@@ -167,9 +159,7 @@ class TestComposeSystemPrompt:
 
     def test_with_role_uses_compact_by_default(self):
         registry = PromptRegistry()
-        result = registry.compose_system_prompt(
-            role_prompt="Ты — преподаватель математики."
-        )
+        result = registry.compose_system_prompt(role_prompt="Ты — преподаватель математики.")
         # Should have compact system prompt
         assert "ДОПОЛНИТЕЛЬНАЯ РОЛЬ" in result
         assert "Ты — преподаватель математики." in result
@@ -178,9 +168,7 @@ class TestComposeSystemPrompt:
 
     def test_with_role_full_mode(self):
         registry = PromptRegistry()
-        result = registry.compose_system_prompt(
-            role_prompt="Ты — учитель.", use_compact=False
-        )
+        result = registry.compose_system_prompt(role_prompt="Ты — учитель.", use_compact=False)
         assert "ДОПОЛНИТЕЛЬНАЯ РОЛЬ" in result
         assert "Ты — учитель." in result
         # Should have full system prompt sections
@@ -304,9 +292,7 @@ class TestNoJailbreakMarkers:
         for tmpl in registry.list_templates():
             text_lower = tmpl.text.lower()
             for marker in self.JAILBREAK_MARKERS:
-                assert marker.lower() not in text_lower, (
-                    f"Template '{tmpl.name}' contains jailbreak marker '{marker}'"
-                )
+                assert marker.lower() not in text_lower, f"Template '{tmpl.name}' contains jailbreak marker '{marker}'"
 
     def test_no_jailbreak_markers_in_legacy_prompt(self):
         from app.prompts import PROMPT_ENGINEER_SYSTEM_PROMPT

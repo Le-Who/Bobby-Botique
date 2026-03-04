@@ -36,13 +36,17 @@ def make_original_message(caption=None, user_id=123):
 
 def make_chat_state():
     return SimpleNamespace(
-        model="gemini-2.0-flash", system_prompt=None,
-        history=[], token_count=0, is_deep_dive=False,
+        model="gemini-2.0-flash",
+        system_prompt=None,
+        history=[],
+        token_count=0,
+        is_deep_dive=False,
         search_enabled=False,
     )
 
 
 # ── Happy path — AI describes photo ──────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_handle_photo_success():
@@ -53,14 +57,17 @@ async def test_handle_photo_success():
 
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_photo._get_ai_response_with_routing", new_callable=AsyncMock,
-              return_value=("This is a mountain landscape.", 10)),
-        patch("app.handlers.ai_photo.handle_ai_response_error", new_callable=AsyncMock,
-              return_value=False),
+        patch(
+            "app.handlers.ai_photo._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value=("This is a mountain landscape.", 10),
+        ),
+        patch("app.handlers.ai_photo.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
         patch("app.handlers.ai_photo.send_long_message", new_callable=AsyncMock) as mock_send,
         patch("app.handlers.ai_photo.update_user_chat", new_callable=AsyncMock),
     ):
         from app.handlers.ai_photo import _handle_photo
+
         await _handle_photo(placeholder, original, chat_state)
 
     mock_send.assert_awaited_once()
@@ -71,6 +78,7 @@ async def test_handle_photo_success():
 
 # ── Empty AI response ────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_handle_photo_empty_response():
     """Shows error when AI returns empty response."""
@@ -80,13 +88,12 @@ async def test_handle_photo_empty_response():
 
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_photo._get_ai_response_with_routing", new_callable=AsyncMock,
-              return_value=(None, 0)),
-        patch("app.handlers.ai_photo.handle_ai_response_error", new_callable=AsyncMock,
-              return_value=False),
+        patch("app.handlers.ai_photo._get_ai_response_with_routing", new_callable=AsyncMock, return_value=(None, 0)),
+        patch("app.handlers.ai_photo.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
         patch("app.handlers.ai_photo.send_long_message", new_callable=AsyncMock) as mock_send,
     ):
         from app.handlers.ai_photo import _handle_photo
+
         await _handle_photo(placeholder, original, chat_state)
 
     mock_send.assert_awaited_once()
@@ -95,6 +102,7 @@ async def test_handle_photo_empty_response():
 
 
 # ── AI response is an error ──────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_handle_photo_ai_error():
@@ -105,12 +113,17 @@ async def test_handle_photo_ai_error():
 
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_photo._get_ai_response_with_routing", new_callable=AsyncMock,
-              return_value=("❌ API Error", 0)),
-        patch("app.handlers.ai_photo.handle_ai_response_error", new_callable=AsyncMock,
-              return_value=True),  # Error was handled
+        patch(
+            "app.handlers.ai_photo._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value=("❌ API Error", 0),
+        ),
+        patch(
+            "app.handlers.ai_photo.handle_ai_response_error", new_callable=AsyncMock, return_value=True
+        ),  # Error was handled
     ):
         from app.handlers.ai_photo import _handle_photo
+
         await _handle_photo(placeholder, original, chat_state)
 
     # Should not crash, error handled by handle_ai_response_error
@@ -118,6 +131,7 @@ async def test_handle_photo_ai_error():
 
 
 # ── Exception during download ────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_handle_photo_download_exception():
@@ -130,6 +144,7 @@ async def test_handle_photo_download_exception():
     original.photo[-1].get_file = AsyncMock(side_effect=Exception("Network error"))
 
     from app.handlers.ai_photo import _handle_photo
+
     await _handle_photo(placeholder, original, chat_state)
 
     placeholder.edit_text.assert_awaited_once()
@@ -138,6 +153,7 @@ async def test_handle_photo_download_exception():
 
 
 # ── Exception during processing with edit fallback ────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_handle_photo_exception_edit_fallback():
@@ -152,6 +168,7 @@ async def test_handle_photo_exception_edit_fallback():
     placeholder.edit_text = AsyncMock(side_effect=Exception("Message not found"))
 
     from app.handlers.ai_photo import _handle_photo
+
     await _handle_photo(placeholder, original, chat_state)
 
     # Should fall back to reply_text

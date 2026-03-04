@@ -51,9 +51,9 @@ class TestIsEncryptedHardened:
         mock_settings = MagicMock()
         mock_settings.ADMIN_SECRET = "test-secret-for-audit-tests"
 
-        with patch("app.crypto.settings", mock_settings, create=True), \
-             patch("app.config.settings", mock_settings):
+        with patch("app.crypto.settings", mock_settings, create=True), patch("app.config.settings", mock_settings):
             from app.crypto import encrypt_api_key, is_encrypted, reset_fernet
+
             reset_fernet()
             ciphertext = encrypt_api_key("AIzaSyB_test123")
             assert is_encrypted(ciphertext) is True
@@ -166,9 +166,7 @@ class TestSafeHandlerDecorator:
             raise ValueError("CB broke!")
 
         await boom_cb(mock_update, mock_context)
-        mock_update.callback_query.answer.assert_awaited_once_with(
-            "❌ Callback error", show_alert=True
-        )
+        mock_update.callback_query.answer.assert_awaited_once_with("❌ Callback error", show_alert=True)
 
 
 # ===========================================================================
@@ -181,6 +179,7 @@ class TestMediaGroupMaxSize:
 
     def test_max_size_constant_exists(self):
         from app.handlers.messages import MEDIA_GROUPS_MAX_SIZE
+
         assert MEDIA_GROUPS_MAX_SIZE == 500
 
     @pytest.mark.asyncio
@@ -225,15 +224,17 @@ class TestConfigReloadDebounce:
 
     def test_reload_task_attribute_exists(self):
         from app.config import ConfigManager
+
         cm = ConfigManager.__new__(ConfigManager)
         cm._reload_task = None
-        assert hasattr(cm, '_reload_task')
+        assert hasattr(cm, "_reload_task")
 
     def test_last_reload_attribute_exists(self):
         from app.config import ConfigManager
+
         cm = ConfigManager.__new__(ConfigManager)
         cm._last_reload = 0
-        assert hasattr(cm, '_last_reload')
+        assert hasattr(cm, "_last_reload")
 
 
 # ===========================================================================
@@ -247,6 +248,7 @@ class TestUserStateStoreSetdefault:
     def test_setdefault_pattern_in_source(self):
         """Verify that __getitem__ uses setdefault instead of check-and-create."""
         import app.state as state_mod
+
         source = open(state_mod.__file__, encoding="utf-8").read()
         assert "setdefault" in source, "H1 fix: __getitem__ should use setdefault"
 
@@ -261,6 +263,7 @@ class TestHttpxLoggerSuppression:
 
     def test_httpx_in_specialized_loggers(self):
         import app.utils.logging_config as lc
+
         source = open(lc.__file__, encoding="utf-8").read()
         assert '"httpx"' in source
         assert '"httpcore"' in source
@@ -277,6 +280,7 @@ class TestHttpClientClose:
     @pytest.mark.asyncio
     async def test_close_http_clients_callable(self):
         from app.ai_provider import close_http_clients
+
         assert callable(close_http_clients)
 
     @pytest.mark.asyncio
@@ -297,6 +301,7 @@ class TestHttpClientClose:
 
         # Restore for other tests
         from app.utils.network import NetworkErrorHandler
+
         aip._openrouter_http_client = NetworkErrorHandler.create_robust_http_client()
 
 
@@ -310,12 +315,14 @@ class TestMetricsCollectorNoLock:
 
     def test_no_lock_attribute(self):
         from app.metrics import RoleConversationMetricsCollector
+
         collector = RoleConversationMetricsCollector()
         assert not hasattr(collector, "_lock")
 
     @pytest.mark.asyncio
     async def test_record_role_application_works(self):
         from app.metrics import RoleConversationMetricsCollector
+
         collector = RoleConversationMetricsCollector()
         await collector.record_role_application("test_role")
         assert collector.role_metrics.role_applications["test_role"] == 1
@@ -323,6 +330,7 @@ class TestMetricsCollectorNoLock:
     @pytest.mark.asyncio
     async def test_get_metrics_summary_works(self):
         from app.metrics import RoleConversationMetricsCollector
+
         collector = RoleConversationMetricsCollector()
         summary = await collector.get_metrics_summary()
         assert "roles" in summary
@@ -351,9 +359,7 @@ class TestMigrateInvalidModels:
 
         with patch("app.repos.chats.db_manager") as mock_mgr:
             mock_mgr.is_connected = False
-            count = await migrate_invalid_models(
-                {"gemini-flash"}, "gemini-flash", "gpt-4"
-            )
+            count = await migrate_invalid_models({"gemini-flash"}, "gemini-flash", "gpt-4")
             assert count == 0
 
     @pytest.mark.asyncio
@@ -365,8 +371,10 @@ class TestMigrateInvalidModels:
             {"user_id": 2, "model": "vendor/old-openrouter"},
         ]
 
-        with patch("app.repos.chats.db_manager") as mock_mgr, \
-             patch("app.repos.chats.db_query", new_callable=AsyncMock) as mock_query:
+        with (
+            patch("app.repos.chats.db_manager") as mock_mgr,
+            patch("app.repos.chats.db_query", new_callable=AsyncMock) as mock_query,
+        ):
             mock_mgr.is_connected = True
             mock_query.return_value = mock_invalid_chats
 
@@ -397,10 +405,13 @@ class TestDatabaseCleanImports:
 
     def test_no_unused_imports(self):
         import app.database as db_mod
+
         source = open(db_mod.__file__, encoding="utf-8").read()  # noqa: SIM115
         # These should no longer appear in the imports
         lines = source.split("\n")
-        import_lines = [l.strip() for l in lines[:20] if l.strip().startswith("import ") or l.strip().startswith("from ")]
+        import_lines = [
+            l.strip() for l in lines[:20] if l.strip().startswith("import ") or l.strip().startswith("from ")
+        ]
         import_text = "\n".join(import_lines)
         assert "import re" not in import_text
         assert "import json" not in import_text
@@ -419,6 +430,7 @@ class TestValidateFileUploadRemoved:
 
     def test_function_not_in_module(self):
         import app.security as sec
+
         assert not hasattr(sec, "validate_file_upload")
 
 
@@ -432,6 +444,7 @@ class TestRequirementsPydantic:
 
     def test_requirements_has_pydantic_not_pydantic_settings(self):
         import pathlib
+
         req_path = pathlib.Path(__file__).parent.parent / "requirements.txt"
         content = req_path.read_text(encoding="utf-8")
         assert "pydantic>=" in content

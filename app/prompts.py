@@ -61,9 +61,8 @@ DEFAULT_ROLES: dict[str, dict[str, str]] = {
     },
 }
 
-def compose_system_instruction(
-    role_prompt: str | None, use_compact: bool = True
-) -> str:
+
+def compose_system_instruction(role_prompt: str | None, use_compact: bool = True) -> str:
     """Compose the system instruction: base formatting + optional role.
 
     Delegates to PromptRegistry for thread-safe, LRU-cached composition.
@@ -76,9 +75,7 @@ def compose_system_instruction(
         Composed system prompt string.
     """
     registry = get_registry()
-    return registry.compose_system_prompt(
-        role_prompt=role_prompt, use_compact=use_compact
-    )
+    return registry.compose_system_prompt(role_prompt=role_prompt, use_compact=use_compact)
 
 
 def clear_prompt_cache():

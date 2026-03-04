@@ -53,9 +53,7 @@ class TestMemoryManager:
 
     @pytest.mark.asyncio
     async def test_custom_thresholds(self):
-        thresholds = MemoryThreshold(
-            warning_percent=80.0, critical_percent=90.0, cleanup_percent=50.0
-        )
+        thresholds = MemoryThreshold(warning_percent=80.0, critical_percent=90.0, cleanup_percent=50.0)
         manager = MemoryManager(thresholds)
         assert manager.thresholds.warning_percent == 80.0
         assert manager.thresholds.critical_percent == 90.0

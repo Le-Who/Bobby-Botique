@@ -92,9 +92,7 @@ class CircuitBreaker:
             if self._state == CircuitState.OPEN:
                 if self._should_attempt_reset():
                     await self._set_state(CircuitState.HALF_OPEN)
-                    logging.info(
-                        f"Circuit Breaker '{self.name}' moved to HALF_OPEN state"
-                    )
+                    logging.info(f"Circuit Breaker '{self.name}' moved to HALF_OPEN state")
                 else:
                     raise CircuitBreakerOpenError(
                         f"Circuit Breaker '{self.name}' is OPEN. "
@@ -110,9 +108,7 @@ class CircuitBreaker:
                 # Success - close circuit if it was half-open
                 if self._state == CircuitState.HALF_OPEN:
                     await self._set_state(CircuitState.CLOSED)
-                    logging.info(
-                        f"Circuit Breaker '{self.name}' recovered, moved to CLOSED state"
-                    )
+                    logging.info(f"Circuit Breaker '{self.name}' recovered, moved to CLOSED state")
 
                 self._failure_count = 0
                 self._last_success_time = time.time()
@@ -127,9 +123,7 @@ class CircuitBreaker:
                     raise
                 else:
                     # Unexpected exception - don't count as circuit breaker failure
-                    logging.warning(
-                        f"Circuit Breaker '{self.name}' received unexpected exception: {e}"
-                    )
+                    logging.warning(f"Circuit Breaker '{self.name}' received unexpected exception: {e}")
                     raise
 
     async def _on_failure(self, exception: Exception) -> None:
@@ -138,16 +132,12 @@ class CircuitBreaker:
         self._total_failures += 1
         self._last_failure_time = time.time()
 
-        logging.warning(
-            f"Circuit Breaker '{self.name}' failure #{self._failure_count}: {exception}"
-        )
+        logging.warning(f"Circuit Breaker '{self.name}' failure #{self._failure_count}: {exception}")
 
         # Check if we should open the circuit
         if self._failure_count >= self.config.failure_threshold and self._state != CircuitState.OPEN:
             await self._set_state(CircuitState.OPEN)
-            logging.error(
-                f"Circuit Breaker '{self.name}' opened after {self._failure_count} failures"
-            )
+            logging.error(f"Circuit Breaker '{self.name}' opened after {self._failure_count} failures")
 
     async def _set_state(self, new_state: CircuitState) -> None:
         """Changes circuit breaker state."""
@@ -155,9 +145,7 @@ class CircuitBreaker:
         self._state = new_state
 
         if old_state != new_state:
-            logging.info(
-                f"Circuit Breaker '{self.name}' state changed: {old_state.value} -> {new_state.value}"
-            )
+            logging.info(f"Circuit Breaker '{self.name}' state changed: {old_state.value} -> {new_state.value}")
 
     def _should_attempt_reset(self) -> bool:
         """Determines if circuit should attempt reset."""
@@ -193,9 +181,7 @@ class CircuitBreaker:
 
                 # Clean up old failure data if too many
                 if self._failure_count > self.config.max_failures:
-                    self._failure_count = min(
-                        self._failure_count, self.config.max_failures
-                    )
+                    self._failure_count = min(self._failure_count, self.config.max_failures)
 
             except asyncio.CancelledError:
                 break
@@ -217,9 +203,7 @@ class CircuitBreaker:
             "total_successes": self._total_successes,
             "last_failure_time": self._last_failure_time,
             "last_success_time": self._last_success_time,
-            "success_rate": (self._total_successes / self._total_requests * 100)
-            if self._total_requests > 0
-            else 0,
+            "success_rate": (self._total_successes / self._total_requests * 100) if self._total_requests > 0 else 0,
         }
 
     async def force_open(self) -> None:
@@ -257,9 +241,7 @@ class CircuitBreaker:
 _circuit_breakers: dict[str, CircuitBreaker] = {}
 
 
-def get_circuit_breaker(
-    name: str, config: CircuitBreakerConfig | None = None
-) -> CircuitBreaker:
+def get_circuit_breaker(name: str, config: CircuitBreakerConfig | None = None) -> CircuitBreaker:
     """
     Gets or creates a circuit breaker instance.
 

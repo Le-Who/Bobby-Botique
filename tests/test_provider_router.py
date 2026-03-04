@@ -26,8 +26,10 @@ class TestProviderRouter:
         mock_status_mgr = MagicMock()
         mock_status_mgr.record_success = AsyncMock()
 
-        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
-             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr):
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+        ):
             text, tokens = await router.get_response(
                 "gemini-2.0-flash",
                 [{"role": "user", "parts": ["hi"]}],
@@ -42,12 +44,12 @@ class TestProviderRouter:
         router = ProviderRouter()
 
         mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(
-            return_value=(None, None, "all_exhausted")
-        )
+        mock_use_case.resolve_ai_request = AsyncMock(return_value=(None, None, "all_exhausted"))
 
-        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
-             patch("app.repos.keys.get_key_status_manager"):
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.repos.keys.get_key_status_manager"),
+        ):
             text, tokens = await router.get_response(
                 "gemini-2.0-flash",
                 [{"role": "user", "parts": ["hi"]}],
@@ -83,8 +85,10 @@ class TestProviderRouter:
         mock_status_mgr.suspend_key = AsyncMock()
         mock_status_mgr.record_success = AsyncMock()
 
-        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
-             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr):
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+        ):
             text, tokens = await router.get_response(
                 "gemini-2.0-flash",
                 [{"role": "user", "parts": ["hi"]}],
@@ -95,7 +99,10 @@ class TestProviderRouter:
         assert tokens == 10
         # First key should have been suspended with "permanent" category
         mock_status_mgr.suspend_key.assert_called_once_with(
-            "hash1", "gemini-2.0-flash", "permanent", "🔑 Неверный API ключ."[:200],
+            "hash1",
+            "gemini-2.0-flash",
+            "permanent",
+            "🔑 Неверный API ключ."[:200],
         )
         # Second key should have been recorded as success
         mock_status_mgr.record_success.assert_called_once_with("hash2", "gemini-2.0-flash")
@@ -119,8 +126,10 @@ class TestProviderRouter:
         mock_status_mgr = MagicMock()
         mock_status_mgr.suspend_key = AsyncMock()
 
-        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
-             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr):
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+        ):
             text, tokens = await router.get_response(
                 "gemini-2.0-flash",
                 [{"role": "user", "parts": ["hi"]}],
@@ -157,8 +166,10 @@ class TestProviderRouter:
         mock_status_mgr.suspend_key = AsyncMock()
         mock_status_mgr.record_success = AsyncMock()
 
-        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
-             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr):
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+        ):
             text, tokens = await router.get_response(
                 "gemini-2.0-flash",
                 [{"role": "user", "parts": ["hi"]}],
@@ -176,12 +187,12 @@ class TestProviderRouter:
         router = ProviderRouter()
 
         mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(
-            return_value=(None, None, "all_exhausted")
-        )
+        mock_use_case.resolve_ai_request = AsyncMock(return_value=(None, None, "all_exhausted"))
 
-        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
-             patch("app.repos.keys.get_key_status_manager"):
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.repos.keys.get_key_status_manager"),
+        ):
             text, _ = await router.get_response(
                 "openai/gpt-4o",
                 [{"role": "user", "parts": ["hi"]}],
@@ -202,15 +213,15 @@ class TestProviderRouter:
             ]
         )
         # The 🔄 emoji is a transient error — not key-related
-        mock_use_case.get_ai_response = AsyncMock(
-            return_value=("⏰ Превышено время ожидания ответа от API.", None)
-        )
+        mock_use_case.get_ai_response = AsyncMock(return_value=("⏰ Превышено время ожидания ответа от API.", None))
 
         mock_status_mgr = MagicMock()
         mock_status_mgr.suspend_key = AsyncMock()
 
-        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
-             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr):
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+        ):
             await router.get_response(
                 "gemini-2.0-flash",
                 [{"role": "user", "parts": ["hi"]}],
@@ -244,7 +255,7 @@ class TestProviderRouter:
                 ("🔑 Неверный API ключ.", None),  # key1 permanent fail
                 ("🔑 Неверный API ключ.", None),  # key2 permanent fail
                 ("🔑 Неверный API ключ.", None),  # key3 permanent fail
-                ("Fallback response!", 15),         # fallback model succeeds
+                ("Fallback response!", 15),  # fallback model succeeds
             ]
         )
         mock_use_case.increment_key_usage = AsyncMock()
@@ -260,9 +271,11 @@ class TestProviderRouter:
             "gemini-flash-latest",
         ]
 
-        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
-             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr), \
-             patch("app.ai_provider.settings", mock_settings):
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+            patch("app.ai_provider.settings", mock_settings),
+        ):
             text, tokens = await router.get_response(
                 "gemini-3-flash-preview",
                 [{"role": "user", "parts": ["hi"]}],
@@ -291,17 +304,19 @@ class TestProviderRouter:
         )
         mock_use_case.get_ai_response = AsyncMock(
             side_effect=[
-                ("🔑 Неверный API ключ.", None),   # permanent
+                ("🔑 Неверный API ключ.", None),  # permanent
                 ("🚫 Достигнут лимит запросов к API (Quota Exceeded).", None),  # quota (NOT permanent)
-                ("🔑 Неверный API ключ.", None),   # permanent
+                ("🔑 Неверный API ключ.", None),  # permanent
             ]
         )
 
         mock_status_mgr = MagicMock()
         mock_status_mgr.suspend_key = AsyncMock()
 
-        with patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case), \
-             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr):
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+        ):
             text, tokens = await router.get_response(
                 "gemini-2.0-flash",
                 [{"role": "user", "parts": ["hi"]}],

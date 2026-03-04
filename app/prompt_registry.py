@@ -49,6 +49,7 @@ FORMATTING_RULES_COMPACT = r"""# ФОРМАТИРОВАНИЕ
 # PROMPT TEMPLATES — Versioned, with metadata
 # ============================================================================
 
+
 @dataclass(frozen=True)
 class PromptTemplate:
     """Immutable prompt template with metadata."""
@@ -437,9 +438,7 @@ User: Добавь ему напарника — попугая Кешу
 )
 
 # Refine instructions (first chunk vs subsequent chunks)
-SUMMARIZATION_REFINE_FIRST = (
-    "Сожми следующий фрагмент диалога в структурированное резюме."
-)
+SUMMARIZATION_REFINE_FIRST = "Сожми следующий фрагмент диалога в структурированное резюме."
 
 SUMMARIZATION_REFINE_SUBSEQUENT = (
     "Дополни существующее резюме новой информацией из следующего фрагмента диалога.\n"
@@ -453,6 +452,7 @@ SUMMARIZATION_REFINE_SUBSEQUENT = (
 # ============================================================================
 # PROMPT REGISTRY — Thread-safe, cached access
 # ============================================================================
+
 
 class PromptRegistry:
     """Thread-safe registry of all prompt templates with LRU caching.
@@ -499,9 +499,7 @@ class PromptRegistry:
         return list(self._templates.values())
 
     @functools.lru_cache(maxsize=128)  # noqa: B019 — singleton, cache cleared in register()
-    def compose_system_prompt(
-        self, role_prompt: str | None = None, use_compact: bool = True
-    ) -> str:
+    def compose_system_prompt(self, role_prompt: str | None = None, use_compact: bool = True) -> str:
         """Compose the system instruction: base prompt + optional role.
 
         Args:

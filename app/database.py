@@ -32,6 +32,15 @@ class ChatState:
 class DatabaseManager:
     _instance = None
 
+    # Type declarations for attributes set in __new__
+    pool: Any
+    _active_keys_cache: Any
+    _user_auth_cache: Any
+    _model_config_cache: Any
+    _active_chats_cache: Any
+    _cache_lock: Any
+    _monitor_task: Any
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -63,6 +72,7 @@ class DatabaseManager:
     async def create_pool(self):
         """Создает пул соединений с базой данных"""
         try:
+
             async def _init_connection(conn):
                 """Apply session-level settings to every new connection."""
                 await conn.execute("SET statement_timeout = '60s'")
@@ -95,14 +105,10 @@ class DatabaseManager:
                 return self.pool
         except Exception as e:
             if "rate limit" in str(e).lower() or "quota" in str(e).lower():
-                logging.critical(
-                    "Supabase.com rate limit exceeded. Please upgrade your plan or wait for quota reset."
-                )
+                logging.critical("Supabase.com rate limit exceeded. Please upgrade your plan or wait for quota reset.")
                 raise DatabaseRateLimitError(f"Database rate limit exceeded: {e}") from e
             elif "connection" in str(e).lower() or "timeout" in str(e).lower():
-                logging.warning(
-                    "Database connection issue: %s. This might be temporary.", e
-                )
+                logging.warning("Database connection issue: %s. This might be temporary.", e)
                 raise DatabaseConnectionError(f"Database connection failed: {e}") from e
             else:
                 logging.error("Unexpected database error: %s", e)
@@ -129,11 +135,13 @@ class DatabaseManager:
     def _start_background_task(self, task_ref, coro_factory, task_name: str):
         """Запускает фоновую задачу с защитой от повторного старта."""
         from app.utils.background_tasks import start_background_task
+
         return start_background_task(task_ref, coro_factory, task_name)
 
     async def _cancel_background_task(self, attr_name: str):
         """Отменяет и ожидает завершение фоновой задачи по имени атрибута."""
         from app.utils.background_tasks import cancel_background_task
+
         await cancel_background_task(self, attr_name)
 
     async def monitor_connection_pool(self):
@@ -155,14 +163,10 @@ class DatabaseManager:
                         pool_stats["free_size"] = self.pool._free_size
 
                     if "size" in pool_stats and "free_size" in pool_stats:
-                        pool_stats["in_use"] = (
-                            pool_stats["size"] - pool_stats["free_size"]
-                        )
+                        pool_stats["in_use"] = pool_stats["size"] - pool_stats["free_size"]
                         if "max_size" in pool_stats and pool_stats["max_size"] > 0:
                             pool_stats["utilization"] = (
-                                (pool_stats["size"] - pool_stats["free_size"])
-                                / pool_stats["max_size"]
-                                * 100
+                                (pool_stats["size"] - pool_stats["free_size"]) / pool_stats["max_size"] * 100
                             )
                         else:
                             pool_stats["utilization"] = 0
@@ -197,9 +201,7 @@ class DatabaseManager:
         for attempt in range(retries + 1):
             try:
                 if not self.pool or self._is_pool_closed():
-                    logging.warning(
-                        "Database pool not initialized or closed – attempting reconnect..."
-                    )
+                    logging.warning("Database pool not initialized or closed – attempting reconnect...")
                     await self.reconnect()
                     if not self.pool or self._is_pool_closed():
                         raise Exception("Database pool is closed")
@@ -208,16 +210,12 @@ class DatabaseManager:
                     return await asyncio.wait_for(operation(connection), timeout=30.0)
 
             except TimeoutError:
-                last_exception = Exception(
-                    f"Database {operation_name} timeout: {query_str[:100]}..."
-                )
+                last_exception = Exception(f"Database {operation_name} timeout: {query_str[:100]}...")
                 logging.warning("Database %s timeout (attempt %s)", operation_name, attempt + 1)
 
             except (asyncpg.InterfaceError, asyncpg.PostgresConnectionError) as e:
                 last_exception = e
-                logging.warning(
-                    "Database connection issue (attempt %s): %s", attempt + 1, e
-                )
+                logging.warning("Database connection issue (attempt %s): %s", attempt + 1, e)
                 if attempt < retries:
                     await asyncio.sleep(min(2**attempt, 10))
                     with contextlib.suppress(Exception):
@@ -235,9 +233,7 @@ class DatabaseManager:
 
         raise last_exception or Exception(f"Database {operation_name} failed")
 
-    async def query(
-        self, query_str: str, params: tuple = (), retries: int = 3, conn=None
-    ):
+    async def query(self, query_str: str, params: tuple = (), retries: int = 3, conn=None):
         if not isinstance(query_str, str) or not query_str.strip():
             raise ValueError("Query must be a non-empty string")
 
@@ -255,9 +251,7 @@ class DatabaseManager:
 
         return await self._execute_with_retry("query", _do_fetch, query_str, retries)
 
-    async def execute_many(
-        self, query_str: str, params_list: list[tuple], retries: int = 3, conn=None
-    ):
+    async def execute_many(self, query_str: str, params_list: list[tuple], retries: int = 3, conn=None):
         if not isinstance(query_str, str) or not query_str.strip():
             raise ValueError("Query must be a non-empty string")
 
@@ -292,9 +286,7 @@ async def db_query(query: str, params: tuple = (), retries: int = 3, conn=None):
     return await db_manager.query(query, params, retries, conn)
 
 
-async def db_execute_many(
-    query: str, params_list: list[tuple], retries: int = 3, conn=None
-):
+async def db_execute_many(query: str, params_list: list[tuple], retries: int = 3, conn=None):
     return await db_manager.execute_many(query, params_list, retries, conn)
 
 
@@ -408,7 +400,6 @@ async def clear_user_context(conn=None):
         )
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to clear user context: %s", e)
-
 
 
 # =============================================================================

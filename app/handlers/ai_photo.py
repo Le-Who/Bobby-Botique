@@ -26,9 +26,7 @@ from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_PHOTO, update_stage
 
 
-async def _handle_photo(
-    placeholder_message: Message, original_message: Message, chat_state: ChatState
-):
+async def _handle_photo(placeholder_message: Message, original_message: Message, chat_state: ChatState):
     stop_heartbeat(placeholder_message.message_id)
     try:
         photo_file = await original_message.photo[-1].get_file()
@@ -137,21 +135,11 @@ _Особенности:_
         if response_text and response_text.strip():
             # Add role button and new topic button to photo responses
             buttons = [
-                [
-                    InlineKeyboardButton(
-                        "🎭 Выбрать роль ИИ", callback_data="open_roles:from_response"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "✨ Начать новую тему", callback_data="new_topic"
-                    )
-                ],
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
+                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
             ]
             reply_markup = InlineKeyboardMarkup(buttons)
-            await send_long_message(
-                placeholder_message, response_text, reply_markup=reply_markup
-            )
+            await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
             # Save context images в истории
             chat_state.history.append({"role": "user", "parts": [formatted_prompt]})
             chat_state.history.append({"role": "model", "parts": [response_text]})
@@ -159,16 +147,8 @@ _Особенности:_
         else:
             # Add role button and new topic button to error responses too
             buttons = [
-                [
-                    InlineKeyboardButton(
-                        "🎭 Выбрать роль ИИ", callback_data="open_roles:from_response"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "✨ Начать новую тему", callback_data="new_topic"
-                    )
-                ],
+                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
+                [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
             ]
             reply_markup = InlineKeyboardMarkup(buttons)
             await send_long_message(
@@ -180,19 +160,14 @@ _Особенности:_
                 f"Empty response from Gemini API for image processing by user {original_message.from_user.id}"
             )
 
-
     except Exception as e:
         logging.error("Error processing photo: %s", e, exc_info=True)
         try:
-            await placeholder_message.edit_text(
-                "❌ Произошла ошибка при обработке изображения."
-            )
+            await placeholder_message.edit_text("❌ Произошла ошибка при обработке изображения.")
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
             # Fallback на new message
-            await original_message.reply_text(
-                "❌ Произошла ошибка при обработке изображения."
-            )
+            await original_message.reply_text("❌ Произошла ошибка при обработке изображения.")
 
 
 async def process_media_group_request(
@@ -208,9 +183,7 @@ async def process_media_group_request(
     chat_state = await get_user_chat(user_id)
 
     count = len(messages) if messages else 0
-    logging.info(
-        f"🔄 Обрабатываю группу из {count} изображений для пользователя {user_id}"
-    )
+    logging.info(f"🔄 Обрабатываю группу из {count} изображений для пользователя {user_id}")
 
     # Check, есть ли searchовый префикс в caption
     search_prefix = None
@@ -222,24 +195,18 @@ async def process_media_group_request(
 
     # If есть searchовый префикс, use сложный search
     if search_prefix:
-        await _handle_complex_media_group_search(
-            placeholder_message, messages, caption, search_prefix, chat_state
-        )
+        await _handle_complex_media_group_search(placeholder_message, messages, caption, search_prefix, chat_state)
     else:
         # Обычная обработка groups fromображений
-        await _handle_media_group_photos(
-            placeholder_message, messages, caption, chat_state
-        )
+        await _handle_media_group_photos(placeholder_message, messages, caption, chat_state)
 
 
-async def _download_images_concurrently(
-    messages: list[Message], log_context: str = ""
-) -> list[Image.Image]:
+async def _download_images_concurrently(messages: list[Message], log_context: str = "") -> list[Image.Image]:
     """
     Downloads images from a list of messages concurrently.
     """
 
-    async def download_one(index, message) -> None:
+    async def download_one(index: int, message: Message) -> bytes | None:
         try:
             photo_file = await message.photo[-1].get_file()
             photo_data = await photo_file.download_as_bytearray()
@@ -260,7 +227,7 @@ async def _download_images_concurrently(
     tasks = [download_one(i, msg) for i, msg in enumerate(messages)]
     results = await asyncio.gather(*tasks)
 
-    return [img for img in results if img is not None]
+    return [img for img in results if img is not None]  # type: ignore[misc]  # download_one returns bytes
 
 
 async def _handle_media_group_photos(
@@ -275,9 +242,7 @@ async def _handle_media_group_photos(
         images = await _download_images_concurrently(messages)
 
         if not images:
-            await placeholder_message.edit_text(
-                "❌ Не удалось загрузить ни одного изображения из группы."
-            )
+            await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения из группы.")
             return
 
         await update_stage(placeholder_message, STAGES_PHOTO, 1)
@@ -375,9 +340,7 @@ _Изображение 2:_ *Современное здание* с иннов�
         parts = [formatted_prompt] + (images or [])
 
         # Get user_id и chat_id for логирования
-        user_id = (
-            placeholder_message.from_user.id if placeholder_message.from_user else None
-        )
+        user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
         response_text, _ = await _get_ai_response_with_routing(
@@ -403,16 +366,13 @@ _Изображение 2:_ *Современное здание* с иннов�
             reply_markup=reply_markup,
         )
 
-
         count = len(images) if images else 0
         logging.info("✅ Группа из %s изображений обработана успешно", count)
 
     except Exception as e:
         logging.error("Error processing media group photos: %s", e, exc_info=True)
         try:
-            await placeholder_message.edit_text(
-                "❌ Произошла ошибка при обработке группы изображений."
-            )
+            await placeholder_message.edit_text("❌ Произошла ошибка при обработке группы изображений.")
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
 
@@ -431,22 +391,16 @@ async def _handle_complex_media_group_search(
         await placeholder_message.edit_text("🖼️ Анализирую группу изображений...")
     except Exception as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
-        placeholder_message = await placeholder_message.reply_text(
-            "🖼️ Анализирую группу изображений..."
-        )
+        placeholder_message = await placeholder_message.reply_text("🖼️ Анализирую группу изображений...")
 
     vision_model = settings.RESEARCH_MODEL
 
     try:
         # Load все images from groups
-        images = await _download_images_concurrently(
-            messages, log_context="для анализа"
-        )
+        images = await _download_images_concurrently(messages, log_context="для анализа")
 
         if not images:
-            await placeholder_message.edit_text(
-                "❌ Не удалось загрузить ни одного изображения для анализа."
-            )
+            await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения для анализа.")
             return
 
         # Аналfromируем группу fromображений for searchа
@@ -494,9 +448,7 @@ cooking process step by step recipe preparation
         parts = [analysis_prompt] + (images or [])
 
         # Get user_id и chat_id for логирования
-        user_id = (
-            placeholder_message.from_user.id if placeholder_message.from_user else None
-        )
+        user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
         search_query, _ = await _get_ai_response_with_routing(
@@ -512,9 +464,7 @@ cooking process step by step recipe preparation
 
         if not search_query:
             try:
-                await placeholder_message.edit_text(
-                    "Не удалось проанализировать группу изображений для поиска."
-                )
+                await placeholder_message.edit_text("Не удалось проанализировать группу изображений для поиска.")
             except Exception as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
             return
@@ -524,9 +474,7 @@ cooking process step by step recipe preparation
         original_user_message = caption or f"Опиши эти {count} изображения."
 
         if search_prefix == "?":
-            await _handle_qna_search(
-                placeholder_message, original_user_message, chat_state, search_query
-            )
+            await _handle_qna_search(placeholder_message, original_user_message, chat_state, search_query)
         else:
             await _handle_research_agent(
                 placeholder_message,
@@ -542,8 +490,6 @@ cooking process step by step recipe preparation
     except Exception as e:
         logging.error("Error processing complex media group search: %s", e, exc_info=True)
         try:
-            await placeholder_message.edit_text(
-                "❌ Произошла ошибка при анализе группы изображений."
-            )
+            await placeholder_message.edit_text("❌ Произошла ошибка при анализе группы изображений.")
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)

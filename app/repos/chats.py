@@ -45,10 +45,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
     """Load the active chat state for a user from the database."""
     # Check cache first
     async with db_manager._cache_lock:
-        if (
-            hasattr(db_manager, "_active_chats_cache")
-            and user_id in db_manager._active_chats_cache
-        ):
+        if hasattr(db_manager, "_active_chats_cache") and user_id in db_manager._active_chats_cache:
             return db_manager._active_chats_cache[user_id]
 
     if not db_manager.is_connected:

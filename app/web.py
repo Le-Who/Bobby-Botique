@@ -59,11 +59,10 @@ quart_app.secret_key = os.urandom(32)  # Secure fallback — overridden at start
 async def _init_secret_key():
     """Compute session secret_key at startup when ADMIN_SECRET is definitely available."""
     admin_secret = _get_admin_secret() or ""
-    quart_app.secret_key = hashlib.sha256(
-        f"gemaibotv2-session-{admin_secret}".encode()
-    ).hexdigest()
+    quart_app.secret_key = hashlib.sha256(f"gemaibotv2-session-{admin_secret}".encode()).hexdigest()
     if not admin_secret:
         logging.warning("ADMIN_SECRET is empty — session secret_key is weak")
+
 
 # Session configuration
 quart_app.config["SESSION_COOKIE_NAME"] = "gembot_session"
@@ -283,12 +282,8 @@ async def api_overview():
         system = {
             "cpu_percent": psutil.cpu_percent(interval=0.1),
             "memory_percent": psutil.virtual_memory().percent,
-            "memory_used_mb": round(
-                psutil.virtual_memory().used / (1024 * 1024), 1
-            ),
-            "memory_total_mb": round(
-                psutil.virtual_memory().total / (1024 * 1024), 1
-            ),
+            "memory_used_mb": round(psutil.virtual_memory().used / (1024 * 1024), 1),
+            "memory_total_mb": round(psutil.virtual_memory().total / (1024 * 1024), 1),
             "disk_percent": psutil.disk_usage("/").percent,
         }
     except Exception:
@@ -404,9 +399,7 @@ async def api_errors():
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
                 "error_count": summary.get("error_count", 0),
                 "error_rate": summary.get("error_rate_percent", 0),
-                "recent_errors": getattr(
-                    metrics_collector, "_recent_errors", []
-                ),
+                "recent_errors": getattr(metrics_collector, "_recent_errors", []),
             }
         )
     except Exception as e:

@@ -3,8 +3,10 @@ import os
 import sys
 
 # Force unbuffered output for container log visibility
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
 import asyncio
 import logging
@@ -16,17 +18,14 @@ from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
 
-async def global_error_handler(
-    update: object, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Log the error and send a telegram message to notify the user."""
-    logging.error(
-        f"Exception while handling an update: {context.error}", exc_info=context.error
-    )
+    logging.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
 
     # Alert admin about unhandled exceptions
     try:
         from app.admin_alerts import AlertSeverity, alert_admin
+
         await alert_admin(
             context.application,
             f"Unhandled exception in update handler:\n`{type(context.error).__name__}: {str(context.error)[:200]}`",
@@ -130,9 +129,7 @@ async def basic_monitoring():
                             f"Metrics summary: {metrics_summary['total_requests']} requests, {metrics_summary['error_rate']:.1f}% errors"
                         )
                     else:
-                        logging.warning(
-                            "Metrics/Queue stats unavailable - database not accessible"
-                        )
+                        logging.warning("Metrics/Queue stats unavailable - database not accessible")
 
                 except Exception as e:
                     logging.warning(f"Extended monitoring failed: {e}")
@@ -155,6 +152,7 @@ async def _cleanup_application(application, reason: str = "cleanup"):
     # Send shutdown alert to admin
     try:
         from app.admin_alerts import alert_admin_shutdown
+
         await alert_admin_shutdown(application, reason=reason)
     except Exception:
         pass  # Best-effort
@@ -174,18 +172,21 @@ async def _cleanup_application(application, reason: str = "cleanup"):
     # Close module-level HTTP clients
     try:
         from app.ai_provider import close_http_clients
+
         await close_http_clients()
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (OpenRouter http client): {cleanup_error}")
 
     try:
         from app.search_services import close_tavily_client
+
         await close_tavily_client()
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (Tavily http client): {cleanup_error}")
 
     try:
         from app.cache import shutdown_redis
+
         await shutdown_redis()
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (Redis client): {cleanup_error}")
@@ -195,9 +196,7 @@ async def run_bot_with_retry():
     """Запускает бота с устойчивостью к ошибкам"""
     logging.info("Starting bot...")
 
-    version_info = (
-        Application.__version__ if hasattr(Application, "__version__") else "Unknown"
-    )
+    version_info = Application.__version__ if hasattr(Application, "__version__") else "Unknown"
     logging.info(f"Python-telegram-bot version: {version_info}")
 
     application = None
@@ -222,9 +221,7 @@ async def run_bot_with_retry():
         commands.register(application)
         callbacks.register(application)
         messages.register(application)
-        application.add_handler(
-            CallbackQueryHandler(new_topic_callback, pattern="^new_topic$")
-        )
+        application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
 
         # Register global error handler
         application.add_error_handler(global_error_handler)
@@ -244,6 +241,7 @@ async def run_bot_with_retry():
             @quart_app.route(webhook_path, methods=["POST"])
             async def webhook_handler():
                 from quart import request as quart_request
+
                 json_data = await quart_request.get_json()
                 update_obj = Update.de_json(json_data, application.bot)
                 await application.process_update(update_obj)
@@ -267,6 +265,7 @@ async def run_bot_with_retry():
         # Send startup alert to admin
         try:
             from app.admin_alerts import alert_admin_startup
+
             await alert_admin_startup(application)
         except Exception:
             pass  # Non-critical
@@ -305,9 +304,7 @@ async def bot_watchdog(bot_task: asyncio.Task):
 
             if bot_task.done():
                 if bot_task.exception():
-                    logging.error(
-                        f"Bot task failed with exception: {bot_task.exception()}"
-                    )
+                    logging.error(f"Bot task failed with exception: {bot_task.exception()}")
                 else:
                     logging.warning("Bot task completed unexpectedly")
             else:
@@ -322,14 +319,10 @@ async def bot_watchdog(bot_task: asyncio.Task):
 
 def _handle_polling_conflict(error: Exception) -> None:
     """Логирует конфликт long polling без побочных эффектов."""
-    is_conflict_error = "Conflict" in str(
-        error
-    ) or "terminated by other getUpdates request" in str(error)
+    is_conflict_error = "Conflict" in str(error) or "terminated by other getUpdates request" in str(error)
 
     if is_conflict_error:
-        logging.warning(
-            "Telegram polling conflict detected: another bot instance might be running."
-        )
+        logging.warning("Telegram polling conflict detected: another bot instance might be running.")
 
 
 async def run_bot_and_server():
@@ -381,22 +374,17 @@ async def _cleanup_with_retry(resource_name, cleanup_coro, retries=1, base_delay
     for attempt in range(1, retries + 1):
         try:
             await cleanup_coro()
-            logging.info(
-                f"Cleanup successful for {resource_name} (attempt {attempt}/{retries})"
-            )
+            logging.info(f"Cleanup successful for {resource_name} (attempt {attempt}/{retries})")
             return
         except Exception as e:
             if attempt < retries:
                 delay = base_delay * (2 ** (attempt - 1))
                 logging.warning(
-                    f"Cleanup failed for {resource_name} (attempt {attempt}/{retries}): {e}. "
-                    f"Retrying in {delay:.2f}s"
+                    f"Cleanup failed for {resource_name} (attempt {attempt}/{retries}): {e}. Retrying in {delay:.2f}s"
                 )
                 await asyncio.sleep(delay)
             else:
-                logging.warning(
-                    f"Cleanup failed for {resource_name} after {retries} attempts: {e}"
-                )
+                logging.warning(f"Cleanup failed for {resource_name} after {retries} attempts: {e}")
 
 
 async def _wait_for_shutdown():
@@ -419,15 +407,11 @@ async def startup_health_check():
         import httpx
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/getMe"
-            )
+            response = await client.get(f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/getMe")
             if response.status_code == 200:
                 bot_info = response.json()
                 if bot_info.get("ok"):
-                    logging.info(
-                        f"✓ Telegram API verified - Bot: {bot_info['result']['username']}"
-                    )
+                    logging.info(f"✓ Telegram API verified - Bot: {bot_info['result']['username']}")
                 else:
                     raise Exception(f"Telegram API error: {bot_info}")
             else:

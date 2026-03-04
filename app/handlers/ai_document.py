@@ -33,15 +33,11 @@ async def _handle_document_question(
         documents = await get_user_documents(user_id)
         if not documents:
             try:
-                await placeholder_message.edit_text(
-                    "❌ У вас нет загруженных документов. Сначала загрузите документ."
-                )
+                await placeholder_message.edit_text("❌ У вас нет загруженных документов. Сначала загрузите документ.")
             except Exception as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
                 # Fallback на new message
-                await placeholder_message.reply_text(
-                    "❌ У вас нет загруженных документов. Сначала загрузите документ."
-                )
+                await placeholder_message.reply_text("❌ У вас нет загруженных документов. Сначала загрузите документ.")
             return
 
         # Берем самый afterдний document
@@ -50,15 +46,11 @@ async def _handle_document_question(
 
         if not document_content:
             try:
-                await placeholder_message.edit_text(
-                    "❌ Не удалось получить содержимое документа."
-                )
+                await placeholder_message.edit_text("❌ Не удалось получить содержимое документа.")
             except Exception as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
                 # Fallback на new message
-                await placeholder_message.reply_text(
-                    "❌ Не удалось получить содержимое документа."
-                )
+                await placeholder_message.reply_text("❌ Не удалось получить содержимое документа.")
             return
 
         try:
@@ -66,21 +58,14 @@ async def _handle_document_question(
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
             # If не можем отредактировать, отправляем new message
-            placeholder_message = await placeholder_message.reply_text(
-                "📄 Анализирую документ..."
-            )
+            placeholder_message = await placeholder_message.reply_text("📄 Анализирую документ...")
 
         # Ограничиваем размер contextа documentа
         max_context_length = 30000  # Ограничиваем до 30K символов
         original_length = len(document_content) if document_content else 0
         if document_content and len(document_content) > max_context_length:
-            document_content = (
-                document_content[:max_context_length]
-                + "\n\n[Документ обрезан для экономии токенов]"
-            )
-            logging.info(
-                f"Document content truncated from {original_length} to {len(document_content)} characters"
-            )
+            document_content = document_content[:max_context_length] + "\n\n[Документ обрезан для экономии токенов]"
+            logging.info(f"Document content truncated from {original_length} to {len(document_content)} characters")
 
         # Безопасная обработка document_content
         try:
@@ -88,9 +73,7 @@ async def _handle_document_question(
         except Exception as e:
             logging.error("Failed to convert document content to string: %s", e, exc_info=True)
             try:
-                await placeholder_message.edit_text(
-                    "❌ Ошибка обработки содержимого документа."
-                )
+                await placeholder_message.edit_text("❌ Ошибка обработки содержимого документа.")
             except Exception as edit_error:
                 logging.error("Could not edit placeholder message: %s", edit_error)
             return
@@ -236,27 +219,15 @@ _Основные сервисы:_
                             callback_data="doc:upload_new",
                         )
                     ],
-                    [
-                        InlineKeyboardButton(
-                            "📋 Выбрать документ", callback_data="doc:select_document"
-                        )
-                    ],
+                    [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
                     [
                         InlineKeyboardButton(
                             "❌ Отменить работу с документами",
                             callback_data="doc:cancel",
                         )
                     ],
-                    [
-                        InlineKeyboardButton(
-                            "🎭 Выбрать роль ИИ", callback_data="open_roles:from_response"
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "✨ Начать новую тему", callback_data="new_topic"
-                        )
-                    ],
+                    [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
+                    [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
                 ]
 
                 # Send response с buttonми

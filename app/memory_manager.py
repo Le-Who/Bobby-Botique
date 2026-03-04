@@ -44,9 +44,7 @@ class MemoryManager:
             asyncio.get_running_loop()
             self._start_monitoring()
         except RuntimeError:
-            logging.debug(
-                "No running event loop found, memory monitoring not started automatically."
-            )
+            logging.debug("No running event loop found, memory monitoring not started automatically.")
 
     def _start_monitoring(self):
         """Starts memory monitoring task."""
@@ -73,17 +71,11 @@ class MemoryManager:
 
                 # Clean up old history
                 cutoff_time = datetime.now() - timedelta(hours=1)
-                self._memory_history = [
-                    entry
-                    for entry in self._memory_history
-                    if entry["timestamp"] > cutoff_time
-                ]
+                self._memory_history = [entry for entry in self._memory_history if entry["timestamp"] > cutoff_time]
 
                 # Keep only recent entries
                 if len(self._memory_history) > self._max_history_size:
-                    self._memory_history = self._memory_history[
-                        -self._max_history_size :
-                    ]
+                    self._memory_history = self._memory_history[-self._max_history_size :]
 
             except asyncio.CancelledError:
                 break
@@ -103,9 +95,7 @@ class MemoryManager:
 
             # Check thresholds
             if memory_info["percent"] >= self.thresholds.critical_percent:
-                logging.critical(
-                    "Critical memory usage: %.1f%%", memory_info["percent"]
-                )
+                logging.critical("Critical memory usage: %.1f%%", memory_info["percent"])
                 await self._emergency_cleanup()
             elif memory_info["percent"] >= self.thresholds.warning_percent:
                 logging.warning("High memory usage: %.1f%%", memory_info["percent"])
@@ -150,9 +140,7 @@ class MemoryManager:
                 await asyncio.sleep(0.05)  # Yield to event loop
 
             if collected > 0:
-                logging.info(
-                    "Emergency garbage collection collected %d objects", collected
-                )
+                logging.info("Emergency garbage collection collected %d objects", collected)
 
             # Run all cleanup callbacks
             for callback in self._cleanup_callbacks:
@@ -222,9 +210,7 @@ class MemoryManager:
             await asyncio.sleep(0.01)
 
             if collected > 0:
-                logging.debug(
-                    "Preventive garbage collection collected %d objects", collected
-                )
+                logging.debug("Preventive garbage collection collected %d objects", collected)
 
             self._last_cleanup = time.time()
 
@@ -359,8 +345,8 @@ class DocumentCache(AutoCleanupResource):
     def __init__(self, max_size: int = 100):
         super().__init__("DocumentCache")
         self.max_size = max_size
-        self._cache = {}
-        self._access_times = {}
+        self._cache: dict[str, Any] = {}
+        self._access_times: dict[str, float] = {}
 
     def get(self, key: str):
         """Gets a document from cache."""

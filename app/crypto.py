@@ -81,6 +81,7 @@ def is_encrypted(value: str) -> bool:
     if len(value) <= 50 or not value.startswith("gAAAAA"):
         return False
     import re
+
     return bool(re.fullmatch(r"[A-Za-z0-9_\-]+=*", value))
 
 
@@ -98,7 +99,9 @@ def safe_decrypt(value: str) -> str:
             decrypted = decrypt_api_key(value)
             logging.debug(
                 "Key decrypted OK: encrypted_prefix=%s... -> decrypted_prefix=%s****, len=%d",
-                value[:12], decrypted[:6], len(decrypted),
+                value[:12],
+                decrypted[:6],
+                len(decrypted),
             )
             return decrypted
         except (ValueError, Exception) as e:
@@ -106,11 +109,11 @@ def safe_decrypt(value: str) -> str:
 
             logging.error(
                 "CRITICAL: Failed to decrypt key (prefix=%s..., len=%d): %s",
-                value[:12], len(value), e,
+                value[:12],
+                len(value),
+                e,
             )
-            raise DecryptionError(
-                f"Cannot decrypt API key (prefix={value[:12]}...): {e}"
-            ) from e
+            raise DecryptionError(f"Cannot decrypt API key (prefix={value[:12]}...): {e}") from e
     logging.debug("Key not encrypted (prefix=%s****, len=%d), using as-is", value[:6], len(value))
     return value
 

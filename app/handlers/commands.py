@@ -26,13 +26,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     logging.info("Start command from user %s", user_id)
 
     chat_state = await get_user_chat(user_id)
-    formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(
-        chat_state, user_id=user_id
-    )
+    formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(chat_state, user_id=user_id)
 
-    await update.message.reply_text(
-        formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-    )
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
     logging.info("Start command completed successfully for user %s", user_id)
 
 
@@ -63,10 +59,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             InlineKeyboardButton("🎭 Роли", callback_data="help_topic:roles"),
         ],
     ]
-    await update.message.reply_text(
-        formatted_text, parse_mode=parse_mode,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
     logging.info("Help command completed successfully for user %s", user_id)
 
 
@@ -97,9 +90,7 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if command_arg in ("clear", "reset") and len(context.args) == 1:
         chat_state.system_prompt = None
         await update_user_chat(user_id, chat_state)
-        await update.message.reply_text(
-            "✅ Системная инструкция сброшена. Использую стандартное поведение."
-        )
+        await update.message.reply_text("✅ Системная инструкция сброшена. Использую стандартное поведение.")
         return
 
     # Set new prompt
@@ -108,13 +99,9 @@ async def set_prompt_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Show preview of what was set
     preview = (
-        chat_state.system_prompt[:100] + "..."
-        if len(chat_state.system_prompt) > 100
-        else chat_state.system_prompt
+        chat_state.system_prompt[:100] + "..." if len(chat_state.system_prompt) > 100 else chat_state.system_prompt
     )
-    formatted_text, parse_mode = TelegramFormatter.format_text(
-        f"✅ Системная инструкция обновлена:\n`{preview}`"
-    )
+    formatted_text, parse_mode = TelegramFormatter.format_text(f"✅ Системная инструкция обновлена:\n`{preview}`")
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 
@@ -124,9 +111,7 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
-    text, _, reply_markup = await menus.get_roles_menu_content(
-        user_id, chat_state
-    )
+    text, _, reply_markup = await menus.get_roles_menu_content(user_id, chat_state)
     await update.message.reply_text(text, reply_markup=reply_markup)
 
 
@@ -143,10 +128,7 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_state.system_prompt = None
     await update_user_chat(user_id, chat_state)
 
-    text = (
-        "✨ **Новый чат начат!**\n\n"
-        "Контекст и роль сброшены. Напишите что-нибудь. 👇"
-    )
+    text = "✨ **Новый чат начат!**\n\nКонтекст и роль сброшены. Напишите что-нибудь. 👇"
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
@@ -170,16 +152,12 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)
 
-    formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(
-        chat_state, context
-    )
+    formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(chat_state, context)
 
     if reply_markup is None:
         await update.message.reply_text(formatted_text)
     else:
-        await update.message.reply_text(
-            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
 @authorized_only
@@ -192,9 +170,7 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
 
     # Используем TelegramFormatter for правильного экранирования
-    formatted_text, parse_mode = TelegramFormatter.format_text(
-        f"🌐 Постоянный режим исследования *{status_text}*."
-    )
+    formatted_text, parse_mode = TelegramFormatter.format_text(f"🌐 Постоянный режим исследования *{status_text}*.")
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 
@@ -206,12 +182,8 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     clear_document_state(update.effective_user.id)
 
-    formatted_text, parse_mode, reply_markup = await menus.get_documents_menu_content(
-        update.effective_user.id
-    )
-    await update.message.reply_text(
-        formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-    )
+    formatted_text, parse_mode, reply_markup = await menus.get_documents_menu_content(update.effective_user.id)
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
 @authorized_only
@@ -232,11 +204,13 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         get_user_today_request_count,
         get_user_weekly_stats,
     )
+
     today_count = await get_user_today_request_count(user_id)
     week_res = await get_user_weekly_stats(user_id)
     model_res = await get_user_model_usage_today(user_id)
 
     from app.document_processor import get_user_documents
+
     docs = await get_user_documents(user_id)
     doc_count = len(docs) if docs else 0
     conv_count = await get_conversation_count(user_id)
@@ -255,7 +229,11 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if week_res:
         text += "📊 **По дням:**\n"
         for row in week_res:
-            date_str = row["metric_date"].strftime("%d.%m") if hasattr(row["metric_date"], "strftime") else str(row["metric_date"])[:5]
+            date_str = (
+                row["metric_date"].strftime("%d.%m")
+                if hasattr(row["metric_date"], "strftime")
+                else str(row["metric_date"])[:5]
+            )
             bar = "█" * min(int(row["cnt"]), 20)
             text += f"  `{date_str}` {bar} `{row['cnt']}`\n"
         text += "\n"
@@ -266,10 +244,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             text += f"  • `{row['model_name']}`: `{row['cnt']}` запросов\n"
         text += "\n"
 
-    text += (
-        f"📄 **Документов:** `{doc_count}`\n"
-        f"📝 **Сохранённых бесед:** `{conv_count}`\n"
-    )
+    text += f"📄 **Документов:** `{doc_count}`\n📝 **Сохранённых бесед:** `{conv_count}`\n"
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
@@ -287,10 +262,7 @@ async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     chat_state = await get_user_chat(user_id)
     if not chat_state or not chat_state.history:
-        await update.message.reply_text(
-            "📭 Нет активного чата для экспорта.\n"
-            "Начните диалог и попробуйте снова."
-        )
+        await update.message.reply_text("📭 Нет активного чата для экспорта.\nНачните диалог и попробуйте снова.")
         return
 
     # Build Markdown
@@ -358,25 +330,23 @@ async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
         return
 
-    level = context.args[0].lower()
+    level: str | None = context.args[0].lower()
 
     if level in ("auto", "default", "reset"):
         level = None
     elif level not in _VALID_THINKING_LEVELS:
         await update.message.reply_text(
-            f"❌ Неизвестный уровень `{level}`.\n"
-            "Допустимые: `off`, `low`, `medium`, `high`, `auto`"
+            f"❌ Неизвестный уровень `{level}`.\nДопустимые: `off`, `low`, `medium`, `high`, `auto`"
         )
         return
 
     from app.repos.chats import update_thinking_level
+
     await update_thinking_level(user_id, level)
     chat_state.thinking_level = level
 
     label = _THINKING_LABELS.get(level, level)
-    formatted_text, parse_mode = TelegramFormatter.format_text(
-        f"✅ Уровень мышления: {label}"
-    )
+    formatted_text, parse_mode = TelegramFormatter.format_text(f"✅ Уровень мышления: {label}")
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 
@@ -388,9 +358,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_state = await get_user_chat(user_id)
 
     model = chat_state.model or "(по умолчанию)"
-    thinking = _THINKING_LABELS.get(
-        chat_state.thinking_level, chat_state.thinking_level or "🔄 Авто"
-    )
+    thinking = _THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level or "🔄 Авто")
     search = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
     role = chat_state.system_prompt
     if role and len(role) > 60:
@@ -418,7 +386,8 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ],
     ]
     await update.message.reply_text(
-        formatted_text, parse_mode=parse_mode,
+        formatted_text,
+        parse_mode=parse_mode,
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -458,6 +427,7 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Add memory stats
     try:
         from app.repos.memory import get_memory_stats
+
         mem_stats = await get_memory_stats(user_id)
         user_data["memories"] = mem_stats
     except Exception:
@@ -490,6 +460,7 @@ async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Delete memories
         try:
             from app.repos.memory import delete_user_memories
+
             deleted["memories"] = await delete_user_memories(user_id)
         except Exception as e:
             logging.warning("Memory deletion failed: %s", e)

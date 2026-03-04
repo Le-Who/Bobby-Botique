@@ -37,9 +37,7 @@ class GroupChatManager:
         if not hasattr(self, "initialized"):
             self.active_groups: dict[int, GroupChat] = {}
             self.group_settings: dict[int, dict[str, Any]] = {}
-            self.user_groups: dict[int, set[int]] = defaultdict(
-                set
-            )  # user_id -> set of chat_ids
+            self.user_groups: dict[int, set[int]] = defaultdict(set)  # user_id -> set of chat_ids
             self._lock = asyncio.Lock()
             self.initialized = True
 
@@ -93,9 +91,7 @@ class GroupChatManager:
     async def _load_active_groups(self):
         """Загружает активные группы из базы данных"""
         try:
-            result = await db.db_query(
-                "SELECT * FROM group_chats WHERE is_active = TRUE"
-            )
+            result = await db.db_query("SELECT * FROM group_chats WHERE is_active = TRUE")
 
             chat_ids = []
             for row in result:
@@ -129,9 +125,7 @@ class GroupChatManager:
         except Exception as e:
             logging.error("Error loading active groups: %s", e, exc_info=True)
 
-    async def register_group(
-        self, chat_id: int, title: str, admin_user_id: int
-    ) -> bool:
+    async def register_group(self, chat_id: int, title: str, admin_user_id: int) -> bool:
         """Регистрирует новую группу"""
         try:
             # Check, что user авторfromован
@@ -235,9 +229,7 @@ class GroupChatManager:
                 # Update в памяти
                 self.user_groups[user_id].discard(chat_id)
                 if chat_id in self.active_groups:
-                    self.active_groups[chat_id].member_count = max(
-                        0, self.active_groups[chat_id].member_count - 1
-                    )
+                    self.active_groups[chat_id].member_count = max(0, self.active_groups[chat_id].member_count - 1)
 
                 return True
 
@@ -270,9 +262,7 @@ class GroupChatManager:
     async def get_user_groups(self, user_id: int) -> list[GroupChat]:
         """Получает группы пользователя"""
         group_ids = self.user_groups.get(user_id, set())
-        return [
-            self.active_groups[gid] for gid in group_ids if gid in self.active_groups
-        ]
+        return [self.active_groups[gid] for gid in group_ids if gid in self.active_groups]
 
     async def update_group_activity(self, chat_id: int):
         """Обновляет время последней активности группы"""
@@ -331,13 +321,9 @@ class GroupChatManager:
 
             return {
                 "total_messages": total_messages[0]["count"] if total_messages else 0,
-                "recent_messages": recent_messages[0]["count"]
-                if recent_messages
-                else 0,
+                "recent_messages": recent_messages[0]["count"] if recent_messages else 0,
                 "active_users_24h": active_users[0]["count"] if active_users else 0,
-                "member_count": self.active_groups[chat_id].member_count
-                if chat_id in self.active_groups
-                else 0,
+                "member_count": self.active_groups[chat_id].member_count if chat_id in self.active_groups else 0,
             }
 
         except Exception as e:
@@ -387,6 +373,4 @@ async def log_group_message(
     is_bot_response: bool = False,
 ):
     """Логирует сообщение в группе"""
-    await group_chat_manager.log_group_message(
-        chat_id, user_id, message_text, message_type, is_bot_response
-    )
+    await group_chat_manager.log_group_message(chat_id, user_id, message_text, message_type, is_bot_response)

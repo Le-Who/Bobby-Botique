@@ -100,6 +100,7 @@ class TestErrorPipeline:
 
         with patch("app.handlers.ai_core.stop_heartbeat"):
             from app.handlers.ai_core import handle_ai_response_error
+
             result = await handle_ai_response_error(error_text, mock_msg)
 
         assert result is True
@@ -113,6 +114,7 @@ class TestErrorPipeline:
 
         with patch("app.handlers.ai_core.stop_heartbeat"):
             from app.handlers.ai_core import handle_ai_response_error
+
             result = await handle_ai_response_error("Нормальный ответ AI", mock_msg)
 
         assert result is False
@@ -212,9 +214,7 @@ class TestProviderRouterFallback:
         # Mock resolve to always return no keys
         with patch("app.agent_use_cases.AgentRequestUseCase") as MockUseCase:
             mock_use_case = MockUseCase.return_value
-            mock_use_case.resolve_ai_request = AsyncMock(
-                return_value=(None, None, "all_exhausted")
-            )
+            mock_use_case.resolve_ai_request = AsyncMock(return_value=(None, None, "all_exhausted"))
 
             from app.ai_provider import ProviderRouter
 
@@ -243,14 +243,20 @@ class TestProviderRouterFallback:
 
         # First call — no exclusions
         key1, model1, err1 = await use_case._resolve_key_generic(
-            "gemini-2.0-flash", mock_get_key, [], excluded_key_hashes=None,
+            "gemini-2.0-flash",
+            mock_get_key,
+            [],
+            excluded_key_hashes=None,
         )
         assert key1["key_hash"] == "h1"
         assert err1 is None
 
         # Second call — exclude first key
         key2, model2, err2 = await use_case._resolve_key_generic(
-            "gemini-2.0-flash", mock_get_key, [], excluded_key_hashes={"h1"},
+            "gemini-2.0-flash",
+            mock_get_key,
+            [],
+            excluded_key_hashes={"h1"},
         )
         assert key2["key_hash"] == "h2"
 

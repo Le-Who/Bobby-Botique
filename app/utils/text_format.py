@@ -58,11 +58,7 @@ def markdown_to_html(text: str) -> str:
                 possible_lang = inner[:first_line_end].strip()
 
                 # Heuristic: Valid language is usually short, alphanumeric
-                if (
-                    possible_lang
-                    and len(possible_lang) < 20
-                    and all(c.isalnum() or c in "+-#." for c in possible_lang)
-                ):
+                if possible_lang and len(possible_lang) < 20 and all(c.isalnum() or c in "+-#." for c in possible_lang):
                     language = possible_lang
                     content = inner[first_line_end + 1 :]  # Skip newline
                 else:
@@ -77,9 +73,7 @@ def markdown_to_html(text: str) -> str:
                 continue
 
             if language:
-                html_parts.append(
-                    f'<pre><code class="language-{language}">{escaped_content}</code></pre>'
-                )
+                html_parts.append(f'<pre><code class="language-{language}">{escaped_content}</code></pre>')
             else:
                 html_parts.append(f"<pre>{escaped_content}</pre>")
 
@@ -111,9 +105,7 @@ def markdown_to_html(text: str) -> str:
 
             # Italic: *text* (Only if not part of **)
             # This regex uses lookarounds to ensure we don't match inside **
-            escaped_text = re.sub(
-                r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", escaped_text
-            )
+            escaped_text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", escaped_text)
 
             # Italic: _text_ (Standard Markdown)
             # Match _text_ but not __text__ or snake_case_text
@@ -123,9 +115,7 @@ def markdown_to_html(text: str) -> str:
             # Safe heuristic: _text_ where _ is preceded/followed by non-word or space/start/end.
             # But standard Markdown is: _text_ works anywhere if surrounded by whitespace or punctuation.
             # Minimal safe version:
-            escaped_text = re.sub(
-                r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)", r"<i>\1</i>", escaped_text
-            )
+            escaped_text = re.sub(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)", r"<i>\1</i>", escaped_text)
 
             # Links: [text](url)
             # Since we already escaped HTML, the url might contain &amp; etc.
@@ -207,9 +197,7 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[str
                     cut_point = last_open_angle
 
         chunk = text[:cut_point]
-        remaining = text[
-            cut_point:
-        ].lstrip()  # Remove leading whitespace from next chunk
+        remaining = text[cut_point:].lstrip()  # Remove leading whitespace from next chunk
 
         # Check tag balance
         # If open tags > close tags, we need to close them in this chunk and open in next

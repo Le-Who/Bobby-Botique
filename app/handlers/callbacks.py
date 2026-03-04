@@ -24,9 +24,7 @@ from app.request_context import set_request_id
 from app.utils.formatting import TelegramFormatter
 
 # ── Concurrency limiter for heavy callback branches ──────────────────────────
-_HEAVY_CALLBACK_LIMIT = max(
-    1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_CALLBACKS", 4))
-)
+_HEAVY_CALLBACK_LIMIT = max(1, int(getattr(settings, "MAX_CONCURRENT_HEAVY_CALLBACKS", 4)))
 _HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore(_HEAVY_CALLBACK_LIMIT)
 
 # ── Background task tracking (prevents GC of fire-and-forget tasks) ──────────
@@ -88,6 +86,7 @@ from app.handlers.cb_roles import (  # noqa: F401
 
 # ── Core / Navigation callbacks (stay here — thin and tightly coupled) ───────
 
+
 async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -103,6 +102,7 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     # Get model from индекса (new формат с хэшем) or from полного имени (old формат for совместимости)
+    model_name: str | None = None
     if query.data.startswith("model:"):
         # Новый формат: model:index:hash or model:index (old формат without хэша)
         try:
@@ -111,7 +111,7 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             expected_hash = parts[2] if len(parts) > 2 else None
 
             # Get актуальный list моделей from настроек
-            all_models = []
+            all_models: list[str] = []
             if settings.AVAILABLE_MODELS:
                 all_models.extend(settings.AVAILABLE_MODELS)
             openrouter_available = bool(get_openrouter_keys())
@@ -127,34 +127,38 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     if actual_hash != expected_hash:
                         # Модель fromменилась (удалена/добавлена), просим выбрать заново
                         from app.utils.keyboards import error_with_back_keyboard
+
                         await query.edit_message_text(
                             "⚠️ Список моделей обновился. Пожалуйста, выберите модель заново.",
-                            reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель")
+                            reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель"),
                         )
                         return
             else:
                 from app.utils.keyboards import error_with_back_keyboard
+
                 await query.edit_message_text(
                     "❌ Ошибка: неверный индекс модели.",
-                    reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель")
+                    reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель"),
                 )
                 return
         except (ValueError, IndexError) as e:
             from app.utils.keyboards import error_with_back_keyboard
+
             await query.edit_message_text(
                 "❌ Ошибка: неверный формат callback_data.",
-                reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель")
+                reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель"),
             )
             logging.error("Error parsing model callback: %s, data: %s", e, query.data)
             return
     else:
-        # Старый формат for совместимости: model_gemini-2.5-pro
-        model_name = query.data.split("_", 1)[1] if "_" in query.data else None
+        data = query.data or ""
+        model_name = data.split("_", 1)[1] if "_" in data else None
         if not model_name:
             from app.utils.keyboards import error_with_back_keyboard
+
             await query.edit_message_text(
                 "❌ Ошибка: неверный формат callback_data.",
-                reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель")
+                reply_markup=error_with_back_keyboard("model_menu", "🧠 Выбрать модель"),
             )
             return
     chat_state = await get_user_chat(user_id)
@@ -162,18 +166,14 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await update_user_chat(user_id, chat_state)
 
     # Update menu с новой выбранной modelю
-    formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(
-        chat_state, context
-    )
+    formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(chat_state, context)
 
     # Определяем имя for тоста
     is_openrouter = "/" in model_name
     display_name = model_name.split("/")[-1] if is_openrouter else model_name
 
     try:
-        await query.edit_message_text(
-            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
     except telegram.error.BadRequest as e:
         if "Message is not modified" in str(e):
             pass
@@ -193,7 +193,7 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer(_BUSY_TOAST, show_alert=True)
         return
 
-    model_name = query.data.split(":", 1)[1] if ":" in query.data else None
+    model_name = (query.data or "").split(":", 1)[1] if ":" in (query.data or "") else None
     if not model_name:
         return
 
@@ -228,16 +228,16 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
 
     # Get оригинальное message from contextа or from reply_to_message
     original_message = None
-    if hasattr(context, "user_data") and "original_message" in context.user_data:
+    if hasattr(context, "user_data") and context.user_data is not None and "original_message" in context.user_data:
         original_message = context.user_data["original_message"]
     else:
         original_message = query.message.reply_to_message
 
     if not original_message:
         from app.utils.keyboards import error_with_back_keyboard
+
         await placeholder_message.edit_text(
-            "❌ Не удалось найти оригинальное сообщение.",
-            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+            "❌ Не удалось найти оригинальное сообщение.", reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
         )
         return
 
@@ -254,19 +254,11 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
         # 2. СРАЗУ даем обратную связь пользователю.
         await placeholder_message.edit_text("🖼️ Описываю изображение...")
         chat_state = await get_user_chat(user_id)
-        task_to_run = agent._handle_photo(
-            placeholder_message, original_message, chat_state
-        )
+        task_to_run = agent._handle_photo(placeholder_message, original_message, chat_state)  # type: ignore[arg-type]  # message comes from original update
     elif action == "confirm":
         # У этой функции своя обратная связь ("Аналfromирую..."), поэтому здесь ничего не меняем.
-        search_prefix = (
-            "??"
-            if (original_message.caption and original_message.caption.startswith("??"))
-            else "?"
-        )
-        task_to_run = agent._handle_complex_agent_search(
-            placeholder_message, original_message, search_prefix
-        )
+        search_prefix = "??" if (original_message.caption and original_message.caption.startswith("??")) else "?"
+        task_to_run = agent._handle_complex_agent_search(placeholder_message, original_message, search_prefix)
 
     # 3. If задача определена, запускаем ее в фоне под блокировкой.
     if task_to_run:
@@ -303,16 +295,16 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     # Get оригинальное message from contextа or from reply_to_message
     original_message = None
-    if hasattr(context, "user_data") and "original_message" in context.user_data:
+    if hasattr(context, "user_data") and context.user_data is not None and "original_message" in context.user_data:
         original_message = context.user_data["original_message"]
     else:
         original_message = query.message.reply_to_message
 
     if not original_message:
         from app.utils.keyboards import error_with_back_keyboard
+
         await placeholder_message.edit_text(
-            "❌ Не удалось найти оригинальное сообщение.",
-            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+            "❌ Не удалось найти оригинальное сообщение.", reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
         )
         return
 
@@ -329,7 +321,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     chat_state = await get_user_chat(user_id)
                     user_message = original_message.text
                     await agent._handle_regular_chat(
-                        placeholder_message,
+                        placeholder_message,  # type: ignore[arg-type]  # MaybeInaccessibleMessage
                         user_id,
                         user_message,
                         chat_state,
@@ -338,9 +330,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except Exception as e:
             logging.error("fallback task failed: %s", e, exc_info=True)
             with contextlib.suppress(Exception):
-                await placeholder_message.edit_text(
-                    "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз."
-                )
+                await placeholder_message.edit_text("❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз.")
 
     _task = asyncio.create_task(task_wrapper())
     _background_tasks.add(_task)
@@ -367,9 +357,7 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         chat_state.context_summary = None
         chat_state.is_deep_dive = False
         await update_user_chat(user_id, chat_state)
-        await query.message.reply_text(
-            "✅ Новый чат создан. История и системная инструкция сброшены."
-        )
+        await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
         await query.edit_message_reply_markup(reply_markup=None)
 
     elif action == "deeper_dive":
@@ -402,9 +390,7 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_reply_markup(reply_markup=None)
 
     # Send confirmation message
-    await query.message.reply_text(
-        "✅ Новый чат создан. История и системная инструкция сброшены."
-    )
+    await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
 
 
 async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -415,6 +401,7 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Hydrate persisted state from DB
     from app.state import ensure_state_loaded, get_last_sent_message
+
     await ensure_state_loaded(user_id)
 
     chat_state = await get_user_chat(user_id)
@@ -425,15 +412,13 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         last_text = None
     if not last_text:
         from app.utils.keyboards import error_with_back_keyboard
+
         await query.edit_message_text(
-            "❌ Нет запроса для повтора.",
-            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+            "❌ Нет запроса для повтора.", reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
         )
         return
     # Create плейсхолдер и запускаем обычную обработку как on новом сообщении
-    placeholder_message = await query.message.reply_text(
-        "🔁 Повторяю предыдущий запрос…"
-    )
+    placeholder_message = await query.message.reply_text("🔁 Повторяю предыдущий запрос…")
     from app.handlers.agent import _handle_regular_chat
 
     user_lock = state.get_user_lock(user_id)
@@ -449,9 +434,10 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             logging.error("retry_last_callback failed: %s", e, exc_info=True)
             try:
                 from app.utils.keyboards import error_with_back_keyboard
+
                 await placeholder_message.edit_text(
                     "❌ Произошла ошибка при повторе запроса.",
-                    reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+                    reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
                 )
             except Exception:
                 pass
@@ -477,10 +463,7 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     chat_state.context_summary = None
     await update_user_chat(user_id, chat_state)
 
-    text = (
-        "✨ **Новый чат начат!**\n\n"
-        "Контекст и роль сброшены. Напишите что-нибудь. 👇"
-    )
+    text = "✨ **Новый чат начат!**\n\nКонтекст и роль сброшены. Напишите что-нибудь. 👇"
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     keyboard = [
         [
@@ -490,8 +473,7 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
-            formatted_text, parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard)
         )
     await query.answer("✨ Чат очищен!")
 
@@ -502,13 +484,9 @@ async def model_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     user_id = query.from_user.id
     chat_state = await get_user_chat(user_id)
-    formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(
-        chat_state, context
-    )
+    formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(chat_state, context)
     with contextlib.suppress(telegram.error.BadRequest):
-        await query.edit_message_text(
-            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
 async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -538,8 +516,7 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
-            formatted_text, parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
 
@@ -595,8 +572,7 @@ async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
-            formatted_text, parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
 
@@ -607,9 +583,7 @@ async def open_documents_callback(update: Update, context: ContextTypes.DEFAULT_
     user_id = query.from_user.id
     formatted_text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
     with contextlib.suppress(telegram.error.BadRequest):
-        await query.edit_message_text(
-            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
 async def open_conversations_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -619,9 +593,7 @@ async def open_conversations_callback(update: Update, context: ContextTypes.DEFA
     user_id = query.from_user.id
     text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id)
     with contextlib.suppress(telegram.error.BadRequest):
-        await query.edit_message_text(
-            text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
 async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -638,15 +610,14 @@ async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     formatted_text, parse_mode, reply_markup = await menus.get_start_menu_content(chat_state)
 
-    await query.edit_message_text(
-        formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-    )
+    await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
     await query.answer(f"Поиск {status_text}")
 
 
 # ── Feedback callbacks ───────────────────────────────────────────────────────
+
 
 async def _noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """No-op callback for decorative buttons (e.g. confirmed feedback indicator)."""
@@ -658,7 +629,7 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    data = query.data  # "feedback:up" or "feedback:down"
+    data = query.data or ""
     rating = data.split(":", 1)[1] if ":" in data else "up"
     message_id = query.message.message_id if query.message else 0
 
@@ -677,36 +648,29 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if old_markup and old_markup.inline_keyboard:
             for row in old_markup.inline_keyboard:
                 # Skip the original feedback row (contains feedback: callbacks)
-                if any(
-                    (getattr(btn, "callback_data", "") or "").startswith("feedback:")
-                    for btn in row
-                ):
+                if any((getattr(btn, "callback_data", "") or "").startswith("feedback:") for btn in row):
                     continue
                 new_buttons.append(row)
 
         # Add confirmed feedback indicator
-        confirmed_row = [
-            InlineKeyboardButton(f"{emoji} Спасибо! Отзыв учтён", callback_data="noop")
-        ]
+        confirmed_row = [InlineKeyboardButton(f"{emoji} Спасибо! Отзыв учтён", callback_data="noop")]
         new_buttons.insert(0, confirmed_row)
 
-        await query.message.edit_reply_markup(
-            reply_markup=InlineKeyboardMarkup(new_buttons)
-        )
+        await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_buttons))
     except Exception:
         pass  # Best-effort UI update
 
 
 # ── Helper ───────────────────────────────────────────────────────────────────
 
+
 def _add_fast_callback(application: Application, callback, pattern: str):
     """Register lightweight UI callbacks in non-blocking mode."""
-    application.add_handler(
-        CallbackQueryHandler(callback, pattern=pattern, block=False), group=-1
-    )
+    application.add_handler(CallbackQueryHandler(callback, pattern=pattern, block=False), group=-1)
 
 
 # ── Registration ─────────────────────────────────────────────────────────────
+
 
 def register(application: Application) -> None:
     # Быстрый канал for UI-настроек: callback выполняется without блокировки update loop.
@@ -730,22 +694,12 @@ def register(application: Application) -> None:
     _add_fast_callback(application, open_conversations_callback, "^open_conversations$")
 
     # Process оба формата: model:0 (new) и model_none (разделитель)
-    application.add_handler(
-        CallbackQueryHandler(complex_search_callback, pattern="^complex:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(fallback_callback, pattern="^fallback:")
-    )
+    application.add_handler(CallbackQueryHandler(complex_search_callback, pattern="^complex:"))
+    application.add_handler(CallbackQueryHandler(fallback_callback, pattern="^fallback:"))
     application.add_handler(CallbackQueryHandler(document_callback, pattern="^doc:"))
-    application.add_handler(
-        CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(new_topic_callback, pattern="^new_topic")
-    )
-    application.add_handler(
-        CallbackQueryHandler(retry_last_callback, pattern="^retry_last$")
-    )
+    application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
+    application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))
+    application.add_handler(CallbackQueryHandler(retry_last_callback, pattern="^retry_last$"))
     # Feedback buttons (👍/👎)
     _add_fast_callback(application, feedback_callback, "^feedback:")
     _add_fast_callback(
@@ -754,101 +708,37 @@ def register(application: Application) -> None:
         "^noop$",
     )
     # Роль: apply/clear/create
-    application.add_handler(
-        CallbackQueryHandler(role_create_callback, pattern="^role_create$")
-    )
-    application.add_handler(
-        CallbackQueryHandler(
-            role_create_cancel_callback, pattern="^role_create_cancel$"
-        )
-    )
-    application.add_handler(
-        CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$")
-    )
-    application.add_handler(
-        CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$")
-    )
-    application.add_handler(
-        CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$")
-    )
+    application.add_handler(CallbackQueryHandler(role_create_callback, pattern="^role_create$"))
+    application.add_handler(CallbackQueryHandler(role_create_cancel_callback, pattern="^role_create_cancel$"))
+    application.add_handler(CallbackQueryHandler(role_custom_apply_callback, pattern="^role_custom_apply$"))
+    application.add_handler(CallbackQueryHandler(role_custom_save_callback, pattern="^role_custom_save$"))
+    application.add_handler(CallbackQueryHandler(role_custom_retry_callback, pattern="^role_custom_retry$"))
     # Manual role creation
-    application.add_handler(
-        CallbackQueryHandler(role_create_manual_callback, pattern="^role_create_manual$")
-    )
-    application.add_handler(
-        CallbackQueryHandler(role_manual_cancel_callback, pattern="^role_manual_cancel$")
-    )
-    application.add_handler(
-        CallbackQueryHandler(role_manual_save_callback, pattern="^role_manual_save$")
-    )
+    application.add_handler(CallbackQueryHandler(role_create_manual_callback, pattern="^role_create_manual$"))
+    application.add_handler(CallbackQueryHandler(role_manual_cancel_callback, pattern="^role_manual_cancel$"))
+    application.add_handler(CallbackQueryHandler(role_manual_save_callback, pattern="^role_manual_save$"))
     # New Role management
-    application.add_handler(
-        CallbackQueryHandler(role_detail_callback, pattern="^role_detail:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(role_view_prompt_callback, pattern="^role_view_prompt:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(role_delete_ask_callback, pattern="^role_delete_ask:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(
-            role_delete_confirm_callback, pattern="^role_delete_confirm:"
-        )
-    )
-    application.add_handler(
-        CallbackQueryHandler(
-            role_delete_cancel_callback, pattern="^role_delete_cancel:"
-        )
-    )
+    application.add_handler(CallbackQueryHandler(role_detail_callback, pattern="^role_detail:"))
+    application.add_handler(CallbackQueryHandler(role_view_prompt_callback, pattern="^role_view_prompt:"))
+    application.add_handler(CallbackQueryHandler(role_delete_ask_callback, pattern="^role_delete_ask:"))
+    application.add_handler(CallbackQueryHandler(role_delete_confirm_callback, pattern="^role_delete_confirm:"))
+    application.add_handler(CallbackQueryHandler(role_delete_cancel_callback, pattern="^role_delete_cancel:"))
 
-    application.add_handler(
-        CallbackQueryHandler(role_rename_menu_callback, pattern="^role_rename_menu$")
-    )
-    application.add_handler(
-        CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(
-            role_rename_cancel_callback, pattern="^role_rename_cancel$"
-        )
-    )
+    application.add_handler(CallbackQueryHandler(role_rename_menu_callback, pattern="^role_rename_menu$"))
+    application.add_handler(CallbackQueryHandler(role_rename_pick_callback, pattern="^role_rename_pick:"))
+    application.add_handler(CallbackQueryHandler(role_rename_cancel_callback, pattern="^role_rename_cancel$"))
 
     # Role Navigation (New)
-    application.add_handler(
-        CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern="^noop$")
-    )
+    application.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern="^noop$"))
 
     # Conversation management callbacks
-    application.add_handler(
-        CallbackQueryHandler(conv_rename_callback, pattern="^conv_rename$")
-    )
-    application.add_handler(
-        CallbackQueryHandler(conv_rename_ask_callback, pattern="^conv_rename_ask:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(
-            conv_rename_cancel_callback, pattern="^conv_rename_cancel$"
-        )
-    )
-    application.add_handler(
-        CallbackQueryHandler(conv_delete_callback, pattern="^conv_delete$")
-    )
-    application.add_handler(
-        CallbackQueryHandler(conv_delete_ask_callback, pattern="^conv_delete_ask:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(
-            conv_delete_confirm_callback, pattern="^conv_delete_confirm:"
-        )
-    )
-    application.add_handler(
-        CallbackQueryHandler(
-            conv_delete_cancel_callback, pattern="^conv_delete_cancel$"
-        )
-    )
+    application.add_handler(CallbackQueryHandler(conv_rename_callback, pattern="^conv_rename$"))
+    application.add_handler(CallbackQueryHandler(conv_rename_ask_callback, pattern="^conv_rename_ask:"))
+    application.add_handler(CallbackQueryHandler(conv_rename_cancel_callback, pattern="^conv_rename_cancel$"))
+    application.add_handler(CallbackQueryHandler(conv_delete_callback, pattern="^conv_delete$"))
+    application.add_handler(CallbackQueryHandler(conv_delete_ask_callback, pattern="^conv_delete_ask:"))
+    application.add_handler(CallbackQueryHandler(conv_delete_confirm_callback, pattern="^conv_delete_confirm:"))
+    application.add_handler(CallbackQueryHandler(conv_delete_cancel_callback, pattern="^conv_delete_cancel$"))
 
     # Refresh metrics
-    application.add_handler(
-        CallbackQueryHandler(refresh_metrics_callback, pattern="^refresh_metrics$")
-    )
+    application.add_handler(CallbackQueryHandler(refresh_metrics_callback, pattern="^refresh_metrics$"))

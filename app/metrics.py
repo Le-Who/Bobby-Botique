@@ -35,13 +35,9 @@ class MetricsCollector:
         self.response_times = deque(maxlen=1000)  # Храним afterдние 1000 requestов
         self.error_log = deque(maxlen=100)  # Храним afterдние 100 ошибок
         self.api_event_log = deque(maxlen=200)  # Храним afterдние API события
-        self.daily_metrics: dict[str, PerformanceMetrics] = defaultdict(
-            PerformanceMetrics
-        )
+        self.daily_metrics: dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
         # Per-user daily metrics: key = (date_str, user_id)
-        self._user_daily: dict[tuple, dict[str, Any]] = defaultdict(
-            lambda: {"request_count": 0, "model_usage": {}}
-        )
+        self._user_daily: dict[tuple, dict[str, Any]] = defaultdict(lambda: {"request_count": 0, "model_usage": {}})
         self._events_queue = asyncio.Queue()
         self._last_save_time = time.time()
         self._save_interval = 300  # Save каждые 5 минут
@@ -55,9 +51,7 @@ class MetricsCollector:
             try:
                 timeout = max(0.1, self._save_interval - (time.time() - last_save))
                 try:
-                    event = await asyncio.wait_for(
-                        self._events_queue.get(), timeout=timeout
-                    )
+                    event = await asyncio.wait_for(self._events_queue.get(), timeout=timeout)
                     self._process_event(event)
                     self._events_queue.task_done()
                 except TimeoutError:
@@ -104,20 +98,12 @@ class MetricsCollector:
             api_name = event["api_name"]
             model = event["model"]
 
-            self.metrics.api_calls[api_name] = (
-                self.metrics.api_calls.get(api_name, 0) + 1
-            )
-            self.daily_metrics[today].api_calls[api_name] = (
-                self.daily_metrics[today].api_calls.get(api_name, 0) + 1
-            )
+            self.metrics.api_calls[api_name] = self.metrics.api_calls.get(api_name, 0) + 1
+            self.daily_metrics[today].api_calls[api_name] = self.daily_metrics[today].api_calls.get(api_name, 0) + 1
 
             if model:
-                self.metrics.model_usage[model] = (
-                    self.metrics.model_usage.get(model, 0) + 1
-                )
-                self.daily_metrics[today].model_usage[model] = (
-                    self.daily_metrics[today].model_usage.get(model, 0) + 1
-                )
+                self.metrics.model_usage[model] = self.metrics.model_usage.get(model, 0) + 1
+                self.daily_metrics[today].model_usage[model] = self.daily_metrics[today].model_usage.get(model, 0) + 1
 
                 # Per-user model usage
                 uid = event.get("user_id")
@@ -188,9 +174,7 @@ class MetricsCollector:
             }
 
             # Snapshot unsaved errors
-            errors_to_process = [
-                error for error in self.error_log if not error.get("saved", False)
-            ]
+            errors_to_process = [error for error in self.error_log if not error.get("saved", False)]
 
         except Exception as e:
             logging.error("Error creating metrics snapshot: %s", e, exc_info=True)
@@ -232,14 +216,9 @@ class MetricsCollector:
 
             # Save new errors
             if errors_to_process:
-                unsaved_errors = [
-                    e for e in errors_to_process if not e.get("saved", False)
-                ]
+                unsaved_errors = [e for e in errors_to_process if not e.get("saved", False)]
                 if unsaved_errors:
-                    params_list = [
-                        (e["type"], e["message"], e.get("request_id"))
-                        for e in unsaved_errors
-                    ]
+                    params_list = [(e["type"], e["message"], e.get("request_id")) for e in unsaved_errors]
 
                     await db.db_execute_many(
                         """
@@ -253,7 +232,7 @@ class MetricsCollector:
                         error["saved"] = True
 
             self._last_save_time = time.time()
-            logging.info("Metrics saved (bg): %s reqs", snapshot_data['request_count'])
+            logging.info("Metrics saved (bg): %s reqs", snapshot_data["request_count"])
 
             # Phase 3: Save per-user metrics
             today_str = date.today().isoformat()
@@ -331,9 +310,7 @@ class MetricsCollector:
                 GROUP BY key
             """)
 
-            self.metrics.api_calls = {
-                row["key"]: int(row["total"]) for row in api_calls_result
-            }
+            self.metrics.api_calls = {row["key"]: int(row["total"]) for row in api_calls_result}
 
             # Aggregate model_usage
             model_usage_result = await db.db_query("""
@@ -343,9 +320,7 @@ class MetricsCollector:
                 GROUP BY key
             """)
 
-            self.metrics.model_usage = {
-                row["key"]: int(row["total"]) for row in model_usage_result
-            }
+            self.metrics.model_usage = {row["key"]: int(row["total"]) for row in model_usage_result}
             # Load дневные metrics за afterдние 7 дней
             daily_result = await db.db_query("""
                 SELECT metric_date, request_count, total_response_time, error_count,
@@ -369,14 +344,11 @@ class MetricsCollector:
                         if row.get("api_calls") and isinstance(row["api_calls"], dict)
                         else {},
                         model_usage=dict(row["model_usage"])
-                        if row.get("model_usage")
-                        and isinstance(row["model_usage"], dict)
+                        if row.get("model_usage") and isinstance(row["model_usage"], dict)
                         else {},
                     )
                 except Exception as e:
-                    logging.warning(
-                        f"Failed to process daily metrics row: {e}, row: {row}"
-                    )
+                    logging.warning(f"Failed to process daily metrics row: {e}, row: {row}")
                     continue
 
             # Load afterдние ошибки
@@ -403,17 +375,13 @@ class MetricsCollector:
         except Exception as e:
             logging.error("Error loading metrics from database: %s", e, exc_info=True)
 
-    async def record_request(
-        self, _request_type: str, response_time: float, success: bool = True, user_id: int = None
-    ):
+    async def record_request(self, _request_type: str, response_time: float, success: bool = True, user_id: int | None = None):
         """Записывает метрики запроса (Fast in-memory update)"""
         self._events_queue.put_nowait(
             {"type": "request", "response_time": response_time, "success": success, "user_id": user_id}
         )
 
-    async def record_api_call(
-        self, api_name: str, model: str = None, request_id: str = None, user_id: int = None
-    ):
+    async def record_api_call(self, api_name: str, model: str | None = None, request_id: str | None = None, user_id: int | None = None):
         """Записывает вызов API"""
         current_request_id = request_id or get_request_id()
         self._events_queue.put_nowait(
@@ -439,9 +407,7 @@ class MetricsCollector:
         """Записывает промах кэша"""
         self._events_queue.put_nowait({"type": "cache_miss"})
 
-    async def record_error(
-        self, error_type: str, error_message: str, request_id: str = None
-    ):
+    async def record_error(self, error_type: str, error_message: str, request_id: str | None = None):
         """Записывает ошибку"""
         current_request_id = request_id or get_request_id()
         self._events_queue.put_nowait(
@@ -491,8 +457,7 @@ class MetricsCollector:
                 date: {
                     "requests": metrics.request_count,
                     "errors": metrics.error_count,
-                    "avg_response_time": metrics.total_response_time
-                    / metrics.request_count
+                    "avg_response_time": metrics.total_response_time / metrics.request_count
                     if metrics.request_count > 0
                     else 0,
                 }
@@ -500,9 +465,7 @@ class MetricsCollector:
             },
         }
 
-        logging.debug(
-            f"Metrics summary: {summary['total_requests']} requests, {summary['error_rate']:.1f}% errors"
-        )
+        logging.debug(f"Metrics summary: {summary['total_requests']} requests, {summary['error_rate']:.1f}% errors")
         return summary
 
     async def initialize(self):
@@ -527,9 +490,7 @@ class MetricsCollector:
             if db.db_manager.is_connected:
                 await self._save_metrics_to_db()
             else:
-                logging.warning(
-                    "Database pool unavailable during metrics cleanup, skipping save"
-                )
+                logging.warning("Database pool unavailable during metrics cleanup, skipping save")
         except Exception as e:
             logging.error("Error during metrics cleanup: %s", e, exc_info=True)
             # Не позволяем ошибкам метрик прерывать shutdown
@@ -597,9 +558,7 @@ class RoleConversationMetricsCollector:
 
     async def record_role_application(self, role_key: str):
         """Записывает применение роли"""
-        self.role_metrics.role_applications[role_key] = (
-            self.role_metrics.role_applications.get(role_key, 0) + 1
-        )
+        self.role_metrics.role_applications[role_key] = self.role_metrics.role_applications.get(role_key, 0) + 1
         logging.info("Role applied: %s", role_key)
 
     async def record_custom_role_creation(self):
@@ -637,9 +596,7 @@ class RoleConversationMetricsCollector:
         self.conversation_metrics.conversations_deleted += 1
         logging.info("Conversation deleted")
 
-    async def record_summarization(
-        self, reason: str, tokens_saved: int, summary_length: int
-    ):
+    async def record_summarization(self, reason: str, tokens_saved: int, summary_length: int):
         """Записывает суммаризацию контекста"""
         self.summarization_metrics.summarizations_triggered += 1
 
@@ -659,13 +616,9 @@ class RoleConversationMetricsCollector:
         # Update average summary length
         current_avg = self.summarization_metrics.average_summary_length
         count = self.summarization_metrics.summarizations_triggered
-        self.summarization_metrics.average_summary_length = (
-            current_avg * (count - 1) + summary_length
-        ) / count
+        self.summarization_metrics.average_summary_length = (current_avg * (count - 1) + summary_length) / count
 
-        logging.info(
-            "Summarization triggered: %s, tokens saved: %d", reason, tokens_saved
-        )
+        logging.info("Summarization triggered: %s, tokens saved: %d", reason, tokens_saved)
 
     async def get_metrics_summary(self) -> dict[str, Any]:
         """Возвращает сводку метрик"""
@@ -713,7 +666,7 @@ async def get_system_status_data() -> dict[str, Any]:
     gemini_keys = await db.db_query("SELECT * FROM api_keys")
 
     # Get использование keyей Gemini за сегодня
-    gemini_usage_map = {}
+    gemini_usage_map: dict[str, list[Any]] = {}
     if gemini_keys:
         all_usage = await db.db_query(
             "SELECT key_hash, model_name, request_count FROM key_usage WHERE usage_date = $1",

@@ -25,9 +25,8 @@ def test_heavy_message_semaphore_present_and_used():
     assert "_HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore" in source
     # regular long request path (messages.py) + media-group heavy path (msg_media.py)
     media_source = Path("app/handlers/msg_media.py").read_text(encoding="utf-8")
-    combined_count = (
-        source.count("async with _HEAVY_REQUEST_SEMAPHORE")
-        + media_source.count("async with _HEAVY_REQUEST_SEMAPHORE")
+    combined_count = source.count("async with _HEAVY_REQUEST_SEMAPHORE") + media_source.count(
+        "async with _HEAVY_REQUEST_SEMAPHORE"
     )
     assert combined_count >= 2
 
@@ -69,14 +68,8 @@ def test_streaming_lock_guards_on_state_mutating_callbacks():
                 func_source = ast.get_source_segment(source, node)
                 assert func_source is not None, f"Could not get source for {node.name}"
                 assert "_is_user_busy" in func_source, (
-                    f"{node.name} is missing _is_user_busy guard — "
-                    f"it mutates chat_state and will race with streaming"
+                    f"{node.name} is missing _is_user_busy guard — it mutates chat_state and will race with streaming"
                 )
-                handlers_needing_guard = [
-                    h for h in handlers_needing_guard if h != node.name
-                ]
+                handlers_needing_guard = [h for h in handlers_needing_guard if h != node.name]
 
-    assert not handlers_needing_guard, (
-        f"Handlers not found in callbacks.py: {handlers_needing_guard}"
-    )
-
+    assert not handlers_needing_guard, f"Handlers not found in callbacks.py: {handlers_needing_guard}"

@@ -27,11 +27,15 @@ class TestCheckDuplicateFile:
     @pytest.mark.asyncio
     @patch("app.documents.repository.database")
     async def test_returns_duplicate_info(self, mock_db):
-        mock_db.db_query = AsyncMock(return_value=[{
-            "id": 42,
-            "filename": "test.pdf",
-            "created_at": "2026-01-01",
-        }])
+        mock_db.db_query = AsyncMock(
+            return_value=[
+                {
+                    "id": 42,
+                    "filename": "test.pdf",
+                    "created_at": "2026-01-01",
+                }
+            ]
+        )
         result = await check_duplicate_file(1, "abc123", "test.pdf")
         assert result is not None
         assert result["id"] == 42
@@ -48,9 +52,8 @@ class TestCheckDuplicateFile:
     @patch("app.documents.repository.database")
     async def test_returns_none_on_db_error(self, mock_db):
         import asyncpg
-        mock_db.db_query = AsyncMock(
-            side_effect=asyncpg.PostgresError("connection error")
-        )
+
+        mock_db.db_query = AsyncMock(side_effect=asyncpg.PostgresError("connection error"))
         result = await check_duplicate_file(1, "abc123", "test.pdf")
         assert result is None
 
@@ -82,9 +85,8 @@ class TestCheckDocumentLimit:
     @patch("app.documents.repository.database")
     async def test_error_allows_upload(self, mock_db, mock_settings):
         import asyncpg
-        mock_db.db_query = AsyncMock(
-            side_effect=asyncpg.InterfaceError("timeout")
-        )
+
+        mock_db.db_query = AsyncMock(side_effect=asyncpg.InterfaceError("timeout"))
         result = await check_document_limit(1)
         assert result is True  # Permissive default
 
@@ -138,9 +140,8 @@ class TestDeleteDocument:
     @patch("app.documents.repository.database")
     async def test_returns_false_on_error(self, mock_db):
         import asyncpg
-        mock_db.db_query = AsyncMock(
-            side_effect=asyncpg.PostgresError("oops")
-        )
+
+        mock_db.db_query = AsyncMock(side_effect=asyncpg.PostgresError("oops"))
         result = await delete_document(42, 1)
         assert result is False
 
@@ -152,9 +153,7 @@ class TestDeleteAllUserDocuments:
     @pytest.mark.asyncio
     @patch("app.documents.repository.database")
     async def test_returns_count(self, mock_db):
-        mock_db.db_query = AsyncMock(
-            return_value=[{"id": 1}, {"id": 2}, {"id": 3}]
-        )
+        mock_db.db_query = AsyncMock(return_value=[{"id": 1}, {"id": 2}, {"id": 3}])
         count = await delete_all_user_documents(1)
         assert count == 3
 
@@ -173,11 +172,15 @@ class TestGetDocumentStats:
     @pytest.mark.asyncio
     @patch("app.documents.repository.database")
     async def test_returns_stats(self, mock_db):
-        mock_db.db_query = AsyncMock(return_value=[{
-            "doc_count": 10,
-            "total_size": 50000,
-            "avg_size": 5000,
-        }])
+        mock_db.db_query = AsyncMock(
+            return_value=[
+                {
+                    "doc_count": 10,
+                    "total_size": 50000,
+                    "avg_size": 5000,
+                }
+            ]
+        )
         stats = await get_document_stats()
         assert stats["total_documents"] == 10
         assert stats["total_size_chars"] == 50000
@@ -187,9 +190,8 @@ class TestGetDocumentStats:
     @patch("app.documents.repository.database")
     async def test_returns_zeros_on_error(self, mock_db):
         import asyncpg
-        mock_db.db_query = AsyncMock(
-            side_effect=asyncpg.PostgresError("fail")
-        )
+
+        mock_db.db_query = AsyncMock(side_effect=asyncpg.PostgresError("fail"))
         stats = await get_document_stats()
         assert stats["total_documents"] == 0
         assert stats["total_size_mb"] == 0
@@ -202,10 +204,12 @@ class TestGetUserDocumentStats:
     @pytest.mark.asyncio
     @patch("app.documents.repository.database")
     async def test_returns_user_stats(self, mock_db):
-        mock_db.db_query = AsyncMock(side_effect=[
-            [{"doc_count": 3}],
-            [{"total_size": 15000, "avg_size": 5000}],
-        ])
+        mock_db.db_query = AsyncMock(
+            side_effect=[
+                [{"doc_count": 3}],
+                [{"total_size": 15000, "avg_size": 5000}],
+            ]
+        )
         stats = await get_user_document_stats(1)
         assert stats["document_count"] == 3
         assert stats["can_upload"] is True
@@ -213,10 +217,12 @@ class TestGetUserDocumentStats:
     @pytest.mark.asyncio
     @patch("app.documents.repository.database")
     async def test_limit_reached_at_five(self, mock_db):
-        mock_db.db_query = AsyncMock(side_effect=[
-            [{"doc_count": 5}],
-            [{"total_size": 25000, "avg_size": 5000}],
-        ])
+        mock_db.db_query = AsyncMock(
+            side_effect=[
+                [{"doc_count": 5}],
+                [{"total_size": 25000, "avg_size": 5000}],
+            ]
+        )
         stats = await get_user_document_stats(1)
         assert stats["limit_reached"] is True
         assert stats["can_upload"] is False

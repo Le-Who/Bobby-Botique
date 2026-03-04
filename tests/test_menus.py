@@ -210,9 +210,7 @@ def verify_button(
     Verify a button at specific position has expected text and callback.
     Works with both mocked and real Telegram buttons.
     """
-    assert 0 <= row < len(keyboard), (
-        f"Row index {row} out of bounds. Keyboard has {len(keyboard)} rows"
-    )
+    assert 0 <= row < len(keyboard), f"Row index {row} out of bounds. Keyboard has {len(keyboard)} rows"
     assert 0 <= col < len(keyboard[row]), (
         f"Column index {col} out of bounds. Row {row} has {len(keyboard[row])} columns"
     )
@@ -220,13 +218,9 @@ def verify_button(
     button = keyboard[row][col]
 
     if partial_match:
-        assert expected_text in button.text, (
-            f"Expected '{expected_text}' in button text, got '{button.text}'"
-        )
+        assert expected_text in button.text, f"Expected '{expected_text}' in button text, got '{button.text}'"
     else:
-        assert button.text == expected_text, (
-            f"Expected button text '{expected_text}', got '{button.text}'"
-        )
+        assert button.text == expected_text, f"Expected button text '{expected_text}', got '{button.text}'"
 
     assert button.callback_data == expected_callback, (
         f"Expected callback '{expected_callback}', got '{button.callback_data}'"
@@ -242,25 +236,19 @@ def verify_response_structure(
     assert len(response) == 3, f"Expected 3-tuple, got {len(response)} elements"
     text, parse_mode, reply_markup = response
     assert isinstance(text, str), f"Expected text to be str, got {type(text)}"
-    assert parse_mode == expected_parse_mode, (
-        f"Expected parse_mode '{expected_parse_mode}', got '{parse_mode}'"
-    )
+    assert parse_mode == expected_parse_mode, f"Expected parse_mode '{expected_parse_mode}', got '{parse_mode}'"
 
     if not allow_none_markup:
         assert reply_markup is not None, "Expected reply_markup, got None"
 
 
-def find_button_by_text(
-    keyboard: list[list[Any]], text_substring: str
-) -> tuple[int, int]:
+def find_button_by_text(keyboard: list[list[Any]], text_substring: str) -> tuple[int, int]:
     """Find button position by text substring."""
     for row_idx, row in enumerate(keyboard):
         for col_idx, button in enumerate(row):
             if text_substring in button.text:
                 return row_idx, col_idx
-    raise AssertionError(
-        f"Button with text containing '{text_substring}' not found in keyboard"
-    )
+    raise AssertionError(f"Button with text containing '{text_substring}' not found in keyboard")
 
 
 def extract_button_texts(keyboard: list[list[Any]]) -> list[str]:
@@ -348,9 +336,7 @@ async def test_start_menu_content_search_off_prompt_unset():
 @pytest.mark.asyncio
 async def test_start_menu_buttons_structure():
     """Verify the overall structure of the start menu buttons."""
-    chat_state = ChatState(
-        model="test-model", search_enabled=True, system_prompt="test"
-    )
+    chat_state = ChatState(model="test-model", search_enabled=True, system_prompt="test")
 
     get_start_menu_content, _ = get_menu_methods()
     response = await get_start_menu_content(chat_state)
@@ -361,9 +347,7 @@ async def test_start_menu_buttons_structure():
 
     # Find and verify buttons dynamically
     new_chat_pos = find_button_by_text(keyboard, "Новый чат")
-    verify_button(
-        keyboard, *new_chat_pos, "💬 Новый чат", "new_chat", partial_match=True
-    )
+    verify_button(keyboard, *new_chat_pos, "💬 Новый чат", "new_chat", partial_match=True)
 
     models_pos = find_button_by_text(keyboard, "Модель")
     verify_button(keyboard, *models_pos, "🧠 Модель AI", "model_menu", partial_match=True)
@@ -385,9 +369,7 @@ async def test_start_menu_buttons_structure():
 @pytest.mark.unit
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_get_model_menu_content_gemini_only(
-    mock_get_keys, mock_settings_obj, mock_context
-):
+def test_get_model_menu_content_gemini_only(mock_get_keys, mock_settings_obj, mock_context):
     """Test model menu with only Gemini models available."""
     mock_settings_obj.AVAILABLE_MODELS = ["gemini-pro", "gemini-flash"]
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
@@ -422,9 +404,7 @@ def test_get_model_menu_content_gemini_only(
 @pytest.mark.unit
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_get_model_menu_content_openrouter_only(
-    mock_get_keys, mock_settings_obj, mock_context
-):
+def test_get_model_menu_content_openrouter_only(mock_get_keys, mock_settings_obj, mock_context):
     """Test model menu with only OpenRouter models available."""
     mock_settings_obj.AVAILABLE_MODELS = []
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = [
@@ -482,9 +462,7 @@ def test_get_model_menu_content_mixed(mock_get_keys, mock_settings_obj, mock_con
 @pytest.mark.unit
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_get_model_menu_content_no_models(
-    mock_get_keys, mock_settings_obj, mock_context
-):
+def test_get_model_menu_content_no_models(mock_get_keys, mock_settings_obj, mock_context):
     """Test model menu when no models are available."""
     mock_settings_obj.AVAILABLE_MODELS = []
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
@@ -494,9 +472,7 @@ def test_get_model_menu_content_no_models(
 
     _, get_model_menu_content = get_menu_methods()
     response = get_model_menu_content(chat_state, mock_context)
-    verify_response_structure(
-        response, expected_parse_mode=None, allow_none_markup=True
-    )
+    verify_response_structure(response, expected_parse_mode=None, allow_none_markup=True)
     text, _, reply_markup = response
 
     # Should show error message
@@ -548,9 +524,7 @@ def test_context_update(mock_get_keys, mock_settings_obj, mock_context):
 @pytest.mark.asyncio
 async def test_start_menu_edge_cases(model, search_enabled, prompt):
     """Test start menu with edge case inputs."""
-    chat_state = ChatState(
-        model=model, search_enabled=search_enabled, system_prompt=prompt
-    )
+    chat_state = ChatState(model=model, search_enabled=search_enabled, system_prompt=prompt)
 
     get_start_menu_content, _ = get_menu_methods()
     response = await get_start_menu_content(chat_state)
@@ -565,9 +539,7 @@ async def test_start_menu_edge_cases(model, search_enabled, prompt):
 @pytest.mark.unit
 @patch("app.handlers.menus.settings")
 @patch("app.handlers.menus.get_openrouter_keys")
-def test_model_menu_nonexistent_selected_model(
-    mock_get_keys, mock_settings_obj, mock_context
-):
+def test_model_menu_nonexistent_selected_model(mock_get_keys, mock_settings_obj, mock_context):
     """Test model menu when selected model is not in available models."""
     mock_settings_obj.AVAILABLE_MODELS = ["gemini-pro"]
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
@@ -608,9 +580,7 @@ def test_find_button_by_text_not_found():
     """Test that find_button_by_text raises AssertionError when button not found."""
     keyboard = [[MockInlineKeyboardButton("Test", "callback")]]
 
-    with pytest.raises(
-        AssertionError, match="Button with text containing .* not found"
-    ):
+    with pytest.raises(AssertionError, match="Button with text containing .* not found"):
         find_button_by_text(keyboard, "Nonexistent")
 
 
@@ -652,9 +622,7 @@ def test_integration_real_telegram_buttons(menus_module, mock_context):
 
         chat_state = ChatState(model="gemini-flash-latest")
 
-        text, parse_mode, reply_markup = menus_module.get_model_menu_content(
-            chat_state, mock_context
-        )
+        text, parse_mode, reply_markup = menus_module.get_model_menu_content(chat_state, mock_context)
 
     # Verify structure with real Telegram objects
     assert "Google Gemini" in text

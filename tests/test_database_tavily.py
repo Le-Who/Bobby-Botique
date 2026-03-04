@@ -29,12 +29,13 @@ async def test_force_update_tavily_keys():
     mock_lock.__aenter__.return_value = None
     mock_lock.__aexit__.return_value = None
 
-    with patch("app.config.get_settings", return_value=mock_settings), \
-         patch.object(keys_mod, "encrypt_api_key", side_effect=lambda k: f"enc_{k}"), \
-         patch.object(keys_mod, "db_query", new_callable=AsyncMock) as mock_db_query, \
-         patch.object(keys_mod, "db_execute_many", new_callable=AsyncMock) as mock_db_exec_many, \
-         patch.object(keys_mod, "db_manager") as mock_db_manager:
-
+    with (
+        patch("app.config.get_settings", return_value=mock_settings),
+        patch.object(keys_mod, "encrypt_api_key", side_effect=lambda k: f"enc_{k}"),
+        patch.object(keys_mod, "db_query", new_callable=AsyncMock) as mock_db_query,
+        patch.object(keys_mod, "db_execute_many", new_callable=AsyncMock) as mock_db_exec_many,
+        patch.object(keys_mod, "db_manager") as mock_db_manager,
+    ):
         mock_db_manager._cache_lock = mock_lock
         mock_db_manager._active_keys_cache = {}
 
@@ -63,10 +64,12 @@ async def test_force_update_tavily_keys_empty():
 
     from app.repos import keys as keys_mod
 
-    with patch("app.config.get_settings", return_value=mock_settings), \
-         patch.object(keys_mod, "db_query", new_callable=AsyncMock) as mock_db_query, \
-         patch.object(keys_mod, "db_execute_many", new_callable=AsyncMock), \
-         patch.object(keys_mod, "db_manager") as mock_db_manager:
+    with (
+        patch("app.config.get_settings", return_value=mock_settings),
+        patch.object(keys_mod, "db_query", new_callable=AsyncMock) as mock_db_query,
+        patch.object(keys_mod, "db_execute_many", new_callable=AsyncMock),
+        patch.object(keys_mod, "db_manager") as mock_db_manager,
+    ):
         mock_db_manager._cache_lock = AsyncMock()
         mock_db_manager._cache_lock.__aenter__.return_value = None
         mock_db_manager._cache_lock.__aexit__.return_value = None

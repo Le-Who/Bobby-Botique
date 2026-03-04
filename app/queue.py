@@ -49,9 +49,7 @@ class TaskQueue:
 
     def __init__(self, max_workers: int = 3):
         self.max_workers = max_workers
-        self.queue: asyncio.PriorityQueue = asyncio.PriorityQueue(
-            maxsize=100
-        )  # prevent unbounded queue growth
+        self.queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=100)  # prevent unbounded queue growth
         self.tasks: dict[str, Task] = {}
         self.workers: list[asyncio.Task] = []
         self.running = False
@@ -125,11 +123,13 @@ class TaskQueue:
     ) -> asyncio.Task:
         """Запускает фоновую задачу с защитой от повторного старта."""
         from app.utils.background_tasks import start_background_task
+
         return start_background_task(task_ref, coro_factory, task_name)
 
     async def _cancel_background_task(self, attr_name: str):
         """Отменяет и ожидает завершение фоновой задачи по имени атрибута."""
         from app.utils.background_tasks import cancel_background_task
+
         await cancel_background_task(self, attr_name)
 
     async def add_task(
@@ -160,9 +160,7 @@ class TaskQueue:
 
         # Add в queue (onоритет - это отрицательное число, чтобы высокий onоритет был первым)
         try:
-            await asyncio.wait_for(
-                self.queue.put((-priority.value, task_id)), timeout=2.0
-            )
+            await asyncio.wait_for(self.queue.put((-priority.value, task_id)), timeout=2.0)
         except TimeoutError:
             async with self._lock:
                 self.tasks.pop(task_id, None)
@@ -235,9 +233,7 @@ class TaskQueue:
                             if task.retry_count < task.max_retries:
                                 task.status = TaskStatus.PENDING
                                 # Повторно добавляем в queue с более нfromким onоритетом
-                                await self.queue.put(
-                                    (-task.priority.value + 1, task_id)
-                                )
+                                await self.queue.put((-task.priority.value + 1, task_id))
                             else:
                                 task.status = TaskStatus.FAILED
                                 task.completed_at = datetime.now()
@@ -275,7 +271,7 @@ class TaskQueue:
                 return {"status": "failed", "error": "Missing required parameters"}
 
             # Process document
-            result = await process_uploaded_document(file_data, filename, user_id)
+            result = await process_uploaded_document(file_data, str(filename), int(user_id))  # type: ignore[arg-type]
 
             if result.get("error"):
                 return {"status": "failed", "error": result["error"]}
@@ -318,9 +314,7 @@ class TaskQueue:
             try:
                 await asyncio.sleep(3600)  # Check каждый час
 
-                cutoff_time = datetime.now() - timedelta(
-                    days=7
-                )  # Delete задачи старше недели
+                cutoff_time = datetime.now() - timedelta(days=7)  # Delete задачи старше недели
 
                 async with self._lock:
                     tasks_to_remove = [
@@ -361,18 +355,10 @@ class TaskQueue:
         """Возвращает статистику очереди"""
         async with self._lock:
             total_tasks = len(self.tasks)
-            pending_tasks = sum(
-                1 for task in self.tasks.values() if task.status == TaskStatus.PENDING
-            )
-            running_tasks = sum(
-                1 for task in self.tasks.values() if task.status == TaskStatus.RUNNING
-            )
-            completed_tasks = sum(
-                1 for task in self.tasks.values() if task.status == TaskStatus.COMPLETED
-            )
-            failed_tasks = sum(
-                1 for task in self.tasks.values() if task.status == TaskStatus.FAILED
-            )
+            pending_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.PENDING)
+            running_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.RUNNING)
+            completed_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.COMPLETED)
+            failed_tasks = sum(1 for task in self.tasks.values() if task.status == TaskStatus.FAILED)
 
             return {
                 "total_tasks": total_tasks,

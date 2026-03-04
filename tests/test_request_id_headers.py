@@ -15,9 +15,7 @@ async def test_tavily_api_call_adds_request_id_header():
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"ok": True}
 
-    with patch(
-        "app.search_services.http_client.post", new=AsyncMock(return_value=mock_response)
-    ) as mock_post:
+    with patch("app.search_services.http_client.post", new=AsyncMock(return_value=mock_response)) as mock_post:
         result = await _tavily_api_call({"query": "hello"})
 
     assert result == {"ok": True}
@@ -41,9 +39,7 @@ async def test_openrouter_request_adds_request_id_header():
     }
 
     with (
-        patch(
-            "app.ai_provider._openrouter_http_client.post", new=AsyncMock(return_value=mock_response)
-        ) as mock_post,
+        patch("app.ai_provider._openrouter_http_client.post", new=AsyncMock(return_value=mock_response)) as mock_post,
         patch("app.ai_provider.metrics_collector.record_api_call", new=AsyncMock()),
         patch("app.ai_provider.metrics_collector.record_error", new=AsyncMock()),
         patch("app.ai_provider.api_logger.log_gemini_response", new=MagicMock()),
@@ -60,8 +56,6 @@ async def test_openrouter_request_adds_request_id_header():
     assert resp.text == "ok"
     assert resp.token_count == 7
     assert mock_post.await_count == 1
-    assert (
-        mock_post.await_args.kwargs["headers"]["X-Request-ID"] == "req-openrouter-456"
-    )
+    assert mock_post.await_args.kwargs["headers"]["X-Request-ID"] == "req-openrouter-456"
 
     clear_request_id()

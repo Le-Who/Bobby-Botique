@@ -17,20 +17,14 @@ async def insert_initial_data(db_query, db_execute_many, settings):
 
     from app.crypto import encrypt_api_key
 
-    gemini_data = [
-        (hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key))
-        for key in settings.GEMINI_API_KEYS
-    ]
+    gemini_data = [(hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key)) for key in settings.GEMINI_API_KEYS]
     if gemini_data:
         await db_execute_many(
             "INSERT INTO api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO UPDATE SET api_key = EXCLUDED.api_key",
             gemini_data,
         )
 
-    tavily_data = [
-        (hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key))
-        for key in settings.TAVILY_API_KEYS
-    ]
+    tavily_data = [(hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key)) for key in settings.TAVILY_API_KEYS]
     if tavily_data:
         await db_execute_many(
             "INSERT INTO tavily_api_keys (key_hash, api_key) VALUES ($1, $2) ON CONFLICT (key_hash) DO UPDATE SET api_key = EXCLUDED.api_key",
@@ -38,8 +32,7 @@ async def insert_initial_data(db_query, db_execute_many, settings):
         )
 
     openrouter_data = [
-        (hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key))
-        for key in settings.OPENROUTER_API_KEYS
+        (hashlib.sha256(key.encode()).hexdigest(), encrypt_api_key(key)) for key in settings.OPENROUTER_API_KEYS
     ]
     if openrouter_data:
         await db_execute_many(
@@ -51,16 +44,11 @@ async def insert_initial_data(db_query, db_execute_many, settings):
     await db_query(
         "CREATE INDEX IF NOT EXISTS idx_conversation_messages_conv_id ON conversation_messages(conversation_id)"
     )
-    await db_query(
-        "CREATE INDEX IF NOT EXISTS idx_key_usage_model_date ON key_usage(model_name, usage_date)"
-    )
+    await db_query("CREATE INDEX IF NOT EXISTS idx_key_usage_model_date ON key_usage(model_name, usage_date)")
 
     # Sync model limits from settings → DB (single source of truth)
     if settings.DAILY_LIMITS:
-        limits_data = [
-            (model, limit, "Google")
-            for model, limit in settings.DAILY_LIMITS.items()
-        ]
+        limits_data = [(model, limit, "Google") for model, limit in settings.DAILY_LIMITS.items()]
         if limits_data:
             await db_execute_many(
                 """INSERT INTO model_configuration (model_name, daily_limit, provider)
@@ -69,8 +57,6 @@ async def insert_initial_data(db_query, db_execute_many, settings):
                    SET daily_limit = EXCLUDED.daily_limit, provider = EXCLUDED.provider""",
                 limits_data,
             )
-            logging.info(
-                "Synced %d model limits from config to DB.", len(limits_data)
-            )
+            logging.info("Synced %d model limits from config to DB.", len(limits_data))
 
     logging.info("Initial data seeded.")

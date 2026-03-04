@@ -25,9 +25,7 @@ async def get_user_custom_roles_full(user_id: int) -> list[dict[str, Any]]:
 
 async def get_custom_role_count(user_id: int) -> int:
     """Returns number of custom roles for a user."""
-    result = await db.db_query(
-        "SELECT COUNT(*) as count FROM user_roles WHERE user_id = $1", (user_id,)
-    )
+    result = await db.db_query("SELECT COUNT(*) as count FROM user_roles WHERE user_id = $1", (user_id,))
     return result[0]["count"] if result else 0
 
 
@@ -50,9 +48,7 @@ async def create_custom_role(user_id: int, title: str, prompt: str) -> None:
 
 async def delete_custom_role(role_id: int, user_id: int) -> None:
     """Deletes a custom role by ID (scoped to user_id for security)."""
-    await db.db_query(
-        "DELETE FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id)
-    )
+    await db.db_query("DELETE FROM user_roles WHERE id = $1 AND user_id = $2", (role_id, user_id))
 
 
 async def rename_custom_role(role_id: int, user_id: int, new_title: str) -> None:

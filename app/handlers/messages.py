@@ -62,6 +62,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Hydrate persisted user state from DB (lazy, fast no-op if already loaded)
     from app.state import ensure_state_loaded
+
     await ensure_state_loaded(user_id)
 
     request_id = set_request_id(f"tgmsg-{chat_id}-{getattr(update, 'update_id', 'na')}")
@@ -83,13 +84,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # ── 2. Telegram API logging ──────────────────────────────────────────
-        message_type = (
-            "photo"
-            if update.message.photo
-            else "text"
-            if update.message.text
-            else "other"
-        )
+        message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
         start_time = api_logger.log_telegram_request(
             method="handle_message",
             chat_id=chat_id,
@@ -98,16 +93,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
         # ── 3. Validation ────────────────────────────────────────────────────
-        message_text = (
-            update.message.text if update.message and update.message.text else "No text"
-        )
+        message_text = update.message.text if update.message and update.message.text else "No text"
         if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
-            logging.warning(
-                "Message too long from user %s: %d chars", user_id, len(message_text)
-            )
+            logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
             await update.message.reply_text(
-                "❌ Сообщение слишком длинное. Максимум 4096 символов.\n"
-                "Сократите текст и отправьте снова."
+                "❌ Сообщение слишком длинное. Максимум 4096 символов.\nСократите текст и отправьте снова."
             )
             return
 
@@ -141,9 +131,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
         if await handle_manual_role_input(update, context, user_id):
             return
-        if await handle_custom_role_generation(
-            update, context, user_id, chat_id, message_text
-        ):
+        if await handle_custom_role_generation(update, context, user_id, chat_id, message_text):
             return
 
         # ── 6. Document mode ─────────────────────────────────────────────────
@@ -153,6 +141,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # ── 7. Save last user input for retry button ─────────────────────────
         try:
             from app.state import set_last_sent_message
+
             if update.message and update.message.text:
                 set_last_sent_message(user_id, update.message.text)
         except Exception:
@@ -163,9 +152,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if is_photo:
             logging.info("Processing single photo from user %s", user_id)
-            placeholder_message = await update.message.reply_text(
-                "🖼️ Обрабатываю изображение..."
-            )
+            placeholder_message = await update.message.reply_text("🖼️ Обрабатываю изображение...")
         else:
             logging.info("Processing text message from user %s", user_id)
             placeholder_message = await update.message.reply_text("🤔 Думаю...")
@@ -210,12 +197,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
                         try:
                             from app.handlers.agent import process_long_request
+
                             await process_long_request(placeholder_message, update, context)
                         except ImportError:
                             stop_heartbeat(placeholder_message.message_id)
-                            await placeholder_message.edit_text(
-                                "🤔 Обрабатываю ваш запрос... (упрощенный режим)"
-                            )
+                            await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
 
                         done_event.set()
                         heartbeat_task.cancel()
@@ -223,6 +209,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         logging.info("Completed task processing for user %s", user_id)
 
                     import time as _time
+
                     elapsed = _time.time() - start_time
                     api_logger.log_telegram_response(
                         start_time=start_time,
@@ -231,25 +218,23 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         chat_id=chat_id,
                         user_id=user_id,
                     )
-                    await metrics_collector.record_request(
-                        "handle_message", elapsed, success=True, user_id=user_id
-                    )
+                    await metrics_collector.record_request("handle_message", elapsed, success=True, user_id=user_id)
 
             except Exception as e:
-                logging.error(
-                    "Error in task wrapper for user %s: %s", user_id, e, exc_info=True
-                )
+                logging.error("Error in task wrapper for user %s: %s", user_id, e, exc_info=True)
                 try:
                     stop_heartbeat(placeholder_message.message_id)
                     from app.errors import build_retry_and_roles_keyboard
+
                     await placeholder_message.edit_text(
                         "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз.",
-                        reply_markup=build_retry_and_roles_keyboard()
+                        reply_markup=build_retry_and_roles_keyboard(),
                     )
                 except (BadRequest, NetworkError) as edit_error:
                     logging.error("Could not edit placeholder message: %s", edit_error)
 
                 import time as _time
+
                 elapsed = _time.time() - start_time
                 api_logger.log_telegram_response(
                     start_time=start_time,
@@ -257,11 +242,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     success=False,
                     chat_id=chat_id,
                     user_id=user_id,
-                    error=str(e),
+                    error_message=str(e),
                 )
-                await metrics_collector.record_request(
-                    "handle_message", elapsed, success=False, user_id=user_id
-                )
+                await metrics_collector.record_request("handle_message", elapsed, success=False, user_id=user_id)
             finally:
                 unregister_heartbeat(placeholder_message.message_id)
                 if not done_event.is_set():
@@ -274,8 +257,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 def register(application: Application) -> None:
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_request)
-    )
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_request))
     application.add_handler(MessageHandler(filters.PHOTO, handle_request))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_request))

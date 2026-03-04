@@ -27,9 +27,7 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
         if chat_state and chat_state.history:
             from app.repos.analytics import generate_auto_title
 
-            title = generate_auto_title(
-                chat_state.history if isinstance(chat_state.history, list) else []
-            )
+            title = generate_auto_title(chat_state.history if isinstance(chat_state.history, list) else [])
         else:
             title = f"Беседа от {datetime.now().strftime('%d.%m.%Y %H:%M')}"
     else:
@@ -70,22 +68,16 @@ async def conversations_command(update: Update, context: ContextTypes.DEFAULT_TY
     if context.args and context.args[0].isdigit():
         page = int(context.args[0])
 
-    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(
-        user_id, page
-    )
+    text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, page)
 
     if reply_markup is None:
         await update.message.reply_text(text)
     else:
-        await update.message.reply_text(
-            text, parse_mode=parse_mode, reply_markup=reply_markup
-        )
+        await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
 @authorized_only
-async def switch_conversation_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def switch_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     """Переключиться на беседу"""
     user_id = update.effective_user.id
@@ -104,52 +96,38 @@ async def switch_conversation_command(
         await role_conv_metrics.record_conversation_switched()
         await update.message.reply_text(f"✅ Переключились на беседу {conv_id}")
     else:
-        await update.message.reply_text(
-            "❌ Беседа не найдена или у вас нет доступа к ней"
-        )
+        await update.message.reply_text("❌ Беседа не найдена или у вас нет доступа к ней")
 
 
 @authorized_only
-async def rename_conversation_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def rename_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     """Переименовать беседу"""
     user_id = update.effective_user.id
 
     args = context.args
-    if len(args) < 2 or not args[0].isdigit():
-        await update.message.reply_text(
-            "Использование: /rename <ID беседы> <новое название>"
-        )
+    if not args or len(args) < 2 or not args[0].isdigit():
+        await update.message.reply_text("Использование: /rename <ID беседы> <новое название>")
         return
 
     conv_id = int(args[0])
     new_title = " ".join(args[1:])
 
     if len(new_title) > 100:
-        await update.message.reply_text(
-            "❌ Название беседы слишком длинное (максимум 100 символов)"
-        )
+        await update.message.reply_text("❌ Название беседы слишком длинное (максимум 100 символов)")
         return
 
     success = await rename_conversation(user_id, conv_id, new_title)
 
     if success:
         await role_conv_metrics.record_conversation_renamed()
-        await update.message.reply_text(
-            f"✅ Беседа {conv_id} переименована в '{new_title}'"
-        )
+        await update.message.reply_text(f"✅ Беседа {conv_id} переименована в '{new_title}'")
     else:
-        await update.message.reply_text(
-            "❌ Беседа не найдена или у вас нет доступа к ней"
-        )
+        await update.message.reply_text("❌ Беседа не найдена или у вас нет доступа к ней")
 
 
 @authorized_only
-async def delete_conversation_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def delete_conversation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for получения argumentов команды
     """Удалить беседу"""
 
@@ -164,11 +142,7 @@ async def delete_conversation_command(
 
     # Подтверждение удаления
     keyboard = [
-        [
-            InlineKeyboardButton(
-                "✅ Да, удалить", callback_data=f"conv_delete_confirm:{conv_id}"
-            )
-        ],
+        [InlineKeyboardButton("✅ Да, удалить", callback_data=f"conv_delete_confirm:{conv_id}")],
         [InlineKeyboardButton("❌ Отмена", callback_data="conv_delete_cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)

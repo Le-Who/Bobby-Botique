@@ -64,16 +64,12 @@ class TestMetricsIntegration(unittest.TestCase):
 
                 # Validate dictionaries have been updated properly
                 today = self.metrics_module.date.today().isoformat()
-                self.assertEqual(
-                    self.collector.daily_metrics.get(today).api_calls["gemini"], 1
-                )
+                self.assertEqual(self.collector.daily_metrics.get(today).api_calls["gemini"], 1)
 
                 # We expect 2 items in the error log to be saved
                 self.assertEqual(len(self.collector.error_log), 2)
                 self.assertFalse(self.collector.error_log[0]["saved"])
-                self.assertEqual(
-                    self.collector.error_log[0]["request_id"], "test_rid_123"
-                )
+                self.assertEqual(self.collector.error_log[0]["request_id"], "test_rid_123")
 
                 # 4. Trigger Batch Save
                 await self.collector._save_metrics_to_db()
@@ -92,12 +88,8 @@ class TestMetricsIntegration(unittest.TestCase):
 
                 # Validate the contents of the parameter list matches the error logs
                 # params structure: (type, message, request_id)
-                self.assertEqual(
-                    params_list[0], ("TestError", "Simulated Error 1", "test_rid_123")
-                )
-                self.assertEqual(
-                    params_list[1], ("AuthError", "Simulated Error 2", "test_rid_123")
-                )
+                self.assertEqual(params_list[0], ("TestError", "Simulated Error 1", "test_rid_123"))
+                self.assertEqual(params_list[1], ("AuthError", "Simulated Error 2", "test_rid_123"))
 
                 # Verify items are marked as saved
                 self.assertTrue(self.collector.error_log[0]["saved"])

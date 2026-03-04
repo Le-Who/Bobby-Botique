@@ -211,6 +211,7 @@ While primarily a Telegram bot, the project includes a web frontend for administ
 | **Doc Processing** | `pypdf`, `python-docx`          | Text extraction from files             |
 | **Monitoring**     | Custom Prometheus exporter      | Zero-dep `/metrics` endpoint           |
 | **Linting**        | Ruff (`pyproject.toml`)         | F, B, I, UP, SIM, E, C4, PIE, T20, RUF |
+| **Type Checking**  | Mypy                            | Static type analysis (0 errors)        |
 | **CI/CD**          | GitHub Actions                  | Lint → Test → Docker Build             |
 | **Container**      | Docker                          | Standardization and deployment         |
 

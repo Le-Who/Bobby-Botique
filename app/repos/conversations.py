@@ -62,7 +62,7 @@ async def get_role_data(role_key: str, user_id: int) -> dict[str, Any] | None:
 
 @timed_operation("save_conversation")
 async def save_conversation(
-    user_id: int, title: str, role_type: str = None, role_id: int = None
+    user_id: int, title: str, role_type: str | None = None, role_id: int | None = None
 ) -> int | None:
     try:
         from app.repos.chats import get_user_chat
@@ -78,9 +78,7 @@ async def save_conversation(
         conv_id = result[0]["id"] if result else None
         if conv_id and chat_state.history:
             try:
-                await db_query(
-                    "CALL save_chat_to_conversation($1, $2)", (user_id, conv_id)
-                )
+                await db_query("CALL save_chat_to_conversation($1, $2)", (user_id, conv_id))
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.error("Error saving conversation messages via Procedure: %s", e, exc_info=True)
         return conv_id
@@ -89,9 +87,7 @@ async def save_conversation(
         return None
 
 
-async def get_user_conversations(
-    user_id: int, limit: int = 10, offset: int = 0
-) -> list[dict[str, Any]]:
+async def get_user_conversations(user_id: int, limit: int = 10, offset: int = 0) -> list[dict[str, Any]]:
     try:
         result = await db_query(
             """SELECT c.id, c.title, c.role_type, c.role_id, c.summary, c.token_budget, c.created_at,
@@ -121,9 +117,7 @@ async def get_user_conversations(
         return []
 
 
-async def get_conversation_messages(
-    conversation_id: int, user_id: int, *, conn=None
-) -> list[dict[str, Any]] | None:
+async def get_conversation_messages(conversation_id: int, user_id: int, *, conn=None) -> list[dict[str, Any]] | None:
     try:
         query = """
             SELECT cm.role, cm.content, cm.created_at
@@ -176,13 +170,12 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                 return False
 
             await db_query(
-                "DELETE FROM active_chat_messages WHERE user_id = $1", (user_id,),
+                "DELETE FROM active_chat_messages WHERE user_id = $1",
+                (user_id,),
                 conn=conn,
             )
             if messages:
-                insert_data = [
-                    (user_id, msg["role"], str(msg.get("content", ""))) for msg in messages
-                ]
+                insert_data = [(user_id, msg["role"], str(msg.get("content", ""))) for msg in messages]
                 await db_execute_many(
                     "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
                     insert_data,
@@ -190,7 +183,8 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                 )
 
             await db_query(
-                "UPDATE chats SET token_count = 0 WHERE user_id = $1", (user_id,),
+                "UPDATE chats SET token_count = 0 WHERE user_id = $1",
+                (user_id,),
                 conn=conn,
             )
 
@@ -198,12 +192,14 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                 role_data = None
                 if role_type == "role":
                     role_data = await db_query(
-                        "SELECT prompt FROM roles WHERE id = $1", (role_id,),
+                        "SELECT prompt FROM roles WHERE id = $1",
+                        (role_id,),
                         conn=conn,
                     )
                 elif role_type == "user_role":
                     role_data = await db_query(
-                        "SELECT prompt FROM user_roles WHERE id = $1", (role_id,),
+                        "SELECT prompt FROM user_roles WHERE id = $1",
+                        (role_id,),
                         conn=conn,
                     )
 
@@ -216,10 +212,7 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
 
         # Invalidate cache outside the transaction (non-critical)
         async with db_manager._cache_lock:
-            if (
-                hasattr(db_manager, "_active_chats_cache")
-                and user_id in db_manager._active_chats_cache
-            ):
+            if hasattr(db_manager, "_active_chats_cache") and user_id in db_manager._active_chats_cache:
                 del db_manager._active_chats_cache[user_id]
 
         return True
@@ -227,9 +220,7 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
         return False
 
 
-async def rename_conversation(
-    user_id: int, conversation_id: int, new_title: str
-) -> bool:
+async def rename_conversation(user_id: int, conversation_id: int, new_title: str) -> bool:
     try:
         result = await db_query(
             "UPDATE conversations SET title = $1 WHERE id = $2 AND user_id = $3",
@@ -266,9 +257,7 @@ async def delete_conversation(user_id: int, conversation_id: int) -> bool:
 
 async def get_conversation_count(user_id: int) -> int:
     try:
-        result = await db_query(
-            "SELECT COUNT(*) FROM conversations WHERE user_id = $1", (user_id,)
-        )
+        result = await db_query("SELECT COUNT(*) FROM conversations WHERE user_id = $1", (user_id,))
         return result[0]["count"] if result else 0
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return 0

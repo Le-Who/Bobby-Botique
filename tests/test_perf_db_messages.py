@@ -14,9 +14,7 @@ def get_database():
 
     import app.database
 
-    if "app.database" not in sys.modules or isinstance(
-        sys.modules["app.database"], type(patch)
-    ):
+    if "app.database" not in sys.modules or isinstance(sys.modules["app.database"], type(patch)):
         importlib.reload(app)
     from app import database
 
@@ -60,6 +58,7 @@ async def test_get_conversation_messages_optimization():
 
     # Patch the function in the canonical repos module
     from app.repos import conversations as conv_module
+
     with patch.object(conv_module, "db_query", mock_db_query):
         # 1. Valid Conversation with Messages
         messages = await conv_module.get_conversation_messages(123, 1)

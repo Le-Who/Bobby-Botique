@@ -216,7 +216,7 @@ async def _get_fresh_available_key(
     )
 
 
-async def invalidate_key_cache(model_name: str = None) -> None:
+async def invalidate_key_cache(model_name: str | None = None) -> None:
     async with db_manager._cache_lock:
         if model_name:
             if model_name in db_manager._active_keys_cache:

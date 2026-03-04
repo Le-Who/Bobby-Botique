@@ -116,9 +116,7 @@ class TestKeyRotationFlow:
         from app.repos.keys import DailyKeyManager
 
         km = DailyKeyManager("api_keys", "key_usage")
-        mock_db.return_value = [
-            {"key_hash": "abc123", "api_key": "enc_key_1", "request_count": 5}
-        ]
+        mock_db.return_value = [{"key_hash": "abc123", "api_key": "enc_key_1", "request_count": 5}]
 
         with patch("app.repos.keys.safe_decrypt", return_value="decrypted_key"):
             result = await km.get_available_key("gemini-2.0-flash")
@@ -191,9 +189,7 @@ class TestKeyRotationFlow:
             credit_limit=1000,
             threshold_percent=0.9,
         )
-        mock_db.return_value = [
-            {"key_hash": "tav123", "api_key": "enc_tavily_1", "credit_usage": 500}
-        ]
+        mock_db.return_value = [{"key_hash": "tav123", "api_key": "enc_tavily_1", "credit_usage": 500}]
 
         with patch("app.repos.keys.safe_decrypt", return_value="decrypted_tavily"):
             result = await km.get_available_key()
@@ -265,9 +261,14 @@ class TestConversationLifecycle:
         # Now list conversations
         mock_db.return_value = [
             {
-                "id": 42, "title": "Test Chat", "role_type": "system",
-                "role_id": None, "summary": None, "token_budget": None,
-                "created_at": "2024-01-01", "role_title": "Assistant",
+                "id": 42,
+                "title": "Test Chat",
+                "role_type": "system",
+                "role_id": None,
+                "summary": None,
+                "token_budget": None,
+                "created_at": "2024-01-01",
+                "role_title": "Assistant",
                 "user_role_title": None,
             }
         ]
@@ -294,8 +295,8 @@ class TestConversationLifecycle:
 
         # First call: DELETE messages; second call: DELETE conversation RETURNING id
         mock_db.side_effect = [
-            None,               # DELETE messages
-            [{"id": 42}],       # DELETE conversation RETURNING id
+            None,  # DELETE messages
+            [{"id": 42}],  # DELETE conversation RETURNING id
         ]
         result = await delete_conversation(1, 42)
         assert result is True

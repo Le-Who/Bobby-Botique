@@ -10,13 +10,16 @@ import logging
 # Dictionary mapping Telegram message_id to its heartbeat termination Event
 _HEARTBEAT_EVENTS: dict[int, asyncio.Event] = {}
 
+
 def register_heartbeat(message_id: int, event: asyncio.Event) -> None:
     """Registers a heartbeat cancellation event for a given placeholder message_id."""
     _HEARTBEAT_EVENTS[message_id] = event
 
+
 def unregister_heartbeat(message_id: int) -> None:
     """Removes a heartbeat event without triggering it (e.g. for cleanup)."""
     _HEARTBEAT_EVENTS.pop(message_id, None)
+
 
 def stop_heartbeat(message_id: int) -> None:
     """

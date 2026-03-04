@@ -145,12 +145,18 @@ async def save_user_state(
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
-                user_id, document_mode, selected_document_id,
-                awaiting_custom_role_input, role_json,
-                last_custom_role_prompt, generating_custom_role,
+                user_id,
+                document_mode,
+                selected_document_id,
+                awaiting_custom_role_input,
+                role_json,
+                last_custom_role_prompt,
+                generating_custom_role,
                 last_sent_message_text,
-                awaiting_manual_role_title, awaiting_manual_role_prompt,
-                manual_role_title, manual_role_prompt,
+                awaiting_manual_role_title,
+                awaiting_manual_role_prompt,
+                manual_role_title,
+                manual_role_prompt,
             ),
         )
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:

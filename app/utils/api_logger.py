@@ -57,9 +57,7 @@ class APILogger:
             "status": "STARTED",
         }
 
-        self.logger.info(
-            f"🚀 API REQUEST STARTED: {self._format_log(log_data)}"
-        )
+        self.logger.info(f"🚀 API REQUEST STARTED: {self._format_log(log_data)}")
         return time.time()
 
     def log_api_response(
@@ -93,13 +91,9 @@ class APILogger:
         }
 
         if success:
-            self.logger.info(
-                f"✅ API REQUEST COMPLETED: {self._format_log(log_data)}"
-            )
+            self.logger.info(f"✅ API REQUEST COMPLETED: {self._format_log(log_data)}")
         else:
-            self.logger.error(
-                f"❌ API REQUEST FAILED: {self._format_log(log_data)}"
-            )
+            self.logger.error(f"❌ API REQUEST FAILED: {self._format_log(log_data)}")
 
         return duration
 
@@ -127,9 +121,7 @@ class APILogger:
                 "status": "STARTED",
             }
 
-            self.logger.info(
-                f"🤖 GEMINI REQUEST STARTED: {self._format_log(log_data)}"
-            )
+            self.logger.info(f"🤖 GEMINI REQUEST STARTED: {self._format_log(log_data)}")
             return start_time
 
         except Exception as e:
@@ -153,9 +145,7 @@ class APILogger:
         try:
             # Check, что start_time является числом
             if not isinstance(start_time, (int, float)) or start_time <= 0:
-                logging.warning(
-                    f"Invalid start_time in log_gemini_response: {start_time}, using current time"
-                )
+                logging.warning(f"Invalid start_time in log_gemini_response: {start_time}, using current time")
                 start_time = time.time()
 
             duration = time.time() - start_time
@@ -176,13 +166,9 @@ class APILogger:
             }
 
             if success:
-                self.logger.info(
-                    f"✅ GEMINI RESPONSE COMPLETED: {self._format_log(log_data)}"
-                )
+                self.logger.info(f"✅ GEMINI RESPONSE COMPLETED: {self._format_log(log_data)}")
             else:
-                self.logger.error(
-                    f"❌ GEMINI RESPONSE FAILED: {self._format_log(log_data)}"
-                )
+                self.logger.error(f"❌ GEMINI RESPONSE FAILED: {self._format_log(log_data)}")
 
             return duration
 
@@ -205,9 +191,7 @@ class APILogger:
         """Логирует ответ OpenRouter API"""
         try:
             if not isinstance(start_time, (int, float)) or start_time <= 0:
-                logging.warning(
-                    f"Invalid start_time in log_openrouter_response: {start_time}, using current time"
-                )
+                logging.warning(f"Invalid start_time in log_openrouter_response: {start_time}, using current time")
                 start_time = time.time()
 
             duration = time.time() - start_time
@@ -228,13 +212,9 @@ class APILogger:
             }
 
             if success:
-                self.logger.info(
-                    f"✅ OPENROUTER RESPONSE COMPLETED: {self._format_log(log_data)}"
-                )
+                self.logger.info(f"✅ OPENROUTER RESPONSE COMPLETED: {self._format_log(log_data)}")
             else:
-                self.logger.error(
-                    f"❌ OPENROUTER RESPONSE FAILED: {self._format_log(log_data)}"
-                )
+                self.logger.error(f"❌ OPENROUTER RESPONSE FAILED: {self._format_log(log_data)}")
 
             return duration
 
@@ -263,9 +243,7 @@ class APILogger:
             "status": "STARTED",
         }
 
-        self.logger.info(
-            f"🔍 TAVILY REQUEST STARTED: {self._format_log(log_data)}"
-        )
+        self.logger.info(f"🔍 TAVILY REQUEST STARTED: {self._format_log(log_data)}")
         return start_time
 
     def log_tavily_response(
@@ -295,13 +273,9 @@ class APILogger:
         }
 
         if success:
-            self.logger.info(
-                f"✅ TAVILY RESPONSE COMPLETED: {self._format_log(log_data)}"
-            )
+            self.logger.info(f"✅ TAVILY RESPONSE COMPLETED: {self._format_log(log_data)}")
         else:
-            self.logger.error(
-                f"❌ TAVILY RESPONSE FAILED: {self._format_log(log_data)}"
-            )
+            self.logger.error(f"❌ TAVILY RESPONSE FAILED: {self._format_log(log_data)}")
 
         return duration
 
@@ -325,9 +299,7 @@ class APILogger:
             "status": "STARTED",
         }
 
-        self.logger.info(
-            f"📱 TELEGRAM REQUEST STARTED: {self._format_log(log_data)}"
-        )
+        self.logger.info(f"📱 TELEGRAM REQUEST STARTED: {self._format_log(log_data)}")
         return start_time
 
     def log_telegram_response(
@@ -355,13 +327,9 @@ class APILogger:
         }
 
         if success:
-            self.logger.info(
-                f"✅ TELEGRAM RESPONSE COMPLETED: {self._format_log(log_data)}"
-            )
+            self.logger.info(f"✅ TELEGRAM RESPONSE COMPLETED: {self._format_log(log_data)}")
         else:
-            self.logger.error(
-                f"❌ TELEGRAM RESPONSE FAILED: {self._format_log(log_data)}"
-            )
+            self.logger.error(f"❌ TELEGRAM RESPONSE FAILED: {self._format_log(log_data)}")
 
         return duration
 
@@ -389,9 +357,7 @@ class APILogger:
 
         self.logger.error(f"💥 API ERROR: {self._format_log(error_data)}")
 
-    def _sanitize_data(
-        self, data: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _sanitize_data(self, data: dict[str, Any] | None) -> dict[str, Any] | None:
         """Очищает чувствительные данные из логов"""
         if not data:
             return None
@@ -408,9 +374,7 @@ class APILogger:
 
         return sanitized
 
-    def _summarize_response(
-        self, response_data: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def _summarize_response(self, response_data: dict[str, Any] | None) -> dict[str, Any] | None:
         """Создает краткое описание ответа"""
         if not response_data:
             return None
@@ -491,9 +455,7 @@ def log_api_call(api_name: str, endpoint: str = ""):
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs):
-            start_time = api_logger.log_api_request(
-                api_name=api_name, endpoint=endpoint
-            )
+            start_time = api_logger.log_api_request(api_name=api_name, endpoint=endpoint)
 
             try:
                 result = func(*args, **kwargs)
@@ -506,9 +468,7 @@ def log_api_call(api_name: str, endpoint: str = ""):
                 )
                 return result
             except Exception as e:
-                api_logger.log_error(
-                    api_name=api_name, error=e, context={"function": func.__name__}
-                )
+                api_logger.log_error(api_name=api_name, error=e, context={"function": func.__name__})
                 api_logger.log_api_response(
                     api_name=api_name,
                     endpoint=endpoint,

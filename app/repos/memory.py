@@ -84,9 +84,7 @@ async def store_memory(
         logging.warning("Skipping memory storage — embedding generation failed")
         return None
 
-    expires_at = (
-        datetime.now(UTC) + timedelta(days=ttl_days) if ttl_days > 0 else None
-    )
+    expires_at = datetime.now(UTC) + timedelta(days=ttl_days) if ttl_days > 0 else None
 
     try:
         async with db_manager.pool.acquire() as conn:

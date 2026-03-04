@@ -81,6 +81,7 @@ class TestGeminiTimeoutSmoke:
             tasks_before = len([t for t in asyncio.all_tasks() if not t.done()])
 
             original_wait_for = asyncio.wait_for
+
             async def fast_wait_for(coro, timeout=None):
                 return await original_wait_for(coro, timeout=0.05)
 

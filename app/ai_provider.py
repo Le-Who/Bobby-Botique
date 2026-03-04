@@ -42,7 +42,7 @@ from app.utils.network import NetworkErrorHandler
 # ── Thinking config helpers ──────────────────────────────────────────
 
 _THINKING_BUDGET_MAP = {"off": 0, "low": 1024, "medium": 8192, "high": 24576}
-_THINKING_LEVEL_MAP = {"off": "minimal", "low": "low", "medium": "medium", "high": "high"}
+_THINKING_LEVEL_MAP: dict[str, str] = {"off": "minimal", "low": "low", "medium": "medium", "high": "high"}
 
 
 def _is_gemini3_model(model_name: str) -> bool:
@@ -65,7 +65,7 @@ def _build_thinking_config(model_name: str, thinking_level: str | None) -> types
     if is_openrouter_model(model_name):
         return None
     if _is_gemini3_model(model_name):
-        return types.ThinkingConfig(thinking_level=_THINKING_LEVEL_MAP[thinking_level])
+        return types.ThinkingConfig(thinking_level=_THINKING_LEVEL_MAP[thinking_level])  # type: ignore[arg-type]  # Pydantic coerces str→ThinkingLevel
     return types.ThinkingConfig(thinking_budget=_THINKING_BUDGET_MAP[thinking_level])
 
 
@@ -196,10 +196,10 @@ class BaseAIProvider(ABC):
             return "model_name must be a non-empty string"
 
         if user_id is not None and not isinstance(user_id, int):
-            return "user_id must be an integer"
+            return "user_id must be an integer"  # type: ignore[unreachable]  # defensive
 
         if chat_id is not None and not isinstance(chat_id, int):
-            return "chat_id must be an integer"
+            return "chat_id must be an integer"  # type: ignore[unreachable]  # defensive
 
         return None
 
@@ -231,8 +231,6 @@ class BaseAIProvider(ABC):
         """
         Execute the actual API request. Must be implemented by subclasses.
         """
-
-
 
 
 def is_openrouter_model(model_name: str) -> bool:
@@ -282,10 +280,7 @@ class GeminiProvider(BaseAIProvider):
             # Compute metrics
             try:
                 prompt_length = sum(
-                    len(str(part))
-                    for item in history
-                    for part in (item.get("parts", []) or [])
-                    if part is not None
+                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
                 )
                 has_images = any(
                     isinstance(part, (bytes, bytearray, Image.Image))
@@ -309,10 +304,10 @@ class GeminiProvider(BaseAIProvider):
             # Reuse client across requests (connection pooling, TLS caching).
             # Rebuild only when api_key changes or on first call.
             if self._client is None or self._client_api_key != self.api_key:
-                client_kwargs = {"api_key": self.api_key}
-                http_opts = {"timeout": 90_000}  # 90s SDK deadline
-                client_kwargs["http_options"] = types.HttpOptions(**http_opts)
-                self._client = genai.Client(**client_kwargs)
+                client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+                http_opts: dict[str, Any] = {"timeout": 90_000}  # 90s SDK deadline
+                client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]  # Pydantic coerces
+                self._client = genai.Client(**client_kwargs)  # type: ignore[arg-type]  # Pydantic coerces
                 self._client_api_key = self.api_key
             client = self._client
 
@@ -321,12 +316,13 @@ class GeminiProvider(BaseAIProvider):
             if contents is None:
                 return self._error_response(
                     "Failed to create valid content for Gemini API",
-                    model_name, start_time, user_id, chat_id,
+                    model_name,
+                    start_time,
+                    user_id,
+                    chat_id,
                 )
 
-            config = types.GenerateContentConfig(
-                safety_settings=settings.SAFETY_SETTINGS
-            )
+            config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
             # Apply thinking config if user requested a specific level
             tc = _build_thinking_config(model_name, thinking_level)
             if tc:
@@ -340,7 +336,9 @@ class GeminiProvider(BaseAIProvider):
             # Native async call — properly supports CancelledError
             response = await asyncio.wait_for(
                 client.aio.models.generate_content(
-                    model=model_name, contents=contents, config=config,
+                    model=model_name,
+                    contents=contents,
+                    config=config,
                 ),
                 timeout=100.0,
             )
@@ -349,11 +347,7 @@ class GeminiProvider(BaseAIProvider):
             # Falls back to 0 if usage_metadata is unavailable.
             try:
                 usage = getattr(response, "usage_metadata", None)
-                token_count = (
-                    getattr(usage, "total_token_count", 0)
-                    or getattr(usage, "candidates_token_count", 0)
-                    or 0
-                )
+                token_count = getattr(usage, "total_token_count", 0) or getattr(usage, "candidates_token_count", 0) or 0
             except Exception as e:
                 logging.debug("Token count from usage_metadata failed: %s", e)
                 token_count = 0
@@ -362,7 +356,10 @@ class GeminiProvider(BaseAIProvider):
             if not response or not hasattr(response, "text"):
                 return self._error_response(
                     "Gemini API returned invalid response object",
-                    model_name, start_time, user_id, chat_id,
+                    model_name,
+                    start_time,
+                    user_id,
+                    chat_id,
                 )
 
             response_text = response.text if response.text else ""
@@ -371,21 +368,30 @@ class GeminiProvider(BaseAIProvider):
                 block_reason = self._diagnose_empty_response(response)
                 return self._error_response(
                     block_reason,
-                    model_name, start_time, user_id, chat_id,
+                    model_name,
+                    start_time,
+                    user_id,
+                    chat_id,
                 )
 
             # Log success
             if start_time is not None:
                 api_logger.log_gemini_response(
-                    start_time=start_time, model=model_name,
+                    start_time=start_time,
+                    model=model_name,
                     response_length=len(response_text),
-                    token_count=token_count, success=True,
-                    user_id=user_id, chat_id=chat_id,
+                    token_count=token_count,
+                    success=True,
+                    user_id=user_id,
+                    chat_id=chat_id,
                 )
 
             return AIResponse(
-                text=response_text, token_count=token_count,
-                success=True, provider=self.provider_name, model=model_name,
+                text=response_text,
+                token_count=token_count,
+                success=True,
+                provider=self.provider_name,
+                model=model_name,
             )
 
         except TimeoutError:
@@ -395,8 +401,11 @@ class GeminiProvider(BaseAIProvider):
             self._log_failure(start_time, model_name, msg, user_id, chat_id)
             return AIResponse(
                 text=tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API. Попробуйте позже."),
-                token_count=0, success=False, error_message=msg,
-                provider=self.provider_name, model=model_name,
+                token_count=0,
+                success=False,
+                error_message=msg,
+                provider=self.provider_name,
+                model=model_name,
             )
 
         except APIError as e:
@@ -424,8 +433,12 @@ class GeminiProvider(BaseAIProvider):
                 text = tag_error(ErrorCode.GENERIC, f"Произошла ошибка вызова API: {e}")
 
             return AIResponse(
-                text=text, token_count=0, success=False,
-                error_message=str(e), provider=self.provider_name, model=model_name,
+                text=text,
+                token_count=0,
+                success=False,
+                error_message=str(e),
+                provider=self.provider_name,
+                model=model_name,
             )
 
         except httpx.HTTPError as e:
@@ -434,8 +447,11 @@ class GeminiProvider(BaseAIProvider):
             await metrics_collector.record_error("gemini_http", str(e))
             return AIResponse(
                 text=tag_error(ErrorCode.NETWORK, f"Произошла непредвиденная ошибка HTTP: {e}"),
-                token_count=0, success=False, error_message=str(e),
-                provider=self.provider_name, model=model_name,
+                token_count=0,
+                success=False,
+                error_message=str(e),
+                provider=self.provider_name,
+                model=model_name,
             )
 
     # ── Gemini helpers ───────────────────────────────────────────────────
@@ -459,11 +475,9 @@ class GeminiProvider(BaseAIProvider):
                         img_bytes = await save_image_as_bytes(part)
                         if img_bytes:
                             try:
-                                processed.append(types.Part(
-                                    inline_data=types.Blob(
-                                        mime_type="image/jpeg", data=img_bytes
-                                    )
-                                ))
+                                processed.append(
+                                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=img_bytes))
+                                )
                             except (TypeError, ValueError) as e:
                                 logging.warning("Failed to create image part: %s", e)
                         else:
@@ -495,12 +509,10 @@ class GeminiProvider(BaseAIProvider):
                 if block_reason:
                     logging.warning(
                         "Gemini prompt blocked: reason=%s, feedback=%s",
-                        block_reason, pf,
+                        block_reason,
+                        pf,
                     )
-                    return (
-                        "Запрос заблокирован фильтром безопасности Google. "
-                        "Попробуйте переформулировать сообщение."
-                    )
+                    return "Запрос заблокирован фильтром безопасности Google. Попробуйте переформулировать сообщение."
         except Exception as e:
             logging.debug("prompt_feedback inspection error: %s", e)
 
@@ -513,37 +525,41 @@ class GeminiProvider(BaseAIProvider):
                 safety_ratings = getattr(candidate, "safety_ratings", None)
 
                 if finish_reason and str(finish_reason).upper() in (
-                    "SAFETY", "2", "FINISH_REASON_SAFETY",
+                    "SAFETY",
+                    "2",
+                    "FINISH_REASON_SAFETY",
                 ):
                     ratings_str = ""
                     if safety_ratings:
                         ratings_str = ", ".join(
-                            f"{getattr(r, 'category', '?')}={getattr(r, 'probability', '?')}"
-                            for r in safety_ratings
+                            f"{getattr(r, 'category', '?')}={getattr(r, 'probability', '?')}" for r in safety_ratings
                         )
                     logging.warning(
                         "Gemini response safety-blocked: finish_reason=%s, ratings=[%s]",
-                        finish_reason, ratings_str,
+                        finish_reason,
+                        ratings_str,
                     )
-                    return (
-                        "Ответ заблокирован фильтром безопасности Google. "
-                        "Попробуйте переформулировать сообщение."
-                    )
+                    return "Ответ заблокирован фильтром безопасности Google. Попробуйте переформулировать сообщение."
 
                 if finish_reason and str(finish_reason).upper() in (
-                    "MAX_TOKENS", "3", "FINISH_REASON_MAX_TOKENS",
+                    "MAX_TOKENS",
+                    "3",
+                    "FINISH_REASON_MAX_TOKENS",
                 ):
                     logging.warning("Gemini response truncated: MAX_TOKENS")
                     return "Ответ превысил максимальную длину. Попробуйте более короткий запрос."
 
                 if finish_reason and str(finish_reason).upper() in (
-                    "RECITATION", "4", "FINISH_REASON_RECITATION",
+                    "RECITATION",
+                    "4",
+                    "FINISH_REASON_RECITATION",
                 ):
                     logging.warning("Gemini response blocked: RECITATION")
                     return "Ответ заблокирован из-за совпадения с защищённым контентом."
 
                 logging.warning(
-                    "Gemini empty response with finish_reason=%s", finish_reason,
+                    "Gemini empty response with finish_reason=%s",
+                    finish_reason,
                 )
             else:
                 logging.warning("Gemini response has no candidates")
@@ -553,27 +569,39 @@ class GeminiProvider(BaseAIProvider):
         return "Gemini API вернул пустой ответ. Попробуйте ещё раз."
 
     def _error_response(
-        self, msg: str, model: str, start_time, user_id, chat_id,
+        self,
+        msg: str,
+        model: str,
+        start_time,
+        user_id,
+        chat_id,
     ) -> AIResponse:
         logging.error(msg)
         self._log_failure(start_time, model, msg, user_id, chat_id)
         return AIResponse(
-            text=f"❌ {msg}", token_count=0, success=False,
-            error_message=msg, provider=self.provider_name, model=model,
+            text=f"❌ {msg}",
+            token_count=0,
+            success=False,
+            error_message=msg,
+            provider=self.provider_name,
+            model=model,
         )
 
     def _log_failure(self, start_time, model, msg, user_id, chat_id):
         if start_time is not None:
             api_logger.log_gemini_response(
-                start_time=start_time, model=model, response_length=0,
-                success=False, error_message=msg,
-                user_id=user_id, chat_id=chat_id,
+                start_time=start_time,
+                model=model,
+                response_length=0,
+                success=False,
+                error_message=msg,
+                user_id=user_id,
+                chat_id=chat_id,
             )
 
 
-
 # Module-level httpx client for OpenRouter
-_openrouter_http_client = NetworkErrorHandler.create_robust_http_client()
+_openrouter_http_client: httpx.AsyncClient | None = NetworkErrorHandler.create_robust_http_client()
 
 
 async def close_http_clients() -> None:
@@ -613,8 +641,12 @@ class OpenRouterProvider(BaseAIProvider):
                 logging.error(msg)
                 await metrics_collector.record_error("openrouter_content_creation", msg)
                 return AIResponse(
-                    text=f"❌ {msg}", token_count=0, success=False,
-                    error_message=msg, provider=self.provider_name, model=model_name,
+                    text=f"❌ {msg}",
+                    token_count=0,
+                    success=False,
+                    error_message=msg,
+                    provider=self.provider_name,
+                    model=model_name,
                 )
 
             # Build request
@@ -634,6 +666,7 @@ class OpenRouterProvider(BaseAIProvider):
 
             # httpx has a 30s read timeout; this is a safety net
             try:
+                assert _openrouter_http_client is not None, "OpenRouter HTTP client not initialized"
                 response = await asyncio.wait_for(
                     _openrouter_http_client.post(url, json=payload, headers=headers),
                     timeout=90.0,
@@ -649,8 +682,11 @@ class OpenRouterProvider(BaseAIProvider):
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
                     text=tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API. Попробуйте позже."),
-                    token_count=0, success=False, error_message=msg,
-                    provider=self.provider_name, model=model_name,
+                    token_count=0,
+                    success=False,
+                    error_message=msg,
+                    provider=self.provider_name,
+                    model=model_name,
                 )
             except (APIError, httpx.HTTPError) as e:
                 msg = f"OpenRouter API error: {e}"
@@ -658,8 +694,12 @@ class OpenRouterProvider(BaseAIProvider):
                 await metrics_collector.record_error("openrouter_api", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
-                    text=tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {msg}"), token_count=0, success=False,
-                    error_message=msg, provider=self.provider_name, model=model_name,
+                    text=tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {msg}"),
+                    token_count=0,
+                    success=False,
+                    error_message=msg,
+                    provider=self.provider_name,
+                    model=model_name,
                 )
 
             # Validate response structure
@@ -670,8 +710,11 @@ class OpenRouterProvider(BaseAIProvider):
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
                     text=tag_error(ErrorCode.INVALID_RESPONSE, "❌ API вернул некорректный ответ. Попробуйте еще раз."),
-                    token_count=0, success=False, error_message=msg,
-                    provider=self.provider_name, model=model_name,
+                    token_count=0,
+                    success=False,
+                    error_message=msg,
+                    provider=self.provider_name,
+                    model=model_name,
                 )
 
             response_text = response_data["choices"][0].get("message", {}).get("content", "")
@@ -682,8 +725,11 @@ class OpenRouterProvider(BaseAIProvider):
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
                     text=tag_error(ErrorCode.EMPTY_RESPONSE, "❌ API вернул пустой ответ. Попробуйте еще раз."),
-                    token_count=0, success=False, error_message=msg,
-                    provider=self.provider_name, model=model_name,
+                    token_count=0,
+                    success=False,
+                    error_message=msg,
+                    provider=self.provider_name,
+                    model=model_name,
                 )
 
             token_count = response_data.get("usage", {}).get("total_tokens", 0)
@@ -691,15 +737,21 @@ class OpenRouterProvider(BaseAIProvider):
             # Log success
             if start_time is not None:
                 api_logger.log_openrouter_response(
-                    start_time=start_time, model=model_name,
+                    start_time=start_time,
+                    model=model_name,
                     response_length=len(response_text),
-                    token_count=token_count, success=True,
-                    user_id=user_id, chat_id=chat_id,
+                    token_count=token_count,
+                    success=True,
+                    user_id=user_id,
+                    chat_id=chat_id,
                 )
 
             return AIResponse(
-                text=response_text, token_count=token_count,
-                success=True, provider=self.provider_name, model=model_name,
+                text=response_text,
+                token_count=token_count,
+                success=True,
+                provider=self.provider_name,
+                model=model_name,
             )
 
         except (APIError, httpx.HTTPError) as e:
@@ -708,15 +760,16 @@ class OpenRouterProvider(BaseAIProvider):
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
             return AIResponse(
                 text=tag_error(ErrorCode.GENERIC, f"❌ Произошла непредвиденная ошибка API: {e}"),
-                token_count=0, success=False, error_message=str(e),
-                provider=self.provider_name, model=model_name,
+                token_count=0,
+                success=False,
+                error_message=str(e),
+                provider=self.provider_name,
+                model=model_name,
             )
 
     # ── OpenRouter helpers ───────────────────────────────────────────────
 
-    async def _build_messages(
-        self, history: list, system_instruction: str | None
-    ) -> list:
+    async def _build_messages(self, history: list, system_instruction: str | None) -> list:
         """Convert Gemini-format history → OpenAI-format messages."""
         messages = []
         if system_instruction:
@@ -740,13 +793,13 @@ class OpenRouterProvider(BaseAIProvider):
                 if isinstance(part, (bytes, bytearray, Image.Image)):
                     img_bytes = await save_image_as_bytes(part)
                     if img_bytes:
-                        img_b64 = await asyncio.to_thread(
-                            lambda b=img_bytes: base64.b64encode(b).decode("utf-8")
+                        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
+                        content_parts.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                            }
                         )
-                        content_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
-                        })
                 else:
                     text = str(part)
                     if text.strip():
@@ -754,14 +807,19 @@ class OpenRouterProvider(BaseAIProvider):
 
             if content_parts:
                 if len(content_parts) == 1 and content_parts[0].get("type") == "text":
-                    messages.append({"role": role, "content": content_parts[0]["text"]})
+                    messages.append({"role": role, "content": content_parts[0]["text"]})  # type: ignore[dict-item]  # content is str|list
                 else:
-                    messages.append({"role": role, "content": content_parts})
+                    messages.append({"role": role, "content": content_parts})  # type: ignore[dict-item]  # content is str|list
 
         return messages
 
     async def _handle_http_error(
-        self, e: httpx.HTTPStatusError, model: str, start_time, user_id, chat_id,
+        self,
+        e: httpx.HTTPStatusError,
+        model: str,
+        start_time,
+        user_id,
+        chat_id,
     ) -> AIResponse:
         msg = f"OpenRouter API HTTP error: {e.response.status_code} - {e.response.text}"
         logging.error(msg)
@@ -781,16 +839,24 @@ class OpenRouterProvider(BaseAIProvider):
             text = tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {status}")
 
         return AIResponse(
-            text=text, token_count=0, success=False,
-            error_message=msg, provider=self.provider_name, model=model,
+            text=text,
+            token_count=0,
+            success=False,
+            error_message=msg,
+            provider=self.provider_name,
+            model=model,
         )
 
     def _log_failure(self, start_time, model, msg, user_id, chat_id):
         if start_time is not None:
             api_logger.log_openrouter_response(
-                start_time=start_time, model=model, response_length=0,
-                success=False, error_message=msg,
-                user_id=user_id, chat_id=chat_id,
+                start_time=start_time,
+                model=model,
+                response_length=0,
+                success=False,
+                error_message=msg,
+                user_id=user_id,
+                chat_id=chat_id,
             )
 
 
@@ -821,9 +887,8 @@ class ProviderRouter:
     def __init__(self, rate_limit_per_minute: int = 20) -> None:
         # Use the consolidated RateLimiter from security.py (includes periodic cleanup)
         from app.security import RateLimiter
-        self._rate_limiter = RateLimiter(
-            max_requests=rate_limit_per_minute, window_seconds=60
-        )
+
+        self._rate_limiter = RateLimiter(max_requests=rate_limit_per_minute, window_seconds=60)
 
     async def get_response(
         self,
@@ -872,24 +937,28 @@ class ProviderRouter:
 
             if not key_data:
                 if resolution == "all_exhausted":
-                    is_or = (
-                        use_openrouter
-                        if use_openrouter is not None
-                        else ("/" in preferred_model)
-                    )
+                    is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
                     provider_name = "OpenRouter" if is_or else "Gemini"
                     return (
-                        tag_error(ErrorCode.KEYS_EXHAUSTED, f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже."),
+                        tag_error(
+                            ErrorCode.KEYS_EXHAUSTED,
+                            f"🚫 Все ключи {provider_name} недоступны или исчерпаны. Попробуйте позже.",
+                        ),
                         None,
                     )
                 if resolution == "no_keys":
                     return (
-                        tag_error(ErrorCode.NO_KEYS, "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки."),
+                        tag_error(
+                            ErrorCode.NO_KEYS, "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки."
+                        ),
                         None,
                     )
                 if resolution == "decryption_failed":
                     return (
-                        tag_error(ErrorCode.DECRYPTION_FAILED, "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET)."),
+                        tag_error(
+                            ErrorCode.DECRYPTION_FAILED,
+                            "🔐 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",
+                        ),
                         None,
                     )
                 return (
@@ -898,6 +967,7 @@ class ProviderRouter:
                 )
 
             # Execute the request
+            assert model_used is not None  # guaranteed by _resolve_ai_request
             response_text, token_count = await use_case.get_ai_response(
                 key_data["api_key"],
                 history,
@@ -910,11 +980,7 @@ class ProviderRouter:
             )
 
             # Track health based on response
-            if (
-                response_text
-                and is_error_message(response_text)
-                and is_key_related_error(response_text)
-            ):
+            if response_text and is_error_message(response_text) and is_key_related_error(response_text):
                 failed_keys.add(key_data["key_hash"])
                 error_category = classify_key_error(response_text)
 
@@ -924,19 +990,23 @@ class ProviderRouter:
                 if error_category != "transient":
                     try:
                         await status_mgr.suspend_key(
-                            key_data["key_hash"], model_used,
-                            error_category, response_text[:200],
+                            key_data["key_hash"],
+                            model_used,  # type: ignore[arg-type]  # asserted above
+                            error_category,
+                            response_text[:200],
                         )
                     except Exception as e:
                         logging.warning(
-                            "Non-critical: failed to suspend key: %s", e,
+                            "Non-critical: failed to suspend key: %s",
+                            e,
                         )
 
                 logging.warning(
-                    "Key %s… failed (category=%s, attempt %d/%d). "
-                    "Error: %s",
-                    key_data["key_hash"][:8], error_category,
-                    attempt + 1, max_key_retries,
+                    "Key %s… failed (category=%s, attempt %d/%d). Error: %s",
+                    key_data["key_hash"][:8],
+                    error_category,
+                    attempt + 1,
+                    max_key_retries,
                     response_text[:100],
                 )
                 continue
@@ -945,15 +1015,14 @@ class ProviderRouter:
             if response_text and not is_error_message(response_text):
                 try:
                     await status_mgr.record_success(
-                        key_data["key_hash"], model_used,
+                        key_data["key_hash"],
+                        model_used,  # type: ignore[arg-type]  # asserted above
                     )
                 except Exception as e:
                     logging.debug("Non-critical: record_success failed: %s", e)
 
                 try:
-                    await use_case.increment_key_usage(
-                        key_data["key_hash"], model_used, use_openrouter
-                    )
+                    await use_case.increment_key_usage(key_data["key_hash"], model_used, use_openrouter)  # type: ignore[arg-type]  # asserted above
                 except Exception as e:
                     logging.warning("Non-critical: failed to increment key usage: %s", e)
 
@@ -965,19 +1034,25 @@ class ProviderRouter:
         # specific model), try alternative models before giving up.
         if all_permanent and failed_keys:
             fallback_result = await self._try_model_fallback(
-                preferred_model, history, system_instruction,
-                user_id, chat_id, use_openrouter,
-                use_case, status_mgr,
+                preferred_model,
+                history,
+                system_instruction,
+                user_id,
+                chat_id,
+                use_openrouter,
+                use_case,
+                status_mgr,
             )
             if fallback_result is not None:
                 return fallback_result
 
-        is_or = (
-            use_openrouter if use_openrouter is not None else ("/" in preferred_model)
-        )
+        is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
         provider_name = "OpenRouter" if is_or else "Gemini"
         return (
-            tag_error(ErrorCode.KEYS_EXHAUSTED, f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже."),
+            tag_error(
+                ErrorCode.KEYS_EXHAUSTED,
+                f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",
+            ),
             None,
         )
 
@@ -1004,24 +1079,33 @@ class ProviderRouter:
                 continue
 
             key_data, model_used, _ = await use_case.resolve_ai_request(
-                fallback_model, use_openrouter=use_openrouter,
+                fallback_model,
+                use_openrouter=use_openrouter,
             )
             if not key_data:
                 continue
 
             logging.info(
                 "Model fallback: trying %s instead of %s (all keys rejected by API for original model)",
-                fallback_model, failed_model,
+                fallback_model,
+                failed_model,
             )
 
             response_text, token_count = await use_case.get_ai_response(
-                key_data["api_key"], history, model_used,
-                system_instruction, user_id, chat_id, use_openrouter,
+                key_data["api_key"],
+                history,
+                model_used,
+                system_instruction,
+                user_id,
+                chat_id,
+                use_openrouter,
             )
 
             if response_text and not is_error_message(response_text):
                 logging.info(
-                    "Model fallback succeeded: %s → %s", failed_model, model_used,
+                    "Model fallback succeeded: %s → %s",
+                    failed_model,
+                    model_used,
                 )
                 try:
                     await status_mgr.record_success(key_data["key_hash"], model_used)
@@ -1029,7 +1113,9 @@ class ProviderRouter:
                     logging.debug("Non-critical: record_success failed: %s", e)
                 try:
                     await use_case.increment_key_usage(
-                        key_data["key_hash"], model_used, use_openrouter,
+                        key_data["key_hash"],
+                        model_used,
+                        use_openrouter,
                     )
                 except Exception as e:
                     logging.warning("Non-critical: failed to increment key usage: %s", e)
@@ -1037,7 +1123,8 @@ class ProviderRouter:
 
             logging.warning(
                 "Model fallback %s also failed: %s",
-                fallback_model, (response_text or "")[:100],
+                fallback_model,
+                (response_text or "")[:100],
             )
 
         return None
@@ -1045,8 +1132,8 @@ class ProviderRouter:
     async def get_key_stats(self) -> list[dict[str, Any]]:
         """Return health stats for all tracked keys (for diagnostics)."""
         from app.repos.keys import get_key_status_manager
-        return await get_key_status_manager().get_all_statuses()
 
+        return await get_key_status_manager().get_all_statuses()
 
 
 # Module-level singleton

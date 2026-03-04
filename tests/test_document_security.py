@@ -55,7 +55,4 @@ async def test_docx_magic_bytes_validation():
     )
 
     assert "error" in result
-    assert (
-        result["error"]
-        == "Invalid Word document format. File must be a valid .docx file."
-    )
+    assert result["error"] == "Invalid Word document format. File must be a valid .docx file."

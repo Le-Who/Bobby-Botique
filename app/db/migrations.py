@@ -61,7 +61,8 @@ async def run_migrations(db_query, db_manager):
                     await conn.execute(sql_content)
                     await conn.execute(
                         "INSERT INTO schema_migrations (version, filename) VALUES ($1, $2)",
-                        version, sql_file.name,
+                        version,
+                        sql_file.name,
                     )
 
                 logging.info("Migration %s applied successfully.", version)
@@ -86,9 +87,7 @@ async def _run_legacy_migrations(db_query):
         doc_column_names = {c["column_name"] for c in doc_columns}
 
         if "filename" not in doc_column_names and "file_name" in doc_column_names:
-            await db_query(
-                "ALTER TABLE user_documents RENAME COLUMN file_name TO filename;"
-            )
+            await db_query("ALTER TABLE user_documents RENAME COLUMN file_name TO filename;")
         elif "filename" not in doc_column_names:
             await db_query("ALTER TABLE user_documents ADD COLUMN filename TEXT;")
 
@@ -100,19 +99,13 @@ async def _run_legacy_migrations(db_query):
         }
         for col, col_type in required_columns.items():
             if col not in doc_column_names:
-                await db_query(
-                    f"ALTER TABLE user_documents ADD COLUMN {col} {col_type};"
-                )
+                await db_query(f"ALTER TABLE user_documents ADD COLUMN {col} {col_type};")
 
-        users_columns = await db_query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='users'"
-        )
+        users_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
         user_col_names = {c["column_name"] for c in users_columns}
 
         if "is_deep_dive" not in user_col_names:
-            await db_query(
-                "ALTER TABLE users ADD COLUMN is_deep_dive BOOLEAN DEFAULT FALSE;"
-            )
+            await db_query("ALTER TABLE users ADD COLUMN is_deep_dive BOOLEAN DEFAULT FALSE;")
 
         if "deep_dive_thread_id" not in user_col_names:
             await db_query("ALTER TABLE users ADD COLUMN deep_dive_thread_id TEXT;")

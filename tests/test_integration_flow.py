@@ -13,6 +13,7 @@ import pytest
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def make_update(user_id=123, chat_id=456, text="Hello AI", photo=False):
     """Creates a realistic Telegram Update mock."""
     update = MagicMock()
@@ -29,10 +30,12 @@ def make_update(user_id=123, chat_id=456, text="Hello AI", photo=False):
     msg.photo = [MagicMock()] if photo else []
     msg.caption = "What is this?" if photo else None
     msg.media_group_id = None
-    msg.reply_text = AsyncMock(return_value=MagicMock(
-        edit_text=AsyncMock(),
-        reply_text=AsyncMock(),
-    ))
+    msg.reply_text = AsyncMock(
+        return_value=MagicMock(
+            edit_text=AsyncMock(),
+            reply_text=AsyncMock(),
+        )
+    )
 
     update.message = msg
     return update
@@ -48,13 +51,18 @@ def make_context():
 
 def make_chat_state():
     return SimpleNamespace(
-        model="gemini-2.0-flash", system_prompt=None,
-        history=[], token_count=0, is_deep_dive=False,
-        search_enabled=False, deep_dive_thread_id=None,
+        model="gemini-2.0-flash",
+        system_prompt=None,
+        history=[],
+        token_count=0,
+        is_deep_dive=False,
+        search_enabled=False,
+        deep_dive_thread_id=None,
     )
 
 
 # ── Test 1: Unauthorized user is silently rejected ────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_unauthorized_user_rejected():
@@ -66,12 +74,11 @@ async def test_unauthorized_user_rejected():
         patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
         patch("app.handlers.messages.set_request_id", return_value="test-req-1"),
         patch("app.handlers.messages.bind_request_span"),
-        patch("app.handlers.messages.check_user_rate_limit",
-              new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.messages.is_authorized",
-              new_callable=AsyncMock, return_value=False),
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock, return_value=True),
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock, return_value=False),
     ):
         from app.handlers.messages import handle_request
+
         await handle_request(update, context)
 
     # No reply_text for placeholder since user is unauthorized
@@ -84,6 +91,7 @@ async def test_unauthorized_user_rejected():
 
 # ── Test 2: Rate-limited user gets warning ────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_rate_limited_user_gets_warning():
     """Rate-limited user receives a warning message."""
@@ -94,10 +102,10 @@ async def test_rate_limited_user_gets_warning():
         patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
         patch("app.handlers.messages.set_request_id", return_value="test-req-2"),
         patch("app.handlers.messages.bind_request_span"),
-        patch("app.handlers.messages.check_user_rate_limit",
-              new_callable=AsyncMock, return_value=False),
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock, return_value=False),
     ):
         from app.handlers.messages import handle_request
+
         await handle_request(update, context)
 
     # Should get rate limit warning
@@ -107,6 +115,7 @@ async def test_rate_limited_user_gets_warning():
 
 
 # ── Test 3: Happy path — text message through full pipeline ───────────────────
+
 
 @pytest.mark.asyncio
 async def test_happy_path_text_message():
@@ -125,10 +134,8 @@ async def test_happy_path_text_message():
         patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
         patch("app.handlers.messages.set_request_id", return_value="test-req-3"),
         patch("app.handlers.messages.bind_request_span"),
-        patch("app.handlers.messages.check_user_rate_limit",
-              new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.messages.is_authorized",
-              new_callable=AsyncMock, return_value=True),
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock, return_value=True),
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock, return_value=True),
         patch("app.handlers.messages.state") as mock_state,
         patch("app.handlers.messages.api_logger") as mock_logger,
         patch("app.handlers.messages.metrics_collector") as mock_metrics,
@@ -145,6 +152,7 @@ async def test_happy_path_text_message():
         mock_state.get_user_lock.return_value = lock_mock
 
         from app.handlers.messages import handle_request
+
         await handle_request(update, context)
 
         # Give the background task time to complete
@@ -162,6 +170,7 @@ async def test_happy_path_text_message():
 
 # ── Test 4: Error in agent shows retry keyboard ───────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_agent_error_shows_retry_keyboard():
     """When agent raises an exception, user gets error + retry button."""
@@ -176,16 +185,15 @@ async def test_agent_error_shows_retry_keyboard():
         patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
         patch("app.handlers.messages.set_request_id", return_value="test-req-4"),
         patch("app.handlers.messages.bind_request_span"),
-        patch("app.handlers.messages.check_user_rate_limit",
-              new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.messages.is_authorized",
-              new_callable=AsyncMock, return_value=True),
+        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock, return_value=True),
+        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock, return_value=True),
         patch("app.handlers.messages.state") as mock_state,
         patch("app.handlers.messages.api_logger") as mock_logger,
         patch("app.handlers.messages.metrics_collector") as mock_metrics,
         patch("app.state.set_last_sent_message"),
-        patch("app.handlers.agent.process_long_request",
-              new_callable=AsyncMock, side_effect=Exception("AI provider down")),
+        patch(
+            "app.handlers.agent.process_long_request", new_callable=AsyncMock, side_effect=Exception("AI provider down")
+        ),
     ):
         mock_logger.log_telegram_request.return_value = 1000.0
         mock_metrics.record_request = AsyncMock()
@@ -195,6 +203,7 @@ async def test_agent_error_shows_retry_keyboard():
         mock_state.get_user_lock.return_value = lock_mock
 
         from app.handlers.messages import handle_request
+
         await handle_request(update, context)
 
         # Give background task time

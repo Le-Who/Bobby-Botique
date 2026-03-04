@@ -13,15 +13,11 @@ from app.repos.user_stats import get_user_today_request_count
 from app.utils.formatting import TelegramFormatter, format_key_for_display
 
 
-async def get_start_menu_content(chat_state, user_id=None) -> None:
+async def get_start_menu_content(chat_state, user_id=None):
     search_icon = "🟢" if chat_state.search_enabled else "🔴"
 
     # Compact status line
-    prompt_label = (
-        f"🎭 {chat_state.system_prompt[:40]}…"
-        if chat_state.system_prompt
-        else ""
-    )
+    prompt_label = f"🎭 {chat_state.system_prompt[:40]}…" if chat_state.system_prompt else ""
     status_parts = [f"`{chat_state.model}`", f"Поиск: {search_icon}"]
     if prompt_label:
         status_parts.append(prompt_label)
@@ -41,28 +37,17 @@ async def get_start_menu_content(chat_state, user_id=None) -> None:
             conv_count = await get_conversation_count(user_id)
 
             if req_count > 0 or doc_count > 0 or conv_count > 0:
-                activity_line = (
-                    f"📈 Сегодня: {req_count} запр. · "
-                    f"{doc_count} док. · {conv_count} бесед\n\n"
-                )
+                activity_line = f"📈 Сегодня: {req_count} запр. · {doc_count} док. · {conv_count} бесед\n\n"
         except Exception as e:
             logging.debug("Could not fetch user context for /start: %s", e)
 
     # Adaptive hint: new user vs returning
     if req_count == 0 and not chat_state.system_prompt:
-        hint = (
-            "💡 **Совет:** попробуйте 🎭 **Роли** — бот ответит "
-            "как эксперт. Или отправьте 🖼️ картинку для анализа."
-        )
+        hint = "💡 **Совет:** попробуйте 🎭 **Роли** — бот ответит как эксперт. Или отправьте 🖼️ картинку для анализа."
     else:
         hint = "Напишите сообщение — и я отвечу. 👇"
 
-    start_text = (
-        f"🤖 **Gemini Bot** — ваш AI-ассистент\n\n"
-        f"📊 {status_line}\n\n"
-        f"{activity_line}"
-        f"{hint}"
-    )
+    start_text = f"🤖 **Gemini Bot** — ваш AI-ассистент\n\n📊 {status_line}\n\n{activity_line}{hint}"
 
     formatted_text, parse_mode = TelegramFormatter.format_text(start_text)
 
@@ -79,9 +64,7 @@ async def get_start_menu_content(chat_state, user_id=None) -> None:
             InlineKeyboardButton("💬 Беседы", callback_data="open_conversations"),
         ],
         [
-            InlineKeyboardButton(
-                f"🌐 Поиск: {search_icon}", callback_data="toggle_search"
-            ),
+            InlineKeyboardButton(f"🌐 Поиск: {search_icon}", callback_data="toggle_search"),
             InlineKeyboardButton("❓ Помощь", callback_data="help"),
         ],
     ]
@@ -142,7 +125,7 @@ def _generate_model_buttons(models, current_model, start_index, is_openrouter=Fa
     return rows, current_index
 
 
-def get_model_menu_content(chat_state, context) -> None:
+def get_model_menu_content(chat_state, context):
     current_model = chat_state.model
 
     # Определяем, какой провайдер используется for текущей models
@@ -157,6 +140,7 @@ def get_model_menu_content(chat_state, context) -> None:
 
     if not all_models:
         from app.utils.keyboards import error_with_back_keyboard
+
         return "❌ Нет доступных моделей. Проверьте настройки.", None, error_with_back_keyboard("start_menu", "⬅️ Меню")
 
     # Save маппинг моделей в context for использования в callback
@@ -177,14 +161,8 @@ def get_model_menu_content(chat_state, context) -> None:
         keyboard.extend(buttons)
 
     # Add разделитель, if есть оба провайдера
-    if (
-        settings.AVAILABLE_MODELS
-        and openrouter_available
-        and settings.OPENROUTER_AVAILABLE_MODELS
-    ):
-        keyboard.append(
-            [InlineKeyboardButton("─────────────", callback_data="model_none")]
-        )
+    if settings.AVAILABLE_MODELS and openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
+        keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
 
     # Add models OpenRouter, if доступны
     if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
@@ -247,20 +225,14 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
         quick_row = []
         for key, meta in top_roles:
             title = meta.get("title", key)
-            quick_row.append(
-                InlineKeyboardButton(title, callback_data=f"role_apply:{key}")
-            )
+            quick_row.append(InlineKeyboardButton(title, callback_data=f"role_apply:{key}"))
         keyboard.append(quick_row)
 
     # 2. Browse catalogs
     keyboard.append(
         [
-            InlineKeyboardButton(
-                "📚 Каталог ролей", callback_data="role_nav:system_roles"
-            ),
-            InlineKeyboardButton(
-                f"👤 Мои роли ({custom_count})", callback_data="role_nav:my_roles"
-            ),
+            InlineKeyboardButton("📚 Каталог ролей", callback_data="role_nav:system_roles"),
+            InlineKeyboardButton(f"👤 Мои роли ({custom_count})", callback_data="role_nav:my_roles"),
         ]
     )
 
@@ -274,18 +246,10 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
 
     # 4. Reset (if role is active)
     if current_prompt:
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    "🔄 Сбросить к стандартной", callback_data="role_clear"
-                )
-            ]
-        )
+        keyboard.append([InlineKeyboardButton("🔄 Сбросить к стандартной", callback_data="role_clear")])
 
     # 5. Back
-    keyboard.append(
-        [InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]
-    )
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
@@ -311,9 +275,7 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
     status_text = "АКТИВНА" if is_active else "Не активна"
 
     preview_len = 150
-    prompt_preview = (
-        prompt[:preview_len] + "..." if len(prompt) > preview_len else prompt
-    )
+    prompt_preview = prompt[:preview_len] + "..." if len(prompt) > preview_len else prompt
 
     text = (
         f"ℹ️ **Детали роли**\n\n"
@@ -326,48 +288,24 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
 
     # 1. Применить/Снять
     if is_active:
-        keyboard.append(
-            [InlineKeyboardButton("🔄 Сбросить роль", callback_data="role_clear")]
-        )
+        keyboard.append([InlineKeyboardButton("🔄 Сбросить роль", callback_data="role_clear")])
     else:
-        keyboard.append(
-            [
-                InlineKeyboardButton(
-                    "▶️ Активировать", callback_data=f"role_apply:{role_key}"
-                )
-            ]
-        )
+        keyboard.append([InlineKeyboardButton("▶️ Активировать", callback_data=f"role_apply:{role_key}")])
 
     # 2. Действия над roleю
     row_actions = []
-    row_actions.append(
-        InlineKeyboardButton("👁️ Промпт", callback_data=f"role_view_prompt:{role_key}")
-    )
+    row_actions.append(InlineKeyboardButton("👁️ Промпт", callback_data=f"role_view_prompt:{role_key}"))
 
     if is_custom:
-        row_actions.append(
-            InlineKeyboardButton(
-                "✏️ Переим.", callback_data=f"role_rename_pick:{role_id}"
-            )
-        )
-        row_actions.append(
-            InlineKeyboardButton(
-                "🗑️ Удалить", callback_data=f"role_delete_ask:{role_id}"
-            )
-        )
+        row_actions.append(InlineKeyboardButton("✏️ Переим.", callback_data=f"role_rename_pick:{role_id}"))
+        row_actions.append(InlineKeyboardButton("🗑️ Удалить", callback_data=f"role_delete_ask:{role_id}"))
 
     keyboard.append(row_actions)
 
     # 3. Назад
     # Определяем, куда возвращаться (в Мои or Системные)
     back_view = "my_roles" if is_custom else "system_roles"
-    keyboard.append(
-        [
-            InlineKeyboardButton(
-                "⬅️ Назад к списку", callback_data=f"role_nav:{back_view}"
-            )
-        ]
-    )
+    keyboard.append([InlineKeyboardButton("⬅️ Назад к списку", callback_data=f"role_nav:{back_view}")])
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
@@ -433,38 +371,22 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
 
     for item in current_items:
         # Одна широкая button
-        keyboard.append(
-            [InlineKeyboardButton(item["text"], callback_data=item["callback"])]
-        )
+        keyboard.append([InlineKeyboardButton(item["text"], callback_data=item["callback"])])
 
     # Кнопки пагинации
     nav_row = []
     if total_pages > 1:
         if page > 0:
-            nav_row.append(
-                InlineKeyboardButton(
-                    "⬅️", callback_data=f"role_page:{view_mode}:{page - 1}"
-                )
-            )
+            nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"role_page:{view_mode}:{page - 1}"))
         else:
-            nav_row.append(
-                InlineKeyboardButton("⏺️", callback_data="noop")
-            )  # Placeholder
+            nav_row.append(InlineKeyboardButton("⏺️", callback_data="noop"))  # Placeholder
 
-        nav_row.append(
-            InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop")
-        )
+        nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
 
         if page < total_pages - 1:
-            nav_row.append(
-                InlineKeyboardButton(
-                    "➡️", callback_data=f"role_page:{view_mode}:{page + 1}"
-                )
-            )
+            nav_row.append(InlineKeyboardButton("➡️", callback_data=f"role_page:{view_mode}:{page + 1}"))
         else:
-            nav_row.append(
-                InlineKeyboardButton("⏺️", callback_data="noop")
-            )  # Placeholder
+            nav_row.append(InlineKeyboardButton("⏺️", callback_data="noop"))  # Placeholder
 
     if nav_row:
         keyboard.append(nav_row)
@@ -479,17 +401,13 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
         )
 
     # Кнопка Назад (в Хаб)
-    keyboard.append(
-        [InlineKeyboardButton("↩️ Назад в меню ролей", callback_data="role_nav:hub")]
-    )
+    keyboard.append([InlineKeyboardButton("↩️ Назад в меню ролей", callback_data="role_nav:hub")])
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
 
-async def get_roles_menu_content(
-    user_id, chat_state, view_mode="hub", page=0, role_key=None
-) -> None:
+async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, role_key=None):
     """
     Генерирует content for menu ролей в стиле "Smart Hub".
     view_mode: 'hub' | 'my_roles' | 'system_roles' | 'role_details'
@@ -540,7 +458,7 @@ async def get_roles_menu_content(
         return f"Ошибка режима: {view_mode}", None, None
 
 
-async def get_metrics_content() -> None:
+async def get_metrics_content():
     """Generates the metrics report text."""
     # Get все data
     data = await get_system_status_data()
@@ -574,9 +492,7 @@ async def get_metrics_content() -> None:
             if (
                 isinstance(model, str)
                 and isinstance(count, (int, float))
-                and not any(
-                    char in model for char in ["/", "\\", ".pdf", ".docx", ".doc"]
-                )
+                and not any(char in model for char in ["/", "\\", ".pdf", ".docx", ".doc"])
             ):
                 text += f"• {model}: `{count}`\n"
         text += "\n"
@@ -617,9 +533,7 @@ async def get_metrics_content() -> None:
     # Add history за afterдние дни
     if metrics["daily_metrics"]:
         text += "*📈 История за последние дни:*\n"
-        for date_str, daily_data in list(metrics["daily_metrics"].items())[
-            :5
-        ]:  # Последние 5 дней
+        for date_str, daily_data in list(metrics["daily_metrics"].items())[:5]:  # Последние 5 дней
             requests = daily_data.get("requests", 0)
             errors = daily_data.get("errors", 0)
             text += f"• {date_str}: {requests} запросов, {errors} ошибок\n"
@@ -637,7 +551,7 @@ async def get_metrics_content() -> None:
     return text
 
 
-async def get_documents_menu_content(user_id) -> None:
+async def get_documents_menu_content(user_id):
     documents = await get_user_documents(user_id)
 
     if not documents:
@@ -661,30 +575,16 @@ async def get_documents_menu_content(user_id) -> None:
         text += "📎 Отправьте новый файл для загрузки."
 
     keyboard = [
-        [
-            InlineKeyboardButton(
-                "📄 Загрузить новый документ", callback_data="doc:upload_new"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "📋 Выбрать документ", callback_data="doc:select_document"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🗑️ Удалить все документы", callback_data="doc:clear_all"
-            )
-        ],
-        [
-            InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")
-        ],
+        [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
+        [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
+        [InlineKeyboardButton("🗑️ Удалить все документы", callback_data="doc:clear_all")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")],
     ]
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
 
-async def get_conversations_menu_content(user_id, page=1) -> None:
+async def get_conversations_menu_content(user_id, page=1):
     limit = 5
     offset = (page - 1) * limit
 
@@ -699,20 +599,14 @@ async def get_conversations_menu_content(user_id, page=1) -> None:
             "💡 Используйте /save после важного разговора."
         )
         formatted_empty, pm = TelegramFormatter.format_text(empty_text)
-        kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]]
-        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]])
         return formatted_empty, pm, kb
 
     text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
 
     for conv in conversations:
         role_info = f" | {conv['role_title']}" if conv["role_title"] else ""
-        created = (
-            conv["created_at"].strftime("%d.%m.%Y %H:%M")
-            if conv["created_at"]
-            else "Неизвестно"
-        )
+        created = conv["created_at"].strftime("%d.%m.%Y %H:%M") if conv["created_at"] else "Неизвестно"
         text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
         text += f"📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n"
 
@@ -720,32 +614,20 @@ async def get_conversations_menu_content(user_id, page=1) -> None:
     keyboard = []
     nav_row = []
     if page > 1:
-        nav_row.append(
-            InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page - 1}")
-        )
+        nav_row.append(InlineKeyboardButton("⬅️ Предыдущая", callback_data=f"conv_page:{page - 1}"))
     if len(conversations) == limit and offset + limit < total_count:
-        nav_row.append(
-            InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page + 1}")
-        )
+        nav_row.append(InlineKeyboardButton("➡️ Следующая", callback_data=f"conv_page:{page + 1}"))
 
     if nav_row:
         keyboard.append(nav_row)
 
     # Кнопки действий
     if conversations:
-        keyboard.append(
-            [InlineKeyboardButton("🔄 Переключиться", callback_data="conv_switch")]
-        )
-        keyboard.append(
-            [InlineKeyboardButton("✏️ Переименовать", callback_data="conv_rename")]
-        )
-        keyboard.append(
-            [InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")]
-        )
+        keyboard.append([InlineKeyboardButton("🔄 Переключиться", callback_data="conv_switch")])
+        keyboard.append([InlineKeyboardButton("✏️ Переименовать", callback_data="conv_rename")])
+        keyboard.append([InlineKeyboardButton("🗑️ Удалить", callback_data="conv_delete")])
 
     # Кнопка Назад
-    keyboard.append(
-        [InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]
-    )
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
 
     return text, "Markdown", InlineKeyboardMarkup(keyboard)

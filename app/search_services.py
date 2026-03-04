@@ -13,7 +13,7 @@ from app.utils.api_logger import api_logger
 from app.utils.network import NetworkErrorHandler
 
 # Robust HTTP client for Tavily API calls
-http_client = NetworkErrorHandler.create_robust_http_client()
+http_client: httpx.AsyncClient | None = NetworkErrorHandler.create_robust_http_client()
 
 
 async def close_tavily_client() -> None:
@@ -25,20 +25,16 @@ async def close_tavily_client() -> None:
         logging.info("Tavily HTTP client closed")
 
 
-
-
-
 async def _tavily_api_call(payload: dict[str, Any]) -> dict[str, Any]:
     """Internal function for making Tavily API calls with circuit breaker."""
+
     async def _do_call():
         headers = {}
         request_id = get_request_id()
         if request_id:
             headers["X-Request-ID"] = request_id
 
-        response = await http_client.post(
-            "https://api.tavily.com/search", json=payload, headers=headers or None
-        )
+        response = await http_client.post("https://api.tavily.com/search", json=payload, headers=headers or None)
         response.raise_for_status()
         return response.json()
 
@@ -52,7 +48,7 @@ async def _tavily_api_call(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def tavily_search_agent(
-    query: str, search_type: str = "search", user_id: int = None, chat_id: int = None
+    query: str, search_type: str = "search", user_id: int | None = None, chat_id: int | None = None
 ):
     # Input validation
     if not isinstance(query, str) or not query.strip():
@@ -78,20 +74,14 @@ async def tavily_search_agent(
 
     available_key = await get_available_tavily_key()
     if not available_key:
-        return {
-            "error": "Поиск недоступен: все API ключи сервиса поиска достигли месячного лимита."
-        }
+        return {"error": "Поиск недоступен: все API ключи сервиса поиска достигли месячного лимита."}
 
     api_key = available_key["api_key"]
 
     # Detailed Tavily API request logging
-    start_time = api_logger.log_tavily_request(
-        query=query, search_type=search_type, user_id=user_id, chat_id=chat_id
-    )
+    start_time = api_logger.log_tavily_request(query=query, search_type=search_type, user_id=user_id, chat_id=chat_id)
 
-    logging.info(
-        f"Performing Tavily API call (type: {search_type}) for query: {query[:100]}"
-    )
+    logging.info(f"Performing Tavily API call (type: {search_type}) for query: {query[:100]}")
 
     # Record search metrics
     await metrics_collector.record_search_query()
@@ -123,9 +113,7 @@ async def tavily_search_agent(
 
         # Log successful Tavily API response
         results = result.get("results", [])
-        results_count = (
-            len(results) if results and result.get("type") == "search" else 1
-        )
+        results_count = len(results) if results and result.get("type") == "search" else 1
         api_logger.log_tavily_response(
             start_time=start_time,
             search_type=search_type,
@@ -148,15 +136,9 @@ async def tavily_search_agent(
             chat_id=chat_id,
         )
 
-        logging.error(
-            f"Tavily API call failed with status {e.response.status_code}: {e.response.text}"
-        )
-        await metrics_collector.record_error(
-            "tavily_http", f"Status {e.response.status_code}: {e.response.text}"
-        )
-        return {
-            "error": f"Ошибка API поиска: {e.response.status_code}. Убедитесь, что ключ API валиден."
-        }
+        logging.error(f"Tavily API call failed with status {e.response.status_code}: {e.response.text}")
+        await metrics_collector.record_error("tavily_http", f"Status {e.response.status_code}: {e.response.text}")
+        return {"error": f"Ошибка API поиска: {e.response.status_code}. Убедитесь, что ключ API валиден."}
     except Exception as e:
         api_logger.log_tavily_response(
             start_time=start_time,

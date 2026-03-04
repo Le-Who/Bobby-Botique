@@ -33,9 +33,7 @@ def schedule_llm_summarization(
     """
     try:
         loop = asyncio.get_running_loop()
-        task = loop.create_task(
-            _run_llm_summarization(dropped_messages, existing_summary, callback)
-        )
+        task = loop.create_task(_run_llm_summarization(dropped_messages, existing_summary, callback))
         # prevent GC of fire-and-forget task
         task.add_done_callback(lambda t: None)
         logger.info(
@@ -43,9 +41,7 @@ def schedule_llm_summarization(
             len(dropped_messages),
         )
     except RuntimeError:
-        logger.warning(
-            "No running event loop — cannot schedule LLM summarization"
-        )
+        logger.warning("No running event loop — cannot schedule LLM summarization")
 
 
 async def _run_llm_summarization(
@@ -69,9 +65,7 @@ async def _run_llm_summarization(
                 await callback(existing_summary)
             return
 
-        logger.info(
-            "Starting refine-chain summarization: %d chunks", len(chunks)
-        )
+        logger.info("Starting refine-chain summarization: %d chunks", len(chunks))
 
         # Import here to avoid circular imports
         from app.prompt_registry import (
@@ -91,9 +85,7 @@ async def _run_llm_summarization(
             if i == 0 and not summary:
                 refine_instruction = SUMMARIZATION_REFINE_FIRST
             else:
-                refine_instruction = SUMMARIZATION_REFINE_SUBSEQUENT.replace(
-                    "{previous_summary}", summary
-                )
+                refine_instruction = SUMMARIZATION_REFINE_SUBSEQUENT.replace("{previous_summary}", summary)
 
             # Build the prompt from template
             prompt_text = SUMMARIZATION_CHUNK.text

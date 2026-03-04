@@ -9,6 +9,7 @@ from app.utils.background_tasks import cancel_background_task, start_background_
 
 # ── start_background_task ─────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_start_background_task_creates_new_when_none():
     """Creates a new task when task_ref is None."""
@@ -26,6 +27,7 @@ async def test_start_background_task_creates_new_when_none():
 @pytest.mark.asyncio
 async def test_start_background_task_creates_new_when_done():
     """Creates a new task when the old one has finished."""
+
     async def noop():
         pass
 
@@ -33,6 +35,7 @@ async def test_start_background_task_creates_new_when_done():
     await old  # finish it
 
     flag = []
+
     async def work():
         flag.append(1)
 
@@ -63,6 +66,7 @@ async def test_start_background_task_returns_existing_when_running():
 
 
 # ── cancel_background_task ────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_cancel_background_task_cancels_running():
