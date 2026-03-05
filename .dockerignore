@@ -9,6 +9,7 @@
 .Jules/
 .idea/
 .roomodes
+skills/
 
 # ── Virtual Environment ──────────────────────────────────────
 .venv/

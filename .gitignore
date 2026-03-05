@@ -28,6 +28,7 @@ tests_output.log
 .roomodes
 *.swp
 *.swo
+skills/
 
 # ── Dev artifacts ─────────────────────────────────────────────
 verification/
