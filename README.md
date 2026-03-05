@@ -102,7 +102,7 @@ Located in `app/handlers/` as modular sub-handlers (`ai_core.py`, `ai_chat.py`, 
 
 The bot implements a sophisticated "Smart Router" for AI requests:
 
-- **Multi-Provider Support**: Seamlessly switches between **Google Gemini** (Flash, Pro) and **OpenRouter** (GPT-4, Claude 3, etc.).
+- **Multi-Provider Support**: Seamlessly switches between **Google Gemini** (Flash, Pro) and **OpenRouter** (GPT-5, Claude 4.5, etc.).
 - **ProviderRouter** (v2.6+):
   - Unified AI call path — both `ProviderRouter` and `AgentRequestUseCase` route through Provider classes (`GeminiProvider` / `OpenRouterProvider`).
   - **DB-backed `KeyStatusManager`** (v2.7.0+): Persistent per-model key health tracking with error-category-aware cooldowns. Replaces the in-memory `KeyHealth` class.
