@@ -348,7 +348,7 @@ class MetricsCollector:
                         else {},
                     )
                 except Exception as e:
-                    logging.warning(f"Failed to process daily metrics row: {e}, row: {row}")
+                    logging.warning("Failed to process daily metrics row: %s, row: %s", e, row)
                     continue
 
             # Load afterдние ошибки
@@ -469,7 +469,7 @@ class MetricsCollector:
             },
         }
 
-        logging.debug(f"Metrics summary: {summary['total_requests']} requests, {summary['error_rate']:.1f}% errors")
+        logging.debug("Metrics summary: %d requests, %.1f%% errors", summary['total_requests'], summary['error_rate'])
         return summary
 
     async def initialize(self):

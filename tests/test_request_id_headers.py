@@ -42,7 +42,7 @@ async def test_openrouter_request_adds_request_id_header():
         patch("app.providers.openrouter._openrouter_http_client.post", new=AsyncMock(return_value=mock_response)) as mock_post,
         patch("app.providers.openrouter.metrics_collector.record_api_call", new=AsyncMock()),
         patch("app.providers.openrouter.metrics_collector.record_error", new=AsyncMock()),
-        patch("app.providers.openrouter.api_logger.log_gemini_response", new=MagicMock()),
+        patch("app.providers.openrouter.api_logger.log_response", new=MagicMock()),
     ):
         resp = await provider._execute_request(
             history=[{"role": "user", "parts": ["hi"]}],

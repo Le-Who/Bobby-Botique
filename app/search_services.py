@@ -79,9 +79,9 @@ async def tavily_search_agent(
     api_key = available_key["api_key"]
 
     # Detailed Tavily API request logging
-    start_time = api_logger.log_tavily_request(query=query, search_type=search_type, user_id=user_id, chat_id=chat_id)
+    start_time = api_logger.log_request("tavily", search_type=search_type, query_length=len(query), query_preview=query[:100])
 
-    logging.info(f"Performing Tavily API call (type: {search_type}) for query: {query[:100]}")
+    logging.info("Performing Tavily API call (type: %s) for query: %.100s", search_type, query)
 
     # Record search metrics
     await metrics_collector.record_search_query()
@@ -114,40 +114,36 @@ async def tavily_search_agent(
         # Log successful Tavily API response
         results = result.get("results", [])
         results_count = len(results) if results and result.get("type") == "search" else 1
-        api_logger.log_tavily_response(
-            start_time=start_time,
+        api_logger.log_response(
+            "tavily",
+            start_time,
             search_type=search_type,
             results_count=results_count,
-            success=True,
-            user_id=user_id,
-            chat_id=chat_id,
         )
 
         return result
 
     except httpx.HTTPStatusError as e:
-        api_logger.log_tavily_response(
-            start_time=start_time,
+        api_logger.log_response(
+            "tavily",
+            start_time,
             search_type=search_type,
             results_count=0,
             success=False,
             error_message=f"HTTP {e.response.status_code}: {e.response.text}",
-            user_id=user_id,
-            chat_id=chat_id,
         )
 
-        logging.error(f"Tavily API call failed with status {e.response.status_code}: {e.response.text}")
+        logging.error("Tavily API call failed with status %d: %s", e.response.status_code, e.response.text)
         await metrics_collector.record_error("tavily_http", f"Status {e.response.status_code}: {e.response.text}")
         return {"error": f"Ошибка API поиска: {e.response.status_code}. Убедитесь, что ключ API валиден."}
     except Exception as e:
-        api_logger.log_tavily_response(
-            start_time=start_time,
+        api_logger.log_response(
+            "tavily",
+            start_time,
             search_type=search_type,
             results_count=0,
             success=False,
             error_message=str(e),
-            user_id=user_id,
-            chat_id=chat_id,
         )
 
         logging.error("Tavily API call failed: %s", e, exc_info=True)

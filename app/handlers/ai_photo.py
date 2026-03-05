@@ -183,7 +183,7 @@ async def process_media_group_request(
     chat_state = await get_user_chat(user_id)
 
     count = len(messages) if messages else 0
-    logging.info(f"🔄 Обрабатываю группу из {count} изображений для пользователя {user_id}")
+    logging.info("Processing group of %d images for user %s", count, user_id)
 
     # Check, есть ли searchовый префикс в caption
     search_prefix = None

@@ -448,14 +448,14 @@ async def _handle_research_agent(
             # Безопасная проверка атрибута deep_dive_thread_id
             if not hasattr(chat_state, "deep_dive_thread_id") or not chat_state.deep_dive_thread_id:
                 chat_state.deep_dive_thread_id = str(uuid.uuid4())
-                logging.info(f"Generated deep dive thread_id {chat_state.deep_dive_thread_id} for user {user_id}")
+                logging.info("Generated deep dive thread_id %s for user %s", chat_state.deep_dive_thread_id, user_id)
 
             await update_user_chat(user_id, chat_state)
-            logging.info(f"Deep dive mode activated for user {user_id} with thread_id {chat_state.deep_dive_thread_id}")
+            logging.info("Deep dive mode activated for user %s with thread_id %s", user_id, chat_state.deep_dive_thread_id)
     else:
         chat_state.history.pop()
         await update_user_chat(user_id, chat_state)
-        logging.warning(f"Empty response from Gemini API for deep dive synthesis by user {user_id}")
+        logging.warning("Empty response from Gemini API for deep dive synthesis by user %s", user_id)
         try:
             from app.errors import build_retry_and_roles_keyboard
 

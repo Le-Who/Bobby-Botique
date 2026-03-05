@@ -138,8 +138,7 @@ async def metrics_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         error_msg = f"❌ Ошибка получения метрик: {str(e)[:100]}"
         await update.message.reply_text(error_msg)
         logging.error(
-            "Error in metrics command for user %s: %s",
-            update.effective_user.id,
+            "Error in metrics command: %s",
             e,
             exc_info=True,
         )
@@ -167,8 +166,7 @@ async def cache_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         error_msg = f"❌ Ошибка получения статистики кэша: {str(e)[:100]}"
         await update.message.reply_text(error_msg)
         logging.error(
-            "Error in cache_stats command for user %s: %s",
-            update.effective_user.id,
+            "Error in cache_stats command: %s",
             e,
             exc_info=True,
         )
@@ -199,8 +197,7 @@ async def queue_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         error_msg = f"❌ Ошибка получения статистики очереди: {str(e)[:100]}"
         await update.message.reply_text(error_msg)
         logging.error(
-            "Error in queue_stats command for user %s: %s",
-            update.effective_user.id,
+            "Error in queue_stats command: %s",
             e,
             exc_info=True,
         )
@@ -507,7 +504,7 @@ async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TY
         formatted_text, parse_mode = TelegramFormatter.format_text(report)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
-        logging.info("Configuration reloaded by admin %s", update.effective_user.id)
+        logging.info("Configuration reloaded by admin")
 
     except Exception as e:
         error_msg = f"❌ Ошибка перезагрузки: {str(e)[:200]}"
@@ -520,8 +517,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # context используется for совместимости с другими командами
     """Показывает справку по админским командам"""
     try:
-        user_id = update.effective_user.id
-        logging.info("Admin command from user %s", user_id)
+        logging.info("Admin command")
 
         help_text = (
             "🔧 *Админские команды Gemini Bot*\n\n"
@@ -560,8 +556,8 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
-        logging.info("Admin command completed successfully for user %s", user_id)
+        logging.info("Admin command completed successfully")
 
     except Exception as e:
-        logging.error("Error in admin command for user %s: %s", user_id, e, exc_info=True)
+        logging.error("Error in admin command: %s", e, exc_info=True)
         await update.message.reply_text("❌ Произошла ошибка при обработке команды. Попробуйте позже.")

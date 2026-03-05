@@ -24,7 +24,7 @@ class AgentRequestUseCase:
             use_openrouter = "/" in preferred_model or get_use_openrouter()
 
         if use_openrouter and not get_openrouter_keys():
-            logging.warning(f"OpenRouter model {preferred_model} selected but no keys available")
+            logging.warning("OpenRouter model %s selected but no keys available", preferred_model)
             return None, None, "no_keys"
 
         if use_openrouter or "/" in preferred_model:
@@ -85,10 +85,10 @@ class AgentRequestUseCase:
                 return None, None, "decryption_failed"
 
             if key:
-                logging.info(f"Found available fallback key for model {fallback_model}.")
+                logging.info("Found available fallback key for model %s.", fallback_model)
                 return key, fallback_model, "confirm_fallback"
 
-        logging.error(f"All {provider_name} API keys for all models are exhausted or excluded.")
+        logging.error("All %s API keys for all models are exhausted or excluded.", provider_name)
         return None, None, "all_exhausted"
 
     async def _resolve_gemini_request(

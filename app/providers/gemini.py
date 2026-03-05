@@ -57,12 +57,11 @@ class GeminiProvider(BaseAIProvider):
                 prompt_length = 0
                 has_images = False
 
-            start_time = api_logger.log_gemini_request(
+            start_time = api_logger.log_request(
+                "gemini",
                 model=model_name,
                 prompt_length=prompt_length,
                 has_images=has_images,
-                user_id=user_id,
-                chat_id=chat_id,
             )
 
             # Reuse client across requests (connection pooling, TLS caching).
@@ -140,14 +139,12 @@ class GeminiProvider(BaseAIProvider):
 
             # Log success
             if start_time is not None:
-                api_logger.log_gemini_response(
-                    start_time=start_time,
+                api_logger.log_response(
+                    "gemini",
+                    start_time,
                     model=model_name,
                     response_length=len(response_text),
                     token_count=token_count,
-                    success=True,
-                    user_id=user_id,
-                    chat_id=chat_id,
                 )
 
             return AIResponse(
@@ -334,12 +331,11 @@ class GeminiProvider(BaseAIProvider):
 
     def _log_failure(self, start_time, model, msg, user_id, chat_id):
         if start_time is not None:
-            api_logger.log_gemini_response(
-                start_time=start_time,
+            api_logger.log_response(
+                "gemini",
+                start_time,
                 model=model,
                 response_length=0,
                 success=False,
                 error_message=msg,
-                user_id=user_id,
-                chat_id=chat_id,
             )

@@ -34,7 +34,7 @@ from app.handlers.msg_roles import (
 from app.metrics import metrics_collector
 from app.repos.chats import get_user_chat
 from app.repos.users import is_authorized
-from app.request_context import set_request_id
+from app.request_context import set_request_id, set_user_context
 from app.security import check_user_rate_limit
 from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
@@ -66,6 +66,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await ensure_state_loaded(user_id)
 
     request_id = set_request_id(f"tgmsg-{chat_id}-{getattr(update, 'update_id', 'na')}")
+    set_user_context(user_id, chat_id)
 
     # Immediate typing indicator — instant feedback before any processing
     try:
@@ -85,10 +86,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # ── 2. Telegram API logging ──────────────────────────────────────────
         message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
-        start_time = api_logger.log_telegram_request(
+        start_time = api_logger.log_request(
+            "telegram",
             method="handle_message",
-            chat_id=chat_id,
-            user_id=user_id,
             message_type=message_type,
         )
 
@@ -211,12 +211,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     import time as _time
 
                     elapsed = _time.time() - start_time
-                    api_logger.log_telegram_response(
-                        start_time=start_time,
+                    api_logger.log_response(
+                        "telegram",
+                        start_time,
                         method="handle_message",
-                        success=True,
-                        chat_id=chat_id,
-                        user_id=user_id,
                     )
                     await metrics_collector.record_request("handle_message", elapsed, success=True, user_id=user_id)
 
@@ -236,12 +234,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 import time as _time
 
                 elapsed = _time.time() - start_time
-                api_logger.log_telegram_response(
-                    start_time=start_time,
+                api_logger.log_response(
+                    "telegram",
+                    start_time,
                     method="handle_message",
                     success=False,
-                    chat_id=chat_id,
-                    user_id=user_id,
                     error_message=str(e),
                 )
                 await metrics_collector.record_request("handle_message", elapsed, success=False, user_id=user_id)

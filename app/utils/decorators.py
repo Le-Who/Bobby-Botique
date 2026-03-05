@@ -5,6 +5,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app.repos.users import is_admin, is_authorized
+from app.request_context import set_request_id, set_user_context
 
 
 def authorized_only(func):
@@ -15,8 +16,15 @@ def authorized_only(func):
         if not update.effective_user:
             return
         user_id = update.effective_user.id
+        chat_id = getattr(update.effective_chat, "id", None)
+        set_user_context(user_id, chat_id)
+        # Generate request_id: callbacks use query.id, messages use update_id
+        if update.callback_query:
+            set_request_id(f"tgcb-{user_id}-{update.callback_query.id}")
+        else:
+            set_request_id(f"tgcmd-{chat_id}-{getattr(update, 'update_id', 'na')}")
         if not await is_authorized(user_id):
-            logging.warning(f"Unauthorized access attempt by user {user_id} to {func.__name__}")
+            logging.warning("Unauthorized access attempt by user %s to %s", user_id, func.__name__)
             if update.message:
                 await update.message.reply_text("❌ У вас нет доступа к этому боту.")
             elif update.callback_query:
@@ -35,8 +43,14 @@ def admin_only(func):
         if not update.effective_user:
             return
         user_id = update.effective_user.id
+        chat_id = getattr(update.effective_chat, "id", None)
+        set_user_context(user_id, chat_id)
+        if update.callback_query:
+            set_request_id(f"tgcb-{user_id}-{update.callback_query.id}")
+        else:
+            set_request_id(f"tgcmd-{chat_id}-{getattr(update, 'update_id', 'na')}")
         if not is_admin(user_id):
-            logging.warning(f"Non-admin access attempt by user {user_id} to {func.__name__}")
+            logging.warning("Non-admin access attempt by user %s to %s", user_id, func.__name__)
             if update.message:
                 await update.message.reply_text("❌ У вас нет прав администратора.")
             elif update.callback_query:

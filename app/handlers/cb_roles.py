@@ -312,7 +312,7 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
         if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
             await progress_msg.edit_text("🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.")
         else:
-            logging.error(f"Failed to parse role JSON on retry. Response: {response_text}")
+            logging.error("Failed to parse role JSON on retry. Response: %s", response_text)
             await progress_msg.edit_text("❌ Снова не удалось сгенерировать роль. Попробуйте изменить описание.")
         set_generating_custom_role(user_id, False)
         return

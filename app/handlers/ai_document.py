@@ -65,7 +65,7 @@ async def _handle_document_question(
         original_length = len(document_content) if document_content else 0
         if document_content and len(document_content) > max_context_length:
             document_content = document_content[:max_context_length] + "\n\n[Документ обрезан для экономии токенов]"
-            logging.info(f"Document content truncated from {original_length} to {len(document_content)} characters")
+            logging.info("Document content truncated from %d to %d characters", original_length, len(document_content))
 
         # Безопасная обработка document_content
         try:

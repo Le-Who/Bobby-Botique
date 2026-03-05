@@ -7,7 +7,7 @@ Provides:
 - DevFormatter for human-readable development logging
 - Optional Rich handler for colored, pretty console output
 - get_logger() helper for module-specific loggers
-- log_with_context() for adding user/chat context to logs
+- RequestContextFilter for injecting request_id, user_id, chat_id from contextvars
 """
 
 import functools
@@ -18,7 +18,7 @@ import sys
 import time
 from typing import Any
 
-from app.request_context import get_request_id
+from app.request_context import get_chat_id, get_request_id, get_user_id
 
 # Try importing Rich for pretty dev output (optional dependency)
 try:
@@ -87,9 +87,12 @@ class JSONFormatter(logging.Formatter):
 
 class RequestContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        request_id = get_request_id()
         if not hasattr(record, "request_id"):
-            record.request_id = request_id or "-"
+            record.request_id = get_request_id() or "-"
+        if not hasattr(record, "user_id"):
+            record.user_id = get_user_id()
+        if not hasattr(record, "chat_id"):
+            record.chat_id = get_chat_id()
         return True
 
 
@@ -193,38 +196,6 @@ def get_logger(name: str) -> logging.Logger:
     """
     return logging.getLogger(name)
 
-
-def log_with_context(
-    logger: logging.Logger,
-    level: int,
-    message: str,
-    user_id: int | None = None,
-    chat_id: int | None = None,
-    **extra: Any,
-) -> None:
-    """
-    Log a message with user/chat context attached.
-
-    Args:
-        logger: Logger instance
-        level: Logging level (logging.INFO, logging.ERROR, etc.)
-        message: Log message
-        user_id: Optional user ID to attach
-        chat_id: Optional chat ID to attach
-        **extra: Additional context to include
-
-    Usage:
-        log_with_context(logger, logging.INFO, "User action", user_id=123)
-    """
-    extra_dict: dict[str, Any] = {}
-    if user_id is not None:
-        extra_dict["user_id"] = user_id
-    if chat_id is not None:
-        extra_dict["chat_id"] = chat_id
-    if extra:
-        extra_dict["extra_context"] = extra
-
-    logger.log(level, message, extra=extra_dict)
 
 
 def timed_operation(operation_name: str = ""):

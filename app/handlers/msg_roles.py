@@ -164,7 +164,7 @@ async def handle_custom_role_generation(
             )
             await agent._increment_key_usage(key_data["key_hash"], model_used)
 
-            logging.info(f"Model response for role generation: {response_text[:500]}...")
+            logging.info("Model response for role generation: %.500s...", response_text)
 
             role_obj = extract_json_object(response_text)
 
@@ -181,7 +181,7 @@ async def handle_custom_role_generation(
                         reply_markup=error_kb,
                     )
                 else:
-                    logging.error(f"Failed to parse role JSON. Response: {response_text}")
+                    logging.error("Failed to parse role JSON. Response: %s", response_text)
                     await progress_msg.edit_text(
                         "❌ Не удалось сгенерировать роль. Попробуйте изменить описание.",
                         reply_markup=error_kb,

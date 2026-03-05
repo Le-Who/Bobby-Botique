@@ -36,7 +36,7 @@ async def send_long_message(
             if user_id:
                 chat_state = await get_user_chat(user_id)
                 if not chat_state.is_deep_dive:
-                    logging.warning(f"Deep dive flag set but user {user_id} not in deep dive mode")
+                    logging.warning("Deep dive flag set but user %s not in deep dive mode", user_id)
                     is_deep_dive = False
                 elif not hasattr(chat_state, "deep_dive_thread_id") or not chat_state.deep_dive_thread_id:
                     is_deep_dive = False
@@ -90,7 +90,7 @@ async def send_long_message(
                 )
 
         except BadRequest as e:
-            logging.warning(f"Failed to send/edit message (parse_mode={parse_mode}): {e}")
+            logging.warning("Failed to send/edit message (parse_mode=%s): %s", parse_mode, e)
 
             # Retry without formatting if HTML fails (should be rare with our validator)
             try:

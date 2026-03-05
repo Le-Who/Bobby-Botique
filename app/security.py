@@ -506,7 +506,7 @@ class RateLimiter:
             del self._user_requests[user_id]
 
         if users_to_remove:
-            logging.debug(f"Cleaned up {len(users_to_remove)} inactive users from rate limiter")
+            logging.debug("Cleaned up %d inactive users from rate limiter", len(users_to_remove))
 
     async def get_user_stats(self, user_id: int) -> dict[str, Any]:
         """Return request statistics for a user."""

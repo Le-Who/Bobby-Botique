@@ -290,7 +290,7 @@ async def _handle_regular_chat(
                 try:
                     await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
                 except Exception as send_err:
-                    logging.warning(f"send_long_message failed, fallback to reply_text: {send_err}")
+                    logging.warning("send_long_message failed, fallback to reply_text: %s", send_err)
                     try:
                         formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
                         await placeholder_message.reply_text(

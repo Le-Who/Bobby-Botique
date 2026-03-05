@@ -155,14 +155,12 @@ class OpenRouterProvider(BaseAIProvider):
 
             # Log success
             if start_time is not None:
-                api_logger.log_openrouter_response(
-                    start_time=start_time,
+                api_logger.log_response(
+                    "openrouter",
+                    start_time,
                     model=model_name,
                     response_length=len(response_text),
                     token_count=token_count,
-                    success=True,
-                    user_id=user_id,
-                    chat_id=chat_id,
                 )
 
             return AIResponse(
@@ -268,14 +266,13 @@ class OpenRouterProvider(BaseAIProvider):
 
     def _log_failure(self, start_time, model, msg, user_id, chat_id):
         if start_time is not None:
-            api_logger.log_openrouter_response(
-                start_time=start_time,
+            api_logger.log_response(
+                "openrouter",
+                start_time,
                 model=model,
                 response_length=0,
                 success=False,
                 error_message=msg,
-                user_id=user_id,
-                chat_id=chat_id,
             )
 
 

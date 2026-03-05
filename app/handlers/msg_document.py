@@ -130,7 +130,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 try:
                     os.unlink(tmp_path)
                 except OSError as cleanup_error:
-                    logging.warning(f"Failed to cleanup temp doc file {tmp_path}: {cleanup_error}")
+                    logging.warning("Failed to cleanup temp doc file %s: %s", tmp_path, cleanup_error)
 
         if result.get("error"):
             if result.get("error") == "duplicate":

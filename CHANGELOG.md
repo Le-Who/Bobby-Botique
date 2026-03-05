@@ -3,6 +3,51 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.18] – 2026-03-05 – Logging Refactoring: ContextFilter, Unified APILogger, f-string Cleanup
+
+### 🔧 ContextFilter for user_id/chat_id
+
+Extended `request_context.py` with `set_user_context()`/`get_user_id()`/`get_chat_id()` via `contextvars`. `RequestContextFilter` auto-injects `user_id`, `chat_id`, and `request_id` into every log record. JSONFormatter already included these fields — no changes needed.
+
+### 🏗️ Unified APILogger (452 → 156 lines)
+
+Replaced 8 specialized methods (`log_gemini_request`, `log_gemini_response`, `log_openrouter_request`, etc.) with 3 universal ones: `log_request()`, `log_response()`, `log_error()`. Removed dead code: `_sanitize_data`, `log_api_call` decorator, `log_with_context`.
+
+### 🔄 Decorator Context Propagation
+
+`authorized_only` and `admin_only` decorators now call `set_user_context()` and `set_request_id()` — covers all ~40+ handlers automatically. Undecorated handlers in `cb_ai_actions.py` updated manually. Redundant calls removed from `commands.py`.
+
+### 🧹 f-string Logging → `%s` Formatting
+
+33 f-string `logging.*()` calls converted to lazy `%s` formatting across 12 files. Zero f-string logging calls remain in `app/`.
+
+### 🧹 cmd_admin.py Inline user_id Cleanup
+
+Removed 7 redundant `update.effective_user.id` references from log messages — user_id is now auto-injected via RequestContextFilter.
+
+### Files Changed
+
+| File                                  | Change                                                      |
+| ------------------------------------- | ----------------------------------------------------------- |
+| `app/request_context.py`              | `set_user_context()`, `get_user_id()`, `get_chat_id()`      |
+| `app/utils/logging_config.py`         | `RequestContextFilter` extended, removed `log_with_context` |
+| `app/utils/api_logger.py`             | 8 methods → 3 (452 → 156 lines), dead code removed          |
+| `app/utils/decorators.py`             | `set_user_context` + `set_request_id` in both decorators    |
+| `app/handlers/cb_ai_actions.py`       | Added `set_user_context`/`set_request_id` to 3 handlers     |
+| `app/handlers/commands.py`            | Removed redundant `set_request_id` import/usage             |
+| `app/handlers/cmd_admin.py`           | Removed 7 inline `user_id` from log messages                |
+| `app/providers/gemini.py`             | Updated to `log_request()`/`log_response()`                 |
+| `app/providers/openrouter.py`         | Updated to `log_request()`/`log_response()`                 |
+| `app/search_services.py`              | Updated to `log_request()`/`log_response()`                 |
+| 12 files across `app/`                | f-string logging → `%s` formatting (33 instances)           |
+| `tests/test_decorators.py`            | [NEW] 6 tests for decorator context propagation             |
+| `tests/test_request_context.py`       | +7 tests for user context                                   |
+| `tests/test_api_logger_request_id.py` | Rewritten for new API                                       |
+
+### 🧪 Tests: 923 passed, 0 failures
+
+---
+
 ## [2.8.17] – 2026-03-05 – Quality Infrastructure: Integration Tests, CI/CD, Lint/Type Safety
 
 ### 🧪 Integration Tests with Real Supabase DB (22 new → 36 total)

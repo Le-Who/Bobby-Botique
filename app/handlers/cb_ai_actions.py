@@ -23,12 +23,13 @@ from app.handlers.callbacks import (
     _is_user_busy,
 )
 from app.repos.chats import get_user_chat
-from app.request_context import set_request_id
+from app.request_context import set_request_id, set_user_context
 
 
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
+    set_user_context(query.from_user.id, getattr(query.message.chat, "id", None) if query.message else None)
     await query.answer()
 
     action = query.data.split(":")[1]
@@ -94,6 +95,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
 async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
+    set_user_context(query.from_user.id, getattr(query.message.chat, "id", None) if query.message else None)
     await query.answer()
 
     parts = query.data.split(":", 2)
@@ -152,6 +154,8 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Повтор последнего пользовательского запроса по кнопке."""
     query = update.callback_query
+    set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
+    set_user_context(query.from_user.id, getattr(query.message.chat, "id", None) if query.message else None)
     await query.answer()
     user_id = query.from_user.id
 

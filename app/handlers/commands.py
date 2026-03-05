@@ -14,7 +14,6 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from app.handlers import menus
 from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.conversations import get_conversation_count
-from app.request_context import set_request_id
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
 
@@ -119,8 +118,6 @@ async def roles_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # context используется for совместимости с другими командами
     user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    set_request_id(f"tgcmd-newchat-{chat_id}-{getattr(update, 'update_id', 'na')}")
 
     chat_state = await get_user_chat(user_id)
     chat_state.history = []

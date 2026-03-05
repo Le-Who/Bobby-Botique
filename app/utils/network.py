@@ -54,12 +54,12 @@ class NetworkErrorHandler:
                 last_exception = e
 
                 if attempt == max_retries:
-                    logging.error(f"Max retries ({max_retries}) reached for {func.__name__}: {e}")
+                    logging.error("Max retries (%d) reached for %s: %s", max_retries, func.__name__, e)
                     raise
 
                 # Calculate delay with exponential backoff
                 delay = min(base_delay * (2**attempt), max_delay)
-                logging.warning(f"Network error on attempt {attempt + 1}/{max_retries + 1} for {func.__name__}: {e}")
+                logging.warning("Network error on attempt %d/%d for %s: %s", attempt + 1, max_retries + 1, func.__name__, e)
                 logging.info("Retrying in %s seconds...", delay)
 
                 await asyncio.sleep(delay)

@@ -118,7 +118,7 @@ async def _redis_operation_with_retry(operation, *args, max_retries=3, **kwargs)
                 )
                 await asyncio.sleep(wait_time)
             else:
-                logging.error(f"Redis operation failed after {max_retries} attempts: {e}")
+                logging.error("Redis operation failed after %d attempts: %s", max_retries, e)
                 raise RedisConnectionError(f"Redis operation failed: {e}") from e
 
         except RedisError as e:
@@ -272,7 +272,7 @@ class MultiLayerCache:
                 logging.info("Stored in Redis cache: %s", key)
 
             except RedisConnectionError as e:
-                logging.warning(f"Failed to store in Redis cache (connection issue): {e}")
+                logging.warning("Failed to store in Redis cache (connection issue): %s", e)
             except RedisError as e:
                 logging.warning("Failed to store in Redis cache: %s", e)
 

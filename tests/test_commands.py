@@ -28,7 +28,7 @@ async def test_new_chat_command():
         patch("app.handlers.commands.get_user_chat", new_callable=AsyncMock, return_value=mock_chat_state) as mock_get,
         patch("app.handlers.commands.update_user_chat", new_callable=AsyncMock) as mock_update,
         patch("app.utils.decorators.is_authorized", new_callable=AsyncMock) as mock_auth,
-        patch("app.handlers.commands.set_request_id") as mock_set_request_id,
+        patch("app.utils.decorators.set_request_id"),
     ):
         mock_auth.return_value = True
 
@@ -37,7 +37,6 @@ async def test_new_chat_command():
         await new_chat_command(update, context)
 
         # Verify side effects
-        mock_set_request_id.assert_called_once()
         mock_get.assert_called_once_with(12345)
         mock_update.assert_called_once_with(12345, mock_chat_state)
 
