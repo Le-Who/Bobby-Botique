@@ -15,6 +15,9 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 
+# Shared test user ID constant for all integration tests
+TEST_USER_ID = 999999
+
 
 def pytest_collection_modifyitems(config, items):
     """Skip integration tests if TEST_DATABASE_URL is not set."""
@@ -32,6 +35,12 @@ def test_db_url():
     if not TEST_DATABASE_URL:
         pytest.skip("TEST_DATABASE_URL not set")
     return TEST_DATABASE_URL
+
+
+@pytest.fixture
+def test_user_id():
+    """Provide the standard test user ID."""
+    return TEST_USER_ID
 
 
 @pytest.fixture
@@ -61,7 +70,41 @@ async def db_conn_with_user(db_conn):
     """
     await db_conn.execute(
         "INSERT INTO users (user_id, is_authorized) VALUES ($1, $2)",
-        999999,
+        TEST_USER_ID,
         1,
     )
     return db_conn
+
+
+@pytest.fixture
+async def db_conn_with_key(db_conn_with_user):
+    """Provide a DB connection with a pre-inserted test API key.
+
+    Returns (connection, key_hash) for tests that need FK references to api_keys.
+    """
+    import hashlib
+
+    test_key = "test-gemini-key-12345"
+    key_hash = hashlib.sha256(test_key.encode()).hexdigest()[:16]
+
+    await db_conn_with_user.execute(
+        "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
+        test_key,
+        key_hash,
+    )
+    return db_conn_with_user, key_hash
+
+
+@pytest.fixture
+async def db_conn_with_metrics(db_conn_with_user):
+    """Provide a DB connection with a pre-inserted user_metrics row for today.
+
+    Useful for testing stats queries that need existing metric data.
+    """
+    await db_conn_with_user.execute(
+        """INSERT INTO user_metrics (user_id, metric_date, request_count, model_usage)
+           VALUES ($1, CURRENT_DATE, 10, '{"gemini-2.5-flash": 7, "gemini-2.0-flash": 3}'::jsonb)""",
+        TEST_USER_ID,
+    )
+    return db_conn_with_user
+

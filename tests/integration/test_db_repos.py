@@ -5,7 +5,6 @@ All tests use transactional rollback — NO data persists after tests complete.
 
 import pytest
 
-
 pytestmark = pytest.mark.integration
 
 
