@@ -8,6 +8,15 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(line_buffering=True)  # type: ignore[union-attr]
 
+# Install uvloop on Linux/Docker for 2-4× event loop throughput
+if sys.platform != "win32":
+    try:
+        import uvloop
+
+        uvloop.install()
+    except ImportError:
+        pass
+
 import asyncio
 import logging
 import signal

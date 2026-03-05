@@ -80,9 +80,18 @@ class DatabaseManager:
 
             async def _init_connection(conn):
                 """Apply session-level settings to every new connection."""
+                import json
+
                 await conn.execute("SET statement_timeout = '60s'")
                 await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
                 await conn.execute("SET lock_timeout = '30s'")
+                # Register JSONB codec: auto-convert JSONB ↔ Python dict
+                await conn.set_type_codec(
+                    "jsonb",
+                    encoder=json.dumps,
+                    decoder=json.loads,
+                    schema="pg_catalog",
+                )
 
             self.pool = await asyncpg.create_pool(
                 dsn=settings.DATABASE_URL,

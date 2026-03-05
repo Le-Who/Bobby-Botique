@@ -130,8 +130,9 @@ class APILogger:
             # Return текущее время как fallback
             return time.time()
 
-    def log_gemini_response(
+    def log_provider_response(
         self,
+        provider: str,
         start_time: float,
         model: str,
         response_length: int,
@@ -141,18 +142,18 @@ class APILogger:
         user_id: int | None = None,
         chat_id: int | None = None,
     ):
-        """Логирует ответ Gemini API"""
+        """Unified provider response logger (Gemini, OpenRouter, etc.)."""
         try:
-            # Check, что start_time является числом
             if not isinstance(start_time, (int, float)) or start_time <= 0:
-                logging.warning(f"Invalid start_time in log_gemini_response: {start_time}, using current time")
+                logging.warning("Invalid start_time in log_%s_response: %s, using current time", provider, start_time)
                 start_time = time.time()
 
             duration = time.time() - start_time
+            label = provider.upper()
 
             log_data = {
                 "timestamp": datetime.now().isoformat(),
-                "api": "gemini",
+                "api": provider,
                 "model": model,
                 "duration_ms": round(duration * 1000, 2),
                 "request_id": get_request_id(),
@@ -166,61 +167,24 @@ class APILogger:
             }
 
             if success:
-                self.logger.info(f"✅ GEMINI RESPONSE COMPLETED: {self._format_log(log_data)}")
+                self.logger.info(f"✅ {label} RESPONSE COMPLETED: {self._format_log(log_data)}")
             else:
-                self.logger.error(f"❌ GEMINI RESPONSE FAILED: {self._format_log(log_data)}")
+                self.logger.error(f"❌ {label} RESPONSE FAILED: {self._format_log(log_data)}")
 
             return duration
 
         except Exception as e:
-            # Log error логирования, но не прерываем выполнение
-            logging.error("Error in log_gemini_response: %s", e, exc_info=True)
+            logging.error("Error in log_%s_response: %s", provider, e, exc_info=True)
             return 0.0
 
-    def log_openrouter_response(
-        self,
-        start_time: float,
-        model: str,
-        response_length: int,
-        token_count: int | None = None,
-        success: bool = True,
-        error_message: str | None = None,
-        user_id: int | None = None,
-        chat_id: int | None = None,
-    ):
-        """Логирует ответ OpenRouter API"""
-        try:
-            if not isinstance(start_time, (int, float)) or start_time <= 0:
-                logging.warning(f"Invalid start_time in log_openrouter_response: {start_time}, using current time")
-                start_time = time.time()
+    # Backward-compat delegates
+    def log_gemini_response(self, **kwargs):
+        """Логирует ответ Gemini API."""
+        return self.log_provider_response(provider="gemini", **kwargs)
 
-            duration = time.time() - start_time
-
-            log_data = {
-                "timestamp": datetime.now().isoformat(),
-                "api": "openrouter",
-                "model": model,
-                "duration_ms": round(duration * 1000, 2),
-                "request_id": get_request_id(),
-                "response_length": response_length,
-                "token_count": token_count,
-                "success": success,
-                "user_id": user_id,
-                "chat_id": chat_id,
-                "error_message": error_message,
-                "status": "COMPLETED",
-            }
-
-            if success:
-                self.logger.info(f"✅ OPENROUTER RESPONSE COMPLETED: {self._format_log(log_data)}")
-            else:
-                self.logger.error(f"❌ OPENROUTER RESPONSE FAILED: {self._format_log(log_data)}")
-
-            return duration
-
-        except Exception as e:
-            logging.error("Error in log_openrouter_response: %s", e, exc_info=True)
-            return 0.0
+    def log_openrouter_response(self, **kwargs):
+        """Логирует ответ OpenRouter API."""
+        return self.log_provider_response(provider="openrouter", **kwargs)
 
     def log_tavily_request(
         self,
