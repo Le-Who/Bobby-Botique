@@ -70,15 +70,25 @@ class UserState:
 
 
 class _UserStateStore:
-    """Thread-safe user state store with lazy DB loading."""
+    """User state store with LRU eviction and lazy DB loading.
 
-    def __init__(self):
-        self._states: dict[int, UserState] = {}
+    Uses LRUCache to cap in-memory state at ``maxsize`` users.
+    Evicted entries are silently re-loaded from DB on next access
+    via ``_ensure_loaded``, so no data is lost.
+    """
+
+    def __init__(self, maxsize: int = 10_000):
+        from cachetools import LRUCache
+
+        self._states: LRUCache = LRUCache(maxsize=maxsize)
 
     def __getitem__(self, user_id: int) -> UserState:
-        # setdefault is atomic in CPython — prevents race where two concurrent
-        # tasks create separate UserState objects for the same user_id.
-        return self._states.setdefault(user_id, UserState(user_id))
+        try:
+            return self._states[user_id]
+        except KeyError:
+            state = UserState(user_id)
+            self._states[user_id] = state
+            return state
 
     def __contains__(self, user_id: int) -> bool:
         return user_id in self._states

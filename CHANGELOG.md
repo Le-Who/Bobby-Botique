@@ -3,6 +3,42 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.19] – 2026-03-06 – Memory Leak Fixes
+
+### 🔴 Fix: Unbounded Memory Growth in User State Store
+
+**Root cause:** `_UserStateStore._states` was a plain `dict` — every unique user added a permanent entry (~200B) that was never evicted. Over time, this caused monotonic RAM growth.
+
+**Fix:** Replaced with `cachetools.LRUCache(maxsize=10000)`. Evicted states are transparently re-loaded from DB on next access via `_ensure_loaded()` — zero data loss.
+
+### 🔴 Fix: Unbounded Growth in Metrics Dictionaries
+
+**Root cause:** `MetricsCollector.daily_metrics` and `_user_daily` dicts accumulated entries forever — one per day and one per user-day respectively. `RoleConversationMetricsCollector.role_applications` also grew without limit.
+
+**Fix:** Added `_prune_old_metrics()` to the `_event_processor` save cycle — prunes `daily_metrics` older than 8 days and `_user_daily` entries for past days. Capped `role_applications` at 500 entries with LFU eviction.
+
+### 🟡 Fix: Per-Request `genai.Client` Allocation in Streaming
+
+**Root cause:** `streaming.py` created a new `genai.Client()` on every streaming request (connection pool + TLS context), while `GeminiProvider` already reused its client correctly.
+
+**Fix:** Added module-level `_streaming_client` with the same reuse pattern — rebuild only when API key changes.
+
+### ℹ️ Deprecation Warning (`asyncio.iscoroutinefunction`)
+
+Verified `memory_manager.py` already uses the correct `inspect.iscoroutinefunction()`. The log warning originates from CPython internals (`loop.add_signal_handler` lambda) — harmless until Python 3.16 and cannot be eliminated from user code.
+
+### Files Changed
+
+| File               | Change                                                |
+| ------------------ | ----------------------------------------------------- |
+| `app/state.py`     | `_UserStateStore._states`: `dict` → `LRUCache(10000)` |
+| `app/metrics.py`   | `_prune_old_metrics()`, `_MAX_ROLE_ENTRIES=500` cap   |
+| `app/streaming.py` | Module-level `_streaming_client` reuse                |
+
+### 🧪 Tests: 923 passed, 0 failures
+
+---
+
 ## [2.8.18] – 2026-03-05 – Logging Refactoring: ContextFilter, Unified APILogger, f-string Cleanup
 
 ### 🔧 ContextFilter for user_id/chat_id

@@ -61,12 +61,35 @@ class MetricsCollector:
                 if now - last_save >= self._save_interval:
                     if db.db_manager.is_connected:
                         await self._save_metrics_to_db()
+                    self._prune_old_metrics()
                     last_save = now
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logging.error("Error in metrics event processor: %s", e, exc_info=True)
                 await asyncio.sleep(5)
+
+    def _prune_old_metrics(self):
+        """Remove stale daily_metrics and _user_daily entries to prevent unbounded growth."""
+        today = date.today()
+        # Prune daily_metrics older than 8 days
+        from datetime import timedelta as _td
+
+        cutoff = (today - _td(days=8)).isoformat()
+        stale_days = [d for d in self.daily_metrics if d < cutoff]
+        for d in stale_days:
+            del self.daily_metrics[d]
+        # Prune _user_daily for past days (keep only today)
+        today_str = today.isoformat()
+        stale_user_keys = [k for k in self._user_daily if k[0] != today_str]
+        for k in stale_user_keys:
+            del self._user_daily[k]
+        if stale_days or stale_user_keys:
+            logging.debug(
+                "Metrics pruned: %d stale days, %d stale user-day entries",
+                len(stale_days),
+                len(stale_user_keys),
+            )
 
     def _process_event(self, event: dict[str, Any]):
         """Обрабатывает одно событие метрики и обновляет локальные словари без блокировок"""
@@ -560,9 +583,15 @@ class RoleConversationMetricsCollector:
         self.conversation_metrics = ConversationMetrics()
         self.summarization_metrics = SummarizationMetrics()
 
+    _MAX_ROLE_ENTRIES = 500
+
     async def record_role_application(self, role_key: str):
         """Записывает применение роли"""
         self.role_metrics.role_applications[role_key] = self.role_metrics.role_applications.get(role_key, 0) + 1
+        # Evict least-used roles when dict exceeds cap
+        if len(self.role_metrics.role_applications) > self._MAX_ROLE_ENTRIES:
+            least_key = min(self.role_metrics.role_applications, key=self.role_metrics.role_applications.get)  # type: ignore[arg-type]
+            del self.role_metrics.role_applications[least_key]
         logging.info("Role applied: %s", role_key)
 
     async def record_custom_role_creation(self):

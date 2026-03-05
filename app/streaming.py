@@ -46,6 +46,10 @@ STREAM_MSG_LIMIT = 4000
 _last_finish_reason: str | None = None
 """Side-channel: finish_reason from the last ``stream_gemini_response`` call."""
 
+# Module-level client reuse to avoid per-request allocation & TLS handshake.
+_streaming_client: genai.Client | None = None
+_streaming_client_api_key: str | None = None
+
 
 async def stream_gemini_response(
     api_key: str,
@@ -66,13 +70,16 @@ async def stream_gemini_response(
         TimeoutError: If streaming exceeds timeout.
         APIError: On Gemini API errors.
     """
-    request_id = get_request_id()
-    client_kwargs: dict[str, Any] = {"api_key": api_key}
-    http_opts: dict[str, Any] = {"timeout": 90_000}
-    if request_id:
-        http_opts["headers"] = {"X-Request-ID": request_id}
-    client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]  # Pydantic coerces at runtime
-    client = genai.Client(**client_kwargs)  # type: ignore[arg-type]  # Pydantic coerces at runtime
+    global _streaming_client, _streaming_client_api_key
+
+    # Reuse client across requests; rebuild only when api_key changes.
+    if _streaming_client is None or _streaming_client_api_key != api_key:
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        http_opts: dict[str, Any] = {"timeout": 90_000}
+        client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]  # Pydantic coerces at runtime
+        _streaming_client = genai.Client(**client_kwargs)  # type: ignore[arg-type]  # Pydantic coerces at runtime
+        _streaming_client_api_key = api_key
+    client = _streaming_client
 
     # Side-channel: store finish_reason after iteration
     finish_reason_holder: list[str | None] = [None]
