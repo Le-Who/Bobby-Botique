@@ -273,7 +273,7 @@ def sanitize_html_tags(html_text: str) -> str:
 
     for match in _TAG_RE.finditer(html_text):
         # Append text between previous match and this one
-        result_parts.append(html_text[last_end:match.start()])
+        result_parts.append(html_text[last_end : match.start()])
         last_end = match.end()
 
         is_close = match.group(1) == "/"

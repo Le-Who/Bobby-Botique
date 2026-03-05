@@ -1,37 +1,56 @@
-# Version control
+# ── Version Control ───────────────────────────────────────────
 .git/
+.github/
+.gitignore
 
-# IDE & editor configs
+# ── IDE & Editor Configs ──────────────────────────────────────
 .vscode/
 .cursor/
 .Jules/
+.idea/
 .roomodes
 
-# Virtual environment (local deps, useless in Docker)
+# ── Virtual Environment ──────────────────────────────────────
 .venv/
+venv/
 
-# Caches
+# ── Python Caches ────────────────────────────────────────────
 __pycache__/
-.pytest_cache/
-.ruff_cache/
 *.pyc
 *.pyo
+*.egg-info/
 
-# Tests (not needed in production image)
+# ── Test & Coverage (not needed in prod) ─────────────────────
 tests/
 pytest.ini
-
-# Legacy
-legacy/
-
-# Dev artifacts
+.pytest_cache/
+.coverage
+htmlcov/
 tests_output.log
 verification/
 
-# Secrets
-.env
-.env.txt
+# ── Linter / Type Checker Caches ─────────────────────────────
+.ruff_cache/
+.mypy_cache/
+pyproject.toml
 
-# Docs (not needed in image)
+# ── Secrets ──────────────────────────────────────────────────
+.env
+.env.*
+
+# ── Docs (not needed in image) ───────────────────────────────
 README.md
 CHANGELOG.md
+docs/
+LICENSE
+
+# ── Dev/Legacy ───────────────────────────────────────────────
+legacy/
+data/
+scripts/
+northflank.yaml
+docker-compose*.yml
+
+# ── OS files ─────────────────────────────────────────────────
+Thumbs.db
+.DS_Store

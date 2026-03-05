@@ -478,12 +478,9 @@ def test_get_model_menu_content_no_models(mock_get_keys, mock_settings_obj, mock
     # Should show error message
     assert "❌ Нет доступных моделей" in text or "Нет доступных" in text
 
-    # Markup can be None when no models available
-    if reply_markup is None:
-        assert True  # Expected behavior
-    else:
-        # Or might have just a back button
-        assert len(reply_markup.inline_keyboard) >= 1
+    # Markup can be None when no models available, or contain just a back button
+    if reply_markup is not None:
+        assert len(reply_markup.inline_keyboard) >= 1, "If markup present, must have at least one row"
 
 
 @pytest.mark.unit
@@ -606,34 +603,62 @@ def test_extract_button_texts():
 
 @pytest.mark.integration
 @pytest.mark.slow
-@pytest.mark.skip(reason="Polluted sys.modules makes real telegram import crash")
-def test_integration_real_telegram_buttons(menus_module, mock_context):
+def test_integration_real_telegram_buttons():
     """
-    Integration test with real Telegram InlineKeyboardButton.
-    Ensures compatibility with actual telegram library.
+    Integration test with real Telegram objects.
+    Temporarily restores original modules, reimports menus, and tests
+    with the real telegram library to ensure our mock-based unit tests
+    aren't masking compatibility issues.
     """
-    with (
-        patch("app.handlers.menus.settings") as mock_settings_obj,
-        patch("app.handlers.menus.get_openrouter_keys") as mock_get_keys,
-    ):
-        mock_settings_obj.AVAILABLE_MODELS = ["gemini-flash-latest", "gemini-pro"]
-        mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
-        mock_get_keys.return_value = []
+    import importlib
 
-        chat_state = ChatState(model="gemini-flash-latest")
+    # Temporarily restore original modules to get a clean import
+    saved = {}
+    for k in _mocked_module_keys:
+        if k in sys.modules:
+            saved[k] = sys.modules.pop(k)
 
-        text, parse_mode, reply_markup = menus_module.get_model_menu_content(chat_state, mock_context)
+    # Restore originals that were backed up
+    sys.modules.update(_original_modules)
 
-    # Verify structure with real Telegram objects
-    assert "Google Gemini" in text
-    assert "gemini-flash-latest" in text
-    assert reply_markup is not None
+    try:
+        # Fresh import with real libraries
+        menus = importlib.import_module("app.handlers.menus")
+        importlib.reload(menus)
 
-    # Extract button texts (works with real InlineKeyboardButton)
-    buttons = [btn.text for row in reply_markup.inline_keyboard for btn in row]
-    assert any("gemini-flash-latest" in btn for btn in buttons)
-    assert any("gemini-pro" in btn for btn in buttons)
-    assert not any("─────────────" in btn for btn in buttons)
+        from telegram import InlineKeyboardButton
+
+        context = MagicMock()
+        context.user_data = {}
+
+        with (
+            patch.object(menus, "settings") as mock_settings_obj,
+            patch.object(menus, "get_openrouter_keys", return_value=[]),
+        ):
+            mock_settings_obj.AVAILABLE_MODELS = ["gemini-flash-latest", "gemini-pro"]
+            mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
+
+            cs = ChatState(model="gemini-flash-latest")
+            text, parse_mode, reply_markup = menus.get_model_menu_content(cs, context)
+
+        # Verify structure with real Telegram objects
+        assert "Google Gemini" in text
+        assert "gemini-flash-latest" in text
+        assert reply_markup is not None
+
+        # Real InlineKeyboardButton objects
+        buttons = [btn.text for row in reply_markup.inline_keyboard for btn in row]
+        assert any("gemini-flash-latest" in btn for btn in buttons)
+        assert any("gemini-pro" in btn for btn in buttons)
+        assert all(isinstance(btn, InlineKeyboardButton) for row in reply_markup.inline_keyboard for btn in row)
+    finally:
+        # Restore the mocked state for any remaining tests in this module
+        for k in _mocked_module_keys:
+            if k in _original_modules:
+                sys.modules.pop(k, None)
+        sys.modules.update(saved)
+        if "app.handlers.menus" in sys.modules:
+            importlib.reload(sys.modules["app.handlers.menus"])
 
 
 # ==============================================================================

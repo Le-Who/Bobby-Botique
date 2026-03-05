@@ -302,6 +302,7 @@ REDIS_URL=redis://...   # Optional — enables Redis caching layer
 | `DAILY_LIMITS`                   | ❌       | See `config.py`               | JSON or `model:limit,...` format for per-model daily limits |
 | `USE_OPENROUTER`                 | ❌       | `false`                       | Force OpenRouter as default provider                        |
 | `MAX_CONCURRENT_HEAVY_REQUESTS`  | ❌       | `4`                           | Max parallel AI request handlers                            |
+| `TEST_DATABASE_URL`              | ❌       | `None`                        | Separate Supabase project for integration tests             |
 
 ---
 
@@ -315,40 +316,58 @@ The project has a comprehensive test suite covering unit, integration, concurren
 # Setup (install dev dependencies)
 pip install -r requirements-dev.txt
 
-# Full suite
+# Full suite (unit + integration)
 python -m pytest tests/
 
-# Single file
-python -m pytest tests/test_keyboards.py --tb=short
+# Unit tests only (no DB required)
+python -m pytest tests/ --ignore=tests/integration
 
-# Verbose with traceback
-python -m pytest tests/ -v --tb=long
+# Integration tests only (requires TEST_DATABASE_URL)
+python -m pytest tests/integration/ -v
+
+# With coverage
+python -m pytest tests/ --cov=app --cov-report=term-missing
+
+# Quality checks
+ruff check app/ && ruff format --check app/ && mypy app/
 ```
 
-### Suite Structure (652 tests, 1 skipped)
+### Suite Structure (870+ tests, 0 skipped)
 
 | Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                      |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |
 | **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`, `test_ai_chat`, `test_ai_search`, `test_ai_document`, `test_ai_photo`, `test_context_assembler`, `test_prompt_registry` | AI routing, key status management, fallback chains, error classification, AI handler coverage, context summarization |
 | **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_cmd_admin`, `test_cmd_conversations`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators`                                  | Callback dispatch, request flow, commands, admin commands, conversation CRUD, menu rendering, role UI                |
+| **Pure Logic**     | `test_chat_logic`, `test_prompts`, `test_resilience`, `test_state_lifecycle`, `test_mutation_smoke`                                                                                                           | Extracted pure functions (100% coverage), system instruction, retry logic, state lifecycle, mutation detection       |
+| **DB Integration** | `tests/integration/test_repos_*`                                                                                                                                                                              | Real SQL against test Supabase DB: users/state UPSERT, chats, conversations CRUD, roles, feedback CHECK constraints  |
+| **Security**       | `test_security`, `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                                | XSS/SSRF/path traversal sanitization, rate limiting, header enforcement, CSP nonce                                   |
+| **Streaming**      | `test_streaming`                                                                                                                                                                                              | Constants, finish reasons, StreamingWriter init                                                                      |
+| **Repos**          | `test_repo_chats`, `test_repo_conversations`, `test_repo_memory`                                                                                                                                              | Pure repo functions: message extraction, system role lookup, memory constants                                        |
 | **Integration**    | `test_integration_flow`, `test_integration`, `test_callback_responsiveness_scenario`                                                                                                                          | E2E request flow, streaming/error/alert/key-rotation integration, callback responsiveness                            |
 | **Concurrency**    | `test_concurrency`, `test_concurrency_hardening`                                                                                                                                                              | Cache stampede (50 concurrent), rate limiter under load, key resolution contention, thread-safe error classification |
 | **E2E Smoke**      | `test_smoke`                                                                                                                                                                                                  | Quart health/metrics endpoints, handler registration, admin alerts startup/shutdown, full error pipeline             |
 | **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                                                                                                         | Tavily key management, query optimization, cleanup                                                                   |
-| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`                                                                                                                                                                      | Circuit breaker, TTL cache                                                                                           |
-| **Security**       | `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                                                 | Header enforcement, auth bypass prevention, CSP nonce, DecryptionError handling                                      |
+| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_cache_fallback`, `test_degradation_recovery`                                                                                                                  | Circuit breaker, TTL cache, Redis fallback, health/recovery scenarios                                                |
 | **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                                                                                              | Batched metric saves, system status data                                                                             |
-| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`, `test_audit_fixes`                                                                                                                | Text formatting, keyboard builders, timezone math, audit regression tests                                            |
+| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`, `test_send_long_message`, `test_audit_fixes`                                                                                      | Text formatting, keyboard builders, timezone math, message splitting, audit regression tests                         |
 
 ### CI/CD Pipeline
 
 GitHub Actions (`.github/workflows/ci.yml`) runs automatically on push to `main`/`TEST_gemaibotv2` and on PRs:
 
-1. **Lint** — `ruff format --check` + `ruff check` with GitHub inline annotations
-2. **Test** — `pytest tests/ -x -q` with all env vars mocked
-3. **Docker Build** — Verifies `Dockerfile.northflank` builds successfully
+1. **Lint** — `ruff check` (with GitHub annotations) + `ruff format --check`
+2. **Type Check** — `mypy app/` (0 errors enforced)
+3. **Test** — `pytest tests/ -x -q --ignore=tests/integration`
 
-Features: pip caching, concurrency groups (auto-cancels outdated runs), job timeouts.
+Features: pip caching, concurrency groups (auto-cancels outdated runs), job timeouts (5–10 min).
+
+### Integration Tests
+
+Separate from CI — require `TEST_DATABASE_URL` pointing to a dedicated Supabase project:
+
+- Each test runs inside `BEGIN → ROLLBACK` — **zero data persists**
+- Auto-skips if `TEST_DATABASE_URL` is not set
+- Covers: user state UPSERT, chat lifecycle, conversations CRUD, roles, feedback constraints
 
 ### Mock Isolation Rule
 

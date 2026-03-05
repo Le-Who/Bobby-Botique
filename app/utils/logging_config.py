@@ -377,6 +377,7 @@ def setup_detailed_logging(
         root_logger.removeHandler(handler)
 
     # Choose handler: Rich > DevFormatter > DEFAULT_FORMATTER
+    stdout_handler: logging.Handler
     if enable_pretty and HAS_RICH and not enable_structured_logging:
         # Rich provides its own formatting — no need for our formatter
         install_rich_tracebacks(show_locals=False, width=200)

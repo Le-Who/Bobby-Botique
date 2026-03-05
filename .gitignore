@@ -1,25 +1,39 @@
-# Секреты
+# ── Secrets ────────────────────────────────────────────────────
 .env
-.env.txt
+.env.*
 
-# Данные (база данных на диске)
-data/
-
-# Python
+# ── Python ────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+.venv/
+venv/
 
-# IDE и редакторы
+# ── Test & Coverage Artifacts ─────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+tests_output.log
+
+# ── Linter / Type Checker Caches ──────────────────────────────
+.ruff_cache/
+.mypy_cache/
+
+# ── IDE & Editor Configs ──────────────────────────────────────
 .vscode/
 .cursor/
 .Jules/
+.idea/
 .roomodes
+*.swp
+*.swo
 
-# Кэши линтеров и тестов
-.ruff_cache/
-.pytest_cache/
-
-# Стейл-артефакты
-tests_output.log
+# ── Dev artifacts ─────────────────────────────────────────────
 verification/
+data/
+
+# ── OS files ──────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+.DS_Store

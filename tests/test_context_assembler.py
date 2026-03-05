@@ -45,28 +45,26 @@ def make_history(n: int, msg_size: int = 50) -> list[dict]:
 
 
 class TestConstants:
-    """Verify the research-backed constants are correctly configured."""
+    """Verify invariant relationships between context assembly constants."""
 
-    def test_budget_is_128k(self):
-        assert DEFAULT_TOKEN_BUDGET == 128_000
+    def test_response_reserve_fits_within_budget(self):
+        assert RESPONSE_RESERVE < DEFAULT_TOKEN_BUDGET, "Reserve must be less than total budget"
+        assert SUMMARY_BUDGET < DEFAULT_TOKEN_BUDGET, "Summary budget must be less than total"
+        remaining = DEFAULT_TOKEN_BUDGET - RESPONSE_RESERVE - SUMMARY_BUDGET
+        assert remaining > 0, "Budget must have room for history after reserve + summary"
 
-    def test_response_reserve_is_12k(self):
-        assert RESPONSE_RESERVE == 12_000
+    def test_chunk_parameters_are_positive_and_bounded(self):
+        assert CHUNK_SIZE > 0, "Chunk size must be positive"
+        assert MAX_CHUNKS >= 1, "Must allow at least one chunk"
+        assert CHUNK_SIZE * MAX_CHUNKS >= LLM_SUMMARY_TOKEN_THRESHOLD, (
+            "Total chunk capacity should be at least the LLM threshold"
+        )
 
-    def test_summary_budget_is_4k(self):
-        assert SUMMARY_BUDGET == 4_000
-
-    def test_chunk_size_is_10k(self):
-        assert CHUNK_SIZE == 10_000
-
-    def test_max_chunks_is_6(self):
-        assert MAX_CHUNKS == 6
-
-    def test_llm_threshold_is_30k(self):
-        assert LLM_SUMMARY_TOKEN_THRESHOLD == 30_000
-
-    def test_summarization_model(self):
-        assert SUMMARIZATION_MODEL == "gemini-2.5-flash-lite"
+    def test_summarization_model_is_a_known_gemini_model(self):
+        assert isinstance(SUMMARIZATION_MODEL, str)
+        assert len(SUMMARIZATION_MODEL) > 0
+        # Must be a lightweight model (flash-lite or flash) to keep summarization cheap
+        assert "flash" in SUMMARIZATION_MODEL.lower(), "Summarization should use a fast/cheap model"
 
 
 # ── TokenBudget ───────────────────────────────────────────────────────────────

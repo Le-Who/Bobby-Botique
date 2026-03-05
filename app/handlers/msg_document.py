@@ -122,7 +122,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         try:
             await file.download_to_drive(custom_path=tmp_path)
-            result = await process_uploaded_document(tmp_path, document.file_name or f"document.{file_ext}", user_id, is_path=True)
+            result = await process_uploaded_document(
+                tmp_path, document.file_name or f"document.{file_ext}", user_id, is_path=True
+            )
         finally:
             if os.path.exists(tmp_path):
                 try:

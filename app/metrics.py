@@ -375,13 +375,17 @@ class MetricsCollector:
         except Exception as e:
             logging.error("Error loading metrics from database: %s", e, exc_info=True)
 
-    async def record_request(self, _request_type: str, response_time: float, success: bool = True, user_id: int | None = None):
+    async def record_request(
+        self, _request_type: str, response_time: float, success: bool = True, user_id: int | None = None
+    ):
         """Записывает метрики запроса (Fast in-memory update)"""
         self._events_queue.put_nowait(
             {"type": "request", "response_time": response_time, "success": success, "user_id": user_id}
         )
 
-    async def record_api_call(self, api_name: str, model: str | None = None, request_id: str | None = None, user_id: int | None = None):
+    async def record_api_call(
+        self, api_name: str, model: str | None = None, request_id: str | None = None, user_id: int | None = None
+    ):
         """Записывает вызов API"""
         current_request_id = request_id or get_request_id()
         self._events_queue.put_nowait(

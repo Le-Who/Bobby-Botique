@@ -16,6 +16,7 @@ from app.handlers.ai_core import (
     _resolve_ai_request,
     handle_ai_response_error,
 )
+from app.handlers.chat_logic import build_memory_context, classify_resolution
 from app.repos.chats import update_user_chat
 from app.utils.formatting import TelegramFormatter
 from app.utils.messaging import send_long_message
@@ -36,18 +37,15 @@ async def _handle_regular_chat(
     _, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
     if resolution == "all_exhausted":
-        # Определяем провайдер на основе models
-        is_openrouter = "/" in model_for_this_request if model_for_this_request else False
-        provider_name = "OpenRouter" if is_openrouter else "Gemini"
+        result = classify_resolution(resolution, model_for_this_request)
         try:
-            await placeholder_message.edit_text(
-                f"🚫 Все лимиты для всех моделей {provider_name} на сегодня исчерпаны. Попробуйте позже."
-            )
+            await placeholder_message.edit_text(result.user_message or "")
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
         return
 
     if resolution == "confirm_fallback":
+        result = classify_resolution(resolution, model_for_this_request, model_used)
         keyboard = [
             [
                 InlineKeyboardButton(
@@ -59,9 +57,7 @@ async def _handle_regular_chat(
         ]
         try:
             await placeholder_message.edit_text(
-                f"Все лимиты для модели `{model_for_this_request}` на сегодня исчерпаны.\n"
-                f"Однако, я могу выполнить ваш запрос, используя `{model_used}`. Качество ответа может быть другим.\n"
-                "Продолжить?",
+                result.user_message or "",
                 reply_markup=InlineKeyboardMarkup(keyboard),
             )
         except Exception as edit_error:
@@ -69,8 +65,8 @@ async def _handle_regular_chat(
         return
 
     # Assemble context with token-budget awareness
-    from app.context_assembler import get_assembler
     from app.context.summarizer import schedule_llm_summarization
+    from app.context_assembler import get_assembler
 
     assembler = get_assembler()
 
@@ -106,18 +102,7 @@ async def _handle_regular_chat(
                 min_similarity=0.55,
             )
             if memories:
-                mem_texts = [m["content"][:300] for m in memories]
-                mem_block = "\n".join(f"- {t}" for t in mem_texts)
-                # Insert as context preamble (user/model pair for role alternation)
-                memory_msg = {
-                    "role": "user",
-                    "parts": [f"[Релевантные воспоминания из прошлых бесед]\n{mem_block}"],
-                }
-                ack_msg = {
-                    "role": "model",
-                    "parts": ["Учитываю контекст из прошлых бесед."],
-                }
-                chat_state.history = [memory_msg, ack_msg] + chat_state.history
+                chat_state.history = build_memory_context(memories, chat_state.history)
                 logging.info("Injected %d memories for user %s", len(memories), user_id)
     except Exception as mem_err:
         logging.debug("Memory recall skipped: %s", mem_err)

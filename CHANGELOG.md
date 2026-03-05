@@ -3,6 +3,74 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.17] – 2026-03-05 – Quality Infrastructure: Integration Tests, CI/CD, Lint/Type Safety
+
+### 🧪 Integration Tests with Real Supabase DB (22 new → 36 total)
+
+New repo-level integration tests against dedicated test database (`tests_test_gemai`). Each test runs inside `BEGIN → ROLLBACK` — zero data persists.
+
+| File                                            | Tests | Covers                                                               |
+| ----------------------------------------------- | ----- | -------------------------------------------------------------------- |
+| `tests/integration/test_repos_users.py`         | 4     | `save_user_state` UPSERT, `load_user_state`, feedback                |
+| `tests/integration/test_repos_chats.py`         | 6     | Chat defaults, model/history update, clear, thinking level, messages |
+| `tests/integration/test_repos_conversations.py` | 6     | CRUD, messages FK, rename, delete cascade, count                     |
+| `tests/integration/test_repos_roles.py`         | 6     | CRUD, rename, delete, count, user-scoped access                      |
+
+### ⚙️ CI/CD Pipeline (updated)
+
+`.github/workflows/ci.yml` — 3-job pipeline:
+
+1. **Lint** — `ruff check --output-format=github` + `ruff format --check`
+2. **Type Check** — `mypy app/` (0 errors enforced)
+3. **Test** — `pytest tests/ -x -q --ignore=tests/integration`
+
+### 🔧 Lint & Type Safety (0 errors)
+
+- **Ruff**: 3 import sort errors auto-fixed, 4 files reformatted
+- **Mypy**: 4 errors fixed — 3 `arg-type` in `ai_chat.py`, 1 `assignment` in `logging_config.py`
+
+### 🧹 .gitignore / .dockerignore Audit
+
+| Issue                                                                   | Fix                                           |
+| ----------------------------------------------------------------------- | --------------------------------------------- |
+| IDE files tracked (`.cursor/`, `.Jules/`, `.vscode/`, `.roomodes`)      | `git rm --cached` + added to `.gitignore`     |
+| Missing entries (`.coverage`, `htmlcov/`, `.mypy_cache/`, `.venv/`)     | Added to `.gitignore`                         |
+| Docker image bloat (`scripts/`, `docs/`, `.github/`, `northflank.yaml`) | Added to `.dockerignore`                      |
+| OS artifacts                                                            | Added `Thumbs.db`, `.DS_Store`, `Desktop.ini` |
+
+### 📝 README.md Updated
+
+- Test count: 652 → **870+**, 0 skipped
+- Added 6 new test categories to suite structure table
+- CI/CD section updated: 3 jobs (was 2)
+- New "Integration Tests" section with safety guarantees
+- `TEST_DATABASE_URL` added to env var reference
+
+### Files Changed
+
+| File                                            | Change                          |
+| ----------------------------------------------- | ------------------------------- |
+| `tests/integration/test_repos_users.py`         | [NEW] 4 integration tests       |
+| `tests/integration/test_repos_chats.py`         | [NEW] 6 integration tests       |
+| `tests/integration/test_repos_conversations.py` | [NEW] 6 integration tests       |
+| `tests/integration/test_repos_roles.py`         | [NEW] 6 integration tests       |
+| `tests/integration/__init__.py`                 | [NEW] Package marker for pytest |
+| `.github/workflows/ci.yml`                      | Updated: 3 jobs + mypy          |
+| `.gitignore`                                    | Comprehensive rewrite           |
+| `.dockerignore`                                 | Comprehensive rewrite           |
+| `README.md`                                     | Testing section overhaul        |
+| `app/handlers/ai_chat.py`                       | Mypy arg-type fix               |
+| `app/utils/logging_config.py`                   | Mypy assignment fix             |
+| `app/handlers/chat_logic.py`                    | Ruff import sort fix            |
+| `app/handlers/ai_search.py`                     | Ruff import sort fix            |
+| `app/handlers/msg_document.py`                  | Ruff format fix                 |
+| `app/metrics.py`                                | Ruff format fix                 |
+| `app/utils/text_format.py`                      | Ruff format fix                 |
+
+### 🧪 Tests: 870 passed, 0 failures, 0 skipped
+
+---
+
 ## [2.8.16] – 2026-03-05 – Streaming HTML Misnesting Fix
 
 ### 🔴 Fix: Telegram "unmatched end tag" Errors During Streaming
