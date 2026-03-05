@@ -10,7 +10,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app import prompts, state
+from app import state
 from app.handlers import agent, menus
 from app.metrics import role_conv_metrics
 from app.prompt_registry import get_registry
@@ -24,6 +24,7 @@ from app.state import (
     set_last_custom_role_prompt,
 )
 from app.utils.formatting import TelegramFormatter
+from app.utils.json_utils import extract_json_object
 
 
 async def handle_conversation_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
@@ -165,7 +166,7 @@ async def handle_custom_role_generation(
 
             logging.info(f"Model response for role generation: {response_text[:500]}...")
 
-            role_obj = prompts.extract_json_object(response_text)
+            role_obj = extract_json_object(response_text)
 
             if not role_obj:
                 error_kb = InlineKeyboardMarkup(

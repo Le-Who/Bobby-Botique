@@ -3,10 +3,10 @@ from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app import prompts
 from app.config import get_model_hash, get_openrouter_keys, settings
 from app.document_processor import get_user_documents
 from app.metrics import get_system_status_data
+from app.prompt_registry import DEFAULT_ROLES
 from app.repos.conversations import get_conversation_count, get_role_data, get_user_conversations
 from app.repos.roles import get_custom_role_count, get_user_custom_roles, get_user_custom_roles_full
 from app.repos.user_stats import get_user_today_request_count
@@ -220,7 +220,7 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
     keyboard = []
 
     # 1. Quick-apply: top-3 preset roles for immediate use
-    top_roles = list(prompts.DEFAULT_ROLES.items())[:3]
+    top_roles = list(DEFAULT_ROLES.items())[:3]
     if top_roles:
         quick_row = []
         for key, meta in top_roles:
@@ -337,7 +337,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
         empty_text = "Список стандартных ролей пуст (странно!)."
 
         items = []
-        for key, meta in prompts.DEFAULT_ROLES.items():
+        for key, meta in DEFAULT_ROLES.items():
             is_active = "✅ " if key == active_role_key else ""
             items.append(
                 {
@@ -422,7 +422,7 @@ async def get_roles_menu_content(user_id, chat_state, view_mode="hub", page=0, r
 
     # Пытаемся найти название активной roles
     if current_prompt:
-        for key, meta in prompts.DEFAULT_ROLES.items():
+        for key, meta in DEFAULT_ROLES.items():
             if meta.get("prompt") == current_prompt:
                 active_role_title = f"{meta.get('title', key)}"
                 active_role_key = key

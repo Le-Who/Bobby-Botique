@@ -6,9 +6,9 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app import prompts
 from app.handlers import menus
 from app.metrics import role_conv_metrics
+from app.prompt_registry import DEFAULT_ROLES
 from app.repos.chats import get_user_chat
 from app.repos.conversations import rename_conversation, save_conversation, switch_to_conversation
 from app.utils.decorators import authorized_only
@@ -43,7 +43,7 @@ async def save_conversation_command(update: Update, context: ContextTypes.DEFAUL
 
     if chat_state and chat_state.system_prompt:
         # Check, есть ли активная role
-        for key, role_data in prompts.DEFAULT_ROLES.items():
+        for key, role_data in DEFAULT_ROLES.items():
             if role_data["prompt"] in chat_state.system_prompt:
                 role_type = "role"
                 role_id = key

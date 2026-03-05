@@ -9,7 +9,6 @@ import logging
 from PIL import Image
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app import prompts
 from app.config import settings
 from app.database import ChatState
 from app.handlers.ai_core import (

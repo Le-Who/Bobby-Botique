@@ -47,13 +47,15 @@ async def test_qna_search_happy_path():
         ),
         patch("app.handlers.ai_search.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
         patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as mock_send,
-        patch("app.handlers.ai_search.prompts") as mock_prompts,
+        patch("app.handlers.ai_search.get_registry") as mock_get_registry,
         patch("app.handlers.ai_search.get_openrouter_keys", return_value=[]),
     ):
         mock_metrics.record_search_query = AsyncMock()
         mock_search.tavily_search_agent = AsyncMock(return_value={"answer": "Raw Tavily answer"})
-        mock_prompts.QNA_LOCALIZATION_PROMPT = "Q: {user_message} A: {tavily_answer}"
-        mock_prompts.compose_system_instruction.return_value = "sys"
+        mock_registry = MagicMock()
+        mock_registry.compose_system_prompt.return_value = "sys"
+        mock_registry.get_task_prompt.return_value = "Q: {user_message} A: {tavily_answer}"
+        mock_get_registry.return_value = mock_registry
 
         from app.handlers.ai_search import _handle_qna_search
 

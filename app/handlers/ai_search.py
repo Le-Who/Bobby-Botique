@@ -9,7 +9,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest, NetworkError
 
-from app import prompts, search_services
+from app import search_services
 from app.config import get_openrouter_keys, settings
 from app.database import ChatState
 from app.handlers.ai_core import (
@@ -85,7 +85,7 @@ async def _handle_qna_search(
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
     # Используем системную инструкцию from chat_state
-    system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
+    system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
 
     # Используем health-aware роутинг
     final_answer, _ = await _get_ai_response_with_routing(
@@ -229,7 +229,7 @@ async def _handle_research_agent(
         # Create parts for API: промпт
         parts = [selection_prompt] if selection_prompt else []
         # Используем системную инструкцию from chat_state
-        system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
+        system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
 
         # Используем health-aware роутинг
         selected_urls_str, _ = await _get_ai_response_with_routing(
@@ -348,7 +348,7 @@ async def _handle_research_agent(
     # Add augmented_prompt to history before assembly
     chat_state.history.append({"role": "user", "parts": [augmented_prompt]})
 
-    system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
+    system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
     assembled = assembler.assemble(
         history=chat_state.history,
         user_message=None,  # type: ignore[arg-type]  # already appended augmented_prompt to history above
@@ -406,7 +406,7 @@ async def _handle_research_agent(
         response_text, new_token_count = await _get_ai_response_with_routing(
             model_for_synthesis,
             chat_state.history,
-            system_instruction=prompts.compose_system_instruction(chat_state.system_prompt),
+            system_instruction=get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt),
             user_id=trace_user_id,
             chat_id=trace_chat_id,
         )

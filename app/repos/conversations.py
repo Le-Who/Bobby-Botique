@@ -25,7 +25,7 @@ async def get_role_data(role_key: str, user_id: int) -> dict[str, Any] | None:
     Получает data roles (название, промпт) по keyу.
     Поддерживает системные roles (from prompts.py) и userские (from БД).
     """
-    from app import prompts
+    from app.prompt_registry import DEFAULT_ROLES
 
     if not role_key:
         return None
@@ -47,8 +47,8 @@ async def get_role_data(role_key: str, user_id: int) -> dict[str, Any] | None:
                 }
         except (ValueError, IndexError, asyncpg.PostgresError):
             pass
-    elif role_key in prompts.DEFAULT_ROLES:
-        meta = prompts.DEFAULT_ROLES[role_key]
+    elif role_key in DEFAULT_ROLES:
+        meta = DEFAULT_ROLES[role_key]
         return {
             "id": None,
             "title": meta.get("title", role_key),

@@ -55,11 +55,11 @@ async def test_handle_regular_chat_success():
         patch("app.handlers.ai_chat.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
         patch("app.handlers.ai_chat.send_long_message", new_callable=AsyncMock),
         patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as mock_save,
-        patch("app.handlers.ai_chat.prompts") as mock_prompts,
+        patch("app.handlers.ai_chat.get_registry") as mock_get_registry,
     ):
-        mock_prompts.prepare_context_with_limits.return_value = ([], None)
-        mock_prompts.build_context_with_summary.return_value = []
-        mock_prompts.compose_system_instruction.return_value = "sys"
+        mock_registry = MagicMock()
+        mock_registry.compose_system_prompt.return_value = "sys"
+        mock_get_registry.return_value = mock_registry
 
         from app.handlers.ai_chat import _handle_regular_chat
 
@@ -142,11 +142,11 @@ async def test_handle_regular_chat_empty_response():
         patch("app.handlers.ai_chat._get_ai_response_with_routing", new_callable=AsyncMock, return_value=(None, 0)),
         patch("app.handlers.ai_chat.update_stage", new_callable=AsyncMock),
         patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as mock_save,
-        patch("app.handlers.ai_chat.prompts") as mock_prompts,
+        patch("app.handlers.ai_chat.get_registry") as mock_get_registry,
     ):
-        mock_prompts.prepare_context_with_limits.return_value = (history, None)
-        mock_prompts.build_context_with_summary.return_value = history
-        mock_prompts.compose_system_instruction.return_value = "sys"
+        mock_registry = MagicMock()
+        mock_registry.compose_system_prompt.return_value = "sys"
+        mock_get_registry.return_value = mock_registry
 
         from app.handlers.ai_chat import _handle_regular_chat
 
@@ -181,11 +181,11 @@ async def test_handle_regular_chat_error_response_cleanup():
             "app.handlers.ai_chat.handle_ai_response_error", new_callable=AsyncMock, return_value=True
         ) as mock_handle_err,
         patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock),
-        patch("app.handlers.ai_chat.prompts") as mock_prompts,
+        patch("app.handlers.ai_chat.get_registry") as mock_get_registry,
     ):
-        mock_prompts.prepare_context_with_limits.return_value = ([], None)
-        mock_prompts.build_context_with_summary.return_value = []
-        mock_prompts.compose_system_instruction.return_value = "sys"
+        mock_registry = MagicMock()
+        mock_registry.compose_system_prompt.return_value = "sys"
+        mock_get_registry.return_value = mock_registry
 
         from app.handlers.ai_chat import _handle_regular_chat
 

@@ -108,7 +108,7 @@ async def test_hub_view_active_system_role(chat_state, mock_db, run_patched):
 
     # Mock system role definition
     with patch(
-        "app.handlers.menus.prompts.DEFAULT_ROLES",
+        "app.handlers.menus.DEFAULT_ROLES",
         {
             "sys1": {
                 "title": "Helpful Assistant",
@@ -182,7 +182,7 @@ async def test_list_view_my_roles_items(chat_state, mock_db, run_patched):
 async def test_list_view_system_roles(chat_state, mock_db, run_patched):
     """Test 'system_roles' view."""
     with patch(
-        "app.handlers.menus.prompts.DEFAULT_ROLES",
+        "app.handlers.menus.DEFAULT_ROLES",
         {
             "sys1": {"title": "Sys Role 1", "prompt": "p1"},
             "sys2": {"title": "Sys Role 2", "prompt": "p2"},

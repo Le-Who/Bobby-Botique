@@ -7,12 +7,12 @@ from google import genai
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app import prompts
 from app.cache import get_cache_stats
 from app.config import settings
 from app.group_chat import group_chat_manager
 from app.handlers import menus
 from app.metrics import role_conv_metrics
+from app.prompt_registry import DEFAULT_ROLES
 from app.queue import task_queue
 from app.repos.admin import (
     authorize_user,
@@ -446,7 +446,7 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
                 reverse=True,
             )
             for role_key, count in sorted_roles[:5]:
-                role_title = prompts.DEFAULT_ROLES.get(role_key, {}).get("title", role_key)
+                role_title = DEFAULT_ROLES.get(role_key, {}).get("title", role_key)
                 text += f"• {role_title}: `{count}`\n"
             text += "\n"
 

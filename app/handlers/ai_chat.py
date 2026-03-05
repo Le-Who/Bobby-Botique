@@ -7,7 +7,6 @@ import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app import prompts
 from app.config import settings
 from app.database import ChatState
 from app.handlers.ai_core import (
@@ -16,6 +15,7 @@ from app.handlers.ai_core import (
     handle_ai_response_error,
 )
 from app.handlers.chat_logic import build_memory_context, classify_resolution
+from app.prompt_registry import get_registry
 from app.providers import GeminiProvider, is_openrouter_model
 from app.repos.chats import update_user_chat
 from app.utils.formatting import TelegramFormatter
@@ -74,7 +74,7 @@ async def _handle_regular_chat(
     existing_summary = chat_state.context_summary
 
     # Compose system instruction first (needed for budget calculation)
-    system_instruction = prompts.compose_system_instruction(chat_state.system_prompt)
+    system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
 
     # Assemble context within token budget
     assembled = assembler.assemble(

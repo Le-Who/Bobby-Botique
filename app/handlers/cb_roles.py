@@ -8,7 +8,6 @@ import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app import prompts
 from app.config import settings
 from app.handlers import menus
 from app.metrics import role_conv_metrics
@@ -32,6 +31,7 @@ from app.state import (
     set_last_custom_role_prompt,
 )
 from app.utils.formatting import TelegramFormatter
+from app.utils.json_utils import extract_json_object
 
 
 class DummyUpdate:
@@ -306,7 +306,7 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
     # Log response models for отладки
     logging.info("Model response for role retry: %s...", response_text[:500])
 
-    role_obj = prompts.extract_json_object(response_text)
+    role_obj = extract_json_object(response_text)
     if not role_obj:
         # Processing явной 503 ошибки from textа
         if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
