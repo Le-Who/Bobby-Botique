@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
@@ -143,6 +144,69 @@ _TRUNCATED_FINISH_REASONS = frozenset(
 )
 
 
+def _detect_open_markdown(text: str) -> tuple[str, str]:
+    """Detect unclosed markdown formatting in *text* and return (suffix, prefix).
+
+    *suffix* should be appended to the frozen (first) message to close any
+    open constructs so that ``markdown_to_html`` produces balanced HTML.
+
+    *prefix* should be prepended to the remainder (second message) so that
+    the open formatting is visually continued.
+
+    Handles:
+    - Fenced code blocks (`` ``` ``)
+    - Inline code (`` ` ``)
+    - Bold (``**``)
+    - Italic (``*`` / ``_``)
+    """
+    suffix_parts: list[str] = []
+    prefix_parts: list[str] = []
+
+    # --- 1. Fenced code blocks (``` ... ```) ---------------------------------
+    #   Count occurrences of triple-backtick fences *outside* of themselves.
+    #   An odd count means we are inside an unclosed code block.
+    fence_re = re.compile(r"^```", re.MULTILINE)
+    fence_count = len(fence_re.findall(text))
+    if fence_count % 2 == 1:
+        # Inside an unclosed code block —
+        # close it in the first message, reopen in the second.
+        # Try to detect original language specifier for reopening.
+        last_fence_idx = text.rfind("```")
+        after_fence = text[last_fence_idx + 3:]
+        lang_match = re.match(r"([a-zA-Z0-9+#._-]{1,20})", after_fence)
+        lang = lang_match.group(1) if lang_match else ""
+        suffix_parts.append("\n```")
+        prefix_parts.append(f"```{lang}\n" if lang else "```\n")
+        # Inside a code block no inline formatting applies, return early.
+        return "".join(suffix_parts), "".join(prefix_parts)
+
+    # --- 2. Inline code (` ... `) outside of fenced blocks --------------------
+    #   Strip fenced blocks first, then count backticks.
+    stripped = fence_re.sub("", text)  # rough strip — fences already balanced here
+    backtick_count = stripped.count("`")
+    if backtick_count % 2 == 1:
+        suffix_parts.append("`")
+        prefix_parts.append("`")
+        # Inside inline code no other formatting applies.
+        return "".join(suffix_parts), "".join(prefix_parts)
+
+    # --- 3. Bold (**...**) ----------------------------------------------------
+    bold_count = text.count("**")
+    if bold_count % 2 == 1:
+        suffix_parts.append("**")
+        prefix_parts.append("**")
+
+    # --- 4. Italic (*...* or _..._) -------------------------------------------
+    #   After removing ** pairs, count remaining lone * characters.
+    no_bold = text.replace("**", "")
+    lone_star = no_bold.count("*")
+    if lone_star % 2 == 1:
+        suffix_parts.append("*")
+        prefix_parts.append("*")
+
+    return "".join(suffix_parts), "".join(prefix_parts)
+
+
 class StreamingWriter:
     """Debounced Telegram message updater for streaming AI responses.
 
@@ -235,6 +299,14 @@ class StreamingWriter:
             # No good split point — take what we have minus some margin
             frozen_text = self._buffer
             remainder = ""
+
+        # Carry open markdown formatting across the message boundary:
+        # close constructs in the frozen part, reopen them in the remainder.
+        md_suffix, md_prefix = _detect_open_markdown(frozen_text)
+        if md_suffix:
+            frozen_text += md_suffix
+        if md_prefix and remainder:
+            remainder = md_prefix + remainder
 
         # Edit current message with frozen text (no cursor)
         try:

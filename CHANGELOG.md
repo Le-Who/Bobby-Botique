@@ -3,6 +3,33 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.20] – 2026-03-06 – Streaming Overflow Formatting Fix
+
+### 🔴 Fix: Broken Formatting When Streamed Responses Overflow Into Multiple Messages
+
+**Root cause:** `_overflow_to_new_message` split the raw markdown buffer at a text boundary, but **did not carry open markdown formatting state** to the remainder. Each half was independently formatted by `markdown_to_html()`, so the second message lost formatting context (unclosed `**`, `` ` ``, ` ``` `, `*` etc. from the first message).
+
+**Fix:** New `_detect_open_markdown(text)` helper scans raw markdown for unclosed constructs:
+
+- Fenced code blocks (` ``` `) — with language specifier preservation
+- Inline code (`` ` ``)
+- Bold (`**`)
+- Italic (`*`)
+
+Returns `(suffix, prefix)` — suffix closes open constructs in the frozen message, prefix reopens them in the remainder. Applied in `_overflow_to_new_message` before each half is formatted.
+
+### Files Changed
+
+| File                             | Change                                                                       |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| `app/streaming.py`               | `_detect_open_markdown()` helper + `_overflow_to_new_message` context repair |
+| `tests/test_markdown_context.py` | [NEW] 22 unit tests for markdown context detection                           |
+| `tests/test_streaming.py`        | +4 integration tests for overflow formatting preservation                    |
+
+### 🧪 Tests: 954 passed, 0 failures
+
+---
+
 ## [2.8.19] – 2026-03-06 – Memory Leak Fixes
 
 ### 🔴 Fix: Unbounded Memory Growth in User State Store
