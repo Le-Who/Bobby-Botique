@@ -469,9 +469,9 @@ class TestRequirementsPydantic:
 
     def test_settings_uses_base_settings_from_pydantic(self):
         """Settings class should not depend on pydantic-settings package."""
-        from app.config import Settings
-
         # Settings should be a pydantic model, not from pydantic_settings
         import pydantic
+
+        from app.config import Settings
 
         assert issubclass(Settings, pydantic.BaseModel)

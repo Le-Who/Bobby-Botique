@@ -29,13 +29,27 @@ def _extract_message_content(msg: dict) -> str:
         content = msg["content"]
         if isinstance(content, str):
             return content
+        if isinstance(content, bytes):
+            return ""
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            return " ".join(str(p) for p in content if not isinstance(p, bytes))
         return str(content)
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
+            text_parts = []
+            for p in parts:
+                if isinstance(p, bytes):
+                    continue
+                if isinstance(p, dict):
+                    text = p.get("text")
+                    if text is not None and not isinstance(text, bytes):
+                        text_parts.append(str(text))
+                else:
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
+        if isinstance(parts, bytes):
+            return ""
         return str(parts)
     return ""
 

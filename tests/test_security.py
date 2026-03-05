@@ -5,7 +5,6 @@ import pytest
 from app.errors import InputSanitizationError
 from app.security import InputSanitizer, RateLimiter
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # InputSanitizer.sanitize_text
 # ═══════════════════════════════════════════════════════════════════════════════

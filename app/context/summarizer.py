@@ -170,14 +170,20 @@ def _extract_text(msg: dict[str, Any]) -> str:
         content = msg.get("content", "")
         if isinstance(content, str):
             return content
+        if isinstance(content, bytes):
+            return ""
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            return " ".join(str(p) for p in content if not isinstance(p, bytes))
         return str(content)
 
     text_parts: list[str] = []
     for part in parts:
         if isinstance(part, str):
             text_parts.append(part)
+        elif isinstance(part, bytes):
+            continue
         elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+            text_val = part["text"]
+            if not isinstance(text_val, bytes):
+                text_parts.append(str(text_val))
     return " ".join(text_parts)
