@@ -17,6 +17,7 @@ from app.handlers.ai_core import (
     handle_ai_response_error,
 )
 from app.metrics import metrics_collector, track_metrics
+from app.prompt_registry import get_registry
 from app.repos.chats import get_user_chat, update_user_chat
 from app.utils.formatting import escape_format_chars
 from app.utils.heartbeat import stop_heartbeat
@@ -76,8 +77,8 @@ async def _handle_qna_search(
     safe_user_message = escape_format_chars(user_message)
     safe_tavily_answer = escape_format_chars(tavily_answer)
 
-    localization_prompt = prompts.QNA_LOCALIZATION_PROMPT.format(
-        user_message=safe_user_message, tavily_answer=safe_tavily_answer
+    localization_prompt = get_registry().get_task_prompt(
+        "qna_localization", user_message=safe_user_message, tavily_answer=safe_tavily_answer
     )
     # Get user_id и chat_id for логирования
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
@@ -218,7 +219,8 @@ async def _handle_research_agent(
         # Экранируем фигурные скобки в user_message for предотвращения ошибок форматирования
         safe_user_message = escape_format_chars(user_message)
 
-        selection_prompt = prompts.URL_SELECTION_PROMPT.format(
+        selection_prompt = get_registry().get_task_prompt(
+            "url_selection",
             user_message=safe_user_message,
             # Optimized: Removed indent=2 to save tokens and improve performance
             search_results_json=await asyncio.to_thread(lambda: json.dumps(safe_search_results, ensure_ascii=False)),
@@ -332,7 +334,9 @@ async def _handle_research_agent(
     safe_full_context = escape_format_chars(full_context)
     safe_user_message = escape_format_chars(user_message)
 
-    augmented_prompt = prompts.SYNTHESIS_PROMPT.format(full_context=safe_full_context, user_message=safe_user_message)
+    augmented_prompt = get_registry().get_task_prompt(
+        "synthesis", full_context=safe_full_context, user_message=safe_user_message
+    )
 
     # Assemble context with token-budget awareness
     from app.context.summarizer import schedule_llm_summarization
@@ -486,7 +490,7 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
 
     img = Image.open(io.BytesIO(photo_data))
 
-    analysis_prompt = prompts.IMAGE_ANALYSIS_PROMPT
+    analysis_prompt = get_registry().get("image_analysis").text
 
     # Create parts for Gemini API: промпт + image
     parts = [analysis_prompt, img] if img else [analysis_prompt]

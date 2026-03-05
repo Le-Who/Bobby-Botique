@@ -5,6 +5,8 @@ Handles complex_search, fallback, and retry_last callbacks.
 These are semaphore-guarded and run in background tasks.
 """
 
+__all__ = ["complex_search_callback", "fallback_callback", "retry_last_callback"]
+
 import asyncio
 import contextlib
 import logging

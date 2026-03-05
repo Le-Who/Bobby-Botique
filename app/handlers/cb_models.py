@@ -4,6 +4,8 @@ Callback handlers — model selection.
 Handles model:* and switch_model:* callback buttons.
 """
 
+__all__ = ["model_button_callback", "switch_model_callback"]
+
 import contextlib
 import logging
 

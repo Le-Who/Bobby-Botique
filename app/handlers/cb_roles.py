@@ -12,6 +12,7 @@ from app import prompts
 from app.config import settings
 from app.handlers import menus
 from app.metrics import role_conv_metrics
+from app.prompt_registry import get_registry
 from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.conversations import get_role_data
 from app.repos.roles import (
@@ -294,7 +295,7 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
         key_data["api_key"],
         history,
         model_used,
-        system_instruction=prompts.PROMPT_ENGINEER_SYSTEM_PROMPT,
+        system_instruction=get_registry().get("prompt_engineer").text,
         user_id=user_id,
         chat_id=user_id,
     )

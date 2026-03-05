@@ -71,6 +71,11 @@ class DatabaseManager:
 
     async def create_pool(self):
         """Создает пул соединений с базой данных"""
+        import os
+
+        pool_min = int(os.getenv("DB_POOL_MIN_SIZE", "2"))
+        pool_max = int(os.getenv("DB_POOL_MAX_SIZE", "10"))
+
         try:
 
             async def _init_connection(conn):
@@ -81,8 +86,9 @@ class DatabaseManager:
 
             self.pool = await asyncpg.create_pool(
                 dsn=settings.DATABASE_URL,
-                min_size=2,
-                max_size=10,
+                min_size=pool_min,
+                max_size=pool_max,
+                max_inactive_connection_lifetime=300,  # evict idle conns after 5 min
                 command_timeout=30,
                 init=_init_connection,
                 statement_cache_size=0,  # Required for PgBouncer transaction mode
@@ -96,6 +102,11 @@ class DatabaseManager:
             )
 
             if self.pool and not self.pool._closed:
+                logging.info(
+                    "Database pool created: min=%d, max=%d, idle_eviction=300s",
+                    pool_min,
+                    pool_max,
+                )
                 self._monitor_task = self._start_background_task(
                     self._monitor_task,
                     self.monitor_connection_pool,

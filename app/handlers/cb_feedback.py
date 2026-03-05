@@ -4,6 +4,8 @@ Callback handlers — feedback.
 Handles 👍/👎 feedback buttons and noop decorative callbacks.
 """
 
+__all__ = ["feedback_callback", "_noop_callback"]
+
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update

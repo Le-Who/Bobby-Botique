@@ -20,6 +20,7 @@ from app.handlers.ai_search import (
     _handle_qna_search,
     _handle_research_agent,
 )
+from app.prompt_registry import get_registry
 from app.repos.chats import get_user_chat, update_user_chat
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
@@ -404,7 +405,7 @@ async def _handle_complex_media_group_search(
             return
 
         # Аналfromируем группу fromображений for searchа
-        analysis_prompt = f"""{prompts.IMAGE_ANALYSIS_PROMPT}
+        analysis_prompt = f"""{get_registry().get("image_analysis").text}
 
 # ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ДЛЯ ГРУППЫ ИЗОБРАЖЕНИЙ
 ## Аналfrom groups

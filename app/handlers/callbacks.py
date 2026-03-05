@@ -14,6 +14,14 @@ Domain-specific callbacks live in sub-modules:
     cb_feedback       — 👍/👎 feedback on AI responses
 """
 
+__all__ = [
+    "register",
+    "_is_user_busy",
+    "_BUSY_TOAST",
+    "_HEAVY_CALLBACK_SEMAPHORE",
+    "_background_tasks",
+]
+
 import asyncio
 
 from telegram.ext import Application, CallbackQueryHandler

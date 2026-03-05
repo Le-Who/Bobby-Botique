@@ -295,10 +295,13 @@ class TestNoJailbreakMarkers:
                 assert marker.lower() not in text_lower, f"Template '{tmpl.name}' contains jailbreak marker '{marker}'"
 
     def test_no_jailbreak_markers_in_legacy_prompt(self):
-        from app.prompts import PROMPT_ENGINEER_SYSTEM_PROMPT
-
-        text_lower = PROMPT_ENGINEER_SYSTEM_PROMPT.lower()
+        """Check the prompt_engineer template via registry (was prompts.PROMPT_ENGINEER_SYSTEM_PROMPT)."""
+        registry = PromptRegistry()
+        tmpl = registry.get("prompt_engineer")
+        assert tmpl is not None
+        text_lower = tmpl.text.lower()
         for marker in self.JAILBREAK_MARKERS:
             assert marker.lower() not in text_lower, (
-                f"PROMPT_ENGINEER_SYSTEM_PROMPT contains jailbreak marker '{marker}'"
+                f"prompt_engineer template contains jailbreak marker '{marker}'"
             )
+

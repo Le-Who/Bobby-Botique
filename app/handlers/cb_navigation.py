@@ -5,6 +5,18 @@ Handles new_topic, new_chat, model_menu, deep_dive, help,
 help_topic, open_documents, open_conversations, toggle_search callbacks.
 """
 
+__all__ = [
+    "deep_dive_callback",
+    "help_callback",
+    "help_topic_callback",
+    "model_menu_callback",
+    "new_chat_callback",
+    "new_topic_callback",
+    "open_conversations_callback",
+    "open_documents_callback",
+    "toggle_search_callback",
+]
+
 import contextlib
 
 import telegram

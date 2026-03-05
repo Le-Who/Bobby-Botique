@@ -13,6 +13,7 @@ from telegram.ext import ContextTypes
 from app import prompts, state
 from app.handlers import agent, menus
 from app.metrics import role_conv_metrics
+from app.prompt_registry import get_registry
 from app.repos.chats import get_user_chat
 from app.repos.conversations import rename_conversation
 from app.state import (
@@ -156,7 +157,7 @@ async def handle_custom_role_generation(
                 key_data["api_key"],
                 history,
                 model_used,
-                system_instruction=prompts.PROMPT_ENGINEER_SYSTEM_PROMPT,
+                system_instruction=get_registry().get("prompt_engineer").text,
                 user_id=user_id,
                 chat_id=chat_id,
             )
