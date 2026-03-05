@@ -220,8 +220,8 @@ class MetricsCollector:
                         search_queries = EXCLUDED.search_queries,
                         cache_hits = EXCLUDED.cache_hits,
                         cache_misses = EXCLUDED.cache_misses,
-                        api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || EXCLUDED.api_calls,
-                        model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
+                        api_calls = EXCLUDED.api_calls,
+                        model_usage = EXCLUDED.model_usage,
                         updated_at = CURRENT_TIMESTAMP
                 """,
                     (
@@ -330,6 +330,7 @@ class MetricsCollector:
                 SELECT key, SUM(value::numeric) as total
                 FROM metrics, jsonb_each_text(api_calls)
                 WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND jsonb_typeof(api_calls) = 'object'
                 GROUP BY key
             """)
 
@@ -340,6 +341,7 @@ class MetricsCollector:
                 SELECT key, SUM(value::numeric) as total
                 FROM metrics, jsonb_each_text(model_usage)
                 WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
+                  AND jsonb_typeof(model_usage) = 'object'
                 GROUP BY key
             """)
 
