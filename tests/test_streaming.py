@@ -3,12 +3,12 @@
 import pytest
 
 from app.streaming import (
-    EDIT_DEBOUNCE_S,
-    MIN_CHUNK_SIZE,
-    STREAMING_INDICATOR,
-    STREAM_MSG_LIMIT,
     _BLOCKED_FINISH_REASONS,
     _TRUNCATED_FINISH_REASONS,
+    EDIT_DEBOUNCE_S,
+    MIN_CHUNK_SIZE,
+    STREAM_MSG_LIMIT,
+    STREAMING_INDICATOR,
     StreamingWriter,
 )
 
