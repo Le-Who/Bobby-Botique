@@ -3,6 +3,27 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.16] – 2026-03-05 – Streaming HTML Misnesting Fix
+
+### 🔴 Fix: Telegram "unmatched end tag" Errors During Streaming
+
+**Root cause:** `sanitize_html_tags()` fixed misnested HTML tags (e.g. `<code>...<i>...</code>`) by appending close tags to the **end** of the string, but never repositioned the original misplaced close tag. Telegram's strict parser still rejected the output because nesting order was invalid.
+
+**Fix:** Rewrote `sanitize_html_tags()` with a **rebuild approach** — walks HTML as segments, inserts close/reopen tags _at the point_ of misnesting. Also strips empty tag pairs (`<i></i>`) produced by the reopen logic.
+
+| Input                     | Old output (broken)           | New output (valid)            |
+| ------------------------- | ----------------------------- | ----------------------------- |
+| `<code>E = <i>mc²</code>` | `<code>E = <i>mc²</code></i>` | `<code>E = <i>mc²</i></code>` |
+
+### Files Changed
+
+| File                        | Change                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| `app/utils/text_format.py`  | `sanitize_html_tags()` rewritten with rebuild approach + empty tag stripping |
+| `tests/test_text_format.py` | Strengthened existing tests + 2 new tests with stack-walk nesting validation |
+
+### 🧪 Tests: 26 passed, 0 failures (text_format suite)
+
 ---
 
 ## [2.8.15] – 2026-03-04 – Mypy Type Safety Overhaul (110 → 0 Errors)

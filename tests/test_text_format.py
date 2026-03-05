@@ -234,15 +234,73 @@ def test_sanitize_unclosed_nested():
 def test_sanitize_code_italic_mismatch():
     """Reproduces the exact error from production logs:
     <code>...<i>text</code> where <i> crosses <code> boundary.
-    The sanitizer should ensure all tags are balanced.
+    The sanitizer must produce properly nested HTML, not just balanced counts.
     """
-    html = "<code>some code <i>italic text</code>"
-    result = sanitize_html_tags(html)
-    # <i> should be closed (misnesting resolved by appending </i>)
-    assert "</i>" in result
+    html_input = "<code>some code <i>italic text</code>"
+    result = sanitize_html_tags(html_input)
     # All tags should be balanced
     assert result.count("<code>") == result.count("</code>")
     assert result.count("<i>") == result.count("</i>")
+    # Verify strict nesting via stack walk
+    import re as _re
+    stack = []
+    for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", result):
+        is_close = m.group(1) == "/"
+        tag = m.group(2)
+        if not is_close:
+            stack.append(tag)
+        else:
+            assert stack and stack[-1] == tag, (
+                f"Misnested: expected </{stack[-1]}>, got </{tag}> in: {result}"
+            )
+            stack.pop()
+    assert not stack, f"Unclosed tags {stack} in: {result}"
+
+
+def test_sanitize_misnested_produces_valid_nesting():
+    """Verify no close tag appears while a different tag is innermost.
+    Uses a regex-based nesting validator.
+    """
+    html_input = "<code>E = <i>mc²</code> rest"
+    result = sanitize_html_tags(html_input)
+
+    # Walk the result and verify strict nesting
+    import re as _re
+    stack = []
+    for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", result):
+        is_close = m.group(1) == "/"
+        tag = m.group(2)
+        if not is_close:
+            stack.append(tag)
+        else:
+            assert stack, f"Orphaned </{tag}> in: {result}"
+            assert stack[-1] == tag, (
+                f"Misnested: expected </{stack[-1]}>, got </{tag}> in: {result}"
+            )
+            stack.pop()
+    # After the close tags appended at end, stack should be empty
+    assert not stack, f"Unclosed tags {stack} in: {result}"
+
+
+def test_sanitize_reopen_after_misnested_close():
+    """Tags closed to resolve misnesting should be re-opened if content follows."""
+    html_input = "<b><i>text</b> more italic</i>"
+    result = sanitize_html_tags(html_input)
+
+    # Verify valid nesting
+    import re as _re
+    stack = []
+    for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", result):
+        is_close = m.group(1) == "/"
+        tag = m.group(2)
+        if not is_close:
+            stack.append(tag)
+        else:
+            assert stack and stack[-1] == tag, f"Bad nesting in: {result}"
+            stack.pop()
+    assert not stack, f"Unclosed tags {stack} in: {result}"
+    # The word "more italic" should still be present
+    assert "more italic" in result
 
 
 def test_sanitize_empty_and_none():
@@ -258,8 +316,8 @@ def test_sanitize_plain_text():
 
 def test_sanitize_pre_code_unclosed():
     """Unclosed <pre><code> from incomplete streaming code block."""
-    html = '<pre><code class="language-python">def hello():'
-    result = sanitize_html_tags(html)
+    html_input = '<pre><code class="language-python">def hello():'
+    result = sanitize_html_tags(html_input)
     assert result.endswith("</code></pre>")
 
 
@@ -271,7 +329,16 @@ def test_markdown_to_html_partial_streaming():
     # After markdown_to_html, bold becomes <b> but italic * stays as text
     # The result may have unclosed tags — sanitize should fix them
     sanitized = sanitize_html_tags(result)
-    # Count open and close tags
-    open_count = sanitized.count("<b>") + sanitized.count("<i>") + sanitized.count("<code>")
-    close_count = sanitized.count("</b>") + sanitized.count("</i>") + sanitized.count("</code>")
-    assert open_count == close_count, f"Unbalanced tags in: {sanitized}"
+
+    # Verify valid nesting via stack walk
+    import re as _re
+    stack = []
+    for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", sanitized):
+        is_close = m.group(1) == "/"
+        tag = m.group(2)
+        if not is_close:
+            stack.append(tag)
+        else:
+            assert stack and stack[-1] == tag, f"Bad nesting in: {sanitized}"
+            stack.pop()
+    assert not stack, f"Unclosed tags {stack} in: {sanitized}"

@@ -249,45 +249,80 @@ def sanitize_html_tags(html_text: str) -> str:
     """Ensure all HTML tags are properly balanced for Telegram.
 
     Designed for mid-stream flushes where markdown_to_html may produce
-    unclosed tags from incomplete markdown (e.g. ``<code>...<i>text``).
+    unclosed or misnested tags from incomplete markdown
+    (e.g. ``<code>...<i>text`` or ``<code>...<i>...</code>``).
 
+    Uses a **rebuild approach**: walks through the HTML splitting it into
+    text runs and tag tokens, maintaining a stack.  When a close tag
+    doesn't match the stack top, the function inserts the necessary
+    close/reopen tags *at that point* so that nesting is always valid.
+
+    - Fixes misnested tags (e.g. ``<code><i>x</code>`` → ``<code><i>x</i></code>``)
     - Removes orphaned close tags (no matching open tag)
     - Appends missing close tags at the end in correct nesting order
     """
     if not html_text:
         return html_text
 
-    # Void/self-closing tags that never need closing
-    _VOID_TAGS = frozenset({"br", "img", "hr"})
+    # Pattern covering Telegram-supported formatting tags
+    _TAG_RE = re.compile(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(\s[^>]*)?>")
 
-    open_stack: list[str] = []  # stack of tag names
+    open_stack: list[tuple[str, str]] = []  # (tag_name, full_open_tag)
+    result_parts: list[str] = []
+    last_end = 0
 
-    for match in re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", html_text):
+    for match in _TAG_RE.finditer(html_text):
+        # Append text between previous match and this one
+        result_parts.append(html_text[last_end:match.start()])
+        last_end = match.end()
+
         is_close = match.group(1) == "/"
         tag_name = match.group(2)
-
-        if tag_name in _VOID_TAGS:
-            continue
+        full_tag = match.group(0)
 
         if not is_close:
-            open_stack.append(tag_name)
+            # Opening tag — push onto stack and emit
+            open_stack.append((tag_name, full_tag))
+            result_parts.append(full_tag)
         else:
-            # Close tag: pop matching open, or it's orphaned
-            if open_stack and open_stack[-1] == tag_name:
+            # Closing tag — find the matching open in the stack
+            if open_stack and open_stack[-1][0] == tag_name:
+                # Perfect match at stack top — just pop and emit
                 open_stack.pop()
-            elif tag_name in open_stack:
-                # Misnested: close everything up to and including the matching open
-                while open_stack and open_stack[-1] != tag_name:
-                    html_text += f"</{open_stack.pop()}>"
+                result_parts.append(full_tag)
+            elif any(name == tag_name for name, _ in open_stack):
+                # Misnested: close intervening tags, emit the close,
+                # then reopen the intervening tags
+                tags_to_reopen: list[tuple[str, str]] = []
+                while open_stack and open_stack[-1][0] != tag_name:
+                    inner_name, inner_open = open_stack.pop()
+                    result_parts.append(f"</{inner_name}>")
+                    tags_to_reopen.append((inner_name, inner_open))
+                # Now close the actual matching tag
                 if open_stack:
                     open_stack.pop()
-            # else: orphaned close tag — leave it (Telegram tolerates it better than removing)
+                result_parts.append(full_tag)
+                # Reopen the intervening tags (in their original order)
+                for reopen_name, reopen_tag in reversed(tags_to_reopen):
+                    result_parts.append(reopen_tag)
+                    open_stack.append((reopen_name, reopen_tag))
+            # else: orphaned close tag — drop it silently
+
+    # Append any remaining text after the last tag
+    result_parts.append(html_text[last_end:])
 
     # Close any remaining unclosed tags (innermost first)
-    for tag_name in reversed(open_stack):
-        html_text += f"</{tag_name}>"
+    for tag_name, _ in reversed(open_stack):
+        result_parts.append(f"</{tag_name}>")
 
-    return html_text
+    result = "".join(result_parts)
+
+    # Strip empty tag pairs produced by reopen logic (e.g. <i></i>)
+    _EMPTY_TAG_RE = re.compile(r"<(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?></\1>")
+    while _EMPTY_TAG_RE.search(result):
+        result = _EMPTY_TAG_RE.sub("", result)
+
+    return result
 
 
 def strip_formatting(text: str) -> str:
