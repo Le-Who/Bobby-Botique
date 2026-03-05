@@ -260,6 +260,28 @@ async def migrate_invalid_models(
     return migrated
 
 
+async def model_migration_watcher(old_settings, new_settings) -> None:
+    """Config watcher: migrates users whose model is no longer available.
+
+    Registered via ``config_manager.add_watcher()`` at startup so that config.py
+    never imports from the DB/repos layer directly (AR-4).
+    """
+    try:
+        all_available = set()
+        if new_settings.AVAILABLE_MODELS:
+            all_available.update(new_settings.AVAILABLE_MODELS)
+        if new_settings.OPENROUTER_AVAILABLE_MODELS:
+            all_available.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
+
+        await migrate_invalid_models(
+            available_models=all_available,
+            default_gemini_model=new_settings.DEFAULT_MODEL,
+            default_openrouter_model=new_settings.OPENROUTER_DEFAULT_MODEL,
+        )
+    except Exception as e:
+        logging.error("Model migration watcher error: %s", e)
+
+
 async def update_thinking_level(user_id: int, level: str | None) -> None:
     """Update thinking level for a user's chat. None resets to default."""
     await db_query(

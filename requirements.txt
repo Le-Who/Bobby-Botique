@@ -28,3 +28,6 @@ tavily-python>=0.3.0,<1.0.0
 
 # Logging (pretty console output)
 rich>=13.0.0,<14.0.0
+
+# Performance (Linux/Docker only — 2-4× event loop throughput)
+uvloop>=0.19.0,<1.0.0; sys_platform != "win32"

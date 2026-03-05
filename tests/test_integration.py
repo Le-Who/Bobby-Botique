@@ -216,7 +216,7 @@ class TestProviderRouterFallback:
             mock_use_case = MockUseCase.return_value
             mock_use_case.resolve_ai_request = AsyncMock(return_value=(None, None, "all_exhausted"))
 
-            from app.ai_provider import ProviderRouter
+            from app.providers import ProviderRouter
 
             router = ProviderRouter()
             result_text, result_tokens = await router.get_response(

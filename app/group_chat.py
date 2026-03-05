@@ -91,7 +91,11 @@ class GroupChatManager:
     async def _load_active_groups(self):
         """Загружает активные группы из базы данных"""
         try:
-            result = await db.db_query("SELECT * FROM group_chats WHERE is_active = TRUE")
+            result = await db.db_query(
+                "SELECT chat_id, title, is_active, created_at, last_activity,"
+                " member_count, admin_user_id, settings"
+                " FROM group_chats WHERE is_active = TRUE"
+            )
 
             chat_ids = []
             for row in result:

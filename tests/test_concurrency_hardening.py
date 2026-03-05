@@ -12,11 +12,13 @@ def test_role_custom_retry_registered_once():
 
 
 def test_heavy_callback_semaphore_present_and_used():
-    _module("app/handlers/callbacks.py")
-    source = Path("app/handlers/callbacks.py").read_text(encoding="utf-8")
-    assert "_HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore" in source
+    # Semaphore is defined in callbacks.py (shared helpers hub)
+    hub_source = Path("app/handlers/callbacks.py").read_text(encoding="utf-8")
+    assert "_HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore" in hub_source
 
-    async_with_count = source.count("async with _HEAVY_CALLBACK_SEMAPHORE")
+    # Semaphore is used in cb_ai_actions.py (heavy callbacks)
+    actions_source = Path("app/handlers/cb_ai_actions.py").read_text(encoding="utf-8")
+    async_with_count = actions_source.count("async with _HEAVY_CALLBACK_SEMAPHORE")
     assert async_with_count >= 2
 
 
@@ -48,28 +50,30 @@ def test_streaming_lock_guards_on_state_mutating_callbacks():
     they race with the streaming handler's final update_user_chat, causing
     the user's intent (model switch, history clear, search toggle) to be silently lost.
     """
-    source = Path("app/handlers/callbacks.py").read_text(encoding="utf-8")
+    # After the HI-4 split, handlers live across multiple cb_* modules
+    handler_module_map = {
+        "model_button_callback": "app/handlers/cb_models.py",
+        "switch_model_callback": "app/handlers/cb_models.py",
+        "new_topic_callback": "app/handlers/cb_navigation.py",
+        "new_chat_callback": "app/handlers/cb_navigation.py",
+        "deep_dive_callback": "app/handlers/cb_navigation.py",
+        "toggle_search_callback": "app/handlers/cb_navigation.py",
+    }
 
-    # Each handler function should contain "_is_user_busy" somewhere in its body
-    handlers_needing_guard = [
-        "model_button_callback",
-        "switch_model_callback",
-        "new_topic_callback",
-        "new_chat_callback",
-        "deep_dive_callback",
-        "toggle_search_callback",
-    ]
+    for handler_name, module_path in handler_module_map.items():
+        source = Path(module_path).read_text(encoding="utf-8")
+        tree = ast.parse(source)
 
-    tree = ast.parse(source)
+        found = False
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name == handler_name:
+                    func_source = ast.get_source_segment(source, node)
+                    assert func_source is not None, f"Could not get source for {handler_name}"
+                    assert "_is_user_busy" in func_source, (
+                        f"{handler_name} is missing _is_user_busy guard — it mutates chat_state and will race with streaming"
+                    )
+                    found = True
+                    break
 
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name in handlers_needing_guard:
-                func_source = ast.get_source_segment(source, node)
-                assert func_source is not None, f"Could not get source for {node.name}"
-                assert "_is_user_busy" in func_source, (
-                    f"{node.name} is missing _is_user_busy guard — it mutates chat_state and will race with streaming"
-                )
-                handlers_needing_guard = [h for h in handlers_needing_guard if h != node.name]
-
-    assert not handlers_needing_guard, f"Handlers not found in callbacks.py: {handlers_needing_guard}"
+        assert found, f"Handler {handler_name} not found in {module_path}"

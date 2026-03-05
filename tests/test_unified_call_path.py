@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.ai_provider import AIResponse
+from app.providers import AIResponse
 
 
 class TestUnifiedCallPath:
@@ -27,7 +27,7 @@ class TestUnifiedCallPath:
             model="gemini-2.0-flash",
         )
 
-        with patch("app.ai_provider.get_provider_for_model") as mock_factory:
+        with patch("app.providers.get_provider_for_model") as mock_factory:
             mock_provider = MagicMock()
             mock_provider.get_response = AsyncMock(return_value=mock_response)
             mock_factory.return_value = mock_provider
@@ -59,7 +59,7 @@ class TestUnifiedCallPath:
         )
 
         with (
-            patch("app.ai_provider.get_provider_for_model") as mock_factory,
+            patch("app.providers.get_provider_for_model") as mock_factory,
             patch("app.agent_use_cases.get_openrouter_keys", return_value=["key1"]),
         ):
             mock_provider = MagicMock()
@@ -93,7 +93,7 @@ class TestUnifiedCallPath:
             model="gemini-2.0-flash",
         )
 
-        with patch("app.ai_provider.get_provider_for_model") as mock_factory:
+        with patch("app.providers.get_provider_for_model") as mock_factory:
             mock_provider = MagicMock()
             mock_provider.get_response = AsyncMock(return_value=mock_response)
             mock_factory.return_value = mock_provider

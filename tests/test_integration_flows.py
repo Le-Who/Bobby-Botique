@@ -19,7 +19,7 @@ class TestAIResponseLifecycle:
     @pytest.mark.asyncio
     async def test_gemini_response_lifecycle(self) -> None:
         """Gemini model routes through GeminiProvider and returns AIResponse."""
-        from app.ai_provider import AIResponse, get_ai_response
+        from app.providers import AIResponse, get_ai_response
 
         mock_response = AIResponse(
             text="Hello from Gemini!",
@@ -29,7 +29,7 @@ class TestAIResponseLifecycle:
             model="gemini-2.0-flash",
         )
 
-        with patch("app.ai_provider.get_provider_for_model") as mock_factory:
+        with patch("app.providers.base.get_provider_for_model") as mock_factory:
             mock_provider = MagicMock()
             mock_provider.get_response = AsyncMock(return_value=mock_response)
             mock_factory.return_value = mock_provider
@@ -48,7 +48,7 @@ class TestAIResponseLifecycle:
     @pytest.mark.asyncio
     async def test_openrouter_response_lifecycle(self) -> None:
         """OpenRouter model (contains /) routes through OpenRouterProvider."""
-        from app.ai_provider import AIResponse, get_ai_response
+        from app.providers import AIResponse, get_ai_response
 
         mock_response = AIResponse(
             text="Hello from GPT-4!",
@@ -58,7 +58,7 @@ class TestAIResponseLifecycle:
             model="openai/gpt-4o",
         )
 
-        with patch("app.ai_provider.get_provider_for_model") as mock_factory:
+        with patch("app.providers.base.get_provider_for_model") as mock_factory:
             mock_provider = MagicMock()
             mock_provider.get_response = AsyncMock(return_value=mock_response)
             mock_factory.return_value = mock_provider
@@ -75,7 +75,7 @@ class TestAIResponseLifecycle:
     @pytest.mark.asyncio
     async def test_error_response_returns_none_tokens(self) -> None:
         """On error, text is error message and tokens is None."""
-        from app.ai_provider import AIResponse, get_ai_response
+        from app.providers import AIResponse, get_ai_response
 
         mock_response = AIResponse(
             text="❌ API error",
@@ -84,7 +84,7 @@ class TestAIResponseLifecycle:
             error_message="Rate limit exceeded",
         )
 
-        with patch("app.ai_provider.get_provider_for_model") as mock_factory:
+        with patch("app.providers.base.get_provider_for_model") as mock_factory:
             mock_provider = MagicMock()
             mock_provider.get_response = AsyncMock(return_value=mock_response)
             mock_factory.return_value = mock_provider

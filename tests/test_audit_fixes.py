@@ -300,7 +300,7 @@ class TestHttpClientClose:
     @pytest.mark.asyncio
     async def test_close_http_clients_runs_without_error(self):
         """close_http_clients must execute successfully (not just be callable)."""
-        from app.ai_provider import close_http_clients
+        from app.providers import close_http_clients
 
         # Actually invoke it — should not raise
         await close_http_clients()
@@ -308,23 +308,23 @@ class TestHttpClientClose:
     @pytest.mark.asyncio
     async def test_double_close_is_idempotent(self):
         """Closing twice should not raise."""
-        import app.ai_provider as aip
-        from app.ai_provider import close_http_clients
+        import app.providers.openrouter as aip_or
+        from app.providers import close_http_clients
 
-        _original_client = aip._openrouter_http_client
+        _original_client = aip_or._openrouter_http_client
 
         # Close
         await close_http_clients()
-        assert aip._openrouter_http_client is None
+        assert aip_or._openrouter_http_client is None
 
         # Close again — should not raise
         await close_http_clients()
-        assert aip._openrouter_http_client is None
+        assert aip_or._openrouter_http_client is None
 
         # Restore for other tests
         from app.utils.network import NetworkErrorHandler
 
-        aip._openrouter_http_client = NetworkErrorHandler.create_robust_http_client()
+        aip_or._openrouter_http_client = NetworkErrorHandler.create_robust_http_client()
 
 
 # ===========================================================================

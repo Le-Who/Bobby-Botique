@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app import state
-from app.handlers import callbacks
+from app.handlers import cb_models
 
 
 class DummyQuery:
@@ -39,21 +39,21 @@ async def test_user_b_settings_callback_not_blocked_by_user_a_long_request(monke
 
     # Minimal settings/config stubs used by model_button_callback
     monkeypatch.setattr(
-        callbacks,
+        cb_models,
         "settings",
         SimpleNamespace(AVAILABLE_MODELS=["gemini-2.5-flash"], OPENROUTER_AVAILABLE_MODELS=[]),
     )
-    monkeypatch.setattr(callbacks, "get_openrouter_keys", list)
-    monkeypatch.setattr(callbacks, "get_model_hash", lambda model_name: "hash-ok")
+    monkeypatch.setattr(cb_models, "get_openrouter_keys", list)
+    monkeypatch.setattr(cb_models, "get_model_hash", lambda model_name: "hash-ok")
 
     chat_state = SimpleNamespace(model=None)
 
     mock_get = AsyncMock(return_value=chat_state)
     mock_update = AsyncMock()
-    monkeypatch.setattr(callbacks, "get_user_chat", mock_get)
-    monkeypatch.setattr(callbacks, "update_user_chat", mock_update)
+    monkeypatch.setattr(cb_models, "get_user_chat", mock_get)
+    monkeypatch.setattr(cb_models, "update_user_chat", mock_update)
     monkeypatch.setattr(
-        callbacks.menus,
+        cb_models.menus,
         "get_model_menu_content",
         lambda _chat_state, _ctx: ("ok", None, None),
     )
@@ -70,7 +70,7 @@ async def test_user_b_settings_callback_not_blocked_by_user_a_long_request(monke
     await asyncio.sleep(0.02)  # let A acquire lock
 
     start = time.perf_counter()
-    await callbacks.model_button_callback(update_b, context_b)
+    await cb_models.model_button_callback(update_b, context_b)
     elapsed = time.perf_counter() - start
 
     await task_a

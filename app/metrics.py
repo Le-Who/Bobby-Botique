@@ -667,7 +667,9 @@ async def get_system_status_data() -> dict[str, Any]:
 
     # 2. Статус keyей Gemini
     today_pacific = time_utils.get_pacific_date()
-    gemini_keys = await db.db_query("SELECT * FROM api_keys")
+    gemini_keys = await db.db_query(
+        "SELECT key_hash, total_requests, last_used, created_at, is_default FROM api_keys"
+    )
 
     # Get использование keyей Gemini за сегодня
     gemini_usage_map: dict[str, list[Any]] = {}
@@ -685,7 +687,9 @@ async def get_system_status_data() -> dict[str, Any]:
 
     # 3. Статус кредитов Tavily
     current_month = time_utils.get_current_month_str()
-    tavily_keys = await db.db_query("SELECT * FROM tavily_api_keys")
+    tavily_keys = await db.db_query(
+        "SELECT key_hash, total_searches, last_used, created_at, credit_limit FROM tavily_api_keys"
+    )
 
     # Get использование keyей Tavily за месяц
     tavily_usage_map = {}

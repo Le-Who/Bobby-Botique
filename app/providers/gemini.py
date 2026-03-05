@@ -1,0 +1,345 @@
+"""Google Gemini AI provider — self-contained execution logic."""
+
+import asyncio
+import logging
+import time
+from typing import Any
+
+import httpx
+from google import genai
+from google.genai import types
+from google.genai.errors import APIError
+from PIL import Image
+
+from app.config import settings
+from app.errors import ErrorCode, tag_error
+from app.metrics import metrics_collector
+from app.providers.base import AIResponse, BaseAIProvider, _build_thinking_config
+from app.utils.api_logger import api_logger
+from app.utils.image_utils import save_image_as_bytes
+
+
+class GeminiProvider(BaseAIProvider):
+    """Google Gemini AI provider — self-contained execution logic."""
+
+    provider_name = "gemini"
+    _client: Any = None  # Lazily-cached genai.Client
+    _client_api_key: str | None = None  # Track which key the cached client uses
+
+    async def _execute_request(
+        self,
+        history: list[dict[str, Any]],
+        model_name: str,
+        system_instruction: str | None,
+        user_id: int | None,
+        chat_id: int | None,
+        timeout: float,
+        thinking_level: str | None = None,
+    ) -> AIResponse:
+        start_time = None
+
+        try:
+            await metrics_collector.record_api_call("gemini", model_name)
+
+            # Compute metrics
+            try:
+                prompt_length = sum(
+                    len(str(part)) for item in history for part in (item.get("parts", []) or []) if part is not None
+                )
+                has_images = any(
+                    isinstance(part, (bytes, bytearray, Image.Image))
+                    for item in history
+                    for part in (item.get("parts", []) or [])
+                    if part is not None
+                )
+            except Exception as e:
+                logging.warning("Metrics calc error: %s", e)
+                prompt_length = 0
+                has_images = False
+
+            start_time = api_logger.log_gemini_request(
+                model=model_name,
+                prompt_length=prompt_length,
+                has_images=has_images,
+                user_id=user_id,
+                chat_id=chat_id,
+            )
+
+            # Reuse client across requests (connection pooling, TLS caching).
+            # Rebuild only when api_key changes or on first call.
+            if self._client is None or self._client_api_key != self.api_key:
+                client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+                http_opts: dict[str, Any] = {"timeout": 90_000}  # 90s SDK deadline
+                client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]  # Pydantic coerces
+                self._client = genai.Client(**client_kwargs)  # type: ignore[arg-type]  # Pydantic coerces
+                self._client_api_key = self.api_key
+            client = self._client
+
+            # Convert history → types.Content
+            contents = await self._build_contents(history)
+            if contents is None:
+                return self._error_response(
+                    "Failed to create valid content for Gemini API",
+                    model_name,
+                    start_time,
+                    user_id,
+                    chat_id,
+                )
+
+            config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
+            # Apply thinking config if user requested a specific level
+            tc = _build_thinking_config(model_name, thinking_level)
+            if tc:
+                config.thinking_config = tc
+            if system_instruction:
+                try:
+                    config.system_instruction = str(system_instruction)
+                except (TypeError, ValueError) as e:
+                    logging.warning("Failed to set system_instruction: %s", e)
+
+            # Native async call — properly supports CancelledError
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                ),
+                timeout=timeout,
+            )
+
+            # Extract token count from response metadata (free, no extra API call).
+            # Falls back to 0 if usage_metadata is unavailable.
+            try:
+                usage = getattr(response, "usage_metadata", None)
+                token_count = getattr(usage, "total_token_count", 0) or getattr(usage, "candidates_token_count", 0) or 0
+            except Exception as e:
+                logging.debug("Token count from usage_metadata failed: %s", e)
+                token_count = 0
+
+            # Validate response
+            if not response or not hasattr(response, "text"):
+                return self._error_response(
+                    "Gemini API returned invalid response object",
+                    model_name,
+                    start_time,
+                    user_id,
+                    chat_id,
+                )
+
+            response_text = response.text if response.text else ""
+            if not response_text:
+                # Inspect WHY the response is empty — safety block, prompt block, etc.
+                block_reason = self._diagnose_empty_response(response)
+                return self._error_response(
+                    block_reason,
+                    model_name,
+                    start_time,
+                    user_id,
+                    chat_id,
+                )
+
+            # Log success
+            if start_time is not None:
+                api_logger.log_gemini_response(
+                    start_time=start_time,
+                    model=model_name,
+                    response_length=len(response_text),
+                    token_count=token_count,
+                    success=True,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                )
+
+            return AIResponse(
+                text=response_text,
+                token_count=token_count,
+                success=True,
+                provider=self.provider_name,
+                model=model_name,
+            )
+
+        except TimeoutError:
+            msg = f"Gemini API request timed out for model {model_name}"
+            logging.error(msg)
+            await metrics_collector.record_error("gemini_timeout", msg)
+            self._log_failure(start_time, model_name, msg, user_id, chat_id)
+            return AIResponse(
+                text=tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API. Попробуйте позже."),
+                token_count=0,
+                success=False,
+                error_message=msg,
+                provider=self.provider_name,
+                model=model_name,
+            )
+
+        except APIError as e:
+            self._log_failure(start_time, model_name, str(e), user_id, chat_id)
+            logging.error("Gemini API Error: %s", e)
+            err_lower = str(e).lower()
+
+            if "quota" in err_lower:
+                await metrics_collector.record_error("gemini_quota", str(e))
+                text = tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API (Quota Exceeded).")
+            elif "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower:
+                await metrics_collector.record_error("gemini_overloaded", str(e))
+                raise  # Trigger retry in BaseAIProvider
+            elif "api key" in err_lower or "api_key_invalid" in err_lower:
+                await metrics_collector.record_error("gemini_invalid_key", str(e))
+                text = tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
+            elif "invalid" in err_lower or "malformed" in err_lower:
+                await metrics_collector.record_error("gemini_invalid_request", str(e))
+                text = tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос к API. Проверьте параметры.")
+            elif "rate limit" in err_lower:
+                await metrics_collector.record_error("gemini_rate_limit", str(e))
+                text = tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов в секунду. Подождите немного.")
+            else:
+                await metrics_collector.record_error("gemini_api_call", str(e))
+                text = tag_error(ErrorCode.GENERIC, f"Произошла ошибка вызова API: {e}")
+
+            return AIResponse(
+                text=text,
+                token_count=0,
+                success=False,
+                error_message=str(e),
+                provider=self.provider_name,
+                model=model_name,
+            )
+
+        except httpx.HTTPError as e:
+            self._log_failure(start_time, model_name, str(e), user_id, chat_id)
+            logging.error("Gemini HTTP error: %s", e, exc_info=True)
+            await metrics_collector.record_error("gemini_http", str(e))
+            return AIResponse(
+                text=tag_error(ErrorCode.NETWORK, f"Произошла непредвиденная ошибка HTTP: {e}"),
+                token_count=0,
+                success=False,
+                error_message=str(e),
+                provider=self.provider_name,
+                model=model_name,
+            )
+
+    # ── Gemini helpers ───────────────────────────────────────────────────
+
+    async def _build_contents(self, history: list) -> list | None:
+        """Convert history dicts → list[types.Content]. Returns None on total failure."""
+        contents = []
+        try:
+            for item in history:
+                if not isinstance(item, dict):
+                    logging.warning("Skipping invalid history item (not dict): %s", type(item))
+                    continue
+                role = item.get("role", "user")
+                parts = item.get("parts", [])
+                if not isinstance(parts, list):
+                    parts = [parts] if parts is not None else []
+
+                processed = []
+                for part in parts:
+                    if isinstance(part, (bytes, bytearray, Image.Image)):
+                        img_bytes = await save_image_as_bytes(part)
+                        if img_bytes:
+                            try:
+                                processed.append(
+                                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=img_bytes))
+                                )
+                            except (TypeError, ValueError) as e:
+                                logging.warning("Failed to create image part: %s", e)
+                        else:
+                            logging.warning("Skipping image part due to processing error")
+                    else:
+                        try:
+                            processed.append(types.Part.from_text(text=str(part)))
+                        except (TypeError, ValueError) as e:
+                            logging.warning("Failed to process text part: %s", e)
+
+                if processed:
+                    try:
+                        contents.append(types.Content(role=role, parts=processed))
+                    except (TypeError, ValueError) as e:
+                        logging.warning("Failed to create Content object: %s", e)
+        except Exception as e:
+            logging.error("Error processing history: %s", e, exc_info=True)
+            return None
+
+        return contents if contents else None
+
+    def _diagnose_empty_response(self, response) -> str:
+        """Inspect Gemini response to determine why text is empty."""
+        # 1. Check prompt-level block (input was blocked)
+        try:
+            pf = getattr(response, "prompt_feedback", None)
+            if pf:
+                block_reason = getattr(pf, "block_reason", None)
+                if block_reason:
+                    logging.warning(
+                        "Gemini prompt blocked: reason=%s, feedback=%s",
+                        block_reason,
+                        pf,
+                    )
+                    return "Запрос заблокирован фильтром безопасности Google. Попробуйте переформулировать сообщение."
+        except Exception as e:
+            logging.debug("prompt_feedback inspection error: %s", e)
+
+        # 2. Check candidate-level finish reason
+        try:
+            candidates = getattr(response, "candidates", None)
+            if candidates:
+                candidate = candidates[0]
+                finish_reason = getattr(candidate, "finish_reason", None)
+                safety_ratings = getattr(candidate, "safety_ratings", None)
+
+                if finish_reason and str(finish_reason).upper() in (
+                    "SAFETY",
+                    "2",
+                    "FINISH_REASON_SAFETY",
+                ):
+                    ratings_str = ""
+                    if safety_ratings:
+                        ratings_str = ", ".join(
+                            f"{getattr(r, 'category', '?')}={getattr(r, 'probability', '?')}" for r in safety_ratings
+                        )
+                    logging.warning(
+                        "Gemini response safety-blocked: finish_reason=%s, ratings=[%s]",
+                        finish_reason,
+                        ratings_str,
+                    )
+                    return "Ответ заблокирован фильтром безопасности Google. Попробуйте переформулировать сообщение."
+
+                if finish_reason and str(finish_reason).upper() in (
+                    "MAX_TOKENS",
+                    "3",
+                    "FINISH_REASON_MAX_TOKENS",
+                ):
+                    logging.warning("Gemini response truncated: MAX_TOKENS")
+                    return "Ответ превысил максимальную длину. Попробуйте более короткий запрос."
+
+                if finish_reason and str(finish_reason).upper() in (
+                    "RECITATION",
+                    "4",
+                    "FINISH_REASON_RECITATION",
+                ):
+                    logging.warning("Gemini response blocked: RECITATION")
+                    return "Ответ заблокирован из-за совпадения с защищённым контентом."
+
+                logging.warning(
+                    "Gemini empty response with finish_reason=%s",
+                    finish_reason,
+                )
+            else:
+                logging.warning("Gemini response has no candidates")
+        except Exception as e:
+            logging.debug("candidate inspection error: %s", e)
+
+        return "Gemini API вернул пустой ответ. Попробуйте ещё раз."
+
+    def _log_failure(self, start_time, model, msg, user_id, chat_id):
+        if start_time is not None:
+            api_logger.log_gemini_response(
+                start_time=start_time,
+                model=model,
+                response_length=0,
+                success=False,
+                error_message=msg,
+                user_id=user_id,
+                chat_id=chat_id,
+            )

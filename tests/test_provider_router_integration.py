@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.ai_provider import AIResponse
+from app.providers import AIResponse
 
 
 class TestProviderRouterIntegration:
@@ -15,7 +15,7 @@ class TestProviderRouterIntegration:
     @pytest.mark.asyncio
     async def test_gemini_full_chain_success(self):
         """Router resolves key → calls get_ai_response → returns text+tokens."""
-        from app.ai_provider import ProviderRouter
+        from app.providers import ProviderRouter
 
         router = ProviderRouter()
 
@@ -47,7 +47,7 @@ class TestProviderRouterIntegration:
     @pytest.mark.asyncio
     async def test_openrouter_full_chain_success(self):
         """Router correctly handles OpenRouter slash-model."""
-        from app.ai_provider import ProviderRouter
+        from app.providers import ProviderRouter
 
         router = ProviderRouter()
 
@@ -79,7 +79,7 @@ class TestProviderRouterIntegration:
     @pytest.mark.asyncio
     async def test_all_keys_exhausted(self):
         """Router returns error when resolve_ai_request reports all_exhausted."""
-        from app.ai_provider import ProviderRouter
+        from app.providers import ProviderRouter
 
         router = ProviderRouter()
 
@@ -108,7 +108,7 @@ class TestProviderRouterIntegration:
     @pytest.mark.asyncio
     async def test_rate_limited_user(self):
         """Router blocks user when rate limit is exceeded."""
-        from app.ai_provider import ProviderRouter
+        from app.providers import ProviderRouter
 
         router = ProviderRouter()
 
@@ -132,7 +132,7 @@ class TestProviderRouterIntegration:
         """When history contains images and use_openrouter=None, force Gemini."""
         from PIL import Image
 
-        from app.ai_provider import ProviderRouter
+        from app.providers import ProviderRouter
 
         router = ProviderRouter()
 
@@ -169,7 +169,7 @@ class TestProviderRouterIntegration:
     @pytest.mark.asyncio
     async def test_key_failure_triggers_retry(self):
         """Router retries with a different key when the first key returns a key-related error."""
-        from app.ai_provider import ProviderRouter
+        from app.providers import ProviderRouter
 
         router = ProviderRouter()
 

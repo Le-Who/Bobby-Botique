@@ -54,7 +54,7 @@ from app import database
 from app.config import settings
 from app.group_chat import initialize_group_chats
 from app.handlers import callbacks, commands, messages
-from app.handlers.callbacks import new_topic_callback
+from app.handlers.cb_navigation import new_topic_callback
 from app.metrics import metrics_collector
 from app.queue import start_task_queue, stop_task_queue
 from app.utils.logging_config import setup_detailed_logging
@@ -171,7 +171,7 @@ async def _cleanup_application(application, reason: str = "cleanup"):
 
     # Close module-level HTTP clients
     try:
-        from app.ai_provider import close_http_clients
+        from app.providers import close_http_clients
 
         await close_http_clients()
     except Exception as cleanup_error:
@@ -396,31 +396,43 @@ async def startup_health_check():
     """Проверяет здоровье всех критических систем при запуске"""
     logging.info("Performing startup health check...")
 
-    try:
-        await database.ensure_database_connection()
-        logging.info("✓ Database connection verified")
-    except Exception as e:
-        logging.warning(f"⚠ Database connection failed: {e}")
-        logging.warning("Bot will run in limited mode without database functionality")
+    # Run DB connection and Telegram API check in parallel
+    db_ok = False
+    telegram_ok = False
 
-    try:
-        import httpx
+    async def _check_db():
+        nonlocal db_ok
+        try:
+            await database.ensure_database_connection()
+            logging.info("✓ Database connection verified")
+            db_ok = True
+        except Exception as e:
+            logging.warning("⚠ Database connection failed: %s", e)
+            logging.warning("Bot will run in limited mode without database functionality")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/getMe")
-            if response.status_code == 200:
-                bot_info = response.json()
-                if bot_info.get("ok"):
-                    logging.info(f"✓ Telegram API verified - Bot: {bot_info['result']['username']}")
+    async def _check_telegram():
+        nonlocal telegram_ok
+        try:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/getMe")
+                if response.status_code == 200:
+                    bot_info = response.json()
+                    if bot_info.get("ok"):
+                        logging.info("✓ Telegram API verified - Bot: %s", bot_info['result']['username'])
+                        telegram_ok = True
+                    else:
+                        raise Exception(f"Telegram API error: {bot_info}")
                 else:
-                    raise Exception(f"Telegram API error: {bot_info}")
-            else:
-                raise Exception(f"Telegram API HTTP error: {response.status_code}")
-    except Exception as e:
-        logging.error(f"✗ Telegram API check failed: {e}")
-        raise Exception(f"Telegram API health check failed: {e}") from e
+                    raise Exception(f"Telegram API HTTP error: {response.status_code}")
+        except Exception as e:
+            logging.error("✗ Telegram API check failed: %s", e)
+            raise Exception(f"Telegram API health check failed: {e}") from e
 
-    if await database.check_database_health():
+    await asyncio.gather(_check_db(), _check_telegram(), return_exceptions=False)
+
+    if db_ok:
         try:
             await metrics_collector.initialize()
             logging.info("✓ Metrics system verified")
@@ -468,6 +480,12 @@ async def main():
             await database.init_db()
             database_available = True
             logging.info("Database initialized successfully")
+
+            # Register config→DB watcher for model migration (AR-4)
+            from app.config import config_manager
+            from app.repos.chats import model_migration_watcher
+
+            config_manager.add_watcher(model_migration_watcher)
         except Exception as e:
             logging.error(f"Database initialization failed: {e}")
 
@@ -549,6 +567,16 @@ async def main():
 if __name__ == "__main__":
     container_id = os.environ.get("HOSTNAME", "unknown")
     logging.info("Starting bot... (container=%s, pid=%s)", container_id, os.getpid())
+
+    # Install uvloop for 2-4× event loop throughput (Linux/Docker only)
+    if sys.platform != "win32":
+        try:
+            import uvloop
+
+            uvloop.install()
+            logging.info("uvloop event loop installed")
+        except ImportError:
+            pass
 
     try:
         asyncio.run(main())

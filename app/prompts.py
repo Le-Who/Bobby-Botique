@@ -1,15 +1,7 @@
 # /app/prompts.py
-# Prompt composition and context management.
-# System prompts and task prompts are now centralized in app.prompt_registry.
-# Context assembly is handled by app.context_assembler.
+# Prompt data constants, system instruction composition, and helpers.
 
-import logging
-
-from app.config import settings
-from app.prompt_registry import (
-    estimate_tokens_cyrillic,
-    get_registry,
-)
+from app.prompt_registry import get_registry
 
 # ============================================================================
 # ROLE COMPOSITION
@@ -83,13 +75,6 @@ def clear_prompt_cache():
     registry = get_registry()
     registry.compose_system_prompt.cache_clear()
 
-
-# ============================================================================
-# BACKWARD COMPATIBILITY — Context management now lives in context_assembler.py
-# ============================================================================
-
-# Re-export improved token estimator under the old name for callers
-estimate_tokens = estimate_tokens_cyrillic
 
 
 # ============================================================================

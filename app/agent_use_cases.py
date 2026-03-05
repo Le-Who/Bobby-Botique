@@ -159,7 +159,7 @@ class AgentRequestUseCase:
             )
 
         # Unified path: delegate to Provider classes (same path as ProviderRouter)
-        from app.ai_provider import get_provider_for_model
+        from app.providers import get_provider_for_model
 
         provider = get_provider_for_model(model_name, api_key)
         response = await provider.get_response(
@@ -197,7 +197,7 @@ class AgentRequestUseCase:
         This method exists for backward compatibility. All new code should
         use ProviderRouter.get_response() directly via _get_ai_response_with_routing().
         """
-        from app.ai_provider import get_provider_router
+        from app.providers import get_provider_router
 
         router = get_provider_router()
         return await router.get_response(

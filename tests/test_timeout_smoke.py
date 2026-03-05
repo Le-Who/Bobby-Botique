@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.ai_provider import GeminiProvider
+from app.providers import GeminiProvider
 
 
 class TestGeminiTimeoutSmoke:
@@ -27,10 +27,10 @@ class TestGeminiTimeoutSmoke:
             await asyncio.sleep(999)
 
         with (
-            patch("app.ai_provider.genai.Client") as MockClient,
-            patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-            patch("app.ai_provider.api_logger", new_callable=MagicMock),
-            patch("app.ai_provider.settings") as mock_settings,
+            patch("app.providers.gemini.genai.Client") as MockClient,
+            patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+            patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+            patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
 
@@ -66,10 +66,10 @@ class TestGeminiTimeoutSmoke:
             await asyncio.sleep(999)
 
         with (
-            patch("app.ai_provider.genai.Client") as MockClient,
-            patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-            patch("app.ai_provider.api_logger", new_callable=MagicMock),
-            patch("app.ai_provider.settings") as mock_settings,
+            patch("app.providers.gemini.genai.Client") as MockClient,
+            patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+            patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+            patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
 
@@ -127,10 +127,10 @@ class TestGeminiTimeoutSmoke:
         provider = GeminiProvider("key")
 
         with (
-            patch("app.ai_provider.genai.Client") as MockClient,
-            patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-            patch("app.ai_provider.api_logger", new_callable=MagicMock),
-            patch("app.ai_provider.settings") as mock_settings,
+            patch("app.providers.gemini.genai.Client") as MockClient,
+            patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+            patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+            patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
 

@@ -8,7 +8,6 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app import prompts
-from app.ai_provider import GeminiProvider, is_openrouter_model
 from app.config import settings
 from app.database import ChatState
 from app.handlers.ai_core import (
@@ -17,6 +16,7 @@ from app.handlers.ai_core import (
     handle_ai_response_error,
 )
 from app.handlers.chat_logic import build_memory_context, classify_resolution
+from app.providers import GeminiProvider, is_openrouter_model
 from app.repos.chats import update_user_chat
 from app.utils.formatting import TelegramFormatter
 from app.utils.messaging import send_long_message
@@ -164,7 +164,7 @@ async def _handle_regular_chat(
         stop_heartbeat(placeholder_message.message_id)
         from google.genai import types as genai_types
 
-        from app.ai_provider import _build_thinking_config
+        from app.providers import _build_thinking_config
         from app.streaming import stream_and_display
 
         excluded_key_hashes: set[str] = set()

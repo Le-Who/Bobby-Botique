@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.ai_provider import OpenRouterProvider
+from app.providers import OpenRouterProvider
 from app.request_context import clear_request_id, set_request_id
 from app.search_services import _tavily_api_call
 
@@ -39,10 +39,10 @@ async def test_openrouter_request_adds_request_id_header():
     }
 
     with (
-        patch("app.ai_provider._openrouter_http_client.post", new=AsyncMock(return_value=mock_response)) as mock_post,
-        patch("app.ai_provider.metrics_collector.record_api_call", new=AsyncMock()),
-        patch("app.ai_provider.metrics_collector.record_error", new=AsyncMock()),
-        patch("app.ai_provider.api_logger.log_gemini_response", new=MagicMock()),
+        patch("app.providers.openrouter._openrouter_http_client.post", new=AsyncMock(return_value=mock_response)) as mock_post,
+        patch("app.providers.openrouter.metrics_collector.record_api_call", new=AsyncMock()),
+        patch("app.providers.openrouter.metrics_collector.record_error", new=AsyncMock()),
+        patch("app.providers.openrouter.api_logger.log_gemini_response", new=MagicMock()),
     ):
         resp = await provider._execute_request(
             history=[{"role": "user", "parts": ["hi"]}],

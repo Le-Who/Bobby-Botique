@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.ai_provider import (
+from app.providers import (
     AIResponse,
     BaseAIProvider,
     GeminiProvider,
@@ -80,6 +80,9 @@ class TestBaseAIProvider:
             async def _execute_request(self, **kwargs):
                 pass
 
+            def _log_failure(self, start_time, model, msg, user_id, chat_id):
+                pass
+
         provider = TestProvider("valid-key")
         assert provider.api_key == "valid-key"
 
@@ -90,6 +93,9 @@ class TestBaseAIProvider:
             provider_name = "test"
 
             async def _execute_request(self, **kwargs):
+                pass
+
+            def _log_failure(self, start_time, model, msg, user_id, chat_id):
                 pass
 
         with pytest.raises(ValueError, match="api_key must be a non-empty string"):
@@ -107,6 +113,9 @@ class TestBaseAIProvider:
             async def _execute_request(self, **kwargs):
                 pass
 
+            def _log_failure(self, start_time, model, msg, user_id, chat_id):
+                pass
+
         provider = TestProvider("key")
         result = provider._validate_inputs([], "model", None, None)
         assert result == "history must be a non-empty list"
@@ -120,6 +129,9 @@ class TestBaseAIProvider:
             async def _execute_request(self, **kwargs):
                 pass
 
+            def _log_failure(self, start_time, model, msg, user_id, chat_id):
+                pass
+
         provider = TestProvider("key")
         result = provider._validate_inputs([{"role": "user", "parts": ["hi"]}], "", None, None)
         assert result == "model_name must be a non-empty string"
@@ -131,6 +143,9 @@ class TestBaseAIProvider:
             provider_name = "test"
 
             async def _execute_request(self, **kwargs):
+                pass
+
+            def _log_failure(self, start_time, model, msg, user_id, chat_id):
                 pass
 
         provider = TestProvider("key")
@@ -162,10 +177,10 @@ class TestProviders:
         mock_response.usage_metadata = mock_usage
 
         with (
-            patch("app.ai_provider.genai.Client") as MockClient,
-            patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-            patch("app.ai_provider.api_logger", new_callable=MagicMock),
-            patch("app.ai_provider.settings") as mock_settings,
+            patch("app.providers.gemini.genai.Client") as MockClient,
+            patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+            patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+            patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
             mock_aio = MagicMock()
@@ -195,10 +210,10 @@ class TestProviders:
         mock_response.text = None  # Empty response triggers error
 
         with (
-            patch("app.ai_provider.genai.Client") as MockClient,
-            patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-            patch("app.ai_provider.api_logger", new_callable=MagicMock),
-            patch("app.ai_provider.settings") as mock_settings,
+            patch("app.providers.gemini.genai.Client") as MockClient,
+            patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+            patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+            patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
             mock_aio = MagicMock()
@@ -230,9 +245,9 @@ class TestProviders:
         mock_resp.raise_for_status = MagicMock()
 
         with (
-            patch("app.ai_provider._openrouter_http_client") as mock_client,
-            patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-            patch("app.ai_provider.api_logger", new_callable=MagicMock),
+            patch("app.providers.openrouter._openrouter_http_client") as mock_client,
+            patch("app.providers.openrouter.metrics_collector", new_callable=AsyncMock),
+            patch("app.providers.openrouter.api_logger", new_callable=MagicMock),
         ):
             mock_client.post = AsyncMock(return_value=mock_resp)
 
@@ -257,7 +272,7 @@ class TestGetAIResponse:
     @pytest.mark.asyncio
     async def test_delegates_to_gemini(self):
         """Should use Gemini for non-slash models."""
-        with patch("app.ai_provider.get_provider_for_model") as mock_factory:
+        with patch("app.providers.base.get_provider_for_model") as mock_factory:
             mock_provider = MagicMock()
             mock_provider.get_response = AsyncMock(
                 return_value=AIResponse(text="Gemini response", token_count=10, success=True)
@@ -276,7 +291,7 @@ class TestGetAIResponse:
     @pytest.mark.asyncio
     async def test_returns_none_on_error(self):
         """Should return None for token_count on error."""
-        with patch("app.ai_provider.get_provider_for_model") as mock_factory:
+        with patch("app.providers.base.get_provider_for_model") as mock_factory:
             mock_provider = MagicMock()
             mock_provider.get_response = AsyncMock(
                 return_value=AIResponse(text="❌ Error", token_count=0, success=False)

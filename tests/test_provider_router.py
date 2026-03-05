@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.ai_provider import ProviderRouter
+from app.providers import ProviderRouter
 
 
 class TestProviderRouter:
@@ -274,7 +274,7 @@ class TestProviderRouter:
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
-            patch("app.ai_provider.settings", mock_settings),
+            patch("app.providers.router.settings", mock_settings),
         ):
             text, tokens = await router.get_response(
                 "gemini-3-flash-preview",

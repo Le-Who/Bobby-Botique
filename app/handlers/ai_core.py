@@ -106,7 +106,7 @@ async def _get_ai_response_with_routing(
     thinking_level: str | None = None,
 ):
     """Health-aware key rotation via ProviderRouter (preferred over plain key rotation)."""
-    from app.ai_provider import get_provider_router
+    from app.providers import get_provider_router
 
     router = get_provider_router()
     return await router.get_response(

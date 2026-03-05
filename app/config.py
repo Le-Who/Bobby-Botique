@@ -325,7 +325,7 @@ class ConfigManager:
         return self._settings
 
     async def _reload_config(self) -> None:
-        """Reloads configuration from environment and migrates users with invalid models."""
+        """Reloads configuration from environment."""
         async with self._lock:
             try:
                 new_settings = get_settings()
@@ -340,34 +340,14 @@ class ConfigManager:
                 if critical_changed:
                     logging.warning("Critical configuration changed, restart may be required")
 
-                # === ВАЛИДАЦИЯ И МИГРАЦИЯ АКТИВНЫХ ПОЛЬЗОВАТЕЛЕЙ ===
-                try:
-                    from app.repos.chats import migrate_invalid_models
-
-                    all_available_models = set()
-                    if new_settings.AVAILABLE_MODELS:
-                        all_available_models.update(new_settings.AVAILABLE_MODELS)
-                    if new_settings.OPENROUTER_AVAILABLE_MODELS:
-                        all_available_models.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
-
-                    migrated_count = await migrate_invalid_models(
-                        available_models=all_available_models,
-                        default_gemini_model=new_settings.DEFAULT_MODEL,
-                        default_openrouter_model=new_settings.OPENROUTER_DEFAULT_MODEL,
-                    )
-                except Exception as migration_error:
-                    migrated_count = 0
-                    # Не прерываем перезагрузку on ошибке миграции
-                    logging.error("Error during user migration: %s", migration_error)
-
-                # Check, что DEFAULT_MODEL существует
-                all_available_models_check = set()
+                # Validate DEFAULT_MODEL exists in available models
+                all_available_models = set()
                 if new_settings.AVAILABLE_MODELS:
-                    all_available_models_check.update(new_settings.AVAILABLE_MODELS)
+                    all_available_models.update(new_settings.AVAILABLE_MODELS)
                 if new_settings.OPENROUTER_AVAILABLE_MODELS:
-                    all_available_models_check.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
+                    all_available_models.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
 
-                if new_settings.DEFAULT_MODEL not in all_available_models_check:
+                if new_settings.DEFAULT_MODEL not in all_available_models:
                     logging.error(f"DEFAULT_MODEL '{new_settings.DEFAULT_MODEL}' not in AVAILABLE_MODELS!")
                     raise ValueError("DEFAULT_MODEL must be in AVAILABLE_MODELS")
 
@@ -376,15 +356,14 @@ class ConfigManager:
                 self._settings = new_settings
                 self._last_reload = time.time()
 
-                # Notify watchers
+                # Notify watchers (including model migration)
                 await self._notify_watchers(old_settings, new_settings)
 
-                logging.info(f"Configuration reloaded successfully. Migrated {migrated_count} users.")
+                logging.info("Configuration reloaded successfully.")
 
             except Exception as e:
                 logging.error("Failed to reload configuration: %s", e, exc_info=True)
-                # Не прерываем работу on ошибке перезагрузки конфигурации
-                # Система продолжит работать со старыми настройками
+                # Keep running with old settings
 
     def add_watcher(self, callback: Callable[[Settings, Settings], None]) -> None:
         """Adds a configuration change watcher."""

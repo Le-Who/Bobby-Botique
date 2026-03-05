@@ -62,7 +62,7 @@ async def test_resolve_key_generic_catches_decryption_error_in_fallback(use_case
 async def test_get_ai_response_with_key_rotation_decryption_message(use_case):
     """User sees a friendly message (not traceback) when DecryptionError occurs."""
     with patch(
-        "app.ai_provider.ProviderRouter.get_response",
+        "app.providers.router.ProviderRouter.get_response",
         new_callable=AsyncMock,
         return_value=(
             "\U0001f510 Ошибка расшифровки API-ключей. Обратитесь к администратору (возможно, изменился ADMIN_SECRET).",

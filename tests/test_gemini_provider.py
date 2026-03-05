@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from google.genai.errors import APIError
 
-from app.ai_provider import GeminiProvider
+from app.providers import GeminiProvider
 
 
 @pytest.mark.asyncio
@@ -17,10 +17,10 @@ async def test_execute_gemini_request_success():
     provider = GeminiProvider("key")
 
     with (
-        patch("app.ai_provider.genai.Client") as MockClient,
-        patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-        patch("app.ai_provider.api_logger", new_callable=MagicMock),
-        patch("app.ai_provider.settings") as mock_settings,
+        patch("app.providers.gemini.genai.Client") as MockClient,
+        patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+        patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+        patch("app.providers.gemini.settings") as mock_settings,
     ):
         mock_settings.SAFETY_SETTINGS = []
 
@@ -56,10 +56,10 @@ async def test_execute_gemini_request_503_error():
     provider = GeminiProvider("key")
 
     with (
-        patch("app.ai_provider.genai.Client") as MockClient,
-        patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-        patch("app.ai_provider.api_logger", new_callable=MagicMock),
-        patch("app.ai_provider.settings") as mock_settings,
+        patch("app.providers.gemini.genai.Client") as MockClient,
+        patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+        patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+        patch("app.providers.gemini.settings") as mock_settings,
     ):
         mock_settings.SAFETY_SETTINGS = []
 
@@ -90,10 +90,10 @@ async def test_execute_gemini_request_other_error():
     provider = GeminiProvider("key")
 
     with (
-        patch("app.ai_provider.genai.Client") as MockClient,
-        patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-        patch("app.ai_provider.api_logger", new_callable=MagicMock),
-        patch("app.ai_provider.settings") as mock_settings,
+        patch("app.providers.gemini.genai.Client") as MockClient,
+        patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+        patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+        patch("app.providers.gemini.settings") as mock_settings,
     ):
         mock_settings.SAFETY_SETTINGS = []
 
@@ -130,10 +130,10 @@ async def test_execute_gemini_request_timeout():
         raise TimeoutError("Timeout")
 
     with (
-        patch("app.ai_provider.genai.Client") as _MockClient,
-        patch("app.ai_provider.metrics_collector", new_callable=AsyncMock),
-        patch("app.ai_provider.api_logger", new_callable=MagicMock),
-        patch("app.ai_provider.settings") as mock_settings,
+        patch("app.providers.gemini.genai.Client") as _MockClient,
+        patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
+        patch("app.providers.gemini.api_logger", new_callable=MagicMock),
+        patch("app.providers.gemini.settings") as mock_settings,
         patch("asyncio.wait_for", side_effect=timeout_side_effect),
     ):
         mock_settings.SAFETY_SETTINGS = []
