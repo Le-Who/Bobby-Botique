@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from telegram import Message
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TelegramError
 
 from app.circuit_breaker import TELEGRAM_API_CONFIG, get_circuit_breaker
 from app.utils.heartbeat import stop_heartbeat
@@ -105,10 +105,10 @@ async def send_long_message(
                         )
                 else:
                     current_message = await current_message.reply_text(plain_text, reply_markup=current_reply_markup)
-            except Exception as final_error:
+            except TelegramError as final_error:
                 logging.error("Critical error sending message: %s", final_error)
 
-        except Exception as e:
+        except TelegramError as e:
             logging.error("Unexpected error in send_long_message: %s", e, exc_info=True)
 
         is_first_part = False
@@ -121,7 +121,7 @@ async def send_formatted_message(message: Message, text: str, parse_mode: str = 
     try:
         formatted, mode = format_text(text, parse_mode=parse_mode)
         await message.reply_text(formatted, parse_mode=mode)
-    except Exception as e:
+    except TelegramError as e:
         logging.error("Error sending formatted message: %s", e, exc_info=True)
         await message.reply_text(strip_formatting(text))
 
@@ -132,6 +132,6 @@ async def edit_formatted_message(message: Message, text: str, parse_mode: str = 
     try:
         formatted, mode = format_text(text, parse_mode=parse_mode)
         await message.edit_text(formatted, parse_mode=mode)
-    except Exception as e:
+    except TelegramError as e:
         logging.error("Error editing formatted message: %s", e, exc_info=True)
         await message.edit_text(strip_formatting(text))

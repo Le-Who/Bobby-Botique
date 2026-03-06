@@ -436,9 +436,11 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
         from app.utils.keyboards import error_with_back_keyboard
 
         kb = error_with_back_keyboard(f"role_detail:{role_key}", "⬅️ Назад к роли")
+        view_text = f"📝 *Полный промпт роли:*\n\n`{prompt}`"
+        fmt_text, fmt_pm = TelegramFormatter.format_text(view_text)
         await query.edit_message_text(
-            f"📝 *Полный промпт роли:*\n\n`{prompt}`",
-            parse_mode="Markdown",
+            fmt_text,
+            parse_mode=fmt_pm,
             reply_markup=kb,
         )
     else:
@@ -524,9 +526,11 @@ async def role_create_manual_callback(update: Update, context: ContextTypes.DEFA
 
     begin_manual_role_creation(user_id)
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")]])
+    create_text = "📝 **Создание роли вручную**\n\nВведите **название** для новой роли (1 строка):"
+    fmt_text, fmt_pm = TelegramFormatter.format_text(create_text)
     await query.edit_message_text(
-        "📝 **Создание роли вручную**\n\nВведите **название** для новой роли (1 строка):",
-        parse_mode="Markdown",
+        fmt_text,
+        parse_mode=fmt_pm,
         reply_markup=kb,
     )
 
@@ -578,9 +582,11 @@ async def role_manual_save_callback(update: Update, context: ContextTypes.DEFAUL
         await update_user_chat(user_id, chat_state)
         clear_manual_role_state(user_id)
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")]])
+        save_text = f"💾 Роль **{title}** сохранена и применена!"
+        fmt_text, fmt_pm = TelegramFormatter.format_text(save_text)
         await query.edit_message_text(
-            f"💾 Роль **{title}** сохранена и применена!",
-            parse_mode="Markdown",
+            fmt_text,
+            parse_mode=fmt_pm,
             reply_markup=kb,
         )
     except Exception as e:

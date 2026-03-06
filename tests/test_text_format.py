@@ -333,7 +333,7 @@ def test_markdown_to_html_partial_streaming():
     # Verify valid nesting via stack walk
     import re as _re
     stack = []
-    for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", sanitized):
+    for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong|blockquote)(?:\s[^>]*)?>", sanitized):
         is_close = m.group(1) == "/"
         tag = m.group(2)
         if not is_close:
@@ -342,3 +342,123 @@ def test_markdown_to_html_partial_streaming():
             assert stack and stack[-1] == tag, f"Bad nesting in: {sanitized}"
             stack.pop()
     assert not stack, f"Unclosed tags {stack} in: {sanitized}"
+
+
+# ===================================================================
+# Tests for headings, blockquotes, strikethrough (new features)
+# ===================================================================
+
+
+class TestMarkdownToHtmlHeadings:
+    """Tests for Markdown heading → <b> conversion."""
+
+    def test_h1_heading(self):
+        result, _ = format_text("# Hello World")
+        assert "<b>Hello World</b>" in result
+        assert "#" not in result.replace("</", "")
+
+    def test_h2_heading(self):
+        result, _ = format_text("## Sub heading")
+        assert "<b>Sub heading</b>" in result
+
+    def test_h3_heading(self):
+        result, _ = format_text("### Third level")
+        assert "<b>Third level</b>" in result
+
+    def test_heading_with_inline_formatting(self):
+        result, _ = format_text("## **Bold heading**")
+        # The heading itself becomes <b>, and ** also becomes <b>
+        assert "<b>" in result
+        assert "Bold heading" in result
+
+    def test_heading_does_not_match_mid_line(self):
+        result, _ = format_text("This is not # a heading")
+        # Should NOT convert mid-line # to heading
+        assert "<b>a heading</b>" not in result
+
+    def test_multiple_headings(self):
+        result, _ = format_text("# First\nSome text\n## Second")
+        assert result.count("<b>") >= 2
+        assert "First" in result
+        assert "Second" in result
+
+
+class TestMarkdownToHtmlBlockquotes:
+    """Tests for Markdown blockquote → <blockquote> conversion."""
+
+    def test_simple_blockquote(self):
+        result, _ = format_text("> This is a quote")
+        assert "<blockquote>" in result
+        assert "This is a quote" in result
+        assert "</blockquote>" in result
+
+    def test_multiline_blockquote(self):
+        result, _ = format_text("> Line 1\n> Line 2\n> Line 3")
+        # Should be a single blockquote wrapping all lines
+        assert result.count("<blockquote>") == 1
+        assert "Line 1" in result
+        assert "Line 2" in result
+        assert "Line 3" in result
+
+    def test_blockquote_then_normal(self):
+        result, _ = format_text("> Quote\nNormal text")
+        assert "<blockquote>" in result
+        assert "Normal text" in result
+        # Normal text should be outside the blockquote
+        bq_end = result.index("</blockquote>")
+        normal_pos = result.index("Normal text")
+        assert normal_pos > bq_end
+
+    def test_empty_blockquote_line(self):
+        """A bare '>' with no text after it should not crash."""
+        result, _ = format_text(">")
+        assert "<blockquote>" in result
+
+
+class TestMarkdownToHtmlStrikethrough:
+    """Tests for ~~text~~ → <s>text</s> conversion."""
+
+    def test_simple_strikethrough(self):
+        result, _ = format_text("~~deleted~~")
+        assert "<s>deleted</s>" in result
+
+    def test_strikethrough_inline(self):
+        result, _ = format_text("This is ~~old~~ new text")
+        assert "<s>old</s>" in result
+        assert "new text" in result
+
+    def test_strikethrough_with_bold(self):
+        result, _ = format_text("**bold** and ~~strike~~")
+        assert "<b>bold</b>" in result
+        assert "<s>strike</s>" in result
+
+
+class TestMarkdownToHtmlHorizontalRules:
+    """Tests for --- / *** / ___ → Unicode separator conversion."""
+
+    def test_triple_dash(self):
+        result, _ = format_text("---")
+        assert "━━━" in result
+
+    def test_triple_asterisk(self):
+        result, _ = format_text("***")
+        assert "━━━" in result
+
+    def test_triple_underscore(self):
+        result, _ = format_text("___")
+        assert "━━━" in result
+
+    def test_long_dash(self):
+        result, _ = format_text("----------")
+        assert "━━━" in result
+
+    def test_hr_between_content(self):
+        result, _ = format_text("Above\n---\nBelow")
+        assert "Above" in result
+        assert "━━━" in result
+        assert "Below" in result
+
+    def test_hr_not_matched_inside_text(self):
+        """Dashes that are part of text should not become HR."""
+        result, _ = format_text("some--text")
+        assert "━━━" not in result

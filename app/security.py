@@ -181,7 +181,7 @@ class InputSanitizer:
         # Parse URL
         try:
             parsed = urlparse(url)
-        except Exception as e:
+        except ValueError as e:
             raise InputSanitizationError(f"Invalid URL format: {e}") from e
 
         # Check protocol

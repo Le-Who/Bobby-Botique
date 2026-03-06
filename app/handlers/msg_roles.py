@@ -80,11 +80,15 @@ async def handle_manual_role_input(
             return True
         set_manual_role_title(user_id, message_text)
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")]])
-        await update.message.reply_text(
+        title_text = (
             f"✅ Название: **{message_text}**\n\n"
             f"Теперь введите **системный промпт** (инструкцию для бота).\n"
-            f"Можно несколько строк — это будет поведение вашей роли:",
-            parse_mode="Markdown",
+            f"Можно несколько строк — это будет поведение вашей роли:"
+        )
+        fmt_text, fmt_pm = TelegramFormatter.format_text(title_text)
+        await update.message.reply_text(
+            fmt_text,
+            parse_mode=fmt_pm,
             reply_markup=kb,
         )
         return True
@@ -104,12 +108,16 @@ async def handle_manual_role_input(
                 [InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")],
             ]
         )
-        await update.message.reply_text(
+        preview_text = (
             f"📋 **Предпросмотр новой роли**\n\n"
             f"🏷 **Название:** {title}\n"
             f"📝 **Промпт:**\n`{prompt_preview}`\n\n"
-            f"Нажмите кнопку ниже, чтобы сохранить:",
-            parse_mode="Markdown",
+            f"Нажмите кнопку ниже, чтобы сохранить:"
+        )
+        fmt_text, fmt_pm = TelegramFormatter.format_text(preview_text)
+        await update.message.reply_text(
+            fmt_text,
+            parse_mode=fmt_pm,
             reply_markup=kb,
         )
         return True

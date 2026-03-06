@@ -59,7 +59,8 @@ async def send_conversation_selection(
 
     buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")])
 
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+    fmt_text, fmt_pm = TelegramFormatter.format_text(text)
+    await query.edit_message_text(fmt_text, parse_mode=fmt_pm, reply_markup=InlineKeyboardMarkup(buttons))
 
 
 async def conv_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -162,9 +163,11 @@ async def conv_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT
         [InlineKeyboardButton("❌ Отмена", callback_data="conv_delete_cancel")],
     ]
 
+    del_text = f"⚠️ **Удалить беседу {conv_id}?**\n\n🚨 **Вся история сообщений будет потеряна безвозвратно.**"
+    fmt_text, fmt_pm = TelegramFormatter.format_text(del_text)
     await query.edit_message_text(
-        f"⚠️ **Удалить беседу {conv_id}?**\n\n🚨 **Вся история сообщений будет потеряна безвозвратно.**",
-        parse_mode="Markdown",
+        fmt_text,
+        parse_mode=fmt_pm,
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 

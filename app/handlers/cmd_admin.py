@@ -300,7 +300,8 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
         report += f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n"
         report += f"   Порог предупреждения: {settings.TAVILY_LIMIT_THRESHOLD_PERCENT * 100}%\n"
 
-        await update.message.reply_text(report, parse_mode="Markdown")
+        formatted_text, parse_mode = TelegramFormatter.format_text(report)
+        await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
     except Exception as e:
         error_msg = f"Ошибка при проверке ключей Tavily: {e}"

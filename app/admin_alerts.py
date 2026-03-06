@@ -94,10 +94,13 @@ async def alert_admin(
         text = text[:3990] + "\n…"
 
     try:
+        from app.utils.formatting import TelegramFormatter
+
+        fmt_text, fmt_pm = TelegramFormatter.format_text(text)
         await app.bot.send_message(
             chat_id=admin_id,
-            text=text,
-            parse_mode="Markdown",
+            text=fmt_text,
+            parse_mode=fmt_pm,
         )
         _record_alert()
         logger.info("Admin alert sent: %s", message[:80])
@@ -116,10 +119,13 @@ async def alert_admin_shutdown(app: Application, reason: str = "normal") -> None
 
     text = f"🔴 *Бот остановлен*\nПричина: {reason}"
     try:
+        from app.utils.formatting import TelegramFormatter
+
+        fmt_text, fmt_pm = TelegramFormatter.format_text(text)
         await app.bot.send_message(
             chat_id=admin_id,
-            text=text,
-            parse_mode="Markdown",
+            text=fmt_text,
+            parse_mode=fmt_pm,
         )
     except Exception:
         pass  # Best-effort on shutdown
@@ -144,10 +150,13 @@ async def alert_admin_startup(app: Application) -> None:
         f"DB: {health.database.value} | Redis: {health.redis.value} | AI: {health.ai_provider.value}"
     )
     try:
+        from app.utils.formatting import TelegramFormatter
+
+        fmt_text, fmt_pm = TelegramFormatter.format_text(text)
         await app.bot.send_message(
             chat_id=admin_id,
-            text=text,
-            parse_mode="Markdown",
+            text=fmt_text,
+            parse_mode=fmt_pm,
         )
     except Exception:
         pass  # Best-effort on startup

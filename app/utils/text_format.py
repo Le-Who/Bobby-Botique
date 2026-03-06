@@ -90,6 +90,51 @@ def markdown_to_html(text: str) -> str:
             # This turns < into &lt;, etc.
             escaped_text = html.escape(segment)
 
+            # 1.5 Block-level formatting (headings, blockquotes)
+            # Process line-by-line for constructs that are line-anchored.
+            lines = escaped_text.split("\n")
+            processed_lines: list[str] = []
+            blockquote_buffer: list[str] = []
+
+            def _flush_blockquote() -> None:
+                """Flush accumulated blockquote lines into a single <blockquote> tag."""
+                if blockquote_buffer:
+                    inner = "\n".join(blockquote_buffer)
+                    processed_lines.append(f"<blockquote>{inner}</blockquote>")
+                    blockquote_buffer.clear()
+
+            for line in lines:
+                stripped = line.lstrip()
+
+                # Blockquote: > text  (must be at visual start of line)
+                if stripped.startswith("&gt; ") or stripped == "&gt;":
+                    # &gt; is the html-escaped '>'
+                    bq_content = stripped[5:] if stripped.startswith("&gt; ") else ""
+                    blockquote_buffer.append(bq_content)
+                    continue
+
+                # Flush any pending blockquote before non-blockquote line
+                _flush_blockquote()
+
+                # Headings: # text, ## text, ### text → <b>text</b>
+                heading_match = re.match(r"^(#{1,3})\s+(.+)$", stripped)
+                if heading_match:
+                    heading_text = heading_match.group(2).strip()
+                    processed_lines.append(f"\n<b>{heading_text}</b>")
+                    continue
+
+                # Horizontal rules: ---, ***, ___ (3+ chars) → Unicode line
+                if re.match(r"^[-*_]{3,}\s*$", stripped):
+                    processed_lines.append("━━━━━━━━━━━━━━━━")
+                    continue
+
+                processed_lines.append(line)
+
+            # Flush any trailing blockquote
+            _flush_blockquote()
+
+            escaped_text = "\n".join(processed_lines)
+
             # 2. Process Inline formatting
             # Order matters slightly, but usually regexes are distinct enough.
 
@@ -111,11 +156,13 @@ def markdown_to_html(text: str) -> str:
             # Match _text_ but not __text__ or snake_case_text
             # Use negative lookbehind and lookahead to avoid matching inside __ or words
             # This is tricky because snake_case is common.
-            # We strictly enforce white space or boundary checks, or just accept that snake_case might break if we are aggressive.
             # Safe heuristic: _text_ where _ is preceded/followed by non-word or space/start/end.
             # But standard Markdown is: _text_ works anywhere if surrounded by whitespace or punctuation.
             # Minimal safe version:
             escaped_text = re.sub(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)", r"<i>\1</i>", escaped_text)
+
+            # Strikethrough: ~~text~~
+            escaped_text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", escaped_text)
 
             # Links: [text](url)
             # Since we already escaped HTML, the url might contain &amp; etc.
@@ -265,7 +312,7 @@ def sanitize_html_tags(html_text: str) -> str:
         return html_text
 
     # Pattern covering Telegram-supported formatting tags
-    _TAG_RE = re.compile(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(\s[^>]*)?>")
+    _TAG_RE = re.compile(r"<(/?)(pre|code|b|i|a|u|s|em|strong|blockquote)(\s[^>]*)?>")
 
     open_stack: list[tuple[str, str]] = []  # (tag_name, full_open_tag)
     result_parts: list[str] = []
@@ -318,7 +365,7 @@ def sanitize_html_tags(html_text: str) -> str:
     result = "".join(result_parts)
 
     # Strip empty tag pairs produced by reopen logic (e.g. <i></i>)
-    _EMPTY_TAG_RE = re.compile(r"<(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?></\1>")
+    _EMPTY_TAG_RE = re.compile(r"<(pre|code|b|i|a|u|s|em|strong|blockquote)(?:\s[^>]*)?>(?:</\1>)")
     while _EMPTY_TAG_RE.search(result):
         result = _EMPTY_TAG_RE.sub("", result)
 
