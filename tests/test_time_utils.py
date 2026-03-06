@@ -20,7 +20,7 @@ class TestTimeUtils(unittest.TestCase):
 
         class MockDatetime(self.real_datetime):
             @classmethod
-            def now(cls, tz=None):
+            def now(cls, _tz=None):
                 return fixed_now
 
         mock_datetime.now = MockDatetime.now
@@ -40,7 +40,7 @@ class TestTimeUtils(unittest.TestCase):
 
         class MockDatetime(self.real_datetime):
             @classmethod
-            def now(cls, tz=None):
+            def now(cls, _tz=None):
                 return fixed_now
 
         mock_datetime.now = MockDatetime.now
@@ -60,7 +60,7 @@ class TestTimeUtils(unittest.TestCase):
 
         class MockDatetime(self.real_datetime):
             @classmethod
-            def now(cls, tz=None):
+            def now(cls, _tz=None):
                 return fixed_now
 
         mock_datetime.now = MockDatetime.now

@@ -1,7 +1,7 @@
 """Tests for app.handlers.ai_photo — single photo processing."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

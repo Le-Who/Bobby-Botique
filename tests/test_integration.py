@@ -1,7 +1,7 @@
 """Integration tests for core AI pipeline: streaming, memory, error handling, and admin alerts."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

@@ -3,6 +3,55 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.21] – 2026-03-06 – Code Quality Audit: Lint, Security & Dead Code Cleanup
+
+### 🧹 Ruff & Vulture: 25 Findings → 0
+
+| Category                     | Count | Fix                                                                        |
+| ---------------------------- | ----- | -------------------------------------------------------------------------- |
+| **F823 (bug)**               | 1     | Removed redundant re-import of `TelegramFormatter` in `ai_chat.py`         |
+| **B023 (style)**             | 4     | Bound loop variables as default args in `text_format.py:_flush_blockquote` |
+| **I001 (imports)**           | 7     | Auto-fixed via `ruff check --fix`                                          |
+| **Unused imports (app)**     | 3     | Removed `timezone` (config.py, memory.py), `ChatAction` (commands.py)      |
+| **Unused imports (tests)**   | 7     | Removed `PropertyMock` ×4, `Chat`/`User` ×1                                |
+| **Unused variables (tests)** | 3     | Renamed `tz` → `_tz` in test_time_utils.py MockDatetime stubs              |
+
+### 🔒 Security: 14 CVEs Patched
+
+| Package        | Old     | New    | CVEs Fixed |
+| -------------- | ------- | ------ | ---------- |
+| `aiohttp`      | 3.10.11 | 3.13.3 | 9          |
+| `cryptography` | 43.0.3  | 46.0.5 | 2          |
+| `pypdf`        | 6.7.3   | 6.7.5  | 2          |
+| `werkzeug`     | 3.1.5   | 3.1.6  | 1          |
+
+### ✅ Quality Gates
+
+| Check          | Result                    |
+| -------------- | ------------------------- |
+| mypy           | 0 errors                  |
+| ruff           | All checks passed         |
+| vulture (≥80%) | 0 findings                |
+| pip-audit      | No known vulnerabilities  |
+| Duplicate code | 0 duplicates (≥6 stmts)   |
+| pytest         | **1040 passed**, 0 failed |
+
+### Files Changed
+
+| File                       | Change                                          |
+| -------------------------- | ----------------------------------------------- |
+| `app/handlers/ai_chat.py`  | Removed redundant `TelegramFormatter` re-import |
+| `app/utils/text_format.py` | Default-arg binding in `_flush_blockquote`      |
+| `app/config.py`            | Removed unused `timezone` import                |
+| `app/handlers/commands.py` | Removed unused `ChatAction` import              |
+| `app/repos/memory.py`      | Removed unused `timezone` import                |
+| `requirements.txt`         | `cryptography` upper bound <44 → <48            |
+| 7 test files               | Removed unused imports, renamed unused vars     |
+
+### 🧪 Tests: 1040 passed, 0 failures
+
+---
+
 ## [2.8.20] – 2026-03-06 – Streaming Overflow Formatting Fix
 
 ### 🔴 Fix: Broken Formatting When Streamed Responses Overflow Into Multiple Messages

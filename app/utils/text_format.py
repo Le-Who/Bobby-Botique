@@ -96,7 +96,10 @@ def markdown_to_html(text: str) -> str:
             processed_lines: list[str] = []
             blockquote_buffer: list[str] = []
 
-            def _flush_blockquote() -> None:
+            def _flush_blockquote(
+                blockquote_buffer: list[str] = blockquote_buffer,
+                processed_lines: list[str] = processed_lines,
+            ) -> None:
                 """Flush accumulated blockquote lines into a single <blockquote> tag."""
                 if blockquote_buffer:
                     inner = "\n".join(blockquote_buffer)

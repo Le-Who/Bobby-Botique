@@ -2,7 +2,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from telegram import Chat, Message, Update, User
+from telegram import Message, Update
 from telegram.ext import ContextTypes
 
 from app.handlers import messages

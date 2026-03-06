@@ -361,8 +361,6 @@ async def _handle_regular_chat(
                         ]
                     )
                     hint_text = f"💡 _{suggestion.reason}_"
-                    from app.utils.formatting import TelegramFormatter
-
                     fmt_text, fmt_pm = TelegramFormatter.format_text(hint_text)
                     await placeholder_message.reply_text(
                         fmt_text,

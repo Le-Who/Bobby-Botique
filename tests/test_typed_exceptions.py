@@ -10,7 +10,7 @@ Verifies:
 - convert_to_typed_exception utility
 """
 
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
 import pytest

@@ -8,7 +8,7 @@ Embeddings are generated via Gemini's embedding API (text-embedding-004, 768-dim
 import asyncio
 import hashlib
 import logging
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from google import genai

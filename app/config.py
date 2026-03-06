@@ -5,7 +5,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from datetime import UTC, timezone
+from datetime import UTC
 from typing import Any
 from zoneinfo import ZoneInfo
 

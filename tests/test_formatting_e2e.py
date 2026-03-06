@@ -10,7 +10,6 @@ import pytest
 
 from app.utils.text_format import format_text, markdown_to_html, sanitize_html_tags, split_text_safe
 
-
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 

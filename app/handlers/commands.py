@@ -8,7 +8,6 @@ Conversation commands: see cmd_conversations.py
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ChatAction
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from app.handlers import menus
