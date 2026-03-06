@@ -23,7 +23,9 @@ class TestStreamingWriter:
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
 
-        writer = StreamingWriter(mock_msg, debounce_s=0.05)
+        writer = StreamingWriter(mock_msg)
+        writer._debounce_s = 0.05
+        writer._min_chunk = 0
 
         # Write several chunks rapidly
         await writer.write("Hello ")
@@ -45,7 +47,9 @@ class TestStreamingWriter:
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
 
-        writer = StreamingWriter(mock_msg, debounce_s=0.01)
+        writer = StreamingWriter(mock_msg)
+        writer._debounce_s = 0.01
+        writer._min_chunk = 0
         await writer.write("Part1 ")
         await writer.write("Part2")
         await writer.finalize()

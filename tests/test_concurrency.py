@@ -111,7 +111,9 @@ class TestStreamingWriterConcurrent:
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
 
-        writer = StreamingWriter(mock_msg, debounce_s=0.01)
+        writer = StreamingWriter(mock_msg)
+        writer._debounce_s = 0.01
+        writer._min_chunk = 0
 
         # Write 20 chunks as fast as possible
         for i in range(20):

@@ -107,7 +107,9 @@ class TestStreamingWriter:
 
         mock_msg = AsyncMock()
         mock_msg.edit_text = AsyncMock()
-        writer = StreamingWriter(mock_msg, debounce_s=0.0)
+        writer = StreamingWriter(mock_msg)
+        writer._debounce_s = 0.0
+        writer._min_chunk = 0
 
         await writer.write("Hello ")
         await writer.write("World!")
@@ -120,7 +122,9 @@ class TestStreamingWriter:
 
         mock_msg = AsyncMock()
         mock_msg.edit_text = AsyncMock()
-        writer = StreamingWriter(mock_msg, debounce_s=10.0)  # Very high debounce
+        writer = StreamingWriter(mock_msg)
+        writer._debounce_s = 10.0  # Very high debounce
+        writer._min_chunk = 0
 
         # Rapid writes should NOT trigger edit (due to debounce)
         for i in range(5):
@@ -137,7 +141,9 @@ class TestStreamingWriter:
 
         mock_msg = AsyncMock()
         mock_msg.edit_text = AsyncMock()
-        writer = StreamingWriter(mock_msg, debounce_s=0.0)
+        writer = StreamingWriter(mock_msg)
+        writer._debounce_s = 0.0
+        writer._min_chunk = 0
 
         await writer.write("a" * 100)
         await writer.finalize()

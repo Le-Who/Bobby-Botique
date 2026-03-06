@@ -201,6 +201,9 @@ async def _handle_regular_chat(
                     model_used,
                     contents,
                     config,
+                    bot=placeholder_message.get_bot(),
+                    chat_id=placeholder_message.chat_id,
+                    chat_type=placeholder_message.chat.type,
                 )
                 if success and response_text:
                     streamed = True
@@ -357,9 +360,13 @@ async def _handle_regular_chat(
                             ],
                         ]
                     )
+                    hint_text = f"💡 _{suggestion.reason}_"
+                    from app.utils.formatting import TelegramFormatter
+
+                    fmt_text, fmt_pm = TelegramFormatter.format_text(hint_text)
                     await placeholder_message.reply_text(
-                        f"💡 _{suggestion.reason}_",
-                        parse_mode="Markdown",
+                        fmt_text,
+                        parse_mode=fmt_pm,
                         reply_markup=hint_keyboard,
                     )
             except Exception:

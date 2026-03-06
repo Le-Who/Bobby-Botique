@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import time
 from collections.abc import AsyncGenerator
@@ -22,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
+from telegram.error import TelegramError
 
 from app.config import settings
 from app.metrics import metrics_collector
@@ -35,11 +37,15 @@ if TYPE_CHECKING:
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-# Minimum interval (seconds) between edit_message_text calls to avoid flood.
-EDIT_DEBOUNCE_S = 1.2
-# Minimum chars accumulated before sending an update (avoids word fragments).
-MIN_CHUNK_SIZE = 80
-# Indicator appended while streaming is in progress.
+# Classic mode (editMessageText) — used for groups and as fallback.
+EDIT_DEBOUNCE_S = 0.6
+MIN_CHUNK_SIZE = 60
+
+# Draft mode (sendMessageDraft) — used for private chats.
+DRAFT_DEBOUNCE_S = 0.3
+DRAFT_MIN_CHUNK = 20
+
+# Indicator appended while streaming is in progress (classic mode only).
 STREAMING_INDICATOR = " ▍"
 # Safe limit for Telegram messages (leaves margin for HTML tag overhead).
 STREAM_MSG_LIMIT = 4000
@@ -204,30 +210,68 @@ def _detect_open_markdown(text: str) -> tuple[str, str]:
         suffix_parts.append("*")
         prefix_parts.append("*")
 
+    #   Also check for _..._ italic (after removing __ pairs).
+    no_double_under = text.replace("__", "")
+    lone_under = no_double_under.count("_")
+    if lone_under % 2 == 1:
+        suffix_parts.append("_")
+        prefix_parts.append("_")
+
+    # --- 5. Strikethrough (~~...~~) -------------------------------------------
+    tilde_pairs = text.count("~~")
+    if tilde_pairs % 2 == 1:
+        suffix_parts.append("~~")
+        prefix_parts.append("~~")
+
     return "".join(suffix_parts), "".join(prefix_parts)
 
 
 class StreamingWriter:
     """Debounced Telegram message updater for streaming AI responses.
 
-    Progressively edits a placeholder message as text chunks arrive,
-    with flood-control debouncing and a cursor indicator.
+    Supports two modes:
+
+    **Draft mode** (private chats): Uses ``sendMessageDraft`` from Bot API 9.5
+    for fast, animated streaming with relaxed rate limits (0.3 s debounce).
+
+    **Classic mode** (groups / fallback): Edits a placeholder message via
+    ``editMessageText`` with debouncing (0.6 s).
 
     When the current message's formatted text approaches STREAM_MSG_LIMIT,
     the writer finalizes the current message and creates a new one via
     reply_text, continuing streaming seamlessly into it.
     """
 
-    def __init__(self, placeholder_message, *, debounce_s: float = EDIT_DEBOUNCE_S):
+    def __init__(
+        self,
+        placeholder_message,
+        *,
+        bot=None,
+        chat_id: int = 0,
+        chat_type: str = "private",
+    ):
         self._msg = placeholder_message  # Current message being edited
         self._first_msg = placeholder_message  # Original placeholder (never changes)
-        self._debounce_s = debounce_s
         self._buffer = ""  # Buffer for CURRENT message only
         self._full_text = ""  # Entire accumulated text across all messages
         self._last_edit_time = 0.0
         self._pending_chars = 0
         self._edit_count = 0
         self._msg_count = 1  # How many messages in chain
+
+        # Draft mode: only for private chats with a bot instance
+        self._use_drafts = (chat_type == "private") and (bot is not None)
+        self._bot = bot
+        self._chat_id = chat_id
+        self._draft_id = random.randint(1, 2**31 - 1) if self._use_drafts else 0
+
+        # Mode-specific debounce
+        if self._use_drafts:
+            self._debounce_s = DRAFT_DEBOUNCE_S
+            self._min_chunk = DRAFT_MIN_CHUNK
+        else:
+            self._debounce_s = EDIT_DEBOUNCE_S
+            self._min_chunk = MIN_CHUNK_SIZE
 
     async def write(self, delta: str) -> None:
         """Accumulate a text delta and flush to Telegram if debounce allows."""
@@ -238,24 +282,69 @@ class StreamingWriter:
         now = time.monotonic()
         elapsed = now - self._last_edit_time
 
-        if elapsed >= self._debounce_s and self._pending_chars >= MIN_CHUNK_SIZE:
+        if elapsed >= self._debounce_s and self._pending_chars >= self._min_chunk:
             await self._flush(final=False)
 
     async def finalize(self) -> str:
         """Send the final version of the message (no cursor indicator).
 
+        In both modes the final text is committed via ``edit_text`` on the
+        placeholder message so that the permanent message supports
+        reply_markup (keyboards, buttons).
+
         Returns:
             The complete accumulated text (across all messages).
         """
+        # Always finalize via classic edit_text (drafts are ephemeral)
         await self._flush(final=True)
         return self._full_text
 
     async def _flush(self, *, final: bool = False) -> None:
-        """Edit the current message with the current buffer content."""
+        """Send the current buffer to Telegram.
+
+        Draft mode: calls ``send_message_draft`` for mid-stream updates,
+        falls back to ``edit_text`` for the final commit.
+        Classic mode: always uses ``edit_text``.
+        """
         text = self._buffer
         if not text.strip():
             return
 
+        # Draft mode mid-stream: use sendMessageDraft (no cursor needed)
+        if self._use_drafts and not final:
+            try:
+                formatted_text, parse_mode = TelegramFormatter.format_text(text)
+                if not final:
+                    formatted_text = sanitize_html_tags(formatted_text)
+
+                if len(formatted_text) > STREAM_MSG_LIMIT:
+                    # Overflow: switch to classic for this + future flushes
+                    await self._overflow_to_new_message()
+                    return
+
+                await self._bot.send_message_draft(
+                    chat_id=self._chat_id,
+                    draft_id=self._draft_id,
+                    text=formatted_text,
+                    parse_mode=parse_mode,
+                )
+                self._last_edit_time = time.monotonic()
+                self._pending_chars = 0
+                self._edit_count += 1
+            except TelegramError as e:
+                if "not modified" not in str(e).lower():
+                    logging.warning(
+                        "Draft streaming failed (attempt %d): %s — falling back to classic",
+                        self._edit_count, e,
+                    )
+                    # Disable draft mode and retry via classic
+                    self._use_drafts = False
+                    self._debounce_s = EDIT_DEBOUNCE_S
+                    self._min_chunk = MIN_CHUNK_SIZE
+                    await self._flush(final=final)
+            return
+
+        # Classic mode (or final flush in draft mode)
         display_text = text if final else text + STREAMING_INDICATOR
 
         try:
@@ -281,7 +370,7 @@ class StreamingWriter:
             self._last_edit_time = time.monotonic()
             self._pending_chars = 0
             self._edit_count += 1
-        except Exception as e:
+        except TelegramError as e:
             # "Message is not modified" is expected if text hasn't changed enough
             if "not modified" not in str(e).lower():
                 logging.warning("Streaming edit failed (attempt %d): %s", self._edit_count, e)
@@ -314,7 +403,7 @@ class StreamingWriter:
             formatted_frozen = sanitize_html_tags(formatted_frozen)
             await self._msg.edit_text(formatted_frozen, parse_mode=parse_mode)
             self._edit_count += 1
-        except Exception as e:
+        except TelegramError as e:
             if "not modified" not in str(e).lower():
                 logging.warning("Failed to freeze message on overflow: %s", e)
 
@@ -337,7 +426,7 @@ class StreamingWriter:
                 self._msg_count,
                 len(frozen_text),
             )
-        except Exception as e:
+        except TelegramError as e:
             logging.error("Failed to create overflow message: %s", e)
             # If we can't create a new message, stop further edits
             # but don't lose text (it's still in _full_text)
@@ -402,12 +491,20 @@ async def stream_and_display(
     contents: list,
     config: types.GenerateContentConfig,
     timeout: float = 100.0,
+    *,
+    bot=None,
+    chat_id: int = 0,
+    chat_type: str = "private",
 ) -> tuple[str, bool, Message | None]:
     """High-level: stream Gemini response and progressively update Telegram message.
 
     Supports multi-message streaming: when a single message exceeds
     Telegram's ~4096 char limit, the writer seamlessly continues into
     a new message while maintaining visual streaming UX.
+
+    In private chats, uses ``sendMessageDraft`` (Bot API 9.5) for fast,
+    animated streaming with relaxed rate limits.  In groups or when the
+    bot instance is unavailable, falls back to classic ``editMessageText``.
 
     Args:
         placeholder_message: Telegram message to edit progressively.
@@ -416,6 +513,9 @@ async def stream_and_display(
         contents: Prepared contents list.
         config: GenerateContentConfig.
         timeout: Max streaming time.
+        bot: Bot instance (required for draft mode).
+        chat_id: Target chat ID.
+        chat_type: Chat type ("private", "group", "supergroup", etc.).
 
     Returns:
         (response_text, success, last_message) tuple.
@@ -423,7 +523,12 @@ async def stream_and_display(
         placeholder_message if overflow occurred). Callers should use it
         for post-stream edits like adding buttons.
     """
-    writer = StreamingWriter(placeholder_message)
+    writer = StreamingWriter(
+        placeholder_message,
+        bot=bot,
+        chat_id=chat_id,
+        chat_type=chat_type,
+    )
 
     try:
         async for delta in stream_gemini_response(
