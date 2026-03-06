@@ -30,13 +30,25 @@ def _extract_message_content(msg: dict) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            # ⚡ Bolt: skip binary payloads to avoid O(N) str() memory allocation overhead
+            return " ".join(str(p) for p in content if not isinstance(p, bytes))
+        return str(content) if not isinstance(content, bytes) else ""
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
-        return str(parts)
+            # ⚡ Bolt: safely extract text or fallback to stringifying non-binary primitives
+            text_parts = []
+            for p in parts:
+                if isinstance(p, bytes):
+                    continue
+                if isinstance(p, dict):
+                    val = p.get("text")
+                    if val is not None and not isinstance(val, bytes):
+                        text_parts.append(str(val))
+                else:
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
+        return str(parts) if not isinstance(parts, bytes) else ""
     return ""
 
 

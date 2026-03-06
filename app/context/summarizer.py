@@ -171,13 +171,19 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            # ⚡ Bolt: skip binary payloads to avoid O(N) str() memory allocation overhead
+            return " ".join(str(p) for p in content if not isinstance(p, bytes))
+        return str(content) if not isinstance(content, bytes) else ""
 
     text_parts: list[str] = []
+    # ⚡ Bolt: safely extract text while skipping binary payloads
     for part in parts:
+        if isinstance(part, bytes):
+            continue
         if isinstance(part, str):
             text_parts.append(part)
-        elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+        elif isinstance(part, dict):
+            val = part.get("text")
+            if val is not None and not isinstance(val, bytes):
+                text_parts.append(str(val))
     return " ".join(text_parts)
