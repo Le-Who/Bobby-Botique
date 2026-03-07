@@ -13,3 +13,7 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+
+## 2026-03-07 - Expensive O(N) Object Stringification
+**Learning:** Calling `str()` on non-text objects like `bytes` or `bytearray` inside loops over message parts causes massive O(N) memory allocation and CPU overhead. In `app/repos/chats.py` and `app/context/summarizer.py`, iterating over conversation history and converting binary image payloads to strings resulted in severe performance bottlenecks for multimodal conversations.
+**Action:** When extracting text from heterogeneous message parts (e.g., Gemini's `parts` list), always explicitly skip binary data using `isinstance(p, (bytes, bytearray))` or check for the presence of a 'text' key in dictionaries before attempting to stringify the content.
