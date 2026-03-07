@@ -22,3 +22,7 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+## 2026-03-07 - [Security Enhancement] IP Spoofing Prevention in Rate Limiting
+**Vulnerability:** The login endpoint rate limiting relied on `request.remote_addr` which reflects the reverse proxy IP when deployed behind a service like Northflank. An attacker could brute force the login page and trigger a global rate limit block for all legitimate users (Denial of Service) because all requests share the same IP pool from the proxy.
+**Learning:** When deployed behind a reverse proxy, the client IP must be securely resolved using the `X-Forwarded-For` header. Because an attacker can spoof left-most IP addresses in `X-Forwarded-For`, the right-most IP appended by the trusted proxy must be used.
+**Prevention:** Always extract the right-most IP from the `X-Forwarded-For` header (or use dedicated reverse proxy middleware provided by the framework like `ProxyFix`) for any IP-based logic, such as rate limiting, logging, or security audits.

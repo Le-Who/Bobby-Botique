@@ -147,11 +147,27 @@ from app.security import SyncRateLimiter  # noqa: E402
 _login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
 
 
+def _get_client_ip() -> str:
+    """
+    Securely resolve the client IP address from behind a proxy.
+    Extracts the rightmost IP from X-Forwarded-For, preventing spoofing
+    since the trusted proxy always appends the actual client IP at the end.
+    Falls back to request.remote_addr.
+    """
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        # The true client IP as seen by the proxy is the rightmost one
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+    return request.remote_addr or "unknown"
+
+
 @quart_app.route("/login", methods=["GET", "POST"])
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
-    client_ip = request.remote_addr or "unknown"
+    client_ip = _get_client_ip()
 
     if request.method == "POST":
         # Check brute-force rate limit
