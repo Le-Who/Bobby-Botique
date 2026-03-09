@@ -27,19 +27,20 @@ class TestCacheStampede:
 
         cache = MultiLayerCache()
 
-        # Pre-populate
-        await cache.set("test_key", "search", {"result": "hello"})
+        with patch("app.cache.redis_client", None):
+            # Pre-populate
+            await cache.set("test_key", "search", {"result": "hello"})
 
-        # Fire 50 concurrent reads
-        async def read():
-            return await cache.get("test_key", "search")
+            # Fire 50 concurrent reads
+            async def read():
+                return await cache.get("test_key", "search")
 
-        results = await asyncio.gather(*[read() for _ in range(50)])
+            results = await asyncio.gather(*[read() for _ in range(50)])
 
-        # All 50 should return the same cached value
-        for r in results:
-            assert r is not None
-            assert r["result"] == "hello"
+            # All 50 should return the same cached value
+            for r in results:
+                assert r is not None
+                assert r["result"] == "hello"
 
     @pytest.mark.asyncio
     async def test_multi_layer_cache_concurrent_writes(self):

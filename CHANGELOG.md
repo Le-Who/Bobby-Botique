@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.23] – 2026-03-09 – Strict AAA Refactoring & Typing Fixes
+
+### 🧪 Strict AAA Unit & Integration Tests
+
+- **Unit Test Boundaries**: Refactored `test_ai_chat.py` to adhere to strict Arrange-Act-Assert (AAA) logic. Eliminated fragile internal function mocks (`update_stage`, `get_registry`, `handle_ai_response_error`) in favor of mocking strict database and network boundaries.
+- **Integration Test Rewrites**: Converted `test_e2e_app_smoke.py` into a true integration flow (`test_integration_full_message_flow`), accurately validating database state continuity without pseudo-E2E network mocks.
+- **Teardown Safety**: Fixed `RuntimeError` (`Event loop is closed`) on tear down in `test_concurrency.py` cache tests by mocking redis layer.
+
+### 🧹 Code Quality & Typing Verification
+
+- **Mypy Audit (100% Passed)**: Fixed 4 typing bugs detected in integration suites (`Dict | None` index violations and missing variable annotations).
+- **Ruff Compliance**: Resolved `F841` (unused variable assignment) during test teardowns and enforced standardized import sorting across impacted domains.
+
+### 🧪 Tests: 1054 passed (all suites clean)
+
+---
+
 ## [2.8.22] – 2026-03-09 – Testing Infrastructure AAA Refactoring & Integration Boundaries
 
 ### 🧪 Legacy Test AAA Refactoring

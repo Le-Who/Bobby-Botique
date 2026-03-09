@@ -13,7 +13,7 @@ class DummyQuery:
     def __init__(self, user_id: int, data: str):
         self.data = data
         self.from_user = SimpleNamespace(id=user_id)
-        self._answers = []
+        self._answers: list[tuple[str | None, bool]] = []
         self.message = SimpleNamespace()
         self.edit_message_text = AsyncMock()
 

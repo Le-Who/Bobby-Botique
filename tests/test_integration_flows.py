@@ -120,6 +120,7 @@ class TestKeyRotationFlow:
 
         with patch("app.repos.keys.safe_decrypt", return_value="decrypted_key"):
             result = await km.get_available_key("gemini-2.0-flash")
+        assert result is not None
         assert result["key_hash"] == "abc123"
         assert result["api_key"] == "decrypted_key"
         # Verify the SQL uses ORDER BY request_count ASC
@@ -146,6 +147,7 @@ class TestKeyRotationFlow:
         mock_db.return_value = [{"request_count": 6}]
 
         result = await km.increment_usage("abc123", "gemini-2.0-flash")
+        assert result is not None
         assert result[0]["request_count"] == 6
         sql = mock_db.call_args[0][0]
         assert "INSERT INTO key_usage" in sql
@@ -193,6 +195,7 @@ class TestKeyRotationFlow:
 
         with patch("app.repos.keys.safe_decrypt", return_value="decrypted_tavily"):
             result = await km.get_available_key()
+        assert result is not None
         assert result["key_hash"] == "tav123"
 
     @pytest.mark.asyncio
