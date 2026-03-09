@@ -9,18 +9,6 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
-def get_database():
-    import importlib
-
-    import app.database
-
-    if "app.database" not in sys.modules or isinstance(sys.modules["app.database"], type(patch)):
-        importlib.reload(app)
-    from app import database
-
-    return database
-
-
 async def test_get_conversation_messages_optimization():
     # Setup Mock
     mock_db_query = AsyncMock()

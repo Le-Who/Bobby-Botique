@@ -240,7 +240,7 @@ class GeminiProvider(BaseAIProvider):
             yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid content for Gemini")
             return
 
-        config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)
+        config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
         tc = _build_thinking_config(model_name, thinking_level)
         if tc:
             config.thinking_config = tc

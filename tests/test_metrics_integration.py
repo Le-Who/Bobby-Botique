@@ -32,16 +32,13 @@ class TestMetricsIntegration(unittest.TestCase):
         mock_pool.acquire.return_value.__aenter__.return_value = mock_connection
 
         with (
-            patch.object(self.db_module, "db_manager") as mock_db_manager,
+            patch("app.metrics.db.db_query", new_callable=AsyncMock) as mock_query,
+            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock) as mock_execute_many,
+            patch("app.metrics.db.db_manager") as mock_db_manager,
             patch("app.metrics.get_request_id", return_value="test_rid_123"),
         ):
             mock_db_manager.pool = mock_pool
             mock_db_manager.is_connected = True
-            mock_db_manager.execute_many = AsyncMock()
-            mock_db_manager.query = AsyncMock()
-
-            mock_execute_many = mock_db_manager.execute_many
-            mock_query = mock_db_manager.query
 
             async def simulate_events():
                 # 1. Record API Call

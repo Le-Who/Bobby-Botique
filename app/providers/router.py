@@ -251,7 +251,7 @@ class ProviderRouter:
             stream_started = False
             try:
                 # We yield from the provider's stream
-                async for chunk in provider.stream_response(
+                async for chunk in provider.stream_response(  # type: ignore[attr-defined]
                     history=history,
                     model_name=model_used,
                     system_instruction=system_instruction,

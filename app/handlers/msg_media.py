@@ -23,6 +23,7 @@ MEDIA_GROUPS_MAX_SIZE = 500  # OOM protection
 _media_groups_lock = asyncio.Lock()
 _background_tasks: set = set()
 _cleanup_task = None
+_HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore(10)
 
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
@@ -198,8 +199,6 @@ async def _process_single_image_from_group(media_group_id: str, context: Context
 
 async def _process_media_group(media_group_id: str, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Process a group of images as a single unit."""
-    from app.handlers.messages import _HEAVY_REQUEST_SEMAPHORE
-
     if media_group_id not in MEDIA_GROUPS:
         logging.error("Media group %s not found", media_group_id)
         return

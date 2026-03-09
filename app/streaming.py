@@ -247,7 +247,7 @@ class StreamingWriter:
 
                 await self._adapter.send_draft(
                     text=formatted_text,
-                    parse_mode=parse_mode,
+                    parse_mode=parse_mode,  # type: ignore[arg-type]
                 )
                 self._last_edit_time = time.monotonic()
                 self._pending_chars = 0
@@ -288,7 +288,7 @@ class StreamingWriter:
                 await self._flush(final=True)
                 return
 
-            await self._adapter.edit_message(formatted_text, parse_mode=parse_mode)
+            await self._adapter.edit_message(formatted_text, parse_mode=parse_mode)  # type: ignore[arg-type]
             self._last_edit_time = time.monotonic()
             self._pending_chars = 0
             self._edit_count += 1
@@ -323,7 +323,7 @@ class StreamingWriter:
         try:
             formatted_frozen, parse_mode = TelegramFormatter.format_text(frozen_text)
             formatted_frozen = sanitize_html_tags(formatted_frozen)
-            await self._adapter.edit_message(formatted_frozen, parse_mode=parse_mode)
+            await self._adapter.edit_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
             self._edit_count += 1
         except Exception as e:
             if "not modified" not in str(e).lower():
@@ -335,7 +335,7 @@ class StreamingWriter:
             formatted_initial, parse_mode = TelegramFormatter.format_text(initial_text)
             self._adapter = await self._adapter.reply_new_message(
                 formatted_initial,
-                parse_mode=parse_mode,
+                parse_mode=parse_mode,  # type: ignore[arg-type]
             )
             # Swap to the new message
             self._buffer = remainder

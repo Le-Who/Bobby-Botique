@@ -79,7 +79,7 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
             thinking_level=chat_state.thinking_level,
             user_id=original_message.from_user.id,
             bot=placeholder_message.get_bot(),
-            chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
+            chat_id=placeholder_message.chat.id if placeholder_message.chat else 0,
             chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
         )
 
@@ -272,7 +272,7 @@ async def _handle_media_group_photos(
             thinking_level=chat_state.thinking_level,
             user_id=user_id,
             bot=placeholder_message.get_bot(),
-            chat_id=chat_id,
+            chat_id=chat_id or 0,
             chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
         )
 

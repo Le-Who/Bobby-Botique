@@ -99,7 +99,7 @@ async def _handle_qna_search(
         thinking_level=chat_state.thinking_level,
         user_id=user_id,
         bot=placeholder_message.get_bot(),
-        chat_id=chat_id,
+        chat_id=chat_id or 0,
         chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
     )
 
@@ -443,7 +443,7 @@ async def _handle_research_agent(
             thinking_level=chat_state.thinking_level,
             user_id=trace_user_id,
             bot=placeholder_message.get_bot(),
-            chat_id=trace_chat_id,
+            chat_id=trace_chat_id or 0,
             chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
         )
 
