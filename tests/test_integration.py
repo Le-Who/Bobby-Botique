@@ -16,14 +16,18 @@ class TestStreamingWriter:
     @pytest.mark.asyncio
     async def test_streaming_writer_debounces_edits(self):
         """StreamingWriter should not call edit_text more often than DEBOUNCE_INTERVAL."""
+        from app.adapters.ui_adapter import StreamingUIAdapter
         from app.streaming import StreamingWriter
 
         mock_msg = AsyncMock()
         mock_msg.message_id = 1
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
+        
+        mock_adapter = AsyncMock(spec=StreamingUIAdapter)
+        mock_adapter._bot = AsyncMock() # force draft mode if possible
 
-        writer = StreamingWriter(mock_msg)
+        writer = StreamingWriter(mock_adapter, chat_type="private")
         writer._debounce_s = 0.05
         writer._min_chunk = 0
 
@@ -35,19 +39,23 @@ class TestStreamingWriter:
 
         # Should have been called at least once (finalize forces a flush),
         # but not 3 times (debouncing should merge some calls)
-        assert mock_msg.edit_text.call_count >= 1
+        assert mock_adapter.edit_message.call_count + mock_adapter.send_draft.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_streaming_writer_finalize_sends_full_text(self):
         """finalize() must send the complete accumulated text."""
+        from app.adapters.ui_adapter import StreamingUIAdapter
         from app.streaming import StreamingWriter
 
         mock_msg = AsyncMock()
         mock_msg.message_id = 2
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
+        
+        mock_adapter = AsyncMock(spec=StreamingUIAdapter)
+        mock_adapter._bot = None # force edit_message mode
 
-        writer = StreamingWriter(mock_msg)
+        writer = StreamingWriter(mock_adapter, chat_type="group")
         writer._debounce_s = 0.01
         writer._min_chunk = 0
         await writer.write("Part1 ")
@@ -55,7 +63,7 @@ class TestStreamingWriter:
         await writer.finalize()
 
         # The last edit_text call should contain the full accumulated text
-        last_call = mock_msg.edit_text.call_args_list[-1]
+        last_call = mock_adapter.edit_message.call_args_list[-1]
         final_text = last_call[0][0] if last_call[0] else last_call[1].get("text", "")
         assert "Part1" in final_text
         assert "Part2" in final_text

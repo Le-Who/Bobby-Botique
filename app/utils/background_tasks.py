@@ -40,3 +40,31 @@ async def cancel_background_task(owner: object, attr_name: str) -> None:
         await task
 
     setattr(owner, attr_name, None)
+
+class TaskManager:
+    """Robust background task manager preventing silent failures."""
+    _tasks: set[asyncio.Task] = set()
+
+    @classmethod
+    def submit(cls, coro: Coroutine[Any, Any, Any], retry: int = 0) -> asyncio.Task:
+        async def _wrapper():
+            attempts = 0
+            while attempts <= retry:
+                try:
+                    await coro
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    attempts += 1
+                    logging.error("Background task failed (attempt %d/%d): %s", attempts, retry + 1, e, exc_info=True)
+                    if attempts <= retry:
+                        await asyncio.sleep(2 ** attempts)  # Exponential backoff
+        
+        task = asyncio.create_task(_wrapper())
+        cls._tasks.add(task)
+        task.add_done_callback(cls._tasks.discard)
+        return task
+
+# Global helper
+submit_task = TaskManager.submit

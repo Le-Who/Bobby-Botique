@@ -215,6 +215,70 @@ class GeminiProvider(BaseAIProvider):
                 model=model_name,
             )
 
+    async def stream_response(
+        self,
+        history: list[dict[str, Any]],
+        model_name: str,
+        system_instruction: str | None = None,
+        thinking_level: str | None = None,
+        timeout: float = 120.0,
+    ):
+        """
+        Stream response from Gemini API.
+        Yields text chunks.
+        """
+        if self._client is None or self._client_api_key != self.api_key:
+            client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+            http_opts: dict[str, Any] = {"timeout": 90_000}
+            client_kwargs["http_options"] = types.HttpOptions(**http_opts)
+            self._client = genai.Client(**client_kwargs)
+            self._client_api_key = self.api_key
+        client = self._client
+
+        contents = await self._build_contents(history)
+        if contents is None:
+            yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid content for Gemini")
+            return
+
+        config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)
+        tc = _build_thinking_config(model_name, thinking_level)
+        if tc:
+            config.thinking_config = tc
+        if system_instruction:
+            config.system_instruction = str(system_instruction)
+
+        try:
+            # wait_for to prevent hanging during connect
+            coro = client.aio.models.generate_content_stream(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+            response_stream = await asyncio.wait_for(coro, timeout=timeout)
+            async for chunk in response_stream:
+                if chunk.text:
+                    yield chunk.text
+        except TimeoutError:
+            logging.error("Gemini API stream timed out for model %s", model_name)
+            yield tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API.")
+        except APIError as e:
+            logging.error("Gemini API stream error: %s", e)
+            err_lower = str(e).lower()
+            if "quota" in err_lower:
+                yield tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
+            elif "api key" in err_lower or "api_key_invalid" in err_lower:
+                yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
+            elif "invalid" in err_lower or "malformed" in err_lower:
+                yield tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос к API.")
+            elif "rate limit" in err_lower:
+                yield tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов.")
+            else:
+                yield tag_error(ErrorCode.GENERIC, f"❌ Произошла ошибка API: {e}")
+        except Exception as e:
+            logging.error("Gemini streaming error: %s", e)
+            yield tag_error(ErrorCode.GENERIC, f"❌ Ошибка: {e}")
+
+
     # ── Gemini helpers ───────────────────────────────────────────────────
 
     async def _build_contents(self, history: list) -> list | None:

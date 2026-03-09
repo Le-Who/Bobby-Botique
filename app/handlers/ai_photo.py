@@ -64,12 +64,33 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
 
         await update_stage(placeholder_message, STAGES_PHOTO, 1)
 
-        response_text, _ = await _get_ai_response_with_routing(
-            chat_state.model or settings.DEFAULT_MODEL,
-            [{"role": "user", "parts": parts}],
+        # We need the current model, so we resolve it first
+        from app.handlers.ai_core import _resolve_ai_request
+        from app.streaming import stream_and_display
+        _, model_used, _ = await _resolve_ai_request(chat_state.model or settings.DEFAULT_MODEL)
+        history = [{"role": "user", "parts": parts}]
+
+        response_text, success, stream_last_msg = await stream_and_display(
+            placeholder_message,
+            model_name=model_used,
+            history=history,
+            system_instruction=None,
+            thinking_level=chat_state.thinking_level,
             user_id=original_message.from_user.id,
+            bot=placeholder_message.get_bot(),
             chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
+            chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
         )
+
+        streamed = bool(success and response_text)
+
+        if not streamed:
+            response_text, _ = await _get_ai_response_with_routing(
+                model_used,
+                history,
+                user_id=original_message.from_user.id,
+                chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
+            )
 
         # Check ошибки от роутера
         if await handle_ai_response_error(response_text, placeholder_message):
@@ -82,7 +103,17 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
                 [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
             ]
             reply_markup = InlineKeyboardMarkup(buttons)
-            await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
+            
+            if not streamed:
+                await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
+            else:
+                button_msg = stream_last_msg if stream_last_msg else placeholder_message
+                try:
+                    await button_msg.edit_reply_markup(reply_markup=reply_markup)
+                except Exception as e:
+                    if "not modified" not in str(e).lower():
+                        logging.warning("Final button edit failed: %s", e)
+                        
             # Save context images в истории
             chat_state.history.append({"role": "user", "parts": [formatted_prompt]})
             chat_state.history.append({"role": "model", "parts": [response_text]})
@@ -226,12 +257,33 @@ async def _handle_media_group_photos(
         user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
-        response_text, _ = await _get_ai_response_with_routing(
-            chat_state.model or settings.DEFAULT_MODEL,
-            [{"role": "user", "parts": parts}],
+        from app.handlers.ai_core import _resolve_ai_request
+        from app.streaming import stream_and_display
+
+        _, model_used, _ = await _resolve_ai_request(chat_state.model or settings.DEFAULT_MODEL)
+        history = [{"role": "user", "parts": parts}]
+
+        response_text, success, stream_last_msg = await stream_and_display(
+            placeholder_message,
+            model_name=model_used,
+            history=history,
+            system_instruction=None,
+            thinking_level=chat_state.thinking_level,
             user_id=user_id,
+            bot=placeholder_message.get_bot(),
             chat_id=chat_id,
+            chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
         )
+
+        streamed = bool(success and response_text)
+
+        if not streamed:
+            response_text, _ = await _get_ai_response_with_routing(
+                model_used,
+                history,
+                user_id=user_id,
+                chat_id=chat_id,
+            )
 
         # Check ошибки от роутера
         if await handle_ai_response_error(response_text, placeholder_message):
@@ -243,11 +295,21 @@ async def _handle_media_group_photos(
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
-        await send_long_message(
-            placeholder_message,
-            response_text or "Не удалось обработать группу изображений.",
-            reply_markup=reply_markup,
-        )
+        
+        err_msg = "Не удалось обработать группу изображений."
+        if not streamed:
+            await send_long_message(
+                placeholder_message,
+                response_text or err_msg,
+                reply_markup=reply_markup,
+            )
+        else:
+            button_msg = stream_last_msg if stream_last_msg else placeholder_message
+            try:
+                await button_msg.edit_reply_markup(reply_markup=reply_markup)
+            except Exception as e:
+                if "not modified" not in str(e).lower():
+                    logging.warning("Final button edit failed: %s", e)
 
         count = len(images) if images else 0
         logging.info("✅ Группа из %s изображений обработана успешно", count)

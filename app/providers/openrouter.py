@@ -184,6 +184,75 @@ class OpenRouterProvider(BaseAIProvider):
                 model=model_name,
             )
 
+    async def stream_response(
+        self,
+        history: list[dict[str, Any]],
+        model_name: str,
+        system_instruction: str | None = None,
+        thinking_level: str | None = None,
+        timeout: float = 120.0,
+    ):
+        """
+        Stream response from OpenRouter API using Server-Sent Events (SSE).
+        Yields text chunks.
+        """
+        import json
+
+        messages = await self._build_messages(history, system_instruction)
+        if not messages:
+            yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid messages for OpenRouter")
+            return
+
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://t.me/gemaibotv2",
+            "X-Title": "GeminiBot v2",
+        }
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
+
+        payload = {"model": model_name, "messages": messages, "stream": True}
+        
+        if _openrouter_http_client is None:
+            yield tag_error(ErrorCode.GENERIC, "❌ OpenRouter HTTP client not initialized")
+            return
+
+        try:
+            async with _openrouter_http_client.stream(
+                "POST", url, json=payload, headers=headers, timeout=timeout
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            data = json.loads(data_str)
+                            chunk = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if chunk:
+                                yield chunk
+                        except json.JSONDecodeError:
+                            continue
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            if status == 429:
+                yield tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов. Подождите немного.")
+            elif status == 401:
+                yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ. Проверьте настройки.")
+            elif status == 402:
+                yield tag_error(ErrorCode.QUOTA_EXCEEDED, "💳 Недостаточно средств на счету OpenRouter.")
+            else:
+                yield tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {status}")
+        except Exception as e:
+            logging.error("OpenRouter streaming error: %s", e)
+            yield tag_error(ErrorCode.GENERIC, f"❌ Произошла непредвиденная ошибка API: {e}")
+
+
     # ── OpenRouter helpers ───────────────────────────────────────────────
 
     async def _build_messages(self, history: list, system_instruction: str | None) -> list:

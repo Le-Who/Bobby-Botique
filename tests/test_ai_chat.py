@@ -14,8 +14,8 @@ def mock_boundaries():
     """Setup clean external boundaries for AI Chat handler without over-mocking internals."""
     with (
         patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as m_resolve,
-        # We mock stream_and_display / _get_ai_response_with_routing to avoid real AI calls
-        patch("app.handlers.ai_chat._get_ai_response_with_routing", new_callable=AsyncMock) as m_get_resp,
+        # We mock stream_and_display to avoid real AI calls
+        patch("app.streaming.stream_and_display", new_callable=AsyncMock) as m_get_resp,
         patch("app.handlers.ai_chat.send_long_message", new_callable=AsyncMock) as m_send_long,
         patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as m_update_chat,
         # Force non-streaming for deterministic simple tests
@@ -27,7 +27,7 @@ def mock_boundaries():
     ):
         # Default Arrange values
         m_resolve.return_value = ({"api_key": "k", "key_hash": "h"}, "gemini-2.0-flash", "direct")
-        m_get_resp.return_value = ("Hello world!", 42)
+        m_get_resp.return_value = ("Hello world!", True, None)
         m_search.return_value = []
 
         yield {
@@ -58,11 +58,13 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
     mock_boundaries["update_chat"].assert_awaited_once()
     called_state = mock_boundaries["update_chat"].call_args[0][1]
 
-    assert called_state.token_count == 42, "Expected updated token count"
+    assert called_state.token_count == 4, "Expected updated token count based on estimate_tokens_cyrillic('Hello world!')"
     assert any("Hello world!" in str(msg) for msg in called_state.history), "Expected model response in history"
-    # Messaging checks
-    mock_boundaries["send_long"].assert_awaited_once()
-    assert "Hello world!" in mock_boundaries["send_long"].call_args[0][1]
+    assert any("Hello world!" in str(msg) for msg in called_state.history), "Expected model response in history"
+    # Note: send_long_message is only called if streamed is False.
+    # We simulated stream_and_display returning success (True), meaning it streamed.
+    # Therefore, we check that it was streamed and edit_reply_markup was called or skipped properly.
+    mock_boundaries["send_long"].assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -122,7 +124,7 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
     chat_state = make_chat_state(history=history)
 
     # Simulate an empty response from AI
-    mock_boundaries["get_resp"].return_value = (None, 0)
+    mock_boundaries["get_resp"].return_value = (None, False, None)
 
     # ── Act ──
     await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
@@ -147,7 +149,7 @@ async def test_error_response_from_ai(mock_boundaries):
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
     chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
-    mock_boundaries["get_resp"].return_value = ("error text mock", 0)
+    mock_boundaries["get_resp"].return_value = ("error text mock", False, None)
 
     with patch("app.handlers.ai_chat.handle_ai_response_error", new_callable=AsyncMock, return_value=True) as m_err:
         # ── Act ──

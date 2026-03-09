@@ -103,11 +103,18 @@ class TestStreamingWriter:
 
     @pytest.mark.asyncio
     async def test_writer_accumulates_text(self):
+        from app.adapters.ui_adapter import StreamingUIAdapter
         from app.streaming import StreamingWriter
 
         mock_msg = AsyncMock()
-        mock_msg.edit_text = AsyncMock()
-        writer = StreamingWriter(mock_msg)
+        mock_msg.message_id = 99
+        mock_msg.chat = MagicMock()
+        mock_msg.chat.id = 123
+        
+        mock_adapter = AsyncMock(spec=StreamingUIAdapter)
+        mock_adapter._bot = None
+
+        writer = StreamingWriter(mock_adapter, chat_type="private")
         writer._debounce_s = 0.0
         writer._min_chunk = 0
 
@@ -118,11 +125,18 @@ class TestStreamingWriter:
 
     @pytest.mark.asyncio
     async def test_writer_debounce_prevents_rapid_edits(self):
+        from app.adapters.ui_adapter import StreamingUIAdapter
         from app.streaming import StreamingWriter
 
         mock_msg = AsyncMock()
-        mock_msg.edit_text = AsyncMock()
-        writer = StreamingWriter(mock_msg)
+        mock_msg.message_id = 99
+        mock_msg.chat = MagicMock()
+        mock_msg.chat.id = 123
+        
+        mock_adapter = AsyncMock(spec=StreamingUIAdapter)
+        mock_adapter._bot = None
+        
+        writer = StreamingWriter(mock_adapter, chat_type="private")
         writer._debounce_s = 10.0  # Very high debounce
         writer._min_chunk = 0
 
@@ -133,15 +147,22 @@ class TestStreamingWriter:
         # Only finalize should trigger edit
         result = await writer.finalize()
         assert "chunk0" in result
-        assert mock_msg.edit_text.call_count >= 1
+        assert mock_adapter.edit_message.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_writer_edit_count(self):
+        from app.adapters.ui_adapter import StreamingUIAdapter
         from app.streaming import StreamingWriter
 
         mock_msg = AsyncMock()
-        mock_msg.edit_text = AsyncMock()
-        writer = StreamingWriter(mock_msg)
+        mock_msg.message_id = 99
+        mock_msg.chat = MagicMock()
+        mock_msg.chat.id = 123
+        
+        mock_adapter = AsyncMock(spec=StreamingUIAdapter)
+        mock_adapter._bot = None
+
+        writer = StreamingWriter(mock_adapter, chat_type="private")
         writer._debounce_s = 0.0
         writer._min_chunk = 0
 
@@ -154,16 +175,24 @@ class TestStreamingWriter:
         from app.streaming import stream_and_display
 
         mock_msg = AsyncMock()
-        mock_msg.edit_text = AsyncMock()
+        mock_msg.message_id = 1
+        mock_msg.chat = MagicMock()
+        mock_msg.chat.id = 123
+        mock_msg.get_bot = MagicMock(return_value=None)
+        mock_msg.chat.type = "private"
 
         async def mock_stream(*a, **kw):
             for word in ["Hello", " ", "World"]:
                 yield word
 
-        with patch("app.streaming.stream_gemini_response", side_effect=mock_stream):
+        # Since stream_and_display instantiates ProviderRouter itself or gets from getter,
+        # we can patch the ProviderRouter class's stream_response method directly.
+        with patch("app.providers.router.ProviderRouter.stream_response", side_effect=mock_stream):
             with patch("app.streaming.metrics_collector") as mock_mc:
                 mock_mc.record_api_call = AsyncMock()
-                text, success, last_msg = await stream_and_display(mock_msg, "key", "model", [], MagicMock())
+                text, success, last_msg = await stream_and_display(
+                    mock_msg, "model", [], MagicMock(), chat_id=123, chat_type="private", bot=None
+                )
                 assert success
                 assert "HelloWorld" in text.replace(" ", "")
                 assert last_msg is not None

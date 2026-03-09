@@ -79,6 +79,9 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
+            
+            async def stream_response(self, **kwargs):
+                yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
                 pass
@@ -94,6 +97,9 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
+            
+            async def stream_response(self, **kwargs):
+                yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
                 pass
@@ -112,6 +118,9 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
+                
+            async def stream_response(self, **kwargs):
+                yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
                 pass
@@ -128,6 +137,9 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
+                
+            async def stream_response(self, **kwargs):
+                yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
                 pass
@@ -144,6 +156,9 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
+            
+            async def stream_response(self, **kwargs):
+                yield ""
 
             def _log_failure(self, start_time, model, msg, user_id, chat_id):
                 pass

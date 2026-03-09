@@ -84,17 +84,35 @@ async def _handle_qna_search(
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
-    # Используем системную инструкцию from chat_state
+    from app.handlers.ai_core import _resolve_ai_request
+    from app.streaming import stream_and_display
+
+    _, model_used, _ = await _resolve_ai_request(preferred_model)
+    history = [{"role": "user", "parts": [localization_prompt]}]
     system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
 
-    # Используем health-aware роутинг
-    final_answer, _ = await _get_ai_response_with_routing(
-        preferred_model,
-        [{"role": "user", "parts": [localization_prompt]}],
+    final_answer, success, stream_last_msg = await stream_and_display(
+        placeholder_message,
+        model_name=model_used,
+        history=history,
         system_instruction=system_instruction,
+        thinking_level=chat_state.thinking_level,
         user_id=user_id,
+        bot=placeholder_message.get_bot(),
         chat_id=chat_id,
+        chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
     )
+
+    streamed = bool(success and final_answer)
+
+    if not streamed:
+        final_answer, _ = await _get_ai_response_with_routing(
+            model_used,
+            history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            chat_id=chat_id,
+        )
 
     # Check, является ли response ошибкой (use универсальную функцию)
     if await handle_ai_response_error(final_answer, placeholder_message):
@@ -106,7 +124,16 @@ async def _handle_qna_search(
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
-        await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
+        
+        if not streamed:
+            await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
+        else:
+            button_msg = stream_last_msg if stream_last_msg else placeholder_message
+            try:
+                await button_msg.edit_reply_markup(reply_markup=reply_markup)
+            except Exception as e:
+                if "not modified" not in str(e).lower():
+                    logging.warning("Final button edit failed: %s", e)
     else:
         # Пустой response
         try:
@@ -402,14 +429,37 @@ async def _handle_research_agent(
                 logging.error("Could not edit placeholder message: %s", edit_error)
             return
 
-        # Используем health-aware роутинг
-        response_text, new_token_count = await _get_ai_response_with_routing(
-            model_for_synthesis,
-            chat_state.history,
+        # Stream the synthesis via unified ProviderRouter
+        from app.handlers.ai_core import _resolve_ai_request
+        from app.streaming import stream_and_display
+
+        _, model_used, _ = await _resolve_ai_request(model_for_synthesis)
+        
+        response_text, success, stream_last_msg = await stream_and_display(
+            placeholder_message,
+            model_name=model_used,
+            history=chat_state.history,
             system_instruction=get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt),
+            thinking_level=chat_state.thinking_level,
             user_id=trace_user_id,
+            bot=placeholder_message.get_bot(),
             chat_id=trace_chat_id,
+            chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
         )
+
+        streamed = bool(success and response_text)
+
+        # We don't get new_token_count from stream, so we approximate or skip
+        new_token_count = 0 
+
+        if not streamed:
+            response_text, new_token_count = await _get_ai_response_with_routing(
+                model_used,
+                chat_state.history,
+                system_instruction=get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt),
+                user_id=trace_user_id,
+                chat_id=trace_chat_id,
+            )
     except Exception as ai_error:
         logging.error("Error in AI synthesis: %s", ai_error)
         chat_state.history.pop()  # Убираем добавленный промпт
@@ -437,7 +487,8 @@ async def _handle_research_agent(
             return  # Error обработана, выходим
         else:
             # Успешный response
-            await send_long_message(placeholder_message, response_text, is_deep_dive=True)
+            if not streamed:
+                await send_long_message(placeholder_message, response_text, is_deep_dive=True)
             chat_state.history.append({"role": "model", "parts": [response_text]})
             chat_state.token_count = new_token_count
             chat_state.is_deep_dive = True

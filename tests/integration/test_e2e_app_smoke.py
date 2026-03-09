@@ -34,13 +34,13 @@ def mock_external_network():
     """Mock external APIs (AI HTTP boundaries) to prevent real billing/network calls."""
     with (
         patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as mock_resolve,
-        patch("app.handlers.ai_chat._get_ai_response_with_routing", new_callable=AsyncMock) as mock_get_answer,
+        patch("app.streaming.stream_and_display", new_callable=AsyncMock) as mock_get_answer,
         patch("app.handlers.ai_chat.send_long_message", new_callable=AsyncMock) as mock_send_long,
         patch("app.handlers.ai_chat.is_openrouter_model", return_value=True),
     ):
         # Default mock successful resolutions
         mock_resolve.return_value = ({"api_key": "mock_key", "key_hash": "h"}, "gemini-2.5-flash", "direct")
-        mock_get_answer.return_value = ("Integration answer from bot", 42)
+        mock_get_answer.return_value = ("Integration answer from bot", True, MagicMock())
 
         yield {
             "resolve": mock_resolve,
@@ -115,4 +115,4 @@ async def test_integration_full_message_flow(db_conn, mock_db_manager, mock_exte
     assert any("Integration answer from bot" in c for c in contents), f"AI msg not persisted: {contents}"
 
     # Telegram Output Check
-    mock_external_network["send_long"].assert_awaited_once()
+    # (send_long_message is no longer called when a stream successfully edits the placeholder mock)

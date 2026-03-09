@@ -16,6 +16,9 @@ from telegram.error import BadRequest, NetworkError
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from app import state
+
+# Concurrency limiter for heavy AI tasks
+from app.adapters.concurrency import heavy_request_semaphore
 from app.config import settings
 from app.handlers.msg_document import handle_document, handle_document_mode_interaction
 from app.handlers.msg_media import (
@@ -39,13 +42,6 @@ from app.security import check_user_rate_limit
 from app.tracing import bind_request_span
 from app.utils.api_logger import api_logger
 from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
-
-# Concurrency limiter for heavy AI tasks
-_HEAVY_REQUEST_LIMIT = max(1, settings.MAX_CONCURRENT_HEAVY_REQUESTS)
-_HEAVY_REQUEST_SEMAPHORE = asyncio.Semaphore(_HEAVY_REQUEST_LIMIT)
-
-# Track fire-and-forget tasks to prevent 'exception never retrieved'
-_background_tasks: set = set()
 
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -157,33 +153,16 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logging.info("Processing text message from user %s", user_id)
             placeholder_message = await update.message.reply_text("🤔 Думаю...")
 
-        _WAIT_STAGES = [
-            (15, "⏳ Обрабатываю ваш запрос..."),
-            (30, "⏳ Ответ генерируется, подождите ещё немного..."),
-            (50, "⏳ Запрос обрабатывается дольше обычного. Пожалуйста, подождите..."),
-        ]
         done_event = asyncio.Event()
         register_heartbeat(placeholder_message.message_id, done_event)
 
         async def _heartbeat() -> None:
+            # We no longer edit the message with hardcoded "waiting" text 
+            # because the unified streaming architecture handles live updates.
+            # This heartbeat task simply waits for cancellation to ensure
+            # any cleanup mechanisms work properly without stepping on streaming's toes.
             try:
-                elapsed = 0
-                for threshold, text in _WAIT_STAGES:
-                    wait_for = threshold - elapsed
-                    if wait_for <= 0:
-                        continue
-                    try:
-                        await asyncio.wait_for(done_event.wait(), timeout=wait_for)
-                        return
-                    except TimeoutError:
-                        pass
-
-                    if done_event.is_set():
-                        return
-
-                    elapsed = threshold
-                    with contextlib.suppress(Exception):
-                        await placeholder_message.edit_text(text)
+                await done_event.wait()
             except asyncio.CancelledError:
                 pass
 
@@ -191,7 +170,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         async def task_wrapper() -> None:
             try:
-                async with _HEAVY_REQUEST_SEMAPHORE:
+                async with heavy_request_semaphore:
                     async with state.get_user_lock(user_id):
                         logging.info("Starting task processing for user %s", user_id)
 
@@ -248,9 +227,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     done_event.set()
                     heartbeat_task.cancel()
 
-        task = asyncio.create_task(task_wrapper())
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
+        from app.utils.background_tasks import submit_task
+        submit_task(task_wrapper(), retry=0)
 
 
 def register(application: Application) -> None:

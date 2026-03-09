@@ -110,14 +110,37 @@ async def _handle_document_question(
 
 Ответь на вопрос пользователя, основываясь на содержимом документа."""
 
-        # Create parts for Gemini API: промпт
+        # Stream via unified ProviderRouter
+        # We need the current model, so we resolve it first to pass to stream_and_display
+        from app.handlers.ai_core import _resolve_ai_request
+        from app.providers import get_provider_router
+        from app.streaming import stream_and_display
+        _, model_used, _ = await _resolve_ai_request(settings.DEFAULT_MODEL)
+        
         parts = [document_prompt] if document_prompt else []
-        response_text, _ = await _get_ai_response_with_routing(
-            settings.DEFAULT_MODEL,
-            [{"role": "user", "parts": parts}],
+        history = [{"role": "user", "parts": parts}]
+        
+        response_text, success, stream_last_msg = await stream_and_display(
+            placeholder_message,
+            model_name=model_used,
+            history=history,
+            system_instruction=None,
+            thinking_level=chat_state.thinking_level,
             user_id=user_id,
-            chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
+            bot=placeholder_message.get_bot(),
+            chat_id=placeholder_message.chat_id,
+            chat_type=placeholder_message.chat.type,
         )
+
+        streamed = bool(success and response_text)
+
+        if not streamed:
+            response_text, _ = await _get_ai_response_with_routing(
+                settings.DEFAULT_MODEL,
+                history,
+                user_id=user_id,
+                chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
+            )
 
         if response_text:
             # Check, является ли response ошибкой
@@ -146,12 +169,21 @@ async def _handle_document_question(
                     [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
                 ]
 
-                # Send response с buttonми
-                await send_long_message(
-                    placeholder_message,
-                    response_text,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
+                # Send response с buttonми (update existing if streamed, otherwise send new)
+                if not streamed:
+                    await send_long_message(
+                        placeholder_message,
+                        response_text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    )
+                else:
+                    button_msg = stream_last_msg if stream_last_msg else placeholder_message
+                    try:
+                        await button_msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+                    except Exception as e:
+                        if "not modified" not in str(e).lower():
+                            logging.warning("Final button edit failed: %s", e)
+
                 await metrics_collector.record_api_call("document_question", settings.DEFAULT_MODEL)
         else:
             try:

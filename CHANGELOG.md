@@ -3,6 +3,39 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.24] – 2026-03-09 – Unified AI Streaming Architecture
+
+### ✨ Unified Real-Time Streaming
+
+- **Universal Streaming Layer**: Replaced static tuple unpacking with a unified `stream_and_display` layer across all AI modalities. Real-time streaming is now fully supported for:
+  - 💬 Regular Chat (`ai_chat.py`)
+  - 📄 Document Analysis Q&A (`ai_document.py`)
+  - 🌉 Image/Photo Analysis (`ai_photo.py`)
+  - 🔍 Web Search & QnA (`ai_search.py`)
+
+### 🧪 Test Suite Adaptations & AsyncPG Fixes
+
+- **Mocking Strategy Update**: Updated all integration and unit tests to correctly mock the 3-tuple signature of `stream_and_display`.
+- **Database Connection Safety**: Patched `_resolve_ai_request` in QnA and Integration tests to prevent `asyncpg.InterfaceError` ("connection was closed in the middle of operation") caused by DB event looping during tests.
+- **Assertion Safety**: Swapped invalid `MagicMock` awaits for `AsyncMock` to ensure stability.
+
+### Files Changed
+
+| File                                      | Change                                                               |
+| ----------------------------------------- | -------------------------------------------------------------------- |
+| `app/handlers/ai_document.py`             | Integrated `stream_and_display` for streaming document Q&A           |
+| `app/handlers/ai_photo.py`                | Vision model multimodal inputs now stream in real time               |
+| `app/handlers/ai_search.py`               | Replaced standard response fetching with generic localized streaming |
+| `app/handlers/agent.py`                   | Refactored orchestrator for streaming compatibility                  |
+| `tests/test_ai_document.py`               | Updated mock signature and assert references                         |
+| `tests/test_ai_photo.py`                  | Updated mock signature and assert references                         |
+| `tests/test_ai_search.py`                 | Patched dependencies to avoid `InterfaceError`                       |
+| `tests/integration/test_e2e_app_smoke.py` | Patched unpacking logic                                              |
+
+### 🧪 Tests: 1054 passed (all suites clean)
+
+---
+
 ## [2.8.23] – 2026-03-09 – Strict AAA Refactoring & Typing Fixes
 
 ### 🧪 Strict AAA Unit & Integration Tests

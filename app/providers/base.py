@@ -240,6 +240,21 @@ class BaseAIProvider(ABC):
         Execute the actual API request. Must be implemented by subclasses.
         """
 
+    @abstractmethod
+    async def stream_response(
+        self,
+        history: list[dict[str, Any]],
+        model_name: str,
+        system_instruction: str | None = None,
+        thinking_level: str | None = None,
+        timeout: float = 120.0,
+    ):
+        """
+        Stream response from AI provider. Must be implemented by subclasses.
+        Yields chunks of text as they arrive.
+        """
+
+
 
 def is_openrouter_model(model_name: str) -> bool:
     """Check if model name indicates an OpenRouter model."""

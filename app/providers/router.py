@@ -201,6 +201,132 @@ class ProviderRouter:
             None,
         )
 
+    async def stream_response(
+        self,
+        preferred_model: str,
+        history: list,
+        system_instruction: str | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
+        use_openrouter: bool | None = None,
+        max_key_retries: int = 3,
+        thinking_level: str | None = None,
+    ):
+        """
+        Stream AI response with automatic key rotation.
+        Yields chunks of text.
+        """
+        from app.agent_use_cases import AgentRequestUseCase
+        from app.providers.base import get_provider_for_model
+        from app.repos.keys import get_key_status_manager
+
+        if user_id and not await self._rate_limiter.check_rate_limit(user_id):
+            yield tag_error(ErrorCode.RATE_LIMIT, "⏳ Слишком много запросов. Пожалуйста, подождите минуту.")
+            return
+
+        if use_openrouter is None and _has_multimodal_content(history):
+            use_openrouter = False
+
+        use_case = AgentRequestUseCase()
+        status_mgr = get_key_status_manager()
+        failed_keys: set[str] = set()
+
+        for attempt in range(max_key_retries):
+            key_data, model_used, resolution = await use_case.resolve_ai_request(
+                preferred_model,
+                use_openrouter=use_openrouter,
+                excluded_key_hashes=failed_keys,
+            )
+
+            if not key_data:
+                is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
+                provider_name = "OpenRouter" if is_or else "Gemini"
+                yield tag_error(ErrorCode.KEYS_EXHAUSTED, f"🚫 Все ключи {provider_name} недоступны.")
+                return
+
+            assert model_used is not None
+            provider = get_provider_for_model(model_used, key_data["api_key"])
+            
+            stream_started = False
+            try:
+                # We yield from the provider's stream
+                async for chunk in provider.stream_response(
+                    history=history,
+                    model_name=model_used,
+                    system_instruction=system_instruction,
+                    thinking_level=thinking_level,
+                ):
+                    if not stream_started:
+                        stream_started = True
+                        # Once we start receiving chunks, we consider the key successful
+                        try:
+                            await status_mgr.record_success(key_data["key_hash"], model_used)
+                            await use_case.increment_key_usage(key_data["key_hash"], model_used, use_openrouter)
+                        except Exception as e:
+                            logging.debug("Non-critical stats update failed: %s", e)
+                    
+                    yield chunk
+                
+                # If we successfully completed the stream, exit the retry loop
+                if stream_started:
+                    return
+
+            except Exception as e:
+                # If the stream failed BEFORE yielding anything, we can retry with another key.
+                # If it failed mid-stream, we must abort because the user already saw partial text.
+                if stream_started:
+                    logging.error("Stream failed mid-flight: %s", e)
+                    yield f"\n\n[Ошибка трансляции: {str(e)}]"
+                    return
+                
+                # Stream didn't start, so this key is bad. Suspend and loop.
+                error_msg = str(e)
+                failed_keys.add(key_data["key_hash"])
+                try:
+                    await status_mgr.suspend_key(
+                        key_data["key_hash"],
+                        model_used,
+                        "transient", # assume stream setup failures are transient
+                        error_msg[:200],
+                    )
+                except Exception as db_e:
+                    logging.warning("Failed to suspend key: %s", db_e)
+                
+                continue
+
+        # Exhausted retries
+        is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
+        provider_name = "OpenRouter" if is_or else "Gemini"
+        yield tag_error(ErrorCode.KEYS_EXHAUSTED, f"🚫 Все доступные ключи {provider_name} не сработали.")
+
+
+        # ── Model-level fallback ─────────────────────────────────────────
+        # All keys failed for the preferred model. If every failure was
+        # "permanent" (API_KEY_INVALID — Google rejects the key for this
+        # specific model), try alternative models before giving up.
+        if all_permanent and failed_keys:
+            fallback_result = await self._try_model_fallback(
+                preferred_model,
+                history,
+                system_instruction,
+                user_id,
+                chat_id,
+                use_openrouter,
+                use_case,
+                status_mgr,
+            )
+            if fallback_result is not None:
+                yield fallback_result[0]
+                return
+
+        is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
+        provider_name = "OpenRouter" if is_or else "Gemini"
+        yield tag_error(
+            ErrorCode.KEYS_EXHAUSTED,
+            f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",
+        )
+        return
+
     async def _try_model_fallback(
         self,
         failed_model: str,

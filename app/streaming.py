@@ -53,80 +53,7 @@ STREAM_MSG_LIMIT = 4000
 _last_finish_reason: str | None = None
 """Side-channel: finish_reason from the last ``stream_gemini_response`` call."""
 
-# Module-level client reuse to avoid per-request allocation & TLS handshake.
-_streaming_client: genai.Client | None = None
-_streaming_client_api_key: str | None = None
-
-
-async def stream_gemini_response(
-    api_key: str,
-    model_name: str,
-    contents: list,
-    config: types.GenerateContentConfig,
-    timeout: float = 100.0,
-) -> AsyncGenerator[str, None]:
-    """Async generator that yields progressive text chunks from Gemini streaming API.
-
-    After iteration completes, check the module-level ``_last_finish_reason``
-    for the model's finish reason (e.g. 'STOP', 'SAFETY', 'RECITATION', 'MAX_TOKENS').
-
-    Yields:
-        Text delta strings as they arrive from the model.
-
-    Raises:
-        TimeoutError: If streaming exceeds timeout.
-        APIError: On Gemini API errors.
-    """
-    global _streaming_client, _streaming_client_api_key
-
-    # Reuse client across requests; rebuild only when api_key changes.
-    if _streaming_client is None or _streaming_client_api_key != api_key:
-        client_kwargs: dict[str, Any] = {"api_key": api_key}
-        http_opts: dict[str, Any] = {"timeout": 90_000}
-        client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]  # Pydantic coerces at runtime
-        _streaming_client = genai.Client(**client_kwargs)  # type: ignore[arg-type]  # Pydantic coerces at runtime
-        _streaming_client_api_key = api_key
-    client = _streaming_client
-
-    # Side-channel: store finish_reason after iteration
-    finish_reason_holder: list[str | None] = [None]
-
-    async def _stream():
-        response_stream = await client.aio.models.generate_content_stream(
-            model=model_name,
-            contents=contents,
-            config=config,
-        )
-        async for chunk in response_stream:
-            # Inspect finish_reason on each chunk (usually set on the last one)
-            try:
-                candidates = getattr(chunk, "candidates", None)
-                if candidates:
-                    fr = getattr(candidates[0], "finish_reason", None)
-                    if fr:
-                        finish_reason_holder[0] = str(fr)
-            except (IndexError, AttributeError):
-                pass
-
-            if chunk.text:
-                yield chunk.text
-
-    try:
-        async with asyncio.timeout(timeout):
-            async for delta in _stream():
-                yield delta
-    except TimeoutError:
-        logging.error("Streaming timed out for model %s", model_name)
-        raise
-    except APIError:
-        raise
-    except Exception as e:
-        logging.error("Streaming error: %s", e, exc_info=True)
-        raise
-    finally:
-        # Expose finish_reason via module-level variable (read by stream_and_display)
-        global _last_finish_reason
-        _last_finish_reason = finish_reason_holder[0]
+# (Stream_gemini_response removed: logic moved to providers)
 
 
 # Finish reasons that indicate the model was blocked mid-response
@@ -244,14 +171,11 @@ class StreamingWriter:
 
     def __init__(
         self,
-        placeholder_message,
+        adapter: StreamingUIAdapter,
         *,
-        bot=None,
-        chat_id: int = 0,
         chat_type: str = "private",
     ):
-        self._msg = placeholder_message  # Current message being edited
-        self._first_msg = placeholder_message  # Original placeholder (never changes)
+        self._adapter = adapter  # Generic UI adapter
         self._buffer = ""  # Buffer for CURRENT message only
         self._full_text = ""  # Entire accumulated text across all messages
         self._last_edit_time = 0.0
@@ -259,11 +183,8 @@ class StreamingWriter:
         self._edit_count = 0
         self._msg_count = 1  # How many messages in chain
 
-        # Draft mode: only for private chats with a bot instance
-        self._use_drafts = (chat_type == "private") and (bot is not None)
-        self._bot = bot
-        self._chat_id = chat_id
-        self._draft_id = random.randint(1, 2**31 - 1) if self._use_drafts else 0
+        # Draft mode: supported if adapter has draft capability
+        self._use_drafts = chat_type == "private" and getattr(adapter, "_bot", None) is not None
 
         # Mode-specific debounce
         if self._use_drafts:
@@ -322,16 +243,14 @@ class StreamingWriter:
                     await self._overflow_to_new_message()
                     return
 
-                await self._bot.send_message_draft(
-                    chat_id=self._chat_id,
-                    draft_id=self._draft_id,
+                await self._adapter.send_draft(
                     text=formatted_text,
                     parse_mode=parse_mode,
                 )
                 self._last_edit_time = time.monotonic()
                 self._pending_chars = 0
                 self._edit_count += 1
-            except TelegramError as e:
+            except Exception as e:
                 if "not modified" not in str(e).lower():
                     logging.warning(
                         "Draft streaming failed (attempt %d): %s — falling back to classic",
@@ -367,11 +286,11 @@ class StreamingWriter:
                 await self._flush(final=True)
                 return
 
-            await self._msg.edit_text(formatted_text, parse_mode=parse_mode)
+            await self._adapter.edit_message(formatted_text, parse_mode=parse_mode)
             self._last_edit_time = time.monotonic()
             self._pending_chars = 0
             self._edit_count += 1
-        except TelegramError as e:
+        except Exception as e:
             # "Message is not modified" is expected if text hasn't changed enough
             if "not modified" not in str(e).lower():
                 logging.warning("Streaming edit failed (attempt %d): %s", self._edit_count, e)
@@ -402,9 +321,9 @@ class StreamingWriter:
         try:
             formatted_frozen, parse_mode = TelegramFormatter.format_text(frozen_text)
             formatted_frozen = sanitize_html_tags(formatted_frozen)
-            await self._msg.edit_text(formatted_frozen, parse_mode=parse_mode)
+            await self._adapter.edit_message(formatted_frozen, parse_mode=parse_mode)
             self._edit_count += 1
-        except TelegramError as e:
+        except Exception as e:
             if "not modified" not in str(e).lower():
                 logging.warning("Failed to freeze message on overflow: %s", e)
 
@@ -412,12 +331,11 @@ class StreamingWriter:
         try:
             initial_text = remainder + STREAMING_INDICATOR if remainder.strip() else STREAMING_INDICATOR
             formatted_initial, parse_mode = TelegramFormatter.format_text(initial_text)
-            new_msg = await self._msg.reply_text(
+            self._adapter = await self._adapter.reply_new_message(
                 formatted_initial,
                 parse_mode=parse_mode,
             )
             # Swap to the new message
-            self._msg = new_msg
             self._buffer = remainder
             self._pending_chars = 0
             self._last_edit_time = time.monotonic()
@@ -427,7 +345,7 @@ class StreamingWriter:
                 self._msg_count,
                 len(frozen_text),
             )
-        except TelegramError as e:
+        except Exception as e:
             logging.error("Failed to create overflow message: %s", e)
             # If we can't create a new message, stop further edits
             # but don't lose text (it's still in _full_text)
@@ -469,7 +387,7 @@ class StreamingWriter:
 
         This is the message that buttons should be attached to.
         """
-        return self._msg
+        return self._adapter.last_message
 
     @property
     def text(self) -> str:
@@ -487,17 +405,17 @@ class StreamingWriter:
 
 async def stream_and_display(
     placeholder_message,
-    api_key: str,
     model_name: str,
-    contents: list,
-    config: types.GenerateContentConfig,
-    timeout: float = 100.0,
+    history: list,
+    system_instruction: str | None = None,
+    thinking_level: str | None = None,
+    user_id: int | None = None,
     *,
     bot=None,
     chat_id: int = 0,
     chat_type: str = "private",
 ) -> tuple[str, bool, Message | None]:
-    """High-level: stream Gemini response and progressively update Telegram message.
+    """High-level: stream AI response and progressively update Telegram message.
 
     Supports multi-message streaming: when a single message exceeds
     Telegram's ~4096 char limit, the writer seamlessly continues into
@@ -509,11 +427,11 @@ async def stream_and_display(
 
     Args:
         placeholder_message: Telegram message to edit progressively.
-        api_key: Gemini API key.
         model_name: Model to use.
-        contents: Prepared contents list.
-        config: GenerateContentConfig.
-        timeout: Max streaming time.
+        history: Chat history.
+        system_instruction: Optional system instruction.
+        thinking_level: Optional thinking level (e.g. "low", "high").
+        user_id: User ID for rate limiting.
         bot: Bot instance (required for draft mode).
         chat_id: Target chat ID.
         chat_type: Chat type ("private", "group", "supergroup", etc.).
@@ -524,20 +442,32 @@ async def stream_and_display(
         placeholder_message if overflow occurred). Callers should use it
         for post-stream edits like adding buttons.
     """
-    writer = StreamingWriter(
-        placeholder_message,
+    from app.adapters.ui_adapter import TelegramMessageAdapter
+    
+    adapter = TelegramMessageAdapter(
+        message=placeholder_message,
         bot=bot,
         chat_id=chat_id,
+        draft_id=random.randint(1, 2**31 - 1) if bot and chat_type == "private" else 0
+    )
+    
+    writer = StreamingWriter(
+        adapter,
         chat_type=chat_type,
     )
 
     try:
-        async for delta in stream_gemini_response(
-            api_key,
-            model_name,
-            contents,
-            config,
-            timeout=timeout,
+        from app.providers import get_provider_router
+        router = get_provider_router()
+
+        async for delta in router.stream_response(
+            preferred_model=model_name,
+            history=history,
+            system_instruction=system_instruction,
+            user_id=user_id,
+            chat_id=chat_id,
+            thinking_level=thinking_level,
+            max_key_retries=3,
         ):
             await writer.write(delta)
 

@@ -62,47 +62,48 @@ class TestStreamingWriterInit:
 
     def test_classic_mode_defaults(self):
         """Without bot, writer uses classic mode with edit debounce."""
-        msg = MagicMock()
-        writer = StreamingWriter(msg)
+        adapter = MagicMock()
+        adapter._bot = None
+        writer = StreamingWriter(adapter, chat_type="group")
         assert writer._use_drafts is False
         assert writer._debounce_s == EDIT_DEBOUNCE_S
         assert writer._min_chunk == MIN_CHUNK_SIZE
 
     def test_draft_mode_in_private_chat(self):
         """With bot + private chat → draft mode, faster debounce."""
-        msg = MagicMock()
-        bot = MagicMock()
-        writer = StreamingWriter(msg, bot=bot, chat_id=123, chat_type="private")
+        adapter = MagicMock()
+        adapter._bot = MagicMock()
+        writer = StreamingWriter(adapter, chat_type="private")
         assert writer._use_drafts is True
         assert writer._debounce_s == DRAFT_DEBOUNCE_S
         assert writer._min_chunk == DRAFT_MIN_CHUNK
-        assert writer._draft_id > 0
-        assert writer._chat_id == 123
 
     def test_classic_mode_in_group_chat(self):
         """In group chat → classic mode even with bot."""
-        msg = MagicMock()
-        bot = MagicMock()
-        writer = StreamingWriter(msg, bot=bot, chat_id=456, chat_type="group")
+        adapter = MagicMock()
+        adapter._bot = MagicMock()
+        writer = StreamingWriter(adapter, chat_type="group")
         assert writer._use_drafts is False
         assert writer._debounce_s == EDIT_DEBOUNCE_S
 
     def test_classic_mode_in_supergroup_chat(self):
         """In supergroup chat → classic mode."""
-        msg = MagicMock()
-        bot = MagicMock()
-        writer = StreamingWriter(msg, bot=bot, chat_id=789, chat_type="supergroup")
+        adapter = MagicMock()
+        adapter._bot = MagicMock()
+        writer = StreamingWriter(adapter, chat_type="supergroup")
         assert writer._use_drafts is False
 
     def test_classic_mode_without_bot(self):
         """Private chat but no bot → classic mode (fallback)."""
-        msg = MagicMock()
-        writer = StreamingWriter(msg, chat_id=123, chat_type="private")
+        adapter = MagicMock()
+        adapter._bot = None
+        writer = StreamingWriter(adapter, chat_type="private")
         assert writer._use_drafts is False
 
     def test_initial_state(self):
-        msg = MagicMock()
-        writer = StreamingWriter(msg)
+        adapter = MagicMock()
+        adapter._bot = None
+        writer = StreamingWriter(adapter, chat_type="private")
         assert writer.text == ""
         assert writer.edit_count == 0
         assert writer.message_count == 1  # Initial placeholder counts as 1
@@ -120,12 +121,12 @@ class TestStreamingWriterDraftMode:
         monkeypatch.setattr("app.streaming.DRAFT_DEBOUNCE_S", 0)
         monkeypatch.setattr("app.streaming.DRAFT_MIN_CHUNK", 0)
 
-        msg = MagicMock()
-        msg.edit_text = AsyncMock()
-        bot = MagicMock()
-        bot.send_message_draft = AsyncMock(return_value=True)
-        writer = StreamingWriter(msg, bot=bot, chat_id=42, chat_type="private")
-        # Zero debounce for tests (monkeypatch affects module, not instance)
+        adapter = MagicMock()
+        adapter.edit_message = AsyncMock()
+        adapter.send_draft = AsyncMock()
+        adapter._bot = MagicMock()
+
+        writer = StreamingWriter(adapter, chat_type="private")
         writer._debounce_s = 0
         writer._min_chunk = 0
         return writer
@@ -135,10 +136,8 @@ class TestStreamingWriterDraftMode:
         """Mid-stream flush uses sendMessageDraft, not edit_text."""
         await draft_writer.write("Hello world")
 
-        draft_writer._bot.send_message_draft.assert_called_once()
-        call_kwargs = draft_writer._bot.send_message_draft.call_args
-        assert call_kwargs.kwargs["chat_id"] == 42
-        assert call_kwargs.kwargs["draft_id"] == draft_writer._draft_id
+        draft_writer._adapter.send_draft.assert_called_once()
+        call_kwargs = draft_writer._adapter.send_draft.call_args
         assert "Hello world" in call_kwargs.kwargs["text"]
 
     @pytest.mark.asyncio
@@ -146,7 +145,7 @@ class TestStreamingWriterDraftMode:
         """Draft mode should NOT append cursor indicator ▍."""
         await draft_writer.write("Hello")
 
-        call_kwargs = draft_writer._bot.send_message_draft.call_args
+        call_kwargs = draft_writer._adapter.send_draft.call_args
         assert STREAMING_INDICATOR not in call_kwargs.kwargs["text"]
 
     @pytest.mark.asyncio
@@ -157,23 +156,21 @@ class TestStreamingWriterDraftMode:
 
         await draft_writer.finalize()
 
-        draft_writer._msg.edit_text.assert_called_once()
-        call_args = draft_writer._msg.edit_text.call_args
+        draft_writer._adapter.edit_message.assert_called_once()
+        call_args = draft_writer._adapter.edit_message.call_args
         assert "Final answer" in call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_draft_fallback_on_error(self, draft_writer):
         """On TelegramError, draft mode falls back to classic edit_text."""
-        from telegram.error import TelegramError
-
-        draft_writer._bot.send_message_draft.side_effect = TelegramError("Forbidden")
+        draft_writer._adapter.send_draft.side_effect = Exception("Forbidden")
 
         await draft_writer.write("Test text that triggers error")
 
         assert draft_writer._use_drafts is False
         assert draft_writer._debounce_s == EDIT_DEBOUNCE_S
-        # Fallback should have called edit_text
-        draft_writer._msg.edit_text.assert_called_once()
+        # Fallback should have called edit_message
+        draft_writer._adapter.edit_message.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_draft_mode_increments_edit_count(self, draft_writer):
@@ -194,20 +191,22 @@ class TestStreamingWriterClassicMode:
         monkeypatch.setattr("app.streaming.EDIT_DEBOUNCE_S", 0)
         monkeypatch.setattr("app.streaming.MIN_CHUNK_SIZE", 0)
 
-        msg = MagicMock()
-        msg.edit_text = AsyncMock()
-        writer = StreamingWriter(msg, chat_type="group")
+        adapter = MagicMock()
+        adapter.edit_message = AsyncMock()
+        adapter._bot = None
+
+        writer = StreamingWriter(adapter, chat_type="group")
         writer._debounce_s = 0
         writer._min_chunk = 0
         return writer
 
     @pytest.mark.asyncio
     async def test_classic_mode_calls_edit_text(self, classic_writer):
-        """Non-draft mode uses edit_text for mid-stream updates."""
+        """Non-draft mode uses edit_message for mid-stream updates."""
         await classic_writer.write("Hello classic")
 
-        classic_writer._msg.edit_text.assert_called_once()
-        call_args = classic_writer._msg.edit_text.call_args
+        classic_writer._adapter.edit_message.assert_called_once()
+        call_args = classic_writer._adapter.edit_message.call_args
         # Classic mode appends cursor indicator
         assert STREAMING_INDICATOR in call_args[0][0]
 
@@ -219,7 +218,7 @@ class TestStreamingWriterClassicMode:
 
         await classic_writer.finalize()
 
-        call_args = classic_writer._msg.edit_text.call_args
+        call_args = classic_writer._adapter.edit_message.call_args
         assert STREAMING_INDICATOR not in call_args[0][0]
 
 
@@ -230,22 +229,22 @@ class TestOverflowFormattingContext:
     """Verify formatting context is carried across overflow message boundaries."""
 
     @pytest.fixture()
-    def mock_message(self):
-        """Create a mock Telegram message that tracks edit_text and reply_text calls."""
-        msg = MagicMock()
-        msg.edit_text = AsyncMock()
-        # reply_text returns a new mock message (the overflow message)
-        new_msg = MagicMock()
-        new_msg.edit_text = AsyncMock()
-        new_msg.reply_text = AsyncMock(return_value=MagicMock())
-        msg.reply_text = AsyncMock(return_value=new_msg)
-        return msg
+    def mock_adapter(self):
+        """Create a mock adapter that tracks edit_message and reply_new_message calls."""
+        adapter = MagicMock()
+        adapter.edit_message = AsyncMock()
+        new_adapter = MagicMock()
+        new_adapter.edit_message = AsyncMock()
+        new_adapter.reply_new_message = AsyncMock(return_value=MagicMock())
+        adapter.reply_new_message = AsyncMock(return_value=new_adapter)
+        adapter._bot = None
+        return adapter
 
     @pytest.mark.asyncio
-    async def test_overflow_preserves_bold_context(self, mock_message, monkeypatch):
+    async def test_overflow_preserves_bold_context(self, mock_adapter, monkeypatch):
         """When bold opens in msg1 and closes in msg2, both get proper markers."""
         monkeypatch.setattr("app.streaming.STREAM_MSG_LIMIT", 80)
-        writer = StreamingWriter(mock_message)
+        writer = StreamingWriter(mock_adapter, chat_type="group")
         writer._debounce_s = 0
         writer._min_chunk = 0
 
@@ -257,7 +256,7 @@ class TestOverflowFormattingContext:
         await writer._overflow_to_new_message()
 
         # The frozen text (first message) should have balanced <b> tags
-        frozen_edit_call = mock_message.edit_text.call_args
+        frozen_edit_call = mock_adapter.edit_message.call_args
         frozen_html = frozen_edit_call[0][0]
         assert frozen_html.count("<b>") == frozen_html.count("</b>")
 
@@ -265,10 +264,10 @@ class TestOverflowFormattingContext:
         assert writer._buffer.startswith("**")
 
     @pytest.mark.asyncio
-    async def test_overflow_preserves_code_block_context(self, mock_message, monkeypatch):
+    async def test_overflow_preserves_code_block_context(self, mock_adapter, monkeypatch):
         """When a code block opens in msg1, msg2 gets a reopened fence."""
         monkeypatch.setattr("app.streaming.STREAM_MSG_LIMIT", 80)
-        writer = StreamingWriter(mock_message)
+        writer = StreamingWriter(mock_adapter, chat_type="group")
         writer._debounce_s = 0
         writer._min_chunk = 0
 
@@ -279,15 +278,15 @@ class TestOverflowFormattingContext:
         await writer._overflow_to_new_message()
 
         # The frozen message should contain a <pre> with </pre> (closed code block)
-        frozen_call = mock_message.edit_text.call_args
+        frozen_call = mock_adapter.edit_message.call_args
         frozen_html = frozen_call[0][0]
         assert frozen_html.count("<pre>") == frozen_html.count("</pre>")
 
     @pytest.mark.asyncio
-    async def test_overflow_preserves_inline_code_context(self, mock_message, monkeypatch):
+    async def test_overflow_preserves_inline_code_context(self, mock_adapter, monkeypatch):
         """When inline code ` opens in msg1, msg2 gets a reopened backtick."""
         monkeypatch.setattr("app.streaming.STREAM_MSG_LIMIT", 50)
-        writer = StreamingWriter(mock_message)
+        writer = StreamingWriter(mock_adapter, chat_type="group")
         writer._debounce_s = 0
         writer._min_chunk = 0
 
@@ -297,16 +296,16 @@ class TestOverflowFormattingContext:
 
         await writer._overflow_to_new_message()
 
-        frozen_call = mock_message.edit_text.call_args
+        frozen_call = mock_adapter.edit_message.call_args
         frozen_html = frozen_call[0][0]
         # <code> should be balanced
         assert frozen_html.count("<code>") == frozen_html.count("</code>")
 
     @pytest.mark.asyncio
-    async def test_overflow_no_extra_markers_when_clean(self, mock_message, monkeypatch):
+    async def test_overflow_no_extra_markers_when_clean(self, mock_adapter, monkeypatch):
         """Clean split (all formatting closed) should not add extra markers."""
         monkeypatch.setattr("app.streaming.STREAM_MSG_LIMIT", 50)
-        writer = StreamingWriter(mock_message)
+        writer = StreamingWriter(mock_adapter, chat_type="group")
         writer._debounce_s = 0
         writer._min_chunk = 0
 
@@ -317,7 +316,7 @@ class TestOverflowFormattingContext:
         await writer._overflow_to_new_message()
 
         # reply_text should not start with bold
-        reply_call = mock_message.reply_text.call_args
+        reply_call = mock_adapter.reply_new_message.call_args
         reply_html = reply_call[0][0]
         # Should not have <b> tag at the very beginning (before content)
         stripped = reply_html.lstrip()
