@@ -8,7 +8,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 
 ## Current Status
 
-**Production-ish**. The application uses industry-standard libraries (Quart, asyncpg, python-telegram-bot v20+) and supports Docker deployments with built-in telemetry, circuit breakers, and connection pooling. However, certain schema migrations and architectural limits are still evolving (e.g., in-memory parsing constraints for heavy documents).
+**Production-Ready**. The application uses industry-standard libraries (Quart, asyncpg, python-telegram-bot v20+) and supports Docker deployments with built-in telemetry, circuit breakers, and connection pooling. All critical concurrency limitations and shutdown bottlenecks have been recently stabilized for safe horizontal scaling.
 
 ## Features
 

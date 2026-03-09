@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 import httpx
+from cachetools import LRUCache
 from google import genai
 from google.genai import types
 from google.genai.errors import APIError
@@ -18,13 +19,26 @@ from app.providers.base import AIResponse, BaseAIProvider, _build_thinking_confi
 from app.utils.api_logger import api_logger
 from app.utils.image_utils import save_image_as_bytes
 
+# Global cache for genai.Client instances to reuse connection pools (TLS/TCP)
+# Key: API Key (string), Value: genai.Client
+_gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
+
 
 class GeminiProvider(BaseAIProvider):
     """Google Gemini AI provider — self-contained execution logic."""
 
     provider_name = "gemini"
-    _client: Any = None  # Lazily-cached genai.Client
-    _client_api_key: str | None = None  # Track which key the cached client uses
+
+    def __init__(self, api_key: str):
+        # We call super() first to validate the key type
+        super().__init__(api_key)
+        # Avoid shadow assignments; pull/push to the global cache
+        if api_key not in _gemini_clients_cache:
+            client_kwargs: dict[str, Any] = {"api_key": api_key}
+            http_opts: dict[str, Any] = {"timeout": 90_000}  # 90s SDK deadline
+            client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]  # Pydantic coerces
+            _gemini_clients_cache[api_key] = genai.Client(**client_kwargs)  # type: ignore[arg-type]  # Pydantic coerces
+        self._client = _gemini_clients_cache[api_key]
 
     async def _execute_request(
         self,
@@ -64,14 +78,6 @@ class GeminiProvider(BaseAIProvider):
                 has_images=has_images,
             )
 
-            # Reuse client across requests (connection pooling, TLS caching).
-            # Rebuild only when api_key changes or on first call.
-            if self._client is None or self._client_api_key != self.api_key:
-                client_kwargs: dict[str, Any] = {"api_key": self.api_key}
-                http_opts: dict[str, Any] = {"timeout": 90_000}  # 90s SDK deadline
-                client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]  # Pydantic coerces
-                self._client = genai.Client(**client_kwargs)  # type: ignore[arg-type]  # Pydantic coerces
-                self._client_api_key = self.api_key
             client = self._client
 
             # Convert history → types.Content

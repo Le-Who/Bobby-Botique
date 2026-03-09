@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.providers import GeminiProvider
+from app.providers.gemini import _gemini_clients_cache
 
 
 class TestGeminiTimeoutSmoke:
@@ -21,7 +22,7 @@ class TestGeminiTimeoutSmoke:
     @pytest.mark.asyncio
     async def test_async_sdk_timeout_cancels_properly(self):
         """When generate_content takes too long, asyncio.wait_for should cancel it cleanly."""
-        provider = GeminiProvider("key")
+        _gemini_clients_cache.clear()
 
         async def slow_generate(*args, **kwargs):
             await asyncio.sleep(999)
@@ -33,6 +34,8 @@ class TestGeminiTimeoutSmoke:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
+            
+            provider = GeminiProvider("key")
 
             mock_client = MockClient.return_value
             mock_aio_models = MagicMock()
@@ -60,7 +63,7 @@ class TestGeminiTimeoutSmoke:
     @pytest.mark.asyncio
     async def test_timeout_does_not_leave_zombie_tasks(self):
         """After timeout, there should be no leftover pending tasks."""
-        provider = GeminiProvider("key")
+        _gemini_clients_cache.clear()
 
         async def slow_generate(*args, **kwargs):
             await asyncio.sleep(999)
@@ -72,6 +75,8 @@ class TestGeminiTimeoutSmoke:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
+            
+            provider = GeminiProvider("key")
 
             mock_client = MockClient.return_value
             mock_aio_models = MagicMock()
@@ -124,7 +129,7 @@ class TestGeminiTimeoutSmoke:
     @pytest.mark.asyncio
     async def test_sdk_http_timeout_is_configured(self):
         """Verify that the genai.Client is created with HttpOptions(timeout=90_000)."""
-        provider = GeminiProvider("key")
+        _gemini_clients_cache.clear()
 
         with (
             patch("app.providers.gemini.genai.Client") as MockClient,
@@ -133,6 +138,8 @@ class TestGeminiTimeoutSmoke:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
+            
+            provider = GeminiProvider("key")
 
             mock_response = MagicMock()
             mock_response.text = "ok"

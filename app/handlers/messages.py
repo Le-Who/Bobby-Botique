@@ -170,8 +170,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         async def task_wrapper() -> None:
             try:
-                async with heavy_request_semaphore:
-                    async with state.get_user_lock(user_id):
+                # Lock inversion fix: acquire user lock BEFORE the global semaphore.
+                # This ensures a single user doesn't consume all global slots while waiting for their own lock.
+                async with state.get_user_lock(user_id):
+                    async with heavy_request_semaphore:
                         logging.info("Starting task processing for user %s", user_id)
 
                         try:

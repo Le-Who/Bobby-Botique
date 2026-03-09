@@ -14,6 +14,7 @@ from app.providers import (
     get_ai_response,
     is_openrouter_model,
 )
+from app.providers.gemini import _gemini_clients_cache
 
 
 class TestAIResponse:
@@ -182,7 +183,7 @@ class TestProviders:
     @pytest.mark.asyncio
     async def test_gemini_wrapper_success(self):
         """GeminiProvider should return AIResponse on success."""
-        wrapper = GeminiProvider("test-key")
+        _gemini_clients_cache.clear()
 
         mock_response = MagicMock()
         mock_response.text = "Hello!"
@@ -198,6 +199,9 @@ class TestProviders:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
+            
+            wrapper = GeminiProvider("test-key")
+            
             mock_aio = MagicMock()
             mock_aio.generate_content = AsyncMock(return_value=mock_response)
             MockClient.return_value.aio.models = mock_aio
@@ -219,7 +223,7 @@ class TestProviders:
     @pytest.mark.asyncio
     async def test_gemini_wrapper_error(self):
         """GeminiProvider should detect error responses."""
-        wrapper = GeminiProvider("test-key")
+        _gemini_clients_cache.clear()
 
         mock_response = MagicMock()
         mock_response.text = None  # Empty response triggers error
@@ -231,6 +235,9 @@ class TestProviders:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
+            
+            wrapper = GeminiProvider("test-key")
+            
             mock_aio = MagicMock()
             mock_aio.generate_content = AsyncMock(return_value=mock_response)
             MockClient.return_value.aio.models = mock_aio

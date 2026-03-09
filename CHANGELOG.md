@@ -3,6 +3,28 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.29] - 2026-03-10 - Concurrency & Graceful Shutdown Bug Fixes
+
+### 🛡️ Concurrency & Operational Stability
+
+- **Concurrency Starvation Fixed**: Inverted the locking order in `messages.py`. Users now acquire their `state.get_user_lock` _before_ taking a slot from the global `heavy_request_semaphore`. Prevention of head-of-line blocking where a single active user could monopolize the entire system.
+- **Gemini Connection Pool Leak Fixed**: Implemented `cachetools.LRUCache` to persistently cache Google `genai.Client` instances by API key. Resolves a critical leak where every request instantiated a fresh `httpx.AsyncClient` preventing TLS session reuse and exhausting sockets.
+- **Graceful Shutdown Bypass Fixed**: `bot.py` now explicitly catches `asyncio.CancelledError` thrown by the `uvloop` shutdown signals, safely executing the `application.stop()` sequence under `asyncio.shield` to prevent data loss.
+- **Task Queue Deadlock Eliminated**: Modified `TaskQueue.stop()` to invoke `worker.cancel()` rather than using blocking `queue.put()` operations. This prevents a classic shutdown deadlock when the queue is completely saturated.
+
+### Files Changed
+
+| File                       | Change                                                               |
+| -------------------------- | -------------------------------------------------------------------- |
+| `app/handlers/messages.py` | Lock inversion (`user_lock` then `heavy_request_semaphore`)          |
+| `app/providers/gemini.py`  | Global `_gemini_clients_cache` LRU implementation                    |
+| `bot.py`                   | Catch `asyncio.CancelledError` and shield `application.stop()`       |
+| `app/queue.py`             | Prevent queue deadlock by migrating blocking shutdown to `.cancel()` |
+
+### 🧪 Tests: Re-validated Unit Suites
+
+---
+
 ## [2.8.28] - 2026-03-09 - Database Latency & N+1 Roundtrip Fixes
 
 ### ⚡ Performance & Database Query Batching

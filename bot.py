@@ -292,15 +292,20 @@ async def run_bot_with_retry():
             pass  # Non-critical
 
         # Wait for shutdown event
-        await shutdown_event.wait()
-
-        logging.info("Stopping bot...")
-        if webhook_url:
-            await application.bot.delete_webhook()
-        else:
-            await application.updater.stop()
-        await application.stop()
-        logging.info("Bot stopped.")
+        try:
+            await shutdown_event.wait()
+        except asyncio.CancelledError:
+            logging.info("Bot run task received CancelledError (shutdown initiated).")
+            # Don't re-raise here; let the finally block perform cleanup.
+        finally:
+            logging.info("Stopping bot...")
+            # We shield the shutdown calls to ensure they run even if the cancellation propagates
+            if webhook_url:
+                await asyncio.shield(application.bot.delete_webhook())
+            else:
+                await asyncio.shield(application.updater.stop())
+            await asyncio.shield(application.stop())
+            logging.info("Bot stopped.")
 
     except Exception as e:
         logging.critical(f"Critical bot error: {e}", exc_info=True)

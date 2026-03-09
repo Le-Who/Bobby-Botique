@@ -102,9 +102,11 @@ class TaskQueue:
 
         self.running = False
         logging.info("Stopping task queue...")
-        # Add сигналы завершения for каждого воркера
-        for _ in range(self.max_workers):
-            await self.queue.put((float("-inf"), None))
+        # Cancel all workers to prevent deadlock when queue is full
+        for worker in self.workers:
+            if not worker.done():
+                worker.cancel()
+
         # Ждем завершения всех воркеров
         await asyncio.gather(*self.workers, return_exceptions=True)
         self.workers.clear()
