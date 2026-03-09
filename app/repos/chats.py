@@ -38,6 +38,9 @@ def _extract_message_content(msg: dict) -> str:
     return ""
 
 
+import json
+
+
 @timed_operation("get_user_chat")
 async def get_user_chat(user_id: int) -> ChatState | None:
     """Load the active chat state for a user from the database."""
@@ -47,54 +50,65 @@ async def get_user_chat(user_id: int) -> ChatState | None:
     async with db_manager.pool.acquire() as conn:
         await set_user_context(user_id, False, conn=conn)
         try:
-            chat_result = await db_query(
-                "SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level FROM chats WHERE user_id = $1",
-                (user_id,),
-                conn=conn,
-            )
-            user_result = await db_query(
-                "SELECT is_deep_dive, deep_dive_thread_id FROM users WHERE user_id = $1",
-                (user_id,),
-                conn=conn,
-            )
+            query = """
+                SELECT
+                    (SELECT row_to_json(u)::jsonb FROM (SELECT is_deep_dive, deep_dive_thread_id FROM users WHERE user_id = $1) u) as user_info,
+                    (SELECT row_to_json(c)::jsonb FROM (SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level FROM chats WHERE user_id = $1) c) as chat_info,
+                    (SELECT COALESCE(jsonb_agg(jsonb_build_object('role', role, 'content', content) ORDER BY id ASC), '[]'::jsonb) FROM active_chat_messages WHERE user_id = $1) as messages
+            """
+            result = await db_query(query, (user_id,), conn=conn)
 
-            if not chat_result:
-                default_model = settings.DEFAULT_MODEL if settings else "gemini-2.0-flash"
-                chat_state = ChatState(
-                    history=[],
-                    model=default_model,
-                    token_count=0,
-                    search_enabled=False,
-                    system_prompt=None,
-                )
+            if not result:
+                # Should normally have 1 full row even if empty, but safety check
+                return _default_chat_state()
+
+            row = result[0]
+            chat_info = row.get("chat_info")
+            user_info = row.get("user_info")
+            messages = row.get("messages", [])
+
+            # Defensive decode in case asyncpg misses jsonb codec mapping
+            if isinstance(chat_info, str):
+                chat_info = json.loads(chat_info)
+            if isinstance(user_info, str):
+                user_info = json.loads(user_info)
+            if isinstance(messages, str):
+                messages = json.loads(messages)
+
+            if not chat_info:
+                chat_state = _default_chat_state()
             else:
-                row = chat_result[0]
-                messages = await db_query(
-                    "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC",
-                    (user_id,),
-                    conn=conn,
-                )
-                history = [{"role": m["role"], "parts": [m["content"]]} for m in messages]
-
+                history = [{"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])]
                 chat_state = ChatState(
                     history=history,
-                    model=row["model"],
-                    token_count=row["token_count"],
-                    search_enabled=row["search_enabled"],
-                    system_prompt=row["system_prompt"],
-                    context_summary=row.get("context_summary"),
-                    thinking_level=row.get("thinking_level"),
+                    model=chat_info.get("model"),
+                    token_count=chat_info.get("token_count", 0),
+                    search_enabled=chat_info.get("search_enabled", False),
+                    system_prompt=chat_info.get("system_prompt"),
+                    context_summary=chat_info.get("context_summary"),
+                    thinking_level=chat_info.get("thinking_level"),
                 )
 
-            if user_result:
-                chat_state.is_deep_dive = bool(user_result[0].get("is_deep_dive", False))
-                chat_state.deep_dive_thread_id = user_result[0].get("deep_dive_thread_id")
+            if user_info:
+                chat_state.is_deep_dive = bool(user_info.get("is_deep_dive", False))
+                chat_state.deep_dive_thread_id = user_info.get("deep_dive_thread_id")
 
             chat_state._original_length = len(chat_state.history)
 
             return chat_state
         finally:
             await clear_user_context(conn=conn)
+
+
+def _default_chat_state() -> ChatState:
+    default_model = settings.DEFAULT_MODEL if settings else "gemini-2.0-flash"
+    return ChatState(
+        history=[],
+        model=default_model,
+        token_count=0,
+        search_enabled=False,
+        system_prompt=None,
+    )
 
 
 @timed_operation("update_user_chat")
@@ -109,62 +123,50 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
             current_length = len(chat_state.history)
             original_length = getattr(chat_state, "_original_length", 0)
 
+            should_delete = False
+            messages_to_insert = []
+
             if current_length == 0 and original_length > 0:
-                # History was cleared — delete all messages
-                await db_query(
-                    "DELETE FROM active_chat_messages WHERE user_id = $1",
-                    (user_id,),
-                    conn=conn,
-                )
+                should_delete = True
             elif current_length > original_length:
-                # New messages appended — insert only the new ones
                 new_msgs = chat_state.history[original_length:]
-
-                insert_data = []
                 for msg in new_msgs:
-                    role = msg.get("role", "user")
-                    content = _extract_message_content(msg)
-                    insert_data.append((user_id, role, content))
-
-                if insert_data:
-                    await db_execute_many(
-                        "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-                        insert_data,
-                        conn=conn,
+                    messages_to_insert.append(
+                        {"role": msg.get("role", "user"), "content": _extract_message_content(msg)}
                     )
             elif current_length < original_length:
-                # History was trimmed — full rewrite
-                await db_query(
-                    "DELETE FROM active_chat_messages WHERE user_id = $1",
-                    (user_id,),
-                    conn=conn,
-                )
-
-                insert_data = []
+                should_delete = True
                 for msg in chat_state.history:
-                    role = msg.get("role", "user")
-                    content = _extract_message_content(msg)
-                    insert_data.append((user_id, role, content))
-                if insert_data:
-                    await db_execute_many(
-                        "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-                        insert_data,
-                        conn=conn,
+                    messages_to_insert.append(
+                        {"role": msg.get("role", "user"), "content": _extract_message_content(msg)}
                     )
 
+            messages_json = json.dumps(messages_to_insert) if messages_to_insert else "[]"
             chat_state._original_length = current_length
 
-            chat_query = """
-            INSERT INTO chats (user_id, model, token_count, search_enabled, system_prompt, context_summary, thinking_level)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (user_id)
-            DO UPDATE SET
-                model = EXCLUDED.model, token_count = EXCLUDED.token_count,
-                search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt,
-                context_summary = EXCLUDED.context_summary, thinking_level = EXCLUDED.thinking_level;
+            query = """
+            WITH update_chats AS (
+                INSERT INTO chats (user_id, model, token_count, search_enabled, system_prompt, context_summary, thinking_level)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (user_id)
+                DO UPDATE SET
+                    model = EXCLUDED.model, token_count = EXCLUDED.token_count,
+                    search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt,
+                    context_summary = EXCLUDED.context_summary, thinking_level = EXCLUDED.thinking_level
+            ),
+            update_users AS (
+                UPDATE users SET is_deep_dive = $8, deep_dive_thread_id = $9 WHERE user_id = $1
+            ),
+            delete_messages AS (
+                DELETE FROM active_chat_messages WHERE user_id = $1 AND $10
+            )
+            INSERT INTO active_chat_messages (user_id, role, content)
+            SELECT $1, role, content FROM json_to_recordset($11::json) AS x(role text, content text)
+            WHERE $11::json IS NOT NULL AND json_array_length($11::json) > 0;
             """
+
             await db_query(
-                chat_query,
+                query,
                 (
                     user_id,
                     chat_state.model,
@@ -173,14 +175,11 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                     chat_state.system_prompt,
                     chat_state.context_summary,
                     chat_state.thinking_level,
+                    chat_state.is_deep_dive,
+                    chat_state.deep_dive_thread_id,
+                    should_delete,
+                    messages_json,
                 ),
-                conn=conn,
-            )
-
-            user_query = "UPDATE users SET is_deep_dive = $1, deep_dive_thread_id = $2 WHERE user_id = $3"
-            await db_query(
-                user_query,
-                (chat_state.is_deep_dive, chat_state.deep_dive_thread_id, user_id),
                 conn=conn,
             )
         finally:

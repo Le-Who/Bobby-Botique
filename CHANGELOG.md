@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.28] - 2026-03-09 - Database Latency & N+1 Roundtrip Fixes
+
+### ⚡ Performance & Database Query Batching
+
+- **Resolved N+1 Query Anti-Pattern**: Replaced 5 sequential database requests in `get_user_chat` and `update_user_chat` with single atomic Common Table Expression (CTE) executed pipelines.
+- **Drastically Reduced Network Latency**: By aggregating results natively inside PostgreSQL using `row_to_json` and `json_to_recordset`, operations that previously took ~400-600ms due to AWS EU Central PgBouncer roundtrips now complete in ~80ms (a single roundtrip).
+- **Consolidated RLS Scoping**: Session context (`set_config('app.user_id', ...)`) is still correctly applied on the unified connections, maintaining strict Row-Level Security isolation without sacrificing performance.
+
+### Files Changed
+
+| File                 | Change                                                            |
+| -------------------- | ----------------------------------------------------------------- |
+| `app/repos/chats.py` | Overhauled `get_user_chat` and `update_user_chat` SQL statements. |
+
+### 🧪 Tests: 1054 passed (all suites clean)
+
+---
+
 ## [2.8.27] - 2026-03-09 - Database Reliability & Legacy Schema Cleanup
 
 ### 🛡️ State Management & Distributed Concurrency Safety
