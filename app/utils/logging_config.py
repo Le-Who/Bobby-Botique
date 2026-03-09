@@ -197,7 +197,6 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-
 def timed_operation(operation_name: str = ""):
     """Decorator that logs the execution time of async functions.
 

@@ -21,12 +21,14 @@ class TestKeyUsageTracking:
                VALUES ($1, $2, CURRENT_DATE, 1)
                ON CONFLICT (key_hash, model_name, usage_date) DO UPDATE
                SET request_count = key_usage.request_count + 1""",
-            key_hash, "gemini-2.5-flash",
+            key_hash,
+            "gemini-2.5-flash",
         )
 
         row = await conn.fetchrow(
             "SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2",
-            key_hash, "gemini-2.5-flash",
+            key_hash,
+            "gemini-2.5-flash",
         )
         assert row["request_count"] == 1
 
@@ -46,7 +48,8 @@ class TestKeyUsageTracking:
 
         row = await conn.fetchrow(
             "SELECT request_count FROM key_usage WHERE key_hash = $1 AND model_name = $2",
-            key_hash, "gemini-2.5-flash",
+            key_hash,
+            "gemini-2.5-flash",
         )
         assert row["request_count"] == 3
 
@@ -59,7 +62,8 @@ class TestKeyUsageTracking:
             await conn.execute(
                 """INSERT INTO key_usage (key_hash, model_name, usage_date, request_count)
                    VALUES ($1, $2, CURRENT_DATE, 1)""",
-                key_hash, model,
+                key_hash,
+                model,
             )
 
         rows = await conn.fetch(
@@ -81,21 +85,27 @@ class TestKeySelection:
         # Insert 2 keys
         await conn.execute(
             "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
-            "key-a", "hash_a",
+            "key-a",
+            "hash_a",
         )
         await conn.execute(
             "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
-            "key-b", "hash_b",
+            "key-b",
+            "hash_b",
         )
 
         # Key A: 5 requests, Key B: 2 requests
         await conn.execute(
             "INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, CURRENT_DATE, $3)",
-            "hash_a", "gemini-2.5-flash", 5,
+            "hash_a",
+            "gemini-2.5-flash",
+            5,
         )
         await conn.execute(
             "INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, CURRENT_DATE, $3)",
-            "hash_b", "gemini-2.5-flash", 2,
+            "hash_b",
+            "gemini-2.5-flash",
+            2,
         )
 
         # Should select hash_b (least used)
@@ -117,15 +127,19 @@ class TestKeySelection:
 
         await conn.execute(
             "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
-            "used-key", "hash_used",
+            "used-key",
+            "hash_used",
         )
         await conn.execute(
             "INSERT INTO api_keys (api_key, key_hash) VALUES ($1, $2)",
-            "fresh-key", "hash_fresh",
+            "fresh-key",
+            "hash_fresh",
         )
         await conn.execute(
             "INSERT INTO key_usage (key_hash, model_name, usage_date, request_count) VALUES ($1, $2, CURRENT_DATE, $3)",
-            "hash_used", "gemini-2.5-flash", 10,
+            "hash_used",
+            "gemini-2.5-flash",
+            10,
         )
 
         row = await conn.fetchrow(
@@ -158,12 +172,14 @@ class TestKeyModelStatus:
                    failure_count = key_model_status.failure_count + 1,
                    last_error = EXCLUDED.last_error,
                    updated_at = NOW()""",
-            key_hash, "gemini-2.5-flash",
+            key_hash,
+            "gemini-2.5-flash",
         )
 
         row = await conn.fetchrow(
             "SELECT status, failure_count, last_error FROM key_model_status WHERE key_hash = $1 AND model_name = $2",
-            key_hash, "gemini-2.5-flash",
+            key_hash,
+            "gemini-2.5-flash",
         )
         assert row["status"] == "suspended"
         assert row["failure_count"] == 1
@@ -178,7 +194,8 @@ class TestKeyModelStatus:
         await conn.execute(
             """INSERT INTO key_model_status (key_hash, model_name, status, failure_count, updated_at)
                VALUES ($1, $2, 'suspended', 3, NOW())""",
-            key_hash, "gemini-2.5-flash",
+            key_hash,
+            "gemini-2.5-flash",
         )
 
         # Then reactivate (mirrors KeyStatusManager.record_success)
@@ -186,12 +203,14 @@ class TestKeyModelStatus:
             """UPDATE key_model_status
                SET status = 'active', failure_count = 0, suspended_until = NULL, updated_at = NOW()
                WHERE key_hash = $1 AND model_name = $2""",
-            key_hash, "gemini-2.5-flash",
+            key_hash,
+            "gemini-2.5-flash",
         )
 
         row = await conn.fetchrow(
             "SELECT status, failure_count FROM key_model_status WHERE key_hash = $1 AND model_name = $2",
-            key_hash, "gemini-2.5-flash",
+            key_hash,
+            "gemini-2.5-flash",
         )
         assert row["status"] == "active"
         assert row["failure_count"] == 0

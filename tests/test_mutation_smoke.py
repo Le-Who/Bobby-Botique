@@ -63,9 +63,7 @@ class TestMutationsAreCaught:
         streamed = classify_response("Hello", was_streamed=True)
         not_streamed = classify_response("Hello", was_streamed=False)
 
-        assert streamed.action != not_streamed.action, (
-            "Streamed and non-streamed must produce different actions"
-        )
+        assert streamed.action != not_streamed.action, "Streamed and non-streamed must produce different actions"
 
     def test_mutation_fallback_model_in_message(self):
         """Mutant: swap model names in fallback message."""

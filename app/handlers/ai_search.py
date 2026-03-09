@@ -451,7 +451,9 @@ async def _handle_research_agent(
                 logging.info("Generated deep dive thread_id %s for user %s", chat_state.deep_dive_thread_id, user_id)
 
             await update_user_chat(user_id, chat_state)
-            logging.info("Deep dive mode activated for user %s with thread_id %s", user_id, chat_state.deep_dive_thread_id)
+            logging.info(
+                "Deep dive mode activated for user %s with thread_id %s", user_id, chat_state.deep_dive_thread_id
+            )
     else:
         chat_state.history.pop()
         await update_user_chat(user_id, chat_state)

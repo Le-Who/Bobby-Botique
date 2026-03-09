@@ -79,7 +79,9 @@ async def tavily_search_agent(
     api_key = available_key["api_key"]
 
     # Detailed Tavily API request logging
-    start_time = api_logger.log_request("tavily", search_type=search_type, query_length=len(query), query_preview=query[:100])
+    start_time = api_logger.log_request(
+        "tavily", search_type=search_type, query_length=len(query), query_preview=query[:100]
+    )
 
     logging.info("Performing Tavily API call (type: %s) for query: %.100s", search_type, query)
 

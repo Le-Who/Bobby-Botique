@@ -494,7 +494,7 @@ class MetricsCollector:
             },
         }
 
-        logging.debug("Metrics summary: %d requests, %.1f%% errors", summary['total_requests'], summary['error_rate'])
+        logging.debug("Metrics summary: %d requests, %.1f%% errors", summary["total_requests"], summary["error_rate"])
         return summary
 
     async def initialize(self):
@@ -698,9 +698,7 @@ async def get_system_status_data() -> dict[str, Any]:
 
     # 2. Статус keyей Gemini
     today_pacific = time_utils.get_pacific_date()
-    gemini_keys = await db.db_query(
-        "SELECT key_hash, total_requests, last_used, created_at, is_default FROM api_keys"
-    )
+    gemini_keys = await db.db_query("SELECT key_hash, total_requests, last_used, created_at, is_default FROM api_keys")
 
     # Get использование keyей Gemini за сегодня
     gemini_usage_map: dict[str, list[Any]] = {}

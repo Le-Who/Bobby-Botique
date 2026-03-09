@@ -46,7 +46,9 @@ class TestUserStatsQueries:
             await conn.execute(
                 """INSERT INTO user_metrics (user_id, metric_date, request_count)
                    VALUES ($1, CURRENT_DATE - $2 * INTERVAL '1 day', $3)""",
-                user_id, offset, (offset + 1) * 5,
+                user_id,
+                offset,
+                (offset + 1) * 5,
             )
 
         rows = await conn.fetch(

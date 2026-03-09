@@ -243,6 +243,7 @@ def test_sanitize_code_italic_mismatch():
     assert result.count("<i>") == result.count("</i>")
     # Verify strict nesting via stack walk
     import re as _re
+
     stack = []
     for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", result):
         is_close = m.group(1) == "/"
@@ -250,9 +251,7 @@ def test_sanitize_code_italic_mismatch():
         if not is_close:
             stack.append(tag)
         else:
-            assert stack and stack[-1] == tag, (
-                f"Misnested: expected </{stack[-1]}>, got </{tag}> in: {result}"
-            )
+            assert stack and stack[-1] == tag, f"Misnested: expected </{stack[-1]}>, got </{tag}> in: {result}"
             stack.pop()
     assert not stack, f"Unclosed tags {stack} in: {result}"
 
@@ -266,6 +265,7 @@ def test_sanitize_misnested_produces_valid_nesting():
 
     # Walk the result and verify strict nesting
     import re as _re
+
     stack = []
     for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", result):
         is_close = m.group(1) == "/"
@@ -274,9 +274,7 @@ def test_sanitize_misnested_produces_valid_nesting():
             stack.append(tag)
         else:
             assert stack, f"Orphaned </{tag}> in: {result}"
-            assert stack[-1] == tag, (
-                f"Misnested: expected </{stack[-1]}>, got </{tag}> in: {result}"
-            )
+            assert stack[-1] == tag, f"Misnested: expected </{stack[-1]}>, got </{tag}> in: {result}"
             stack.pop()
     # After the close tags appended at end, stack should be empty
     assert not stack, f"Unclosed tags {stack} in: {result}"
@@ -289,6 +287,7 @@ def test_sanitize_reopen_after_misnested_close():
 
     # Verify valid nesting
     import re as _re
+
     stack = []
     for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong)(?:\s[^>]*)?>", result):
         is_close = m.group(1) == "/"
@@ -332,6 +331,7 @@ def test_markdown_to_html_partial_streaming():
 
     # Verify valid nesting via stack walk
     import re as _re
+
     stack = []
     for m in _re.finditer(r"<(/?)(pre|code|b|i|a|u|s|em|strong|blockquote)(?:\s[^>]*)?>", sanitized):
         is_close = m.group(1) == "/"

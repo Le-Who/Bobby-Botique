@@ -27,9 +27,7 @@ def _validate_balanced_html(text: str) -> None:
             continue  # ignore non-Telegram tags
         if is_closing:
             assert stack, f"Closing </{tag_name}> without matching open tag in: {text!r}"
-            assert stack[-1] == tag_name, (
-                f"Tag mismatch: expected </{stack[-1]}>, got </{tag_name}> in: {text!r}"
-            )
+            assert stack[-1] == tag_name, f"Tag mismatch: expected </{stack[-1]}>, got </{tag_name}> in: {text!r}"
             stack.pop()
         else:
             stack.append(tag_name)
@@ -110,19 +108,22 @@ class TestCombinedFormatting:
 class TestSanitizationRoundTrip:
     """format_text → sanitize_html_tags always produces valid HTML."""
 
-    @pytest.mark.parametrize("md", [
-        "**bold**",
-        "*italic*",
-        "~~strike~~",
-        "`code`",
-        "```\nblock\n```",
-        "> quote",
-        "# heading",
-        "[link](http://example.com)",
-        "plain text with no formatting",
-        "",
-    ], ids=["bold", "italic", "strike", "code", "codeblock",
-            "quote", "heading", "link", "plain", "empty"])
+    @pytest.mark.parametrize(
+        "md",
+        [
+            "**bold**",
+            "*italic*",
+            "~~strike~~",
+            "`code`",
+            "```\nblock\n```",
+            "> quote",
+            "# heading",
+            "[link](http://example.com)",
+            "plain text with no formatting",
+            "",
+        ],
+        ids=["bold", "italic", "strike", "code", "codeblock", "quote", "heading", "link", "plain", "empty"],
+    )
     def test_individual_format_round_trip(self, md):
         result = _full_pipeline(md)
         _validate_balanced_html(result)
@@ -187,13 +188,17 @@ class TestSplitAndRebalance:
 class TestSnakeCaseSafety:
     """Underscores in snake_case identifiers should NOT become italic."""
 
-    @pytest.mark.parametrize("text,should_not_have_italic", [
-        ("my_variable_name is good", True),
-        ("use get_user_by_id() to fetch", True),
-        ("UPPER_CASE_CONST = 42", True),
-        ("__init__ method", True),
-        ("path/to/file_name.py", True),
-    ], ids=["simple", "function", "upper", "dunder", "path"])
+    @pytest.mark.parametrize(
+        "text,should_not_have_italic",
+        [
+            ("my_variable_name is good", True),
+            ("use get_user_by_id() to fetch", True),
+            ("UPPER_CASE_CONST = 42", True),
+            ("__init__ method", True),
+            ("path/to/file_name.py", True),
+        ],
+        ids=["simple", "function", "upper", "dunder", "path"],
+    )
     def test_snake_case_not_italicized(self, text, should_not_have_italic):
         result = _full_pipeline(text)
         if should_not_have_italic:
@@ -215,15 +220,19 @@ class TestSnakeCaseSafety:
 class TestSpecialCharacters:
     """HTML-sensitive characters are escaped properly."""
 
-    @pytest.mark.parametrize("text", [
-        "2 < 3 and 5 > 4",
-        "Tom & Jerry",
-        'She said "hello"',
-        "<script>alert('xss')</script>",
-        "Price: $5.00 (10% off!)",
-        "C:\\Users\\admin\\Desktop",
-        "Формула: x² + y² = z²",
-    ], ids=["lt_gt", "ampersand", "quotes", "xss", "special_chars", "backslash", "unicode"])
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "2 < 3 and 5 > 4",
+            "Tom & Jerry",
+            'She said "hello"',
+            "<script>alert('xss')</script>",
+            "Price: $5.00 (10% off!)",
+            "C:\\Users\\admin\\Desktop",
+            "Формула: x² + y² = z²",
+        ],
+        ids=["lt_gt", "ampersand", "quotes", "xss", "special_chars", "backslash", "unicode"],
+    )
     def test_special_chars_safe(self, text):
         result = _full_pipeline(text)
         _validate_balanced_html(result)
@@ -245,32 +254,38 @@ class TestStreamingContext:
 
     def test_bold_context_detected(self):
         from app.streaming import _detect_open_markdown
+
         prefix, suffix = _detect_open_markdown("This is **bold text")
         assert "**" in prefix or "<b>" in prefix or "**" in suffix
 
     def test_italic_asterisk_context_detected(self):
         from app.streaming import _detect_open_markdown
+
         prefix, suffix = _detect_open_markdown("This is *italic text")
         assert "*" in prefix or "<i>" in prefix or "*" in suffix
 
     def test_italic_underscore_context_detected(self):
         from app.streaming import _detect_open_markdown
+
         prefix, suffix = _detect_open_markdown("This is _italic text")
         assert "_" in prefix or "<i>" in prefix or "_" in suffix
 
     def test_strikethrough_context_detected(self):
         from app.streaming import _detect_open_markdown
+
         prefix, suffix = _detect_open_markdown("This is ~~strike text")
         assert "~~" in prefix or "<s>" in prefix or "~~" in suffix
 
     def test_closed_formatting_no_context(self):
         from app.streaming import _detect_open_markdown
+
         prefix, suffix = _detect_open_markdown("This is **bold** and done")
         assert prefix == ""
         assert suffix == ""
 
     def test_multiple_open_formats(self):
         from app.streaming import _detect_open_markdown
+
         prefix, suffix = _detect_open_markdown("**bold _italic")
         # Both should be detected
         assert prefix != "" or suffix != ""

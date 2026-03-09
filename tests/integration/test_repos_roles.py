@@ -19,11 +19,15 @@ class TestCustomRolesCRUD:
 
         await conn.execute(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-            user_id, "Teacher", "You are a helpful teacher",
+            user_id,
+            "Teacher",
+            "You are a helpful teacher",
         )
         await conn.execute(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-            user_id, "Developer", "You are a senior dev",
+            user_id,
+            "Developer",
+            "You are a senior dev",
         )
 
         rows = await conn.fetch(
@@ -42,12 +46,15 @@ class TestCustomRolesCRUD:
 
         role_id = await conn.fetchval(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            user_id, "Writer", "You are a creative writer",
+            user_id,
+            "Writer",
+            "You are a creative writer",
         )
 
         row = await conn.fetchrow(
             "SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2",
-            role_id, user_id,
+            role_id,
+            user_id,
         )
         assert row["prompt"] == "You are a creative writer"
 
@@ -59,11 +66,15 @@ class TestCustomRolesCRUD:
 
         role_id = await conn.fetchval(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            user_id, "Old Name", "prompt",
+            user_id,
+            "Old Name",
+            "prompt",
         )
         await conn.execute(
             "UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3",
-            "New Name", role_id, user_id,
+            "New Name",
+            role_id,
+            user_id,
         )
 
         row = await conn.fetchrow("SELECT title FROM user_roles WHERE id = $1", role_id)
@@ -77,7 +88,9 @@ class TestCustomRolesCRUD:
 
         role_id = await conn.fetchval(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            user_id, "Temp Role", "temp",
+            user_id,
+            "Temp Role",
+            "temp",
         )
         await conn.execute("DELETE FROM user_roles WHERE id = $1 AND user_id = $2", role_id, user_id)
 
@@ -93,12 +106,12 @@ class TestCustomRolesCRUD:
         for i in range(3):
             await conn.execute(
                 "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3)",
-                user_id, f"Role {i}", f"Prompt {i}",
+                user_id,
+                f"Role {i}",
+                f"Prompt {i}",
             )
 
-        count = await conn.fetchval(
-            "SELECT COUNT(*) FROM user_roles WHERE user_id = $1", user_id
-        )
+        count = await conn.fetchval("SELECT COUNT(*) FROM user_roles WHERE user_id = $1", user_id)
         assert count == 3
 
     @pytest.mark.asyncio
@@ -114,12 +127,15 @@ class TestCustomRolesCRUD:
         # Create role for other user
         role_id = await conn.fetchval(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            other_user_id, "Secret Role", "Secret prompt",
+            other_user_id,
+            "Secret Role",
+            "Secret prompt",
         )
 
         # Try to access as user_id=999999 — should return nothing
         row = await conn.fetchrow(
             "SELECT prompt FROM user_roles WHERE id = $1 AND user_id = $2",
-            role_id, user_id,
+            role_id,
+            user_id,
         )
         assert row is None

@@ -21,7 +21,8 @@ class TestConversationCRUD:
         for title in ["Chat A", "Chat B", "Chat C"]:
             await conn.execute(
                 "INSERT INTO conversations (user_id, title) VALUES ($1, $2)",
-                user_id, title,
+                user_id,
+                title,
             )
 
         rows = await conn.fetch(
@@ -39,7 +40,10 @@ class TestConversationCRUD:
         conv_id = await conn.fetchval(
             """INSERT INTO conversations (user_id, title, role_type, role_id)
                VALUES ($1, $2, $3, $4) RETURNING id""",
-            user_id, "Teacher Chat", "system", 5,
+            user_id,
+            "Teacher Chat",
+            "system",
+            5,
         )
         row = await conn.fetchrow("SELECT * FROM conversations WHERE id = $1", conv_id)
         assert row["role_type"] == "system"
@@ -53,7 +57,8 @@ class TestConversationCRUD:
 
         conv_id = await conn.fetchval(
             "INSERT INTO conversations (user_id, title) VALUES ($1, $2) RETURNING id",
-            user_id, "Test Chat",
+            user_id,
+            "Test Chat",
         )
 
         # Add messages
@@ -89,11 +94,14 @@ class TestConversationCRUD:
 
         conv_id = await conn.fetchval(
             "INSERT INTO conversations (user_id, title) VALUES ($1, $2) RETURNING id",
-            user_id, "Old Title",
+            user_id,
+            "Old Title",
         )
         await conn.execute(
             "UPDATE conversations SET title = $1 WHERE id = $2 AND user_id = $3",
-            "New Title", conv_id, user_id,
+            "New Title",
+            conv_id,
+            user_id,
         )
         row = await conn.fetchrow("SELECT title FROM conversations WHERE id = $1", conv_id)
         assert row["title"] == "New Title"
@@ -106,13 +114,17 @@ class TestConversationCRUD:
 
         conv_id = await conn.fetchval(
             "INSERT INTO conversations (user_id, title) VALUES ($1, $2) RETURNING id",
-            user_id, "To Delete",
+            user_id,
+            "To Delete",
         )
         await conn.execute(
             """INSERT INTO conversation_messages
                (conversation_id, role, content, owner_user_id)
                VALUES ($1, $2, $3, $4)""",
-            conv_id, "user", "Msg", user_id,
+            conv_id,
+            "user",
+            "Msg",
+            user_id,
         )
 
         # Delete messages then conversation (mirrors delete_conversation)
@@ -135,7 +147,8 @@ class TestConversationCRUD:
         for i in range(5):
             await conn.execute(
                 "INSERT INTO conversations (user_id, title) VALUES ($1, $2)",
-                user_id, f"Chat {i}",
+                user_id,
+                f"Chat {i}",
             )
 
         count = await conn.fetchval(

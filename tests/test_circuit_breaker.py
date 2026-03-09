@@ -169,3 +169,75 @@ async def test_monitoring_task(cb):
     # Stats should be retrievable
     stats = cb.get_stats()
     assert isinstance(stats, dict)
+
+
+@pytest.mark.asyncio
+async def test_get_circuit_breaker_and_shutdown_all():
+    from app.circuit_breaker import _circuit_breakers, get_circuit_breaker, shutdown_all_circuit_breakers
+
+    _circuit_breakers.clear()
+    cb1 = get_circuit_breaker("test_global_1")
+    cb2 = get_circuit_breaker("test_global_1")
+
+    # Needs to return the same instance
+    assert cb1 is cb2
+
+    cb3 = get_circuit_breaker("test_global_2")
+    assert cb3 is not cb1
+
+    await shutdown_all_circuit_breakers()
+    assert len(_circuit_breakers) == 0
+
+
+@pytest.mark.asyncio
+async def test_monitor_loop_max_failures_cap(cb):
+    # Overfill failures
+    cb._failure_count = cb.config.max_failures + 10
+
+    await asyncio.sleep(0.15)
+
+    # Assuming monitor loop ran, it should cap it
+    assert cb._failure_count <= cb.config.max_failures
+
+
+@pytest.mark.asyncio
+async def test_should_attempt_reset_not_open(cb):
+    # State is CLOSED, should return False
+    assert cb._should_attempt_reset() is False
+
+    await cb._set_state(CircuitState.HALF_OPEN)
+    assert cb._should_attempt_reset() is False
+
+
+def test_init_without_running_loop():
+    # Attempt to init without a running loop
+    from unittest.mock import patch
+
+    import app.circuit_breaker
+
+    with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+        cb = app.circuit_breaker.CircuitBreaker("test_no_loop")
+        assert cb._monitor_task is None
+
+
+@pytest.mark.asyncio
+async def test_start_monitoring_already_done(cb):
+    # Attempt to call start_monitoring when already running
+    task = cb._monitor_task
+    cb._start_monitoring()
+    assert task is cb._monitor_task
+
+
+@pytest.mark.asyncio
+async def test_monitor_loop_exception_handling(cb):
+    from unittest.mock import patch
+
+    with patch("asyncio.sleep", side_effect=Exception("mocked error")):
+        # The monitor loop should catch the exception and log it, then next iteration will fail again if mocked,
+        # but here we just want to ensure it handles one exception. Since it's a while True, if sleep always raises,
+        # it might infinite loop. Let's just side_effect a single exception then CancelledError.
+        with patch("app.circuit_breaker.asyncio.sleep", side_effect=[Exception("mocked"), asyncio.CancelledError()]):
+            await cb._monitor_loop()
+
+    # Should exit gracefully on CancelledError
+    assert True

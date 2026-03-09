@@ -63,7 +63,15 @@ class TestMetricsJsonbRoundtrip:
 
         await db_conn.execute(
             UPSERT_SQL,
-            TODAY, 10, 1.5, 0, 2, 5, 1, api_calls, model_usage,
+            TODAY,
+            10,
+            1.5,
+            0,
+            2,
+            5,
+            1,
+            api_calls,
+            model_usage,
         )
 
         rows = await db_conn.fetch(LOAD_API_CALLS_SQL)
@@ -86,7 +94,15 @@ class TestMetricsJsonbRoundtrip:
 
         await db_conn.execute(
             UPSERT_SQL,
-            TODAY, 5, 1.0, 0, 1, 3, 0, api_calls_v1, model_usage_v1,
+            TODAY,
+            5,
+            1.0,
+            0,
+            1,
+            3,
+            0,
+            api_calls_v1,
+            model_usage_v1,
         )
 
         # Second save — same date, updated values
@@ -95,7 +111,15 @@ class TestMetricsJsonbRoundtrip:
 
         await db_conn.execute(
             UPSERT_SQL,
-            TODAY, 12, 2.5, 1, 3, 8, 1, api_calls_v2, model_usage_v2,
+            TODAY,
+            12,
+            2.5,
+            1,
+            3,
+            8,
+            1,
+            api_calls_v2,
+            model_usage_v2,
         )
 
         # This would have crashed with the old || merge code
@@ -112,13 +136,25 @@ class TestMetricsJsonbRoundtrip:
         """Multiple dates aggregate correctly via jsonb_each_text."""
         await db_conn.execute(
             UPSERT_SQL,
-            YESTERDAY, 5, 1.0, 0, 1, 2, 0,
+            YESTERDAY,
+            5,
+            1.0,
+            0,
+            1,
+            2,
+            0,
             json.dumps({"gemini_streaming": 3}),
             json.dumps({"gemini-2.5-flash": 2}),
         )
         await db_conn.execute(
             UPSERT_SQL,
-            TODAY, 10, 2.0, 1, 2, 5, 1,
+            TODAY,
+            10,
+            2.0,
+            1,
+            2,
+            5,
+            1,
             json.dumps({"gemini_streaming": 7, "gemini_search": 1}),
             json.dumps({"gemini-2.5-flash": 5, "gemini-2.5-pro": 2}),
         )
@@ -136,7 +172,13 @@ class TestMetricsJsonbRoundtrip:
         """Empty JSONB objects should not crash jsonb_each_text."""
         await db_conn.execute(
             UPSERT_SQL,
-            TODAY, 1, 0.1, 0, 0, 0, 0,
+            TODAY,
+            1,
+            0.1,
+            0,
+            0,
+            0,
+            0,
             json.dumps({}),
             json.dumps({}),
         )
@@ -153,7 +195,13 @@ class TestMetricsJsonbRoundtrip:
         # Insert a valid row
         await db_conn.execute(
             UPSERT_SQL,
-            YESTERDAY, 5, 1.0, 0, 0, 0, 0,
+            YESTERDAY,
+            5,
+            1.0,
+            0,
+            0,
+            0,
+            0,
             json.dumps({"gemini_streaming": 3}),
             json.dumps({"gemini-2.5-flash": 2}),
         )

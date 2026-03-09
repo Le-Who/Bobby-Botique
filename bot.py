@@ -429,7 +429,7 @@ async def startup_health_check():
                 if response.status_code == 200:
                     bot_info = response.json()
                     if bot_info.get("ok"):
-                        logging.info("✓ Telegram API verified - Bot: %s", bot_info['result']['username'])
+                        logging.info("✓ Telegram API verified - Bot: %s", bot_info["result"]["username"])
                         telegram_ok = True
                     else:
                         raise Exception(f"Telegram API error: {bot_info}")

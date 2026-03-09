@@ -84,9 +84,7 @@ class TestSendLongMessageSplitting:
         parts = split_text_safe(html_text, max_length=4096)
 
         for part in parts:
-            assert part.count("<b>") == part.count("</b>"), (
-                f"Unbalanced <b> tags in part: {part[:100]}..."
-            )
+            assert part.count("<b>") == part.count("</b>"), f"Unbalanced <b> tags in part: {part[:100]}..."
 
     @pytest.mark.asyncio
     async def test_keyboard_attached_to_last_part_only(self):

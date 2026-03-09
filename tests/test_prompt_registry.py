@@ -301,7 +301,4 @@ class TestNoJailbreakMarkers:
         assert tmpl is not None
         text_lower = tmpl.text.lower()
         for marker in self.JAILBREAK_MARKERS:
-            assert marker.lower() not in text_lower, (
-                f"prompt_engineer template contains jailbreak marker '{marker}'"
-            )
-
+            assert marker.lower() not in text_lower, f"prompt_engineer template contains jailbreak marker '{marker}'"

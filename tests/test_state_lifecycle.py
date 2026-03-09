@@ -67,6 +67,7 @@ class TestUserStateInit:
 
     def test_lock_is_asyncio_lock(self):
         import asyncio
+
         s = UserState(user_id=2)
         assert isinstance(s.lock, asyncio.Lock)
 
@@ -208,6 +209,7 @@ class TestPublicAPI:
 
     def test_get_user_lock_returns_lock(self):
         import asyncio
+
         lock = get_user_lock(uid())
         assert isinstance(lock, asyncio.Lock)
 

@@ -84,11 +84,15 @@ class TestActiveChatMessages:
         user_id = 999999
         await conn.execute(
             "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-            user_id, "user", "Hello",
+            user_id,
+            "user",
+            "Hello",
         )
         await conn.execute(
             "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-            user_id, "model", "Hi there!",
+            user_id,
+            "model",
+            "Hi there!",
         )
         rows = await conn.fetch(
             "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC",
@@ -108,11 +112,13 @@ class TestConversations:
         user_id = 999999
         await conn.execute(
             "INSERT INTO conversations (user_id, title) VALUES ($1, $2)",
-            user_id, "Test Chat 1",
+            user_id,
+            "Test Chat 1",
         )
         await conn.execute(
             "INSERT INTO conversations (user_id, title) VALUES ($1, $2)",
-            user_id, "Test Chat 2",
+            user_id,
+            "Test Chat 2",
         )
         rows = await conn.fetch(
             "SELECT title FROM conversations WHERE user_id = $1 ORDER BY created_at DESC",
@@ -126,11 +132,15 @@ class TestConversations:
         user_id = 999999
         conv_id = await conn.fetchval(
             "INSERT INTO conversations (user_id, title) VALUES ($1, $2) RETURNING id",
-            user_id, "Test",
+            user_id,
+            "Test",
         )
         await conn.execute(
             "INSERT INTO conversation_messages (conversation_id, role, content, owner_user_id) VALUES ($1, $2, $3, $4)",
-            conv_id, "user", "Message 1", user_id,
+            conv_id,
+            "user",
+            "Message 1",
+            user_id,
         )
         count = await conn.fetchval(
             "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = $1",
@@ -146,9 +156,7 @@ class TestUserState:
     async def test_user_state_defaults(self, db_conn_with_user):
         conn = db_conn_with_user
         user_id = 999999
-        await conn.execute(
-            "INSERT INTO user_state (user_id) VALUES ($1)", user_id
-        )
+        await conn.execute("INSERT INTO user_state (user_id) VALUES ($1)", user_id)
         row = await conn.fetchrow("SELECT * FROM user_state WHERE user_id = $1", user_id)
         assert row["document_mode"] is False
         assert row["awaiting_custom_role_input"] is False
@@ -159,9 +167,7 @@ class TestUserState:
     async def test_user_state_update(self, db_conn_with_user):
         conn = db_conn_with_user
         user_id = 999999
-        await conn.execute(
-            "INSERT INTO user_state (user_id) VALUES ($1)", user_id
-        )
+        await conn.execute("INSERT INTO user_state (user_id) VALUES ($1)", user_id)
         await conn.execute(
             "UPDATE user_state SET document_mode = true, selected_document_id = 42 WHERE user_id = $1",
             user_id,
@@ -180,11 +186,14 @@ class TestUserRoles:
         user_id = 999999
         role_id = await conn.fetchval(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            user_id, "My Custom Role", "You are a helpful teacher",
+            user_id,
+            "My Custom Role",
+            "You are a helpful teacher",
         )
         row = await conn.fetchrow(
             "SELECT * FROM user_roles WHERE id = $1 AND user_id = $2",
-            role_id, user_id,
+            role_id,
+            user_id,
         )
         assert row["title"] == "My Custom Role"
         assert row["prompt"] == "You are a helpful teacher"
@@ -195,7 +204,9 @@ class TestUserRoles:
         user_id = 999999
         role_id = await conn.fetchval(
             "INSERT INTO user_roles (user_id, title, prompt) VALUES ($1, $2, $3) RETURNING id",
-            user_id, "Temp", "temp",
+            user_id,
+            "Temp",
+            "temp",
         )
         await conn.execute("DELETE FROM user_roles WHERE id = $1", role_id)
         row = await conn.fetchrow("SELECT * FROM user_roles WHERE id = $1", role_id)
@@ -211,11 +222,10 @@ class TestFeedback:
         user_id = 999999
         await conn.execute(
             "INSERT INTO feedback (user_id, rating) VALUES ($1, $2)",
-            user_id, "up",
+            user_id,
+            "up",
         )
-        row = await conn.fetchrow(
-            "SELECT rating FROM feedback WHERE user_id = $1", user_id
-        )
+        row = await conn.fetchrow("SELECT rating FROM feedback WHERE user_id = $1", user_id)
         assert row["rating"] == "up"
 
     @pytest.mark.asyncio
@@ -225,7 +235,8 @@ class TestFeedback:
         with pytest.raises(Exception):  # CHECK constraint violation
             await conn.execute(
                 "INSERT INTO feedback (user_id, rating) VALUES ($1, $2)",
-                user_id, "invalid",
+                user_id,
+                "invalid",
             )
 
 
@@ -236,7 +247,9 @@ class TestModelConfiguration:
     async def test_insert_model_config(self, db_conn):
         await db_conn.execute(
             "INSERT INTO model_configuration (model_name, daily_limit, provider) VALUES ($1, $2, $3)",
-            "test-model", 100, "gemini",
+            "test-model",
+            100,
+            "gemini",
         )
         row = await db_conn.fetchrow(
             "SELECT * FROM model_configuration WHERE model_name = $1",

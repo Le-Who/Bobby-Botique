@@ -107,4 +107,3 @@ async def db_conn_with_metrics(db_conn_with_user):
         TEST_USER_ID,
     )
     return db_conn_with_user
-

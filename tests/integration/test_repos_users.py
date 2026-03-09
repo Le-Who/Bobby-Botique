@@ -45,12 +45,18 @@ class TestUserStatePersistence:
                 manual_role_prompt = EXCLUDED.manual_role_prompt,
                 updated_at = CURRENT_TIMESTAMP
             """,
-            user_id, True, 42,
-            True, role_json,
-            "make me a teacher", True,
+            user_id,
+            True,
+            42,
+            True,
+            role_json,
+            "make me a teacher",
+            True,
             "Hello bot",
-            False, False,
-            "", "",
+            False,
+            False,
+            "",
+            "",
         )
 
         # Load — mirrors load_user_state()
@@ -75,7 +81,9 @@ class TestUserStatePersistence:
         assert row["last_sent_message_text"] == "Hello bot"
         assert row["last_custom_role_prompt"] == "make me a teacher"
         # JSONB round-trip
-        role_data = json.loads(row["generated_role"]) if isinstance(row["generated_role"], str) else row["generated_role"]
+        role_data = (
+            json.loads(row["generated_role"]) if isinstance(row["generated_role"], str) else row["generated_role"]
+        )
         assert role_data["title"] == "Teacher"
 
     @pytest.mark.asyncio
@@ -87,7 +95,9 @@ class TestUserStatePersistence:
         await conn.execute(
             """INSERT INTO user_state (user_id, document_mode, manual_role_title)
                VALUES ($1, $2, $3)""",
-            user_id, False, "Original",
+            user_id,
+            False,
+            "Original",
         )
         # Upsert with new values
         await conn.execute(
@@ -96,7 +106,9 @@ class TestUserStatePersistence:
                ON CONFLICT (user_id) DO UPDATE SET
                    document_mode = EXCLUDED.document_mode,
                    manual_role_title = EXCLUDED.manual_role_title""",
-            user_id, True, "Updated",
+            user_id,
+            True,
+            "Updated",
         )
 
         row = await conn.fetchrow("SELECT document_mode, manual_role_title FROM user_state WHERE user_id = $1", user_id)
@@ -112,7 +124,9 @@ class TestFeedbackPersistence:
         conn = db_conn_with_user
         await conn.execute(
             "INSERT INTO feedback (user_id, message_id, rating) VALUES ($1, $2, $3)",
-            999999, 12345, "up",
+            999999,
+            12345,
+            "up",
         )
         row = await conn.fetchrow("SELECT rating FROM feedback WHERE user_id = $1 AND message_id = $2", 999999, 12345)
         assert row["rating"] == "up"
@@ -122,7 +136,9 @@ class TestFeedbackPersistence:
         conn = db_conn_with_user
         await conn.execute(
             "INSERT INTO feedback (user_id, message_id, rating) VALUES ($1, $2, $3)",
-            999999, 12346, "down",
+            999999,
+            12346,
+            "down",
         )
         row = await conn.fetchrow("SELECT rating FROM feedback WHERE user_id = $1", 999999)
         assert row["rating"] == "down"

@@ -141,9 +141,7 @@ async def test_user_context_isolated_between_coroutines():
         await asyncio.sleep(0)
         return get_user_id(), get_chat_id()
 
-    (uid_a, cid_a), (uid_b, cid_b) = await asyncio.gather(
-        worker(1, 10), worker(2, 20)
-    )
+    (uid_a, cid_a), (uid_b, cid_b) = await asyncio.gather(worker(1, 10), worker(2, 20))
 
     assert uid_a == 1
     assert cid_a == 10

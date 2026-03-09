@@ -3,6 +3,34 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.22] – 2026-03-09 – Testing Infrastructure AAA Refactoring & Integration Boundaries
+
+### 🧪 Legacy Test AAA Refactoring
+
+- Completely refactored `test_ai_chat.py` and `test_smoke.py` away from implementation coupling towards the Arrange-Act-Assert (AAA) principle.
+- Created `tests/factories.py` providing `make_telegram_update` and `make_telegram_context` generators to standardise component isolation and mock provisioning.
+
+### 🛡️ Integration Verification Coverage
+
+- **Web Dashboard Authorization Boundary**: Added `test_web_security.py` to target Quart's Admin endpoints, enforcing the Admin Secret logic securely without leaking internal errors.
+- **Concurrency Locks Protection**: Created `test_concurrency_locks.py`:
+  - Enforced queueing boundaries against the `state.get_user_lock` layer for simultaneous chat requests.
+  - Successfully demonstrated that UI Callbacks are rejected via the `_is_user_busy` validation, preventing DB corruption and generating a Toast warning for the user.
+
+### Files Changed
+
+| File                                          | Change                                                          |
+| --------------------------------------------- | --------------------------------------------------------------- |
+| `tests/test_ai_chat.py`                       | AAA refactored, assertions centralized, decoupled context       |
+| `tests/test_smoke.py`                         | Formalized admin Quart verification against standard mocking    |
+| `tests/factories.py`                          | [NEW] Centralized mock creation tools                           |
+| `tests/integration/test_web_security.py`      | [NEW] Web authorization perimeter checks                        |
+| `tests/integration/test_concurrency_locks.py` | [NEW] Sequential lock enforcement and callback busy validations |
+
+### 🧪 Tests: 1053 passed, 0 skipped, 1 unrelated external runner fail
+
+---
+
 ## [2.8.21] – 2026-03-06 – Code Quality Audit: Lint, Security & Dead Code Cleanup
 
 ### 🧹 Ruff & Vulture: 25 Findings → 0

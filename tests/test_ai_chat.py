@@ -1,195 +1,152 @@
 """Tests for app.handlers.ai_chat — regular conversational AI chat."""
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
-def make_chat_state(history=None, model="gemini-2.0-flash", system_prompt=None, token_count=0, is_deep_dive=False):
-    """Create a minimal ChatState-like object."""
-    cs = SimpleNamespace(
-        history=history if history is not None else [],
-        model=model,
-        system_prompt=system_prompt,
-        token_count=token_count,
-        is_deep_dive=is_deep_dive,
-        search_enabled=False,
-        context_summary=None,
-        thinking_level=None,
-    )
-    return cs
+from app.handlers.ai_chat import _handle_regular_chat
+from tests.factories import make_chat_state, make_telegram_message
 
 
-def make_placeholder():
-    """Create a mock placeholder message."""
-    msg = MagicMock()
-    msg.edit_text = AsyncMock()
-    msg.reply_text = AsyncMock()
-    msg.chat.id = 456
-    msg.from_user.id = 123
-    return msg
+@pytest.fixture
+def mock_dependencies():
+    """Setup all external dependencies needed by AI Chat handler."""
+    with (
+        patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as m_resolve,
+        patch("app.handlers.ai_chat._get_ai_response_with_routing", new_callable=AsyncMock) as m_get_resp,
+        patch("app.handlers.ai_chat.update_stage", new_callable=AsyncMock) as m_update_stg,
+        patch(
+            "app.handlers.ai_chat.handle_ai_response_error", new_callable=AsyncMock, return_value=False
+        ) as m_handle_err,
+        patch("app.handlers.ai_chat.send_long_message", new_callable=AsyncMock) as m_send_long,
+        patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as m_update_chat,
+        patch("app.handlers.ai_chat.get_registry") as m_registry,
+        patch("app.handlers.ai_chat.is_openrouter_model", return_value=True),  # Force non-streaming for testing
+        patch("app.metrics.role_conv_metrics.record_summarization", new_callable=AsyncMock),
+        patch("app.repos.memory.search_memories", new_callable=AsyncMock),
+        patch("app.repos.memory.store_memory", new_callable=AsyncMock),
+    ):
+        # Default successful setup
+        m_resolve.return_value = ({"api_key": "k", "key_hash": "h"}, "gemini-2.0-flash", "direct")
+        m_get_resp.return_value = ("Hello world!", 42)
 
+        reg_mock = MagicMock()
+        reg_mock.compose_system_prompt.return_value = "System directive"
+        m_registry.return_value = reg_mock
 
-# ── Happy path ────────────────────────────────────────────────────────────────
+        yield {
+            "resolve": m_resolve,
+            "get_resp": m_get_resp,
+            "update_stg": m_update_stg,
+            "handle_err": m_handle_err,
+            "send_long": m_send_long,
+            "update_chat": m_update_chat,
+        }
 
 
 @pytest.mark.asyncio
-async def test_handle_regular_chat_success():
-    """Successful AI response appends to history and persists."""
-    placeholder = make_placeholder()
+async def test_successful_chat_response_appended_to_history(mock_dependencies):
+    """
+    Risk Covered: System fails to persist AI reply or token counts.
+    Level: Unit.
+    """
+    # Arrange
+    user_id = 123
+    placeholder = make_telegram_message(user_id=user_id)
     chat_state = make_chat_state()
+    user_message = "Hi"
 
-    with (
-        patch(
-            "app.handlers.ai_chat._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"api_key": "k", "key_hash": "h"}, "gemini-2.0-flash", "direct"),
-        ),
-        patch(
-            "app.handlers.ai_chat._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value=("Hello world!", 42),
-        ),
-        patch("app.handlers.ai_chat.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_chat.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
-        patch("app.handlers.ai_chat.send_long_message", new_callable=AsyncMock),
-        patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as mock_save,
-        patch("app.handlers.ai_chat.get_registry") as mock_get_registry,
-    ):
-        mock_registry = MagicMock()
-        mock_registry.compose_system_prompt.return_value = "sys"
-        mock_get_registry.return_value = mock_registry
+    # Act
+    await _handle_regular_chat(placeholder, user_id, user_message, chat_state)
 
-        from app.handlers.ai_chat import _handle_regular_chat
-
-        await _handle_regular_chat(placeholder, 123, "Hi", chat_state)
-
-    # History should have the model response appended
-    assert any("Hello world!" in str(h) for h in chat_state.history)
-    assert chat_state.token_count == 42
-    mock_save.assert_awaited_once()
-
-
-# ── All limits exhausted ──────────────────────────────────────────────────────
+    # Assert
+    assert any("Hello world!" in str(msg) for msg in chat_state.history), "Expected model response in history"
+    assert chat_state.token_count == 42, "Expected updated token count"
+    mock_dependencies["update_chat"].assert_awaited_once_with(user_id, chat_state)
+    mock_dependencies["send_long"].assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_handle_regular_chat_all_exhausted():
-    """When all API keys exhausted, shows limit message."""
-    placeholder = make_placeholder()
+async def test_exhausted_limits_shows_error_message(mock_dependencies):
+    """
+    Risk Covered: System crashes or hangs when API keys are exhausted.
+    Level: Unit.
+    """
+    # Arrange
+    user_id = 123
+    placeholder = make_telegram_message(user_id=user_id)
     chat_state = make_chat_state()
+    mock_dependencies["resolve"].return_value = (None, None, "all_exhausted")
 
-    with (
-        patch(
-            "app.handlers.ai_chat._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=(None, None, "all_exhausted"),
-        ),
-    ):
-        from app.handlers.ai_chat import _handle_regular_chat
+    # Act
+    await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
-        await _handle_regular_chat(placeholder, 123, "Hi", chat_state)
-
+    # Assert
     placeholder.edit_text.assert_awaited_once()
-    text = placeholder.edit_text.call_args[0][0]
-    assert "лимиты" in text.lower() or "исчерпаны" in text.lower()
-
-
-# ── Fallback confirmation ─────────────────────────────────────────────────────
+    edited_text = placeholder.edit_text.call_args[0][0].lower()
+    assert "исчерпаны" in edited_text or "лимиты" in edited_text
 
 
 @pytest.mark.asyncio
-async def test_handle_regular_chat_confirm_fallback():
-    """When model exhausted, offers fallback model confirmation."""
-    placeholder = make_placeholder()
+async def test_model_exhausted_prompts_fallback_confirmation(mock_dependencies):
+    """
+    Risk Covered: Silent failure when switching to fallback model instead of asking user.
+    Level: Unit.
+    """
+    # Arrange
+    user_id = 123
+    placeholder = make_telegram_message(user_id=user_id)
     chat_state = make_chat_state()
+    mock_dependencies["resolve"].return_value = ({"api_key": "k"}, "gemini-1.5-pro", "confirm_fallback")
 
-    with (
-        patch(
-            "app.handlers.ai_chat._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"api_key": "k"}, "gemini-1.5-pro", "confirm_fallback"),
-        ),
-    ):
-        from app.handlers.ai_chat import _handle_regular_chat
+    # Act
+    await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
-        await _handle_regular_chat(placeholder, 123, "Hi", chat_state)
-
+    # Assert
     placeholder.edit_text.assert_awaited_once()
-    call_kwargs = placeholder.edit_text.call_args
-    assert "reply_markup" in call_kwargs[1]
-    text = call_kwargs[0][0]
-    assert "gemini-1.5-pro" in text
-
-
-# ── Empty response ────────────────────────────────────────────────────────────
+    call_args, call_kwargs = placeholder.edit_text.call_args
+    assert "reply_markup" in call_kwargs, "Expected inline keyboard for fallback confirmation"
+    assert "gemini-1.5-pro" in call_args[0]
 
 
 @pytest.mark.asyncio
-async def test_handle_regular_chat_empty_response():
-    """Empty AI response pops last history entry and persists."""
-    placeholder = make_placeholder()
+async def test_empty_response_rolls_back_history(mock_dependencies):
+    """
+    Risk Covered: Storing empty AI responses clutters history and causes errors on next turn.
+    Level: Unit.
+    """
+    # Arrange
+    user_id = 123
+    placeholder = make_telegram_message(user_id=user_id)
     history = [{"role": "user", "parts": ["Hi"]}]
     chat_state = make_chat_state(history=history)
+    mock_dependencies["get_resp"].return_value = (None, 0)
 
-    with (
-        patch(
-            "app.handlers.ai_chat._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"api_key": "k", "key_hash": "h"}, "gemini-2.0-flash", "direct"),
-        ),
-        patch("app.handlers.ai_chat._get_ai_response_with_routing", new_callable=AsyncMock, return_value=(None, 0)),
-        patch("app.handlers.ai_chat.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as mock_save,
-        patch("app.handlers.ai_chat.get_registry") as mock_get_registry,
-    ):
-        mock_registry = MagicMock()
-        mock_registry.compose_system_prompt.return_value = "sys"
-        mock_get_registry.return_value = mock_registry
+    # Act
+    await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
-        from app.handlers.ai_chat import _handle_regular_chat
-
-        await _handle_regular_chat(placeholder, 123, "Hi", chat_state)
-
-    # State should have been saved (history popped)
-    mock_save.assert_awaited_once()
-
-
-# ── Error response triggers cleanup ──────────────────────────────────────────
+    # Assert
+    assert len(chat_state.history) == 0, "Last user message should be popped on empty AI response"
+    mock_dependencies["update_chat"].assert_awaited_once_with(user_id, chat_state)
+    placeholder.edit_text.assert_awaited_once()
+    assert "пустой ответ" in placeholder.edit_text.call_args[0][0].lower()
 
 
 @pytest.mark.asyncio
-async def test_handle_regular_chat_error_response_cleanup():
-    """AI error response triggers cleanup callback."""
-    placeholder = make_placeholder()
+async def test_error_response_triggers_cleanup(mock_dependencies):
+    """
+    Risk Covered: AI failure states not triggering proper error handler.
+    Level: Unit.
+    """
+    # Arrange
+    user_id = 123
+    placeholder = make_telegram_message(user_id=user_id)
     chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
+    mock_dependencies["get_resp"].return_value = ("503 Service Unavailable", 0)
+    mock_dependencies["handle_err"].return_value = True
 
-    with (
-        patch(
-            "app.handlers.ai_chat._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"api_key": "k", "key_hash": "h"}, "gemini-2.0-flash", "direct"),
-        ),
-        patch(
-            "app.handlers.ai_chat._get_ai_response_with_routing",
-            new_callable=AsyncMock,
-            return_value=("503 Service Unavailable", 0),
-        ),
-        patch("app.handlers.ai_chat.update_stage", new_callable=AsyncMock),
-        patch(
-            "app.handlers.ai_chat.handle_ai_response_error", new_callable=AsyncMock, return_value=True
-        ) as mock_handle_err,
-        patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock),
-        patch("app.handlers.ai_chat.get_registry") as mock_get_registry,
-    ):
-        mock_registry = MagicMock()
-        mock_registry.compose_system_prompt.return_value = "sys"
-        mock_get_registry.return_value = mock_registry
+    # Act
+    await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
-        from app.handlers.ai_chat import _handle_regular_chat
-
-        await _handle_regular_chat(placeholder, 123, "Hi", chat_state)
-
-    # Error handler should have been invoked
-    mock_handle_err.assert_awaited_once()
+    # Assert
+    mock_dependencies["handle_err"].assert_awaited_once()

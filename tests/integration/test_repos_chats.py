@@ -24,7 +24,8 @@ class TestChatStateLifecycle:
             """INSERT INTO chats (user_id, model, history, token_count, search_enabled)
                VALUES ($1, $2, '[]'::jsonb, 0, false)
                ON CONFLICT (user_id) DO NOTHING""",
-            user_id, "gemini-2.5-flash",
+            user_id,
+            "gemini-2.5-flash",
         )
 
         row = await conn.fetchrow("SELECT * FROM chats WHERE user_id = $1", user_id)
@@ -41,13 +42,17 @@ class TestChatStateLifecycle:
 
         await conn.execute(
             "INSERT INTO chats (user_id, model) VALUES ($1, $2)",
-            user_id, "gemini-2.5-flash",
+            user_id,
+            "gemini-2.5-flash",
         )
 
         history = [{"role": "user", "content": "Hello"}, {"role": "model", "content": "Hi!"}]
         await conn.execute(
             "UPDATE chats SET model = $1, history = $2::jsonb, token_count = $3 WHERE user_id = $4",
-            "gemini-2.5-flash-lite", json.dumps(history), 150, user_id,
+            "gemini-2.5-flash-lite",
+            json.dumps(history),
+            150,
+            user_id,
         )
 
         row = await conn.fetchrow("SELECT model, history, token_count FROM chats WHERE user_id = $1", user_id)
@@ -65,7 +70,10 @@ class TestChatStateLifecycle:
 
         await conn.execute(
             "INSERT INTO chats (user_id, model, token_count, context_summary) VALUES ($1, $2, $3, $4)",
-            user_id, "gemini-2.5-flash", 500, "Previous summary",
+            user_id,
+            "gemini-2.5-flash",
+            500,
+            "Previous summary",
         )
 
         await conn.execute(
@@ -130,7 +138,9 @@ class TestActiveChatMessages:
 
         await conn.execute(
             "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-            user_id, "user", "Hello",
+            user_id,
+            "user",
+            "Hello",
         )
         await conn.execute("DELETE FROM active_chat_messages WHERE user_id = $1", user_id)
         count = await conn.fetchval("SELECT COUNT(*) FROM active_chat_messages WHERE user_id = $1", user_id)

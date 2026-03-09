@@ -49,9 +49,7 @@ class TestModelButtonCallback:
         query.answer.assert_awaited()
         # Should show alert toast
         call_kwargs = query.answer.call_args
-        assert call_kwargs[1].get("show_alert") is True or (
-            len(call_kwargs[0]) >= 1 and call_kwargs[0][0]
-        )
+        assert call_kwargs[1].get("show_alert") is True or (len(call_kwargs[0]) >= 1 and call_kwargs[0][0])
 
     @pytest.mark.asyncio
     async def test_valid_model_index_updates_chat_state(self):

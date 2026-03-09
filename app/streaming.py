@@ -178,7 +178,7 @@ def _detect_open_markdown(text: str) -> tuple[str, str]:
         # close it in the first message, reopen in the second.
         # Try to detect original language specifier for reopening.
         last_fence_idx = text.rfind("```")
-        after_fence = text[last_fence_idx + 3:]
+        after_fence = text[last_fence_idx + 3 :]
         lang_match = re.match(r"([a-zA-Z0-9+#._-]{1,20})", after_fence)
         lang = lang_match.group(1) if lang_match else ""
         suffix_parts.append("\n```")
@@ -335,7 +335,8 @@ class StreamingWriter:
                 if "not modified" not in str(e).lower():
                     logging.warning(
                         "Draft streaming failed (attempt %d): %s — falling back to classic",
-                        self._edit_count, e,
+                        self._edit_count,
+                        e,
                     )
                     # Disable draft mode and retry via classic
                     self._use_drafts = False
