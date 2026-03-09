@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.27] - 2026-03-09 - Database Reliability & Legacy Schema Cleanup
+
+### 🛡️ State Management & Distributed Concurrency Safety
+
+- **Removed Unsafe Local Caching**: Completely removed the in-memory `TTLCache` (`_active_chats_cache`) from `app/database.py` and `app/repos/chats.py`. In an environment scaled beyond a single replica, local memory caching directly caused state divergence and chat history truncation (Data Loss).
+- **Enforced Single Source of Truth (SSOT)**: `get_user_chat` and `update_user_chat` now strictly and unconditionally route `ChatState` reads/writes directly to the PostgreSQL database, ensuring perfect consistency across all bot instances with `asyncpg` pooling.
+
+### 🧹 Schema Tech Debt Cleanup
+
+- **Dropped Legacy Column**: Executed DDL migration to `ALTER TABLE public.chats DROP COLUMN history;`. The message history has been durably stored in the relational `active_chat_messages` table for a long time, but the legacy `history` JSONB column was still being zeroed out with `[]` on every `chat_state` update, creating unnecessary I/O constraints.
+
+### Files Changed
+
+| File                         | Change                                                    |
+| ---------------------------- | --------------------------------------------------------- |
+| `app/database.py`            | Removed `_active_chats_cache` TTLCache initialization     |
+| `app/repos/chats.py`         | Dropped TTL caching logic and `history` dummy JSON insert |
+| `app/repos/conversations.py` | Removed legacy cache invalidation sweeps                  |
+
+### 🧪 Tests: 1054 passed (all suites clean)
+
+---
+
 ## [2.8.26] – 2026-03-09 – CI Stabilization & Type Safety
 
 ### 🧪 CI Stabilization: Test Mocking Architecture Fixes

@@ -8,8 +8,6 @@ and is re-exported here for convenience.
 
 import logging
 
-from cachetools import TTLCache
-
 from app.config import settings
 from app.database import (
     ChatState,
@@ -43,11 +41,6 @@ def _extract_message_content(msg: dict) -> str:
 @timed_operation("get_user_chat")
 async def get_user_chat(user_id: int) -> ChatState | None:
     """Load the active chat state for a user from the database."""
-    # Check cache first
-    async with db_manager._cache_lock:
-        if hasattr(db_manager, "_active_chats_cache") and user_id in db_manager._active_chats_cache:
-            return db_manager._active_chats_cache[user_id]
-
     if not db_manager.is_connected:
         await reconnect_database()
 
@@ -99,12 +92,6 @@ async def get_user_chat(user_id: int) -> ChatState | None:
 
             chat_state._original_length = len(chat_state.history)
 
-            # Update cache
-            async with db_manager._cache_lock:
-                if not hasattr(db_manager, "_active_chats_cache"):
-                    db_manager._active_chats_cache = TTLCache(maxsize=1000, ttl=900)
-                db_manager._active_chats_cache[user_id] = chat_state
-
             return chat_state
         finally:
             await clear_user_context(conn=conn)
@@ -119,12 +106,6 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
     async with db_manager.pool.acquire() as conn:
         await set_user_context(user_id, False, conn=conn)
         try:
-            # Update cache
-            async with db_manager._cache_lock:
-                if not hasattr(db_manager, "_active_chats_cache"):
-                    db_manager._active_chats_cache = TTLCache(maxsize=1000, ttl=900)
-                db_manager._active_chats_cache[user_id] = chat_state
-
             current_length = len(chat_state.history)
             original_length = getattr(chat_state, "_original_length", 0)
 
@@ -174,8 +155,8 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
             chat_state._original_length = current_length
 
             chat_query = """
-            INSERT INTO chats (user_id, history, model, token_count, search_enabled, system_prompt, context_summary, thinking_level)
-            VALUES ($1, '[]', $2, $3, $4, $5, $6, $7)
+            INSERT INTO chats (user_id, model, token_count, search_enabled, system_prompt, context_summary, thinking_level)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (user_id)
             DO UPDATE SET
                 model = EXCLUDED.model, token_count = EXCLUDED.token_count,
@@ -288,7 +269,3 @@ async def update_thinking_level(user_id: int, level: str | None) -> None:
         "UPDATE chats SET thinking_level = $1 WHERE user_id = $2",
         (level, user_id),
     )
-    # Invalidate cache
-    async with db_manager._cache_lock:
-        if hasattr(db_manager, "_active_chats_cache"):
-            db_manager._active_chats_cache.pop(user_id, None)

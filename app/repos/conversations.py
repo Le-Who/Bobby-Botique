@@ -210,11 +210,6 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                         conn=conn,
                     )
 
-        # Invalidate cache outside the transaction (non-critical)
-        async with db_manager._cache_lock:
-            if hasattr(db_manager, "_active_chats_cache") and user_id in db_manager._active_chats_cache:
-                del db_manager._active_chats_cache[user_id]
-
         return True
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False

@@ -52,7 +52,6 @@ class DatabaseManager:
             cls._instance._active_keys_cache = TTLCache(maxsize=100, ttl=300)
             cls._instance._user_auth_cache = TTLCache(maxsize=1000, ttl=300)
             cls._instance._model_config_cache = TTLCache(maxsize=50, ttl=3600)
-            cls._instance._active_chats_cache = TTLCache(maxsize=1000, ttl=900)
 
             cls._instance._cache_lock = asyncio.Lock()
             cls._instance._monitor_task = None
