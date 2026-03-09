@@ -46,9 +46,13 @@ async def test_qna_search_happy_path():
             new_callable=AsyncMock,
             return_value=("Localized answer", True, AsyncMock()),
         ),
-        patch("app.handlers.ai_core._resolve_ai_request", new_callable=AsyncMock, return_value=({"key": "val"}, "gemini-2.0-flash", None)),
+        patch(
+            "app.handlers.ai_core._resolve_ai_request",
+            new_callable=AsyncMock,
+            return_value=({"key": "val"}, "gemini-2.0-flash", None),
+        ),
         patch("app.handlers.ai_search.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
-        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as mock_send,
+        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as _mock_send,
         patch("app.handlers.ai_search.get_registry") as mock_get_registry,
         patch("app.handlers.ai_search.get_openrouter_keys", return_value=[]),
     ):

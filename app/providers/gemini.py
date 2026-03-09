@@ -278,7 +278,6 @@ class GeminiProvider(BaseAIProvider):
             logging.error("Gemini streaming error: %s", e)
             yield tag_error(ErrorCode.GENERIC, f"❌ Ошибка: {e}")
 
-
     # ── Gemini helpers ───────────────────────────────────────────────────
 
     async def _build_contents(self, history: list) -> list | None:

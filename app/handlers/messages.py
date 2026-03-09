@@ -157,7 +157,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         register_heartbeat(placeholder_message.message_id, done_event)
 
         async def _heartbeat() -> None:
-            # We no longer edit the message with hardcoded "waiting" text 
+            # We no longer edit the message with hardcoded "waiting" text
             # because the unified streaming architecture handles live updates.
             # This heartbeat task simply waits for cancellation to ensure
             # any cleanup mechanisms work properly without stepping on streaming's toes.
@@ -228,6 +228,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     heartbeat_task.cancel()
 
         from app.utils.background_tasks import submit_task
+
         submit_task(task_wrapper(), retry=0)
 
 

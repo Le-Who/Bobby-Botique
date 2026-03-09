@@ -3,6 +3,37 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.25] – 2026-03-09 – Background Task Resilience & Distributed Concurrency Limits
+
+### 🛡️ Resilient Background Task Manager
+
+- **Prevent Data Loss**: Replaced suppressed `asyncio.create_task` scattered usage with a centralized `TaskManager`. Background tasks, such as saving memory vectors (`_bg_store`), are now retried with exponential backoff.
+- **Global Error Hooks**: When tasks exhaust all retries, critical failures are sent to the admin dashboard via a centralized error callback, ensuring observability.
+
+### 🌐 Distributed State Management
+
+- **Redis-backed Semaphores**: Upgraded the local `_HEAVY_REQUEST_SEMAPHORE` to a `GlobalLLMSemaphore` backed by Redis Sorted Sets (ZSETs), preventing API starvation across multi-replica deployments horizontally.
+- **Graceful Degradation**: If Redis is unavailable, the semaphore transparently falls back to an in-memory `asyncio.Semaphore`, ensuring high availability.
+
+### 🧹 Code Quality & Testing Strictness
+
+- **Cleanups**: Fixed unused variables (`stream_last_msg`, `attempt`, `resolution`) and undefined names across `ai_search.py`, `router.py`, and test packages.
+- **Ruff compliance**: Verified automated formatting (`ruff format`) and strict linting (`ruff check`) across the codebase.
+
+### Files Changed
+
+| File                            | Change                                                        |
+| ------------------------------- | ------------------------------------------------------------- |
+| `app/utils/background_tasks.py` | Centralized `TaskManager` with retry and error callback hooks |
+| `bot.py`                        | Registered background task alerts to Admin alert pipeline     |
+| `app/adapters/concurrency.py`   | Built Redis `GlobalLLMSemaphore` with graceful fallback       |
+| `app/handlers/ai_chat.py`       | Wired background hooks to vector database                     |
+| `tests/*`                       | Refactored mock assignments                                   |
+
+### 🧪 Tests: 1054 passed (all suites clean)
+
+---
+
 ## [2.8.24] – 2026-03-09 – Unified AI Streaming Architecture
 
 ### ✨ Unified Real-Time Streaming

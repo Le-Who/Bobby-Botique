@@ -236,6 +236,18 @@ async def run_bot_with_retry():
         application.add_error_handler(global_error_handler)
 
         await application.initialize()
+
+        # Register TaskManager error callback for critical background alerts
+        from app.admin_alerts import AlertSeverity, alert_admin
+        from app.utils.background_tasks import TaskManager
+
+        async def _bg_task_alert(exc: Exception, context: str):
+            await alert_admin(
+                application, f"Background Task Failure:\n{context}", severity=AlertSeverity.CRITICAL, exc=exc
+            )
+
+        TaskManager.register_error_callback(_bg_task_alert)
+
         await application.start()
 
         # Choose polling or webhook based on WEBHOOK_URL

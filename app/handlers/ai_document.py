@@ -115,11 +115,12 @@ async def _handle_document_question(
         from app.handlers.ai_core import _resolve_ai_request
         from app.providers import get_provider_router
         from app.streaming import stream_and_display
+
         _, model_used, _ = await _resolve_ai_request(settings.DEFAULT_MODEL)
-        
+
         parts = [document_prompt] if document_prompt else []
         history = [{"role": "user", "parts": parts}]
-        
+
         response_text, success, stream_last_msg = await stream_and_display(
             placeholder_message,
             model_name=model_used,

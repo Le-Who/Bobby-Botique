@@ -160,7 +160,7 @@ async def _handle_regular_chat(
     from app.utils.heartbeat import stop_heartbeat
 
     stop_heartbeat(placeholder_message.message_id)
-    
+
     from app.streaming import stream_and_display
 
     response_text, success, stream_last_msg = await stream_and_display(
@@ -174,11 +174,12 @@ async def _handle_regular_chat(
         chat_id=placeholder_message.chat_id,
         chat_type=placeholder_message.chat.type,
     )
-    
+
     if success and response_text:
         streamed = True
         # Token count is approximate for streamed responses right now unless tracked at provider level
         from app.prompt_registry import estimate_tokens_cyrillic
+
         new_token_count = estimate_tokens_cyrillic(response_text)
 
     if response_text:
@@ -251,6 +252,7 @@ async def _handle_regular_chat(
                         )
 
                     from app.utils.background_tasks import submit_task
+
                     submit_task(_bg_store(), retry=3)
             except Exception:
                 pass

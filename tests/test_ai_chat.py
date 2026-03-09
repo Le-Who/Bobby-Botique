@@ -58,7 +58,9 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
     mock_boundaries["update_chat"].assert_awaited_once()
     called_state = mock_boundaries["update_chat"].call_args[0][1]
 
-    assert called_state.token_count == 4, "Expected updated token count based on estimate_tokens_cyrillic('Hello world!')"
+    assert called_state.token_count == 4, (
+        "Expected updated token count based on estimate_tokens_cyrillic('Hello world!')"
+    )
     assert any("Hello world!" in str(msg) for msg in called_state.history), "Expected model response in history"
     assert any("Hello world!" in str(msg) for msg in called_state.history), "Expected model response in history"
     # Note: send_long_message is only called if streamed is False.

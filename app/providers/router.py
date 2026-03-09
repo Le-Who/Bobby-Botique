@@ -230,9 +230,10 @@ class ProviderRouter:
         use_case = AgentRequestUseCase()
         status_mgr = get_key_status_manager()
         failed_keys: set[str] = set()
+        all_permanent: bool = True
 
-        for attempt in range(max_key_retries):
-            key_data, model_used, resolution = await use_case.resolve_ai_request(
+        for _attempt in range(max_key_retries):
+            key_data, model_used, _resolution = await use_case.resolve_ai_request(
                 preferred_model,
                 use_openrouter=use_openrouter,
                 excluded_key_hashes=failed_keys,
@@ -246,7 +247,7 @@ class ProviderRouter:
 
             assert model_used is not None
             provider = get_provider_for_model(model_used, key_data["api_key"])
-            
+
             stream_started = False
             try:
                 # We yield from the provider's stream
@@ -264,9 +265,9 @@ class ProviderRouter:
                             await use_case.increment_key_usage(key_data["key_hash"], model_used, use_openrouter)
                         except Exception as e:
                             logging.debug("Non-critical stats update failed: %s", e)
-                    
+
                     yield chunk
-                
+
                 # If we successfully completed the stream, exit the retry loop
                 if stream_started:
                     return
@@ -278,27 +279,27 @@ class ProviderRouter:
                     logging.error("Stream failed mid-flight: %s", e)
                     yield f"\n\n[Ошибка трансляции: {str(e)}]"
                     return
-                
+
                 # Stream didn't start, so this key is bad. Suspend and loop.
                 error_msg = str(e)
                 failed_keys.add(key_data["key_hash"])
+                all_permanent = False
                 try:
                     await status_mgr.suspend_key(
                         key_data["key_hash"],
                         model_used,
-                        "transient", # assume stream setup failures are transient
+                        "transient",  # assume stream setup failures are transient
                         error_msg[:200],
                     )
                 except Exception as db_e:
                     logging.warning("Failed to suspend key: %s", db_e)
-                
+
                 continue
 
         # Exhausted retries
         is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
         provider_name = "OpenRouter" if is_or else "Gemini"
         yield tag_error(ErrorCode.KEYS_EXHAUSTED, f"🚫 Все доступные ключи {provider_name} не сработали.")
-
 
         # ── Model-level fallback ─────────────────────────────────────────
         # All keys failed for the preferred model. If every failure was

@@ -67,6 +67,7 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
         # We need the current model, so we resolve it first
         from app.handlers.ai_core import _resolve_ai_request
         from app.streaming import stream_and_display
+
         _, model_used, _ = await _resolve_ai_request(chat_state.model or settings.DEFAULT_MODEL)
         history = [{"role": "user", "parts": parts}]
 
@@ -103,7 +104,7 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
                 [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
             ]
             reply_markup = InlineKeyboardMarkup(buttons)
-            
+
             if not streamed:
                 await send_long_message(placeholder_message, response_text, reply_markup=reply_markup)
             else:
@@ -113,7 +114,7 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
                 except Exception as e:
                     if "not modified" not in str(e).lower():
                         logging.warning("Final button edit failed: %s", e)
-                        
+
             # Save context images в истории
             chat_state.history.append({"role": "user", "parts": [formatted_prompt]})
             chat_state.history.append({"role": "model", "parts": [response_text]})
@@ -295,7 +296,7 @@ async def _handle_media_group_photos(
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
-        
+
         err_msg = "Не удалось обработать группу изображений."
         if not streamed:
             await send_long_message(

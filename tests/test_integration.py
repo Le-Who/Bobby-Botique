@@ -23,9 +23,9 @@ class TestStreamingWriter:
         mock_msg.message_id = 1
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
-        
+
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
-        mock_adapter._bot = AsyncMock() # force draft mode if possible
+        mock_adapter._bot = AsyncMock()  # force draft mode if possible
 
         writer = StreamingWriter(mock_adapter, chat_type="private")
         writer._debounce_s = 0.05
@@ -51,9 +51,9 @@ class TestStreamingWriter:
         mock_msg.message_id = 2
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
-        
+
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
-        mock_adapter._bot = None # force edit_message mode
+        mock_adapter._bot = None  # force edit_message mode
 
         writer = StreamingWriter(mock_adapter, chat_type="group")
         writer._debounce_s = 0.01

@@ -53,10 +53,18 @@ async def test_document_question_success():
             new_callable=AsyncMock,
             return_value=("Python is great!", True, AsyncMock()),
         ),
-        patch("app.handlers.ai_core._resolve_ai_request", new_callable=AsyncMock, return_value=({"key": "val"}, "gemini-2.0-flash", None)),
-        patch("app.handlers.ai_document._get_ai_response_with_routing", new_callable=AsyncMock, return_value=("Python is great!", 10)),
+        patch(
+            "app.handlers.ai_core._resolve_ai_request",
+            new_callable=AsyncMock,
+            return_value=({"key": "val"}, "gemini-2.0-flash", None),
+        ),
+        patch(
+            "app.handlers.ai_document._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value=("Python is great!", 10),
+        ),
         patch("app.handlers.ai_document.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
-        patch("app.handlers.ai_document.send_long_message", new_callable=AsyncMock) as mock_send,
+        patch("app.handlers.ai_document.send_long_message", new_callable=AsyncMock) as _mock_send,
         patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
     ):
         mock_metrics.record_api_call = AsyncMock()
@@ -136,7 +144,11 @@ async def test_document_question_empty_ai_response():
         ),
         patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
         patch("app.streaming.stream_and_display", new_callable=AsyncMock, return_value=("", False, AsyncMock())),
-        patch("app.handlers.ai_core._resolve_ai_request", new_callable=AsyncMock, return_value=({"key": "val"}, "gemini-2.0-flash", None)),
+        patch(
+            "app.handlers.ai_core._resolve_ai_request",
+            new_callable=AsyncMock,
+            return_value=({"key": "val"}, "gemini-2.0-flash", None),
+        ),
         patch("app.handlers.ai_document._get_ai_response_with_routing", new_callable=AsyncMock, return_value=(None, 0)),
     ):
         from app.handlers.ai_document import _handle_document_question

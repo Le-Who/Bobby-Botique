@@ -124,7 +124,7 @@ async def _handle_qna_search(
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
-        
+
         if not streamed:
             await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup)
         else:
@@ -434,8 +434,8 @@ async def _handle_research_agent(
         from app.streaming import stream_and_display
 
         _, model_used, _ = await _resolve_ai_request(model_for_synthesis)
-        
-        response_text, success, stream_last_msg = await stream_and_display(
+
+        response_text, success, _stream_last_msg = await stream_and_display(
             placeholder_message,
             model_name=model_used,
             history=chat_state.history,
@@ -450,7 +450,7 @@ async def _handle_research_agent(
         streamed = bool(success and response_text)
 
         # We don't get new_token_count from stream, so we approximate or skip
-        new_token_count = 0 
+        new_token_count = 0
 
         if not streamed:
             response_text, new_token_count = await _get_ai_response_with_routing(

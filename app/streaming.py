@@ -34,6 +34,8 @@ from app.utils.text_format import sanitize_html_tags
 if TYPE_CHECKING:
     from telegram import Message
 
+    from app.adapters.ui_adapter import StreamingUIAdapter
+
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -443,14 +445,14 @@ async def stream_and_display(
         for post-stream edits like adding buttons.
     """
     from app.adapters.ui_adapter import TelegramMessageAdapter
-    
+
     adapter = TelegramMessageAdapter(
         message=placeholder_message,
         bot=bot,
         chat_id=chat_id,
-        draft_id=random.randint(1, 2**31 - 1) if bot and chat_type == "private" else 0
+        draft_id=random.randint(1, 2**31 - 1) if bot and chat_type == "private" else 0,
     )
-    
+
     writer = StreamingWriter(
         adapter,
         chat_type=chat_type,
@@ -458,6 +460,7 @@ async def stream_and_display(
 
     try:
         from app.providers import get_provider_router
+
         router = get_provider_router()
 
         async for delta in router.stream_response(

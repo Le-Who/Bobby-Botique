@@ -110,7 +110,7 @@ class TestStreamingWriter:
         mock_msg.message_id = 99
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
-        
+
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
         mock_adapter._bot = None
 
@@ -132,10 +132,10 @@ class TestStreamingWriter:
         mock_msg.message_id = 99
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
-        
+
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
         mock_adapter._bot = None
-        
+
         writer = StreamingWriter(mock_adapter, chat_type="private")
         writer._debounce_s = 10.0  # Very high debounce
         writer._min_chunk = 0
@@ -158,7 +158,7 @@ class TestStreamingWriter:
         mock_msg.message_id = 99
         mock_msg.chat = MagicMock()
         mock_msg.chat.id = 123
-        
+
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
         mock_adapter._bot = None
 

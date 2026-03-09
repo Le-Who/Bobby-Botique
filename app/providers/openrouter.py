@@ -215,7 +215,7 @@ class OpenRouterProvider(BaseAIProvider):
             headers["X-Request-ID"] = request_id
 
         payload = {"model": model_name, "messages": messages, "stream": True}
-        
+
         if _openrouter_http_client is None:
             yield tag_error(ErrorCode.GENERIC, "❌ OpenRouter HTTP client not initialized")
             return
@@ -251,7 +251,6 @@ class OpenRouterProvider(BaseAIProvider):
         except Exception as e:
             logging.error("OpenRouter streaming error: %s", e)
             yield tag_error(ErrorCode.GENERIC, f"❌ Произошла непредвиденная ошибка API: {e}")
-
 
     # ── OpenRouter helpers ───────────────────────────────────────────────
 

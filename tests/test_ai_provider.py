@@ -79,7 +79,7 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
-            
+
             async def stream_response(self, **kwargs):
                 yield ""
 
@@ -97,7 +97,7 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
-            
+
             async def stream_response(self, **kwargs):
                 yield ""
 
@@ -118,7 +118,7 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
-                
+
             async def stream_response(self, **kwargs):
                 yield ""
 
@@ -137,7 +137,7 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
-                
+
             async def stream_response(self, **kwargs):
                 yield ""
 
@@ -156,7 +156,7 @@ class TestBaseAIProvider:
 
             async def _execute_request(self, **kwargs):
                 pass
-            
+
             async def stream_response(self, **kwargs):
                 yield ""
 

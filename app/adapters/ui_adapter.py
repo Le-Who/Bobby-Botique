@@ -33,6 +33,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
 
     async def edit_message(self, text: str, parse_mode: str) -> None:
         from telegram.error import TelegramError
+
         try:
             await self._msg.edit_text(text, parse_mode=parse_mode)
         except TelegramError as e:
@@ -43,6 +44,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
         if not self._bot:
             raise ValueError("Draft mode requires a bot instance")
         from telegram.error import TelegramError
+
         try:
             await self._bot.send_message_draft(
                 chat_id=self._chat_id,
@@ -56,12 +58,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
 
     async def reply_new_message(self, text: str, parse_mode: str) -> "StreamingUIAdapter":
         new_msg = await self._msg.reply_text(text, parse_mode=parse_mode)
-        return TelegramMessageAdapter(
-            message=new_msg,
-            bot=self._bot,
-            chat_id=self._chat_id,
-            draft_id=self._draft_id
-        )
+        return TelegramMessageAdapter(message=new_msg, bot=self._bot, chat_id=self._chat_id, draft_id=self._draft_id)
 
     @property
     def last_message(self):

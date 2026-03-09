@@ -16,6 +16,8 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Deep Research Mode**: Web scraping via Tavily API with relevance scoring and AI synthesis.
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
 - **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall.
+- **Distributed Concurrency**: Redis-backed global semaphores to prevent API quota starvation in multi-replica deployments.
+- **Resilient Operations**: Background task manager with exponential backoff and admin alerting hooks.
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
 - **Context Summarization**: Automatic token compression for large chats.
 - **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`) and system health overviews.

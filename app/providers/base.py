@@ -255,7 +255,6 @@ class BaseAIProvider(ABC):
         """
 
 
-
 def is_openrouter_model(model_name: str) -> bool:
     """Check if model name indicates an OpenRouter model."""
     return "/" in model_name
