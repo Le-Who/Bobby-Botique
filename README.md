@@ -1,380 +1,204 @@
-# GemAI Bot v2 – Technical Documentation
+# GemAI Bot v2
 
-![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)
-![Telegram](https://img.shields.io/badge/Telegram-Bot-blue.svg)
-![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-orange.svg)
-![OpenRouter](https://img.shields.io/badge/AI-OpenRouter-purple.svg)
-![License](https://img.shields.io/badge/License-MIT-green.svg)
+An advanced, asynchronous Telegram bot designed as a comprehensive AI assistant. It orchestrates multiple AI providers (Google Gemini, OpenRouter), performs web research via Tavily, maintains long-term contextual memory, and analyzes documents.
 
-**GemAI Bot v2** is an advanced, asynchronous Telegram bot designed to serve as a comprehensive AI assistant. It orchestrates multiple AI providers (Google Gemini, OpenRouter), performs real-time web research, maintains long-term memory, and analyzes complex documents.
+## What It Does
 
-The project is built with a **monolithic asyncio architecture**, integrating a high-performance Telegram bot with a lightweight Quart-based monitoring dashboard.
+The bot provides intelligent conversational abilities within Telegram, augmenting standard LLM replies with real-time internet search capabilities and document processing (PDF, DOCX). It actively manages AI API quotas using a key rotation system, stores chat histories and extracted semantic concepts in a PostgreSQL database, and exposes an administrative health dashboard.
 
----
+## Current Status
 
-## 📑 Table of Contents
+**Production-ish**. The application uses industry-standard libraries (Quart, asyncpg, python-telegram-bot v20+) and supports Docker deployments with built-in telemetry, circuit breakers, and connection pooling. However, certain schema migrations and architectural limits are still evolving (e.g., in-memory parsing constraints for heavy documents).
 
-- [🎯 Project Goals](#-project-goals)
-- [🏗 Architecture Overview](#-architecture-overview)
-- [🧠 Backend Capabilities](#-backend-capabilities)
-  - [Core Logic & Agentic Workflow](#core-logic--agentic-workflow)
-  - [AI Provider Routing & Key Rotation](#ai-provider-routing--key-rotation)
-  - [Document Processing](#document-processing)
-- [🖥 Frontend (Monitoring Dashboard)](#-frontend-monitoring-dashboard)
-- [🛠 Technical Stack](#-technical-stack)
-- [🚀 Deployment & Infrastructure](#-deployment--infrastructure)
-- [⚙️ Configuration](#%EF%B8%8F-configuration)
-- [🧪 Testing](#-testing)
-- [📝 Changelog](#-changelog)
+## Features
 
----
+- **Smart Provider Routing**: Automatic failover and API key rotation across Google Gemini and OpenRouter models.
+- **Deep Research Mode**: Web scraping via Tavily API with relevance scoring and AI synthesis.
+- **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
+- **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall.
+- **Thinking Level Control**: Configurable reasoning depth for supported models.
+- **Context Summarization**: Automatic token compression for large chats.
+- **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`) and system health overviews.
+- **Security & GDPR**: CSRF-protected dashboard authentication, brute-force rate limiting, and Telegram commands for data export (`/mydata`) and deletion (`/deleteme`).
 
-## 🎯 Project Goals
+## Non-Goals / Limitations
 
-1.  **Resilience**: Ensure 24/7 availability with robust error handling, self-healing database connections, and graceful shutdowns.
-2.  **Scalability**: Bypass API rate limits through intelligent key rotation and multi-provider fallback strategies.
-3.  **Versatility**: Go beyond text generation by integrating web search (Tavily), document understanding, and group chat management.
-4.  **Observability**: Provide real-time insights into system health and resource usage via a web dashboard.
+- **No Voice/Audio Support**: Does not currently process or transcribe Telegram voice messages.
+- **OpenRouter Limitations**: Multimodal detection (images) strictly forces Gemini; OpenRouter is not utilized for vision tasks.
+- **Local Rate Limits**: Heavy request limits are rigidly enforced per user to prevent API quota drain (`MAX_CONCURRENT_HEAVY_REQUESTS`).
+- **Incomplete Schema Bootstrapping**: The codebase relies on historical SQL migration scripts (`scripts/migrations`) for full database schema setups; `app/db/schema.py` alone may be insufficient to build all tables from scratch.
 
----
+## Architecture
 
-## 🏗 Architecture Overview
+- **Monolithic Container**: A single async event loop runs both the Telegram long-polling (or webhook) updater and the Quart web server via Hypercorn.
+- **Database (PostgreSQL)**: Source of truth for users, chats, messages, metrics, roles, and pgvector embeddings.
+- **Cache (Redis)**: Optional high-speed layer for caching rate limits and transient states.
+- **Third-Party APIs**: Google Gemini (native SDK), OpenRouter (HTTPX), Tavily (HTTPX), Telegram Bot API (HTTPX-based `python-telegram-bot`).
 
-> 📖 **For the full module map, design patterns, and dependency graph, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).**
+```mermaid
+graph TD;
+    User-->TelegramAPI;
+    TelegramAPI-->BotHandler;
+    Admin-->QuartServer;
 
-The system runs as a single containerized application performing two parallel asyncio tasks:
+    BotHandler-->ProviderRouter;
+    ProviderRouter-->Gemini[Google Gemini];
+    ProviderRouter-->OpenRouter[OpenRouter];
 
-1.  **Telegram Bot (`bot.py`)**:
-    - Uses `python-telegram-bot` with **dual mode**: long-polling (default) or **webhook** (set `WEBHOOK_URL` env var).
-    - Manages user interactions, message queues, and AI responses.
-    - Handles "Agentic" workflows (Research, Q&A).
-    - **Streaming responses** (`streaming.py`): Gemini `generate_content_stream` + debounced `edit_message_text` (1.2s, 80-char minimum). **Multi-message overflow**: auto-splits at natural break points when exceeding 4096 chars. **Retry with key rotation** (up to 3 keys) before non-streaming fallback. Falls back to non-streaming for OpenRouter.
-    - **Smart model suggestions**: Regex heuristics classify message type (code/reasoning) and suggest upgrade to a more capable model. **No-downgrade policy** (v2.8.2+): only suggests models with higher capability tier.
-2.  **Web Server (`app/web.py`)**:
-    - A lightweight Quart + Hypercorn server (fully async-native).
-    - Exposes Health Check (`/health`) and **Prometheus metrics** (`/metrics`) endpoints.
-    - Serves a secure Monitoring Dashboard with cookie-session auth.
+    BotHandler-->Tavily[Tavily Search];
 
-**Data Persistence**:
-
-- **PostgreSQL**: Stores user preferences, chat history (short-term & long-term), API key usage statistics, and **long-term memory** (pgvector embeddings for semantic recall).
-- **Redis** (Optional): Async `redis.asyncio.Redis` client for high-speed caching and temporary state management. Connection pool sized to `max_connections=10` (matching `concurrent_updates=True` handler capacity; Upstash free tier allows 100). Properly closed via `aclose()` on shutdown.
-
-**Database Package** (`app/db/`):
-
-- `schema.py` — All `CREATE TABLE` DDL statements.
-- `migrations.py` — SQL file runner + legacy inline migrations.
-- `rls.py` — Row Level Security configuration and policy templates.
-- `seed.py` — Initial data seeding (admin user, API keys, indexes).
-- `database.py` acts as a backward-compatible facade, re-exporting all public functions.
-
----
-
-## 🧠 Backend Capabilities
-
-### Core Logic & Agentic Workflow
-
-Located in `app/handlers/` as modular sub-handlers (`ai_core.py`, `ai_chat.py`, `ai_search.py`, `ai_photo.py`, `ai_document.py`), with `agent.py` as a thin re-export facade. Capabilities:
-
-- **Deep Dive Research**:
-  1.  Analyzes user query.
-  2.  Uses **Tavily API** to search the web.
-  3.  **URL Selection Agent**: Uses AI to score and select the most relevant sources.
-  4.  **Content Scraper**: Fetches content from selected URLs.
-  5.  **Synthesis Agent**: Generates a comprehensive answer with citations based on the scraped context (up to 30k+ tokens).
-- **Context-Aware Chat**:
-  - Maintains conversation history in PostgreSQL.
-  - Injects system instructions and user preferences into every prompt.
-  - Supports "New Topic" to reset context while keeping long-term memory.
-  - **Context Summarization** (v2.6.9+): Two-tier summarization system for long conversations:
-    - **Local tier**: Snippet-based truncation for conversations under 30K dropped tokens.
-    - **LLM tier**: Asynchronous refine-chain summarization (chunked 10K × 6 max) for conversations above 30K dropped tokens.
-    - 128K token budget with 12K response reserve and 4K summary budget.
-    - Summaries persisted in `chats.context_summary` column across sessions.
-    - Tier-specific metrics (triggered, LLM/local counts, tokens saved) surfaced in the dashboard.
-- **Thinking Level Control** (v2.7.2+): Per-user configurable reasoning depth via `/thinking` command (`off`/`low`/`medium`/`high`/`auto`). Auto-detects model family: `thinkingBudget` for Gemini 2.5, `thinkingLevel` for Gemini 3. OpenRouter models unaffected.
-- **pgvector long-term memory** (`repos/memory.py`): `gemini-embedding-001` (3072-dim `halfvec`), HNSW index, cosine similarity search, `task_type`-aware asymmetric embedding, 500/user limit, 90-day TTL. Semantically recalled during context assembly, stored after each exchange.
-- **Smart model selection** (`model_selector.py`): Regex heuristics classify messages (code/reasoning) → non-intrusive inline button suggestions for upgrades only. **No-downgrade policy**: `_get_tier()` ranks models (`lite=1 < flash=2 < 2.5-flash=3 < pro=4`); suggestions only when `tier(suggested) > tier(current)`. `switch_model:` callback handler for one-tap switching.
-- **Group Chat Mode**: Specialized handlers for admin-only or reply-only interactions in groups.
-- **Customizable Roles**: Browse system role catalog, generate AI roles, or write custom roles manually — all manageable via an AIDA-structured roles hub.
-
-### AI Provider Routing & Key Rotation
-
-The bot implements a sophisticated "Smart Router" for AI requests:
-
-- **Multi-Provider Support**: Seamlessly switches between **Google Gemini** (Flash, Pro) and **OpenRouter** (GPT-5, Claude 4.5, etc.).
-- **ProviderRouter** (v2.6+):
-  - Unified AI call path — both `ProviderRouter` and `AgentRequestUseCase` route through Provider classes (`GeminiProvider` / `OpenRouterProvider`).
-  - **DB-backed `KeyStatusManager`** (v2.7.0+): Persistent per-model key health tracking with error-category-aware cooldowns. Replaces the in-memory `KeyHealth` class.
-  - **Two-tier key selection**: SQL prioritizes active keys first, then probes cooldown-expired keys for recovery.
-  - **Error-aware suspension**: `API_KEY_INVALID` → 24h, `quota` → midnight PT, `rate_limit` → 60s, transient errors → no suspension. Exponential backoff on repeated failures (capped at 7 days).
-  - **Multimodal auto-detection**: Detects PIL Image / bytes in history and forces Gemini automatically.
-  - **Per-user rate limiting**: Consolidated `RateLimiter` (async) + `SyncRateLimiter` (sync, login) with periodic cleanup, stats, and admin reset.
-  - **`DailyKeyManager`**: Generic key rotation engine shared by Gemini and OpenRouter, parameterized by table names.
-  - **OpenRouter exclusion fix** (v2.7.1): `get_available_openrouter_key()` now properly forwards `excluded_hashes` to the two-tier SQL query, ensuring failed keys are rotated out.
-- **Key Rotation System**:
-  - Rotates through a pool of API keys to avoid rate limits.
-  - Tracks usage stats (requests/tokens) per key.
-  - **Auto-Fallback**: If a key fails (Quota Exceeded) or a provider is down, it automatically tries the next key or switches to a backup model.
-- **Stage Indicators** (v2.5+): Animated processing stages (🤔→💭→✅) keep users informed during multi-step AI operations.
-- **Heartbeat Feedback** (v2.6.4+): 3-stage progressive updates (15s → 30s → 50s) reassure users during long-running requests.
-- **Manual Role Persistence** (v2.6.4+): In-progress manual role creation survives bot restarts via DB-backed `user_state` columns.
-- **Origin-Aware Role Buttons** (v2.7.0+): "🎭 Выбрать роль ИИ" under AI responses sends the roles menu as a **new message** (preserving the response); from menus it edits in-place. Controlled via `callback_data` suffix (`open_roles:from_response` vs `open_roles`).
-
-### Document Processing
-
-- **Formats**: Supports PDF (`pypdf`), DOCX (`python-docx`), and txt/md.
-- **Multimodal Analysis**: Can "see" images via Gemini's vision capabilities.
-- **RAG-lite**: Uploaded documents are parsed, truncated to fits context limits (~30k chars), and injected into the conversation for Q&A.
-
-### Performance Optimizations (v2.1+)
-
-- **Non-Blocking Document I/O**: Asynchronous file processing and streaming chunked hashing algorithms completely avoid Event Loop blocking and prevent RAM starvation (OOM) on memory-constrained 256-512MB hosting environments.
-- **Batched Metrics DB Inserts**: Background batching via `asyncio.Queue` of monitoring metrics into PostgreSQL, replacing expensive synchronous tracking and dictionary iterations.
-- **Hybrid Database Schema** (PostgreSQL/Supabase)
-  - `users`, `api_keys`, `conversations`, `model_configuration` tables
-  - `active_chat_messages` table for O(1) history insert performance
-  - Database-side JSON ETL handling to bypass Python GIL limits
-  - Prepared statements for high-throughput concurrency
-  - RLS Denormalization indexing (`owner_user_id`) to optimize security policies
-  - Transaction-local RLS context (`set_config(..., true)`) preventing context leaks
-- **Repository Layer** (`app/repos/`): Canonical location for domain logic:
-  - `keys.py` — API key rotation (DailyKeyManager, MonthlyKeyManager, KeyStatusManager)
-  - `users.py` — Auth, user state, feedback
-  - `chats.py` — Chat state management
-  - `conversations.py` — Saved conversations CRUD
-  - `roles.py` — Custom user roles CRUD (7 functions)
-  - `user_stats.py` — Per-user daily/weekly statistics (3 functions)
-  - `admin.py` — Admin-only operations: user management, metrics cleanup, key inspection (6 functions)
-  - `metrics_repo.py`, `analytics.py` — System metrics and analytics queries
-- **In-Memory Caching** (TTLCache / Redis)
-  - Key status, user authorization, and dynamic AI model limits are aggressively cached to reduce DB I/O.
-- **Scoped DB Transactions**: Optimized database pooling (`max_size=10`) with `asyncio.Semaphore` and scope-limited transactions to prevent connection starvation without hitting provider DB connection limits.
-- **Micro-GC Pauses**: Fine-tuned `gc.collect(1)` macro-invocations preventing full stop-the-world application pauses during heavy traffic spikes.
-- **Robust TCP Pooling**: Scaled (yet strictly constrained) HTTPX connection pools (50 concurrent external HTTP connections) with Circuit Breaker tracking for external AI Providers to defend against socket exhaustion.
-
-### Admin Alerts (v2.8.8+)
-
-- **`app/admin_alerts.py`**: Rate-limited Telegram notifications to `ADMIN_ID` (5 per 5 minutes).
-- **Severities**: `CRITICAL` (unhandled exceptions), `WARNING`, `INFO`.
-- **Triggers**: `global_error_handler` → critical alert with traceback; startup → health report (DB/Redis/AI); shutdown → stop notification.
-- Tracebacks auto-truncated to fit Telegram's 4096-character message limit.
-
-### Resilience & Circuit Breakers (v2.6.6+)
-
-- **Gemini/OpenRouter**: DB-backed per-model key health tracking (`key_model_status` table) with error-category-aware cooldowns and automatic recovery probing.
-- **Tavily API**: Circuit breaker in `search_services.py` — trips after consecutive failures, auto-recovers.
-- **Telegram API**: Lazy circuit breaker in `messaging.py` — prevents flooding Telegram servers during outages.
-- **Response time tracking**: `MetricsMiddleware` wired into `handle_request` and `@track_metrics` decorator on all search handlers for per-operation latency dashboards.
-
-### Security Hardening (v2.6.5+)
-
-- **Nonce-based CSP**: Per-request `secrets.token_urlsafe(16)` nonce replaces `'unsafe-inline'` in `script-src` and `style-src` directives.
-- **Brute-force protection**: `SyncRateLimiter` on `/login` (5 attempts per 5 min → 429), with periodic eviction of stale IPs.
-- **`DecryptionError` handling**: API key decryption failures produce user-friendly messages instead of raw Python tracebacks.
-- **Error response sanitization**: API endpoints return generic `"internal_error"` instead of exception class names.
-- **SQL injection prevention**: Regex validation for dynamic table names in `DailyKeyManager`.
-
-### Planned Improvements
-
-- _(Planned)_ **Database Architecture V3**: Migration from Monolithic JSON TEXT arrays to normalized JSONB/Relational models, removal of block AST caching constraints, and RLS constraint denormalization to eliminate high-concurrency CPU limits.
-
----
-
-## 🖥 Frontend (Monitoring Dashboard)
-
-While primarily a Telegram bot, the project includes a web frontend for administration and monitoring.
-
-- **Technology**: Quart (async Flask-compatible), Jinja2 Templates (`app/templates`), Vanilla CSS (`app/static`).
-- **Endpoints**:
-  - `/`: Visual dashboard showing system status (CPU, RAM, Uptime), performance metrics, and context summarization stats.
-  - `/health`: JSON endpoint for docker healthchecks (DB, Redis, bot status).
-  - `/metrics`: Prometheus text exposition endpoint (zero-dep `app/prometheus.py` — uptime, API calls, errors, active users, memory).
-  - `/api/overview`: **(Secured)** System health, performance metrics, and summarization tier stats.
-  - `/api/keys`: **(Secured)** Detailed view of API key usage, active keys, and remaining quotas per model.
-  - `/api/errors`, `/api/cache`, `/api/queue`, `/api/database`, `/api/circuit-breakers`, `/api/memory`: **(Secured)** Operational data endpoints.
-- **Security**: Protected by `ADMIN_SECRET` with cookie-session auth, CSRF tokens, IP-based brute-force protection (5 attempts → 429), and nonce-based Content-Security-Policy.
-
----
-
-## 🛠 Technical Stack
-
-| Category           | Technology                      | Purpose                                |
-| :----------------- | :------------------------------ | :------------------------------------- |
-| **Language**       | Python 3.14+                    | Core runtime                           |
-| **Bot Framework**  | `python-telegram-bot` (v22+)    | Async Telegram API wrapper             |
-| **Web Server**     | Quart + Hypercorn               | Async-native web server                |
-| **Database**       | `asyncpg` (PostgreSQL)          | High-performance async DB driver       |
-| **Caching**        | `redis.asyncio` + `cachetools`  | Multi-layer cache (Redis + TTL)        |
-| **AI SDKs**        | `google-genai`, OpenAI (compat) | Interaction with LLMs                  |
-| **Search**         | `tavily-python`                 | AI-optimized web search                |
-| **Doc Processing** | `pypdf`, `python-docx`          | Text extraction from files             |
-| **Monitoring**     | Custom Prometheus exporter      | Zero-dep `/metrics` endpoint           |
-| **Linting**        | Ruff (`pyproject.toml`)         | F, B, I, UP, SIM, E, C4, PIE, T20, RUF |
-| **Type Checking**  | Mypy                            | Static type analysis (0 errors)        |
-| **CI/CD**          | GitHub Actions                  | Lint → Test → Docker Build             |
-| **Container**      | Docker                          | Standardization and deployment         |
-
----
-
-## 🚀 Deployment & Infrastructure
-
-The project is "Cloud Native" ready, specifically optimized for PaaS providers like **Northflank** and **Render**.
-
-### Docker
-
-- **Base Image**: `python:3.14-slim` (Lightweight, secure, fast).
-- **Security**: Runs as a non-root `app` user.
-- **Entrypoint**: Custom `start.sh` script to handle environment setup.
-- **Healthcheck**: Built-in curl command pinging `localhost:10000/status`.
-
-### Services (`docker-compose.yml`)
-
-- **telegram-gemini-bot**: The main application service.
-- Configured with `restart: unless-stopped` for resilience.
-- Mounts `./data` for persistent storage (if not using a managed DB).
-
-### Signal Handling
-
-Implements graceful shutdown handling (SIGINT/SIGTERM) to ensure:
-
-- Database connections are closed properly.
-- Pending Telegram updates are dropped or processed.
-- Web server unbinds ports immediately.
-- Admin shutdown notification sent to `ADMIN_ID`.
-
----
-
-## ⚙️ Configuration
-
-Configuration is managed via environment variables (supports `.env` file).
-
-### Essential
-
-```bash
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
-DATABASE_URL=postgresql://user:pass@host:5432/dbname
-ADMIN_ID=123456789
+    BotHandler-->Cache[(Redis)];
+    BotHandler-->DB[(PostgreSQL/pgvector)];
+    QuartServer-->DB;
 ```
 
-### AI Providers
+## Repository Structure
+
+| Path                  | Purpose                                                                        |
+| --------------------- | ------------------------------------------------------------------------------ |
+| `app/`                | Core application logic (bot, web server, DB layer, handlers).                  |
+| `app/handlers/`       | Telegram command and message processors (`ai_chat`, `ai_search`, `commands`).  |
+| `app/repos/`          | Database repository pattern implementations (queries for chats, memory, keys). |
+| `app/templates/`      | HTML Jinja2 templates for the admin web dashboard.                             |
+| `docs/`               | Extended architectural documentation.                                          |
+| `scripts/migrations/` | Numbered SQL migration files for Database updates.                             |
+| `tests/`              | Comprehensive test suite (Unit and Integration).                               |
+| `bot.py`              | Main application entry point uniting Quart and the Telegram updater.           |
+
+## Tech Stack
+
+| Layer           | Technology            | Purpose                                        |
+| --------------- | --------------------- | ---------------------------------------------- |
+| Runtime         | Python 3.11+          | Execution environment                          |
+| Bot Framework   | `python-telegram-bot` | Async interaction with Telegram APIs           |
+| Web Server      | Quart + Hypercorn     | Lightweight dashboard & Prometheus `/metrics`  |
+| Database        | `asyncpg`             | High-performance Async PostgreSQL driver       |
+| Vector DB       | `pgvector`            | Storing and querying semantic memories         |
+| Data Validation | `pydantic`            | Configuration and strictly-typed object models |
+
+## Setup
+
+1. Clone the repository.
+2. Ensure Python 3.11-3.14 and PostgreSQL (with `pgvector` extension) are installed.
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Copy `.env.example` to `.env` (if applicable) and fill in necessary configuration.
+5. Create PostgreSQL database and apply schemas using DDL scripts in `scripts/migrations/`.
+
+## Configuration
+
+All configuration variables are loaded from the environment (or a `.env` file).
+
+| Variable                            | Required | Default                       | Description                                                        | Used In                            |
+| ----------------------------------- | -------- | ----------------------------- | ------------------------------------------------------------------ | ---------------------------------- |
+| `TELEGRAM_BOT_TOKEN`                | ✅       | -                             | Your Telegram bot API token.                                       | `config.py`, `bot.py`              |
+| `DATABASE_URL`                      | ✅       | -                             | Postgres connection string (must support pgvector).                | `config.py`, `database.py`         |
+| `ADMIN_ID`                          | ✅       | -                             | Telegram User ID of the bot administrator.                         | `config.py`, Handlers              |
+| `ADMIN_SECRET`                      | ❌       | -                             | Secret for Dashboard auth and key encryption.                      | `config.py`, `web.py`, `crypto.py` |
+| `PORT`                              | ❌       | `10000`                       | Port for the Quart Web Server to bind to.                          | `config.py`, `bot.py`              |
+| `ENABLE_WEB_SERVER`                 | ❌       | `true`                        | Enables the built-in diagnostic dashboard.                         | `config.py`, `bot.py`              |
+| `GEMINI_API_KEYS`                   | ✅       | -                             | Comma-separated Google access keys.                                | `config.py`                        |
+| `TAVILY_API_KEYS`                   | ✅       | -                             | Comma-separated Tavily access keys.                                | `config.py`                        |
+| `OPENROUTER_API_KEYS`               | ❌       | `[]`                          | Comma-separated OpenRouter access keys.                            | `config.py`                        |
+| `WEBHOOK_URL`                       | ❌       | -                             | Public URL for Telegram Webhook mode. If empty, uses Long-Polling. | `bot.py`                           |
+| `STRUCTURED_LOGGING` / `LOG_FORMAT` | ❌       | Auto                          | Enables JSON-structured application logs.                          | `bot.py`                           |
+| `DEFAULT_MODEL` / `QNA_MODEL` / ... | ❌       | `gemini-2.5-flash` etc.       | Default Gemini models for specific operations.                     | `config.py`                        |
+| `OPENROUTER_DEFAULT_MODEL` / ...    | ❌       | `stepfun/step-3.5-flash:free` | Default OpenRouter models for operations.                          | `config.py`                        |
+| `DAILY_LIMITS`                      | ❌       | Default dict                  | JSON or compact `model:limit` format for daily rate limits.        | `config.py`                        |
+| `USE_OPENROUTER`                    | ❌       | `false`                       | Force OpenRouter as the default provider instead of Gemini.        | `config.py`                        |
+| `MAX_CONCURRENT_HEAVY_REQUESTS`     | ❌       | `4`                           | Max parallel AI request handlers to prevent exhaustion.            | `config.py`                        |
+
+## Run
+
+**Local Python:**
 
 ```bash
-# Comma-separated keys for rotation
-GEMINI_API_KEYS=AIzaSy...,AIzaSy...
-TAVILY_API_KEYS=tvly-xxxx
-OPENROUTER_API_KEYS=sk-or-v1-...,sk-or-v1-...  # Optional
+python bot.py
 ```
 
-### System
+**Docker Container:**
 
 ```bash
-PORT=10000              # Web server port (default: 10000)
-ENABLE_WEB_SERVER=true  # Enable/Disable dashboard (default: true)
-ADMIN_SECRET=...        # Secret for dashboard login & API key encryption
-REDIS_URL=redis://...   # Optional — enables Redis caching layer
+./start.sh
+# OR via docker-compose:
+docker-compose -f docker-compose.northflank.yml up -d
 ```
 
-### Complete Environment Variable Reference
+## Scripts
 
-| Variable                         | Required | Default                       | Description                                                 |
-| -------------------------------- | -------- | ----------------------------- | ----------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`             | ✅       | —                             | Telegram Bot API token                                      |
-| `DATABASE_URL`                   | ✅       | —                             | PostgreSQL connection string                                |
-| `ADMIN_ID`                       | ✅       | —                             | Telegram user ID of the admin                               |
-| `GEMINI_API_KEYS`                | ✅       | —                             | Comma-separated Google Gemini API keys                      |
-| `TAVILY_API_KEYS`                | ✅       | —                             | Comma-separated Tavily search API keys                      |
-| `OPENROUTER_API_KEYS`            | ❌       | `[]`                          | Comma-separated OpenRouter API keys                         |
-| `ADMIN_SECRET`                   | ❌       | `None`                        | Dashboard login secret & API key encryption key             |
-| `PORT`                           | ❌       | `10000`                       | Web server listening port                                   |
-| `ENABLE_WEB_SERVER`              | ❌       | `true`                        | Enable/disable the monitoring dashboard                     |
-| `REDIS_URL`                      | ❌       | `None`                        | Redis connection URL (enables multi-layer cache)            |
-| `DEFAULT_MODEL`                  | ❌       | `gemini-flash-latest`         | Default Gemini model for chat                               |
-| `QNA_MODEL`                      | ❌       | `gemini-2.5-flash-lite`       | Model for Q&A tasks                                         |
-| `RESEARCH_MODEL`                 | ❌       | `gemini-2.5-pro`              | Model for deep research                                     |
-| `URL_SELECTION_MODEL`            | ❌       | `gemini-flash-latest`         | Model for URL relevance scoring                             |
-| `GEMINI_AVAILABLE_MODELS`        | ❌       | 4 default models              | Comma-separated list of available Gemini models             |
-| `OPENROUTER_DEFAULT_MODEL`       | ❌       | `stepfun/step-3.5-flash:free` | Default OpenRouter model                                    |
-| `OPENROUTER_QNA_MODEL`           | ❌       | `stepfun/step-3.5-flash:free` | OpenRouter Q&A model                                        |
-| `OPENROUTER_RESEARCH_MODEL`      | ❌       | `stepfun/step-3.5-flash:free` | OpenRouter research model                                   |
-| `OPENROUTER_URL_SELECTION_MODEL` | ❌       | `stepfun/step-3.5-flash:free` | OpenRouter URL selection model                              |
-| `OPENROUTER_AVAILABLE_MODELS`    | ❌       | `[]`                          | Comma-separated available OpenRouter models                 |
-| `DAILY_LIMITS`                   | ❌       | See `config.py`               | JSON or `model:limit,...` format for per-model daily limits |
-| `USE_OPENROUTER`                 | ❌       | `false`                       | Force OpenRouter as default provider                        |
-| `MAX_CONCURRENT_HEAVY_REQUESTS`  | ❌       | `4`                           | Max parallel AI request handlers                            |
-| `TEST_DATABASE_URL`              | ❌       | `None`                        | Separate Supabase project for integration tests             |
+| Command                    | Purpose                                  |
+| -------------------------- | ---------------------------------------- |
+| `ruff check app/`          | Runs Pyflakes / Style / Bugbear linting. |
+| `ruff format --check app/` | Verifies code formatting.                |
+| `mypy app/`                | Static type checking for Python types.   |
 
----
+## Testing
 
-## 🧪 Testing
+The application features a heavily engineered test suite (nearly 100 tests based on `tests/` directory files).
 
-The project has a comprehensive test suite covering unit, integration, concurrency, and end-to-end validation.
+- **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections).
+- **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-cov`.
+- **Prerequisites:** Integration tests require `TEST_DATABASE_URL` (or `DATABASE_URL` in test environments) to a clean Postgres instance.
 
-### Running Tests
+| Test Type    | Tooling    | Command                                          | Scope                                |
+| ------------ | ---------- | ------------------------------------------------ | ------------------------------------ |
+| Unit / Logic | pytest     | `pytest tests/ -x -q --ignore=tests/integration` | Pure logic, LLM mock chains, prompts |
+| Integration  | pytest     | `pytest tests/integration/ -v`                   | Raw PostgreSQL operations, DB states |
+| Coverage     | pytest-cov | `pytest tests/ --cov=app`                        | Application-wide execution coverage  |
 
-```bash
-# Setup (install dev dependencies)
-pip install -r requirements-dev.txt
+## API / Events / Contracts
 
-# Full suite (unit + integration)
-python -m pytest tests/
+**Telegram Commands:**
 
-# Unit tests only (no DB required)
-python -m pytest tests/ --ignore=tests/integration
+- `/start`, `/help` — Initial onboarding & main menus.
+- `/settings` — Quick access to Model, Thinking Level, Search toggles.
+- `/stats` — User metrics, streak tracking, API usage.
+- `/documents` — Management of parsed files.
+- `/mydata`, `/deleteme` — GDPR compliant export/deletion actions.
+- `/admin` — System administration hub (Requires `ADMIN_ID`).
 
-# Integration tests only (requires TEST_DATABASE_URL)
-python -m pytest tests/integration/ -v
+**Web Dashboard (Quart HTTP Routes):**
 
-# With coverage
-python -m pytest tests/ --cov=app --cov-report=term-missing
+- `GET /`, `GET /login`, `POST /login`, `GET /logout` — UI interface (requires `ADMIN_SECRET` authentication and uses Cookie Sessions).
+- `GET /health` — Robust unauthenticated API health check.
+- `GET /metrics` — Exposes Prometheus telemetry text (uptime, errors, usage).
+- `GET /api/overview`, `/api/keys`, `/api/errors`, `/api/cache`, `/api/queue`, `/api/database`, `/api/circuit-breakers`, `/api/memory` — Internal JSON data endpoints for dashboard charts (requires auth cookie or `X-Auth-Token` header).
 
-# Quality checks
-ruff check app/ && ruff format --check app/ && mypy app/
-```
+## Main User Flows
 
-### Suite Structure (1040+ tests, 0 skipped)
+- **Standard Conversation**
+  - _Preconditions_: User selects `/newchat`.
+  - _Steps_: User inputs text. The orchestrator embeds it in context, pulls long-term memory via pgvector, and dispatches it to the current AI provider model (Gemini or OpenRouter).
+  - _Expected Outcome_: Streaming response appended to the Telegram message.
+- **Research Query**
+  - _Preconditions_: User triggers Research via `/res`.
+  - _Steps_: Bot extracts search intent, retrieves context via Tavily API, scores endpoints utilizing LLM, and synthesizes the finalized context stream.
+  - _Expected Outcome_: Sourced and cited comprehensive answer.
+- **Admin Dashboard Monitoring**
+  - _Preconditions_: Application binds to `PORT`, `ENABLE_WEB_SERVER=true`.
+  - _Steps_: Admin visits web URL, completes the Brute-force protected Login Flow using the `ADMIN_SECRET` token.
+  - _Expected Outcome_: Live monitoring of metrics, keys usage, memory efficiency, and database connection pools.
 
-| Category           | Files                                                                                                                                                                                                         | What They Cover                                                                                                      |
-| :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------- |
-| **Core Logic**     | `test_ai_provider`, `test_provider_router`, `test_agent_optimization`, `test_errors`, `test_ai_chat`, `test_ai_search`, `test_ai_document`, `test_ai_photo`, `test_context_assembler`, `test_prompt_registry` | AI routing, key status management, fallback chains, error classification, AI handler coverage, context summarization |
-| **Handlers**       | `test_callbacks`, `test_messages`, `test_commands`, `test_cmd_admin`, `test_cmd_conversations`, `test_menus`, `test_roles_menu`, `test_io_handlers`, `test_stage_indicators`                                  | Callback dispatch, request flow, commands, admin commands, conversation CRUD, menu rendering, role UI                |
-| **Pure Logic**     | `test_chat_logic`, `test_prompts`, `test_resilience`, `test_state_lifecycle`, `test_mutation_smoke`                                                                                                           | Extracted pure functions (100% coverage), system instruction, retry logic, state lifecycle, mutation detection       |
-| **DB Integration** | `tests/integration/test_repos_*`                                                                                                                                                                              | Real SQL against test Supabase DB: users/state UPSERT, chats, conversations CRUD, roles, feedback CHECK constraints  |
-| **Security**       | `test_security`, `test_auth_headers`, `test_security_headers`, `test_web_security`, `test_document_security`, `test_decryption_error_handling`                                                                | XSS/SSRF/path traversal sanitization, rate limiting, header enforcement, CSP nonce                                   |
-| **Streaming**      | `test_streaming`                                                                                                                                                                                              | Constants, finish reasons, StreamingWriter init                                                                      |
-| **Repos**          | `test_repo_chats`, `test_repo_conversations`, `test_repo_memory`                                                                                                                                              | Pure repo functions: message extraction, system role lookup, memory constants                                        |
-| **Integration**    | `test_integration_flow`, `test_integration`, `test_callback_responsiveness_scenario`                                                                                                                          | E2E request flow, streaming/error/alert/key-rotation integration, callback responsiveness                            |
-| **Concurrency**    | `test_concurrency`, `test_concurrency_hardening`                                                                                                                                                              | Cache stampede (50 concurrent), rate limiter under load, key resolution contention, thread-safe error classification |
-| **E2E Smoke**      | `test_smoke`                                                                                                                                                                                                  | Quart health/metrics endpoints, handler registration, admin alerts startup/shutdown, full error pipeline             |
-| **Database**       | `test_database_tavily`, `test_perf_db_messages`, `test_document_cleanup_optimization`                                                                                                                         | Tavily key management, query optimization, cleanup                                                                   |
-| **Infrastructure** | `test_circuit_breaker`, `test_cache_ttl`, `test_cache_fallback`, `test_degradation_recovery`                                                                                                                  | Circuit breaker, TTL cache, Redis fallback, health/recovery scenarios                                                |
-| **Metrics**        | `test_metrics_integration`, `test_system_status`                                                                                                                                                              | Batched metric saves, system status data                                                                             |
-| **Utilities**      | `test_formatting`, `test_keyboards`, `test_time_utils`, `test_image_utils`, `test_send_long_message`, `test_audit_fixes`                                                                                      | Text formatting, keyboard builders, timezone math, message splitting, audit regression tests                         |
+## Troubleshooting
 
-### CI/CD Pipeline
+- **Conflict Error on Startup**: Usually signifies another bot instance is currently polling the Telegram API using the same Token. Requires closing duplicate instances if not using Webhooks.
+- **`decryption_error` traces**: Usually caused by attempting to load the database on a new host without providing the exact prior base64 `ADMIN_SECRET`.
+- **Search features hanging**: Check `TAVILY_API_KEYS` exhaustively or verify the `circuit_breaker` state at `/api/circuit-breakers`.
 
-GitHub Actions (`.github/workflows/ci.yml`) runs automatically on push to `main`/`TEST_gemaibotv2` and on PRs:
+## Known Documentation Gaps
 
-1. **Lint** — `ruff check` (with GitHub annotations) + `ruff format --check`
-2. **Type Check** — `mypy app/` (0 errors enforced)
-3. **Test** — `pytest tests/ -x -q --ignore=tests/integration`
+- **Code/Schema Mismatch**: The repository utilizes `app/db/schema.py` for initial creation, but completely depends on `scripts/migrations/` DDL logic (e.g., `008_upgrade_embedding_3072.sql`) to instantiate `long_term_memory` structures and `pgvector` sizing. Attempting to deploy _only_ via `schema.py` natively will crash memory pipelines since the database tables rely on historical manual patch migration scripts.
+- **Bot Config vs Environment Discrepancy**: Northflank compose config explicitly enables `LOG_JSON=true`, however, runtime application checks environment variable `STRUCTURED_LOGGING` and `LOG_FORMAT` in `bot.py`.
+- **OpenRouter Multimodal Capabilities**: OpenRouter is explicitly disabled for multimodality interactions in current abstractions; however, this architecture distinction is under-represented in internal application documentation.
 
-Features: pip caching, concurrency groups (auto-cancels outdated runs), job timeouts (5–10 min).
+## Contributing
 
-### Integration Tests
+1. Create a descriptive PR.
+2. Verify all `pytest` checks pass (`pytest tests/`).
+3. Verify `ruff check app/` yields zero stylistic flags and `mypy app/` validates static types before submission.
 
-Separate from CI — require `TEST_DATABASE_URL` pointing to a dedicated Supabase project:
+## License
 
-- Each test runs inside `BEGIN → ROLLBACK` — **zero data persists**
-- Auto-skips if `TEST_DATABASE_URL` is not set
-- Covers: user state UPSERT, chat lifecycle, conversations CRUD, roles, feedback constraints
-
-### Mock Isolation Rule
-
-> **Critical**: Never assign `sys.modules["X"] = MagicMock()` at module top-level in test files. Always use `setup_module()` / `teardown_module()` with save/restore. See [CHANGELOG.md](CHANGELOG.md) §2.2.0 for detailed anti-pattern reference.
-
----
-
-## 📝 Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes.
+MIT (Verified via shield badge notation in legacy files).
