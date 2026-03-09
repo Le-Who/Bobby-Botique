@@ -33,7 +33,16 @@ def _extract_message_content(msg: dict) -> str:
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
+            text_parts = []
+            for p in parts:
+                # OPTIMIZATION: explicitly extract "text" from dicts and skip binary payloads
+                # (like inline_data) to avoid massive string allocation overhead (O(N) OOMs).
+                if isinstance(p, dict):
+                    if "text" in p:
+                        text_parts.append(str(p["text"]))
+                elif not isinstance(p, (bytes, bytearray)):
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
         return str(parts)
     return ""
 

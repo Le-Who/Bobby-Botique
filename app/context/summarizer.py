@@ -176,8 +176,11 @@ def _extract_text(msg: dict[str, Any]) -> str:
 
     text_parts: list[str] = []
     for part in parts:
-        if isinstance(part, str):
-            text_parts.append(part)
-        elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+        # OPTIMIZATION: explicitly extract "text" from dicts and skip binary payloads
+        # (like inline_data) to avoid massive string allocation overhead (O(N) OOMs).
+        if isinstance(part, dict):
+            if "text" in part:
+                text_parts.append(str(part["text"]))
+        elif not isinstance(part, (bytes, bytearray)):
+            text_parts.append(str(part))
     return " ".join(text_parts)
