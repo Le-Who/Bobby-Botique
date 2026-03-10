@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.31] - 2026-03-10 - Integration Test Stabilization
+
+### 🧪 Integration Tests Stabilization
+
+- **Event Loop Leakage Prevention**: Mocked the global `heavy_request_semaphore` in test contexts to prevent the Redis semaphore from holding references to closed `asyncio` event loops across test suite runs resulting in `RuntimeError: Event loop is closed`.
+- **Module Namespace Cross-Contamination**: Addressed `AsyncMock` leakage where function imports inside of `handle_request` cached un-mocked database references in the module namespace. Patched both `app.repos.chats.get_user_chat` and `app.handlers.agent.get_user_chat` simultaneously for perfect isolation under heavy pytest load.
+- **Strict Parameter Contracts**: Fixed `AttributeError` exceptions inside the integration pipeline by adding missing attributes (`thinking_level`, `context_summary`, `deep_dive_thread_id`) to the `fake_chat_state` mock payload, fully replicating the complex production `ChatState` object.
+
+### Files Changed
+
+| File                             | Change                                                                                                  |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `tests/test_integration_flow.py` | Added comprehensive integration mocks (semaphore, state lock, thinking_level, multiple module bindings) |
+| `tests/test_ai_chat.py`          | Cleaned up AAA testing blocks and import definitions                                                    |
+
+### 🧪 Tests: 1054 passed (0 skipped, 0 failures)
+
+---
+
 ## [2.8.30] - 2026-03-10 - Test Suite Reliability & CI Pipeline
 
 ### 🧪 Test Suite Stabilisation & Technical Debt

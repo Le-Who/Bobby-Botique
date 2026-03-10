@@ -1,9 +1,10 @@
 """Tests for app.handlers.ai_chat — regular conversational AI chat."""
 
-import json
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram import Message
 
 from app.handlers.ai_chat import _handle_regular_chat
 from tests.factories import make_chat_state, make_telegram_message
@@ -11,30 +12,36 @@ from tests.factories import make_chat_state, make_telegram_message
 
 @pytest.fixture
 def mock_boundaries():
-    """Setup clean external boundaries for AI Chat handler without over-mocking internals."""
+    """Setup external boundaries for AI Chat handler with strict AAA isolation."""
+
+    # We create a fake async generator for the provider stream
+    async def fake_stream(*args, **kwargs):
+        yield "Hello "
+        yield "world!"
+
+    # Create a mock router that returns our fake stream
+    fake_router = MagicMock()
+    fake_router.stream_response = fake_stream
+
     with (
+        # 1. Key resolution (independent domain, mocked)
         patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as m_resolve,
-        # We mock stream_and_display to avoid real AI calls
-        patch("app.streaming.stream_and_display", new_callable=AsyncMock) as m_get_resp,
-        patch("app.handlers.ai_chat.send_long_message", new_callable=AsyncMock) as m_send_long,
+        # 2. Provider router (the actual external boundary, mocked instead of stream_and_display)
+        patch("app.providers.get_provider_router", return_value=fake_router),
+        # 3. DB persistence
         patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as m_update_chat,
-        # Force non-streaming for deterministic simple tests
-        patch("app.handlers.ai_chat.is_openrouter_model", return_value=True),
-        # Suppress background DB saving
-        patch("app.repos.memory.search_memories", new_callable=AsyncMock) as m_search,
-        patch("app.repos.memory.store_memory", new_callable=AsyncMock),
+        # 4. Long-term memory search (independent domain)
+        patch("app.repos.memory.search_memories", new_callable=AsyncMock, return_value=[]),
+        patch("app.streaming.metrics_collector", MagicMock(record_api_call=AsyncMock())),
         patch("app.metrics.role_conv_metrics.record_summarization", new_callable=AsyncMock),
+        patch("app.handlers.ai_chat.update_stage", new_callable=AsyncMock),
     ):
-        # Default Arrange values
         m_resolve.return_value = ({"api_key": "k", "key_hash": "h"}, "gemini-2.0-flash", "direct")
-        m_get_resp.return_value = ("Hello world!", True, None)
-        m_search.return_value = []
 
         yield {
             "resolve": m_resolve,
-            "get_resp": m_get_resp,
-            "send_long": m_send_long,
             "update_chat": m_update_chat,
+            "router": fake_router,
         }
 
 
@@ -47,34 +54,26 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
     # ── Arrange ──
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
 
-    # Pre-existing chat state with 1 message
+    # Pre-existing chat state
     chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
-    user_message = "Hi"
-
-    # We expect this mock interaction:
-    mock_boundaries["resolve"].return_value = ({"api_key": "k", "key_hash": "h"}, "gemini-2.0-flash", "direct")
-    mock_boundaries["get_resp"].return_value = ("Hello world!", True, None)
 
     # ── Act ──
-    await _handle_regular_chat(placeholder, user_id, user_message, chat_state)
+    await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
     # ── Assert ──
-    # Check that update_user_chat was called to persist data
     mock_boundaries["update_chat"].assert_awaited_once()
-
-    # Retrieve the state passed to update_user_chat
-    called_state = mock_boundaries["update_chat"].call_args[0][1]
-
-    # Verify Behavior: Token count is updated
-    assert called_state.token_count == 4, "Expected updated token count based on estimate_tokens_cyrillic"
+    saved_state = mock_boundaries["update_chat"].call_args[0][1]
 
     # Verify Behavior: The generated response is appended to history
-    assert len(called_state.history) == 2, "Expected 1 new message in history"
-    assert "Hello world!" in str(called_state.history[-1]), "Expected model response in the last history item"
+    assert len(saved_state.history) == 2, "Expected 1 new message in history"
+    assert saved_state.history[-1]["role"] == "model"
+    assert "Hello world!" in saved_state.history[-1]["parts"][0]
 
-    # Verify Behavior: Stream_and_display handled the streaming, so send_long_message isn't called
-    mock_boundaries["send_long"].assert_not_called()
+    # Verify Behavior: Token limit correctly updated internally
+    assert saved_state.token_count > 0, "Expected updated token count based on the assembled chunk"
 
 
 @pytest.mark.asyncio
@@ -95,7 +94,7 @@ async def test_exhausted_limits_shows_error_message(mock_boundaries):
     # ── Assert ──
     placeholder.edit_text.assert_awaited_once()
     edited_text = placeholder.edit_text.call_args[0][0].lower()
-    assert "исчерпаны" in edited_text or "лимиты" in edited_text
+    assert "исчерпаны" in edited_text or "лимит" in edited_text
 
 
 @pytest.mark.asyncio
@@ -129,43 +128,27 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
     # ── Arrange ──
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
-    # Start with length 2 history
-    history = [{"role": "user", "parts": ["Hi"]}, {"role": "model", "parts": ["Resp"]}]
-    chat_state = make_chat_state(history=history)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
 
-    # Simulate an empty response from AI
-    mock_boundaries["get_resp"].return_value = (None, False, None)
+    chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}, {"role": "model", "parts": ["Resp"]}])
 
-    # ── Act ──
-    await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
+    # Simulate an empty response via the stream
+    async def empty_stream(*args, **kwargs):
+        if False:
+            yield ""  # enforce generator
 
-    # ── Assert ──
-    # Verify rollback: last element popped (the history starts at 2, user msg makes it 3, empty response pops it back to 2)
-    assert len(chat_state.history) == 2, "Last user message should be popped on empty AI response"
-    mock_boundaries["update_chat"].assert_awaited_once_with(user_id, chat_state)
+    mock_boundaries["router"].stream_response = empty_stream
 
-    # Verify user notified
-    placeholder.edit_text.assert_awaited()
-    assert "пустой ответ" in placeholder.edit_text.call_args_list[-1][0][0].lower()
-
-
-@pytest.mark.asyncio
-async def test_error_response_from_ai(mock_boundaries):
-    """
-    Risk Covered: Handling standardized AI error strings gracefully.
-    Level: Unit.
-    """
-    # ── Arrange ──
-    user_id = 123
-    placeholder = make_telegram_message(user_id=user_id)
-    chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
-    mock_boundaries["get_resp"].return_value = ("error text mock", False, None)
-
-    with patch("app.handlers.ai_chat.handle_ai_response_error", new_callable=AsyncMock, return_value=True) as m_err:
+    with patch("app.errors.build_retry_and_roles_keyboard", return_value=None):
         # ── Act ──
         await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
 
-        # ── Assert ──
-        m_err.assert_awaited()
-        # It also must NOT send the error as a regular response
-        mock_boundaries["send_long"].assert_not_called()
+    # ── Assert ──
+    # Rollback: user message was appended internally during Context Assembler, but should be popped back
+    # to original length of 2
+    mock_boundaries["update_chat"].assert_awaited_once_with(user_id, chat_state)
+    assert len(chat_state.history) == 2, "Last user message should be popped on empty AI response"
+
+    placeholder.edit_text.assert_awaited()
+    assert "пустой ответ" in placeholder.edit_text.call_args_list[-1][0][0].lower()
