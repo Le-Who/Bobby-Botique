@@ -139,7 +139,21 @@ def require_auth(f):
     return decorated_function
 
 
+
+def _get_client_ip() -> str:
+    """
+    Extract client IP securely from X-Forwarded-For header.
+    In Northflank, the rightmost IP is the true client IP appended by the proxy.
+    """
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        # Get the rightmost IP address (appended by the trusted proxy)
+        return xff.split(",")[-1].strip()
+    return request.remote_addr or "unknown"
+
+
 # Brute-force login protection using shared SyncRateLimiter
+
 import contextlib
 
 from app.security import SyncRateLimiter  # noqa: E402
@@ -151,7 +165,7 @@ _login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
-    client_ip = request.remote_addr or "unknown"
+    client_ip = _get_client_ip()
 
     if request.method == "POST":
         # Check brute-force rate limit
