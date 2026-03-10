@@ -23,17 +23,29 @@ from app.utils.logging_config import timed_operation
 
 def _extract_message_content(msg: dict) -> str:
     """Extract content string from a message dict that may use 'content' or 'parts' key."""
+    def _extract_list(items: list) -> str:
+        text_parts = []
+        for p in items:
+            if isinstance(p, dict):
+                # Skip large binary payloads to avoid massive O(N) string allocation overhead
+                if "inline_data" in p or "image_url" in p or "source" in p:
+                    continue
+                text_parts.append(str(p.get("text", p)))
+            elif not isinstance(p, (bytes, bytearray)):
+                text_parts.append(str(p))
+        return " ".join(text_parts)
+
     if "content" in msg:
         content = msg["content"]
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            return _extract_list(content)
         return str(content)
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
+            return _extract_list(parts)
         return str(parts)
     return ""
 
