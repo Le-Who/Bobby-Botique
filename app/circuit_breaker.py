@@ -100,31 +100,32 @@ class CircuitBreaker:
                         f"Reset in: {self.config.recovery_timeout - (time.time() - self._last_failure_time):.1f}s"
                     )
 
-            # Execute function
-            try:
-                self._total_requests += 1
-                result = await func(*args, **kwargs)
+            self._total_requests += 1
 
-                # Success - close circuit if it was half-open
-                if self._state == CircuitState.HALF_OPEN:
-                    await self._set_state(CircuitState.CLOSED)
-                    logging.info("Circuit Breaker '%s' recovered, moved to CLOSED state", self.name)
-
-                self._failure_count = 0
-                self._last_success_time = time.time()
-                self._total_successes += 1
-
-                return result
-
-            except Exception as e:
-                # Check if this exception should be considered a failure
+        # Execute function outside lock to allow concurrency
+        try:
+            result = await func(*args, **kwargs)
+        except Exception as e:
+            # Reacquire lock to record failure
+            async with self._lock:
                 if isinstance(e, self.config.expected_exception):
                     await self._on_failure(e)
                     raise
                 else:
-                    # Unexpected exception - don't count as circuit breaker failure
                     logging.warning("Circuit Breaker '%s' received unexpected exception: %s", self.name, e)
                     raise
+
+        # Reacquire lock to record success
+        async with self._lock:
+            if self._state == CircuitState.HALF_OPEN:
+                await self._set_state(CircuitState.CLOSED)
+                logging.info("Circuit Breaker '%s' recovered, moved to CLOSED state", self.name)
+
+            self._failure_count = 0
+            self._last_success_time = time.time()
+            self._total_successes += 1
+
+        return result
 
     async def _on_failure(self, exception: Exception) -> None:
         """Handles function execution failure."""

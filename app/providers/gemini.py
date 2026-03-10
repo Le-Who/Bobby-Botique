@@ -263,6 +263,17 @@ class GeminiProvider(BaseAIProvider):
             )
             response_stream = await asyncio.wait_for(coro, timeout=timeout)
             async for chunk in response_stream:
+                try:
+                    candidates = getattr(chunk, "candidates", None)
+                    if candidates:
+                        fr = getattr(candidates[0], "finish_reason", None)
+                        if fr and str(fr) != "FINISH_REASON_UNSPECIFIED":
+                            from app.streaming import set_last_finish_reason
+
+                            set_last_finish_reason(str(fr))
+                except Exception as e:
+                    logging.debug("Error extracting stream finish_reason: %s", e)
+
                 if chunk.text:
                     yield chunk.text
         except TimeoutError:

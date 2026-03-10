@@ -224,7 +224,7 @@ async def run_bot_with_retry():
             Application.builder()
             .token(settings.TELEGRAM_BOT_TOKEN)
             .request(custom_request)
-            .concurrent_updates(True)
+            .concurrent_updates(50)  # Matches connection_pool_size to prevent timeouts
             .build()
         )
         commands.register(application)
@@ -380,6 +380,14 @@ async def run_bot_and_server():
         _handle_polling_conflict(e)
     finally:
         logging.info("Starting graceful shutdown...")
+
+        try:
+            from app.utils.background_tasks import TaskManager
+
+            await TaskManager.drain(timeout=10.0)
+        except Exception as e:
+            logging.error(f"Error draining background tasks: {e}")
+
         tasks_to_cancel = [monitoring_task, bot_task, watchdog_task, shutdown_task]
         if server_task:
             tasks_to_cancel.append(server_task)

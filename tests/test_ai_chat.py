@@ -24,7 +24,7 @@ def mock_boundaries():
 
     with (
         patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as m_update_chat,
-        patch("app.handlers.ai_chat.stream_and_display", new_callable=AsyncMock) as m_stream,
+        patch("app.streaming.stream_and_display", new_callable=AsyncMock) as m_stream,
         patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as m_resolve,
         # Secondary dependencies that aren't the focus of this integration test
         patch("app.repos.memory.search_memories", new_callable=AsyncMock, return_value=[]),
@@ -137,8 +137,8 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
 
-    # Starting history has 1 user message
-    chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
+    # Starting history has a user message and a model reply
+    chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}, {"role": "model", "parts": ["Hello"]}])
 
     # We simulate stream_and_display failing to stream anything and returning success=False
     mock_boundaries["stream"].return_value = (None, False, None)
@@ -155,8 +155,9 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
     # Find the state saved during the error branch
     saved_state = mock_boundaries["update_chat"].call_args_list[-1][0][1]
 
-    # Make sure we didn't save a model role without content
-    assert saved_state.history[-1]["role"] == "user", "Should roll back to user message or remain at user message"
+    # Make sure we didn't save a model role without content, and rolled back the user message
+    # Since we started with user -> model, after adding a user message and failing, it should roll back to user -> model
+    assert saved_state.history[-1]["role"] == "model", "Should roll back to the previous model message"
 
     placeholder.edit_text.assert_awaited()
     assert "ответ от api" in placeholder.edit_text.call_args_list[-1][0][0].lower()

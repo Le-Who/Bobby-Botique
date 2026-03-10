@@ -45,6 +45,7 @@ async def cancel_background_task(owner: object, attr_name: str) -> None:
 class TaskManager:
     """Robust background task manager preventing silent failures."""
 
+    MAX_TASKS = 100  # Prevent unbounded background task accumulation
     _tasks: set[asyncio.Task] = set()
     _error_callback: Callable[[Exception, str], Any] | None = None
 
@@ -56,6 +57,14 @@ class TaskManager:
     @classmethod
     def submit(cls, coro: Coroutine[Any, Any, Any], retry: int = 0) -> asyncio.Task:
         coro_name = getattr(coro, "__name__", getattr(coro, "__qualname__", str(coro)))
+
+        if len(cls._tasks) >= cls.MAX_TASKS:
+            logging.warning("TaskManager at capacity (%d). Rejecting task %s", cls.MAX_TASKS, coro_name)
+
+            async def _noop():
+                pass
+
+            return asyncio.create_task(_noop())
 
         async def _wrapper():
             attempts = 0
@@ -93,6 +102,24 @@ class TaskManager:
         cls._tasks.add(task)
         task.add_done_callback(cls._tasks.discard)
         return task
+
+    @classmethod
+    async def drain(cls, timeout: float = 10.0) -> None:
+        """Await all running tasks with a timeout for graceful shutdown."""
+        if not cls._tasks:
+            return
+
+        logging.info("Draining %d background tasks...", len(cls._tasks))
+        # wait doesn't cancel, it just waits up to timeout
+        _done, pending = await asyncio.wait(cls._tasks, timeout=timeout)
+
+        if pending:
+            logging.warning("Timeout draining background tasks. Cancelling %d tasks.", len(pending))
+            for task in pending:
+                task.cancel()
+
+            # Allow cancelled tasks a tick to clean up
+            await asyncio.sleep(0.1)
 
 
 # Global helper

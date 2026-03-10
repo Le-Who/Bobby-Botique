@@ -138,7 +138,7 @@ docker-compose -f docker-compose.northflank.yml up -d
 
 ## Testing
 
-The application features a heavily engineered test suite (nearly 100 tests based on `tests/` directory files).
+The application features a heavily engineered test suite (over 1000 unit and integration tests).
 
 - **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections).
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-cov`.

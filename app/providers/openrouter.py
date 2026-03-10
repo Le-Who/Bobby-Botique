@@ -233,7 +233,15 @@ class OpenRouterProvider(BaseAIProvider):
                             break
                         try:
                             data = json.loads(data_str)
-                            chunk = data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            choice = data.get("choices", [{}])[0]
+
+                            fr = choice.get("finish_reason")
+                            if fr:
+                                from app.streaming import set_last_finish_reason
+
+                                set_last_finish_reason(str(fr))
+
+                            chunk = choice.get("delta", {}).get("content", "")
                             if chunk:
                                 yield chunk
                         except json.JSONDecodeError:

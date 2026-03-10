@@ -62,4 +62,4 @@ def test_fast_callback_helper_sets_block_false_and_priority_group():
 
 def test_application_enables_concurrent_updates():
     source = Path("bot.py").read_text()
-    assert ".concurrent_updates(True)" in source
+    assert ".concurrent_updates(50)" in source

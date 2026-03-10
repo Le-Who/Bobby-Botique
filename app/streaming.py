@@ -52,10 +52,14 @@ STREAMING_INDICATOR = " ▍"
 # Safe limit for Telegram messages (leaves margin for HTML tag overhead).
 STREAM_MSG_LIMIT = 4000
 
-_last_finish_reason: str | None = None
-"""Side-channel: finish_reason from the last ``stream_gemini_response`` call."""
+import contextvars
 
-# (Stream_gemini_response removed: logic moved to providers)
+_last_finish_reason: contextvars.ContextVar[str | None] = contextvars.ContextVar("last_finish_reason", default=None)
+
+
+def set_last_finish_reason(reason: str | None) -> None:
+    """Pass finish_reason from the provider back to the streaming loop."""
+    _last_finish_reason.set(reason)
 
 
 # Finish reasons that indicate the model was blocked mid-response
@@ -480,7 +484,7 @@ async def stream_and_display(
             return "", False, placeholder_message
 
         # Check finish_reason for blocked/truncated responses
-        fr = _last_finish_reason
+        fr = _last_finish_reason.get()
         fr_upper = (fr or "").upper()
 
         if fr_upper in _BLOCKED_FINISH_REASONS:

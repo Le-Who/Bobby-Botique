@@ -162,6 +162,7 @@ async def test_handle_request_text_message_happy_path():
         patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
+        patch("app.utils.background_tasks.submit_task") as _mock_submit,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as _mock_agent_process,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
