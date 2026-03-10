@@ -47,25 +47,33 @@ async def test_successful_chat_response_appended_to_history(mock_boundaries):
     # ── Arrange ──
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
+
+    # Pre-existing chat state with 1 message
     chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}])
     user_message = "Hi"
+
+    # We expect this mock interaction:
+    mock_boundaries["resolve"].return_value = ({"api_key": "k", "key_hash": "h"}, "gemini-2.0-flash", "direct")
+    mock_boundaries["get_resp"].return_value = ("Hello world!", True, None)
 
     # ── Act ──
     await _handle_regular_chat(placeholder, user_id, user_message, chat_state)
 
     # ── Assert ──
-    # DB Update checks
+    # Check that update_user_chat was called to persist data
     mock_boundaries["update_chat"].assert_awaited_once()
+
+    # Retrieve the state passed to update_user_chat
     called_state = mock_boundaries["update_chat"].call_args[0][1]
 
-    assert called_state.token_count == 4, (
-        "Expected updated token count based on estimate_tokens_cyrillic('Hello world!')"
-    )
-    assert any("Hello world!" in str(msg) for msg in called_state.history), "Expected model response in history"
-    assert any("Hello world!" in str(msg) for msg in called_state.history), "Expected model response in history"
-    # Note: send_long_message is only called if streamed is False.
-    # We simulated stream_and_display returning success (True), meaning it streamed.
-    # Therefore, we check that it was streamed and edit_reply_markup was called or skipped properly.
+    # Verify Behavior: Token count is updated
+    assert called_state.token_count == 4, "Expected updated token count based on estimate_tokens_cyrillic"
+
+    # Verify Behavior: The generated response is appended to history
+    assert len(called_state.history) == 2, "Expected 1 new message in history"
+    assert "Hello world!" in str(called_state.history[-1]), "Expected model response in the last history item"
+
+    # Verify Behavior: Stream_and_display handled the streaming, so send_long_message isn't called
     mock_boundaries["send_long"].assert_not_called()
 
 

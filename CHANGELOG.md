@@ -3,6 +3,32 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.30] - 2026-03-10 - Test Suite Reliability & CI Pipeline
+
+### 🧪 Test Suite Stabilisation & Technical Debt
+
+- **Database Transaction Isolation**: Implemented a global `force_test_db_conn` autouse fixture in integration tests. This forcefully mocks the `DatabaseManager` connection pool, ensuring all application business logic runs strictly inside the test's `BEGIN`/`ROLLBACK` transaction boundary, providing perfect isolation and parallelization safety.
+- **Deterministic Time Mocking**: Eliminated flaky `asyncio.sleep` calls in `test_circuit_breaker.py` by introducing a `mock_time` fixture that monkeypatches `time.time()`. This allows instantaneous testing of timeouts without hanging the event loop, vastly improving test speed and CI reliability.
+- **Webhook Integration Fix**: Resolved a `TypeError` parsing bug in `test_integration_webhook.py` by configuring `mock_app.bot.defaults.tzinfo = timezone.utc`, allowing `telegram.Update` JSON hydration to succeed locally.
+
+### ⚙️ CI/CD Pipeline
+
+- **Automated Validation**: Restructured `.github/workflows/ci.yml` pipeline to automatically execute `ruff check`, `ruff format`, `mypy`, and `pytest` across all application directories, tests, and utility scripts (`load_test.py`).
+- **Graceful DB Degradation**: Configured the Pytest step to conditionally run integration tests only when `TEST_DATABASE_URL` is present; ensuring GitHub actions execute unit tests fully without failing on missing secrets.
+
+### Files Changed
+
+| File                                            | Change                                                         |
+| ----------------------------------------------- | -------------------------------------------------------------- |
+| `tests/integration/conftest.py`                 | Added global transactional pool mocking for `db_manager`       |
+| `tests/test_circuit_breaker.py`                 | Replaced real sleep timers with `mock_time.advance()`          |
+| `tests/integration/test_integration_webhook.py` | Injected UTC timezone into `mock_application`                  |
+| `.github/workflows/ci.yml`                      | Expanded QA coverage matrix across `tests/` and `load_test.py` |
+
+### 🧪 Tests: 1055 passed (all suites clean)
+
+---
+
 ## [2.8.29] - 2026-03-10 - Concurrency & Graceful Shutdown Bug Fixes
 
 ### 🛡️ Concurrency & Operational Stability

@@ -39,6 +39,7 @@ class GeminiProvider(BaseAIProvider):
             client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]  # Pydantic coerces
             _gemini_clients_cache[api_key] = genai.Client(**client_kwargs)  # type: ignore[arg-type]  # Pydantic coerces
         self._client = _gemini_clients_cache[api_key]
+        self._client_api_key: str = api_key
 
     async def _execute_request(
         self,

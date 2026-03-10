@@ -15,7 +15,7 @@ from app.providers.gemini import GeminiProvider, _gemini_clients_cache
 async def test_execute_gemini_request_success():
     """Test GeminiProvider._execute_request happy path."""
     _gemini_clients_cache.clear()
-    
+
     with (
         patch("app.providers.gemini.genai.Client") as MockClient,
         patch("app.providers.gemini.metrics_collector", new_callable=AsyncMock),
@@ -23,7 +23,7 @@ async def test_execute_gemini_request_success():
         patch("app.providers.gemini.settings") as mock_settings,
     ):
         mock_settings.SAFETY_SETTINGS = []
-        
+
         provider = GeminiProvider("key")
 
         mock_client_instance = MockClient.return_value
@@ -64,7 +64,7 @@ async def test_execute_gemini_request_503_error():
         patch("app.providers.gemini.settings") as mock_settings,
     ):
         mock_settings.SAFETY_SETTINGS = []
-        
+
         provider = GeminiProvider("key")
 
         mock_client_instance = MockClient.return_value
@@ -100,7 +100,7 @@ async def test_execute_gemini_request_other_error():
         patch("app.providers.gemini.settings") as mock_settings,
     ):
         mock_settings.SAFETY_SETTINGS = []
-        
+
         provider = GeminiProvider("key")
 
         mock_client_instance = MockClient.return_value
@@ -143,7 +143,7 @@ async def test_execute_gemini_request_timeout():
         patch("asyncio.wait_for", side_effect=timeout_side_effect),
     ):
         mock_settings.SAFETY_SETTINGS = []
-        
+
         provider = GeminiProvider("key")
 
         resp = await provider._execute_request(

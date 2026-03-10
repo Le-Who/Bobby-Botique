@@ -62,6 +62,29 @@ async def db_conn(test_db_url):
         await conn.close()
 
 
+@pytest.fixture(autouse=True)
+def force_test_db_conn(db_conn, monkeypatch):
+    """Mock the global db_manager to always use the transactional db_conn.
+
+    This ensures that even when the business logic pulls a connection from the pool,
+    it receives the isolated connection bound to the test's transaction.
+    """
+    import contextlib
+    from app.database import db_manager
+
+    class TransactionalPool:
+        _closed = False
+
+        @contextlib.asynccontextmanager
+        async def acquire(self):
+            yield db_conn
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(db_manager, "pool", TransactionalPool())
+
+
 @pytest.fixture
 async def db_conn_with_user(db_conn):
     """Provide a DB connection with a pre-inserted test user (user_id=999999).

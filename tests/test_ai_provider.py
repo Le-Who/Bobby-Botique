@@ -199,9 +199,9 @@ class TestProviders:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
-            
+
             wrapper = GeminiProvider("test-key")
-            
+
             mock_aio = MagicMock()
             mock_aio.generate_content = AsyncMock(return_value=mock_response)
             MockClient.return_value.aio.models = mock_aio
@@ -235,9 +235,9 @@ class TestProviders:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
-            
+
             wrapper = GeminiProvider("test-key")
-            
+
             mock_aio = MagicMock()
             mock_aio.generate_content = AsyncMock(return_value=mock_response)
             MockClient.return_value.aio.models = mock_aio

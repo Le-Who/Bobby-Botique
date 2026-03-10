@@ -22,7 +22,25 @@ def config():
 
 
 @pytest.fixture
-async def cb(config):
+def mock_time(monkeypatch):
+    class MockTimeManager:
+        def __init__(self):
+            self.current = 1000.0
+
+        def __call__(self):
+            return self.current
+
+        def advance(self, seconds: float):
+            self.current += seconds
+
+    m = MockTimeManager()
+    # Mock time.time specifically in the circuit_breaker module
+    monkeypatch.setattr("app.circuit_breaker.time.time", m)
+    return m
+
+
+@pytest.fixture
+async def cb(config, mock_time):
     cb = CircuitBreaker("test_cb", config)
     yield cb
     await cb.shutdown()
@@ -107,13 +125,13 @@ async def test_unexpected_exception_ignored(cb):
 
 
 @pytest.mark.asyncio
-async def test_recovery_flow_success(cb):
+async def test_recovery_flow_success(cb, mock_time):
     # Setup: Force open
     await cb.force_open()
     assert cb.get_state() == CircuitState.OPEN
 
-    # Wait for recovery timeout (0.1s)
-    await asyncio.sleep(0.15)
+    # Advance time past recovery timeout
+    mock_time.advance(0.15)
 
     # Next call should be allowed (HALF_OPEN) and succeed
     mock_func = AsyncMock(return_value="recovered")
@@ -125,12 +143,12 @@ async def test_recovery_flow_success(cb):
 
 
 @pytest.mark.asyncio
-async def test_recovery_flow_failure(cb):
+async def test_recovery_flow_failure(cb, mock_time):
     # Setup: Force open
     await cb.force_open()
 
-    # Wait for recovery timeout
-    await asyncio.sleep(0.15)
+    # Advance time past recovery timeout
+    mock_time.advance(0.15)
 
     # Call fails
     mock_func = AsyncMock(side_effect=ValueError("fail again"))
@@ -190,10 +208,11 @@ async def test_get_circuit_breaker_and_shutdown_all():
 
 
 @pytest.mark.asyncio
-async def test_monitor_loop_max_failures_cap(cb):
+async def test_monitor_loop_max_failures_cap(cb, mock_time):
     # Overfill failures
     cb._failure_count = cb.config.max_failures + 10
 
+    # The background monitor task sleeps for monitor_interval. Let it run once.
     await asyncio.sleep(0.15)
 
     # Assuming monitor loop ran, it should cap it

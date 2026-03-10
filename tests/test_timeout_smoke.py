@@ -34,7 +34,7 @@ class TestGeminiTimeoutSmoke:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
-            
+
             provider = GeminiProvider("key")
 
             mock_client = MockClient.return_value
@@ -75,7 +75,7 @@ class TestGeminiTimeoutSmoke:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
-            
+
             provider = GeminiProvider("key")
 
             mock_client = MockClient.return_value
@@ -138,7 +138,7 @@ class TestGeminiTimeoutSmoke:
             patch("app.providers.gemini.settings") as mock_settings,
         ):
             mock_settings.SAFETY_SETTINGS = []
-            
+
             provider = GeminiProvider("key")
 
             mock_response = MagicMock()

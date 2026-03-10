@@ -24,9 +24,9 @@ jobs:
       - name: Install ruff
         run: pip install ruff
       - name: Ruff check
-        run: ruff check app/ --output-format=github
+        run: ruff check app/ tests/ load_test.py --output-format=github
       - name: Ruff format check
-        run: ruff format --check app/
+        run: ruff format --check app/ tests/ load_test.py
 
   type-check:
     name: Type Check (Mypy)
@@ -44,7 +44,7 @@ jobs:
           pip install -r requirements.txt
           pip install mypy
       - name: Mypy
-        run: mypy app/
+        run: mypy app/ tests/ load_test.py
 
   test:
     name: Test (pytest)
@@ -70,5 +70,5 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
-      - name: Run tests (unit only)
-        run: pytest tests/ -x -q --ignore=tests/integration
+      - name: Run tests
+        run: pytest tests/ -v
