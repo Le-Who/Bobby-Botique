@@ -25,9 +25,9 @@ async def test_force_update_tavily_keys():
 
     from app.repos import keys as keys_mod
 
-    mock_lock = AsyncMock()
-    mock_lock.__aenter__.return_value = None
-    mock_lock.__aexit__.return_value = None
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
 
     with (
         patch("app.config.get_settings", return_value=mock_settings),
@@ -70,9 +70,10 @@ async def test_force_update_tavily_keys_empty():
         patch.object(keys_mod, "db_execute_many", new_callable=AsyncMock),
         patch.object(keys_mod, "db_manager") as mock_db_manager,
     ):
-        mock_db_manager._cache_lock = AsyncMock()
-        mock_db_manager._cache_lock.__aenter__.return_value = None
-        mock_db_manager._cache_lock.__aexit__.return_value = None
+        mock_lock = MagicMock()
+        mock_lock.__aenter__ = AsyncMock(return_value=None)
+        mock_lock.__aexit__ = AsyncMock(return_value=None)
+        mock_db_manager._cache_lock = mock_lock
 
         result = await keys_mod.force_update_tavily_keys()
 

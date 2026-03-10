@@ -3,7 +3,30 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [2.8.31] - 2026-03-10 - Integration Test Stabilization
+## [2.8.32] - 2026-03-10 - E2E Testing & Background Task Stability
+
+### 🧪 End-to-End Test Suite Completion
+
+- **E2E Happy Path**: Added tests/e2e/test_chat_happy_path.py to completely simulate the core conversational loop from Telegram struct ingestion to final PostgreSQL database persistence.
+- **Background Task Validation**: Resolved the _background_tasks mock reference to accurately validate and await asynchronous DB queries launched outside the HTTP request lifecycle.
+- **Database Schema Alignment**: Fixed archaic assertions in performance and integration tests to correctly expect active_chat_messages tables instead of the legacy user_chats JSONB column.
+
+### 🐛 Bug Fixes & Architecture Alignment
+
+- **Async Mocking TypeErrors**: Resolved MagicMock object can't be awaited in key rotation and metrics generation tests by enforcing correct AsyncMock injection into connection pool context managers.
+- **Datetime Mock Isolation**: Corrected the datetime monkeypatching in test_time_utils.py to preserve core module subclasses, preventing integration failures when hydrating Timezones.
+- **Memory Feature Coverage**: Added dedicated integration tests for storage vector dimension constraints and similarity_search logic utilizing mocked API embeddings.
+
+### 🧹 Code Quality
+
+- **Ruff Linting**: Auto-fixed import sorting across the new E2E and integration test files.
+- **Mypy Type Safety**: Confirmed 100% strict type safety across 212 application files with zero warnings.
+
+### 🧪 Tests: 1056 passed (100% Core + Integration Coverage)
+
+---
+
+ - 2026-03-10 - Integration Test Stabilization
 
 ### 🧪 Integration Tests Stabilization
 
@@ -1870,3 +1893,4 @@ python -m pytest tests/ --tb=short
 - TTLCache with lazy eviction for web search states
 - Micro-GC pauses with tuned `gc.collect(1)`
 - Robust TCP pooling with Circuit Breaker tracking
+

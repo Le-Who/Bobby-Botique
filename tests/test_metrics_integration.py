@@ -27,9 +27,10 @@ class TestMetricsIntegration(unittest.TestCase):
         and that _save_metrics_to_db performs batched inserts."""
 
         # Mock the db manager dependencies
-        mock_pool = AsyncMock()
-        mock_connection = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__.return_value = mock_connection
+        mock_pool = MagicMock()
+        mock_pool.acquire = MagicMock()
+        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
+        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
         with (
             patch("app.metrics.db.db_query", new_callable=AsyncMock) as mock_query,
