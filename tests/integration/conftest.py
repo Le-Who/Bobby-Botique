@@ -70,6 +70,7 @@ def force_test_db_conn(db_conn, monkeypatch):
     it receives the isolated connection bound to the test's transaction.
     """
     import contextlib
+
     from app.database import db_manager
 
     class TransactionalPool:

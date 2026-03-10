@@ -4,6 +4,7 @@ Coverage for Quart webhook routing and Telegram Update processing.
 """
 
 import json
+from datetime import UTC
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -24,10 +25,11 @@ def app_client():
 def mock_application():
     """Arrange: mock the Telegram Application object."""
     from datetime import timezone
+
     mock_app = AsyncMock()
     mock_app.bot = AsyncMock()
     # Explicitly set tzinfo to utc to avoid AsyncMock errors deep in PTB
-    mock_app.bot.defaults.tzinfo = timezone.utc
+    mock_app.bot.defaults.tzinfo = UTC
     return mock_app
 
 
