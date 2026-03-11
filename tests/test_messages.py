@@ -154,14 +154,6 @@ async def test_handle_request_text_message_happy_path():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
-    created_tasks = []
-    original_create_task = asyncio.create_task
-
-    def side_effect_create_task(coro, **kwargs):
-        task = original_create_task(coro, **kwargs)
-        created_tasks.append(task)
-        return task
-
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
@@ -170,9 +162,7 @@ async def test_handle_request_text_message_happy_path():
         patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
-        patch("app.utils.background_tasks.submit_task") as _mock_submit,
-        patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as _mock_agent_process,
-        patch("asyncio.create_task", side_effect=side_effect_create_task),
+        patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -183,9 +173,13 @@ async def test_handle_request_text_message_happy_path():
 
         await messages.handle_request(update, context)
 
-        # Await background tasks to prevent "coroutine was never awaited" errors
-        if created_tasks:
-            await asyncio.gather(*created_tasks)
+        # Run the background task deterministically to prevent dangling tasks
+        for call_args in mock_create_task.call_args_list:
+            coro = call_args[0][0]
+            if coro.__name__ == "_heartbeat":
+                coro.close()
+            else:
+                await coro
 
 
 @pytest.mark.asyncio
@@ -197,15 +191,6 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
-    # We need to capture the task created by handle_request
-    created_tasks = []
-    original_create_task = asyncio.create_task
-
-    def side_effect_create_task(coro, **kwargs):
-        task = original_create_task(coro, **kwargs)
-        created_tasks.append(task)
-        return task
-
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
@@ -215,7 +200,7 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
-        patch("asyncio.create_task", side_effect=side_effect_create_task),
+        patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -229,9 +214,13 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         # Verify initial placeholder message
         message.reply_text.assert_awaited_with("🤔 Думаю...")
 
-        # Wait for the background task to complete
-        if created_tasks:
-            await asyncio.gather(*created_tasks)
+        # Execute the background task coro
+        for call_args in mock_create_task.call_args_list:
+            coro = call_args[0][0]
+            if coro.__name__ == "_heartbeat":
+                coro.close()
+            else:
+                await coro
 
         mock_agent_process.assert_awaited_once()
         # Verify arguments passed to process_long_request

@@ -185,7 +185,7 @@ async def parallel_search(
     tasks = [
         tavily_search_agent(
             query=q,
-            search_type="advanced",
+            search_type="search",
             user_id=user_id,
             chat_id=chat_id,
             max_results=5,  # Get top 5 per query to ensure diversity before dedupping

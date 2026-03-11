@@ -13,8 +13,10 @@ Format is optimized for agent-parseable context.
 | C2 | 🔴 Critical | Added `close()` coroutine for module-level `httpx.AsyncClient` to prevent resource leaks on shutdown | `web_reader.py` |
 | C3 | 🔴 Critical | Moved mid-file imports to module top | `ai_search.py` |
 | M2 | 🟡 Medium | Added TTL cache (120s) for personalized stats — DB queries drop from ~27 to ~3 per research session | `waiting_facts.py` |
-| M3 | 🟡 Medium | Fixed persistent `ERROR` in `test_messages.py` by awaiting background `asyncio.create_task` | `test_messages.py` |
+| M3 | 🟡 Medium | Replaced global `asyncio.create_task` test monkeypatch with local interception to prevent Windows `stack overflow` & semaphore exhaustion | `test_messages.py` |
 | M4 | 🟡 Medium | Wired `settings.AGENTIC_MODEL` into model selection chain (was defined but unused) | `ai_search.py` |
+| M5 | 🟡 Medium | Fixed `relation "authorized_users" does not exist` error by pointing query to correct `users` table | `waiting_facts.py` |
+| M6 | 🟡 Medium | Fixed `search_type must be 'search' or 'qna'` API exception by using correct internal Enum mapping | `search_services.py` |
 | L1 | 🟢 Low | Replaced f-string logging with `%s` format (6 instances) | `agentic.py` |
 | L2 | 🟢 Low | Fixed typo "про проведении" → "при проведении" | `ai_search.py` |
 | L3 | 🟢 Low | Deduplicated `has_function_calls` iteration + added mypy assertion for type narrowing | `agentic.py` |

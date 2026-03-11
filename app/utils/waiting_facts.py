@@ -59,7 +59,7 @@ async def get_personalized_stat(user_id: int) -> str | None:
 
     try:
         # Get start date
-        user_record = await db.db_query("SELECT created_at FROM authorized_users WHERE user_id = $1", (user_id,))
+        user_record = await db.db_query("SELECT created_at FROM users WHERE user_id = $1", (user_id,))
         if not user_record:
             return None
 
