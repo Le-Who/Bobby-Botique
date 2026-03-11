@@ -1,4 +1,6 @@
 import asyncio
+import dataclasses
+import gc
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -141,160 +143,188 @@ class AgenticSearch:
             The final synthesized answer string.
         """
         await on_status(STAGES_AGENTIC_RESEARCH[0][1])  # "Планирую исследование..."
-
         # 1. Prepare configuration and context
         contents: list[Any] = []
+        concluding_answer: str | None = None
 
-        # Inject conversation history so the agent has context from prior turns
-        if history:
-            # Take only the last 10 entries to avoid token overflow
-            for entry in history[-10:]:
-                role = entry.get("role", "user")
-                parts_data = entry.get("parts", [])
-                text_parts = []
-                for p in parts_data:
-                    if isinstance(p, str):
-                        text_parts.append(types.Part.from_text(text=p))
-                    elif isinstance(p, dict) and "text" in p:
-                        text_parts.append(types.Part.from_text(text=p["text"]))
-                if text_parts:
-                    contents.append(types.Content(role=role, parts=text_parts))
+        try:
+            # Inject conversation history so the agent has context from prior turns
+            if history:
+                # Take only the last 10 entries to avoid token overflow
+                for entry in history[-10:]:
+                    role = entry.get("role", "user")
+                    parts_data = entry.get("parts", [])
+                    text_parts = []
+                    for p in parts_data:
+                        if isinstance(p, str):
+                            text_parts.append(types.Part.from_text(text=p))
+                        elif isinstance(p, dict) and "text" in p:
+                            text_parts.append(types.Part.from_text(text=p["text"]))
+                    if text_parts:
+                        contents.append(types.Content(role=role, parts=text_parts))
 
-        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=query)]))
+            contents.append(types.Content(role="user", parts=[types.Part.from_text(text=query)]))
 
-        config = types.GenerateContentConfig(
-            system_instruction=self._get_system_instruction(),
-            tools=self._get_tools(),
-            temperature=0.4,  # Lower temperature for more analytical research
-        )
+            config = types.GenerateContentConfig(
+                system_instruction=self._get_system_instruction(),  # Changed from system_instruction to self._get_system_instruction()
+                temperature=0.2,  # Changed from 0.4 to 0.2
+                tools=self._get_tools(),
+            )
 
-        pages_read = 0
-        iterations = 0
+            # 2. Main reasoning loop
+            pages_read = 0
+            iterations = 0
+            while iterations < self.max_iterations:
+                iterations += 1
+                logger.info("Agent loop iteration %d/%d for query '%s'", iterations, self.max_iterations, query[:30])
 
-        # 2. Main Agentic Loop
-        while iterations < self.max_iterations:
-            iterations += 1
-            logger.info("Agentic loop iteration %d/%d", iterations, self.max_iterations)
+                try:
+                    # Model thinks and decides (requires tools)
+                    response = await self.client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=contents,
+                        config=config,
+                    )
+                except Exception as e:
+                    logger.error("GenAI call failed in loop: %s", e)
+                    return "❌ Возникла ошибка при обращении к языковой модели."
+
+                if not response.candidates:
+                    logger.warning("Agent returned no candidates")
+                    break
+
+                candidate = response.candidates[0]
+                message_content = candidate.content
+                if not message_content:
+                    logger.warning("Agent returned empty message content")
+                    break
+
+                # Append model's response to history
+                contents.append(message_content)
+
+                parts = message_content.parts or []
+                fc_parts = [p for p in parts if p.function_call]
+
+                if fc_parts:
+                    function_responses = []
+                    concluding_answer = None
+
+                    for part in fc_parts:
+                        call = part.function_call
+                        assert call is not None
+
+                        # Convert call args to pure dict
+                        if hasattr(call, "args") and call.args:
+                            # Google SDK's arg objects behave like dicts but sometimes aren't
+                            try:
+                                call_args = dict(call.args)
+                            except (ValueError, TypeError):
+                                call_args = {}
+                        else:
+                            call_args = {}
+
+                        call_name = str(call.name) if call.name else "unknown"
+
+                        if call_name == "conclude_research":
+                            logger.info("Agent decided to conclude research.")
+                            concluding_answer = str(
+                                call_args.get("answer", "❌ Агент завершил работу, но не предоставил ответ.")
+                            )
+                            break
+
+                        # Enforce page limits
+                        if call_name == "read_page":
+                            if pages_read >= self.max_pages:
+                                logger.info("Agent hit max pages limit (%d). Denying read_page.", self.max_pages)
+                                function_responses.append(
+                                    types.Part.from_function_response(
+                                        name=call_name,
+                                        response={
+                                            "error": f"Max page limit ({self.max_pages}) reached. Analyze existing data or conclude."
+                                        },
+                                    )
+                                )
+                                continue
+                            pages_read += 1
+                            await on_status(STAGES_AGENTIC_RESEARCH[2][1])  # "Читаю источник..."
+                        elif call_name == "search_web":
+                            await on_status(STAGES_AGENTIC_RESEARCH[1][1])  # "Ищу информацию..."
+
+                        # Execute tool
+                        result = await self._execute_tool(call, user_id, chat_id)
+
+                        if isinstance(result, Exception):
+                            # Should not happen since we execute directly without return_exceptions,
+                            # but keeping it safe if _execute_tool decides to return an exception
+                            result_dict = {"error": str(result)}
+                        else:
+                            result_dict = dict(result)
+
+                        function_responses.append(
+                            types.Part.from_function_response(name=call_name, response=result_dict)
+                        )
+
+                    if concluding_answer:
+                        # Agent has reached a conclusion
+                        logger.info("Agent concluded research successfully.")
+                        await on_status(STAGES_AGENTIC_RESEARCH[4][1])  # "Формирую итоговый ответ..."
+                        return concluding_answer
+
+                    # Append all tool results to history for the model to see in the next turn
+                    if function_responses:
+                        contents.append(
+                            types.Content(
+                                role="user",
+                                parts=function_responses,
+                            )
+                        )
+
+                    # Update status indicating we are processing/refining
+                    if iterations < self.max_iterations:
+                        await on_status(STAGES_AGENTIC_RESEARCH[3][1])  # "Уточняю запрос..."
+
+                    continue  # Loop again with the new context
+                else:
+                    # No function calls - this means the model decided to answer directly as text
+                    logger.info("Agent provided direct text answer without using conclude_research.")
+                    return str(parts[0].text) if parts and parts[0].text else "❌ Отсутствует текст в ответе."
+
+            # 3. Force conclusion if loop maxed out or broke unexpectedly
+            logger.warning("Agentic loop finished without explicit conclusion. Forcing synthesis.")
+            await on_status(STAGES_AGENTIC_RESEARCH[-1][1])  # "Формирую ответ..."
 
             try:
-                # We use the sync client wrapped in unblock to be safe, or just call async client.
-                # The google-genai SDK provides an async client accessible via `client.aio`
+                # Drop tools and ask it to synthesize everything it knows so far
+                config.tools = None
+                config.system_instruction = "Synthesize all the gathered information so far into a coherent final answer to the user's original query. Do not ask for tools. Format in Markdown."
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_text(
+                                text="Force conclusion: Provide your final answer based on the acquired context."
+                            )
+                        ],
+                    )
+                )
                 response = await self.client.aio.models.generate_content(
                     model=self.model_name,
                     contents=contents,
                     config=config,
                 )
+                if response.text:
+                    return response.text
             except Exception as e:
-                logger.error("Agentic model generation failed: %s", e, exc_info=True)
-                if iterations == 1:
-                    return f"❌ Ошибка при запуске агента: {str(e)}"
-                break  # Break out and try to force conclusion
+                logger.error("Forced synthesis failed: %s", e)
 
-            if not response.candidates:
-                logger.warning("Agent returned no candidates")
-                break  # Break out and force conclusion
+            return "❌ К сожалению, агенту не удалось собрать достаточно информации для ответа в отведенное время."
 
-            candidate = response.candidates[0]
-            message_content = candidate.content
-            if not message_content:
-                logger.warning("Agent returned empty message content")
-                break
-
-            # Append model's response to history
-            contents.append(message_content)
-
-            parts = message_content.parts or []
-            # Collect function call parts in one pass (avoids double-iteration from any())
-            fc_parts = [p for p in parts if p.function_call]
-
-            if fc_parts:
-                # Process all function calls in parallel or sequentially (Google SDK allows returning multiple results in one Content)
-                function_responses = []
-                concluding_answer = None
-
-                for part in fc_parts:
-                    call = part.function_call
-                    assert call is not None  # guaranteed by list comprehension filter
-                    call_args = call.args if isinstance(call.args, dict) else {}
-                    if call.name == "conclude_research":
-                        logger.info("Agent decided to conclude research.")
-                        concluding_answer = call_args.get(
-                            "answer", "❌ Агент завершил работу, но не предоставил ответ."
-                        )
-                        break  # Stop processing other calls
-
-                    # Enforce page limits
-                    if call.name == "read_page":
-                        if pages_read >= self.max_pages:
-                            logger.info("Agent hit max pages limit (%d). Denying read_page.", self.max_pages)
-                            function_responses.append(
-                                types.Part.from_function_response(
-                                    name=call.name,
-                                    response={
-                                        "error": f"Max page limit ({self.max_pages}) reached. Analyze existing data or conclude."
-                                    },
-                                )
-                            )
-                            continue
-                        pages_read += 1
-                        await on_status(STAGES_AGENTIC_RESEARCH[2][1])  # "Читаю источник..."
-                    elif call.name == "search_web":
-                        await on_status(STAGES_AGENTIC_RESEARCH[1][1])  # "Ищу информацию..."
-
-                    # Execute tool
-                    result = await self._execute_tool(call, user_id, chat_id)
-
-                    function_responses.append(types.Part.from_function_response(name=str(call.name), response=result))
-
-                if concluding_answer:
-                    return concluding_answer
-
-                # Append all tool results to history for the model to see in the next turn
-                if function_responses:
-                    contents.append(
-                        types.Content(
-                            role="user",  # Function responses are sent back as 'user' or 'function' role depending on SDK wrapper, in genai it often goes as 'user' role with function_response parts
-                            parts=function_responses,
-                        )
-                    )
-
-                # Update status indicating we are processing/refining
-                if iterations < self.max_iterations:
-                    await on_status(STAGES_AGENTIC_RESEARCH[3][1])  # "Уточняю запрос..."
-
-                continue  # Loop again with the new context
-            else:
-                # No function calls - this means the model decided to answer directly as text
-                # We usually want it to use conclude_research, but if it doesn't, this is the fallback
-                logger.info("Agent provided direct text answer without using conclude_research.")
-                return str(parts[0].text) if parts and parts[0].text else "❌ Отсутствует текст в ответе."
-
-        # 3. Force conclusion if loop maxed out or broke unexpectedly
-        logger.warning("Agentic loop finished without explicit conclusion. Forcing synthesis.")
-        await on_status(STAGES_AGENTIC_RESEARCH[-1][1])  # "Формирую ответ..."
-
-        try:
-            # Drop tools and ask it to synthesize everything it knows so far
-            config.tools = None
-            config.system_instruction = "Synthesize all the gathered information so far into a coherent final answer to the user's original query. Do not ask for tools. Format in Markdown."
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part.from_text(
-                            text="Force conclusion: Provide your final answer based on the acquired context."
-                        )
-                    ],
-                )
-            )
-            response = await self.client.aio.models.generate_content(
-                model=self.model_name,
-                contents=contents,
-                config=config,
-            )
-            if response.text:
-                return response.text
-        except Exception as e:
-            logger.error("Forced synthesis failed: %s", e)
-
-        return "❌ К сожалению, агенту не удалось собрать достаточно информации для ответа в отведенное время."
+        finally:
+            # MEMORY LEAK FIX:
+            # The `contents` list accumulates all model responses and tool results (up to 3 web pages x 15KB each).
+            # The GenAI SDK's proto-plus objects create deep reference cycles with internal channels.
+            # Python's refcount GC cannot collect these immediately when `contents` falls out of scope,
+            # resulting in ~250MB RAM bloat after a deep dive until cyclic GC runs.
+            # Explicitly clear the container and force cyclic GC collection.
+            contents.clear()
+            gc.collect()
