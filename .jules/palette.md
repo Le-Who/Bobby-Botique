@@ -1,0 +1,3 @@
+## 2024-05-24 - WAI-ARIA Tab Patterns and Live Regions
+**Learning:** Custom UI components in this application (like the dashboard tabs) often lack proper WAI-ARIA tab patterns, making them inaccessible to screen readers. Furthermore, dynamic updates, such as the error badge, don't announce changes automatically without `aria-live` properties.
+**Action:** When implementing or modifying custom tabs, always ensure the complete WAI-ARIA tab pattern is applied: `role="tablist"` on the container, `role="tab"` and dynamic `aria-selected` toggling on buttons, and `role="tabpanel"` on content areas. explicitly linking them using `aria-controls` and `aria-labelledby`. Ensure dynamic badges include `aria-live="polite"`.
