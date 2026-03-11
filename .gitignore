@@ -14,6 +14,7 @@ venv/
 .coverage
 htmlcov/
 .pytest_cache/
+.pytest_tmp/
 tests_output.log
 
 # ── Linter / Type Checker Caches ──────────────────────────────

@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for metrics JSONB roundtrip — real database.
 
 Validates that the upsert in _save_metrics_to_db and the jsonb_each_text

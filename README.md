@@ -142,17 +142,19 @@ docker-compose -f docker-compose.northflank.yml up -d
 
 ## Testing
 
-The application features a heavily engineered test suite (over 1000 unit and integration tests).
+The application features a heavily engineered test suite (over 1000 unit and integration tests) with **parallel execution** via `pytest-xdist`.
 
-- **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections).
-- **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-cov`.
+- **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`).
+- **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.
 - **Prerequisites:** Integration tests require `TEST_DATABASE_URL` (or `DATABASE_URL` in test environments) to a clean Postgres instance.
+- **Default behavior:** Running `pytest` automatically uses parallel workers (`-n auto`) and **excludes** integration tests (`-m "not integration"`) via `pytest.ini` defaults.
 
-| Test Type    | Tooling    | Command                                          | Scope                                |
-| ------------ | ---------- | ------------------------------------------------ | ------------------------------------ |
-| Unit / Logic | pytest     | `pytest tests/ -x -q --ignore=tests/integration` | Pure logic, LLM mock chains, prompts |
-| Integration  | pytest     | `pytest tests/integration/ -v`                   | Raw PostgreSQL operations, DB states |
-| Coverage     | pytest-cov | `pytest tests/ --cov=app`                        | Application-wide execution coverage  |
+| Test Type             | Command                                 | Scope                                |
+| --------------------- | --------------------------------------- | ------------------------------------ |
+| Unit (default, fast)  | `pytest`                                | Pure logic, LLM mock chains, prompts |
+| Integration (slow)    | `pytest -m integration`                 | Raw PostgreSQL operations, DB states |
+| All tests             | `pytest -m ""`                          | Full suite (unit + integration)      |
+| Coverage              | `pytest --cov=app`                      | Application-wide execution coverage  |
 
 ## API / Events / Contracts
 
@@ -202,7 +204,7 @@ The application features a heavily engineered test suite (over 1000 unit and int
 ## Contributing
 
 1. Create a descriptive PR.
-2. Verify all `pytest` checks pass (`pytest tests/`).
+2. Verify all `pytest` checks pass (`pytest` for unit tests, `pytest -m ""` for full suite).
 3. Verify `ruff check app/` yields zero stylistic flags and `mypy app/` validates static types before submission.
 
 ## License

@@ -24,6 +24,16 @@ from app.utils.image_utils import save_image_as_bytes
 _gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
 
 
+def get_cached_genai_client(api_key: str) -> genai.Client:
+    """Return a cached genai.Client for the given API key, creating one if needed."""
+    if api_key not in _gemini_clients_cache:
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        http_opts: dict[str, Any] = {"timeout": 90_000}
+        client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]
+        _gemini_clients_cache[api_key] = genai.Client(**client_kwargs)  # type: ignore[arg-type]
+    return _gemini_clients_cache[api_key]
+
+
 class GeminiProvider(BaseAIProvider):
     """Google Gemini AI provider — self-contained execution logic."""
 
@@ -32,13 +42,8 @@ class GeminiProvider(BaseAIProvider):
     def __init__(self, api_key: str):
         # We call super() first to validate the key type
         super().__init__(api_key)
-        # Avoid shadow assignments; pull/push to the global cache
-        if api_key not in _gemini_clients_cache:
-            client_kwargs: dict[str, Any] = {"api_key": api_key}
-            http_opts: dict[str, Any] = {"timeout": 90_000}  # 90s SDK deadline
-            client_kwargs["http_options"] = types.HttpOptions(**http_opts)  # type: ignore[arg-type]  # Pydantic coerces
-            _gemini_clients_cache[api_key] = genai.Client(**client_kwargs)  # type: ignore[arg-type]  # Pydantic coerces
-        self._client = _gemini_clients_cache[api_key]
+        # Reuse cached client via shared factory
+        self._client = get_cached_genai_client(api_key)
         self._client_api_key: str = api_key
 
     async def _execute_request(

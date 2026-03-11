@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for user stats — mirrors repos/user_stats.py SQL.
 
 Tests today's request count, weekly stats, and model usage breakdown queries.

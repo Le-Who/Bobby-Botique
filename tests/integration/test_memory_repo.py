@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for memory repository and vector search logic."""
 
 from unittest.mock import AsyncMock, patch

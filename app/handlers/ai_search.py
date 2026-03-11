@@ -11,6 +11,7 @@ from telegram.error import BadRequest, NetworkError
 
 from app import search_services
 from app.config import get_openrouter_keys, settings
+from app.core.agentic import AgenticSearch
 from app.database import ChatState
 from app.handlers.ai_core import (
     _get_ai_response_with_routing,
@@ -23,6 +24,7 @@ from app.utils.formatting import escape_format_chars
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_SEARCH_DEEP, STAGES_SEARCH_QUICK, update_stage
+from app.utils.waiting_facts import get_waiting_message
 
 
 @track_metrics("qna_search")
@@ -147,9 +149,6 @@ async def _handle_qna_search(
             logging.error("Could not edit placeholder message: %s", edit_error)
 
 
-from app.core.agentic import AgenticSearch
-from app.utils.waiting_facts import get_waiting_message
-
 @track_metrics("research_search")
 async def _handle_research_agent(
     placeholder_message: Message,
@@ -171,11 +170,13 @@ async def _handle_research_agent(
 
     # Get the key and model for AgenticSearch. Fallback to default if no OpenRouter/override
     from app.repos.keys import get_available_gemini_key
-    model_used = model_override or chat_state.model or settings.RESEARCH_MODEL
+
+    model_used = model_override or chat_state.model or settings.AGENTIC_MODEL or settings.RESEARCH_MODEL
     key_data = await get_available_gemini_key(model_used)
     if not key_data:
         try:
             from app.errors import build_retry_and_roles_keyboard
+
             await placeholder_message.edit_text(
                 "❌ Нет доступных ключей API. Пожалуйста, попробуйте позже.",
                 reply_markup=build_retry_and_roles_keyboard(),
@@ -199,15 +200,14 @@ async def _handle_research_agent(
     # Run the agentic loop
     try:
         final_answer = await agent.run(
-            query=actual_search_query,
-            on_status=on_status,
-            user_id=trace_user_id,
-            chat_id=trace_chat_id
+            query=actual_search_query, on_status=on_status, user_id=trace_user_id, chat_id=trace_chat_id
         )
     except Exception as ai_error:
         logging.error("Error in AgenticSearch run: %s", ai_error, exc_info=True)
         try:
-            await placeholder_message.edit_text("❌ Внутренняя ошибка про проведении глубокого исследования. Попробуйте отформатировать запрос иначе.")
+            await placeholder_message.edit_text(
+                "❌ Внутренняя ошибка при проведении глубокого исследования. Попробуйте отформатировать запрос иначе."
+            )
         except (BadRequest, NetworkError):
             pass
         return
@@ -220,16 +220,17 @@ async def _handle_research_agent(
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
-        
+
         await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup, is_deep_dive=True)
-        
+
         # Save to history
         chat_state.history.append({"role": "user", "parts": [actual_search_query]})
         chat_state.history.append({"role": "model", "parts": [final_answer]})
         chat_state.is_deep_dive = True
-        
+
         # Generate unique thread_id for deep dive session if absent
         import uuid
+
         if not hasattr(chat_state, "deep_dive_thread_id") or not chat_state.deep_dive_thread_id:
             chat_state.deep_dive_thread_id = str(uuid.uuid4())
             logging.info("Generated deep dive thread_id %s for user %s", chat_state.deep_dive_thread_id, user_id)
@@ -240,6 +241,7 @@ async def _handle_research_agent(
         error_msg = final_answer if final_answer else "Не удалось сформировать ответ."
         try:
             from app.errors import build_retry_and_roles_keyboard
+
             await placeholder_message.edit_text(
                 error_msg,
                 reply_markup=build_retry_and_roles_keyboard(),

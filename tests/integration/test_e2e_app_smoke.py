@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Tests integration between Agent processor and the Application Stack."""
 
 import contextlib

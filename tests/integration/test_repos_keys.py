@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for API key management — mirrors repos/keys.py SQL.
 
 Tests key rotation, usage tracking, daily limits, and key status management.

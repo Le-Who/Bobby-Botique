@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for custom roles — mirrors repos/roles.py SQL.
 
 Tests CRUD operations for user_roles table.

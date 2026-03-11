@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests — fixtures for real Supabase test database.
 
 Uses TEST_DATABASE_URL from .env to connect to a dedicated empty Supabase project.

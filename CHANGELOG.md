@@ -3,6 +3,55 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.35] - 2026-03-11 - Code Quality Audit & Test Acceleration
+
+### 🔍 Professional Code Audit (9 Findings Fixed)
+
+| ID | Severity | Fix | File |
+|----|----------|-----|------|
+| C1 | 🔴 Critical | Extracted `get_cached_genai_client()` factory — `AgenticSearch` and `GeminiProvider` now share TLS-cached clients | `gemini.py`, `agentic.py` |
+| C2 | 🔴 Critical | Added `close()` coroutine for module-level `httpx.AsyncClient` to prevent resource leaks on shutdown | `web_reader.py` |
+| C3 | 🔴 Critical | Moved mid-file imports to module top | `ai_search.py` |
+| M2 | 🟡 Medium | Added TTL cache (120s) for personalized stats — DB queries drop from ~27 to ~3 per research session | `waiting_facts.py` |
+| M3 | 🟡 Medium | Fixed persistent `ERROR` in `test_messages.py` by awaiting background `asyncio.create_task` | `test_messages.py` |
+| M4 | 🟡 Medium | Wired `settings.AGENTIC_MODEL` into model selection chain (was defined but unused) | `ai_search.py` |
+| L1 | 🟢 Low | Replaced f-string logging with `%s` format (6 instances) | `agentic.py` |
+| L2 | 🟢 Low | Fixed typo "про проведении" → "при проведении" | `ai_search.py` |
+| L3 | 🟢 Low | Deduplicated `has_function_calls` iteration + added mypy assertion for type narrowing | `agentic.py` |
+
+### ⚡ Test Suite Acceleration
+
+- **Parallel Execution**: Installed `pytest-xdist` and set `addopts = -n auto` in `pytest.ini` for automatic parallel test execution across all CPU cores.
+- **Integration Test Separation**: Added `@pytest.mark.integration` marker to all 14 integration test files. Default `pytest` run now excludes them via `-m "not integration"`.
+- **CI Pipeline Split**: GitHub Actions `ci.yml` now has two test jobs:
+  - `test-unit` (fast, ~1-2min): Runs on every push/PR — unit tests only.
+  - `test-integration` (slow, ~5min): Runs only on merge to `main` — full suite with DB tests.
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff format + check` | 0 errors |
+| `mypy app/ tests/` | 0 errors in 217 files |
+| `pytest` (unit, parallel) | 1000+ tests passed |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/providers/gemini.py` | Added `get_cached_genai_client()` factory |
+| `app/core/agentic.py` | Uses cached client, %s logging, deduplication |
+| `app/web_reader.py` | Added `close()` coroutine |
+| `app/handlers/ai_search.py` | Import ordering, typo fix, AGENTIC_MODEL wiring |
+| `app/utils/waiting_facts.py` | TTL cache for personalized stats |
+| `tests/test_messages.py` | Background task await fix |
+| `tests/test_agentic_search.py` | Updated mock for cached client factory |
+| `pytest.ini` | `addopts = -n auto --basetemp=.pytest_tmp -m "not integration"` |
+| `.github/workflows/ci.yml` | Split into `test-unit` + `test-integration` jobs |
+| `tests/integration/*.py` | Added `pytestmark = pytest.mark.integration` |
+
+---
+
 ## [2.8.34] - 2026-03-10 - Agentic Web-Browsing Research
 
 ### 🤖 Agentic Research Loop

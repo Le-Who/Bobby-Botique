@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for Concurrency Hardening bounds (TC-03)."""
 
 import asyncio

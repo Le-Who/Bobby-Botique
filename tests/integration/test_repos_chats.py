@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for chat state — mirrors repos/chats.py SQL.
 
 Tests get_user_chat / update_user_chat / update_thinking_level logic.

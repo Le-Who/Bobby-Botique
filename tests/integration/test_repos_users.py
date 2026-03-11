@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for user state persistence — mirrors repos/users.py SQL.
 
 Tests save_user_state and load_user_state UPSERT logic against real DB.

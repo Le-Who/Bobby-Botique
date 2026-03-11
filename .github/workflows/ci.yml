@@ -46,10 +46,10 @@ jobs:
       - name: Mypy
         run: mypy app/ tests/ load_test.py
 
-  test:
-    name: Test (pytest)
+  test-unit:
+    name: Test Unit (Fast)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     needs: [lint]
     env:
       TELEGRAM_BOT_TOKEN: "test:token"
@@ -70,5 +70,33 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
-      - name: Run tests
-        run: pytest tests/ -v
+      - name: Run unit tests
+        run: pytest tests/ -v  # runs with -m "not integration" due to pytest.ini
+        
+  test-integration:
+    name: Test Integration (Slow)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [test-unit]
+    env:
+      TELEGRAM_BOT_TOKEN: "test:token"
+      DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+      ADMIN_ID: "123456"
+      GEMINI_API_KEYS: "test-key"
+      TAVILY_API_KEYS: "test-key"
+      ADMIN_SECRET: "test-secret"
+      REDIS_URL: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+      - name: Run integration tests
+        run: pytest -m "integration" -n auto tests/ -v

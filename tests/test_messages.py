@@ -154,6 +154,14 @@ async def test_handle_request_text_message_happy_path():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
+    created_tasks = []
+    original_create_task = asyncio.create_task
+
+    def side_effect_create_task(coro, **kwargs):
+        task = original_create_task(coro, **kwargs)
+        created_tasks.append(task)
+        return task
+
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
@@ -164,6 +172,7 @@ async def test_handle_request_text_message_happy_path():
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.utils.background_tasks.submit_task") as _mock_submit,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as _mock_agent_process,
+        patch("asyncio.create_task", side_effect=side_effect_create_task),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -173,7 +182,10 @@ async def test_handle_request_text_message_happy_path():
         mock_lock.return_value.__aexit__.return_value = None
 
         await messages.handle_request(update, context)
-        # Note: Background task might not have run yet.
+
+        # Await background tasks to prevent "coroutine was never awaited" errors
+        if created_tasks:
+            await asyncio.gather(*created_tasks)
 
 
 @pytest.mark.asyncio

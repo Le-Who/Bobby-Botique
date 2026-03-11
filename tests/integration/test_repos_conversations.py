@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for conversations — mirrors repos/conversations.py SQL.
 
 Tests save_conversation, get_user_conversations, add/get messages, delete.

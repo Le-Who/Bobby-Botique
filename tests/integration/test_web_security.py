@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for Quart web dashboard security boundaries (TC-01).
 
 Ensures unauthenticated requests to protected endpoints are rejected or redirected.

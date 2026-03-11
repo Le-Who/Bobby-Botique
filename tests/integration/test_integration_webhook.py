@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """
 Integration tests for the Quart webhook endpoint.
 Coverage for Quart webhook routing and Telegram Update processing.

@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 import json
 import os
 from contextlib import asynccontextmanager

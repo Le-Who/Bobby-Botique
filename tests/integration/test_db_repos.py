@@ -1,3 +1,6 @@
+import pytest
+
+pytestmark = pytest.mark.integration
 """Integration tests for repos — real database queries against test Supabase project.
 
 All tests use transactional rollback — NO data persists after tests complete.
