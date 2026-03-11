@@ -55,7 +55,7 @@ async def get_personalized_stat(user_id: int) -> str | None:
         ts, stat_str = cached
         if time.monotonic() - ts < _STAT_CACHE_TTL:
             return stat_str
-        del _stat_cache[user_id]
+        _stat_cache.pop(user_id, None)
 
     try:
         # Get start date
