@@ -3,9 +3,37 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [2.8.33] - 2026-03-10 - Concurrency Scaling & Reliability
+## [2.8.34] - 2026-03-10 - Agentic Web-Browsing Research
 
-### 🚀 Performance & High Availability
+### 🤖 Agentic Research Loop
+
+- **Multi-Step Query Decomposition**: Upgraded static web search to a dynamic agentic loop (`AgenticSearch`). The Gemini model can iteratively decompose complex questions, formulate search queries via the Tavily API, and self-correct if the gathered context is incomplete.
+- **URL Triage & Pre-Evaluation**: The agent can autonomously evaluate search result metadata (titles, snippets) and selectively pick which URLs warrant deep reading.
+- **Deep DOM Parsing with Jina**: Integrated `Jina Reader API` (`web_reader.py`) to bypass anti-bot protections, extract core text from noisy DOMs, and accurately retrieve article contents from target URLs.
+- **Iterative Synthesis**: Bound loop recursion with strict limits (`AGENTIC_MAX_ITERATIONS=3`, `AGENTIC_MAX_PAGES=3`) to prevent infinite scraping while providing comprehensive, deeply-researched synthesis answers.
+- **Dynamic Waiting Facts**: Introduced `app/utils/waiting_facts.py` to display personalized system stats and generic interesting trivia to the user while the agent is executing prolonged multi-step research iterations, providing a better UX.
+
+### 🧹 Infrastructure Updates
+
+- **Dependencies**: Added configurations for `JINA_API_KEY` and updated the `prompt_registry` with a dedicated new `RESEARCH_AGENT_SYSTEM` zero-shot planning role.
+- **Testing**: Added extensive test suites and mock infrastructure (`test_agentic_search.py`) covering the agentic iteration flow, direct answer fallbacks, parsing errors, tool calling signatures, and API exceptions.
+
+### Files Changed
+
+| File | Change |
+| --- | --- |
+| `app/core/agentic.py` | [NEW] Implement `AgenticSearch` loop managing tools and memory |
+| `app/web_reader.py` | [NEW] Implement Async wrapper over `Jina Reader API` |
+| `app/utils/waiting_facts.py` | [NEW] Fun facts & stats during active research waiting |
+| `app/handlers/ai_search.py` | Fully refactored to utilize the `AgenticSearch` process |
+| `app/search_services.py` | Parameterized advanced queries allowing dynamic max lengths |
+| `app/stage_indicators.py` | Added agentic specific UI stage indicators (`STAGES_AGENTIC_RESEARCH`) |
+
+### 🧪 Tests: 1064 passed (100% Core + Integration Coverage)
+
+---
+
+## [2.8.33] - 2026-03-10 - Concurrency Scaling & Reliability
 
 - **Strict Context Isolation**: Relocated the _last_finish_reason state from a globally mutable module variable into a thread-safe contextvars.ContextVar. Resolved a dangerous race condition where parallel streams could leak safety block statuses into adjacent AI responses.
 - **Circuit Breaker Unblocking**: Severely refactored CircuitBreaker.call() to explicitly release its internal syncio.Lock during remote HTTP execution. This eradicated a critical head-of-line blocking bottleneck, allowing 100% concurrent request throughput without sacrificing state transition safety.

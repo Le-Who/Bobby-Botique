@@ -133,7 +133,7 @@ class TestPromptRegistry:
     def test_list_templates(self):
         registry = PromptRegistry()
         templates = registry.list_templates()
-        assert len(templates) == 9  # 7 original + 2 summarization templates
+        assert len(templates) == 10  # 7 original + 2 summarization + 1 research agent
 
     def test_version_info(self):
         registry = PromptRegistry()

@@ -147,6 +147,9 @@ async def _handle_qna_search(
             logging.error("Could not edit placeholder message: %s", edit_error)
 
 
+from app.core.agentic import AgenticSearch
+from app.utils.waiting_facts import get_waiting_message
+
 @track_metrics("research_search")
 async def _handle_research_agent(
     placeholder_message: Message,
@@ -156,364 +159,89 @@ async def _handle_research_agent(
     model_override: str | None = None,
     search_query: str | None = None,
 ):
-    # If beforeан search_query, use его for searchа, а user_message for локалfromации
+    # If search_query is provided, use it for search, else use user_message
     actual_search_query = search_query if search_query else user_message
 
     stop_heartbeat(placeholder_message.message_id)
     await metrics_collector.record_search_query()
 
-    try:
-        await update_stage(placeholder_message, STAGES_SEARCH_DEEP, 0)
-    except (BadRequest, NetworkError) as edit_error:
-        logging.error("Could not edit placeholder message: %s", edit_error)
-        placeholder_message = await placeholder_message.reply_text("🔎 Ищу источники...")
-
-    # Get user_id и chat_id for логирования
+    # Determine trace IDs
     trace_user_id: int | None = placeholder_message.from_user.id if placeholder_message.from_user else None
     trace_chat_id: int | None = placeholder_message.chat.id if placeholder_message.chat else None
 
-    try:
-        search_result = await search_services.tavily_search_agent(
-            actual_search_query, search_type="search", user_id=trace_user_id, chat_id=trace_chat_id
-        )
-    except Exception as search_error:
-        logging.error("Error in Tavily search: %s", search_error)
-        try:
-            await placeholder_message.edit_text("❌ Произошла ошибка при поиске. Попробуйте позже.")
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return
-
-    if search_result.get("error"):
-        try:
-            await placeholder_message.edit_text(search_result["error"])
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return
-
-    search_results = search_result.get("results", [])
-    if not search_results:
-        try:
-            await placeholder_message.edit_text("Не удалось найти релевантные источники для исследования.")
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return
-
-    # Check, что search_results содержит валидные data
-    valid_results = []
-    if search_results:
-        for result in search_results:
-            if isinstance(result, dict) and result.get("url") and result.get("title"):
-                valid_results.append(result)
-            else:
-                logging.warning("Skipping invalid search result: %s", result)
-
-    if not valid_results:
-        try:
-            await placeholder_message.edit_text("Не удалось найти валидные источники для исследования.")
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return
-
-    search_results = valid_results  # Используем only валидные results
-
-    try:
-        count = len(search_results) if search_results else 0
-        await placeholder_message.edit_text(f"✅ Найдено {count} источников. Выбираю лучшие...")
-    except (BadRequest, NetworkError) as edit_error:
-        logging.error("Could not edit placeholder message: %s", edit_error)
-
-    # Используем model from chat_state, if она указана, иначе use settings by default
-    preferred_model = (
-        chat_state.model
-        if chat_state.model
-        else (settings.OPENROUTER_URL_SELECTION_MODEL if get_openrouter_keys() else settings.URL_SELECTION_MODEL)
-    )
-
-    try:
-        # Безопасная сериалfromация search_results
-        safe_search_results = []
-        if search_results:
-            for result in search_results:
-                safe_result = {
-                    "title": str(result.get("title", "")),
-                    "url": str(result.get("url", "")),
-                    "content": str(result.get("content", "")),
-                    "score": float(result.get("score", 0.0)) if result.get("score") is not None else 0.0,
-                }
-                safe_search_results.append(safe_result)
-
-        # Экранируем фигурные скобки в user_message for предотвращения ошибок форматирования
-        safe_user_message = escape_format_chars(user_message)
-
-        selection_prompt = get_registry().get_task_prompt(
-            "url_selection",
-            user_message=safe_user_message,
-            # Optimized: Removed indent=2 to save tokens and improve performance
-            search_results_json=await asyncio.to_thread(lambda: json.dumps(safe_search_results, ensure_ascii=False)),
-        )
-
-        # Create parts for API: промпт
-        parts = [selection_prompt] if selection_prompt else []
-        # Используем системную инструкцию from chat_state
-        system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
-
-        # Используем health-aware роутинг
-        selected_urls_str, _ = await _get_ai_response_with_routing(
-            preferred_model,
-            [{"role": "user", "parts": parts}],
-            system_instruction=system_instruction,
-            user_id=trace_user_id,
-            chat_id=trace_chat_id,
-        )
-
-        # Check, является ли response ошибкой
-        from app.errors import (
-            build_retry_and_roles_keyboard,
-            is_error_message,
-            is_retryable_error,
-        )
-
-        if selected_urls_str and is_error_message(selected_urls_str):
-            # Это ошибка - показываем с кнопкой повтора
-            if is_retryable_error(selected_urls_str):
-                reply_markup = build_retry_and_roles_keyboard()
-            else:
-                from app.errors import build_roles_keyboard
-
-                reply_markup = build_roles_keyboard()
-
-            try:
-                await placeholder_message.edit_text(selected_urls_str, reply_markup=reply_markup)
-            except (BadRequest, NetworkError) as edit_error:
-                logging.error("Could not edit placeholder message: %s", edit_error)
-            return
-
-        if not selected_urls_str:
-            try:
-                await placeholder_message.edit_text(
-                    "Не удалось выбрать источники.",
-                    reply_markup=build_retry_and_roles_keyboard(),
-                )
-            except (BadRequest, NetworkError) as edit_error:
-                logging.error("Could not edit placeholder message: %s", edit_error)
-            return
-    except Exception as gemini_error:
-        logging.error("Error in Gemini URL selection: %s", gemini_error)
-        try:
-            await placeholder_message.edit_text("❌ Произошла ошибка при выборе источников. Попробуйте позже.")
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return
-
-    selected_urls = [url.strip() for url in selected_urls_str.split(",") if url.strip().startswith("http")]
-
-    if not selected_urls:
-        try:
-            await placeholder_message.edit_text(
-                "Не удалось выбрать подходящие источники для глубокого анализа. Попробуйте переформулировать запрос."
-            )
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return
-
-    try:
-        count = len(selected_urls) if selected_urls else 0
-        await placeholder_message.edit_text(f"✅ Выбрано {count} источников. Собираю контент...")
-    except (BadRequest, NetworkError) as edit_error:
-        logging.error("Could not edit placeholder message: %s", edit_error)
-
-    final_context_list = []
-    if selected_urls and search_results:
-        # Create dictionary for быстрого searchа по URL (O(1) instead of O(N*M))
-        results_map = {res.get("url"): res for res in search_results if res.get("url")}
-        for url in selected_urls:
-            res = results_map.get(url)
-            if res:
-                # Return old формат for совместимости с Gemini API
-                # но с улучшенной структурой for AI
-                source_info = f"Источник: {res.get('url')}\nСодержание:\n{res.get('content')}"
-                final_context_list.append(source_info)
-
-    full_context = "\n\n---\n\n".join(final_context_list) if final_context_list else ""
-
-    if not full_context:
-        try:
-            await placeholder_message.edit_text("Не удалось собрать контент с выбранных страниц.")
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return
-
-    try:
-        await update_stage(placeholder_message, STAGES_SEARCH_DEEP, 2)
-    except (BadRequest, NetworkError) as edit_error:
-        logging.error("Could not edit placeholder message: %s", edit_error)
-
-    # Используем model from chat_state or переопределение, if указано
-    model_for_synthesis = (
-        model_override
-        or chat_state.model
-        or (settings.OPENROUTER_RESEARCH_MODEL if get_openrouter_keys() else settings.RESEARCH_MODEL)
-    )
-
-    # Экранируем фигурные скобки в данных for предотвращения ошибок форматирования
-    # Применяем экранирование к данным before форматированием промпта
-    safe_full_context = escape_format_chars(full_context)
-    safe_user_message = escape_format_chars(user_message)
-
-    augmented_prompt = get_registry().get_task_prompt(
-        "synthesis", full_context=safe_full_context, user_message=safe_user_message
-    )
-
-    # Assemble context with token-budget awareness
-    from app.context.summarizer import schedule_llm_summarization
-    from app.context_assembler import get_assembler
-
-    assembler = get_assembler()
-    existing_summary = chat_state.context_summary
-
-    # Add augmented_prompt to history before assembly
-    chat_state.history.append({"role": "user", "parts": [augmented_prompt]})
-
-    system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
-    assembled = assembler.assemble(
-        history=chat_state.history,
-        user_message=None,  # type: ignore[arg-type]  # already appended augmented_prompt to history above
-        system_instruction=system_instruction,
-        existing_summary=existing_summary,
-    )
-
-    chat_state.history = assembled.history
-    chat_state.context_summary = assembled.summary
-
-    if assembled.was_truncated:
-        logging.info(
-            "Search context trimmed: dropped %d msgs, llm_scheduled=%s",
-            assembled.messages_dropped,
-            assembled.llm_summarization_scheduled,
-        )
-
-        # Record summarization metrics
-        from app.metrics import role_conv_metrics
-        from app.prompt_registry import estimate_tokens_cyrillic
-
-        tokens_saved = sum(estimate_tokens_cyrillic(assembler._extract_text(msg)) for msg in assembled.dropped_messages)
-        summary_len = estimate_tokens_cyrillic(assembled.summary) if assembled.summary else 0
-        tier = "llm" if assembled.llm_summarization_scheduled else "local"
-        await role_conv_metrics.record_summarization(
-            reason=f"{tier}: search dropped {assembled.messages_dropped} msgs",
-            tokens_saved=tokens_saved,
-            summary_length=summary_len,
-        )
-
-        # Schedule async LLM summarization
-        if assembled.llm_summarization_scheduled and assembled.dropped_messages:
-
-            async def _store_llm_summary(summary: str) -> None:
-                chat_state.context_summary = summary
-                await update_user_chat(user_id, chat_state)
-                logging.info("LLM summary persisted for user %s (search)", user_id)
-
-            schedule_llm_summarization(
-                dropped_messages=assembled.dropped_messages,
-                existing_summary=existing_summary,
-                callback=_store_llm_summary,
-            )
-
-    try:
-        # Check, что history не empty
-        if not chat_state.history or len(chat_state.history) == 0:
-            try:
-                await placeholder_message.edit_text("❌ История чата пуста. Невозможно обработать вопрос.")
-            except (BadRequest, NetworkError) as edit_error:
-                logging.error("Could not edit placeholder message: %s", edit_error)
-            return
-
-        # Stream the synthesis via unified ProviderRouter
-        from app.handlers.ai_core import _resolve_ai_request
-        from app.streaming import stream_and_display
-
-        _, model_used, _ = await _resolve_ai_request(model_for_synthesis)
-
-        response_text, success, _stream_last_msg = await stream_and_display(
-            placeholder_message,
-            model_name=model_used,
-            history=chat_state.history,
-            system_instruction=get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt),
-            thinking_level=chat_state.thinking_level,
-            user_id=trace_user_id,
-            bot=placeholder_message.get_bot(),
-            chat_id=trace_chat_id or 0,
-            chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
-        )
-
-        streamed = bool(success and response_text)
-
-        # We don't get new_token_count from stream, so we approximate or skip
-        new_token_count = 0
-
-        if not streamed:
-            response_text, new_token_count = await _get_ai_response_with_routing(
-                model_used,
-                chat_state.history,
-                system_instruction=get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt),
-                user_id=trace_user_id,
-                chat_id=trace_chat_id,
-            )
-    except Exception as ai_error:
-        logging.error("Error in AI synthesis: %s", ai_error)
-        chat_state.history.pop()  # Убираем добавленный промпт
-        await update_user_chat(user_id, chat_state)
-        try:
-            await placeholder_message.edit_text("❌ Произошла ошибка при синтезе ответа. Попробуйте позже.")
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return
-
-    if response_text and response_text.strip():
-        # Check, является ли response ошибкой
-        from app.errors import (
-            build_retry_and_roles_keyboard,
-            is_error_message,
-            is_retryable_error,
-        )
-
-        # Используем универсальную функцию обработки ошибок
-        async def cleanup_on_error() -> None:
-            chat_state.history.pop()  # Убираем добавленный промпт
-            await update_user_chat(user_id, chat_state)
-
-        if await handle_ai_response_error(response_text, placeholder_message, on_error_callback=cleanup_on_error):
-            return  # Error обработана, выходим
-        else:
-            # Успешный response
-            if not streamed:
-                await send_long_message(placeholder_message, response_text, is_deep_dive=True)
-            chat_state.history.append({"role": "model", "parts": [response_text]})
-            chat_state.token_count = new_token_count
-            chat_state.is_deep_dive = True
-
-            # Генерируем уникальный thread_id for deep dive сессии
-            import uuid
-
-            # Безопасная проверка атрибута deep_dive_thread_id
-            if not hasattr(chat_state, "deep_dive_thread_id") or not chat_state.deep_dive_thread_id:
-                chat_state.deep_dive_thread_id = str(uuid.uuid4())
-                logging.info("Generated deep dive thread_id %s for user %s", chat_state.deep_dive_thread_id, user_id)
-
-            await update_user_chat(user_id, chat_state)
-            logging.info(
-                "Deep dive mode activated for user %s with thread_id %s", user_id, chat_state.deep_dive_thread_id
-            )
-    else:
-        chat_state.history.pop()
-        await update_user_chat(user_id, chat_state)
-        logging.warning("Empty response from Gemini API for deep dive synthesis by user %s", user_id)
+    # Get the key and model for AgenticSearch. Fallback to default if no OpenRouter/override
+    from app.repos.keys import get_available_gemini_key
+    model_used = model_override or chat_state.model or settings.RESEARCH_MODEL
+    key_data = await get_available_gemini_key(model_used)
+    if not key_data:
         try:
             from app.errors import build_retry_and_roles_keyboard
-
             await placeholder_message.edit_text(
-                "Получен пустой ответ от API.",
+                "❌ Нет доступных ключей API. Пожалуйста, попробуйте позже.",
+                reply_markup=build_retry_and_roles_keyboard(),
+            )
+        except (BadRequest, NetworkError):
+            pass
+        return
+
+    agent = AgenticSearch(model_name=model_used, api_key=key_data["api_key"])
+
+    # Define the status callback that will show stages + fun facts
+    async def on_status(stage_text: str):
+        fact = await get_waiting_message(trace_user_id)
+        full_text = f"{stage_text}\n\n{fact}"
+        try:
+            await placeholder_message.edit_text(full_text)
+        except (BadRequest, NetworkError) as edit_error:
+            if "not modified" not in str(edit_error).lower():
+                logging.error("Could not edit placeholder message with status: %s", edit_error)
+
+    # Run the agentic loop
+    try:
+        final_answer = await agent.run(
+            query=actual_search_query,
+            on_status=on_status,
+            user_id=trace_user_id,
+            chat_id=trace_chat_id
+        )
+    except Exception as ai_error:
+        logging.error("Error in AgenticSearch run: %s", ai_error, exc_info=True)
+        try:
+            await placeholder_message.edit_text("❌ Внутренняя ошибка про проведении глубокого исследования. Попробуйте отформатировать запрос иначе.")
+        except (BadRequest, NetworkError):
+            pass
+        return
+
+    # Process and display the final answer
+    if final_answer and not final_answer.startswith("❌"):
+        # We successfully got an answer
+        buttons = [
+            [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
+            [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
+        ]
+        reply_markup = InlineKeyboardMarkup(buttons)
+        
+        await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup, is_deep_dive=True)
+        
+        # Save to history
+        chat_state.history.append({"role": "user", "parts": [actual_search_query]})
+        chat_state.history.append({"role": "model", "parts": [final_answer]})
+        chat_state.is_deep_dive = True
+        
+        # Generate unique thread_id for deep dive session if absent
+        import uuid
+        if not hasattr(chat_state, "deep_dive_thread_id") or not chat_state.deep_dive_thread_id:
+            chat_state.deep_dive_thread_id = str(uuid.uuid4())
+            logging.info("Generated deep dive thread_id %s for user %s", chat_state.deep_dive_thread_id, user_id)
+
+        await update_user_chat(user_id, chat_state)
+    else:
+        # Agent failed to get an answer or returned an explicit error
+        error_msg = final_answer if final_answer else "Не удалось сформировать ответ."
+        try:
+            from app.errors import build_retry_and_roles_keyboard
+            await placeholder_message.edit_text(
+                error_msg,
                 reply_markup=build_retry_and_roles_keyboard(),
             )
         except (BadRequest, NetworkError) as edit_error:

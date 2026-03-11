@@ -29,6 +29,7 @@ tests_output.log
 *.swp
 *.swo
 skills/
+.agents/
 
 # ── Dev artifacts ─────────────────────────────────────────────
 verification/

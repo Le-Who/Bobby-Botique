@@ -166,6 +166,12 @@ class Settings(BaseModel):
     MAX_DOCUMENTS_PER_USER: int = 5
     MAX_CONCURRENT_HEAVY_REQUESTS: int = 4
 
+    # --- AGENTIC RESEARCH ---
+    JINA_API_KEY: str = ""
+    AGENTIC_MAX_ITERATIONS: int = 5
+    AGENTIC_MAX_PAGES: int = 3
+    AGENTIC_MODEL: str = ""  # Defaults to RESEARCH_MODEL if empty
+
     # --- SAFETY ---
     SAFETY_SETTINGS: list[dict[str, str]] = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -216,6 +222,10 @@ def load_settings() -> Settings:
             ),
             "DAILY_LIMITS": _load_daily_limits(),
             "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
+            "JINA_API_KEY": os.getenv("JINA_API_KEY", ""),
+            "AGENTIC_MAX_ITERATIONS": int(os.getenv("AGENTIC_MAX_ITERATIONS", "5")),
+            "AGENTIC_MAX_PAGES": int(os.getenv("AGENTIC_MAX_PAGES", "3")),
+            "AGENTIC_MODEL": os.getenv("AGENTIC_MODEL", ""),
         }
 
         # Validation: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей

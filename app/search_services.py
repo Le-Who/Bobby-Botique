@@ -48,7 +48,7 @@ async def _tavily_api_call(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def tavily_search_agent(
-    query: str, search_type: str = "search", user_id: int | None = None, chat_id: int | None = None
+    query: str, search_type: str = "search", user_id: int | None = None, chat_id: int | None = None, max_results: int = 5
 ):
     # Input validation
     if not isinstance(query, str) or not query.strip():
@@ -97,7 +97,7 @@ async def tavily_search_agent(
         cost = settings.TAVILY_QNA_SEARCH_COST
     else:
         payload["search_depth"] = "advanced"
-        payload["max_results"] = 7
+        payload["max_results"] = max_results
         cost = settings.TAVILY_ADVANCED_SEARCH_COST
 
     try:
@@ -151,3 +151,72 @@ async def tavily_search_agent(
         logging.error("Tavily API call failed: %s", e, exc_info=True)
         await metrics_collector.record_error("tavily_api", str(e))
         return {"error": f"Произошла непредвиденная ошибка API: {e}"}
+
+async def parallel_search(
+    queries: list[str],
+    user_id: int | None = None,
+    chat_id: int | None = None,
+    max_results: int = 10,
+) -> list[dict]:
+    """
+    Run multiple Tavily searches in parallel and return merged, deduplicated results.
+    
+    Args:
+        queries: List of search queries
+        user_id: Optional user ID for tracking
+        chat_id: Optional chat ID for tracking
+        max_results: Maximum total results to return after deduplication
+        
+    Returns:
+        List of result dictionaries containing url, title, content (snippet), and score.
+        If an error occurs for a query, it is logged and skipped.
+    """
+    if not queries:
+        return []
+
+    import asyncio
+    
+    # Run all searches in parallel
+    tasks = [
+        tavily_search_agent(
+            query=q,
+            search_type="advanced",
+            user_id=user_id,
+            chat_id=chat_id,
+            max_results=5, # Get top 5 per query to ensure diversity before dedupping
+        )
+        for q in queries
+    ]
+    
+    results_list: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Deduplicate by URL
+    seen_urls: set[str] = set()
+    merged_results: list[dict[str, Any]] = []
+    
+    for result in results_list:
+        if isinstance(result, Exception):
+            logging.error("Parallel search task failed: %s", result)
+            continue
+            
+        if isinstance(result, dict) and "error" not in result and "results" in result:
+            for item in result["results"]:
+                if not isinstance(item, dict):
+                    continue
+                url = item.get("url")
+                if url and isinstance(url, str) and url not in seen_urls:
+                    seen_urls.add(url)
+                    merged_results.append({
+                        "url": url,
+                        "title": str(item.get("title", "")),
+                        "snippet": str(item.get("content", "")),
+                        "score": float(item.get("score", 0.0)),
+                        "published_date": str(item.get("published_date", ""))
+                    })
+                    
+    # Sort by score descending (if Tavily provides sensible scores across queries)
+    # Tavily scores are usually 0.0 to 1.0
+    merged_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+    
+    return merged_results[:max_results]
+

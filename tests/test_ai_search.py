@@ -109,10 +109,14 @@ async def test_research_agent_search_exception():
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_search.search_services") as mock_search,
+        patch("app.handlers.ai_search.AgenticSearch") as mock_agent_class,
+        patch("app.repos.keys.get_available_gemini_key", new_callable=AsyncMock) as mock_get_key,
     ):
         mock_metrics.record_search_query = AsyncMock()
-        mock_search.tavily_search_agent = AsyncMock(side_effect=Exception("Network fail"))
+        mock_get_key.return_value = {"api_key": "fake"}
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.run = AsyncMock(side_effect=Exception("Network fail"))
+        mock_agent_class.return_value = mock_agent_instance
 
         from app.handlers.ai_search import _handle_research_agent
 
@@ -120,7 +124,7 @@ async def test_research_agent_search_exception():
 
     placeholder.edit_text.assert_awaited()
     text = placeholder.edit_text.call_args[0][0]
-    assert "ошибка" in text.lower()
+    assert "error" in text.lower() or "ошибка" in text.lower()
 
 
 # ── Research agent — no results ───────────────────────────────────────────────
@@ -135,10 +139,16 @@ async def test_research_agent_no_results():
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_search.search_services") as mock_search,
+        patch("app.handlers.ai_search.AgenticSearch") as mock_agent_class,
+        patch("app.repos.keys.get_available_gemini_key", new_callable=AsyncMock) as mock_get_key,
     ):
         mock_metrics.record_search_query = AsyncMock()
-        mock_search.tavily_search_agent = AsyncMock(return_value={"results": []})
+        mock_get_key.return_value = {"api_key": "fake"}
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.run = AsyncMock(
+            return_value="❌ К сожалению, агенту не удалось собрать достаточно информации для ответа в отведенное время."
+        )
+        mock_agent_class.return_value = mock_agent_instance
 
         from app.handlers.ai_search import _handle_research_agent
 
@@ -146,7 +156,7 @@ async def test_research_agent_no_results():
 
     placeholder.edit_text.assert_awaited()
     text = placeholder.edit_text.call_args[0][0]
-    assert "найти" in text.lower() or "источник" in text.lower()
+    assert "к сожалению" in text.lower()
 
 
 # ── Research agent — Tavily returns error dict ────────────────────────────────
@@ -161,10 +171,14 @@ async def test_research_agent_tavily_error():
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_search.search_services") as mock_search,
+        patch("app.handlers.ai_search.AgenticSearch") as mock_agent_class,
+        patch("app.repos.keys.get_available_gemini_key", new_callable=AsyncMock) as mock_get_key,
     ):
         mock_metrics.record_search_query = AsyncMock()
-        mock_search.tavily_search_agent = AsyncMock(return_value={"error": "Rate limited"})
+        mock_get_key.return_value = {"api_key": "fake"}
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.run = AsyncMock(return_value="❌ Ошибка при запуске агента: Rate limit exceeded")
+        mock_agent_class.return_value = mock_agent_instance
 
         from app.handlers.ai_search import _handle_research_agent
 
@@ -172,4 +186,4 @@ async def test_research_agent_tavily_error():
 
     placeholder.edit_text.assert_awaited()
     text = placeholder.edit_text.call_args[0][0]
-    assert "Rate limited" in text
+    assert "Rate limit exceeded" in text

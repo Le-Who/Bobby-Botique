@@ -13,7 +13,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 ## Features
 
 - **Smart Provider Routing**: Automatic failover and API key rotation across Google Gemini and OpenRouter models.
-- **Deep Research Mode**: Web scraping via Tavily API with relevance scoring and AI synthesis.
+- **Agentic Web Browsing**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops.
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
 - **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall.
 - **Distributed Concurrency**: Redis-backed global semaphores to prevent API quota starvation in multi-replica deployments.
@@ -98,6 +98,10 @@ All configuration variables are loaded from the environment (or a `.env` file).
 | `TELEGRAM_BOT_TOKEN`                | ✅       | -                             | Your Telegram bot API token.                                       | `config.py`, `bot.py`              |
 | `DATABASE_URL`                      | ✅       | -                             | Postgres connection string (must support pgvector).                | `config.py`, `database.py`         |
 | `ADMIN_ID`                          | ✅       | -                             | Telegram User ID of the bot administrator.                         | `config.py`, Handlers              |
+| `JINA_API_KEY`                      | ❌       | -                             | API key for Jina Reader API (web content extraction).              | `config.py`, `web_reader.py`       |
+| `AGENTIC_MAX_ITERATIONS`            | ❌       | 3                             | Maximum number of research loop iterations for the agent.          | `config.py`, `agentic.py`          |
+| `AGENTIC_MAX_PAGES`                 | ❌       | 3                             | Maximum number of pages to read per iteration.                     | `config.py`, `agentic.py`          |
+| `AGENTIC_MODEL`                     | ❌       | `gemini-2.5-pro`              | Recommended reasoning model to use for the agentic loop.           | `config.py`, `agentic.py`          |
 | `ADMIN_SECRET`                      | ❌       | -                             | Secret for Dashboard auth and key encryption.                      | `config.py`, `web.py`, `crypto.py` |
 | `PORT`                              | ❌       | `10000`                       | Port for the Quart Web Server to bind to.                          | `config.py`, `bot.py`              |
 | `ENABLE_WEB_SERVER`                 | ❌       | `true`                        | Enables the built-in diagnostic dashboard.                         | `config.py`, `bot.py`              |
