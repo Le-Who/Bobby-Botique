@@ -58,12 +58,14 @@ async def get_personalized_stat(user_id: int) -> str | None:
         _stat_cache.pop(user_id, None)
 
     try:
-        # Get start date
-        user_record = await db.db_query("SELECT created_at FROM users WHERE user_id = $1", (user_id,))
+        # Get approximate start date from earliest metric entry
+        user_record = await db.db_query(
+            "SELECT MIN(metric_date) as first_seen FROM user_metrics WHERE user_id = $1", (user_id,)
+        )
         if not user_record:
             return None
 
-        first_seen = user_record[0].get("created_at")
+        first_seen = user_record[0].get("first_seen")
         days_together = 0
         if first_seen:
             # handle timezone-aware or naive datetimes

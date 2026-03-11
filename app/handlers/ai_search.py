@@ -209,7 +209,11 @@ async def _handle_research_agent(
     # Run the agentic loop
     try:
         final_answer = await agent.run(
-            query=actual_search_query, on_status=on_status, user_id=trace_user_id, chat_id=trace_chat_id
+            query=actual_search_query,
+            on_status=on_status,
+            user_id=trace_user_id,
+            chat_id=trace_chat_id,
+            history=chat_state.history if chat_state.history else None,
         )
     except Exception as ai_error:
         logging.error("Error in AgenticSearch run: %s", ai_error, exc_info=True)

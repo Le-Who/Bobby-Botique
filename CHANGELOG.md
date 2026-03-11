@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.38] - 2026-03-11 - Agentic Search Context & Stats Fixes
+
+### 🔴 Critical Fixes
+| Fix | File | Detail |
+|-----|------|--------|
+| Follow-up routing gap | `agent.py` | After `??` search set `is_deep_dive=True`, follow-up messages fell through to regular chat (no search tools) → hallucinations. Added `elif chat_state.is_deep_dive` routing case. |
+| Missing conversation context | `agentic.py`, `ai_search.py` | `AgenticSearch.run()` started from scratch each time. Now receives last 10 history entries so the agent can answer contextual follow-ups ("А за 2018?") using prior search results. |
+
+### 🟡 Medium Fixes
+| Fix | File | Detail |
+|-----|------|--------|
+| DB schema mismatch | `waiting_facts.py` | `SELECT created_at FROM users` failed because `users` table lacks `created_at`. Replaced with `SELECT MIN(metric_date) as first_seen FROM user_metrics` (index-only scan). |
+
 ## [2.8.35] - 2026-03-11 - Code Quality Audit & Test Acceleration
 
 ### 🔍 Professional Code Audit (9 Findings Fixed)

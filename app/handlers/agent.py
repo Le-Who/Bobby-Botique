@@ -107,6 +107,9 @@ async def process_long_request(
             await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
         elif chat_state.search_enabled:
             await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
+        elif chat_state.is_deep_dive:
+            # Continue deep dive session — route follow-ups through agentic search
+            await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
         else:
             await _handle_regular_chat(placeholder_message, update.effective_user.id, text, chat_state)
 

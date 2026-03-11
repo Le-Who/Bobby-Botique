@@ -125,6 +125,7 @@ class AgenticSearch:
         on_status: Callable[[str], Awaitable[None]],
         user_id: int | None = None,
         chat_id: int | None = None,
+        history: list[dict[str, Any]] | None = None,
     ) -> str:
         """
         Execute the agentic research loop.
@@ -134,6 +135,7 @@ class AgenticSearch:
             on_status: Async callback for UI updates.
             user_id: Optional user ID for tracking/personalized facts.
             chat_id: Optional chat ID.
+            history: Optional conversation history from prior turns.
 
         Returns:
             The final synthesized answer string.
@@ -141,7 +143,24 @@ class AgenticSearch:
         await on_status(STAGES_AGENTIC_RESEARCH[0][1])  # "Планирую исследование..."
 
         # 1. Prepare configuration and context
-        contents: list[Any] = [types.Content(role="user", parts=[types.Part.from_text(text=query)])]
+        contents: list[Any] = []
+
+        # Inject conversation history so the agent has context from prior turns
+        if history:
+            # Take only the last 10 entries to avoid token overflow
+            for entry in history[-10:]:
+                role = entry.get("role", "user")
+                parts_data = entry.get("parts", [])
+                text_parts = []
+                for p in parts_data:
+                    if isinstance(p, str):
+                        text_parts.append(types.Part.from_text(text=p))
+                    elif isinstance(p, dict) and "text" in p:
+                        text_parts.append(types.Part.from_text(text=p["text"]))
+                if text_parts:
+                    contents.append(types.Content(role=role, parts=text_parts))
+
+        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=query)]))
 
         config = types.GenerateContentConfig(
             system_instruction=self._get_system_instruction(),
