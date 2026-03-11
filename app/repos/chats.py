@@ -28,12 +28,38 @@ def _extract_message_content(msg: dict) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            text_parts = []
+            for p in content:
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, dict):
+                    if "text" in p:
+                        text_parts.append(str(p["text"]))
+                else:
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
+        if isinstance(content, (bytes, bytearray)):
+            return ""
+        if isinstance(content, dict):
+            return content.get("text", "")
         return str(content)
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
+            text_parts = []
+            for p in parts:
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, dict):
+                    if "text" in p:
+                        text_parts.append(str(p["text"]))
+                else:
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
+        if isinstance(parts, (bytes, bytearray)):
+            return ""
+        if isinstance(parts, dict):
+            return parts.get("text", "")
         return str(parts)
     return ""
 

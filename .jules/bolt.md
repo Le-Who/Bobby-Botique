@@ -13,3 +13,7 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+
+## 2025-03-05 - Massive String Allocations from Binary Payloads
+**Learning:** Blindly stringifying fallback message parts in iterations (e.g. `str(p.get("text", p))`) creates a massive memory bottleneck if the dictionary contains large structure like base64 or binary data for `inline_data` or `image_url`. This causes an O(N) allocation and severely degraded performance, increasing CPU usage.
+**Action:** Always check the dictionary's keys before calling `str()`. If it represents a binary structure (`inline_data`, `image_url`, `video_url`), or if it is a `bytes` or `bytearray` object, explicitly skip stringifying it.
