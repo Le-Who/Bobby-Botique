@@ -13,7 +13,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 ## Features
 
 - **Smart Provider Routing**: Automatic failover and API key rotation across Google Gemini and OpenRouter models.
-- **Agentic Web Browsing**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops.
+- **Agentic Web Browsing**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops. Hardened against memory leaks caused by gRPC protobuf cyclic references during long-running iterations.
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
 - **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall.
 - **Distributed Concurrency**: Redis-backed global semaphores to prevent API quota starvation in multi-replica deployments.

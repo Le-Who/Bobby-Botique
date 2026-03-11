@@ -10,11 +10,12 @@ Format is optimized for agent-parseable context.
 |--------|------|--------|
 | Added "💬 Вернуться в чат" button | `keyboards.py`, `cb_navigation.py` | After deep dive (`??`) responses, users now see a friendly exit button that disables `is_deep_dive` without clearing conversation history. Previously the only option was "Начать новую тему" which fully reset the chat — too destructive, users avoided pressing it and stayed stuck in search mode. |
 
-## [2.8.38] - 2026-03-11 - Agentic Search Context & Stats Fixes
+## [2.8.38] - 2026-03-11 - Agentic Search Memory & Context Fixes
 
 ### 🔴 Critical Fixes
 | Fix | File | Detail |
 |-----|------|--------|
+| Unbounded memory leak | `agentic.py` | Google GenAI SDK protobuf implementations create reference cycles that evade standard GC when returned. A single 5-iteration `??` search generated up to 250MB in leaked `contents` objects (containing full parsed web pages). Added strict `contents.clear()` + `gc.collect()` in a `finally` block to force cyclic GC sweep, completely resolving the leak. |
 | Follow-up routing gap | `agent.py` | After `??` search set `is_deep_dive=True`, follow-up messages fell through to regular chat (no search tools) → hallucinations. Added `elif chat_state.is_deep_dive` routing case. |
 | Missing conversation context | `agentic.py`, `ai_search.py` | `AgenticSearch.run()` started from scratch each time. Now receives last 10 history entries so the agent can answer contextual follow-ups ("А за 2018?") using prior search results. |
 
