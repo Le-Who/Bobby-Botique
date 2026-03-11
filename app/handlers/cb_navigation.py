@@ -52,6 +52,14 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
         await query.edit_message_reply_markup(reply_markup=None)
 
+    elif action == "exit_search":
+        chat_state = await get_user_chat(user_id)
+        chat_state.is_deep_dive = False
+        await update_user_chat(user_id, chat_state)
+        await query.answer("💬 Режим исследования завершён")
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text("💬 Вы вернулись в обычный чат. История сохранена — можете продолжить общение!")
+
     elif action == "deeper_dive":
         await query.edit_message_reply_markup(reply_markup=None)
         text = "Супер! Мы готовы *копнуть глубже*! 😉 \nЧто еще вы хотели бы узнать по этой теме?"

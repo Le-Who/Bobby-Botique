@@ -269,6 +269,7 @@ def deep_dive_keyboard(is_last_part: bool = True) -> InlineKeyboardMarkup:
     """Keyboard for deep dive mode responses."""
     buttons = [
         feedback_row(),
+        [InlineKeyboardButton("💬 Вернуться в чат", callback_data="deepdive:exit_search")],
         [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
     ]
     if is_last_part:

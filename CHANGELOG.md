@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.39] - 2026-03-11 - Deep Dive UX: Soft Exit Button
+
+### ✨ UX Improvement
+| Change | File | Detail |
+|--------|------|--------|
+| Added "💬 Вернуться в чат" button | `keyboards.py`, `cb_navigation.py` | After deep dive (`??`) responses, users now see a friendly exit button that disables `is_deep_dive` without clearing conversation history. Previously the only option was "Начать новую тему" which fully reset the chat — too destructive, users avoided pressing it and stayed stuck in search mode. |
+
 ## [2.8.38] - 2026-03-11 - Agentic Search Context & Stats Fixes
 
 ### 🔴 Critical Fixes
