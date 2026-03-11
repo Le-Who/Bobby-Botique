@@ -112,6 +112,16 @@ async def add_security_headers(response):
 # _get_admin_secret() is defined above (before session key derivation).
 
 
+def _get_client_ip():
+    """Extracts the client IP from X-Forwarded-For header, mitigating IP spoofing."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        # The rightmost IP is the one added by the trusted reverse proxy (e.g. Northflank)
+        # Anything before it could be spoofed by the client.
+        return forwarded.split(",")[-1].strip()
+    return request.remote_addr or "unknown"
+
+
 def _is_authenticated():
     """Check if current request has a valid session or header token."""
     # Check session cookie first
@@ -151,7 +161,7 @@ _login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
-    client_ip = request.remote_addr or "unknown"
+    client_ip = _get_client_ip()
 
     if request.method == "POST":
         # Check brute-force rate limit

@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-25 - [IP Spoofing / DoS] Insecure Rate Limit Key
+**Vulnerability:** The login rate limiter in `app/web.py` relied on `request.remote_addr`, which represents the reverse proxy's IP in a cloud deployment (like Northflank). This allowed any single brute-force attempt to trigger global rate limiting for all legitimate users (DoS), or potentially bypass limits if the IP was spoofed.
+**Learning:** In deployments behind a reverse proxy, `request.remote_addr` is insecure and functionally incorrect for user identification. The `X-Forwarded-For` header contains the client IP chain, but only the rightmost IP can be trusted as it is appended by the proxy.
+**Prevention:** Always extract the rightmost IP from the `X-Forwarded-For` header for security controls (rate limiting, auditing) when running behind a trusted reverse proxy, falling back to `remote_addr` only if the header is absent.
