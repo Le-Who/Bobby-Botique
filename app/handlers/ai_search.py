@@ -5,6 +5,7 @@ AI Search handlers — QnA quick answers, research agent, and complex agent sear
 import asyncio
 import json
 import logging
+import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest, NetworkError
@@ -188,9 +189,17 @@ async def _handle_research_agent(
     agent = AgenticSearch(model_name=model_used, api_key=key_data["api_key"])
 
     # Define the status callback that will show stages + fun facts
+    last_fact_time = 0.0
+    current_fact = ""
+
     async def on_status(stage_text: str):
-        fact = await get_waiting_message(trace_user_id)
-        full_text = f"{stage_text}\n\n{fact}"
+        nonlocal last_fact_time, current_fact
+        now = time.monotonic()
+        if now - last_fact_time > 10.0 or not current_fact:
+            current_fact = await get_waiting_message(trace_user_id)
+            last_fact_time = now
+
+        full_text = f"{stage_text}\n\n{current_fact}"
         try:
             await placeholder_message.edit_text(full_text)
         except (BadRequest, NetworkError) as edit_error:

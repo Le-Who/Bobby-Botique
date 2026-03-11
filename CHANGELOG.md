@@ -20,6 +20,7 @@ Format is optimized for agent-parseable context.
 | L1 | 🟢 Low | Replaced f-string logging with `%s` format (6 instances) | `agentic.py` |
 | L2 | 🟢 Low | Fixed typo "про проведении" → "при проведении" | `ai_search.py` |
 | L3 | 🟢 Low | Deduplicated `has_function_calls` iteration + added mypy assertion for type narrowing | `agentic.py` |
+| L4 | 🟢 Low | Implemented 10-second cache for waiting facts during AI search loops so users have time to read them | `ai_search.py` |
 
 ### ⚡ Test Suite Acceleration
 
