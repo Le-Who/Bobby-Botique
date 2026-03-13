@@ -5,7 +5,7 @@ hit the AI router, and output a result that persists.
 """
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -32,6 +32,13 @@ async def test_e2e_happy_path_conversation(db_conn_with_key):
 
     update = make_update(user_id=user_id, message_text="What is the capital of France?")
     context = make_context()
+
+    # Create a proper message mock for the placeholder to avoid AsyncMock returning
+    # unawaited coroutines for synchronous ptb methods like get_bot()
+    placeholder_msg = make_context().bot.send_message.return_value
+    placeholder_msg.edit_text = AsyncMock()
+    placeholder_msg.get_bot = MagicMock(return_value=context.bot)
+    update.message.reply_text.return_value = placeholder_msg
 
     # We create a fake async generator for the provider stream so the network isn't hit
     async def fake_stream(*args, **kwargs):
