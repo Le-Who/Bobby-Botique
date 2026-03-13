@@ -516,6 +516,7 @@ class TestSendFinalMessageReplyThreading:
             text="hello",
             parse_mode="HTML",
             reply_to_message_id=123,
+            allow_sending_without_reply=True,
         )
 
     @pytest.mark.asyncio
@@ -536,6 +537,7 @@ class TestSendFinalMessageReplyThreading:
             text="hello",
             parse_mode="HTML",
             reply_to_message_id=999,
+            allow_sending_without_reply=True,
         )
 
 class TestDetectOpenMarkdown:

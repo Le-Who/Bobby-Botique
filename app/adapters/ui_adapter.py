@@ -78,7 +78,12 @@ class TelegramMessageAdapter(StreamingUIAdapter):
                 raise
 
     async def reply_new_message(self, text: str, parse_mode: str) -> "StreamingUIAdapter":
-        new_msg = await self._msg.reply_text(text, parse_mode=parse_mode)
+        # BUG: if original message was deleted, reply_text raises "Message to be replied not found"
+        new_msg = await self._msg.reply_text(
+            text,
+            parse_mode=parse_mode,
+            allow_sending_without_reply=True,
+        )
         return TelegramMessageAdapter(message=new_msg, bot=self._bot, chat_id=self._chat_id, draft_id=self._draft_id)
 
     async def delete_placeholder(self) -> None:
@@ -107,6 +112,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
             
         if reply_id:
             kwargs["reply_to_message_id"] = reply_id
+            kwargs["allow_sending_without_reply"] = True
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup
         new_msg = await self._bot.send_message(**kwargs)
