@@ -13,3 +13,10 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+## 2026-03-13 - Prevent String Allocation Overhead from Binary Payloads
+**Learning:** Iterating and stringifying dictionary payloads containing binary data (like `inline_data` or `image_url`) or byte strings can cause massive O(N) memory allocation and block the main thread. This was found as a bottleneck in  and .
+**Action:** Check for and skip binary objects (`bytes`, `bytearray`) and specific large dictionary payloads (`inline_data`, `image_url`) explicitly before calling `str()` during message text extraction.
+
+## 2025-02-19 - Prevent String Allocation Overhead from Binary Payloads
+**Learning:** Iterating and stringifying dictionary payloads containing binary data (like `inline_data` or `image_url`) or byte strings can cause massive O(N) memory allocation and block the main thread. This was found as a bottleneck in `_extract_message_content` and `_extract_text`.
+**Action:** Check for and skip binary objects (`bytes`, `bytearray`) and specific large dictionary payloads (`inline_data`, `image_url`) explicitly before calling `str()` during message text extraction.
