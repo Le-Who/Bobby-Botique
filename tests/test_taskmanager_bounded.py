@@ -24,8 +24,10 @@ async def test_taskmanager_bounded_and_drain():
             await release_event.wait()
 
         # Submit 5 tasks. TaskManager should only accept 3.
-        for _ in range(5):
-            TaskManager.submit(slow_work())
+        # Track coroutines so we can close rejected ones (avoids RuntimeWarning).
+        coroutines = [slow_work() for _ in range(5)]
+        for coro in coroutines:
+            TaskManager.submit(coro)
 
         # Yield to allow wrapper tasks to start `slow_work`
         await asyncio.sleep(0.01)
@@ -43,6 +45,10 @@ async def test_taskmanager_bounded_and_drain():
 
         # All tasks should be cleaned up
         assert len(TaskManager._tasks) == 0
+
+        # Explicitly close any rejected coroutines to avoid RuntimeWarning
+        for coro in coroutines:
+            coro.close()
 
     finally:
         TaskManager.MAX_TASKS = old_max

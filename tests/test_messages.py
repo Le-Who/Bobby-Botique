@@ -154,15 +154,29 @@ async def test_handle_request_text_message_happy_path():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
+    # Capture coroutines passed to submit_task and create_task
+    # so we can drive them deterministically instead of letting them
+    # run as real background tasks (which would block the event loop
+    # waiting on unmocked infrastructure like process_long_request).
+    captured_coros = []
+
+    def capture_submit(coro, **kwargs):
+        captured_coros.append(coro)
+        noop_task = AsyncMock()
+        noop_task.cancel = MagicMock()
+        return noop_task
+
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
+        patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
         patch("app.handlers.messages.settings") as mock_settings,
         patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
         patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
+        patch("app.utils.background_tasks.submit_task", side_effect=capture_submit) as mock_submit,
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -173,13 +187,17 @@ async def test_handle_request_text_message_happy_path():
 
         await messages.handle_request(update, context)
 
-        # Run the background task deterministically to prevent dangling tasks
+        # Verify submit_task was called with the task_wrapper coroutine
+        assert mock_submit.called
+
+        # Clean up: close captured heartbeat coroutines (from create_task)
         for call_args in mock_create_task.call_args_list:
             coro = call_args[0][0]
-            if coro.__name__ == "_heartbeat":
-                coro.close()
-            else:
-                await coro
+            coro.close()
+
+        # Close captured submit_task coroutines (task_wrapper)
+        for coro in captured_coros:
+            coro.close()
 
 
 @pytest.mark.asyncio
@@ -191,9 +209,19 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
+    # Capture coroutines so we can drive them deterministically.
+    captured_coros = []
+
+    def capture_submit(coro, **kwargs):
+        captured_coros.append(coro)
+        noop_task = AsyncMock()
+        noop_task.cancel = MagicMock()
+        return noop_task
+
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
+        patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
         patch("app.handlers.messages.settings") as mock_settings,
         patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock) as mock_rate_limit,
         patch("app.handlers.messages.is_authorized", new_callable=AsyncMock) as mock_is_auth,
@@ -201,6 +229,8 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
+        patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
+        patch("app.handlers.messages.metrics_collector", AsyncMock()),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -214,13 +244,14 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         # Verify initial placeholder message
         message.reply_text.assert_awaited_with("🤔 Думаю...")
 
-        # Execute the background task coro
+        # Close heartbeat coroutine (from create_task)
         for call_args in mock_create_task.call_args_list:
             coro = call_args[0][0]
-            if coro.__name__ == "_heartbeat":
-                coro.close()
-            else:
-                await coro
+            coro.close()
+
+        # Execute the captured task_wrapper coroutine to test the AI pipeline
+        for coro in captured_coros:
+            await coro
 
         mock_agent_process.assert_awaited_once()
         # Verify arguments passed to process_long_request

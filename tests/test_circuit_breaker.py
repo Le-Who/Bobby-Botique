@@ -63,9 +63,10 @@ async def test_successful_call(cb):
     assert result == "success"
     mock_func.assert_called_once_with("arg1", key="value")
     assert cb.get_state() == CircuitState.CLOSED
-    assert cb._total_successes == 1
-    assert cb._total_requests == 1
-    assert cb._failure_count == 0
+    stats = cb.get_stats()
+    assert stats["total_successes"] == 1
+    assert stats["total_requests"] == 1
+    assert stats["failure_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -76,7 +77,7 @@ async def test_failure_counting(cb):
     with pytest.raises(ValueError, match="fail"):
         await cb.call(mock_func)
 
-    assert cb._failure_count == 1
+    assert cb.get_stats()["failure_count"] == 1
     assert cb.get_state() == CircuitState.CLOSED
 
 
@@ -89,13 +90,13 @@ async def test_circuit_opens_on_threshold(cb):
     with pytest.raises(ValueError):
         await cb.call(mock_func)
     assert cb.get_state() == CircuitState.CLOSED
-    assert cb._failure_count == 1
+    assert cb.get_stats()["failure_count"] == 1
 
     # Second failure -> Should open circuit
     with pytest.raises(ValueError):
         await cb.call(mock_func)
     assert cb.get_state() == CircuitState.OPEN
-    assert cb._failure_count == 2
+    assert cb.get_stats()["failure_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -120,7 +121,7 @@ async def test_unexpected_exception_ignored(cb):
         await cb.call(mock_func)
 
     # Should not count as failure
-    assert cb._failure_count == 0
+    assert cb.get_stats()["failure_count"] == 0
     assert cb.get_state() == CircuitState.CLOSED
 
 
@@ -139,7 +140,7 @@ async def test_recovery_flow_success(cb, mock_time):
 
     assert result == "recovered"
     assert cb.get_state() == CircuitState.CLOSED
-    assert cb._failure_count == 0
+    assert cb.get_stats()["failure_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -159,7 +160,7 @@ async def test_recovery_flow_failure(cb, mock_time):
     # Should reopen immediately
     assert cb.get_state() == CircuitState.OPEN
     # Failure count increases
-    assert cb._failure_count > 0
+    assert cb.get_stats()["failure_count"] > 0
 
 
 @pytest.mark.asyncio
@@ -169,11 +170,11 @@ async def test_manual_control(cb):
 
     await cb.force_close()
     assert cb.get_state() == CircuitState.CLOSED
-    assert cb._failure_count == 0
+    assert cb.get_stats()["failure_count"] == 0
 
     await cb.reset()
     assert cb.get_state() == CircuitState.CLOSED
-    assert cb._total_requests == 0
+    assert cb.get_stats()["total_requests"] == 0
 
 
 @pytest.mark.asyncio

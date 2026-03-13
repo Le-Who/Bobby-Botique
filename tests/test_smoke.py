@@ -230,7 +230,10 @@ class TestFullPipelineSmoke:
         # 2. Detect it
         assert is_error_message(error_text) is True
 
-        # 3. Record directly via _process_event (queue consumer is a background task)
+        # 3. Process synchronously — record_error() only enqueues and
+        #    the background consumer loop is not running in unit tests.
+        #    _process_event() is the only way to test the pipeline without
+        #    starting the full async event processor.
         metrics_collector._process_event(
             {
                 "type": "error",

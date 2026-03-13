@@ -61,8 +61,18 @@ async def db_conn(test_db_url):
     try:
         yield conn
     finally:
-        await tx.rollback()
-        await conn.close()
+        try:
+            # Cancel any in-flight operation that would block rollback.
+            # This can happen when xdist defers fixture teardown while a
+            # query from a prior test is still executing on this connection.
+            if conn.is_in_transaction():
+                await conn.reset(timeout=5.0)
+            else:
+                await tx.rollback()
+        except Exception:
+            pass  # Best-effort cleanup — connection will be closed below
+        finally:
+            await conn.close()
 
 
 @pytest.fixture(autouse=True)

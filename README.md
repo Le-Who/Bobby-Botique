@@ -142,19 +142,19 @@ docker-compose -f docker-compose.northflank.yml up -d
 
 ## Testing
 
-The application features a heavily engineered test suite (over 1000 unit and integration tests) with **parallel execution** via `pytest-xdist`.
+The application features a heavily engineered test suite (**1201 unit and integration tests, 60% line coverage**) with **parallel execution** via `pytest-xdist`.
 
-- **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`).
+- **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.
 - **Prerequisites:** Integration tests require `TEST_DATABASE_URL` (or `DATABASE_URL` in test environments) to a clean Postgres instance.
 - **Default behavior:** Running `pytest` automatically uses parallel workers (`-n auto`) and **excludes** integration tests (`-m "not integration"`) via `pytest.ini` defaults.
 
-| Test Type            | Command                 | Scope                                |
-| -------------------- | ----------------------- | ------------------------------------ |
-| Unit (default, fast) | `pytest`                | Pure logic, LLM mock chains, prompts |
-| Integration (slow)   | `pytest -m integration` | Raw PostgreSQL operations, DB states |
-| All tests            | `pytest -m ""`          | Full suite (unit + integration)      |
-| Coverage             | `pytest --cov=app`      | Application-wide execution coverage  |
+| Test Type            | Command                               | Scope                                |
+| -------------------- | ------------------------------------- | ------------------------------------ |
+| Unit (default, fast) | `pytest`                              | Pure logic, LLM mock chains, prompts |
+| Integration (slow)   | `pytest -m integration`               | Raw PostgreSQL operations, DB states |
+| All tests            | `pytest -m ""`                        | Full suite (unit + integration)      |
+| Coverage             | `pytest --cov=app --cov-report=term-missing` | Application-wide execution coverage  |
 
 ## API / Events / Contracts
 

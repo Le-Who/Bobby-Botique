@@ -3,6 +3,68 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.41] - 2026-03-13 - Test Suite Expansion & Reliability
+
+### 🧪 14 New Test Modules (1201 total tests, 60% coverage)
+
+| Module | Tests | Covers |
+|--------|-------|--------|
+| `test_admin_alerts.py` | Admin alert routing & formatting |
+| `test_agent_use_cases.py` | Agent dispatch routing edge cases |
+| `test_config_helpers.py` | `_load_and_clean_keys`, `_load_daily_limits`, `get_model_hash` |
+| `test_context_summarizer.py` | `_extract_text`, `split_into_chunks` |
+| `test_heartbeat.py` | Heartbeat typing indicator lifecycle |
+| `test_json_utils.py` | JSON serialization utilities |
+| `test_model_selector.py` | Smart model auto-selection heuristics |
+| `test_network.py` | Retry logic with exponential backoff |
+| `test_openrouter_provider.py` | OpenRouter streaming & error handling |
+| `test_search_services.py` | Tavily input validation & parallel dedup |
+| `test_tracing.py` | Request span binding & context propagation |
+| `test_ui_adapter.py` | Telegram UI adapter formatting |
+| `test_waiting_facts.py` | Waiting facts display logic |
+| `test_web_reader.py` | Jina Reader API wrapper |
+
+### 🔴 Critical Fixes
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Single-threaded test hang | `test_messages.py` | `handle_request` dispatches via `submit_task()` (not `asyncio.create_task`), so the test's `create_task` patch was bypassed — unmocked `process_long_request` ran as a real background task, blocking the event loop forever at 57%. Fixed by mocking `submit_task` at source + `ensure_state_loaded`. |
+| asyncpg teardown error | `integration/conftest.py` | `db_conn` fixture called `tx.rollback()` unconditionally at teardown; when xdist deferred teardown while the connection had a pending operation, it crashed with `InterfaceError`. Added `conn.reset(timeout=5.0)` + graceful error handling. |
+
+### 🟡 Medium Fixes
+
+| Fix | File | Detail |
+|-----|------|--------|
+| CircuitBreaker test API | `test_circuit_breaker.py` | Updated from private `_stats` dict to public `get_stats()` method. |
+| TaskManager bounded test | `test_taskmanager_bounded.py` | Fixed race condition in capacity test by using `asyncio.Event` synchronization. |
+| Smoke test resilience | `test_smoke.py` | Hardened import-time side-effect handling. |
+| Dev dependencies | `requirements-dev.txt` | Added `pytest-cov`, `pytest-xdist`. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check` | 0 errors |
+| `ruff format` | 0 files to reformat |
+| `mypy app/` | 0 errors in 101 files |
+| `pytest -n auto` | **1201 passed**, 0 errors, 2 warnings, 67s |
+| `pytest --cov=app` | **60% line coverage** (10185 lines) |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `tests/test_messages.py` | Mocked `submit_task` + `ensure_state_loaded` to fix hang |
+| `tests/integration/conftest.py` | Resilient `db_conn` teardown with `conn.reset()` |
+| `tests/test_circuit_breaker.py` | Updated to `get_stats()` API |
+| `tests/test_taskmanager_bounded.py` | Event-based synchronization |
+| `tests/test_smoke.py` | Import hardening |
+| `tests/test_tracing.py` | Unused variable fix |
+| `requirements-dev.txt` | +pytest-cov, +pytest-xdist |
+| 14 new `tests/test_*.py` | See table above |
+
+---
+
 ## [2.8.40] - 2026-03-13 - Streaming UX Polish & Concurrency Feedback
 
 ### ✨ UX Improvements & Bug Fixes
