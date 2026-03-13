@@ -124,6 +124,8 @@ class TestStreamingWriterDraftMode:
         adapter = MagicMock()
         adapter.edit_message = AsyncMock()
         adapter.send_draft = AsyncMock()
+        adapter.delete_placeholder = AsyncMock()  # P1: required for draft mode
+        adapter.send_final_message = AsyncMock()  # P1: used on finalize after draft
         adapter._bot = MagicMock()
 
         writer = StreamingWriter(adapter, chat_type="private")
@@ -149,28 +151,39 @@ class TestStreamingWriterDraftMode:
         assert STREAMING_INDICATOR not in call_kwargs.kwargs["text"]
 
     @pytest.mark.asyncio
-    async def test_finalize_uses_edit_text(self, draft_writer):
-        """Final flush uses edit_text for a permanent message (not draft)."""
+    async def test_finalize_uses_send_final_message(self, draft_writer):
+        """In draft mode (placeholder deleted), finalize sends a new permanent message."""
+        # Simulate that a draft was already sent (which deletes placeholder)
+        await draft_writer.write("First chunk")
+        draft_writer._adapter.delete_placeholder.assert_called_once()  # P1
+
         draft_writer._buffer = "Final answer"
         draft_writer._full_text = "Final answer"
 
         await draft_writer.finalize()
 
-        draft_writer._adapter.edit_message.assert_called_once()
-        call_args = draft_writer._adapter.edit_message.call_args
-        assert "Final answer" in call_args[0][0]
+        # P1: placeholder was deleted, so finalize uses send_final_message
+        draft_writer._adapter.send_final_message.assert_called_once()
+        call_kwargs = draft_writer._adapter.send_final_message.call_args
+        assert "Final answer" in call_kwargs[0][0] or "Final answer" in call_kwargs.kwargs.get(
+            "text", call_kwargs[0][0]
+        )
 
     @pytest.mark.asyncio
     async def test_draft_fallback_on_error(self, draft_writer):
-        """On TelegramError, draft mode falls back to classic edit_text."""
+        """On TelegramError, draft mode falls back to classic.
+
+        Since placeholder was deleted before the first draft attempt,
+        the fallback creates a recovery message via send_final_message.
+        """
         draft_writer._adapter.send_draft.side_effect = Exception("Forbidden")
 
         await draft_writer.write("Test text that triggers error")
 
         assert draft_writer._use_drafts is False
         assert draft_writer._debounce_s == EDIT_DEBOUNCE_S
-        # Fallback should have called edit_message
-        draft_writer._adapter.edit_message.assert_called_once()
+        # P1: placeholder was deleted, so recovery sends a new message
+        draft_writer._adapter.send_final_message.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_draft_mode_increments_edit_count(self, draft_writer):

@@ -16,6 +16,24 @@ class StreamingUIAdapter(abc.ABC):
     async def reply_new_message(self, text: str, parse_mode: str) -> "StreamingUIAdapter":
         """Start a new message when the current one overflows, returning a new adapter."""
 
+    @abc.abstractmethod
+    async def delete_placeholder(self) -> None:
+        """Delete the placeholder message (used before draft streaming to prevent dual-display)."""
+
+    @abc.abstractmethod
+    async def send_final_message(
+        self,
+        text: str,
+        parse_mode: str,
+        reply_markup: object | None = None,
+    ) -> None:
+        """Send a new permanent message and update internal reference.
+
+        Used when the placeholder was deleted before draft streaming.
+        The new message becomes the adapter's current message for
+        subsequent operations like adding buttons.
+        """
+
     @property
     @abc.abstractmethod
     def last_message(self) -> object:
@@ -59,6 +77,27 @@ class TelegramMessageAdapter(StreamingUIAdapter):
     async def reply_new_message(self, text: str, parse_mode: str) -> "StreamingUIAdapter":
         new_msg = await self._msg.reply_text(text, parse_mode=parse_mode)
         return TelegramMessageAdapter(message=new_msg, bot=self._bot, chat_id=self._chat_id, draft_id=self._draft_id)
+
+    async def delete_placeholder(self) -> None:
+        """Delete the current placeholder message to prevent dual-display with drafts."""
+        await self._msg.delete()
+
+    async def send_final_message(
+        self,
+        text: str,
+        parse_mode: str,
+        reply_markup: object | None = None,
+    ) -> None:
+        """Send a new permanent message and update internal reference."""
+        kwargs: dict = {
+            "chat_id": self._chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+        }
+        if reply_markup is not None:
+            kwargs["reply_markup"] = reply_markup
+        new_msg = await self._bot.send_message(**kwargs)
+        self._msg = new_msg  # Update reference so last_message returns the new one
 
     @property
     def last_message(self):

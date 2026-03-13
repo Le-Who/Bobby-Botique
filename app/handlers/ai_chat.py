@@ -219,11 +219,11 @@ async def _handle_regular_chat(
                     except Exception:
                         await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
             else:
-                # Streaming: message is already displayed, just add buttons
-                # Use stream_last_msg (final message in chain) for button attachment
+                # P3: buttons were already attached atomically via stream_and_display
+                # for draft mode (send_final_message). For classic mode, finalize()
+                # uses edit_text which doesn't accept reply_markup, so fall back.
                 button_msg = stream_last_msg if stream_last_msg else placeholder_message
                 try:
-                    # Simply attach buttons to the last message without re-rendering
                     await button_msg.edit_reply_markup(reply_markup=reply_markup)
                 except Exception as e:
                     if "not modified" not in str(e).lower():

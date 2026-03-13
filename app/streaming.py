@@ -191,6 +191,8 @@ class StreamingWriter:
 
         # Draft mode: supported if adapter has draft capability
         self._use_drafts = chat_type == "private" and getattr(adapter, "_bot", None) is not None
+        # P1 fix: track whether placeholder was deleted for draft mode
+        self._placeholder_deleted = False
 
         # Mode-specific debounce
         if self._use_drafts:
@@ -199,6 +201,31 @@ class StreamingWriter:
         else:
             self._debounce_s = EDIT_DEBOUNCE_S
             self._min_chunk = MIN_CHUNK_SIZE
+
+    def _switch_to_classic(self) -> None:
+        """Switch from draft mode to classic mode (edit-based streaming)."""
+        self._use_drafts = False
+        self._debounce_s = EDIT_DEBOUNCE_S
+        self._min_chunk = MIN_CHUNK_SIZE
+
+    async def _prepare_draft_mode(self) -> bool:
+        """One-time: delete placeholder before first draft to prevent dual-display.
+
+        Returns True if ready for drafts, False if fell back to classic.
+        """
+        if self._placeholder_deleted:
+            return True
+        try:
+            await self._adapter.delete_placeholder()
+            self._placeholder_deleted = True
+            return True
+        except Exception as e:
+            logging.warning(
+                "Cannot delete placeholder for draft mode: %s — falling back to classic",
+                e,
+            )
+            self._switch_to_classic()
+            return False
 
     async def write(self, delta: str) -> None:
         """Accumulate a text delta and flush to Telegram if debounce allows."""
@@ -212,25 +239,28 @@ class StreamingWriter:
         if elapsed >= self._debounce_s and self._pending_chars >= self._min_chunk:
             await self._flush(final=False)
 
-    async def finalize(self) -> str:
+    async def finalize(self, reply_markup: object | None = None) -> str:
         """Send the final version of the message (no cursor indicator).
 
-        In both modes the final text is committed via ``edit_text`` on the
-        placeholder message so that the permanent message supports
-        reply_markup (keyboards, buttons).
+        If the placeholder was deleted (draft mode), sends a new permanent
+        message via ``send_final_message`` — the draft auto-clears when
+        the bot sends a real message.  Otherwise uses ``edit_text``.
+
+        Args:
+            reply_markup: Optional reply markup to attach to the final message
+                atomically, avoiding a separate edit_reply_markup call.
 
         Returns:
             The complete accumulated text (across all messages).
         """
-        # Always finalize via classic edit_text (drafts are ephemeral)
-        await self._flush(final=True)
+        await self._flush(final=True, reply_markup=reply_markup)
         return self._full_text
 
-    async def _flush(self, *, final: bool = False) -> None:
+    async def _flush(self, *, final: bool = False, reply_markup: object | None = None) -> None:
         """Send the current buffer to Telegram.
 
-        Draft mode: calls ``send_message_draft`` for mid-stream updates,
-        falls back to ``edit_text`` for the final commit.
+        Draft mode: calls ``send_message_draft`` for mid-stream updates.
+        On first draft, deletes the placeholder to prevent dual-display.
         Classic mode: always uses ``edit_text``.
         """
         text = self._buffer
@@ -239,13 +269,18 @@ class StreamingWriter:
 
         # Draft mode mid-stream: use sendMessageDraft (no cursor needed)
         if self._use_drafts and not final:
+            # P1: one-time — delete placeholder before first draft
+            if not await self._prepare_draft_mode():
+                # Fell back to classic, retry flush
+                await self._flush(final=final)
+                return
+
             try:
                 formatted_text, parse_mode = TelegramFormatter.format_text(text)
-                if not final:
-                    formatted_text = sanitize_html_tags(formatted_text)
+                formatted_text = sanitize_html_tags(formatted_text)
 
                 if len(formatted_text) > STREAM_MSG_LIMIT:
-                    # Overflow: switch to classic for this + future flushes
+                    # Overflow: finalize frozen text, continue in classic
                     await self._overflow_to_new_message()
                     return
 
@@ -263,14 +298,47 @@ class StreamingWriter:
                         self._edit_count,
                         e,
                     )
-                    # Disable draft mode and retry via classic
-                    self._use_drafts = False
-                    self._debounce_s = EDIT_DEBOUNCE_S
-                    self._min_chunk = MIN_CHUNK_SIZE
-                    await self._flush(final=final)
+                    self._switch_to_classic()
+                    # P1: if placeholder was deleted, create a recovery message
+                    if self._placeholder_deleted:
+                        try:
+                            display = text + STREAMING_INDICATOR
+                            fmt, pm = TelegramFormatter.format_text(display)
+                            fmt = sanitize_html_tags(fmt)
+                            await self._adapter.send_final_message(fmt, parse_mode=pm)  # type: ignore[arg-type]
+                            self._placeholder_deleted = False
+                            self._last_edit_time = time.monotonic()
+                            self._pending_chars = 0
+                            self._edit_count += 1
+                        except Exception as recovery_err:
+                            logging.error("Draft fallback recovery failed: %s", recovery_err)
+                    else:
+                        await self._flush(final=final)
             return
 
-        # Classic mode (or final flush in draft mode)
+        # P1: draft mode finalize — send new permanent message (placeholder was deleted)
+        if self._placeholder_deleted and final:
+            try:
+                formatted_text, parse_mode = TelegramFormatter.format_text(text)
+
+                if len(formatted_text) > STREAM_MSG_LIMIT:
+                    await self._overflow_to_new_message()
+                    await self._flush(final=True, reply_markup=reply_markup)
+                    return
+
+                await self._adapter.send_final_message(
+                    formatted_text,
+                    parse_mode=parse_mode,  # type: ignore[arg-type]
+                    reply_markup=reply_markup,
+                )
+                self._last_edit_time = time.monotonic()
+                self._pending_chars = 0
+                self._edit_count += 1
+            except Exception as e:
+                logging.error("Failed to send final message after draft streaming: %s", e)
+            return
+
+        # Classic mode (or final flush when placeholder exists)
         display_text = text if final else text + STREAMING_INDICATOR
 
         try:
@@ -289,7 +357,7 @@ class StreamingWriter:
                 # Final flush overflows — split into finalize + new message
                 await self._overflow_to_new_message()
                 # Now flush the remainder (recursion with reduced buffer)
-                await self._flush(final=True)
+                await self._flush(final=True, reply_markup=reply_markup)
                 return
 
             await self._adapter.edit_message(formatted_text, parse_mode=parse_mode)  # type: ignore[arg-type]
@@ -323,11 +391,16 @@ class StreamingWriter:
         if md_prefix and remainder:
             remainder = md_prefix + remainder
 
-        # Edit current message with frozen text (no cursor)
+        # Freeze current message (or send new if placeholder was deleted)
         try:
             formatted_frozen, parse_mode = TelegramFormatter.format_text(frozen_text)
             formatted_frozen = sanitize_html_tags(formatted_frozen)
-            await self._adapter.edit_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
+            if self._placeholder_deleted:
+                # P1: no placeholder to edit — send frozen text as new message
+                await self._adapter.send_final_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
+                self._placeholder_deleted = False
+            else:
+                await self._adapter.edit_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
             self._edit_count += 1
         except Exception as e:
             if "not modified" not in str(e).lower():
@@ -420,6 +493,7 @@ async def stream_and_display(
     bot=None,
     chat_id: int = 0,
     chat_type: str = "private",
+    reply_markup: Any | None = None,
 ) -> tuple[str, bool, Message | None]:
     """High-level: stream AI response and progressively update Telegram message.
 
@@ -441,6 +515,8 @@ async def stream_and_display(
         bot: Bot instance (required for draft mode).
         chat_id: Target chat ID.
         chat_type: Chat type ("private", "group", "supergroup", etc.).
+        reply_markup: Optional reply markup to attach atomically to the
+            final message (avoids a separate edit_reply_markup call).
 
     Returns:
         (response_text, success, last_message) tuple.
@@ -478,7 +554,7 @@ async def stream_and_display(
         ):
             await writer.write(delta)
 
-        final_text = await writer.finalize()
+        final_text = await writer.finalize(reply_markup=reply_markup)
 
         if not final_text.strip():
             return "", False, placeholder_message

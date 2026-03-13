@@ -157,12 +157,18 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         register_heartbeat(placeholder_message.message_id, done_event)
 
         async def _heartbeat() -> None:
-            # We no longer edit the message with hardcoded "waiting" text
-            # because the unified streaming architecture handles live updates.
-            # This heartbeat task simply waits for cancellation to ensure
-            # any cleanup mechanisms work properly without stepping on streaming's toes.
+            # P6 fix: send periodic typing indicator so users see "bot is working"
+            # during long AI processing (ChatAction.TYPING expires after ~5s).
+            # Automatically cancelled by stop_heartbeat() when streaming starts.
             try:
-                await done_event.wait()
+                while not done_event.is_set():
+                    with contextlib.suppress(Exception):
+                        await update.effective_chat.send_action(action="typing")
+                    try:
+                        await asyncio.wait_for(done_event.wait(), timeout=4.0)
+                        break  # done_event was set
+                    except TimeoutError:
+                        continue  # send typing again
             except asyncio.CancelledError:
                 pass
 
