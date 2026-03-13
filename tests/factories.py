@@ -20,6 +20,7 @@ def make_chat_state(
     search_enabled=False,
     context_summary=None,
     thinking_level=None,
+    ltm_enabled=True,
 ):
     """Create a minimal ChatState-like object."""
     return SimpleNamespace(
@@ -31,6 +32,7 @@ def make_chat_state(
         search_enabled=search_enabled,
         context_summary=context_summary,
         thinking_level=thinking_level,
+        ltm_enabled=ltm_enabled,
     )
 
 

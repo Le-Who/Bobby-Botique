@@ -89,23 +89,26 @@ async def _handle_regular_chat(
     chat_state.context_summary = assembled.summary
 
     # ── Inject long-term memories (semantic recall) ──────────────────────
-    try:
-        from app.repos.memory import search_memories
+    _memories_injected = 0
+    if chat_state.ltm_enabled:
+        try:
+            from app.repos.memory import search_memories
 
-        key_data_for_mem, _, _ = await _resolve_ai_request(model_used)
-        if key_data_for_mem and user_message and len(user_message) > 15:
-            memories = await search_memories(
-                user_id,
-                user_message,
-                key_data_for_mem["api_key"],
-                limit=3,
-                min_similarity=0.55,
-            )
-            if memories:
-                chat_state.history = build_memory_context(memories, chat_state.history)
-                logging.info("Injected %d memories for user %s", len(memories), user_id)
-    except Exception as mem_err:
-        logging.debug("Memory recall skipped: %s", mem_err)
+            key_data_for_mem, _, _ = await _resolve_ai_request(model_used)
+            if key_data_for_mem and user_message and len(user_message) > 15:
+                memories = await search_memories(
+                    user_id,
+                    user_message,
+                    key_data_for_mem["api_key"],
+                    limit=3,
+                    min_similarity=0.72,
+                )
+                if memories:
+                    chat_state.history = build_memory_context(memories, chat_state.history)
+                    _memories_injected = len(memories)
+                    logging.info("Injected %d memories for user %s", _memories_injected, user_id)
+        except Exception as mem_err:
+            logging.debug("Memory recall skipped: %s", mem_err)
 
     if assembled.was_truncated:
         logging.info(
@@ -205,6 +208,11 @@ async def _handle_regular_chat(
             ]
             reply_markup = InlineKeyboardMarkup(buttons)
 
+            # ── Memory indicator footnote ─────────────────────────────────
+            # Append string so it applies to history and non-streaming modes natively
+            if _memories_injected > 0:
+                response_text += f"\n\n_🧠 Использован контекст из прошлых бесед ({_memories_injected})_"
+
             if not streamed:
                 # Non-streaming: send_long_message as before
                 try:
@@ -219,15 +227,20 @@ async def _handle_regular_chat(
                     except Exception:
                         await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
             else:
-                # P3: buttons were already attached atomically via stream_and_display
-                # for draft mode (send_final_message). For classic mode, finalize()
-                # uses edit_text which doesn't accept reply_markup, so fall back.
+                # P3: final buttons. If we injected memories, we must edit the text as well
+                # because the streaming text didn't contain the footnote.
                 button_msg = stream_last_msg if stream_last_msg else placeholder_message
                 try:
-                    await button_msg.edit_reply_markup(reply_markup=reply_markup)
+                    if _memories_injected > 0:
+                        formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
+                        await button_msg.edit_text(
+                            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
+                        )
+                    else:
+                        await button_msg.edit_reply_markup(reply_markup=reply_markup)
                 except Exception as e:
                     if "not modified" not in str(e).lower():
-                        logging.warning("Final button edit failed: %s", e)
+                        logging.warning("Final button/text edit failed: %s", e)
 
             chat_state.history.append({"role": "model", "parts": [response_text]})
             chat_state.token_count = new_token_count

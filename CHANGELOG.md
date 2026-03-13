@@ -3,6 +3,48 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.43] - 2026-03-13 - Memory Persistence Fix (BUG-9)
+
+### 🔴 Critical Fix
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Memories injected into every chat regardless of relevance | `ai_chat.py` | `min_similarity` threshold was `0.55` — far too low for `gemini-embedding-001` embeddings where unrelated strings naturally score `0.6–0.7`. Raised to `0.72`. |
+
+### 🟢 New Features
+
+| Feature | Files | Detail |
+|---------|-------|--------|
+| Long-Term Memory toggle in `/settings` | `database.py`, `commands.py`, `cb_navigation.py`, `callbacks.py`, `chats.py` | New `ltm_enabled` field on `ChatState` with 📚 toggle button. Persisted via `017_add_ltm_enabled.sql` migration. |
+| `/clearmemory` command | `commands.py` | Deletes all long-term vector memories for the user. Registered in the command router. |
+| Memory usage indicator | `ai_chat.py` | Appends `🧠 Использован контекст из прошлых бесед (N)` to responses when LTM was used. For streamed responses, uses `edit_text` on the final message. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check` | 0 errors |
+| `pytest -n auto` | **1212 passed**, 0 errors |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/database.py` | Added `ltm_enabled: bool = True` to `ChatState` |
+| `app/handlers/ai_chat.py` | Threshold `0.55→0.72`, LTM guard, memory footnote |
+| `app/handlers/commands.py` | `/clearmemory` command, settings LTM line + button |
+| `app/handlers/cb_navigation.py` | `toggle_ltm_callback`, updated `__all__` |
+| `app/handlers/callbacks.py` | Registered `toggle_ltm_callback` |
+| `app/repos/chats.py` | Added `ltm_enabled` to SQL SELECT/UPSERT |
+| `app/db/migrations.py` | Legacy migration for `ltm_enabled` column |
+| `scripts/migrations/017_add_ltm_enabled.sql` | DDL migration |
+| `tests/factories.py` | Added `ltm_enabled` to `make_chat_state` |
+| `tests/test_integration_flow.py` | Added `ltm_enabled` to inline mocks |
+| `tests/test_ui_adapter.py` | Fixed `allow_sending_without_reply` assertion |
+| `tests/integration/conftest.py` | Schema migration for test DB |
+
+---
+
 ## [2.8.42] - 2026-03-13 - Multi-Message Streaming Bug Fixes
 
 ### 🔴 Critical Fixes

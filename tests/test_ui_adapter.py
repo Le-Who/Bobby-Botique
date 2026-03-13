@@ -73,7 +73,9 @@ class TestTelegramMessageAdapter:
         mock_message.reply_text.return_value = new_msg
 
         new_adapter = await adapter.reply_new_message("continuation", "HTML")
-        mock_message.reply_text.assert_called_once_with("continuation", parse_mode="HTML")
+        mock_message.reply_text.assert_called_once_with(
+            "continuation", parse_mode="HTML", allow_sending_without_reply=True
+        )
         assert isinstance(new_adapter, TelegramMessageAdapter)
 
     @pytest.mark.asyncio

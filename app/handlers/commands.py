@@ -368,6 +368,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         f"💡 **Мышление:** {thinking}\n"
         f"🌐 **Поиск:** {search}\n"
         f"🎭 **Роль:** {role}\n"
+        f"📚 **Долгосрочная память:** {'✅ Включена' if chat_state.ltm_enabled else '❌ Выключена'}\n"
     )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
@@ -379,6 +380,12 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         [
             InlineKeyboardButton("🌐 Поиск", callback_data="toggle_search"),
             InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
+        ],
+        [
+            InlineKeyboardButton(
+                f"📚 Память: {'Вкл' if chat_state.ltm_enabled else 'Выкл'}",
+                callback_data="toggle_ltm",
+            ),
         ],
     ]
     await update.message.reply_text(
@@ -498,6 +505,21 @@ async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 
+@authorized_only
+@safe_handler("❌ Ошибка очистки памяти.")
+async def clearmemory_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear all long-term semantic memories for the user."""
+    user_id = update.effective_user.id
+
+    from app.repos.memory import delete_user_memories
+
+    deleted = await delete_user_memories(user_id)
+    formatted_text, parse_mode = TelegramFormatter.format_text(
+        f"🗑️ Удалено **{deleted}** воспоминаний из долгосрочной памяти."
+    )
+    await update.message.reply_text(formatted_text, parse_mode=parse_mode)
+
+
 def register(application: Application) -> None:
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
@@ -514,6 +536,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("settings", settings_command))
     application.add_handler(CommandHandler("mydata", mydata_command))
     application.add_handler(CommandHandler("deleteme", deleteme_command))
+    application.add_handler(CommandHandler("clearmemory", clearmemory_command))
 
     # Admin commands (from cmd_admin)
     from app.handlers.cmd_admin import (

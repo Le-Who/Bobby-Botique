@@ -124,6 +124,7 @@ async def test_happy_path_text_message(run_background_sync):
         deep_dive_thread_id=None,
         context_summary=None,
         thinking_level=0,
+        ltm_enabled=True,
     )
 
     with (
@@ -198,6 +199,7 @@ async def test_agent_error_shows_retry_keyboard(run_background_sync):
         deep_dive_thread_id=None,
         context_summary=None,
         thinking_level=0,
+        ltm_enabled=True,
     )
 
     with (

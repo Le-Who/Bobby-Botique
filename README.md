@@ -15,7 +15,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Smart Provider Routing**: Automatic failover and API key rotation across Google Gemini and OpenRouter models.
 - **Agentic Web Browsing**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops. Hardened against memory leaks caused by gRPC protobuf cyclic references during long-running iterations.
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
-- **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall.
+- **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall. User-toggleable via `/settings`; transparent `🧠` indicator when memories influence a response.
 - **Distributed Concurrency**: Redis-backed global semaphores to prevent API quota starvation in multi-replica deployments.
 - **Resilient Operations**: Background task manager with exponential backoff and admin alerting hooks.
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
@@ -161,9 +161,10 @@ The application features a heavily engineered test suite (**1200+ unit and integ
 **Telegram Commands:**
 
 - `/start`, `/help` — Initial onboarding & main menus.
-- `/settings` — Quick access to Model, Thinking Level, Search toggles.
+- `/settings` — Quick access to Model, Thinking Level, Search, and Long-Term Memory toggles.
 - `/stats` — User metrics, streak tracking, API usage.
 - `/documents` — Management of parsed files.
+- `/clearmemory` — Wipe all long-term vector memories.
 - `/mydata`, `/deleteme` — GDPR compliant export/deletion actions.
 - `/admin` — System administration hub (Requires `ADMIN_ID`).
 

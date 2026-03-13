@@ -56,6 +56,8 @@ async def db_conn(test_db_url):
     - Rolls back ALL changes after test completes
     """
     conn = await asyncpg.connect(test_db_url, statement_cache_size=0)
+    # Ensure schema is up-to-date for integration tests (idempotent)
+    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
     tx = conn.transaction()
     await tx.start()
     try:

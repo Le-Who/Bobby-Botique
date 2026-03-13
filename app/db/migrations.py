@@ -110,5 +110,11 @@ async def _run_legacy_migrations(db_query):
         if "deep_dive_thread_id" not in user_col_names:
             await db_query("ALTER TABLE users ADD COLUMN deep_dive_thread_id TEXT;")
 
+        # Ensure chats table has ltm_enabled column
+        chats_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='chats'")
+        chats_col_names = {c["column_name"] for c in chats_columns}
+        if "ltm_enabled" not in chats_col_names:
+            await db_query("ALTER TABLE chats ADD COLUMN ltm_enabled BOOLEAN DEFAULT TRUE;")
+
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Legacy migration warning: %s", e)

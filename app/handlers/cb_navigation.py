@@ -12,9 +12,11 @@ __all__ = [
     "model_menu_callback",
     "new_chat_callback",
     "new_topic_callback",
+    "open_conversations_callback",
     "open_documents_callback",
     "toggle_search_callback",
     "settings_thinking_callback",
+    "toggle_ltm_callback",
 ]
 
 import contextlib
@@ -300,6 +302,7 @@ async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAU
         f"💡 **Мышление:** {thinking_str}\n"
         f"🌐 **Поиск:** {search_str}\n"
         f"🎭 **Роль:** {role}\n"
+        f"📚 **Долгосрочная память:** {'✅ Включена' if chat_state.ltm_enabled else '❌ Выключена'}\n"
     )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
@@ -312,6 +315,12 @@ async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAU
             InlineKeyboardButton("🌐 Поиск", callback_data="toggle_search"),
             InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
         ],
+        [
+            InlineKeyboardButton(
+                f"📚 Память: {'Вкл' if chat_state.ltm_enabled else 'Выкл'}",
+                callback_data="toggle_ltm",
+            ),
+        ],
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
@@ -320,3 +329,65 @@ async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAU
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
     await query.answer(f"Мышление: {thinking_str}")
+
+
+async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle long-term memory on/off from /settings inline keyboard."""
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if _is_user_busy(user_id):
+        await query.answer(_BUSY_TOAST, show_alert=True)
+        return
+
+    chat_state = await get_user_chat(user_id)
+    chat_state.ltm_enabled = not chat_state.ltm_enabled
+    await update_user_chat(user_id, chat_state)
+
+    # Rebuild settings menu
+    from app.handlers.commands import _THINKING_LABELS
+    model_name = chat_state.model or "(по умолчанию)"
+    thinking_str = _THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level or "🔄 Авто")
+    search_str = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
+
+    role = chat_state.system_prompt
+    if role and len(role) > 60:
+        role = role[:60] + "…"
+    elif not role:
+        role = "(стандартная)"
+
+    text = (
+        "⚙️ **Настройки**\n\n"
+        f"🧠 **Модель:** `{model_name}`\n"
+        f"💡 **Мышление:** {thinking_str}\n"
+        f"🌐 **Поиск:** {search_str}\n"
+        f"🎭 **Роль:** {role}\n"
+        f"📚 **Долгосрочная память:** {'✅ Включена' if chat_state.ltm_enabled else '❌ Выключена'}\n"
+    )
+
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    keyboard = [
+        [
+            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
+            InlineKeyboardButton("💡 Мышление", callback_data="settings_thinking"),
+        ],
+        [
+            InlineKeyboardButton("🌐 Поиск", callback_data="toggle_search"),
+            InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
+        ],
+        [
+            InlineKeyboardButton(
+                f"📚 Память: {'Вкл' if chat_state.ltm_enabled else 'Выкл'}",
+                callback_data="toggle_ltm",
+            ),
+        ],
+    ]
+    with contextlib.suppress(telegram.error.BadRequest):
+        await query.edit_message_text(
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    ltm_status = "Включена" if chat_state.ltm_enabled else "Выключена"
+    await query.answer(f"Память: {ltm_status}")
+
