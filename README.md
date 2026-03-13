@@ -142,7 +142,7 @@ docker-compose -f docker-compose.northflank.yml up -d
 
 ## Testing
 
-The application features a heavily engineered test suite (**1201 unit and integration tests, 60% line coverage**) with **parallel execution** via `pytest-xdist`.
+The application features a heavily engineered test suite (**1200+ unit and integration tests, 60% line coverage**) with **parallel execution** via `pytest-xdist`.
 
 - **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.

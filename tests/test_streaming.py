@@ -374,3 +374,147 @@ class TestDetectOpenMarkdownExtended:
         assert "**" in suffix
         assert "_" in suffix
         assert "~~" in suffix
+
+
+# ── Regression tests for multi-message streaming bugs ────────────────────────
+
+
+class TestDraftOverflowSwitchesToClassic:
+    """BUG-1: After overflow in draft mode, writer must switch to classic mode.
+
+    Without the fix, _use_drafts stays True after overflow, causing the next
+    write() to call delete_placeholder() on the NEW continuation message —
+    potentially deleting visible content.
+    """
+
+    @pytest.fixture()
+    def draft_overflow_writer(self, monkeypatch):
+        """Create a draft-mode writer with low overflow limit for testing."""
+        monkeypatch.setattr("app.streaming.STREAM_MSG_LIMIT", 80)
+        monkeypatch.setattr("app.streaming.DRAFT_DEBOUNCE_S", 0)
+        monkeypatch.setattr("app.streaming.DRAFT_MIN_CHUNK", 0)
+
+        adapter = MagicMock()
+        adapter.edit_message = AsyncMock()
+        adapter.send_draft = AsyncMock()
+        adapter.delete_placeholder = AsyncMock()
+        adapter.send_final_message = AsyncMock()
+        adapter._bot = MagicMock()
+
+        # reply_new_message returns a fresh adapter (simulates the real flow)
+        new_adapter = MagicMock()
+        new_adapter.edit_message = AsyncMock()
+        new_adapter.reply_new_message = AsyncMock()
+        new_adapter._bot = None  # New adapter is NOT draft-capable
+        adapter.reply_new_message = AsyncMock(return_value=new_adapter)
+
+        writer = StreamingWriter(adapter, chat_type="private")
+        writer._debounce_s = 0
+        writer._min_chunk = 0
+        return writer
+
+    @pytest.mark.asyncio
+    async def test_overflow_switches_use_drafts_to_false(self, draft_overflow_writer):
+        """After overflow, _use_drafts must be False."""
+        writer = draft_overflow_writer
+        assert writer._use_drafts is True  # Starts in draft mode
+
+        # Trigger overflow with long text
+        long_text = "A" * 200
+        writer._buffer = long_text
+        writer._full_text = long_text
+        # Simulate that placeholder was already deleted (first draft was sent)
+        writer._placeholder_deleted = True
+
+        await writer._overflow_to_new_message()
+
+        assert writer._use_drafts is False, "_use_drafts must be False after draft overflow"
+        assert writer._debounce_s == EDIT_DEBOUNCE_S, "debounce must match classic mode"
+        assert writer._min_chunk == MIN_CHUNK_SIZE, "min_chunk must match classic mode"
+
+    @pytest.mark.asyncio
+    async def test_overflow_sends_frozen_via_send_final_message(self, draft_overflow_writer):
+        """Frozen text should go via send_final_message when placeholder is deleted."""
+        writer = draft_overflow_writer
+        writer._placeholder_deleted = True
+
+        long_text = "A" * 200
+        writer._buffer = long_text
+        writer._full_text = long_text
+
+        # Capture original adapter before overflow swaps it
+        original_adapter = writer._adapter
+
+        await writer._overflow_to_new_message()
+
+        # Frozen text was sent via send_final_message on the ORIGINAL adapter
+        original_adapter.send_final_message.assert_called_once()
+
+
+class TestClassicFinalFlushPassesReplyMarkup:
+    """BUG-2: reply_markup must be forwarded to edit_message in classic finalize."""
+
+    @pytest.fixture()
+    def classic_writer(self, monkeypatch):
+        monkeypatch.setattr("app.streaming.EDIT_DEBOUNCE_S", 0)
+        monkeypatch.setattr("app.streaming.MIN_CHUNK_SIZE", 0)
+
+        adapter = MagicMock()
+        adapter.edit_message = AsyncMock()
+        adapter._bot = None
+
+        writer = StreamingWriter(adapter, chat_type="group")
+        writer._debounce_s = 0
+        writer._min_chunk = 0
+        return writer
+
+    @pytest.mark.asyncio
+    async def test_finalize_passes_reply_markup_to_edit(self, classic_writer):
+        """finalize(reply_markup=X) should forward X to edit_message()."""
+        classic_writer._buffer = "Final text"
+        classic_writer._full_text = "Final text"
+
+        mock_markup = MagicMock()
+        await classic_writer.finalize(reply_markup=mock_markup)
+
+        call_kwargs = classic_writer._adapter.edit_message.call_args
+        assert call_kwargs.kwargs.get("reply_markup") is mock_markup or (
+            len(call_kwargs) > 2 and call_kwargs[0][2] is mock_markup
+        ), "reply_markup must be forwarded to edit_message"
+
+    @pytest.mark.asyncio
+    async def test_finalize_without_reply_markup(self, classic_writer):
+        """finalize() without reply_markup should not pass it to edit_message."""
+        classic_writer._buffer = "Final text"
+        classic_writer._full_text = "Final text"
+
+        await classic_writer.finalize()
+
+        call_kwargs = classic_writer._adapter.edit_message.call_args
+        # reply_markup should be None (not present)
+        assert call_kwargs.kwargs.get("reply_markup") is None
+
+
+class TestSendFinalMessageReplyThreading:
+    """BUG-3: send_final_message must include reply_to_message_id for threading."""
+
+    @pytest.mark.asyncio
+    async def test_send_final_message_includes_reply_to(self):
+        """send_final_message should pass reply_to_message_id to bot.send_message."""
+        from app.adapters.ui_adapter import TelegramMessageAdapter
+
+        mock_msg = MagicMock()
+        mock_msg.message_id = 42
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock())
+
+        adapter = TelegramMessageAdapter(message=mock_msg, bot=mock_bot, chat_id=123, draft_id=0)
+
+        await adapter.send_final_message("Hello", parse_mode="HTML")
+
+        call_kwargs = mock_bot.send_message.call_args.kwargs
+        assert call_kwargs.get("reply_to_message_id") == 42, (
+            "send_final_message must include reply_to_message_id for threading"
+        )
+        assert call_kwargs.get("chat_id") == 123
+        assert call_kwargs.get("text") == "Hello"

@@ -5,7 +5,7 @@ class StreamingUIAdapter(abc.ABC):
     """Protocol for dynamic UI updates (e.g., Telegram messages) during streaming."""
 
     @abc.abstractmethod
-    async def edit_message(self, text: str, parse_mode: str) -> None:
+    async def edit_message(self, text: str, parse_mode: str, reply_markup: object | None = None) -> None:
         """Edit the current message with new text."""
 
     @abc.abstractmethod
@@ -49,11 +49,14 @@ class TelegramMessageAdapter(StreamingUIAdapter):
         self._chat_id = chat_id
         self._draft_id = draft_id
 
-    async def edit_message(self, text: str, parse_mode: str) -> None:
+    async def edit_message(self, text: str, parse_mode: str, reply_markup: object | None = None) -> None:
         from telegram.error import TelegramError
 
         try:
-            await self._msg.edit_text(text, parse_mode=parse_mode)
+            kwargs: dict = {"parse_mode": parse_mode}
+            if reply_markup is not None:
+                kwargs["reply_markup"] = reply_markup
+            await self._msg.edit_text(text, **kwargs)
         except TelegramError as e:
             if "not modified" not in str(e).lower():
                 raise
@@ -93,6 +96,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
             "chat_id": self._chat_id,
             "text": text,
             "parse_mode": parse_mode,
+            "reply_to_message_id": self._msg.message_id,
         }
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup

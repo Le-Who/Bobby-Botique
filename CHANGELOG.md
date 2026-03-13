@@ -3,6 +3,47 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.42] - 2026-03-13 - Multi-Message Streaming Bug Fixes
+
+### 🔴 Critical Fixes
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Draft mode corruption on overflow | `streaming.py` | After overflow into a 2nd message, `_use_drafts` stayed `True` — next `write()` attempted to `delete_placeholder()` on the new continuation message, potentially deleting visible content. Fixed by calling `_switch_to_classic()` after draft overflow. |
+| Missing reply threading in draft overflow | `ui_adapter.py` | `send_final_message()` sent standalone messages without `reply_to_message_id`, breaking reply threading in private chats. Overflow messages now correctly chain as replies. |
+
+### 🟡 Medium Fixes
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Buttons not attached atomically | `streaming.py`, `ui_adapter.py` | `reply_markup` was not forwarded through `edit_message()` in the classic finalize path. Callers' fallback `edit_reply_markup()` worked but created an extra API round-trip and a race condition. `edit_message()` now accepts optional `reply_markup`. |
+
+### 🧪 Tests
+
+| New Tests | Class | Covers |
+|-----------|-------|--------|
+| 2 | `TestDraftOverflowSwitchesToClassic` | BUG-1: `_use_drafts` resets to `False`, debounce/chunk match classic mode |
+| 2 | `TestClassicFinalFlushPassesReplyMarkup` | BUG-2: `reply_markup` forwarded to/omitted from `edit_message()` |
+| 1 | `TestSendFinalMessageReplyThreading` | BUG-3: `reply_to_message_id` present in `send_message()` kwargs |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check` | 0 errors |
+| `ruff format` | 0 files to reformat |
+| `pytest -n auto` | **1206 passed**, 0 errors |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/streaming.py` | `_switch_to_classic()` after draft overflow; `reply_markup` forwarded to `edit_message()` |
+| `app/adapters/ui_adapter.py` | `edit_message()` accepts `reply_markup`; `send_final_message()` adds `reply_to_message_id` |
+| `tests/test_streaming.py` | +5 regression tests across 3 new test classes |
+
+---
+
 ## [2.8.41] - 2026-03-13 - Test Suite Expansion & Reliability
 
 ### 🧪 14 New Test Modules (1201 total tests, 60% coverage)

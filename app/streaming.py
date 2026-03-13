@@ -360,7 +360,7 @@ class StreamingWriter:
                 await self._flush(final=True, reply_markup=reply_markup)
                 return
 
-            await self._adapter.edit_message(formatted_text, parse_mode=parse_mode)  # type: ignore[arg-type]
+            await self._adapter.edit_message(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)  # type: ignore[arg-type]
             self._last_edit_time = time.monotonic()
             self._pending_chars = 0
             self._edit_count += 1
@@ -399,6 +399,9 @@ class StreamingWriter:
                 # P1: no placeholder to edit — send frozen text as new message
                 await self._adapter.send_final_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
                 self._placeholder_deleted = False
+                # BUG-1 fix: new message is a regular reply, not draft-capable.
+                # Switch to classic mode to prevent deleting the continuation message.
+                self._switch_to_classic()
             else:
                 await self._adapter.edit_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
             self._edit_count += 1
