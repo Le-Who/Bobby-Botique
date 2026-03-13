@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.44] - 2026-03-13 - Streaming Overflow Fixes (BUG-10)
+
+### 🔴 Critical Fix
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Infinite retry storm on overflow ("Flood control exceeded") | `streaming.py` | Added circuit breaker (`_overflow_failed` + 5s backoff) to prevent hot-looping when Telegram rejects an overflow message chunk. |
+| "Can't parse entities" on cross-boundary format tags | `streaming.py` | Overflows missing format tags (e.g. `_`) that were carried over to the new chunk are now properly sanitized via `sanitize_html_tags()` before being sent to Telegram. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Tests | Pass (1214 passing) |
+| Linter | Pass |
+
 ## [2.8.43] - 2026-03-13 - Memory Persistence Fix (BUG-9)
 
 ### 🔴 Critical Fix
