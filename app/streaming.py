@@ -287,6 +287,8 @@ class StreamingWriter:
                 formatted_text = sanitize_html_tags(formatted_text)
 
                 if len(formatted_text) > STREAM_MSG_LIMIT:
+                    if getattr(self, "_overflow_failed", False):
+                        return  # Circuit breaker: don't loop if overflow is failing
                     # Overflow: finalize frozen text, continue in classic
                     await self._overflow_to_new_message()
                     return
@@ -329,9 +331,13 @@ class StreamingWriter:
                 formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
                 if len(formatted_text) > STREAM_MSG_LIMIT:
-                    await self._overflow_to_new_message()
-                    await self._flush(final=True, reply_markup=reply_markup)
-                    return
+                    if getattr(self, "_overflow_failed", False):
+                        # Force send clamped text to avoid losing everything
+                        formatted_text = sanitize_html_tags(formatted_text[:STREAM_MSG_LIMIT])
+                    else:
+                        await self._overflow_to_new_message()
+                        await self._flush(final=True, reply_markup=reply_markup)
+                        return
 
                 await self._adapter.send_final_message(
                     formatted_text,
@@ -356,16 +362,21 @@ class StreamingWriter:
                 formatted_text = sanitize_html_tags(formatted_text)
 
             if len(formatted_text) > STREAM_MSG_LIMIT and not final:
+                if getattr(self, "_overflow_failed", False):
+                    return  # Circuit breaker
                 # Mid-stream overflow: finalize current, start new message
                 await self._overflow_to_new_message()
                 return
 
             if len(formatted_text) > STREAM_MSG_LIMIT and final:
-                # Final flush overflows — split into finalize + new message
-                await self._overflow_to_new_message()
-                # Now flush the remainder (recursion with reduced buffer)
-                await self._flush(final=True, reply_markup=reply_markup)
-                return
+                if getattr(self, "_overflow_failed", False):
+                    formatted_text = sanitize_html_tags(formatted_text[:STREAM_MSG_LIMIT])
+                else:
+                    # Final flush overflows — split into finalize + new message
+                    await self._overflow_to_new_message()
+                    # Now flush the remainder (recursion with reduced buffer)
+                    await self._flush(final=True, reply_markup=reply_markup)
+                    return
 
             await self._adapter.edit_message(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)  # type: ignore[arg-type]
             self._last_edit_time = time.monotonic()
@@ -420,6 +431,8 @@ class StreamingWriter:
         try:
             initial_text = remainder + STREAMING_INDICATOR if remainder.strip() else STREAMING_INDICATOR
             formatted_initial, parse_mode = TelegramFormatter.format_text(initial_text)
+            formatted_initial = sanitize_html_tags(formatted_initial)
+            
             self._adapter = await self._adapter.reply_new_message(
                 formatted_initial,
                 parse_mode=parse_mode,  # type: ignore[arg-type]
@@ -438,6 +451,8 @@ class StreamingWriter:
             logging.error("Failed to create overflow message: %s", e)
             # If we can't create a new message, stop further edits
             # but don't lose text (it's still in _full_text)
+            self._overflow_failed = True
+            self._last_edit_time = time.monotonic() + 5.0  # Backoff
 
     def _find_split_point(self) -> int:
         """Find the best point to split the buffer so the formatted head fits within limits.
