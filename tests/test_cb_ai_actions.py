@@ -107,6 +107,92 @@ class TestRetryLastCallback:
         assert "нет запроса" in error_text.lower()
 
 
+class TestBusyStateToast:
+    """P4: when user lock is held, handlers must show toast via a SINGLE query.answer().
+
+    Telegram only processes the first answerCallbackQuery per callback_query_id.
+    If the handler calls query.answer() twice (once empty, once with text),
+    the second call is silently ignored and the user never sees the toast.
+    """
+
+    @pytest.mark.asyncio
+    async def test_complex_search_busy_shows_toast(self):
+        from app.handlers.cb_ai_actions import complex_search_callback
+
+        update, query = _make_update("complex_search:confirm")
+        original = MagicMock()
+        original.from_user.id = 42
+        query.message.reply_to_message = original
+        context = MagicMock()
+        context.user_data = {}
+
+        lock = AsyncMock()
+        lock.locked = MagicMock(return_value=True)
+
+        with (
+            patch("app.handlers.cb_ai_actions.set_request_id"),
+            patch("app.handlers.cb_ai_actions.set_user_context"),
+            patch("app.handlers.cb_ai_actions.state.get_user_lock", return_value=lock),
+        ):
+            await complex_search_callback(update, context)
+
+        # Must be called exactly once — Telegram ignores subsequent calls
+        assert query.answer.await_count == 1, f"query.answer() called {query.answer.await_count} times, expected 1"
+        # That single call must carry the toast text
+        first_call_args = query.answer.call_args_list[0]
+        assert "⏳" in str(first_call_args), f"First answer() must have toast: {first_call_args}"
+
+    @pytest.mark.asyncio
+    async def test_fallback_busy_shows_toast(self):
+        from app.handlers.cb_ai_actions import fallback_callback
+
+        update, query = _make_update("fallback:confirm:gpt-4")
+        original = MagicMock()
+        original.from_user.id = 42
+        query.message.reply_to_message = original
+        context = MagicMock()
+        context.user_data = {}
+
+        lock = AsyncMock()
+        lock.locked = MagicMock(return_value=True)
+
+        with (
+            patch("app.handlers.cb_ai_actions.set_request_id"),
+            patch("app.handlers.cb_ai_actions.set_user_context"),
+            patch("app.handlers.cb_ai_actions.state.get_user_lock", return_value=lock),
+        ):
+            await fallback_callback(update, context)
+
+        assert query.answer.await_count == 1, f"query.answer() called {query.answer.await_count} times, expected 1"
+        first_call_args = query.answer.call_args_list[0]
+        assert "⏳" in str(first_call_args), f"First answer() must have toast: {first_call_args}"
+
+    @pytest.mark.asyncio
+    async def test_retry_busy_shows_toast(self):
+        from app.handlers.cb_ai_actions import retry_last_callback
+
+        update, query = _make_update("retry_last")
+
+        lock = AsyncMock()
+        lock.locked = MagicMock(return_value=True)
+
+        with (
+            patch("app.handlers.cb_ai_actions.set_request_id"),
+            patch("app.handlers.cb_ai_actions.set_user_context"),
+            patch("app.handlers.cb_ai_actions.get_user_chat", new_callable=AsyncMock, return_value=MagicMock()),
+            patch("app.handlers.cb_ai_actions.state.get_user_lock", return_value=lock),
+            patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
+            patch("app.state.get_last_sent_message", return_value="some previous text"),
+        ):
+            await retry_last_callback(update, MagicMock())
+
+        assert query.answer.await_count == 1, f"query.answer() called {query.answer.await_count} times, expected 1"
+        first_call_args = query.answer.call_args_list[0]
+        assert "⏳" in str(first_call_args), f"First answer() must have toast: {first_call_args}"
+        # No placeholder message should have been created
+        query.message.reply_text.assert_not_awaited()
+
+
 class TestExports:
     def test_all_exports(self):
         from app.handlers.cb_ai_actions import __all__

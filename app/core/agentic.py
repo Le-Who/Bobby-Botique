@@ -253,12 +253,9 @@ class AgenticSearch:
                         # Execute tool
                         result = await self._execute_tool(call, user_id, chat_id)
 
-                        if isinstance(result, Exception):
-                            # Should not happen since we execute directly without return_exceptions,
-                            # but keeping it safe if _execute_tool decides to return an exception
-                            result_dict = {"error": str(result)}
-                        else:
-                            result_dict = dict(result)
+                        # Should not happen since we execute directly without return_exceptions,
+                        # but keeping it safe if _execute_tool decides to return an exception
+                        result_dict = {"error": str(result)} if isinstance(result, Exception) else dict(result)  # type: ignore[unreachable]
 
                         function_responses.append(
                             types.Part.from_function_response(name=call_name, response=result_dict)

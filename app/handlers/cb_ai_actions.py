@@ -30,12 +30,12 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     set_user_context(query.from_user.id, getattr(query.message.chat, "id", None) if query.message else None)
-    await query.answer()
 
     action = query.data.split(":")[1]
     placeholder_message = query.message
 
     if action == "cancel":
+        await query.answer()
         await placeholder_message.delete()
         return
 
@@ -49,6 +49,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     if not original_message:
         from app.utils.keyboards import error_with_back_keyboard
 
+        await query.answer()
         await placeholder_message.edit_text(
             "❌ Не удалось найти оригинальное сообщение.", reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
         )
@@ -57,6 +58,8 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     user_id = original_message.from_user.id
     user_lock = state.get_user_lock(user_id)
 
+    # P4: single query.answer() — Telegram ignores subsequent calls per callback_query_id
+    await query.answer(_BUSY_TOAST if user_lock.locked() else "")
     if user_lock.locked():
         return
 
@@ -96,7 +99,6 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     set_user_context(query.from_user.id, getattr(query.message.chat, "id", None) if query.message else None)
-    await query.answer()
 
     parts = query.data.split(":", 2)
     action = parts[1] if len(parts) > 1 else ""
@@ -104,6 +106,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     placeholder_message = query.message
 
     if action == "cancel":
+        await query.answer()
         await placeholder_message.edit_text("Операция отменена.")
         return
 
@@ -117,6 +120,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not original_message:
         from app.utils.keyboards import error_with_back_keyboard
 
+        await query.answer()
         await placeholder_message.edit_text(
             "❌ Не удалось найти оригинальное сообщение.", reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
         )
@@ -125,6 +129,8 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user_id = original_message.from_user.id
     user_lock = state.get_user_lock(user_id)
 
+    # P4: single query.answer() — Telegram ignores subsequent calls per callback_query_id
+    await query.answer(_BUSY_TOAST if user_lock.locked() else "")
     if user_lock.locked():
         return
 
@@ -156,7 +162,6 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
     set_user_context(query.from_user.id, getattr(query.message.chat, "id", None) if query.message else None)
-    await query.answer()
     user_id = query.from_user.id
 
     # Hydrate persisted state from DB
@@ -173,18 +178,21 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not last_text:
         from app.utils.keyboards import error_with_back_keyboard
 
+        await query.answer()
         await query.edit_message_text(
             "❌ Нет запроса для повтора.", reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
         )
         return
+
+    # P4+P5: single query.answer() with toast if busy; check BEFORE creating placeholder
+    user_lock = state.get_user_lock(user_id)
+    await query.answer(_BUSY_TOAST if user_lock.locked() else "")
+    if user_lock.locked():
+        return
+
     # Create плейсхолдер и запускаем обычную обработку как on новом сообщении
     placeholder_message = await query.message.reply_text("🔁 Повторяю предыдущий запрос…")
     from app.handlers.agent import _handle_regular_chat
-
-    user_lock = state.get_user_lock(user_id)
-    if user_lock.locked():
-        await placeholder_message.edit_text("⏳ Предыдущий запрос ещё обрабатывается. Подождите.")
-        return
 
     async def _retry_wrapper() -> None:
         try:

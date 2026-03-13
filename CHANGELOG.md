@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.40] - 2026-03-13 - Streaming UX Polish & Concurrency Feedback
+
+### ✨ UX Improvements & Bug Fixes
+| Fix | File | Detail |
+|-----|------|--------|
+| Typing Indicator Timeout | `messages.py` | Fixed Telegram's 5-second typing indicator timeout by repurposing `_heartbeat` to send periodic `ChatAction.TYPING` packets. |
+| Draft Message Duplication | `streaming.py` | Streaming system now perfectly balances the initial UI placeholder vs final AI draft response, gracefully deleting the `placeholder_message` before chunk emission to prevent dual-render cloning. |
+| Double Reply Toast Bug | `cb_ai_actions.py` | Overhauled all action callbacks (`complex_search`, `fallback_callback`, `retry_last_callback`) to call `query.answer()` strictly once. Fixed bug where concurrent execution warning toast "⏳" was swallowed by Telegram's single-answer barrier. |
+| Orphaned Placeholders | `cb_ai_actions.py` | Moved request sequence lock checks *before* `message.reply_text()` generation. Prevents permanent chat clutter with disconnected "Повторяю запрос" bubbles following lock rejections. |
+
+### 🧪 Tests & Quality
+- `test_cb_ai_actions.py` expanded with strict `AsyncMock` counter assertions to guarantee single `query.answer()` execution.
+
+---
+
 ## [2.8.39] - 2026-03-11 - Deep Dive UX: Soft Exit Button
 
 ### ✨ UX Improvement
