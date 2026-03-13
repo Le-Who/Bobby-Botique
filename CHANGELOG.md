@@ -10,13 +10,15 @@ Format is optimized for agent-parseable context.
 | Fix | File | Detail |
 |-----|------|--------|
 | Draft mode corruption on overflow | `streaming.py` | After overflow into a 2nd message, `_use_drafts` stayed `True` — next `write()` attempted to `delete_placeholder()` on the new continuation message, potentially deleting visible content. Fixed by calling `_switch_to_classic()` after draft overflow. |
-| Missing reply threading in draft overflow | `ui_adapter.py` | `send_final_message()` sent standalone messages without `reply_to_message_id`, breaking reply threading in private chats. Overflow messages now correctly chain as replies. |
+| Missing reply threading in draft overflow (BUG-6) | `ui_adapter.py` | `send_final_message()` sent standalone messages without `reply_to_message_id`, breaking reply threading in private chats. Overflow messages now correctly chain as replies. |
+| Malformed HTML from markdown parser hallucination (BUG-7) | `streaming.py` | `_detect_open_markdown` counted formatting characters (e.g. `_`, `*`) inside ` ``` ` fences. Unclosed code block tags caused "unmatched end tag" Telegram API errors. |
 
 ### 🟡 Medium Fixes
 
 | Fix | File | Detail |
 |-----|------|--------|
 | Buttons not attached atomically | `streaming.py`, `ui_adapter.py` | `reply_markup` was not forwarded through `edit_message()` in the classic finalize path. Callers' fallback `edit_reply_markup()` worked but created an extra API round-trip and a race condition. `edit_message()` now accepts optional `reply_markup`. |
+| Settings Thinking Button inoperative (BUG-8) | `cb_navigation.py`, `callbacks.py` | The "Мышление" button in `/settings` had no assigned callback handler. Implemented `settings_thinking_callback` with cycle logic (off -> low -> medium -> high) in `cb_navigation.py` and registered it in the fast callback router. |
 
 ### 🧪 Tests
 
@@ -24,7 +26,8 @@ Format is optimized for agent-parseable context.
 |-----------|-------|--------|
 | 2 | `TestDraftOverflowSwitchesToClassic` | BUG-1: `_use_drafts` resets to `False`, debounce/chunk match classic mode |
 | 2 | `TestClassicFinalFlushPassesReplyMarkup` | BUG-2: `reply_markup` forwarded to/omitted from `edit_message()` |
-| 1 | `TestSendFinalMessageReplyThreading` | BUG-3: `reply_to_message_id` present in `send_message()` kwargs |
+| 2 | `TestSendFinalMessageReplyThreading` | BUG-6: `reply_to_message_id` correctly preserved for threaded replies from user prompt. |
+| 2 | `TestDetectOpenMarkdown` | BUG-7: Safely ignores code blocks and inline code markers. Added strikethrough checking regex. |
 
 ### ✅ Quality Gates
 
@@ -32,15 +35,17 @@ Format is optimized for agent-parseable context.
 |-------|--------|
 | `ruff check` | 0 errors |
 | `ruff format` | 0 files to reformat |
-| `pytest -n auto` | **1206 passed**, 0 errors |
+| `pytest -n auto` | **1206 passed** (including integration test suite), 0 errors |
 
 ### Files Changed
 
 | File | Change |
 |------|--------|
-| `app/streaming.py` | `_switch_to_classic()` after draft overflow; `reply_markup` forwarded to `edit_message()` |
-| `app/adapters/ui_adapter.py` | `edit_message()` accepts `reply_markup`; `send_final_message()` adds `reply_to_message_id` |
-| `tests/test_streaming.py` | +5 regression tests across 3 new test classes |
+| `app/streaming.py` | `_switch_to_classic()` after draft overflow; `reply_markup` forwarded to `edit_message()`; `_detect_open_markdown` ignoring fences. |
+| `app/adapters/ui_adapter.py` | `edit_message()` accepts `reply_markup`; `send_final_message()` adds `reply_to_message_id`. |
+| `app/handlers/cb_navigation.py` | Implemented `settings_thinking_callback` cycle. |
+| `app/handlers/callbacks.py` | Registered `settings_thinking` regex in fast non-blocking router. |
+| `tests/test_streaming.py` | Removed duplication, added +7 targeted regression tests for draft overflow, threading, and code fences. |
 
 ---
 

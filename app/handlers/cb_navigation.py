@@ -12,9 +12,9 @@ __all__ = [
     "model_menu_callback",
     "new_chat_callback",
     "new_topic_callback",
-    "open_conversations_callback",
     "open_documents_callback",
     "toggle_search_callback",
+    "settings_thinking_callback",
 ]
 
 import contextlib
@@ -260,3 +260,63 @@ async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
     await query.answer(f"Поиск {status_text}")
+
+
+async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if _is_user_busy(user_id):
+        await query.answer(_BUSY_TOAST, show_alert=True)
+        return
+
+    chat_state = await get_user_chat(user_id)
+    cycle = [None, "off", "low", "medium", "high"]
+    try:
+        idx = cycle.index(chat_state.thinking_level)
+    except ValueError:
+        idx = 0
+    next_level = cycle[(idx + 1) % len(cycle)]
+
+    from app.repos.chats import update_thinking_level
+    await update_thinking_level(user_id, next_level)
+    chat_state.thinking_level = next_level
+
+    # Rebuild settings menu
+    from app.handlers.commands import _THINKING_LABELS
+    model_name = chat_state.model or "(по умолчанию)"
+    thinking_str = _THINKING_LABELS.get(next_level, next_level or "🔄 Авто")
+    search_str = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
+
+    role = chat_state.system_prompt
+    if role and len(role) > 60:
+        role = role[:60] + "…"
+    elif not role:
+        role = "(стандартная)"
+
+    text = (
+        "⚙️ **Настройки**\n\n"
+        f"🧠 **Модель:** `{model_name}`\n"
+        f"💡 **Мышление:** {thinking_str}\n"
+        f"🌐 **Поиск:** {search_str}\n"
+        f"🎭 **Роль:** {role}\n"
+    )
+
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    keyboard = [
+        [
+            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
+            InlineKeyboardButton("💡 Мышление", callback_data="settings_thinking"),
+        ],
+        [
+            InlineKeyboardButton("🌐 Поиск", callback_data="toggle_search"),
+            InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
+        ],
+    ]
+    with contextlib.suppress(telegram.error.BadRequest):
+        await query.edit_message_text(
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    await query.answer(f"Мышление: {thinking_str}")

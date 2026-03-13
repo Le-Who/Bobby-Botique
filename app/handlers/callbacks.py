@@ -83,6 +83,7 @@ def register(application: Application) -> None:
         new_topic_callback,
         open_conversations_callback,
         open_documents_callback,
+        settings_thinking_callback,
         toggle_search_callback,
     )
     from app.handlers.cb_roles import (
@@ -112,6 +113,7 @@ def register(application: Application) -> None:
 
     # ── Fast (non-blocking) callbacks ────────────────────────────────────
     _add_fast_callback(application, toggle_search_callback, "^toggle_search$")
+    _add_fast_callback(application, settings_thinking_callback, "^settings_thinking$")
     _add_fast_callback(application, new_chat_callback, "^new_chat$")
     _add_fast_callback(application, model_menu_callback, "^model_menu$")
     _add_fast_callback(application, help_callback, "^help$")

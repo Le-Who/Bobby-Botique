@@ -499,22 +499,76 @@ class TestSendFinalMessageReplyThreading:
     """BUG-3: send_final_message must include reply_to_message_id for threading."""
 
     @pytest.mark.asyncio
-    async def test_send_final_message_includes_reply_to(self):
-        """send_final_message should pass reply_to_message_id to bot.send_message."""
+    async def test_uses_reply_to_message_id_if_present(self):
         from app.adapters.ui_adapter import TelegramMessageAdapter
-
-        mock_msg = MagicMock()
-        mock_msg.message_id = 42
+        
         mock_bot = AsyncMock()
-        mock_bot.send_message = AsyncMock(return_value=MagicMock())
+        mock_msg = MagicMock()
+        mock_msg.message_id = 999
+        mock_msg.reply_to_message = MagicMock()
+        mock_msg.reply_to_message.message_id = 123  # The original user's message
 
-        adapter = TelegramMessageAdapter(message=mock_msg, bot=mock_bot, chat_id=123, draft_id=0)
+        adapter = TelegramMessageAdapter(message=mock_msg, bot=mock_bot, chat_id=1)
+        await adapter.send_final_message("hello", parse_mode="HTML")
 
-        await adapter.send_final_message("Hello", parse_mode="HTML")
-
-        call_kwargs = mock_bot.send_message.call_args.kwargs
-        assert call_kwargs.get("reply_to_message_id") == 42, (
-            "send_final_message must include reply_to_message_id for threading"
+        mock_bot.send_message.assert_called_once_with(
+            chat_id=1,
+            text="hello",
+            parse_mode="HTML",
+            reply_to_message_id=123,
         )
-        assert call_kwargs.get("chat_id") == 123
-        assert call_kwargs.get("text") == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_message_id_if_no_reply_to(self):
+        from app.adapters.ui_adapter import TelegramMessageAdapter
+        
+        mock_bot = AsyncMock()
+        mock_msg = MagicMock()
+        mock_msg.message_id = 999
+        # No reply_to_message
+        mock_msg.reply_to_message = None
+
+        adapter = TelegramMessageAdapter(message=mock_msg, bot=mock_bot, chat_id=1)
+        await adapter.send_final_message("hello", parse_mode="HTML")
+
+        mock_bot.send_message.assert_called_once_with(
+            chat_id=1,
+            text="hello",
+            parse_mode="HTML",
+            reply_to_message_id=999,
+        )
+
+class TestDetectOpenMarkdown:
+    def test_ignores_safely_closed_code_blocks(self):
+        from app.streaming import _detect_open_markdown
+        text = "Here is some code:\n```python\ndef test_feature():\n    pass\n```\nAnd a **bold** statement."
+        suf, pref = _detect_open_markdown(text)
+        assert suf == ""
+        assert pref == ""
+
+    def test_ignores_inline_code(self):
+        from app.streaming import _detect_open_markdown
+    def test_open_strikethrough(self):
+        from app.streaming import _detect_open_markdown
+
+        suffix, prefix = _detect_open_markdown("Hello ~~deleted text")
+        assert "~~" in suffix
+        assert "~~" in prefix
+
+    def test_closed_strikethrough(self):
+        from app.streaming import _detect_open_markdown
+
+        suffix, prefix = _detect_open_markdown("Hello ~~deleted~~ text")
+        assert "~~" not in suffix
+        assert "~~" not in prefix
+
+    def test_combined_bold_underscore_strikethrough(self):
+        from app.streaming import _detect_open_markdown
+
+        suffix, prefix = _detect_open_markdown("**bold _italic ~~strike")
+        assert "**" in suffix
+        assert "_" in suffix
+        assert "~~" in suffix
+
+
+

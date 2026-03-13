@@ -96,8 +96,17 @@ class TelegramMessageAdapter(StreamingUIAdapter):
             "chat_id": self._chat_id,
             "text": text,
             "parse_mode": parse_mode,
-            "reply_to_message_id": self._msg.message_id,
         }
+        
+        # BUG-6: If we are replacing a placeholder (which might be deleted), 
+        # we still want to thread the reply correctly. The placeholder itself 
+        # was a reply to the user's original message.
+        reply_id = getattr(self._msg, "message_id", None)
+        if getattr(self._msg, "reply_to_message", None):
+            reply_id = self._msg.reply_to_message.message_id
+            
+        if reply_id:
+            kwargs["reply_to_message_id"] = reply_id
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup
         new_msg = await self._bot.send_message(**kwargs)

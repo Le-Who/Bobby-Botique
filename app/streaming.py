@@ -119,39 +119,46 @@ def _detect_open_markdown(text: str) -> tuple[str, str]:
         # Inside a code block no inline formatting applies, return early.
         return "".join(suffix_parts), "".join(prefix_parts)
 
-    # --- 2. Inline code (` ... `) outside of fenced blocks --------------------
-    #   Strip fenced blocks first, then count backticks.
-    stripped = fence_re.sub("", text)  # rough strip — fences already balanced here
-    backtick_count = stripped.count("`")
+    # --- 2. Strip ALL code blocks for further inline analysis -----------------
+    # Fences are completely closed (fence_count is even).
+    # We must remove them before counting `_` or `*` so we don't count formatting
+    # characters that are safely nested inside code blocks.
+    stripped_fences = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+
+    # --- 3. Inline code (` ... `) outside of fenced blocks --------------------
+    backtick_count = stripped_fences.count("`")
     if backtick_count % 2 == 1:
         suffix_parts.append("`")
         prefix_parts.append("`")
         # Inside inline code no other formatting applies.
         return "".join(suffix_parts), "".join(prefix_parts)
 
-    # --- 3. Bold (**...**) ----------------------------------------------------
-    bold_count = text.count("**")
+    # Strip inline code before analyzing styling marks
+    stripped_code = re.sub(r"`[^`]*`", "", stripped_fences)
+
+    # --- 4. Bold (**...**) ----------------------------------------------------
+    bold_count = stripped_code.count("**")
     if bold_count % 2 == 1:
         suffix_parts.append("**")
         prefix_parts.append("**")
 
-    # --- 4. Italic (*...* or _..._) -------------------------------------------
+    # --- 5. Italic (*...* or _..._) -------------------------------------------
     #   After removing ** pairs, count remaining lone * characters.
-    no_bold = text.replace("**", "")
+    no_bold = stripped_code.replace("**", "")
     lone_star = no_bold.count("*")
     if lone_star % 2 == 1:
         suffix_parts.append("*")
         prefix_parts.append("*")
 
     #   Also check for _..._ italic (after removing __ pairs).
-    no_double_under = text.replace("__", "")
+    no_double_under = stripped_code.replace("__", "")
     lone_under = no_double_under.count("_")
     if lone_under % 2 == 1:
         suffix_parts.append("_")
         prefix_parts.append("_")
 
-    # --- 5. Strikethrough (~~...~~) -------------------------------------------
-    tilde_pairs = text.count("~~")
+    # --- 6. Strikethrough (~~...~~) -------------------------------------------
+    tilde_pairs = stripped_code.count("~~")
     if tilde_pairs % 2 == 1:
         suffix_parts.append("~~")
         prefix_parts.append("~~")
