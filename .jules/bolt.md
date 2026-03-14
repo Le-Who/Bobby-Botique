@@ -13,3 +13,7 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+
+## 2025-02-19 - Iterative String Formatting O(N^2) Bottleneck
+**Learning:** Checking the total length of strings built inside a loop using `text += "some dynamically generated string\n"` creates an O(N^2) performance bottleneck. Since strings are immutable in Python, each `+=` creates a new string object that must be copied over. This is particularly problematic in places where large strings with multiple lists or database loop records are appended (like `menus.get_metrics_content`).
+**Action:** When building large strings dynamically (like user menus or admin dashboard displays), always accumulate parts in a list (`parts.append("...")`) and then combine them once at the end using `"".join(parts)`. This guarantees O(N) linear time construction.

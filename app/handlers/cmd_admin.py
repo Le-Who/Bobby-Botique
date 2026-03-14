@@ -61,15 +61,15 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         body = "\n".join(models_list[:50])  # Cap output
 
         # Show config validation
-        validation = "\n\n*🔍 Проверка конфигурации:*\n"
-        validation += f"✅ Доступны: `{', '.join(sorted(available)) or 'нет'}`\n"
+        validation = ["\n\n*🔍 Проверка конфигурации:*\n"]
+        validation.append(f"✅ Доступны: `{', '.join(sorted(available)) or 'нет'}`\n")
         if missing:
-            validation += f"❌ НЕ найдены в API: `{', '.join(sorted(missing))}`\n"
-            validation += "⚠️ Запросы к этим моделям будут вызывать ошибки ключей!\n"
+            validation.append(f"❌ НЕ найдены в API: `{', '.join(sorted(missing))}`\n")
+            validation.append("⚠️ Запросы к этим моделям будут вызывать ошибки ключей!\n")
         else:
-            validation += "✅ Все настроенные модели доступны в API\n"
+            validation.append("✅ Все настроенные модели доступны в API\n")
 
-        full_text = header + body + validation
+        full_text = header + body + "".join(validation)
         formatted_text, parse_mode = TelegramFormatter.format_text(full_text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
     except Exception as e:
@@ -271,35 +271,37 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
             return
 
         # Build отчет
-        report = f"📋 Найдено {len(keys_result)} ключей Tavily API:\n\n"
+        parts = [f"📋 Найдено {len(keys_result)} ключей Tavily API:\n\n"]
+
+        from app.crypto import safe_decrypt
 
         for i, row in enumerate(keys_result, 1):
             key_hash = row["key_hash"]
-            from app.crypto import safe_decrypt
 
             api_key = safe_decrypt(row["api_key"])
-            report += f"🔑 *Ключ {i}:*\n"
-            report += f"   Хэш: `{key_hash[:16]}...`\n"
-            report += f"   API: `{api_key[:10]}...{api_key[-4:]}`\n\n"
+            parts.append(f"🔑 *Ключ {i}:*\n")
+            parts.append(f"   Хэш: `{key_hash[:16]}...`\n")
+            parts.append(f"   API: `{api_key[:10]}...{api_key[-4:]}`\n\n")
 
         # Check использование
         current_month = time_utils.get_current_month_str()
         usage_result = await get_tavily_usage_for_month(current_month)
 
         if usage_result:
-            report += f"📊 *Использование за {current_month}:*\n"
+            parts.append(f"📊 *Использование за {current_month}:*\n")
             for row in usage_result:
                 key_preview = row["key_hash"][:16] + "..."
                 usage = row["credit_usage"]
-                report += f"   `{key_preview}`: {usage} кредитов\n"
+                parts.append(f"   `{key_preview}`: {usage} кредитов\n")
         else:
-            report += f"📊 *Использование за {current_month}:*\n   Нет данных\n"
+            parts.append(f"📊 *Использование за {current_month}:*\n   Нет данных\n")
 
         # Add информацию о limitах
-        report += "\n⚡ *Лимиты:*\n"
-        report += f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n"
-        report += f"   Порог предупреждения: {settings.TAVILY_LIMIT_THRESHOLD_PERCENT * 100}%\n"
+        parts.append("\n⚡ *Лимиты:*\n")
+        parts.append(f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n")
+        parts.append(f"   Порог предупреждения: {settings.TAVILY_LIMIT_THRESHOLD_PERCENT * 100}%\n")
 
+        report = "".join(parts)
         formatted_text, parse_mode = TelegramFormatter.format_text(report)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
@@ -426,18 +428,18 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
     try:
         metrics = await role_conv_metrics.get_metrics_summary()
 
-        text = "📊 *Метрики ролей и бесед:*\n\n"
+        parts = ["📊 *Метрики ролей и бесед:*\n\n"]
 
         # Метрики ролей
-        text += "*🎭 Роли:*\n"
-        text += f"• Применений ролей: `{sum(metrics['roles']['applications'].values())}`\n"
-        text += f"• Кастомных ролей создано: `{metrics['roles']['custom_created']}`\n"
-        text += f"• Сбросов ролей: `{metrics['roles']['clears']}`\n"
-        text += f"• Сохранений ролей: `{metrics['roles']['saves']}`\n\n"
+        parts.append("*🎭 Роли:*\n")
+        parts.append(f"• Применений ролей: `{sum(metrics['roles']['applications'].values())}`\n")
+        parts.append(f"• Кастомных ролей создано: `{metrics['roles']['custom_created']}`\n")
+        parts.append(f"• Сбросов ролей: `{metrics['roles']['clears']}`\n")
+        parts.append(f"• Сохранений ролей: `{metrics['roles']['saves']}`\n\n")
 
         # Популярные roles
         if metrics["roles"]["applications"]:
-            text += "*🔥 Популярные роли:*\n"
+            parts.append("*🔥 Популярные роли:*\n")
             sorted_roles = sorted(
                 metrics["roles"]["applications"].items(),
                 key=lambda x: x[1],
@@ -445,24 +447,25 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
             )
             for role_key, count in sorted_roles[:5]:
                 role_title = DEFAULT_ROLES.get(role_key, {}).get("title", role_key)
-                text += f"• {role_title}: `{count}`\n"
-            text += "\n"
+                parts.append(f"• {role_title}: `{count}`\n")
+            parts.append("\n")
 
         # Метрики бесед
-        text += "*💬 Беседы:*\n"
-        text += f"• Сохранено: `{metrics['conversations']['saved']}`\n"
-        text += f"• Переключений: `{metrics['conversations']['switched']}`\n"
-        text += f"• Переименований: `{metrics['conversations']['renamed']}`\n"
-        text += f"• Удалений: `{metrics['conversations']['deleted']}`\n\n"
+        parts.append("*💬 Беседы:*\n")
+        parts.append(f"• Сохранено: `{metrics['conversations']['saved']}`\n")
+        parts.append(f"• Переключений: `{metrics['conversations']['switched']}`\n")
+        parts.append(f"• Переименований: `{metrics['conversations']['renamed']}`\n")
+        parts.append(f"• Удалений: `{metrics['conversations']['deleted']}`\n\n")
 
         # Метрики суммаризации
-        text += "*📝 Суммаризация:*\n"
-        text += f"• Срабатываний: `{metrics['summarization']['triggered']}`\n"
-        text += f"• Мягких лимитов: `{metrics['summarization']['soft_limit']}`\n"
-        text += f"• Жёстких лимитов: `{metrics['summarization']['hard_limit']}`\n"
-        text += f"• Токенов сэкономлено: `{metrics['summarization']['tokens_saved']}`\n"
-        text += f"• Средняя длина суммаризации: `{metrics['summarization']['avg_summary_length']:.0f}` символов\n"
+        parts.append("*📝 Суммаризация:*\n")
+        parts.append(f"• Срабатываний: `{metrics['summarization']['triggered']}`\n")
+        parts.append(f"• Мягких лимитов: `{metrics['summarization']['soft_limit']}`\n")
+        parts.append(f"• Жёстких лимитов: `{metrics['summarization']['hard_limit']}`\n")
+        parts.append(f"• Токенов сэкономлено: `{metrics['summarization']['tokens_saved']}`\n")
+        parts.append(f"• Средняя длина суммаризации: `{metrics['summarization']['avg_summary_length']:.0f}` символов\n")
 
+        text = "".join(parts)
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
@@ -487,21 +490,22 @@ async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TY
         new_settings = config_manager.settings
 
         # Build отчет
-        report = "✅ *Конфигурация перезагружена*\n\n"
-        report += "🔑 *API ключи:*\n"
-        report += f"• Gemini: `{len(new_settings.GEMINI_API_KEYS)}` ключей\n"
-        report += f"• Tavily: `{len(new_settings.TAVILY_API_KEYS)}` ключей\n"
-        report += f"• OpenRouter: `{len(new_settings.OPENROUTER_API_KEYS)}` ключей\n\n"
-        report += "🤖 *Модели:*\n"
-        report += f"• Gemini: `{len(new_settings.AVAILABLE_MODELS)}` моделей\n"
-        report += f"• OpenRouter: `{len(new_settings.OPENROUTER_AVAILABLE_MODELS)}` моделей\n"
-        report += f"• По умолчанию: `{new_settings.DEFAULT_MODEL}`\n\n"
-        report += "⚙️ *Настройки:*\n"
-        report += f"• PORT: `{new_settings.PORT}`\n"
-        report += f"• ADMIN_ID: `{new_settings.ADMIN_ID}`\n"
-        report += f"• Лимитов моделей: `{len(new_settings.DAILY_LIMITS)}`\n\n"
-        report += "💡 Все настройки загружены из переменных окружения."
+        parts = ["✅ *Конфигурация перезагружена*\n\n"]
+        parts.append("🔑 *API ключи:*\n")
+        parts.append(f"• Gemini: `{len(new_settings.GEMINI_API_KEYS)}` ключей\n")
+        parts.append(f"• Tavily: `{len(new_settings.TAVILY_API_KEYS)}` ключей\n")
+        parts.append(f"• OpenRouter: `{len(new_settings.OPENROUTER_API_KEYS)}` ключей\n\n")
+        parts.append("🤖 *Модели:*\n")
+        parts.append(f"• Gemini: `{len(new_settings.AVAILABLE_MODELS)}` моделей\n")
+        parts.append(f"• OpenRouter: `{len(new_settings.OPENROUTER_AVAILABLE_MODELS)}` моделей\n")
+        parts.append(f"• По умолчанию: `{new_settings.DEFAULT_MODEL}`\n\n")
+        parts.append("⚙️ *Настройки:*\n")
+        parts.append(f"• PORT: `{new_settings.PORT}`\n")
+        parts.append(f"• ADMIN_ID: `{new_settings.ADMIN_ID}`\n")
+        parts.append(f"• Лимитов моделей: `{len(new_settings.DAILY_LIMITS)}`\n\n")
+        parts.append("💡 Все настройки загружены из переменных окружения.")
 
+        report = "".join(parts)
         formatted_text, parse_mode = TelegramFormatter.format_text(report)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
