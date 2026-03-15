@@ -564,15 +564,18 @@ async def get_documents_menu_content(user_id):
             "📎 Отправьте файл прямо в чат."
         )
     else:
-        text = f"📄 **Документы** ({len(documents)})\n\n"
+        parts = [f"📄 **Документы** ({len(documents)})\n\n"]
         for i, doc in enumerate(documents[:10], 1):
-            text += f"{i}. **{doc['filename']}**\n"
-            text += f"   📄 Страниц: {doc['pages']}\n"
-            text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
-            text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
+            parts.append(
+                f"{i}. **{doc['filename']}**\n"
+                f"   📄 Страниц: {doc['pages']}\n"
+                f"   📅 Загружен: {doc['created_at'][:10]}\n"
+                f"   📊 Размер: {doc['file_size']:,} символов\n\n"
+            )
         if len(documents) > 10:
-            text += f"… и ещё {len(documents) - 10} документов\n\n"
-        text += "📎 Отправьте новый файл для загрузки."
+            parts.append(f"… и ещё {len(documents) - 10} документов\n\n")
+        parts.append("📎 Отправьте новый файл для загрузки.")
+        text = "".join(parts)
 
     keyboard = [
         [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
