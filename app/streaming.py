@@ -25,7 +25,6 @@ from google.genai import types
 from google.genai.errors import APIError
 from telegram.error import TelegramError
 
-from app.config import settings
 from app.metrics import metrics_collector
 from app.request_context import get_request_id
 from app.utils.formatting import TelegramFormatter
