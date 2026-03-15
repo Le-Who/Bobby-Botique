@@ -39,14 +39,14 @@ async def send_conversation_selection(
         )
         return
 
-    text = f"{title}\n\n"
+    text_parts = [f"{title}\n\n"]
     buttons = []
 
     for conv in conversations:
         role_info = f" | {conv['role_title']}" if conv["role_title"] else ""
         created = conv["created_at"].strftime("%d.%m %H:%M") if conv["created_at"] else "Неизвестно"
-        text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
-        text += f"📅 {created}\n\n"
+        text_parts.append(f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n")
+        text_parts.append(f"📅 {created}\n\n")
 
         buttons.append(
             [
@@ -56,6 +56,8 @@ async def send_conversation_selection(
                 )
             ]
         )
+
+    text = "".join(text_parts)
 
     buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")])
 
