@@ -1,5 +1,5 @@
-import timeit
 import datetime
+import timeit
 
 conversations = [
     {

@@ -1,5 +1,5 @@
-import timeit
 import datetime
+import timeit
 
 week_res = [{"metric_date": datetime.date.today(), "cnt": i} for i in range(1000)]
 model_res = [{"model_name": f"model_{i}", "cnt": i} for i in range(1000)]
