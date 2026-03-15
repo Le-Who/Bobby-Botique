@@ -467,26 +467,26 @@ async def get_metrics_content():
     tavily_data = data["tavily"]
 
     # Build main text
-    text = (
-        "📊 *Полная сводка системы:*\n\n"
-        "*🚀 Производительность:*\n"
-        f"• Всего запросов: `{metrics['total_requests']}`\n"
-        f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
-        f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
-        f"• Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
+    text_parts = [
+        "📊 *Полная сводка системы:*\n\n",
+        "*🚀 Производительность:*\n",
+        f"• Всего запросов: `{metrics['total_requests']}`\n",
+        f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n",
+        f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n",
+        f"• Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n",
         f"• Поисковых запросов: `{metrics['search_queries']}`\n\n"
-    )
+    ]
 
     # Add использование API и моделей
     if metrics.get("api_calls"):
-        text += "*🔌 Использование API:*\n"
+        text_parts.append("*🔌 Использование API:*\n")
         for api, count in metrics["api_calls"].items():
             if isinstance(api, str) and isinstance(count, (int, float)):
-                text += f"• {api}: `{count}`\n"
-        text += "\n"
+                text_parts.append(f"• {api}: `{count}`\n")
+        text_parts.append("\n")
 
     if metrics.get("model_usage"):
-        text += "*🤖 Использование моделей:*\n"
+        text_parts.append("*🤖 Использование моделей:*\n")
         for model, count in metrics["model_usage"].items():
             # Пропускаем записи, которые содержат имена fileов (это ошибки в логике)
             if (
@@ -494,12 +494,12 @@ async def get_metrics_content():
                 and isinstance(count, (int, float))
                 and not any(char in model for char in ["/", "\\", ".pdf", ".docx", ".doc"])
             ):
-                text += f"• {model}: `{count}`\n"
-        text += "\n"
+                text_parts.append(f"• {model}: `{count}`\n")
+        text_parts.append("\n")
 
     # Add статус keyей Gemini
     if gemini_data["keys"]:
-        text += "*🔑 Статус ключей Gemini (сегодня):*\n"
+        text_parts.append("*🔑 Статус ключей Gemini (сегодня):*\n")
 
         usage_map = gemini_data["usage_map"]
 
@@ -508,18 +508,18 @@ async def get_metrics_content():
             usage_data = usage_map.get(key_row["key_hash"], [])
 
             if not usage_data:
-                text += f"• `{display_name}`: не использовался\n"
+                text_parts.append(f"• `{display_name}`: не использовался\n")
             else:
                 for usage in usage_data:
                     model_name = usage["model_name"]
                     count = usage["request_count"]
                     limit = settings.DAILY_LIMITS.get(model_name, "N/A")
-                    text += f"• `{display_name}` ({model_name}): {count} / {limit}\n"
-        text += f"Сброс лимитов: *{gemini_data['reset_time']}* по Киеву\n\n"
+                    text_parts.append(f"• `{display_name}` ({model_name}): {count} / {limit}\n")
+        text_parts.append(f"Сброс лимитов: *{gemini_data['reset_time']}* по Киеву\n\n")
 
     # Add статус кредитов Tavily
     if tavily_data["keys"]:
-        text += "*💳 Кредиты Tavily (текущий месяц):*\n"
+        text_parts.append("*💳 Кредиты Tavily (текущий месяц):*\n")
 
         tavily_usage_map = tavily_data["usage_map"]
 
@@ -527,28 +527,28 @@ async def get_metrics_content():
             display_name = format_key_for_display(key_row["api_key"])
             count = tavily_usage_map.get(key_row["key_hash"], 0)
             limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
-            text += f"• `{display_name}`: {count} / {limit}\n"
-        text += "Сброс лимитов: 1-го числа каждого месяца\n\n"
+            text_parts.append(f"• `{display_name}`: {count} / {limit}\n")
+        text_parts.append("Сброс лимитов: 1-го числа каждого месяца\n\n")
 
     # Add history за afterдние дни
     if metrics["daily_metrics"]:
-        text += "*📈 История за последние дни:*\n"
+        text_parts.append("*📈 История за последние дни:*\n")
         for date_str, daily_data in list(metrics["daily_metrics"].items())[:5]:  # Последние 5 дней
             requests = daily_data.get("requests", 0)
             errors = daily_data.get("errors", 0)
-            text += f"• {date_str}: {requests} запросов, {errors} ошибок\n"
-        text += "\n"
+            text_parts.append(f"• {date_str}: {requests} запросов, {errors} ошибок\n")
+        text_parts.append("\n")
 
     # Add afterдние ошибки
     if metrics["recent_errors"]:
-        text += "*⚠️ Последние ошибки:*\n"
+        text_parts.append("*⚠️ Последние ошибки:*\n")
         for error in metrics["recent_errors"][:3]:  # Последние 3 ошибки
-            text += f"• {error['type']}: {error['message'][:40]}...\n"
+            text_parts.append(f"• {error['type']}: {error['message'][:40]}...\n")
 
     # Add timestamp for live update feedback
-    text += f"\n_Обновлено: {datetime.now().strftime('%H:%M:%S UTC')}_"
+    text_parts.append(f"\n_Обновлено: {datetime.now().strftime('%H:%M:%S UTC')}_")
 
-    return text
+    return "".join(text_parts)
 
 
 async def get_documents_menu_content(user_id):
