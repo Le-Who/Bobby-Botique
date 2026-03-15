@@ -61,6 +61,7 @@ async def send_conversation_selection(
 
     buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="conv_page:1")])
 
+    text = "".join(text_parts)
     fmt_text, fmt_pm = TelegramFormatter.format_text(text)
     await query.edit_message_text(fmt_text, parse_mode=fmt_pm, reply_markup=InlineKeyboardMarkup(buttons))
 
