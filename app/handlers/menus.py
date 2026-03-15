@@ -466,6 +466,8 @@ async def get_metrics_content():
     gemini_data = data["gemini"]
     tavily_data = data["tavily"]
 
+    parts = []
+
     # Build main text
     parts = []
     parts.append(
