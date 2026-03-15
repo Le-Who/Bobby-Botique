@@ -1,61 +1,81 @@
-import timeit
+import asyncio
+import time
+import sys
+import os
+from unittest.mock import MagicMock
 
-documents = [
-    {
-        'filename': f'document_{i}.pdf',
-        'pages': i % 100,
-        'created_at': '2023-10-25 12:00:00',
-        'file_size': 1024 * i
+# Mock everything needed
+sys.modules['telegram'] = MagicMock()
+sys.modules['telegram.ext'] = MagicMock()
+sys.modules['telegram.constants'] = MagicMock()
+sys.modules['cachetools'] = MagicMock()
+sys.modules['httpx'] = MagicMock()
+sys.modules['asyncpg'] = MagicMock()
+sys.modules['dotenv'] = MagicMock()
+sys.modules['pydantic'] = MagicMock()
+sys.modules['PIL'] = MagicMock()
+sys.modules['pypdf'] = MagicMock()
+sys.modules['docx'] = MagicMock()
+sys.modules['marko'] = MagicMock()
+
+# Other mocks to prevent DB connection
+sys.modules['app.database'] = MagicMock()
+sys.modules['app.config'] = MagicMock()
+mock_settings = MagicMock()
+mock_settings.DAILY_LIMITS = {"gemini-pro": 1000}
+mock_settings.TAVILY_MONTHLY_CREDIT_LIMIT = 1000
+sys.modules['app.config'].settings = mock_settings
+
+# Make sure we import menus successfully
+try:
+    import app.handlers.menus as menus
+except Exception as e:
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+
+async def mock_get_system_status_data():
+    return {
+        "metrics_summary": {
+            "total_requests": 1000,
+            "average_response_time": 1.5,
+            "error_rate": 0.5,
+            "cache_hit_rate": 80.0,
+            "search_queries": 100,
+            "api_calls": {f"api_{i}": i for i in range(50)},
+            "model_usage": {f"model_{i}": i for i in range(50)},
+            "daily_metrics": {f"date_{i}": {"requests": i, "errors": 0} for i in range(30)},
+            "recent_errors": [{"type": "error", "message": f"msg_{i}"} for i in range(10)]
+        },
+        "gemini": {
+            "keys": [{"api_key": f"key_{i}abcd1234", "key_hash": f"hash_{i}"} for i in range(500)],
+            "usage_map": {f"hash_{i}": [{"model_name": "gemini-pro", "request_count": i}] for i in range(500)},
+            "reset_time": "00:00"
+        },
+        "tavily": {
+            "keys": [{"api_key": f"key_{i}abcd1234", "key_hash": f"hash_{i}"} for i in range(200)],
+            "usage_map": {f"hash_{i}": i for i in range(200)}
+        }
     }
-    for i in range(100)
-]
 
-def test_concat():
-    text = f"📄 **Документы** ({len(documents)})\n\n"
-    for i, doc in enumerate(documents[:10], 1):
-        text += f"{i}. **{doc['filename']}**\n"
-        text += f"   📄 Страниц: {doc['pages']}\n"
-        text += f"   📅 Загружен: {doc['created_at'][:10]}\n"
-        text += f"   📊 Размер: {doc['file_size']:,} символов\n\n"
-    if len(documents) > 10:
-        text += f"… и ещё {len(documents) - 10} документов\n\n"
-    text += "📎 Отправьте новый файл для загрузки."
-    return text
+async def run_benchmark():
+    # Patch the data source
+    menus.get_system_status_data = mock_get_system_status_data
+    menus.datetime = MagicMock()
+    menus.datetime.now().strftime.return_value = "12:00:00 UTC"
+    menus.format_key_for_display = lambda k: k[:4] + "..." + k[-4:]
 
-def test_join():
-    parts = [f"📄 **Документы** ({len(documents)})\n\n"]
-    for i, doc in enumerate(documents[:10], 1):
-        parts.append(f"{i}. **{doc['filename']}**\n")
-        parts.append(f"   📄 Страниц: {doc['pages']}\n")
-        parts.append(f"   📅 Загружен: {doc['created_at'][:10]}\n")
-        parts.append(f"   📊 Размер: {doc['file_size']:,} символов\n\n")
-    if len(documents) > 10:
-        parts.append(f"… и ещё {len(documents) - 10} документов\n\n")
-    parts.append("📎 Отправьте новый файл для загрузки.")
-    return "".join(parts)
+    # Warm up
+    for _ in range(10):
+        await menus.get_metrics_content()
 
-def test_join_optimized():
-    parts = [f"📄 **Документы** ({len(documents)})\n\n"]
-    for i, doc in enumerate(documents[:10], 1):
-        parts.append(
-            f"{i}. **{doc['filename']}**\n"
-            f"   📄 Страниц: {doc['pages']}\n"
-            f"   📅 Загружен: {doc['created_at'][:10]}\n"
-            f"   📊 Размер: {doc['file_size']:,} символов\n\n"
-        )
-    if len(documents) > 10:
-        parts.append(f"… и ещё {len(documents) - 10} документов\n\n")
-    parts.append("📎 Отправьте новый файл для загрузки.")
-    return "".join(parts)
+    start = time.perf_counter()
+    n = 1000
+    for _ in range(n):
+        await menus.get_metrics_content()
+    end = time.perf_counter()
 
-print("Running benchmarks (100000 iterations)...")
-concat_time = timeit.timeit(test_concat, number=100000)
-join_time = timeit.timeit(test_join, number=100000)
-join_opt_time = timeit.timeit(test_join_optimized, number=100000)
+    print(f"Time taken for {n} iterations (Baseline): {end - start:.4f} seconds")
 
-print(f"Concat: {concat_time:.4f}s")
-print(f"Join: {join_time:.4f}s")
-print(f"Join (Optimized single string): {join_opt_time:.4f}s")
-
-# Ensure outputs match
-assert test_concat() == test_join() == test_join_optimized()
+if __name__ == "__main__":
+    asyncio.run(run_benchmark())

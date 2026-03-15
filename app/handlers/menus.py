@@ -466,16 +466,19 @@ async def get_metrics_content():
     gemini_data = data["gemini"]
     tavily_data = data["tavily"]
 
+    parts = []
+
     # Build main text
-    parts = [
-        "📊 *Полная сводка системы:*\n\n",
-        "*🚀 Производительность:*\n",
-        f"• Всего запросов: `{metrics['total_requests']}`\n",
-        f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n",
-        f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n",
-        f"• Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n",
-        f"• Поисковых запросов: `{metrics['search_queries']}`\n\n",
-    ]
+    parts = []
+    parts.append(
+        "📊 *Полная сводка системы:*\n\n"
+        "*🚀 Производительность:*\n"
+        f"• Всего запросов: `{metrics['total_requests']}`\n"
+        f"• Среднее время ответа: `{metrics['average_response_time']:.2f}s`\n"
+        f"• Процент ошибок: `{metrics['error_rate']:.1f}%`\n"
+        f"• Попадания в кэш: `{metrics['cache_hit_rate']:.1f}%`\n"
+        f"• Поисковых запросов: `{metrics['search_queries']}`\n\n"
+    )
 
     # Add использование API и моделей
     if metrics.get("api_calls"):
