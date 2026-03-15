@@ -271,35 +271,35 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
             return
 
         # Build отчет
-        report = f"📋 Найдено {len(keys_result)} ключей Tavily API:\n\n"
+        report_parts = [f"📋 Найдено {len(keys_result)} ключей Tavily API:\n\n"]
+        from app.crypto import safe_decrypt
 
         for i, row in enumerate(keys_result, 1):
             key_hash = row["key_hash"]
-            from app.crypto import safe_decrypt
-
             api_key = safe_decrypt(row["api_key"])
-            report += f"🔑 *Ключ {i}:*\n"
-            report += f"   Хэш: `{key_hash[:16]}...`\n"
-            report += f"   API: `{api_key[:10]}...{api_key[-4:]}`\n\n"
+            report_parts.append(f"🔑 *Ключ {i}:*\n")
+            report_parts.append(f"   Хэш: `{key_hash[:16]}...`\n")
+            report_parts.append(f"   API: `{api_key[:10]}...{api_key[-4:]}`\n\n")
 
         # Check использование
         current_month = time_utils.get_current_month_str()
         usage_result = await get_tavily_usage_for_month(current_month)
 
         if usage_result:
-            report += f"📊 *Использование за {current_month}:*\n"
+            report_parts.append(f"📊 *Использование за {current_month}:*\n")
             for row in usage_result:
                 key_preview = row["key_hash"][:16] + "..."
                 usage = row["credit_usage"]
-                report += f"   `{key_preview}`: {usage} кредитов\n"
+                report_parts.append(f"   `{key_preview}`: {usage} кредитов\n")
         else:
-            report += f"📊 *Использование за {current_month}:*\n   Нет данных\n"
+            report_parts.append(f"📊 *Использование за {current_month}:*\n   Нет данных\n")
 
         # Add информацию о limitах
-        report += "\n⚡ *Лимиты:*\n"
-        report += f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n"
-        report += f"   Порог предупреждения: {settings.TAVILY_LIMIT_THRESHOLD_PERCENT * 100}%\n"
+        report_parts.append("\n⚡ *Лимиты:*\n")
+        report_parts.append(f"   Месячный лимит: {settings.TAVILY_MONTHLY_CREDIT_LIMIT} кредитов\n")
+        report_parts.append(f"   Порог предупреждения: {settings.TAVILY_LIMIT_THRESHOLD_PERCENT * 100}%\n")
 
+        report = "".join(report_parts)
         formatted_text, parse_mode = TelegramFormatter.format_text(report)
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 

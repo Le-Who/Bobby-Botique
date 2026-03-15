@@ -1,8 +1,10 @@
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
 from app.utils.image import estimate_image_size_in_bytes
+from app.utils.image_utils import _image_worker
 
 
 class TestImageUtils(unittest.TestCase):
@@ -41,6 +43,20 @@ class TestImageUtils(unittest.TestCase):
         expected_size = width * height * 4
         estimated_size = estimate_image_size_in_bytes(image)
         self.assertEqual(estimated_size, expected_size)
+
+    @patch("app.utils.image_utils.logging.error")
+    def test_image_worker_error_path(self, mock_error):
+        # Pass invalid byte data to trigger an exception in Image.open
+        result = _image_worker(b"invalid_image_data")
+
+        # Verify that it returns None on exception
+        self.assertIsNone(result)
+
+        # Verify that logging.error was called
+        mock_error.assert_called_once()
+        args, kwargs = mock_error.call_args
+        self.assertIn("Error in image processing worker: %s", args[0])
+        self.assertTrue(kwargs.get("exc_info"))
 
 
 if __name__ == "__main__":
