@@ -579,7 +579,7 @@ class TestOverflowRetryStorm:
     @pytest.mark.asyncio
     async def test_circuit_breaker_on_overflow_failure(self):
         """If reply_new_message fails, it should circuit-break and not hot-loop."""
-        from app.streaming import StreamingWriter, STREAM_MSG_LIMIT
+        from app.streaming import STREAM_MSG_LIMIT, StreamingWriter
 
         adapter = MagicMock()
         adapter.edit_message = AsyncMock()
@@ -608,7 +608,7 @@ class TestSanitizeOverflowRemainder:
     @pytest.mark.asyncio
     async def test_remainder_is_sanitized(self):
         """The remainder of an overflow should be sanitized before sending."""
-        from app.streaming import StreamingWriter, STREAM_MSG_LIMIT
+        from app.streaming import STREAM_MSG_LIMIT, StreamingWriter
         
         adapter = MagicMock()
         adapter.edit_message = AsyncMock()

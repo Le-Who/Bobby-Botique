@@ -171,13 +171,23 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            # ⚡ Bolt Optimization: explicitly skip raw byte objects to prevent massive O(N) string allocation overhead
+            return " ".join(str(p) for p in content if not isinstance(p, (bytes, bytearray)))
         return str(content)
 
     text_parts: list[str] = []
     for part in parts:
         if isinstance(part, str):
             text_parts.append(part)
-        elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+        elif isinstance(part, dict):
+            if "text" in part:
+                text_parts.append(str(part["text"]))
+            # ⚡ Bolt Optimization: explicitly check for binary payload dicts (image_url, inline_data, source)
+            # and skip them to prevent severe memory allocation bottlenecks.
+            elif "inline_data" in part or "image_url" in part or "source" in part:
+                continue
+            else:
+                text_parts.append(str(part))
+        elif not isinstance(part, (bytes, bytearray)):
+            text_parts.append(str(part))
     return " ".join(text_parts)
