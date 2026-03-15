@@ -602,13 +602,15 @@ async def get_conversations_menu_content(user_id, page=1):
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")]])
         return formatted_empty, pm, kb
 
-    text = f"📝 *Сохранённые беседы* (страница {page})\n\n"
+    text_parts = [f"📝 *Сохранённые беседы* (страница {page})\n\n"]
 
     for conv in conversations:
         role_info = f" | {conv['role_title']}" if conv["role_title"] else ""
         created = conv["created_at"].strftime("%d.%m.%Y %H:%M") if conv["created_at"] else "Неизвестно"
-        text += f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
-        text += f"📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n"
+        text_parts.append(f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n")
+        text_parts.append(f"📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n")
+
+    text = "".join(text_parts)
 
     # Кнопки навигации
     keyboard = []
