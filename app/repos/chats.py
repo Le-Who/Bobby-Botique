@@ -23,17 +23,52 @@ from app.utils.logging_config import timed_operation
 
 def _extract_message_content(msg: dict) -> str:
     """Extract content string from a message dict that may use 'content' or 'parts' key."""
+    # Process "content"
     if "content" in msg:
         content = msg["content"]
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            valid_parts = []
+            for p in content:
+                # ⚡ Bolt Optimization: Skip binary data and large image payload dicts
+                # Calling str() on these objects allocates massive strings and causes O(N) overhead
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, dict) and any(k in p for k in ("inline_data", "image_url", "file_data")):
+                    continue
+                valid_parts.append(str(p))
+            return " ".join(valid_parts)
+        if isinstance(content, (bytes, bytearray)):
+            return ""
+        if isinstance(content, dict) and any(k in content for k in ("inline_data", "image_url", "file_data")):
+            return ""
         return str(content)
+
+    # Process "parts"
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
+            valid_parts = []
+            for p in parts:
+                # ⚡ Bolt Optimization: Skip binary data and large image payload dicts
+                # Calling str() on these objects allocates massive strings and causes O(N) overhead
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, dict):
+                    if "text" in p:
+                        valid_parts.append(str(p["text"]))
+                    elif any(k in p for k in ("inline_data", "image_url", "file_data")):
+                        continue
+                    else:
+                        valid_parts.append(str(p))
+                else:
+                    valid_parts.append(str(p))
+            return " ".join(valid_parts)
+        if isinstance(parts, (bytes, bytearray)):
+            return ""
+        if isinstance(parts, dict) and any(k in parts for k in ("inline_data", "image_url", "file_data")):
+            return ""
         return str(parts)
     return ""
 

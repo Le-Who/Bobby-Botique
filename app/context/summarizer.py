@@ -171,13 +171,41 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            valid_parts = []
+            for p in content:
+                # ⚡ Bolt Optimization: Skip binary data and large image payload dicts
+                # Calling str() on these objects allocates massive strings and causes O(N) overhead
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, dict) and any(k in p for k in ("inline_data", "image_url", "file_data")):
+                    continue
+                valid_parts.append(str(p))
+            return " ".join(valid_parts)
+        if isinstance(content, (bytes, bytearray)):
+            return ""
+        if isinstance(content, dict) and any(k in content for k in ("inline_data", "image_url", "file_data")):
+            return ""
         return str(content)
 
     text_parts: list[str] = []
-    for part in parts:
-        if isinstance(part, str):
-            text_parts.append(part)
-        elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+    if isinstance(parts, list):
+        for part in parts:
+            # ⚡ Bolt Optimization: Skip binary data and large image payload dicts
+            # Calling str() on these objects allocates massive strings and causes O(N) overhead
+            if isinstance(part, (bytes, bytearray)):
+                continue
+            if isinstance(part, str):
+                text_parts.append(part)
+            elif isinstance(part, dict):
+                if "text" in part:
+                    text_parts.append(str(part["text"]))
+                elif any(k in part for k in ("inline_data", "image_url", "file_data")):
+                    continue
+                else:
+                    text_parts.append(str(part))
+            else:
+                text_parts.append(str(part))
+    elif isinstance(parts, str):
+        text_parts.append(parts)
+
     return " ".join(text_parts)
