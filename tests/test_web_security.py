@@ -217,3 +217,52 @@ async def test_error_leakage_prevented(client):
 
         response_text = (await response.get_data()).decode()
         assert secret_message not in response_text
+
+
+@pytest.mark.asyncio
+async def test_get_client_ip_absent_xff():
+    """Test _get_client_ip when X-Forwarded-For is absent."""
+    from app.web import _get_client_ip, quart_app
+    from unittest.mock import MagicMock, patch
+
+    async with quart_app.test_request_context("/", headers={}):
+        with patch("app.web.request") as mock_request:
+            mock_headers = MagicMock()
+            mock_headers.get.return_value = None
+            mock_request.headers = mock_headers
+            mock_request.remote_addr = "192.168.1.1"
+            assert _get_client_ip() == "192.168.1.1"
+
+
+@pytest.mark.asyncio
+async def test_get_client_ip_single_xff():
+    """Test _get_client_ip when X-Forwarded-For has a single IP."""
+    from app.web import _get_client_ip, quart_app
+
+    async with quart_app.test_request_context("/", headers={"X-Forwarded-For": "10.0.0.1"}):
+        assert _get_client_ip() == "10.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_get_client_ip_multiple_xff():
+    """Test _get_client_ip when X-Forwarded-For has multiple IPs (spoofed)."""
+    from app.web import _get_client_ip, quart_app
+
+    # The rightmost IP is the one appended by the trusted proxy
+    async with quart_app.test_request_context("/", headers={"X-Forwarded-For": "8.8.8.8, 10.0.0.1, 192.168.1.5"}):
+        assert _get_client_ip() == "192.168.1.5"
+
+
+@pytest.mark.asyncio
+async def test_get_client_ip_fallback():
+    """Test _get_client_ip when neither X-Forwarded-For nor REMOTE_ADDR is present."""
+    from app.web import _get_client_ip, quart_app
+    from unittest.mock import MagicMock, patch
+
+    async with quart_app.test_request_context("/", headers={}):
+        with patch("app.web.request") as mock_request:
+            mock_headers = MagicMock()
+            mock_headers.get.return_value = None
+            mock_request.headers = mock_headers
+            mock_request.remote_addr = ""
+            assert _get_client_ip() == "unknown"

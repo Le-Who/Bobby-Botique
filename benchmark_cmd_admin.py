@@ -1,5 +1,6 @@
-import time
 import asyncio
+import time
+
 
 async def original_code(keys_result, usage_result):
     report = f"📋 Найдено {len(keys_result)} ключей Tavily API:\n\n"

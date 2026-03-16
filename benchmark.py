@@ -1,7 +1,7 @@
 import asyncio
-import time
-import sys
 import os
+import sys
+import time
 from unittest.mock import MagicMock
 
 # Mock everything needed
@@ -29,7 +29,7 @@ sys.modules['app.config'].settings = mock_settings
 # Make sure we import menus successfully
 try:
     import app.handlers.menus as menus
-except Exception as e:
+except Exception:
     import traceback
     traceback.print_exc()
     sys.exit(1)
