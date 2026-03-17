@@ -178,15 +178,15 @@ def get_model_menu_content(chat_state, context):
     is_current_openrouter = "/" in current_model if current_model else False
     provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
 
-    text = "🧠 **Выбор модели**\n\n"
-    text += f"Текущая: `{current_model}`\n"
+    parts = ["🧠 **Выбор модели**\n\n"]
+    parts.append(f"Текущая: `{current_model}`\n")
 
     # Show hint for current model
     hint = MODEL_HINTS.get(current_model, "")
     if hint:
-        text += f"→ {hint}\n"
+        parts.append(f"→ {hint}\n")
 
-    text += f"\nПровайдер: {provider_name}\n"
+    parts.append(f"\nПровайдер: {provider_name}\n")
 
     # Recommendation for undecided users
     if len(all_models) > 1:
@@ -197,11 +197,11 @@ def get_model_menu_content(chat_state, context):
                 rec = m
                 break
         if rec:
-            text += f"\n💡 Не знаете, что выбрать? `{rec}` — лучший баланс."
+            parts.append(f"\n💡 Не знаете, что выбрать? `{rec}` — лучший баланс.")
 
     keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
 
-    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    formatted_text, parse_mode = TelegramFormatter.format_text("".join(parts))
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
 
@@ -363,9 +363,9 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     end_idx = start_idx + ITEMS_PER_PAGE
     current_items = items[start_idx:end_idx]
 
-    text = f"{title_header}\nСтраница {page + 1} из {max(1, total_pages)}\n\n"
+    parts = [f"{title_header}\nСтраница {page + 1} из {max(1, total_pages)}\n\n"]
     if not items:
-        text += f"_{empty_text}_"
+        parts.append(f"_{empty_text}_")
 
     keyboard = []
 
@@ -403,7 +403,7 @@ async def _get_roles_list_content(user_id, view_mode, page, active_role_key):
     # Кнопка Назад (в Хаб)
     keyboard.append([InlineKeyboardButton("↩️ Назад в меню ролей", callback_data="role_nav:hub")])
 
-    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+    formatted_text, parse_mode = TelegramFormatter.format_text("".join(parts))
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 
 
@@ -522,31 +522,34 @@ async def get_metrics_content():
 
     # Add статус кредитов Tavily
     if tavily_data["keys"]:
-        parts.append("*💳 Кредиты Tavily (текущий месяц):*\n")
-
+        tavily_parts = ["*💳 Кредиты Tavily (текущий месяц):*\n"]
         tavily_usage_map = tavily_data["usage_map"]
 
         for key_row in tavily_data["keys"]:
             display_name = format_key_for_display(key_row["api_key"])
             count = tavily_usage_map.get(key_row["key_hash"], 0)
             limit = settings.TAVILY_MONTHLY_CREDIT_LIMIT
-            parts.append(f"• `{display_name}`: {count} / {limit}\n")
-        parts.append("Сброс лимитов: 1-го числа каждого месяца\n\n")
+            tavily_parts.append(f"• `{display_name}`: {count} / {limit}\n")
+
+        tavily_parts.append("Сброс лимитов: 1-го числа каждого месяца\n\n")
+        parts.append("".join(tavily_parts))
 
     # Add history за afterдние дни
     if metrics["daily_metrics"]:
-        parts.append("*📈 История за последние дни:*\n")
+        history_parts = ["*📈 История за последние дни:*\n"]
         for date_str, daily_data in list(metrics["daily_metrics"].items())[:5]:  # Последние 5 дней
             requests = daily_data.get("requests", 0)
             errors = daily_data.get("errors", 0)
-            parts.append(f"• {date_str}: {requests} запросов, {errors} ошибок\n")
-        parts.append("\n")
+            history_parts.append(f"• {date_str}: {requests} запросов, {errors} ошибок\n")
+        history_parts.append("\n")
+        parts.append("".join(history_parts))
 
     # Add afterдние ошибки
     if metrics["recent_errors"]:
-        parts.append("*⚠️ Последние ошибки:*\n")
+        error_parts = ["*⚠️ Последние ошибки:*\n"]
         for error in metrics["recent_errors"][:3]:  # Последние 3 ошибки
-            parts.append(f"• {error['type']}: {error['message'][:40]}...\n")
+            error_parts.append(f"• {error['type']}: {error['message'][:40]}...\n")
+        parts.append("".join(error_parts))
 
     # Add timestamp for live update feedback
     parts.append(f"\n_Обновлено: {datetime.now().strftime('%H:%M:%S UTC')}_")

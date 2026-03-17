@@ -426,18 +426,18 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
     try:
         metrics = await role_conv_metrics.get_metrics_summary()
 
-        text = "📊 *Метрики ролей и бесед:*\n\n"
+        parts = ["📊 *Метрики ролей и бесед:*\n\n"]
 
         # Метрики ролей
-        text += "*🎭 Роли:*\n"
-        text += f"• Применений ролей: `{sum(metrics['roles']['applications'].values())}`\n"
-        text += f"• Кастомных ролей создано: `{metrics['roles']['custom_created']}`\n"
-        text += f"• Сбросов ролей: `{metrics['roles']['clears']}`\n"
-        text += f"• Сохранений ролей: `{metrics['roles']['saves']}`\n\n"
+        parts.append("*🎭 Роли:*\n")
+        parts.append(f"• Применений ролей: `{sum(metrics['roles']['applications'].values())}`\n")
+        parts.append(f"• Кастомных ролей создано: `{metrics['roles']['custom_created']}`\n")
+        parts.append(f"• Сбросов ролей: `{metrics['roles']['clears']}`\n")
+        parts.append(f"• Сохранений ролей: `{metrics['roles']['saves']}`\n\n")
 
         # Популярные roles
         if metrics["roles"]["applications"]:
-            text += "*🔥 Популярные роли:*\n"
+            parts.append("*🔥 Популярные роли:*\n")
             sorted_roles = sorted(
                 metrics["roles"]["applications"].items(),
                 key=lambda x: x[1],
@@ -445,25 +445,25 @@ async def role_conv_metrics_command(update: Update, context: ContextTypes.DEFAUL
             )
             for role_key, count in sorted_roles[:5]:
                 role_title = DEFAULT_ROLES.get(role_key, {}).get("title", role_key)
-                text += f"• {role_title}: `{count}`\n"
-            text += "\n"
+                parts.append(f"• {role_title}: `{count}`\n")
+            parts.append("\n")
 
         # Метрики бесед
-        text += "*💬 Беседы:*\n"
-        text += f"• Сохранено: `{metrics['conversations']['saved']}`\n"
-        text += f"• Переключений: `{metrics['conversations']['switched']}`\n"
-        text += f"• Переименований: `{metrics['conversations']['renamed']}`\n"
-        text += f"• Удалений: `{metrics['conversations']['deleted']}`\n\n"
+        parts.append("*💬 Беседы:*\n")
+        parts.append(f"• Сохранено: `{metrics['conversations']['saved']}`\n")
+        parts.append(f"• Переключений: `{metrics['conversations']['switched']}`\n")
+        parts.append(f"• Переименований: `{metrics['conversations']['renamed']}`\n")
+        parts.append(f"• Удалений: `{metrics['conversations']['deleted']}`\n\n")
 
         # Метрики суммаризации
-        text += "*📝 Суммаризация:*\n"
-        text += f"• Срабатываний: `{metrics['summarization']['triggered']}`\n"
-        text += f"• Мягких лимитов: `{metrics['summarization']['soft_limit']}`\n"
-        text += f"• Жёстких лимитов: `{metrics['summarization']['hard_limit']}`\n"
-        text += f"• Токенов сэкономлено: `{metrics['summarization']['tokens_saved']}`\n"
-        text += f"• Средняя длина суммаризации: `{metrics['summarization']['avg_summary_length']:.0f}` символов\n"
+        parts.append("*📝 Суммаризация:*\n")
+        parts.append(f"• Срабатываний: `{metrics['summarization']['triggered']}`\n")
+        parts.append(f"• Мягких лимитов: `{metrics['summarization']['soft_limit']}`\n")
+        parts.append(f"• Жёстких лимитов: `{metrics['summarization']['hard_limit']}`\n")
+        parts.append(f"• Токенов сэкономлено: `{metrics['summarization']['tokens_saved']}`\n")
+        parts.append(f"• Средняя длина суммаризации: `{metrics['summarization']['avg_summary_length']:.0f}` символов\n")
 
-        formatted_text, parse_mode = TelegramFormatter.format_text(text)
+        formatted_text, parse_mode = TelegramFormatter.format_text("".join(parts))
         await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
     except Exception as e:
