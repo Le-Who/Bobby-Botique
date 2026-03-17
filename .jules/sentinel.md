@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-24 - [Rate Limiting Bypass / DoS] Insecure Client IP Resolution
+**Vulnerability:** The login rate limiter relied on `request.remote_addr` to track failed login attempts. Since the application runs behind a reverse proxy (Northflank), this address is always the proxy's IP. An attacker could trigger a global DoS by failing to login 5 times, locking out all legitimate users. Alternatively, if the proxy forwarded the IP in `X-Forwarded-For`, an attacker could spoof it by providing a fake leftmost IP.
+**Learning:** When deployed behind reverse proxies, `request.remote_addr` is useless for security. `X-Forwarded-For` is a comma-separated list where the client can control the leftmost values, but the proxy appends the true connection IP to the *rightmost* position.
+**Prevention:** Always extract the *rightmost* IP from the `X-Forwarded-For` header for security-critical functions like rate limiting when operating behind a trusted reverse proxy. Fallback to `request.remote_addr` only if the header is missing.

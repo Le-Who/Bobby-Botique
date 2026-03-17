@@ -1,5 +1,6 @@
 import timeit
 
+
 class DummySettings:
     GEMINI_API_KEYS = list(range(10))
     TAVILY_API_KEYS = list(range(5))

@@ -1,6 +1,7 @@
 import time
 from datetime import datetime
 
+
 class SettingsMock:
     DAILY_LIMITS = {"gemini-pro": 100}
     TAVILY_MONTHLY_CREDIT_LIMIT = 1000

@@ -1,5 +1,6 @@
-import timeit
 import time
+import timeit
+
 
 # Dummy safe_decrypt for testing
 def dummy_safe_decrypt(api_key):

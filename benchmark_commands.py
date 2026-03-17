@@ -1,6 +1,8 @@
-import timeit
 import datetime
+import timeit
+
 from app.utils.formatting import TelegramFormatter
+
 
 def create_mock_data():
     week_res = [

@@ -1,5 +1,6 @@
 import timeit
 
+
 def test_concat():
     text = "*🚀 Производительность:*\n"
     text += f"• Всего запросов: `{100}`\n"
