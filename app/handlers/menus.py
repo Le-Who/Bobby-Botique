@@ -469,7 +469,6 @@ async def get_metrics_content():
     parts = []
 
     # Build main text
-    parts = []
     parts.append(
         "📊 *Полная сводка системы:*\n\n"
         "*🚀 Производительность:*\n"

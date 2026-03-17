@@ -29,7 +29,7 @@ async def test_create_rls_policies_users():
         assert len(creation_sql) > 0
         sql = creation_sql[0]
 
-        assert 'CREATE POLICY "users_policy" ON "users"' in sql
+        assert "CREATE POLICY users_policy ON users" in sql
         assert "current_setting('app.user_id', true)" in sql
 
 
@@ -45,7 +45,7 @@ async def test_create_rls_policies_chats():
         creation_sql = [c[0][0] for c in calls if "CREATE POLICY" in c[0][0]]
         assert len(creation_sql) > 0
         sql = creation_sql[0]
-        assert 'CREATE POLICY "chats_policy" ON "chats"' in sql
+        assert "CREATE POLICY chats_policy ON chats" in sql
 
 
 @pytest.mark.asyncio
@@ -80,7 +80,7 @@ async def test_create_rls_policies_conversation_messages():
         creation_sql = [c[0][0] for c in calls if "CREATE POLICY" in c[0][0]]
         assert len(creation_sql) > 0
         sql = creation_sql[0]
-        assert 'CREATE POLICY "conversation_messages_policy" ON "conversation_messages"' in sql
+        assert "CREATE POLICY conversation_messages_policy ON conversation_messages" in sql
         assert "owner_user_id" in sql  # Uses owner_user_id for direct user filtering
 
 
@@ -96,7 +96,7 @@ async def test_create_rls_policies_group_chats():
         creation_sql = [c[0][0] for c in calls if "CREATE POLICY" in c[0][0]]
         assert len(creation_sql) > 0
         sql = creation_sql[0]
-        assert 'CREATE POLICY "group_chats_policy" ON "group_chats"' in sql
+        assert "CREATE POLICY group_chats_policy ON group_chats" in sql
         assert "group_members" in sql
 
 
@@ -113,5 +113,5 @@ async def test_create_rls_policies_admin_tables():
         creation_sql = [c[0][0] for c in calls if "CREATE POLICY" in c[0][0]]
         assert len(creation_sql) > 0
         sql = creation_sql[0]
-        assert 'CREATE POLICY "api_keys_policy" ON "api_keys"' in sql
+        assert "CREATE POLICY api_keys_policy ON api_keys" in sql
         assert "current_setting('app.is_admin', true)" in sql

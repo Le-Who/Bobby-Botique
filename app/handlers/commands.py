@@ -211,19 +211,19 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     doc_count = len(docs) if docs else 0
     conv_count = await get_conversation_count(user_id)
 
-    text_parts = ["📊 **Ваша статистика**\n\n"]
+    text = "📊 **Ваша статистика**\n\n"
 
     if streak > 0:
-        text_parts.append(f"{badge} **Серия:** `{streak}` {'день' if streak == 1 else 'дней'}\n")
+        text += f"{badge} **Серия:** `{streak}` {'день' if streak == 1 else 'дней'}\n"
         if engagement["longest_streak"] > streak:
-            text_parts.append(f"🏆 **Рекорд:** `{engagement['longest_streak']}` дней\n")
-        text_parts.append("\n")
+            text += f"🏆 **Рекорд:** `{engagement['longest_streak']}` дней\n"
+        text += "\n"
 
-    text_parts.append(f"📅 **Сегодня:** `{today_count}` запросов\n")
-    text_parts.append(f"📈 **7 дней:** `{engagement['total_requests_7d']}` запросов ({engagement['active_days_7d']}/7 дней)\n\n")
+    text += f"📅 **Сегодня:** `{today_count}` запросов\n"
+    text += f"📈 **7 дней:** `{engagement['total_requests_7d']}` запросов ({engagement['active_days_7d']}/7 дней)\n\n"
 
     if week_res:
-        text_parts.append("📊 **По дням:**\n")
+        text += "📊 **По дням:**\n"
         for row in week_res:
             date_str = (
                 row["metric_date"].strftime("%d.%m")
@@ -231,17 +231,16 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 else str(row["metric_date"])[:5]
             )
             bar = "█" * min(int(row["cnt"]), 20)
-            text_parts.append(f"  `{date_str}` {bar} `{row['cnt']}`\n")
-        text_parts.append("\n")
+            text += f"  `{date_str}` {bar} `{row['cnt']}`\n"
+        text += "\n"
 
     if model_res:
-        text_parts.append("🤖 **Модели сегодня:**\n")
+        text += "🤖 **Модели сегодня:**\n"
         for row in model_res:
-            text_parts.append(f"  • `{row['model_name']}`: `{row['cnt']}` запросов\n")
-        text_parts.append("\n")
+            text += f"  • `{row['model_name']}`: `{row['cnt']}` запросов\n"
+        text += "\n"
 
-    text_parts.append(f"📄 **Документов:** `{doc_count}`\n📝 **Сохранённых бесед:** `{conv_count}`\n")
-    text = "".join(text_parts)
+    text += f"📄 **Документов:** `{doc_count}`\n📝 **Сохранённых бесед:** `{conv_count}`\n"
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)

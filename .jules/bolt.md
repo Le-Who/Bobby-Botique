@@ -13,3 +13,7 @@
 ## 2025-02-19 - PDF Processing O(N^2) Bottleneck
 **Learning:** Checking the total length of a list of strings by joining them inside a loop (`len('\n'.join(chunks))`) creates an O(N^2) performance bottleneck. For 500 pages, this operation took ~0.02s vs 0.0004s when using a running counter (50x difference).
 **Action:** When accumulating text chunks with a size limit, always maintain a separate `current_length` integer counter instead of re-calculating the full string length on every iteration.
+
+## 2025-02-19 - Message Payload O(N) Memory Allocation
+**Learning:** Checking or extracting text from message payload parts using list comprehensions and `.join()` like `str(p.get("text", p))` can cause a massive O(N) memory allocation overhead if the dictionary contains binary representations like `inline_data` or `image_url`. Calling `str()` on large dictionaries blindly forces python to stringify the entire binary data.
+**Action:** When iterating over conversation history or message parts, use explicit type checks (`isinstance(p, (bytes, bytearray))`) to skip non-text objects. Avoid stringifying dictionaries by explicitly checking for and skipping payloads with `inline_data` or `image_url` keys.

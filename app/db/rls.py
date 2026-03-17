@@ -103,11 +103,6 @@ VALID_TABLES = set(RLS_CONFIG.keys())
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
-def quote_ident(ident: str) -> str:
-    """Safely quote a PostgreSQL identifier (table or policy name)."""
-    return '"' + ident.replace('"', '""') + '"'
-
-
 async def setup_row_level_security(db_query):
     """Configure Row Level Security for all tables."""
     try:
@@ -122,8 +117,7 @@ async def setup_row_level_security(db_query):
                 logging.error("Refusing to use unsafe table name in SQL: %s", table)
                 continue
             try:
-                quoted_table = quote_ident(table)
-                await db_query(f"ALTER TABLE {quoted_table} ENABLE ROW LEVEL SECURITY;")
+                await db_query(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
                 await create_rls_policies(table, db_query)
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.warning("Failed to enable RLS for table %s: %s", table, e)
@@ -158,10 +152,7 @@ async def create_rls_policies(table_name: str, db_query):
                     if "sql" in policy_cfg:
                         sql = policy_cfg["sql"]
                     elif "template" in policy_cfg:
-                        sql = policy_cfg["template"].format(
-                            policy_name=quote_ident(policy_name),
-                            table_name=quote_ident(table_name),
-                        )
+                        sql = policy_cfg["template"].format(policy_name=policy_name, table_name=table_name)
                     else:
                         logging.error("Missing SQL or template for policy %s", policy_name)
                         continue
