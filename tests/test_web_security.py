@@ -205,6 +205,35 @@ async def test_logout_clears_session(client):
 
 
 @pytest.mark.asyncio
+async def test_get_client_ip_extraction(client):
+    """Test that _get_client_ip correctly extracts the rightmost IP from X-Forwarded-For."""
+    import app.web
+
+    # Reset internal rate limiter state before test
+    app.web._login_limiter._requests.clear()
+
+    # Case 1: Multiple IPs in X-Forwarded-For
+    mock_request1 = MagicMock()
+    mock_request1.headers.get = MagicMock(return_value="203.0.113.195, 70.41.3.18, 150.172.238.178")
+    with patch("app.web.request", mock_request1):
+        assert app.web._get_client_ip() == "150.172.238.178"
+
+    # Case 2: Empty X-Forwarded-For, fall back to remote_addr
+    mock_request2 = MagicMock()
+    mock_request2.headers.get = MagicMock(return_value="")
+    mock_request2.remote_addr = "192.168.1.5"
+    with patch("app.web.request", mock_request2):
+        assert app.web._get_client_ip() == "192.168.1.5"
+
+    # Case 3: No X-Forwarded-For, no remote_addr, fall back to "unknown"
+    mock_request3 = MagicMock()
+    mock_request3.headers.get = MagicMock(return_value=None)
+    mock_request3.remote_addr = None
+    with patch("app.web.request", mock_request3):
+        assert app.web._get_client_ip() == "unknown"
+
+
+@pytest.mark.asyncio
 async def test_error_leakage_prevented(client):
     """Verify that exceptions do NOT leak internal details."""
     secret_message = "SecretDatabaseConnectionString"
