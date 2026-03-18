@@ -19,12 +19,12 @@ class TestClassifyResolution:
     """Test the resolution branching logic extracted from _handle_regular_chat."""
 
     def test_proceed_on_direct_resolution(self):
-        result = classify_resolution("direct", "gemini-2.0-flash")
+        result = classify_resolution("direct", "gemini-3.1-flash-lite")
         assert result.action == "proceed"
         assert result.user_message is None
 
     def test_all_exhausted_gemini(self):
-        result = classify_resolution("all_exhausted", "gemini-2.0-flash")
+        result = classify_resolution("all_exhausted", "gemini-3.1-flash-lite")
         assert result.action == "all_exhausted"
         assert result.provider_name == "Gemini"
         assert "Gemini" in result.user_message

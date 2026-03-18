@@ -74,13 +74,10 @@ async def get_start_menu_content(chat_state, user_id=None):
 
 # Model descriptions for decision support
 MODEL_HINTS = {
-    "gemini-2.5-pro-preview-05-06": "🧠 Самая умная — сложные задачи, анализ, код",
+    "gemini-3.0-flash": "💎 Флагманская модель — максимальный интеллект",
+    "gemini-3.1-flash-lite": "🧠 Самая умная из доступных — сложные задачи и код",
     "gemini-2.5-flash": "⚡ Быстрая — баланс скорости и качества",
-    "gemini-2.5-flash-preview-04-17": "⚡ Быстрая — баланс скорости и качества",
-    "gemini-2.0-flash": "🚀 Ультрабыстрая — простые вопросы",
-    "gemini-2.0-flash-lite": "💨 Самая лёгкая — мгновенные ответы",
-    "gemini-1.5-pro": "📐 Предыдущее поколение — стабильная",
-    "gemini-1.5-flash": "📐 Предыдущее поколение — быстрая",
+    "gemini-2.5-flash-lite": "💨 Самая лёгкая — мгновенные ответы",
 }
 
 

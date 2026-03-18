@@ -1,7 +1,7 @@
 import timeit
 
 missing = {"gemini-pro-vision", "gemini-ultra"}
-available = {"gemini-pro", "gemini-1.5-pro", "gemini-1.5-flash"}
+available = {"gemini-pro", "gemini-3.0-flash", "gemini-3.1-flash-lite"}
 
 
 def original_method():

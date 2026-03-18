@@ -61,7 +61,7 @@ class TestKeyUsageTracking:
         """Usage should be tracked separately per model."""
         conn, key_hash = db_conn_with_key
 
-        for model in ("gemini-2.5-flash", "gemini-2.0-flash"):
+        for model in ("gemini-2.5-flash", "gemini-3.1-flash-lite"):
             await conn.execute(
                 """INSERT INTO key_usage (key_hash, model_name, usage_date, request_count)
                    VALUES ($1, $2, CURRENT_DATE, 1)""",
@@ -74,7 +74,7 @@ class TestKeyUsageTracking:
             key_hash,
         )
         models = {r["model_name"] for r in rows}
-        assert models == {"gemini-2.5-flash", "gemini-2.0-flash"}
+        assert models == {"gemini-2.5-flash", "gemini-3.1-flash-lite"}
 
 
 class TestKeySelection:

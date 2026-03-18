@@ -2,8 +2,8 @@
 """Smart model auto-selection based on message content.
 
 Analyzes user input characteristics to recommend the optimal model:
-- Short queries → fast models (e.g. gemini-2.0-flash)
-- Complex reasoning → thinking models (e.g. gemini-2.5-pro-preview)
+- Short queries → fast models (e.g. gemini-3.1-flash-lite)
+- Complex reasoning → thinking models (e.g. gemini-2.5-flash)
 - Image analysis → multimodal models
 - Code tasks → code-optimized models
 
@@ -34,9 +34,10 @@ class SelectionResult:
 # Order matters: first match wins within _find_model.
 # Models are ranked roughly by capability tier.
 _MODEL_TIER = {
-    "pro": 4,  # gemini-2.5-pro-preview-05-06
-    "2.5-flash": 3,  # gemini-2.5-flash (thinking-capable)
-    "flash-lite": 1,  # gemini-2.5-flash-lite / flash-lite-latest
+    "3.0-flash": 5,  # flagship
+    "3.1-flash-lite": 4,  # excellent performance, better than 2.5
+    "2.5-flash": 3,  # standard
+    "2.5-flash-lite": 1,  # low latency fallback
 }
 
 
@@ -45,13 +46,15 @@ def _get_tier(model_name: str) -> int:
     name = model_name.lower()
     # Check from most specific to least specific
     if "flash-lite" in name:
+        if "3.1-flash-lite" in name:
+            return 4
         return 1
-    if "pro" in name:
-        return 4
+    if "luma" in name or "dall-e" in name:
+        return 1
+    if "3.0-flash" in name:
+        return 5
     if "2.5-flash" in name:
         return 3
-    if "flash" in name:
-        return 2
     return 2  # Unknown models get middle tier
 
 
@@ -106,7 +109,7 @@ def select_model(
 
     # ── Code tasks → best available model ────────────────────────────────
     if _CODE_PATTERNS.search(user_message):
-        code_model = _find_model(available, ["2.5-pro", "pro"])
+        code_model = _find_model(available, ["3.0-flash", "3.1-flash-lite", "2.5-flash"])
         if code_model and code_model != current_model and _get_tier(code_model) > current_tier:
             return SelectionResult(
                 model=code_model,
@@ -116,7 +119,7 @@ def select_model(
 
     # ── Deep reasoning → thinking model ──────────────────────────────────
     if _REASONING_PATTERNS.search(user_message) or msg_len > 1000:
-        reasoning_model = _find_model(available, ["2.5-pro", "pro", "2.5-flash"])
+        reasoning_model = _find_model(available, ["3.0-flash", "3.1-flash-lite", "2.5-flash"])
         if reasoning_model and reasoning_model != current_model and _get_tier(reasoning_model) > current_tier:
             return SelectionResult(
                 model=reasoning_model,

@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.model_selector import _get_tier
+
 # ============================================================================
 # MODEL SELECTOR TESTS
 # ============================================================================
@@ -22,39 +24,39 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-2.0-flash",
-                "gemini-2.5-pro-preview-05-06",
+                "gemini-3.1-flash-lite",
+                "gemini-2.5-flash",
             ]
-            result = select_model("Привет!", current_model="gemini-2.5-pro-preview-05-06")
+            result = select_model("Привет!", current_model="gemini-2.5-flash")
             # No downgrade suggestion — pro → flash is a downgrade
             assert result is None
 
-    def test_code_message_suggests_pro(self):
+    def test_code_message_suggests_top_tier(self):
         from app.model_selector import select_model
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-2.0-flash",
-                "gemini-2.5-pro-preview-05-06",
+                "gemini-3.1-flash-lite",
+                "gemini-2.5-flash",
             ]
             result = select_model(
                 "Напиши функцию для сортировки массива и исправь баг",
-                current_model="gemini-2.0-flash",
+                current_model="gemini-2.5-flash-lite",
             )
             assert result is not None
-            assert "pro" in result.model.lower()
+            assert _get_tier(result.model) > 1  # Should suggest upgrade from lite
 
-    def test_reasoning_message_suggests_pro(self):
+    def test_reasoning_message_suggests_top_tier(self):
         from app.model_selector import select_model
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-2.0-flash",
-                "gemini-2.5-pro-preview-05-06",
+                "gemini-3.1-flash-lite",
+                "gemini-2.5-flash",
             ]
             result = select_model(
                 "Объясни подробно, как работает алгоритм Дейкстры и в чём разница с A*",
-                current_model="gemini-2.0-flash",
+                current_model="gemini-2.5-flash-lite",
             )
             assert result is not None
 
@@ -63,10 +65,10 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-2.0-flash",
-                "gemini-2.5-pro-preview-05-06",
+                "gemini-3.1-flash-lite",
+                "gemini-2.5-flash",
             ]
-            result = select_model("Привет!", current_model="gemini-2.0-flash")
+            result = select_model("Привет!", current_model="gemini-3.1-flash-lite")
             assert result is None
 
     def test_no_suggestion_for_medium_message(self):
@@ -74,12 +76,12 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-2.0-flash",
-                "gemini-2.5-pro-preview-05-06",
+                "gemini-3.1-flash-lite",
+                "gemini-2.5-flash",
             ]
             result = select_model(
                 "Расскажи о погоде в Москве сегодня",
-                current_model="gemini-2.0-flash",
+                current_model="gemini-3.1-flash-lite",
             )
             # No strong signal → should return None
             assert result is None
@@ -89,7 +91,7 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = []
-            result = select_model("test", current_model="gemini-2.0-flash")
+            result = select_model("test", current_model="gemini-3.1-flash-lite")
             assert result is None
 
 
@@ -257,7 +259,7 @@ class TestGDPRCommands:
         mock_update.message.reply_document = AsyncMock()
 
         mock_chat_state = MagicMock()
-        mock_chat_state.model = "gemini-2.5-pro-preview-05-06"
+        mock_chat_state.model = "gemini-2.5-flash"
         mock_chat_state.thinking_level = "medium"
         mock_chat_state.search_enabled = True
         mock_chat_state.history = [{"role": "user", "parts": ["test"]}]
@@ -277,7 +279,7 @@ class TestGDPRCommands:
         content = doc.read().decode("utf-8")
         data = json.loads(content)
         assert data["user_id"] == 12345
-        assert data["current_model"] == "gemini-2.5-pro-preview-05-06"
+        assert data["current_model"] == "gemini-2.5-flash"
 
     @pytest.mark.asyncio
     async def test_deleteme_shows_confirmation(self):

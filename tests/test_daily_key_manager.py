@@ -26,7 +26,7 @@ class TestDailyKeyManager:
 
         with patch("app.repos.keys.db_query", new_callable=AsyncMock) as mock_db:
             mock_db.return_value = mock_result
-            result = await mgr.get_available_key("gemini-2.0-flash")
+            result = await mgr.get_available_key("gemini-3.1-flash-lite")
 
         assert result == {"key_hash": "hash1", "api_key": "key1"}
         call_args = mock_db.call_args
@@ -40,7 +40,7 @@ class TestDailyKeyManager:
 
         with patch("app.repos.keys.db_query", new_callable=AsyncMock) as mock_db:
             mock_db.return_value = []
-            result = await mgr.get_available_key("gemini-2.0-flash")
+            result = await mgr.get_available_key("gemini-3.1-flash-lite")
 
         assert result is None
 
@@ -51,7 +51,7 @@ class TestDailyKeyManager:
 
         with patch("app.repos.keys.db_query", new_callable=AsyncMock) as mock_db:
             mock_db.return_value = [{"request_count": 42}]
-            result = await mgr.increment_usage("hash1", "gemini-2.0-flash")
+            result = await mgr.increment_usage("hash1", "gemini-3.1-flash-lite")
 
         assert result[0]["request_count"] == 42
         sql = mock_db.call_args[0][0]

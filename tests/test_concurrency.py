@@ -155,7 +155,7 @@ class TestKeyResolutionConcurrent:
         # Fire 10 concurrent key resolutions
         tasks = [
             use_case._resolve_key_generic(
-                "gemini-2.0-flash",
+                "gemini-3.1-flash-lite",
                 mock_get_key,
                 [],
             )

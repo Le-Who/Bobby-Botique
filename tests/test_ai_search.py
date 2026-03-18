@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def make_chat_state(model="gemini-2.0-flash", system_prompt=None, history=None, is_deep_dive=False):
+def make_chat_state(model="gemini-3.1-flash-lite", system_prompt=None, history=None, is_deep_dive=False):
     return SimpleNamespace(
         model=model,
         system_prompt=system_prompt,
@@ -49,7 +49,7 @@ async def test_qna_search_happy_path():
         patch(
             "app.handlers.ai_core._resolve_ai_request",
             new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-2.0-flash", None),
+            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
         ),
         patch("app.handlers.ai_search.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
         patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as _mock_send,

@@ -3,6 +3,28 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.46] - 2026-03-18 - Model Hierarchy Modernization
+
+### ⚙️ Model Tier Overhaul
+
+| Change | File | Detail |
+|--------|------|--------|
+| Remove unavailable `gemini-2.5-pro` | `model_selector.py`, `menus.py` | All references to `gemini-2.5-pro` and preview variants replaced with `gemini-2.5-flash`. |
+| Remove legacy models (1.5, 2.0) | `menus.py`, 18 test files | Purged all `gemini-1.5-*` and `gemini-2.0-*` references from application code and test mocks. |
+| Add `gemini-3.0-flash` and `gemini-3.1-flash-lite` | `model_selector.py`, `menus.py` | New 5-tier hierarchy: `3.0-flash`(5) > `3.1-flash-lite`(4) > `2.5-flash`(3) > `2.5-flash-lite`(1). Benchmarks confirm `3.1-flash-lite` outperforms `2.5-flash` in speed (2.5× TTFT) and quality (higher Arena Elo). |
+| Smart routing update | `model_selector.py` | Code and reasoning task routing now prefers `3.0-flash` → `3.1-flash-lite` → `2.5-flash`. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Tests | **1250 passed**, 0 failed (78s, 12 workers) |
+| Ruff lint | Pass |
+| Ruff format | Pass |
+| Mypy | 0 errors |
+
+---
+
 ## [2.8.45] - 2026-03-18 - Admin Metrics & Waiting Facts Stability
 
 ### 🔴 Critical Fixes

@@ -17,7 +17,7 @@ def make_placeholder():
 
 def make_chat_state():
     return SimpleNamespace(
-        model="gemini-2.0-flash",
+        model="gemini-3.1-flash-lite",
         system_prompt=None,
         history=[],
         token_count=0,
@@ -56,7 +56,7 @@ async def test_document_question_success():
         patch(
             "app.handlers.ai_core._resolve_ai_request",
             new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-2.0-flash", None),
+            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
         ),
         patch(
             "app.handlers.ai_document._get_ai_response_with_routing",
@@ -147,7 +147,7 @@ async def test_document_question_empty_ai_response():
         patch(
             "app.handlers.ai_core._resolve_ai_request",
             new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-2.0-flash", None),
+            return_value=({"key": "val"}, "gemini-3.1-flash-lite", None),
         ),
         patch("app.handlers.ai_document._get_ai_response_with_routing", new_callable=AsyncMock, return_value=(None, 0)),
     ):
