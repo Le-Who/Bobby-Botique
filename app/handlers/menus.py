@@ -614,8 +614,7 @@ async def get_conversations_menu_content(user_id, page=1):
         role_info = f" | {conv['role_title']}" if conv["role_title"] else ""
         created = conv["created_at"].strftime("%d.%m.%Y %H:%M") if conv["created_at"] else "Неизвестно"
         parts.append(
-            f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n"
-            f"📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n"
+            f"🆔 *{conv['id']}* | {conv['title']}{role_info}\n📅 {created} | 💬 {conv['token_budget'] or 0} токенов\n\n"
         )
     text = "".join(parts)
 

@@ -90,7 +90,7 @@ class TestExtractJsonObject:
         assert result["title"] == "T"
 
     def test_escaped_quotes_and_backslashes(self):
-        text = '{"title": "T", "purpose": "P", "prompt": "Quotes: \\\" and Backslash: \\\\"}'
+        text = '{"title": "T", "purpose": "P", "prompt": "Quotes: \\" and Backslash: \\\\"}'
         result = extract_json_object(text)
         assert result is not None
         assert '\\"' in text  # raw text has \"

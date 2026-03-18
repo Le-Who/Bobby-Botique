@@ -431,7 +431,7 @@ class StreamingWriter:
             initial_text = remainder + STREAMING_INDICATOR if remainder.strip() else STREAMING_INDICATOR
             formatted_initial, parse_mode = TelegramFormatter.format_text(initial_text)
             formatted_initial = sanitize_html_tags(formatted_initial)
-            
+
             self._adapter = await self._adapter.reply_new_message(
                 formatted_initial,
                 parse_mode=parse_mode,  # type: ignore[arg-type]

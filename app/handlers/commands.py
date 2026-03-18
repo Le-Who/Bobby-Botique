@@ -220,7 +220,9 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         text_parts.append("\n")
 
     text_parts.append(f"📅 **Сегодня:** `{today_count}` запросов\n")
-    text_parts.append(f"📈 **7 дней:** `{engagement['total_requests_7d']}` запросов ({engagement['active_days_7d']}/7 дней)\n\n")
+    text_parts.append(
+        f"📈 **7 дней:** `{engagement['total_requests_7d']}` запросов ({engagement['active_days_7d']}/7 дней)\n\n"
+    )
 
     if week_res:
         text_parts.append("📊 **По дням:**\n")

@@ -233,9 +233,7 @@ async def _handle_regular_chat(
                 try:
                     if _memories_injected > 0:
                         formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
-                        await button_msg.edit_text(
-                            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
-                        )
+                        await button_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
                     else:
                         await button_msg.edit_reply_markup(reply_markup=reply_markup)
                 except Exception as e:

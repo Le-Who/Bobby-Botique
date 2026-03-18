@@ -1,5 +1,6 @@
 import timeit
 
+
 class DummySettings:
     GEMINI_API_KEYS = list(range(10))
     TAVILY_API_KEYS = list(range(5))
@@ -11,7 +12,9 @@ class DummySettings:
     ADMIN_ID = 123456789
     DAILY_LIMITS = list(range(100))
 
+
 new_settings = DummySettings()
+
 
 def original_method():
     report = "✅ *Конфигурация перезагружена*\n\n"
@@ -30,6 +33,7 @@ def original_method():
     report += "💡 Все настройки загружены из переменных окружения."
     return report
 
+
 def optimized_method():
     report_parts = [
         "✅ *Конфигурация перезагружена*\n\n",
@@ -45,15 +49,13 @@ def optimized_method():
         f"• PORT: `{new_settings.PORT}`\n",
         f"• ADMIN_ID: `{new_settings.ADMIN_ID}`\n",
         f"• Лимитов моделей: `{len(new_settings.DAILY_LIMITS)}`\n\n",
-        "💡 Все настройки загружены из переменных окружения."
+        "💡 Все настройки загружены из переменных окружения.",
     ]
     return "".join(report_parts)
+
 
 if __name__ == "__main__":
     t1 = timeit.timeit(original_method, number=100000)
     t2 = timeit.timeit(optimized_method, number=100000)
-    print(f"Original += method: {t1:.4f} seconds")
-    print(f"Optimized join method: {t2:.4f} seconds")
     if t1 > 0:
         improvement = ((t1 - t2) / t1) * 100
-        print(f"Improvement: {improvement:.2f}%")

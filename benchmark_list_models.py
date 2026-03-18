@@ -3,6 +3,7 @@ import timeit
 missing = {"gemini-pro-vision", "gemini-ultra"}
 available = {"gemini-pro", "gemini-1.5-pro", "gemini-1.5-flash"}
 
+
 def original_method():
     validation = "\n\n*🔍 Проверка конфигурации:*\n"
     validation += f"✅ Доступны: `{', '.join(sorted(available)) or 'нет'}`\n"
@@ -13,10 +14,11 @@ def original_method():
         validation += "✅ Все настроенные модели доступны в API\n"
     return validation
 
+
 def optimized_method():
     validation_parts = [
         "\n\n*🔍 Проверка конфигурации:*\n",
-        f"✅ Доступны: `{', '.join(sorted(available)) or 'нет'}`\n"
+        f"✅ Доступны: `{', '.join(sorted(available)) or 'нет'}`\n",
     ]
     if missing:
         validation_parts.append(
@@ -27,11 +29,9 @@ def optimized_method():
         validation_parts.append("✅ Все настроенные модели доступны в API\n")
     return "".join(validation_parts)
 
+
 if __name__ == "__main__":
     t1 = timeit.timeit(original_method, number=100000)
     t2 = timeit.timeit(optimized_method, number=100000)
-    print(f"Original += method: {t1:.4f} seconds")
-    print(f"Optimized join method: {t2:.4f} seconds")
     if t1 > 0:
         improvement = ((t1 - t2) / t1) * 100
-        print(f"Improvement: {improvement:.2f}%")

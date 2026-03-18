@@ -42,3 +42,6 @@ Desktop.ini
 .DS_Store
 test_script.py
 test_sim.py
+test_perf.py
+load_test.py
+benchmark*.py

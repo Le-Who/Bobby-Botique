@@ -84,9 +84,9 @@ async def get_personalized_stat(user_id: int) -> str | None:
         total_requests = total_req_record[0].get("total", 0) if total_req_record else 0
 
         # Get today requests
-        today_str = datetime.date.today().isoformat()
+        today = datetime.date.today()
         today_req_record = await db.db_query(
-            "SELECT request_count FROM user_metrics WHERE user_id = $1 AND metric_date = $2", (user_id, today_str)
+            "SELECT request_count FROM user_metrics WHERE user_id = $1 AND metric_date = $2", (user_id, today)
         )
         today_requests = today_req_record[0].get("request_count", 0) if today_req_record else 0
 

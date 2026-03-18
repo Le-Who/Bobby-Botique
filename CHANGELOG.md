@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.45] - 2026-03-18 - Admin Metrics & Waiting Facts Stability
+
+### 🔴 Critical Fixes
+
+| Fix | File | Detail |
+|-----|------|--------|
+| `UndefinedColumnError` in `/metrics` | `app/metrics.py` | Querying `api_keys` and `tavily_api_keys` for historical columns generated DB exceptions because usage metadata is stored in separate tables. Query simplified to `key_hash` and `api_key` with decryption logic restored. |
+| `toordinal()` error in waiting stats | `app/utils/waiting_facts.py` | `metric_date` is a `DATE` column, but asyncpg was sent an `.isoformat()` string. Directly passing `datetime.date` resolves the coercion crash. |
+
+### 🧹 Infrastructure & QA
+
+| Change | File | Detail |
+|--------|------|--------|
+| Git & Docker Ignores | `.gitignore`, `.dockerignore` | Guarded against accidental check-ins and image bloat by appending `benchmark*.py`, `test_perf.py`, `load_test.py`, and `.pytest_tmp/`. |
+| Quality Gates | - | 54 formatting and styling alerts resolved via Ruff; Pytest suite expanded to **1250 tests** running in 80s; Mypy reports 0 strict type errors. |
+
+---
+
 ## [2.8.44] - 2026-03-13 - Streaming Overflow Fixes (BUG-10)
 
 ### 🔴 Critical Fix

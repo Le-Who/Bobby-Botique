@@ -1,7 +1,8 @@
-import pytest
 import sys
-from unittest.mock import MagicMock, patch
 from datetime import datetime
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # We mock at the top level to allow imports to succeed in isolated test runs,
 # but we shouldn't pollute the global sys.modules permanently if this runs in a suite.
@@ -10,18 +11,16 @@ from datetime import datetime
 # of analytics.py we have to mock it before importing analytics.py.
 # A cleaner way is using `unittest.mock.patch.dict` or just leaving it since it's common
 # in this codebase's restricted env, but to be perfectly clean:
-if 'asyncpg' not in sys.modules:
-    sys.modules['asyncpg'] = MagicMock()
-if 'app.database' not in sys.modules:
-    sys.modules['app.database'] = MagicMock()
+if "asyncpg" not in sys.modules:
+    sys.modules["asyncpg"] = MagicMock()
+if "app.database" not in sys.modules:
+    sys.modules["app.database"] = MagicMock()
 
 from app.repos.analytics import generate_auto_title
 
 
 def test_generate_auto_title_simple_content():
-    messages = [
-        {"role": "user", "content": "Hello world!"}
-    ]
+    messages = [{"role": "user", "content": "Hello world!"}]
     assert generate_auto_title(messages) == "Hello world!"
 
 
@@ -29,49 +28,33 @@ def test_generate_auto_title_skips_non_user():
     messages = [
         {"role": "system", "content": "System prompt"},
         {"role": "assistant", "content": "How can I help you?"},
-        {"role": "user", "content": "My actual message."}
+        {"role": "user", "content": "My actual message."},
     ]
     assert generate_auto_title(messages) == "My actual message."
 
 
 def test_generate_auto_title_with_parts_strings():
-    messages = [
-        {"role": "user", "parts": ["Hello", "world"]}
-    ]
+    messages = [{"role": "user", "parts": ["Hello", "world"]}]
     assert generate_auto_title(messages) == "Hello world"
 
 
 def test_generate_auto_title_with_parts_dicts():
-    messages = [
-        {"role": "user", "parts": [{"text": "First part"}, {"text": "Second part"}]}
-    ]
+    messages = [{"role": "user", "parts": [{"text": "First part"}, {"text": "Second part"}]}]
     assert generate_auto_title(messages) == "First part Second part"
 
 
 def test_generate_auto_title_with_mixed_parts():
-    messages = [
-        {"role": "user", "parts": [
-            "Hello",
-            {"image": b"binary_data"},
-            {"text": "there"}
-        ]}
-    ]
+    messages = [{"role": "user", "parts": ["Hello", {"image": b"binary_data"}, {"text": "there"}]}]
     assert generate_auto_title(messages) == "Hello there"
 
 
 def test_generate_auto_title_empty_content():
-    messages = [
-        {"role": "user", "content": "   \n  "},
-        {"role": "user", "content": "Valid message"}
-    ]
+    messages = [{"role": "user", "content": "   \n  "}, {"role": "user", "content": "Valid message"}]
     assert generate_auto_title(messages) == "Valid message"
 
 
 def test_generate_auto_title_empty_parts():
-    messages = [
-        {"role": "user", "parts": [{"image": b"123"}]},
-        {"role": "user", "content": "Valid message"}
-    ]
+    messages = [{"role": "user", "parts": [{"image": b"123"}]}, {"role": "user", "content": "Valid message"}]
     assert generate_auto_title(messages) == "Valid message"
 
 
@@ -120,7 +103,12 @@ def test_generate_auto_title_ignores_early_sentence_boundary():
 
 def test_generate_auto_title_sentence_boundary_after_max_len():
     # Boundary happens after max_len, so it should just truncate at max_len
-    messages = [{"role": "user", "content": "This is a very long sentence that has no boundaries and will exceed twenty characters. Right?"}]
+    messages = [
+        {
+            "role": "user",
+            "content": "This is a very long sentence that has no boundaries and will exceed twenty characters. Right?",
+        }
+    ]
     title = generate_auto_title(messages, max_len=20)
     assert title == "This is a very lo..."
 

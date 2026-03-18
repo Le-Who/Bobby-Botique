@@ -501,7 +501,7 @@ class TestSendFinalMessageReplyThreading:
     @pytest.mark.asyncio
     async def test_uses_reply_to_message_id_if_present(self):
         from app.adapters.ui_adapter import TelegramMessageAdapter
-        
+
         mock_bot = AsyncMock()
         mock_msg = MagicMock()
         mock_msg.message_id = 999
@@ -522,7 +522,7 @@ class TestSendFinalMessageReplyThreading:
     @pytest.mark.asyncio
     async def test_fallback_to_message_id_if_no_reply_to(self):
         from app.adapters.ui_adapter import TelegramMessageAdapter
-        
+
         mock_bot = AsyncMock()
         mock_msg = MagicMock()
         mock_msg.message_id = 999
@@ -540,9 +540,11 @@ class TestSendFinalMessageReplyThreading:
             allow_sending_without_reply=True,
         )
 
+
 class TestDetectOpenMarkdown:
     def test_ignores_safely_closed_code_blocks(self):
         from app.streaming import _detect_open_markdown
+
         text = "Here is some code:\n```python\ndef test_feature():\n    pass\n```\nAnd a **bold** statement."
         suf, pref = _detect_open_markdown(text)
         assert suf == ""
@@ -550,6 +552,7 @@ class TestDetectOpenMarkdown:
 
     def test_ignores_inline_code(self):
         from app.streaming import _detect_open_markdown
+
     def test_open_strikethrough(self):
         from app.streaming import _detect_open_markdown
 
@@ -579,7 +582,7 @@ class TestOverflowRetryStorm:
     @pytest.mark.asyncio
     async def test_circuit_breaker_on_overflow_failure(self):
         """If reply_new_message fails, it should circuit-break and not hot-loop."""
-        from app.streaming import StreamingWriter, STREAM_MSG_LIMIT
+        from app.streaming import STREAM_MSG_LIMIT, StreamingWriter
 
         adapter = MagicMock()
         adapter.edit_message = AsyncMock()
@@ -593,23 +596,24 @@ class TestOverflowRetryStorm:
         writer._use_drafts = True
 
         oversized = "A" * (STREAM_MSG_LIMIT + 100)
-        
-        # Write 1: hits overflow, replies new message, throws error. 
+
+        # Write 1: hits overflow, replies new message, throws error.
         # Should record the failure.
         await writer.write(oversized)
-        
+
         # Verify the exception was handled and state was updated to prevent hot loop
         assert hasattr(writer, "_overflow_failed")
         assert writer._overflow_failed is True
 
+
 class TestSanitizeOverflowRemainder:
     """BUG-10: Maintain balanced HTML across overflow chunks."""
-    
+
     @pytest.mark.asyncio
     async def test_remainder_is_sanitized(self):
         """The remainder of an overflow should be sanitized before sending."""
-        from app.streaming import StreamingWriter, STREAM_MSG_LIMIT
-        
+        from app.streaming import STREAM_MSG_LIMIT, StreamingWriter
+
         adapter = MagicMock()
         adapter.edit_message = AsyncMock()
         adapter.send_draft = AsyncMock()
@@ -619,25 +623,22 @@ class TestSanitizeOverflowRemainder:
 
         writer = StreamingWriter(adapter, chat_type="private")
         writer._use_drafts = True
-        
+
         # Create text that will be split right after the open markdown
-        # _detect_open_markdown will prefix the remainder with `_` 
+        # _detect_open_markdown will prefix the remainder with `_`
         # When formatted, `_` matches the second `_`, creating `<i>` tags
         # By overlapping it with a `<code>` block, we verify it is sanitized
         oversized = "A" * STREAM_MSG_LIMIT + "\n_italic text that `overflows_ and overlaps`"
-        
+
         await writer.write(oversized)
-        
+
         # The remainder message uses reply_new_message
         adapter.reply_new_message.assert_called_once()
         call_args = adapter.reply_new_message.call_args
         formatted_initial = call_args[0][0]
-        
+
         # If it was sanitized, the initial `<i>` (from `_`) must be properly closed
         # before the `<code>` tag ends, or properly nested
         assert "<i>" in formatted_initial
         assert "</i>" in formatted_initial
         assert "</i>" in formatted_initial
-
-
-

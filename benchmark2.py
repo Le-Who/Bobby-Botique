@@ -1,14 +1,10 @@
 import timeit
 
 documents = [
-    {
-        'filename': f'document_{i}.pdf',
-        'pages': i % 100,
-        'created_at': '2023-10-25 12:00:00',
-        'file_size': 1024 * i
-    }
+    {"filename": f"document_{i}.pdf", "pages": i % 100, "created_at": "2023-10-25 12:00:00", "file_size": 1024 * i}
     for i in range(100)
 ]
+
 
 def test_concat():
     text = f"📄 **Документы** ({len(documents)})\n\n"
@@ -21,6 +17,7 @@ def test_concat():
         text += f"… и ещё {len(documents) - 10} документов\n\n"
     text += "📎 Отправьте новый файл для загрузки."
     return text
+
 
 def test_join_optimized():
     parts = [f"📄 **Документы** ({len(documents)})\n\n"]
@@ -36,12 +33,10 @@ def test_join_optimized():
     parts.append("📎 Отправьте новый файл для загрузки.")
     return "".join(parts)
 
-print("Running benchmarks (1000000 iterations)...")
+
 concat_time = timeit.timeit(test_concat, number=1000000)
 join_opt_time = timeit.timeit(test_join_optimized, number=1000000)
 
-print(f"Concat: {concat_time:.4f}s")
-print(f"Join (Optimized single string): {join_opt_time:.4f}s")
 
 # Ensure outputs match
 assert test_concat() == test_join_optimized()

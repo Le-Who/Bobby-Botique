@@ -30,6 +30,12 @@ pytest.ini
 htmlcov/
 tests_output.log
 verification/
+.pytest_tmp/
+test_script.py
+test_sim.py
+test_perf.py
+load_test.py
+benchmark*.py
 
 # ── Linter / Type Checker Caches ─────────────────────────────
 .ruff_cache/

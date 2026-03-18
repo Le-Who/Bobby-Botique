@@ -1,14 +1,18 @@
 import time
 from datetime import datetime
 
+
 class SettingsMock:
     DAILY_LIMITS = {"gemini-pro": 100}
     TAVILY_MONTHLY_CREDIT_LIMIT = 1000
 
+
 settings = SettingsMock()
+
 
 def format_key_for_display(k):
     return k[:4] + "..."
+
 
 def get_metrics_content_concat(metrics, gemini_data, tavily_data):
     # Build main text
@@ -180,18 +184,18 @@ def run_benchmark():
         "api_calls": {f"api_{i}": i for i in range(N)},
         "model_usage": {f"model_{i}": i for i in range(N)},
         "daily_metrics": {f"2023-10-{i:02d}": {"requests": i, "errors": i % 5} for i in range(1, 31)},
-        "recent_errors": [{"type": f"Error{i}", "message": f"Message{i}"} for i in range(10)]
+        "recent_errors": [{"type": f"Error{i}", "message": f"Message{i}"} for i in range(10)],
     }
 
     gemini_data = {
         "keys": [{"api_key": f"key_{i}", "key_hash": f"hash_{i}"} for i in range(N)],
         "usage_map": {f"hash_{i}": [{"model_name": "gemini-pro", "request_count": i}] for i in range(N)},
-        "reset_time": "00:00"
+        "reset_time": "00:00",
     }
 
     tavily_data = {
         "keys": [{"api_key": f"tkey_{i}", "key_hash": f"thash_{i}"} for i in range(N)],
-        "usage_map": {f"thash_{i}": i for i in range(N)}
+        "usage_map": {f"thash_{i}": i for i in range(N)},
     }
 
     # Warmup
@@ -204,20 +208,17 @@ def run_benchmark():
     for _ in range(iters):
         res1 = get_metrics_content_concat(metrics, gemini_data, tavily_data)
     t1 = time.perf_counter()
-    concat_time = (t1 - t0) / iters
+    (t1 - t0) / iters
 
     t0 = time.perf_counter()
     for _ in range(iters):
         res2 = get_metrics_content_join(metrics, gemini_data, tavily_data)
     t1 = time.perf_counter()
-    join_time = (t1 - t0) / iters
+    (t1 - t0) / iters
 
     # Just to check correctness.
     if len(res1) != len(res2):
-        print(f"Lengths differ: concat={len(res1)}, join={len(res2)}")
+        pass
 
-    print(f"Concat average: {concat_time:.5f}s")
-    print(f"Join average:   {join_time:.5f}s")
-    print(f"Improvement:    {concat_time / join_time:.2f}x faster")
 
 run_benchmark()

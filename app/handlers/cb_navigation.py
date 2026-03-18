@@ -281,11 +281,13 @@ async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAU
     next_level = cycle[(idx + 1) % len(cycle)]
 
     from app.repos.chats import update_thinking_level
+
     await update_thinking_level(user_id, next_level)
     chat_state.thinking_level = next_level
 
     # Rebuild settings menu
     from app.handlers.commands import _THINKING_LABELS
+
     model_name = chat_state.model or "(по умолчанию)"
     thinking_str = _THINKING_LABELS.get(next_level, next_level or "🔄 Авто")
     search_str = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
@@ -346,6 +348,7 @@ async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Rebuild settings menu
     from app.handlers.commands import _THINKING_LABELS
+
     model_name = chat_state.model or "(по умолчанию)"
     thinking_str = _THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level or "🔄 Авто")
     search_str = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
@@ -390,4 +393,3 @@ async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
     ltm_status = "Включена" if chat_state.ltm_enabled else "Выключена"
     await query.answer(f"Память: {ltm_status}")
-

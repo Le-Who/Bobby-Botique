@@ -1,6 +1,8 @@
-import timeit
 import datetime
+import timeit
+
 from app.utils.formatting import TelegramFormatter
+
 
 def create_mock_data():
     week_res = [
@@ -11,15 +13,16 @@ def create_mock_data():
         {"metric_date": datetime.date(2023, 10, 5), "cnt": 50},
         {"metric_date": datetime.date(2023, 10, 6), "cnt": 60},
         {"metric_date": datetime.date(2023, 10, 7), "cnt": 70},
-    ] * 20 # duplicate to simulate more entries
+    ] * 20  # duplicate to simulate more entries
 
     model_res = [
         {"model_name": "gpt-3.5-turbo", "cnt": 100},
         {"model_name": "gpt-4", "cnt": 50},
         {"model_name": "claude-2", "cnt": 20},
-    ] * 10 # duplicate to simulate more entries
+    ] * 10  # duplicate to simulate more entries
 
     return week_res, model_res
+
 
 def baseline(week_res, model_res):
     text = ""
@@ -46,6 +49,7 @@ def baseline(week_res, model_res):
     text += f"📄 **Документов:** `{doc_count}`\n📝 **Сохранённых бесед:** `{conv_count}`\n"
     return text
 
+
 def optimized(week_res, model_res):
     parts = []
     if week_res:
@@ -71,6 +75,7 @@ def optimized(week_res, model_res):
     parts.append(f"📄 **Документов:** `{doc_count}`\n📝 **Сохранённых бесед:** `{conv_count}`\n")
     return "".join(parts)
 
+
 if __name__ == "__main__":
     week_res, model_res = create_mock_data()
 
@@ -81,11 +86,7 @@ if __name__ == "__main__":
     t_baseline = timeit.timeit(lambda: baseline(week_res, model_res), number=n_runs)
     t_optimized = timeit.timeit(lambda: optimized(week_res, model_res), number=n_runs)
 
-    print(f"Baseline:  {t_baseline:.4f} seconds for {n_runs} runs")
-    print(f"Optimized: {t_optimized:.4f} seconds for {n_runs} runs")
-
     if t_optimized < t_baseline:
         improvement = (t_baseline - t_optimized) / t_baseline * 100
-        print(f"Improvement: {improvement:.2f}%")
     else:
-        print("Optimized is slower!")
+        pass

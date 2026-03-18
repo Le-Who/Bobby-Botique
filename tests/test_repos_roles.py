@@ -9,6 +9,7 @@ import pytest
 def mock_db_query():
     """Patch db.db_query for roles module."""
     import app.repos.roles
+
     with patch.object(app.repos.roles.db, "db_query", new_callable=AsyncMock) as m_query:
         yield m_query
 

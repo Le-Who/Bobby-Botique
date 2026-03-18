@@ -63,7 +63,7 @@ async def list_models_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Show config validation
         validation_parts = [
             "\n\n*🔍 Проверка конфигурации:*\n",
-            f"✅ Доступны: `{', '.join(sorted(available)) or 'нет'}`\n"
+            f"✅ Доступны: `{', '.join(sorted(available)) or 'нет'}`\n",
         ]
         if missing:
             validation_parts.append(
@@ -282,9 +282,7 @@ async def check_tavily_keys_command(update: Update, context: ContextTypes.DEFAUL
             key_hash = row["key_hash"]
             api_key = safe_decrypt(row["api_key"])
             report_parts.append(
-                f"🔑 *Ключ {i}:*\n"
-                f"   Хэш: `{key_hash[:16]}...`\n"
-                f"   API: `{api_key[:10]}...{api_key[-4:]}`\n\n"
+                f"🔑 *Ключ {i}:*\n   Хэш: `{key_hash[:16]}...`\n   API: `{api_key[:10]}...{api_key[-4:]}`\n\n"
             )
 
         # Check использование
@@ -515,7 +513,7 @@ async def reload_config_command(update: Update, context: ContextTypes.DEFAULT_TY
             f"• PORT: `{new_settings.PORT}`\n",
             f"• ADMIN_ID: `{new_settings.ADMIN_ID}`\n",
             f"• Лимитов моделей: `{len(new_settings.DAILY_LIMITS)}`\n\n",
-            "💡 Все настройки загружены из переменных окружения."
+            "💡 Все настройки загружены из переменных окружения.",
         ]
 
         formatted_text, parse_mode = TelegramFormatter.format_text("".join(report_parts))
