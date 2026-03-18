@@ -5,8 +5,6 @@ Uses pgvector for embedding storage and HNSW-indexed cosine similarity search.
 Embeddings are generated via Gemini's embedding API (text-embedding-004, 768-dim).
 """
 
-import asyncio
-import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,8 +12,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from app.config import settings
-from app.database import clear_user_context, db_execute_many, db_manager, db_query, set_user_context
+from app.database import clear_user_context, db_manager, db_query, set_user_context
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
