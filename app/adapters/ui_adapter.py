@@ -78,12 +78,27 @@ class TelegramMessageAdapter(StreamingUIAdapter):
                 raise
 
     async def reply_new_message(self, text: str, parse_mode: str) -> "StreamingUIAdapter":
+        from telegram.error import TelegramError
+
         # BUG: if original message was deleted, reply_text raises "Message to be replied not found"
-        new_msg = await self._msg.reply_text(
-            text,
-            parse_mode=parse_mode,
-            allow_sending_without_reply=True,
-        )
+        try:
+            new_msg = await self._msg.reply_text(
+                text,
+                parse_mode=parse_mode,
+                allow_sending_without_reply=True,
+            )
+        except TelegramError as e:
+            if "not found" in str(e).lower() and "message to be replied" in str(e).lower():
+                # Fallback: original message deleted, just send a new message to the chat
+                bot = self._bot or self._msg.get_bot()
+                new_msg = await bot.send_message(
+                    chat_id=self._chat_id or self._msg.chat_id,
+                    text=text,
+                    parse_mode=parse_mode,
+                )
+            else:
+                raise
+
         return TelegramMessageAdapter(message=new_msg, bot=self._bot, chat_id=self._chat_id, draft_id=self._draft_id)
 
     async def delete_placeholder(self) -> None:
