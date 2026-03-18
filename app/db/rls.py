@@ -158,17 +158,18 @@ async def create_rls_policies(table_name: str, db_query):
             logging.warning("No RLS configuration found for table: %s", table_name)
             return
 
+        # Fetch all existing policies for the table at once to avoid N+1 queries
+        existing_policy_records = await db_query(
+            "SELECT policyname FROM pg_policies WHERE tablename = $1",
+            (table_name,),
+        )
+        existing_policies = {row["policyname"] for row in existing_policy_records}
+
         for policy_cfg in policies:
             policy_name = policy_cfg["name"]
 
             try:
-                # Check if policy exists
-                existing_policy = await db_query(
-                    "SELECT 1 FROM pg_policies WHERE tablename = $1 AND policyname = $2",
-                    (table_name, policy_name),
-                )
-
-                if not existing_policy:
+                if policy_name not in existing_policies:
                     # Construct SQL
                     if "sql" in policy_cfg:
                         sql = policy_cfg["sql"]
