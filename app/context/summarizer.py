@@ -165,19 +165,35 @@ def split_into_chunks(messages: list[dict[str, Any]]) -> list[str]:
 
 def _extract_text(msg: dict[str, Any]) -> str:
     """Extract text content from a message dict."""
+    def _safe_str(p) -> str:
+        # Skip large binary/image payloads to prevent massive O(N) memory allocations
+        if isinstance(p, (bytes, bytearray)):
+            return ""
+        if isinstance(p, dict):
+            if "inline_data" in p or "image_url" in p:
+                return ""
+            return str(p.get("text", ""))
+        return str(p)
+
     parts = msg.get("parts", [])
     if not parts:
         content = msg.get("content", "")
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            extracted = [_safe_str(p) for p in content]
+            return " ".join(e for e in extracted if e)
+        return _safe_str(content)
 
     text_parts: list[str] = []
     for part in parts:
         if isinstance(part, str):
             text_parts.append(part)
-        elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
-    return " ".join(text_parts)
+        elif isinstance(part, dict):
+            if "inline_data" in part or "image_url" in part:
+                continue
+            if "text" in part:
+                text_parts.append(str(part["text"]))
+        elif not isinstance(part, (bytes, bytearray)):
+            text_parts.append(str(part))
+    return " ".join(e for e in text_parts if e)

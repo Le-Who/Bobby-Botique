@@ -23,18 +23,30 @@ from app.utils.logging_config import timed_operation
 
 def _extract_message_content(msg: dict) -> str:
     """Extract content string from a message dict that may use 'content' or 'parts' key."""
+    def _safe_str(p) -> str:
+        # Skip large binary/image payloads to prevent massive O(N) memory allocations
+        if isinstance(p, (bytes, bytearray)):
+            return ""
+        if isinstance(p, dict):
+            if "inline_data" in p or "image_url" in p:
+                return ""
+            return str(p.get("text", p))
+        return str(p)
+
     if "content" in msg:
         content = msg["content"]
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            extracted = [_safe_str(p) for p in content]
+            return " ".join(e for e in extracted if e)
+        return _safe_str(content)
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
-        return str(parts)
+            extracted = [_safe_str(p) for p in parts]
+            return " ".join(e for e in extracted if e)
+        return _safe_str(parts)
     return ""
 
 
