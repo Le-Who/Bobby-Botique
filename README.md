@@ -160,13 +160,34 @@ The application features a heavily engineered test suite (**1250+ unit and integ
 
 **Telegram Commands:**
 
-- `/start`, `/help` — Initial onboarding & main menus.
-- `/settings` — Quick access to Model, Thinking Level, Search, and Long-Term Memory toggles.
-- `/stats` — User metrics, streak tracking, API usage.
-- `/documents` — Management of parsed files.
-- `/clearmemory` — Wipe all long-term vector memories.
-- `/mydata`, `/deleteme` — GDPR compliant export/deletion actions.
-- `/admin` — System administration hub (Requires `ADMIN_ID`).
+**Telegram Commands:**
+
+- **User Commands:**
+  - `/start`, `/help` — Initial onboarding & main menus.
+  - `/newchat` — Reset context and start a fresh conversation.
+  - `/model` — Select the active AI model.
+  - `/thinking` — Configure reasoning depth (Auto/Low/Medium/High).
+  - `/res` — Toggle Deep Research mode (Tavily-powered).
+  - `/settings` — Quick access menu for models, search, and memory toggles.
+  - `/stats` — Personal usage metrics, streaks, and API usage stats.
+  - `/documents` — Manage and query uploaded PDF/DOCX files.
+  - `/roles` — Switch between different AI personas/roles.
+  - `/setprompt` — Set a custom system instruction for the current chat.
+  - `/save`, `/conversations`, `/switch`, `/rename`, `/delete` — Advanced conversation management (persistence).
+  - `/export` — Export the current chat history.
+  - `/clearmemory` — Wipe all long-term vector-indexed memories.
+  - `/mydata`, `/deleteme` — GDPR compliant data export and account deletion.
+
+- **Admin Commands (Requires `ADMIN_ID`):**
+  - `/admin` — Central administration hub.
+  - `/listmodels`, `/listusers` — List configured models and registered users.
+  - `/adduser`, `/deluser` — Manual user management.
+  - `/metrics`, `/rolemetrics` — Detailed system and role-based usage telemetry.
+  - `/cachestats`, `/queuestats`, `/docstats`, `/groupstats` — Performance monitoring for different subsystems.
+  - `/clearcache`, `/clearoldmetrics`, `/clearolddocs` — System maintenance and cleanup.
+  - `/updatetavilykeys`, `/checktavilykeys` — Hot-swap and verify search API keys.
+  - `/registergroup` — Authorize the bot for use in a specific Telegram group.
+  - `/reloadconfig` — Trigger an immediate hot-reload of the environment configuration.
 
 **Web Dashboard (Quart HTTP Routes):**
 
