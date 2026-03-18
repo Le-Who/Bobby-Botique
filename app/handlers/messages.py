@@ -154,25 +154,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             placeholder_message = await update.message.reply_text("🤔 Думаю...")
 
         done_event = asyncio.Event()
-        register_heartbeat(placeholder_message.message_id, done_event)
-
-        async def _heartbeat() -> None:
-            # P6 fix: send periodic typing indicator so users see "bot is working"
-            # during long AI processing (ChatAction.TYPING expires after ~5s).
-            # Automatically cancelled by stop_heartbeat() when streaming starts.
-            try:
-                while not done_event.is_set():
-                    with contextlib.suppress(Exception):
-                        await update.effective_chat.send_action(action="typing")
-                    try:
-                        await asyncio.wait_for(done_event.wait(), timeout=4.0)
-                        break  # done_event was set
-                    except TimeoutError:
-                        continue  # send typing again
-            except asyncio.CancelledError:
-                pass
-
-        heartbeat_task = asyncio.create_task(_heartbeat())
+        register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
 
         async def task_wrapper() -> None:
             try:
@@ -190,8 +172,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             stop_heartbeat(placeholder_message.message_id)
                             await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
 
-                        done_event.set()
-                        heartbeat_task.cancel()
+                        stop_heartbeat(placeholder_message.message_id)
 
                         logging.info("Completed task processing for user %s", user_id)
 
@@ -232,8 +213,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             finally:
                 unregister_heartbeat(placeholder_message.message_id)
                 if not done_event.is_set():
-                    done_event.set()
-                    heartbeat_task.cancel()
+                    stop_heartbeat(placeholder_message.message_id)
 
         from app.utils.background_tasks import submit_task
 
