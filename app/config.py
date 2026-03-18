@@ -14,6 +14,8 @@ from pydantic import BaseModel, ValidationError
 # Single source of truth for default Gemini models.
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().
 DEFAULT_GEMINI_MODELS: list[str] = [
+    "gemini-3.0-flash",
+    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
 ]
@@ -138,10 +140,10 @@ class Settings(BaseModel):
     # --- MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
     AVAILABLE_MODELS: list[str] = DEFAULT_GEMINI_MODELS.copy()
-    DEFAULT_MODEL: str = "gemini-2.5-flash"
+    DEFAULT_MODEL: str = "gemini-3.1-flash-lite"
     QNA_MODEL: str = "gemini-2.5-flash-lite"
-    RESEARCH_MODEL: str = "gemini-2.5-flash"
-    URL_SELECTION_MODEL: str = "gemini-2.5-flash"
+    RESEARCH_MODEL: str = "gemini-3.1-flash-lite"
+    URL_SELECTION_MODEL: str = "gemini-3.1-flash-lite"
 
     # --- OPENROUTER MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
@@ -210,10 +212,10 @@ def load_settings() -> Settings:
             or default_gemini_models,
             "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False)
             or default_openrouter_models,
-            "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gemini-2.5-flash"),
+            "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gemini-3.1-flash-lite"),
             "QNA_MODEL": os.getenv("QNA_MODEL", "gemini-2.5-flash-lite"),
-            "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-2.5-flash"),
-            "URL_SELECTION_MODEL": os.getenv("URL_SELECTION_MODEL", "gemini-2.5-flash"),
+            "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-3.1-flash-lite"),
+            "URL_SELECTION_MODEL": os.getenv("URL_SELECTION_MODEL", "gemini-3.1-flash-lite"),
             "OPENROUTER_DEFAULT_MODEL": os.getenv("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_QNA_MODEL": os.getenv("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_RESEARCH_MODEL": os.getenv("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),
