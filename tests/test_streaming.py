@@ -124,8 +124,8 @@ class TestStreamingWriterDraftMode:
         adapter = MagicMock()
         adapter.edit_message = AsyncMock()
         adapter.send_draft = AsyncMock()
-        adapter.delete_placeholder = AsyncMock()  # P1: required for draft mode
-        adapter.send_final_message = AsyncMock()  # P1: used on finalize after draft
+        adapter.delete_placeholder = AsyncMock()  # required for draft mode
+        adapter.send_final_message = AsyncMock()  # used on finalize after draft
         adapter._bot = MagicMock()
 
         writer = StreamingWriter(adapter, chat_type="private")
@@ -155,14 +155,14 @@ class TestStreamingWriterDraftMode:
         """In draft mode (placeholder deleted), finalize sends a new permanent message."""
         # Simulate that a draft was already sent (which deletes placeholder)
         await draft_writer.write("First chunk")
-        draft_writer._adapter.delete_placeholder.assert_called_once()  # P1
+        draft_writer._adapter.delete_placeholder.assert_called_once()
 
         draft_writer._buffer = "Final answer"
         draft_writer._full_text = "Final answer"
 
         await draft_writer.finalize()
 
-        # P1: placeholder was deleted, so finalize uses send_final_message
+        # placeholder was deleted, so finalize uses send_final_message
         draft_writer._adapter.send_final_message.assert_called_once()
         call_kwargs = draft_writer._adapter.send_final_message.call_args
         assert "Final answer" in call_kwargs[0][0] or "Final answer" in call_kwargs.kwargs.get(
@@ -182,7 +182,7 @@ class TestStreamingWriterDraftMode:
 
         assert draft_writer._use_drafts is False
         assert draft_writer._debounce_s == EDIT_DEBOUNCE_S
-        # P1: placeholder was deleted, so recovery sends a new message
+        # placeholder was deleted, so recovery sends a new message
         draft_writer._adapter.send_final_message.assert_called_once()
 
     @pytest.mark.asyncio
