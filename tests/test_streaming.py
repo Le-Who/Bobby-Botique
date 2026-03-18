@@ -507,6 +507,7 @@ class TestSendFinalMessageReplyThreading:
         mock_msg.message_id = 999
         mock_msg.reply_to_message = MagicMock()
         mock_msg.reply_to_message.message_id = 123  # The original user's message
+        mock_msg.message_thread_id = None
 
         adapter = TelegramMessageAdapter(message=mock_msg, bot=mock_bot, chat_id=1)
         await adapter.send_final_message("hello", parse_mode="HTML")
@@ -520,6 +521,28 @@ class TestSendFinalMessageReplyThreading:
         )
 
     @pytest.mark.asyncio
+    async def test_uses_message_thread_id_if_present(self):
+        from app.adapters.ui_adapter import TelegramMessageAdapter
+
+        mock_bot = AsyncMock()
+        mock_msg = MagicMock()
+        mock_msg.message_id = 999
+        mock_msg.reply_to_message = None
+        mock_msg.message_thread_id = 42
+
+        adapter = TelegramMessageAdapter(message=mock_msg, bot=mock_bot, chat_id=1)
+        await adapter.send_final_message("hello", parse_mode="HTML")
+
+        mock_bot.send_message.assert_called_once_with(
+            chat_id=1,
+            text="hello",
+            parse_mode="HTML",
+            reply_to_message_id=999,
+            allow_sending_without_reply=True,
+            message_thread_id=42,
+        )
+
+    @pytest.mark.asyncio
     async def test_fallback_to_message_id_if_no_reply_to(self):
         from app.adapters.ui_adapter import TelegramMessageAdapter
 
@@ -528,6 +551,7 @@ class TestSendFinalMessageReplyThreading:
         mock_msg.message_id = 999
         # No reply_to_message
         mock_msg.reply_to_message = None
+        mock_msg.message_thread_id = None
 
         adapter = TelegramMessageAdapter(message=mock_msg, bot=mock_bot, chat_id=1)
         await adapter.send_final_message("hello", parse_mode="HTML")
