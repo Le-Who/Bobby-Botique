@@ -101,7 +101,7 @@ All configuration variables are loaded from the environment (or a `.env` file).
 | `JINA_API_KEY`                      | ❌       | -                             | API key for Jina Reader API (web content extraction).              | `config.py`, `web_reader.py`       |
 | `AGENTIC_MAX_ITERATIONS`            | ❌       | 3                             | Maximum number of research loop iterations for the agent.          | `config.py`, `agentic.py`          |
 | `AGENTIC_MAX_PAGES`                 | ❌       | 3                             | Maximum number of pages to read per iteration.                     | `config.py`, `agentic.py`          |
-| `AGENTIC_MODEL`                     | ❌       | `gemini-2.5-pro`              | Recommended reasoning model to use for the agentic loop.           | `config.py`, `agentic.py`          |
+| `AGENTIC_MODEL`                     | ❌       | `gemini-2.5-pro-preview-05-06`              | Recommended reasoning model to use for the agentic loop.           | `config.py`, `agentic.py`          |
 | `ADMIN_SECRET`                      | ❌       | -                             | Secret for Dashboard auth and key encryption.                      | `config.py`, `web.py`, `crypto.py` |
 | `PORT`                              | ❌       | `10000`                       | Port for the Quart Web Server to bind to.                          | `config.py`, `bot.py`              |
 | `ENABLE_WEB_SERVER`                 | ❌       | `true`                        | Enables the built-in diagnostic dashboard.                         | `config.py`, `bot.py`              |

@@ -13,7 +13,7 @@ def mock_agent():
         mock_client.aio = AsyncMock()
         mock_client.aio.models.generate_content = AsyncMock()
         mock_factory.return_value = mock_client
-        agent = AgenticSearch(model_name="gemini-2.5-pro", api_key="fake-key")
+        agent = AgenticSearch(model_name="gemini-2.5-pro-preview-05-06", api_key="fake-key")
         return agent
 
 

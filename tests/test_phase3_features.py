@@ -23,9 +23,9 @@ class TestModelSelector:
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
                 "gemini-2.0-flash",
-                "gemini-2.5-pro",
+                "gemini-2.5-pro-preview-05-06",
             ]
-            result = select_model("Привет!", current_model="gemini-2.5-pro")
+            result = select_model("Привет!", current_model="gemini-2.5-pro-preview-05-06")
             # No downgrade suggestion — pro → flash is a downgrade
             assert result is None
 
@@ -35,7 +35,7 @@ class TestModelSelector:
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
                 "gemini-2.0-flash",
-                "gemini-2.5-pro",
+                "gemini-2.5-pro-preview-05-06",
             ]
             result = select_model(
                 "Напиши функцию для сортировки массива и исправь баг",
@@ -50,7 +50,7 @@ class TestModelSelector:
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
                 "gemini-2.0-flash",
-                "gemini-2.5-pro",
+                "gemini-2.5-pro-preview-05-06",
             ]
             result = select_model(
                 "Объясни подробно, как работает алгоритм Дейкстры и в чём разница с A*",
@@ -64,7 +64,7 @@ class TestModelSelector:
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
                 "gemini-2.0-flash",
-                "gemini-2.5-pro",
+                "gemini-2.5-pro-preview-05-06",
             ]
             result = select_model("Привет!", current_model="gemini-2.0-flash")
             assert result is None
@@ -75,7 +75,7 @@ class TestModelSelector:
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
                 "gemini-2.0-flash",
-                "gemini-2.5-pro",
+                "gemini-2.5-pro-preview-05-06",
             ]
             result = select_model(
                 "Расскажи о погоде в Москве сегодня",
@@ -257,7 +257,7 @@ class TestGDPRCommands:
         mock_update.message.reply_document = AsyncMock()
 
         mock_chat_state = MagicMock()
-        mock_chat_state.model = "gemini-2.5-pro"
+        mock_chat_state.model = "gemini-2.5-pro-preview-05-06"
         mock_chat_state.thinking_level = "medium"
         mock_chat_state.search_enabled = True
         mock_chat_state.history = [{"role": "user", "parts": ["test"]}]
@@ -277,7 +277,7 @@ class TestGDPRCommands:
         content = doc.read().decode("utf-8")
         data = json.loads(content)
         assert data["user_id"] == 12345
-        assert data["current_model"] == "gemini-2.5-pro"
+        assert data["current_model"] == "gemini-2.5-pro-preview-05-06"
 
     @pytest.mark.asyncio
     async def test_deleteme_shows_confirmation(self):

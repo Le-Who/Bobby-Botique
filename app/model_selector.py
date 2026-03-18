@@ -3,7 +3,7 @@
 
 Analyzes user input characteristics to recommend the optimal model:
 - Short queries → fast models (e.g. gemini-2.0-flash)
-- Complex reasoning → thinking models (e.g. gemini-2.5-pro)
+- Complex reasoning → thinking models (e.g. gemini-2.5-pro-preview)
 - Image analysis → multimodal models
 - Code tasks → code-optimized models
 
@@ -34,7 +34,7 @@ class SelectionResult:
 # Order matters: first match wins within _find_model.
 # Models are ranked roughly by capability tier.
 _MODEL_TIER = {
-    "pro": 4,  # gemini-2.5-pro
+    "pro": 4,  # gemini-2.5-pro-preview-05-06
     "2.5-flash": 3,  # gemini-2.5-flash (thinking-capable)
     "flash-lite": 1,  # gemini-2.5-flash-lite / flash-lite-latest
 }

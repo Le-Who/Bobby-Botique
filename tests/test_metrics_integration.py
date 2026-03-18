@@ -43,7 +43,7 @@ class TestMetricsIntegration(unittest.TestCase):
 
             async def simulate_events():
                 # 1. Record API Call
-                await self.collector.record_api_call("gemini", model="gemini-2.5-pro")
+                await self.collector.record_api_call("gemini", model="gemini-2.5-pro-preview-05-06")
                 # 2. Record Error (1)
                 await self.collector.record_error("TestError", "Simulated Error 1")
                 # 3. Record Error (2)
