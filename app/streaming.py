@@ -197,7 +197,7 @@ class StreamingWriter:
 
         # Draft mode: supported if adapter has draft capability
         self._use_drafts = chat_type == "private" and getattr(adapter, "_bot", None) is not None
-        # P1 fix: track whether placeholder was deleted for draft mode
+        # Track whether placeholder was deleted for draft mode
         self._placeholder_deleted = False
 
         # Mode-specific debounce
@@ -275,7 +275,7 @@ class StreamingWriter:
 
         # Draft mode mid-stream: use sendMessageDraft (no cursor needed)
         if self._use_drafts and not final:
-            # P1: one-time — delete placeholder before first draft
+            # One-time: delete placeholder before first draft
             if not await self._prepare_draft_mode():
                 # Fell back to classic, retry flush
                 await self._flush(final=final)
@@ -307,7 +307,7 @@ class StreamingWriter:
                         e,
                     )
                     self._switch_to_classic()
-                    # P1: if placeholder was deleted, create a recovery message
+                    # If placeholder was deleted, create a recovery message
                     if self._placeholder_deleted:
                         try:
                             display = text + STREAMING_INDICATOR
@@ -324,7 +324,7 @@ class StreamingWriter:
                         await self._flush(final=final)
             return
 
-        # P1: draft mode finalize — send new permanent message (placeholder was deleted)
+        # Draft mode finalize — send new permanent message (placeholder was deleted)
         if self._placeholder_deleted and final:
             try:
                 formatted_text, parse_mode = TelegramFormatter.format_text(text)
@@ -413,7 +413,7 @@ class StreamingWriter:
             formatted_frozen, parse_mode = TelegramFormatter.format_text(frozen_text)
             formatted_frozen = sanitize_html_tags(formatted_frozen)
             if self._placeholder_deleted:
-                # P1: no placeholder to edit — send frozen text as new message
+                # No placeholder to edit — send frozen text as new message
                 await self._adapter.send_final_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
                 self._placeholder_deleted = False
                 # BUG-1 fix: new message is a regular reply, not draft-capable.
