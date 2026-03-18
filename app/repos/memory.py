@@ -113,7 +113,7 @@ async def store_memory(
                     (
                         user_id,
                         content[:10000],  # Truncate
-                        f"[{','.join(str(v) for v in embedding)}]",
+                        embedding,
                         source_type,
                         __import__("json").dumps(metadata or {}),
                         expires_at,
@@ -153,8 +153,6 @@ async def search_memories(
     if query_embedding is None:
         return []
 
-    embedding_str = f"[{','.join(str(v) for v in query_embedding)}]"
-
     try:
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)
@@ -170,7 +168,7 @@ async def search_memories(
                     ORDER BY similarity DESC
                     LIMIT $4
                     """,
-                    (user_id, embedding_str, min_similarity, limit),
+                    (user_id, query_embedding, min_similarity, limit),
                     conn=conn,
                 )
                 return [

@@ -9,11 +9,15 @@ import sys
 from pathlib import Path
 
 import pytest
-from dotenv import load_dotenv
 
-_env_path = Path(__file__).resolve().parent.parent / ".env"
-if _env_path.exists():
-    load_dotenv(_env_path, override=False)
+try:
+    from dotenv import load_dotenv
+
+    _env_path = Path(__file__).resolve().parent.parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)
+except ImportError:
+    pass
 
 
 def _quiet_exception_handler(loop, context):
