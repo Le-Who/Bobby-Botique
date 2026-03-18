@@ -21,6 +21,7 @@ def register_heartbeat(message_id: int, event: asyncio.Event, chat: Any = None) 
     _HEARTBEAT_EVENTS[message_id] = event
 
     if chat:
+
         async def _heartbeat_loop() -> None:
             try:
                 while not event.is_set():

@@ -207,8 +207,9 @@ async def test_logout_clears_session(client):
 @pytest.mark.asyncio
 async def test_generate_csp_nonce_format():
     """Test that generated CSP nonce has correct format and length directly."""
-    from app.web import quart_app, generate_csp_nonce
     from quart import g
+
+    from app.web import generate_csp_nonce, quart_app
 
     async with quart_app.test_request_context("/"):
         await generate_csp_nonce()
@@ -217,14 +218,15 @@ async def test_generate_csp_nonce_format():
         # A 16-byte random sequence encoded with base64url should be exactly 22 chars long
         assert len(nonce) == 22
         # Check that it's URL safe (alphanumeric, -, _)
-        assert re.match(r'^[A-Za-z0-9_-]+$', nonce) is not None
+        assert re.match(r"^[A-Za-z0-9_-]+$", nonce) is not None
 
 
 @pytest.mark.asyncio
 async def test_generate_csp_nonce_uniqueness():
     """Test that generated CSP nonces are unique per request."""
-    from app.web import quart_app, generate_csp_nonce
     from quart import g
+
+    from app.web import generate_csp_nonce, quart_app
 
     async with quart_app.test_request_context("/"):
         await generate_csp_nonce()

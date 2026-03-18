@@ -91,11 +91,7 @@ class TestTelegramMessageAdapter:
         new_adapter = await adapter.reply_new_message("fallback", "HTML")
 
         # Should catch the error and fall back to sending a new message
-        mock_bot.send_message.assert_called_once_with(
-            chat_id=123,
-            text="fallback",
-            parse_mode="HTML"
-        )
+        mock_bot.send_message.assert_called_once_with(chat_id=123, text="fallback", parse_mode="HTML")
 
         assert isinstance(new_adapter, TelegramMessageAdapter)
         assert new_adapter.last_message is fallback_msg

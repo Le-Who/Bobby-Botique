@@ -1,6 +1,9 @@
 import logging
+
 import pytest
+
 from app.metrics import RoleConversationMetricsCollector
+
 
 @pytest.mark.asyncio
 async def test_record_custom_role_creation(caplog):
