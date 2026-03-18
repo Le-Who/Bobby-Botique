@@ -117,16 +117,31 @@ async def setup_row_level_security(db_query):
             logging.info("RLS already configured, skipping setup.")
             return
 
+        alter_statements = []
+        safe_tables = []
+
         for table in VALID_TABLES:
             if not _SAFE_IDENTIFIER_RE.match(table):
                 logging.error("Refusing to use unsafe table name in SQL: %s", table)
                 continue
+            safe_tables.append(table)
+            quoted_table = quote_ident(table)
+            alter_statements.append(f"ALTER TABLE {quoted_table} ENABLE ROW LEVEL SECURITY;")
+
+        if alter_statements:
+            combined_query = "\n".join(alter_statements)
             try:
-                quoted_table = quote_ident(table)
-                await db_query(f"ALTER TABLE {quoted_table} ENABLE ROW LEVEL SECURITY;")
+                await db_query(combined_query)
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+                logging.error("Failed to batch enable RLS: %s", e)
+                # If batch fails, we log it and continue. Policies may fail to create properly.
+
+        for table in safe_tables:
+            try:
                 await create_rls_policies(table, db_query)
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.warning("Failed to enable RLS for table %s: %s", table, e)
+                logging.warning("Failed to create RLS policies for table %s: %s", table, e)
+
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.error("Error setting up RLS: %s", e, exc_info=True)
 
