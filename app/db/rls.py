@@ -143,30 +143,37 @@ async def create_rls_policies(table_name: str, db_query):
             logging.warning("No RLS configuration found for table: %s", table_name)
             return
 
+        try:
+            # Fetch all existing policies for this table in one query
+            existing_records = await db_query(
+                "SELECT policyname FROM pg_policies WHERE tablename = $1",
+                (table_name,),
+            )
+            existing_policies = {record["policyname"] for record in existing_records} if existing_records else set()
+        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+            logging.error("Failed to fetch existing policies for table %s: %s", table_name, e)
+            return
+
         for policy_cfg in policies:
             policy_name = policy_cfg["name"]
 
+            if policy_name in existing_policies:
+                continue
+
             try:
-                # Check if policy exists
-                existing_policy = await db_query(
-                    "SELECT 1 FROM pg_policies WHERE tablename = $1 AND policyname = $2",
-                    (table_name, policy_name),
-                )
+                # Construct SQL
+                if "sql" in policy_cfg:
+                    sql = policy_cfg["sql"]
+                elif "template" in policy_cfg:
+                    sql = policy_cfg["template"].format(
+                        policy_name=quote_ident(policy_name),
+                        table_name=quote_ident(table_name),
+                    )
+                else:
+                    logging.error("Missing SQL or template for policy %s", policy_name)
+                    continue
 
-                if not existing_policy:
-                    # Construct SQL
-                    if "sql" in policy_cfg:
-                        sql = policy_cfg["sql"]
-                    elif "template" in policy_cfg:
-                        sql = policy_cfg["template"].format(
-                            policy_name=quote_ident(policy_name),
-                            table_name=quote_ident(table_name),
-                        )
-                    else:
-                        logging.error("Missing SQL or template for policy %s", policy_name)
-                        continue
-
-                    await db_query(sql)
+                await db_query(sql)
 
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.error(
