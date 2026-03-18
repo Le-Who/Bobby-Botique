@@ -113,6 +113,11 @@ class TelegramMessageAdapter(StreamingUIAdapter):
         if reply_id:
             kwargs["reply_to_message_id"] = reply_id
             kwargs["allow_sending_without_reply"] = True
+
+        message_thread_id = getattr(self._msg, "message_thread_id", None)
+        if message_thread_id:
+            kwargs["message_thread_id"] = message_thread_id
+
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup
         new_msg = await self._bot.send_message(**kwargs)
