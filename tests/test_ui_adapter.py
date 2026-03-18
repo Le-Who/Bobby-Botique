@@ -79,6 +79,28 @@ class TestTelegramMessageAdapter:
         assert isinstance(new_adapter, TelegramMessageAdapter)
 
     @pytest.mark.asyncio
+    async def test_reply_new_message_fallback_when_deleted(self, adapter, mock_message, mock_bot):
+        from telegram.error import TelegramError
+
+        # Simulate original message being deleted
+        mock_message.reply_text.side_effect = TelegramError("Message to be replied not found")
+
+        fallback_msg = AsyncMock()
+        mock_bot.send_message.return_value = fallback_msg
+
+        new_adapter = await adapter.reply_new_message("fallback", "HTML")
+
+        # Should catch the error and fall back to sending a new message
+        mock_bot.send_message.assert_called_once_with(
+            chat_id=123,
+            text="fallback",
+            parse_mode="HTML"
+        )
+
+        assert isinstance(new_adapter, TelegramMessageAdapter)
+        assert new_adapter.last_message is fallback_msg
+
+    @pytest.mark.asyncio
     async def test_delete_placeholder(self, adapter, mock_message):
         await adapter.delete_placeholder()
         mock_message.delete.assert_called_once()
