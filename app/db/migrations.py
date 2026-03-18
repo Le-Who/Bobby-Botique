@@ -97,9 +97,13 @@ async def _run_legacy_migrations(db_query):
             "file_size": "BIGINT",
             "created_at": "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP",
         }
+        cols_to_add = []
         for col, col_type in required_columns.items():
             if col not in doc_column_names:
-                await db_query(f"ALTER TABLE user_documents ADD COLUMN {col} {col_type};")
+                cols_to_add.append(f"ADD COLUMN {col} {col_type}")
+
+        if cols_to_add:
+            await db_query(f"ALTER TABLE user_documents {', '.join(cols_to_add)};")
 
         users_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
         user_col_names = {c["column_name"] for c in users_columns}
