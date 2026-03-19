@@ -8,7 +8,12 @@ import re
 
 import pytest
 
-from app.utils.text_format import format_text, markdown_to_html, sanitize_html_tags, split_text_safe
+from app.utils.text_format import (
+    format_text,
+    markdown_to_html,
+    sanitize_html_tags,
+    split_text_safe,
+)
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -122,7 +127,18 @@ class TestSanitizationRoundTrip:
             "plain text with no formatting",
             "",
         ],
-        ids=["bold", "italic", "strike", "code", "codeblock", "quote", "heading", "link", "plain", "empty"],
+        ids=[
+            "bold",
+            "italic",
+            "strike",
+            "code",
+            "codeblock",
+            "quote",
+            "heading",
+            "link",
+            "plain",
+            "empty",
+        ],
     )
     def test_individual_format_round_trip(self, md):
         result = _full_pipeline(md)
@@ -231,7 +247,15 @@ class TestSpecialCharacters:
             "C:\\Users\\admin\\Desktop",
             "Формула: x² + y² = z²",
         ],
-        ids=["lt_gt", "ampersand", "quotes", "xss", "special_chars", "backslash", "unicode"],
+        ids=[
+            "lt_gt",
+            "ampersand",
+            "quotes",
+            "xss",
+            "special_chars",
+            "backslash",
+            "unicode",
+        ],
     )
     def test_special_chars_safe(self, text):
         result = _full_pipeline(text)

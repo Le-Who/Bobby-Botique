@@ -27,13 +27,21 @@ async def test_save_conversation_with_title():
     update, context = make_update(args=["My", "Conversation"])
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch(
             "app.handlers.cmd_conversations.get_user_chat",
             new_callable=AsyncMock,
             return_value=SimpleNamespace(history=[], system_prompt=None),
         ),
-        patch("app.handlers.cmd_conversations.save_conversation", new_callable=AsyncMock, return_value=42),
+        patch(
+            "app.handlers.cmd_conversations.save_conversation",
+            new_callable=AsyncMock,
+            return_value=42,
+        ),
     ):
         from app.handlers.cmd_conversations import save_conversation_command
 
@@ -51,13 +59,21 @@ async def test_save_conversation_failure():
     update, context = make_update(args=["Title"])
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch(
             "app.handlers.cmd_conversations.get_user_chat",
             new_callable=AsyncMock,
             return_value=SimpleNamespace(history=[], system_prompt=None),
         ),
-        patch("app.handlers.cmd_conversations.save_conversation", new_callable=AsyncMock, return_value=None),
+        patch(
+            "app.handlers.cmd_conversations.save_conversation",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         from app.handlers.cmd_conversations import save_conversation_command
 
@@ -76,7 +92,11 @@ async def test_conversations_command_empty():
     update, context = make_update()
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.handlers.cmd_conversations.menus") as mock_menus,
     ):
         mock_menus.get_conversations_menu_content = AsyncMock(return_value=("📂 Нет бесед", None, None))
@@ -111,8 +131,16 @@ async def test_switch_conversation_success():
     update, context = make_update(args=["5"])
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.cmd_conversations.switch_to_conversation", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "app.handlers.cmd_conversations.switch_to_conversation",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.handlers.cmd_conversations.role_conv_metrics") as mock_metrics,
     ):
         mock_metrics.record_conversation_switched = AsyncMock()

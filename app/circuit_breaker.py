@@ -112,7 +112,11 @@ class CircuitBreaker:
                     await self._on_failure(e)
                     raise
                 else:
-                    logging.warning("Circuit Breaker '%s' received unexpected exception: %s", self.name, e)
+                    logging.warning(
+                        "Circuit Breaker '%s' received unexpected exception: %s",
+                        self.name,
+                        e,
+                    )
                     raise
 
         # Reacquire lock to record success
@@ -133,12 +137,21 @@ class CircuitBreaker:
         self._total_failures += 1
         self._last_failure_time = time.time()
 
-        logging.warning("Circuit Breaker '%s' failure #%d: %s", self.name, self._failure_count, exception)
+        logging.warning(
+            "Circuit Breaker '%s' failure #%d: %s",
+            self.name,
+            self._failure_count,
+            exception,
+        )
 
         # Check if we should open the circuit
         if self._failure_count >= self.config.failure_threshold and self._state != CircuitState.OPEN:
             await self._set_state(CircuitState.OPEN)
-            logging.error("Circuit Breaker '%s' opened after %d failures", self.name, self._failure_count)
+            logging.error(
+                "Circuit Breaker '%s' opened after %d failures",
+                self.name,
+                self._failure_count,
+            )
 
     async def _set_state(self, new_state: CircuitState) -> None:
         """Changes circuit breaker state."""
@@ -146,7 +159,12 @@ class CircuitBreaker:
         self._state = new_state
 
         if old_state != new_state:
-            logging.info("Circuit Breaker '%s' state changed: %s -> %s", self.name, old_state.value, new_state.value)
+            logging.info(
+                "Circuit Breaker '%s' state changed: %s -> %s",
+                self.name,
+                old_state.value,
+                new_state.value,
+            )
 
     def _should_attempt_reset(self) -> bool:
         """Determines if circuit should attempt reset."""
@@ -187,7 +205,12 @@ class CircuitBreaker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logging.error("Circuit Breaker '%s' monitoring error: %s", self.name, e, exc_info=True)
+                logging.error(
+                    "Circuit Breaker '%s' monitoring error: %s",
+                    self.name,
+                    e,
+                    exc_info=True,
+                )
 
     def get_state(self) -> CircuitState:
         """Returns current circuit breaker state."""
@@ -204,7 +227,7 @@ class CircuitBreaker:
             "total_successes": self._total_successes,
             "last_failure_time": self._last_failure_time,
             "last_success_time": self._last_success_time,
-            "success_rate": (self._total_successes / self._total_requests * 100) if self._total_requests > 0 else 0,
+            "success_rate": ((self._total_successes / self._total_requests * 100) if self._total_requests > 0 else 0),
         }
 
     async def force_open(self) -> None:

@@ -63,7 +63,11 @@ class TestModelButtonCallback:
 
         with (
             patch("app.handlers.cb_models._is_user_busy", return_value=False),
-            patch("app.handlers.cb_models.get_user_chat", new_callable=AsyncMock, return_value=mock_chat_state),
+            patch(
+                "app.handlers.cb_models.get_user_chat",
+                new_callable=AsyncMock,
+                return_value=mock_chat_state,
+            ),
             patch("app.handlers.cb_models.update_user_chat", new_callable=AsyncMock) as mock_update,
             patch("app.handlers.cb_models.settings") as mock_settings,
             patch("app.handlers.cb_models.get_openrouter_keys", return_value=None),
@@ -71,7 +75,11 @@ class TestModelButtonCallback:
         ):
             mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite-preview"]
             mock_settings.OPENROUTER_AVAILABLE_MODELS = []
-            mock_menus.get_model_menu_content.return_value = ("text", "Markdown", MagicMock())
+            mock_menus.get_model_menu_content.return_value = (
+                "text",
+                "Markdown",
+                MagicMock(),
+            )
 
             await model_button_callback(update, MagicMock())
 
@@ -141,7 +149,11 @@ class TestSwitchModelCallback:
         with (
             patch("app.handlers.cb_models._is_user_busy", return_value=False),
             patch("app.handlers.cb_models.settings") as mock_settings,
-            patch("app.handlers.cb_models.get_user_chat", new_callable=AsyncMock, return_value=mock_chat_state),
+            patch(
+                "app.handlers.cb_models.get_user_chat",
+                new_callable=AsyncMock,
+                return_value=mock_chat_state,
+            ),
             patch("app.handlers.cb_models.update_user_chat", new_callable=AsyncMock) as mock_update,
         ):
             mock_settings.AVAILABLE_MODELS = ["gemini-3.1-flash-lite-preview"]

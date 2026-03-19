@@ -160,7 +160,10 @@ async def login_page():
             error = "Слишком много попыток входа. Повторите через 5 минут."
             csrf_token = secrets.token_hex(32)
             session["csrf_token"] = csrf_token
-            return await render_template("login.html", error=error, csrf_token=csrf_token), 429
+            return (
+                await render_template("login.html", error=error, csrf_token=csrf_token),
+                429,
+            )
 
         form = await request.form
         password = form.get("password", "")

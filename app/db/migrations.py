@@ -40,7 +40,10 @@ async def run_migrations(db_query, db_manager):
     # 3. Find migration files
     migrations_dir = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts" / "migrations"
     if not migrations_dir.exists():
-        logging.info("No migrations directory found at %s — skipping file migrations", migrations_dir)
+        logging.info(
+            "No migrations directory found at %s — skipping file migrations",
+            migrations_dir,
+        )
     else:
         sql_files = sorted(migrations_dir.glob("*.sql"))
 

@@ -73,7 +73,11 @@ async def test_handle_photo_success():
             new_callable=AsyncMock,
             return_value=("This is a mountain landscape.", 10),
         ),
-        patch("app.handlers.ai_photo.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
+        patch(
+            "app.handlers.ai_photo.handle_ai_response_error",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
         patch("app.handlers.ai_photo.send_long_message", new_callable=AsyncMock) as _mock_send,
         patch("app.handlers.ai_photo.update_user_chat", new_callable=AsyncMock),
     ):
@@ -99,14 +103,26 @@ async def test_handle_photo_empty_response():
 
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
-        patch("app.streaming.stream_and_display", new_callable=AsyncMock, return_value=("", False, AsyncMock())),
-        patch("app.handlers.ai_photo._get_ai_response_with_routing", new_callable=AsyncMock, return_value=(None, 0)),
+        patch(
+            "app.streaming.stream_and_display",
+            new_callable=AsyncMock,
+            return_value=("", False, AsyncMock()),
+        ),
+        patch(
+            "app.handlers.ai_photo._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value=(None, 0),
+        ),
         patch(
             "app.handlers.ai_core._resolve_ai_request",
             new_callable=AsyncMock,
             return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
         ),
-        patch("app.handlers.ai_photo.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
+        patch(
+            "app.handlers.ai_photo.handle_ai_response_error",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
         patch("app.handlers.ai_photo.send_long_message", new_callable=AsyncMock) as mock_send,
     ):
         from app.handlers.ai_photo import _handle_photo
@@ -146,7 +162,9 @@ async def test_handle_photo_ai_error():
             return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
         ),
         patch(
-            "app.handlers.ai_photo.handle_ai_response_error", new_callable=AsyncMock, return_value=True
+            "app.handlers.ai_photo.handle_ai_response_error",
+            new_callable=AsyncMock,
+            return_value=True,
         ),  # Error was handled
     ):
         from app.handlers.ai_photo import _handle_photo

@@ -56,10 +56,22 @@ def run_patched():
             patch("app.handlers.menus.get_role_data", db_mock.get_role_data),
             patch("app.handlers.menus.get_conversation_count", AsyncMock(return_value=0)),
             patch("app.handlers.menus.get_user_conversations", AsyncMock(return_value=[])),
-            patch("app.handlers.menus.get_user_custom_roles", AsyncMock(return_value=custom_roles or [])),
-            patch("app.handlers.menus.get_user_custom_roles_full", AsyncMock(return_value=custom_roles_full or [])),
-            patch("app.handlers.menus.get_custom_role_count", AsyncMock(return_value=custom_role_count)),
-            patch("app.handlers.menus.get_user_today_request_count", AsyncMock(return_value=0)),
+            patch(
+                "app.handlers.menus.get_user_custom_roles",
+                AsyncMock(return_value=custom_roles or []),
+            ),
+            patch(
+                "app.handlers.menus.get_user_custom_roles_full",
+                AsyncMock(return_value=custom_roles_full or []),
+            ),
+            patch(
+                "app.handlers.menus.get_custom_role_count",
+                AsyncMock(return_value=custom_role_count),
+            ),
+            patch(
+                "app.handlers.menus.get_user_today_request_count",
+                AsyncMock(return_value=0),
+            ),
             patch("app.handlers.menus.settings") as mock_settings,
             patch("app.handlers.menus.TelegramFormatter") as mock_formatter,
         ):

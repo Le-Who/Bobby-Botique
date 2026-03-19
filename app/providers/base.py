@@ -25,7 +25,12 @@ from app.resilience_policy import ResiliencePolicy, run_with_resilience
 # ── Thinking config helpers ──────────────────────────────────────────
 
 _THINKING_BUDGET_MAP = {"off": 0, "low": 1024, "medium": 8192, "high": 24576}
-_THINKING_LEVEL_MAP: dict[str, str] = {"off": "minimal", "low": "low", "medium": "medium", "high": "high"}
+_THINKING_LEVEL_MAP: dict[str, str] = {
+    "off": "minimal",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+}
 
 
 def _is_gemini3_model(model_name: str) -> bool:

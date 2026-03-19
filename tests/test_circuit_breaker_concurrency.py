@@ -10,7 +10,10 @@ from app.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitSta
 async def test_circuit_breaker_concurrency():
     """Verify that the circuit breaker lock is split and correctly permits concurrent executions."""
 
-    cb = CircuitBreaker("ConcurrencyTest", CircuitBreakerConfig(failure_threshold=3, expected_exception=(ValueError,)))
+    cb = CircuitBreaker(
+        "ConcurrencyTest",
+        CircuitBreakerConfig(failure_threshold=3, expected_exception=(ValueError,)),
+    )
 
     in_flight = 0
     max_in_flight = 0

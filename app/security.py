@@ -298,9 +298,9 @@ class InputSanitizer:
 
             sanitized["from"] = {  # type: ignore[assignment]  # mixed value types in dict
                 "id": user.get("id"),
-                "username": self.sanitize_text(user.get("username", ""), 32) if user.get("username") else None,
-                "first_name": self.sanitize_text(user.get("first_name", ""), 64) if user.get("first_name") else None,
-                "last_name": self.sanitize_text(user.get("last_name", ""), 64) if user.get("last_name") else None,
+                "username": (self.sanitize_text(user.get("username", ""), 32) if user.get("username") else None),
+                "first_name": (self.sanitize_text(user.get("first_name", ""), 64) if user.get("first_name") else None),
+                "last_name": (self.sanitize_text(user.get("last_name", ""), 64) if user.get("last_name") else None),
             }
 
         # Validate chat data
@@ -312,8 +312,8 @@ class InputSanitizer:
             sanitized["chat"] = {  # type: ignore[assignment]  # mixed value types in dict
                 "id": chat.get("id"),
                 "type": chat.get("type"),
-                "title": self.sanitize_text(chat.get("title", ""), 255) if chat.get("title") else None,
-                "username": self.sanitize_text(chat.get("username", ""), 32) if chat.get("username") else None,
+                "title": (self.sanitize_text(chat.get("title", ""), 255) if chat.get("title") else None),
+                "username": (self.sanitize_text(chat.get("username", ""), 32) if chat.get("username") else None),
             }
 
         # Copy other safe fields
@@ -481,7 +481,10 @@ class RateLimiter:
             # Check limit
             if len(user_requests) >= self.max_requests:
                 logging.warning(
-                    "Rate limit exceeded for user %s: %s/%s requests", user_id, len(user_requests), self.max_requests
+                    "Rate limit exceeded for user %s: %s/%s requests",
+                    user_id,
+                    len(user_requests),
+                    self.max_requests,
                 )
                 return False
 
@@ -523,7 +526,7 @@ class RateLimiter:
                 "max_requests": self.max_requests,
                 "window_seconds": self.window_seconds,
                 "remaining": max(0, self.max_requests - len(recent_requests)),
-                "reset_at": min(recent_requests) + self.window_seconds if recent_requests else current_time,
+                "reset_at": (min(recent_requests) + self.window_seconds if recent_requests else current_time),
             }
 
     async def reset_user_limit(self, user_id: int):

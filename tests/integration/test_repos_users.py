@@ -114,7 +114,10 @@ class TestUserStatePersistence:
             "Updated",
         )
 
-        row = await conn.fetchrow("SELECT document_mode, manual_role_title FROM user_state WHERE user_id = $1", user_id)
+        row = await conn.fetchrow(
+            "SELECT document_mode, manual_role_title FROM user_state WHERE user_id = $1",
+            user_id,
+        )
         assert row["document_mode"] is True
         assert row["manual_role_title"] == "Updated"
 
@@ -131,7 +134,11 @@ class TestFeedbackPersistence:
             12345,
             "up",
         )
-        row = await conn.fetchrow("SELECT rating FROM feedback WHERE user_id = $1 AND message_id = $2", 999999, 12345)
+        row = await conn.fetchrow(
+            "SELECT rating FROM feedback WHERE user_id = $1 AND message_id = $2",
+            999999,
+            12345,
+        )
         assert row["rating"] == "up"
 
     @pytest.mark.asyncio

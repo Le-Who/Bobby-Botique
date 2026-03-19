@@ -115,7 +115,7 @@ async def get_document_by_id(document_id: int, user_id: int) -> dict[str, Any] |
                 "id": row["id"],
                 "filename": row["filename"],
                 "pages": row["pages"],
-                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "created_at": (row["created_at"].isoformat() if row["created_at"] else None),
                 "file_size": row["file_size"],
                 "file_hash": row["file_hash"],
             }
@@ -142,7 +142,7 @@ async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
                     "id": row["id"],
                     "filename": row["filename"],
                     "pages": row["pages"],
-                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                    "created_at": (row["created_at"].isoformat() if row["created_at"] else None),
                     "file_size": row["file_size"],
                     "file_hash": row["file_hash"],
                 }
@@ -249,7 +249,7 @@ async def get_document_stats() -> dict[str, Any]:
                 "total_documents": stats["doc_count"],
                 "total_size_chars": stats["total_size"],
                 "average_size_chars": stats["avg_size"],
-                "total_size_mb": stats["total_size"] / (1024 * 1024) if stats["total_size"] else 0,
+                "total_size_mb": (stats["total_size"] / (1024 * 1024) if stats["total_size"] else 0),
             }
 
         return {
@@ -295,7 +295,7 @@ async def get_user_document_stats(user_id: int) -> dict[str, Any]:
                 "document_count": doc_count,
                 "total_size_chars": stats["total_size"],
                 "average_size_chars": stats["avg_size"],
-                "total_size_mb": stats["total_size"] / (1024 * 1024) if stats["total_size"] else 0,
+                "total_size_mb": (stats["total_size"] / (1024 * 1024) if stats["total_size"] else 0),
                 "limit_reached": doc_count >= settings.MAX_DOCUMENTS_PER_USER,
                 "can_upload": doc_count < settings.MAX_DOCUMENTS_PER_USER,
             }

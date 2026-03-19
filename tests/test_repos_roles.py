@@ -18,7 +18,10 @@ def mock_db_query():
 async def test_get_user_custom_roles(mock_db_query):
     from app.repos.roles import get_user_custom_roles
 
-    mock_db_query.return_value = [{"id": 1, "title": "Role 1"}, {"id": 2, "title": "Role 2"}]
+    mock_db_query.return_value = [
+        {"id": 1, "title": "Role 1"},
+        {"id": 2, "title": "Role 2"},
+    ]
     user_id = 42
 
     result = await get_user_custom_roles(user_id)

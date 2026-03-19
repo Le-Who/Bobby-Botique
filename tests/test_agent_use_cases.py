@@ -40,7 +40,11 @@ class TestResolveAiRequest:
         with (
             patch("app.agent_use_cases.settings", mock_settings),
             patch("app.agent_use_cases.get_use_openrouter", return_value=False),
-            patch("app.agent_use_cases.get_available_gemini_key", new_callable=AsyncMock, return_value=fake_key),
+            patch(
+                "app.agent_use_cases.get_available_gemini_key",
+                new_callable=AsyncMock,
+                return_value=fake_key,
+            ),
         ):
             key, model, status = await usecase.resolve_ai_request("gemini-2.5-flash")
 
@@ -75,7 +79,11 @@ class TestResolveAiRequest:
         with (
             patch("app.agent_use_cases.settings", mock_settings),
             patch("app.agent_use_cases.get_use_openrouter", return_value=False),
-            patch("app.agent_use_cases.get_available_gemini_key", new_callable=AsyncMock, return_value=None),
+            patch(
+                "app.agent_use_cases.get_available_gemini_key",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
             patch("app.agent_use_cases.invalidate_key_cache", new_callable=AsyncMock),
         ):
             key, model, status = await usecase.resolve_ai_request("gemini-2.5-flash")
@@ -123,7 +131,11 @@ class TestResolveAiRequest:
         with (
             patch("app.agent_use_cases.settings", mock_settings),
             patch("app.agent_use_cases.get_openrouter_keys", return_value=["k1"]),
-            patch("app.agent_use_cases.get_available_openrouter_key", new_callable=AsyncMock, return_value=fake_key),
+            patch(
+                "app.agent_use_cases.get_available_openrouter_key",
+                new_callable=AsyncMock,
+                return_value=fake_key,
+            ),
         ):
             key, model, status = await usecase.resolve_ai_request("anthropic/claude-3-sonnet")
 
@@ -149,7 +161,10 @@ class TestIncrementKeyUsage:
     async def test_openrouter_model_increments_openrouter(self, usecase):
         with (
             patch("app.agent_use_cases.get_use_openrouter", return_value=False),
-            patch("app.agent_use_cases.increment_openrouter_key_usage", new_callable=AsyncMock) as mock_inc,
+            patch(
+                "app.agent_use_cases.increment_openrouter_key_usage",
+                new_callable=AsyncMock,
+            ) as mock_inc,
         ):
             await usecase.increment_key_usage("hash1", "anthropic/claude-3-sonnet")
             mock_inc.assert_called_once()

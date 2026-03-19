@@ -108,9 +108,19 @@ class APILogger:
         }
 
         if success:
-            self.logger.info("%s %s RESPONSE COMPLETED: %s", _EMOJI_OK, api.upper(), self._format_log(data))
+            self.logger.info(
+                "%s %s RESPONSE COMPLETED: %s",
+                _EMOJI_OK,
+                api.upper(),
+                self._format_log(data),
+            )
         else:
-            self.logger.error("%s %s RESPONSE FAILED: %s", _EMOJI_FAIL, api.upper(), self._format_log(data))
+            self.logger.error(
+                "%s %s RESPONSE FAILED: %s",
+                _EMOJI_FAIL,
+                api.upper(),
+                self._format_log(data),
+            )
 
         return duration
 

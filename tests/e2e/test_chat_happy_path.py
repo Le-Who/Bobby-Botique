@@ -76,7 +76,9 @@ async def test_e2e_happy_path_conversation(db_conn_with_key):
     # We expect 2 messages in the history
     # We expect 2 messages in the history
     rows = await db_query(
-        "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC", (user_id,), conn=conn
+        "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC",
+        (user_id,),
+        conn=conn,
     )
     assert len(rows) == 2
 

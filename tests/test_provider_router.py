@@ -18,7 +18,11 @@ class TestProviderRouter:
 
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
-            return_value=({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None)
+            return_value=(
+                {"api_key": "key1", "key_hash": "hash1"},
+                "gemini-3.1-flash-lite-preview",
+                None,
+            )
         )
         mock_use_case.get_ai_response = AsyncMock(return_value=("Hello!", 10))
         mock_use_case.increment_key_usage = AsyncMock()
@@ -69,8 +73,16 @@ class TestProviderRouter:
         # First call returns a key that produces an error, second call succeeds
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
-                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3.1-flash-lite-preview", None),
+                (
+                    {"api_key": "key1", "key_hash": "hash1"},
+                    "gemini-3.1-flash-lite-preview",
+                    None,
+                ),
+                (
+                    {"api_key": "key2", "key_hash": "hash2"},
+                    "gemini-3.1-flash-lite-preview",
+                    None,
+                ),
             ]
         )
         mock_use_case.get_ai_response = AsyncMock(
@@ -115,7 +127,11 @@ class TestProviderRouter:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
+                (
+                    {"api_key": "key1", "key_hash": "hash1"},
+                    "gemini-3.1-flash-lite-preview",
+                    None,
+                ),
                 (None, None, "all_exhausted"),
             ]
         )
@@ -150,8 +166,16 @@ class TestProviderRouter:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
-                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3.1-flash-lite-preview", None),
+                (
+                    {"api_key": "key1", "key_hash": "hash1"},
+                    "gemini-3.1-flash-lite-preview",
+                    None,
+                ),
+                (
+                    {"api_key": "key2", "key_hash": "hash2"},
+                    "gemini-3.1-flash-lite-preview",
+                    None,
+                ),
             ]
         )
         mock_use_case.get_ai_response = AsyncMock(
@@ -208,7 +232,11 @@ class TestProviderRouter:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
+                (
+                    {"api_key": "key1", "key_hash": "hash1"},
+                    "gemini-3.1-flash-lite-preview",
+                    None,
+                ),
                 (None, None, "all_exhausted"),
             ]
         )
@@ -243,9 +271,21 @@ class TestProviderRouter:
         # Then fallback: resolve succeeds for fallback model
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3-flash-preview", None),
-                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3-flash-preview", None),
-                ({"api_key": "key3", "key_hash": "hash3"}, "gemini-3-flash-preview", None),
+                (
+                    {"api_key": "key1", "key_hash": "hash1"},
+                    "gemini-3-flash-preview",
+                    None,
+                ),
+                (
+                    {"api_key": "key2", "key_hash": "hash2"},
+                    "gemini-3-flash-preview",
+                    None,
+                ),
+                (
+                    {"api_key": "key3", "key_hash": "hash3"},
+                    "gemini-3-flash-preview",
+                    None,
+                ),
                 # Fallback call for "gemini-2.5-flash"
                 ({"api_key": "key1", "key_hash": "hash1"}, "gemini-2.5-flash", None),
             ]
@@ -297,15 +337,30 @@ class TestProviderRouter:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
-                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3.1-flash-lite-preview", None),
-                ({"api_key": "key3", "key_hash": "hash3"}, "gemini-3.1-flash-lite-preview", None),
+                (
+                    {"api_key": "key1", "key_hash": "hash1"},
+                    "gemini-3.1-flash-lite-preview",
+                    None,
+                ),
+                (
+                    {"api_key": "key2", "key_hash": "hash2"},
+                    "gemini-3.1-flash-lite-preview",
+                    None,
+                ),
+                (
+                    {"api_key": "key3", "key_hash": "hash3"},
+                    "gemini-3.1-flash-lite-preview",
+                    None,
+                ),
             ]
         )
         mock_use_case.get_ai_response = AsyncMock(
             side_effect=[
                 ("🔑 Неверный API ключ.", None),  # permanent
-                ("🚫 Достигнут лимит запросов к API (Quota Exceeded).", None),  # quota (NOT permanent)
+                (
+                    "🚫 Достигнут лимит запросов к API (Quota Exceeded).",
+                    None,
+                ),  # quota (NOT permanent)
                 ("🔑 Неверный API ключ.", None),  # permanent
             ]
         )

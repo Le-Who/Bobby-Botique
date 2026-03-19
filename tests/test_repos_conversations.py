@@ -49,7 +49,11 @@ class TestSaveConversation:
         mock_chat.history = []
         mock_chat.token_count = 100
 
-        with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=mock_chat):
+        with patch(
+            "app.repos.chats.get_user_chat",
+            new_callable=AsyncMock,
+            return_value=mock_chat,
+        ):
             result = await save_conversation(1, "My Chat", "system", None)
         assert result == 42
         query = mock_deps["query"].call_args[0][0]
@@ -65,7 +69,11 @@ class TestSaveConversation:
         mock_chat.history = []
         mock_chat.token_count = 0
 
-        with patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=mock_chat):
+        with patch(
+            "app.repos.chats.get_user_chat",
+            new_callable=AsyncMock,
+            return_value=mock_chat,
+        ):
             result = await save_conversation(1, "My Chat")
         assert result is None
 

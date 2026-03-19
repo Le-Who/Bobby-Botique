@@ -91,11 +91,17 @@ async def get_tavily_key_usage_stats() -> list[dict[str, Any]]:
     """
     return await db_query(
         query,
-        (settings.TAVILY_MONTHLY_CREDIT_LIMIT, settings.TAVILY_LIMIT_THRESHOLD_PERCENT, current_month),
+        (
+            settings.TAVILY_MONTHLY_CREDIT_LIMIT,
+            settings.TAVILY_LIMIT_THRESHOLD_PERCENT,
+            current_month,
+        ),
     )
 
 
-async def get_gemini_key_usage_stats(model_name: str | None = None) -> list[dict[str, Any]]:
+async def get_gemini_key_usage_stats(
+    model_name: str | None = None,
+) -> list[dict[str, Any]]:
     today_pacific: date = datetime.now(get_pacific_tz()).date()
     if model_name:
         query = """

@@ -606,7 +606,12 @@ async def stream_and_display(
             )
             final_text += "\n\n⚠️ _Ответ был обрезан из-за ограничения длины._"
 
-        elif len(final_text) < 150 and fr_upper not in ("STOP", "1", "FINISH_REASON_STOP", ""):
+        elif len(final_text) < 150 and fr_upper not in (
+            "STOP",
+            "1",
+            "FINISH_REASON_STOP",
+            "",
+        ):
             logging.warning(
                 "Suspiciously short streaming response: %d chars, finish_reason=%s",
                 len(final_text),
@@ -627,17 +632,37 @@ async def stream_and_display(
         partial = writer.text
         if partial:
             await writer.finalize()
-            return partial + "\n\n⏰ _(ответ был прерван по таймауту)_", True, writer.last_message
-        return "⏰ Превышено время ожидания ответа. Попробуйте позже.", False, placeholder_message
+            return (
+                partial + "\n\n⏰ _(ответ был прерван по таймауту)_",
+                True,
+                writer.last_message,
+            )
+        return (
+            "⏰ Превышено время ожидания ответа. Попробуйте позже.",
+            False,
+            placeholder_message,
+        )
 
     except APIError as e:
         logging.error("Streaming API error: %s", e)
         partial = writer.text
         if partial:
             await writer.finalize()
-            return partial + "\n\n⚠️ _(ответ был прерван из-за ошибки API)_", True, writer.last_message
-        return "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.", False, placeholder_message
+            return (
+                partial + "\n\n⚠️ _(ответ был прерван из-за ошибки API)_",
+                True,
+                writer.last_message,
+            )
+        return (
+            "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.",
+            False,
+            placeholder_message,
+        )
 
     except Exception as e:
         logging.error("Streaming failed: %s", e, exc_info=True)
-        return "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.", False, placeholder_message
+        return (
+            "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.",
+            False,
+            placeholder_message,
+        )

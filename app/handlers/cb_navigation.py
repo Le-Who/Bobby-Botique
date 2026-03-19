@@ -121,7 +121,9 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
-            formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard)
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
     await query.answer("✨ Чат очищен!")
 
@@ -164,7 +166,9 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
-            formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard)
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
 
@@ -220,7 +224,9 @@ async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
-            formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard)
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
 

@@ -51,7 +51,14 @@ async def test_save_conversation_success(mock_chat_state):
         # First call args (INSERT)
         insert_call = mock_db_query.call_args_list[0]
         assert "INSERT INTO conversations" in insert_call[0][0]
-        assert insert_call[0][1] == (user_id, title, None, None, None, mock_chat_state.token_count)
+        assert insert_call[0][1] == (
+            user_id,
+            title,
+            None,
+            None,
+            None,
+            mock_chat_state.token_count,
+        )
 
         # Second call args (CALL procedure)
         proc_call = mock_db_query.call_args_list[1]
@@ -139,7 +146,10 @@ async def test_save_conversation_procedure_failure(mock_chat_state):
         # Setup db_query side effects
         # First call: INSERT -> returns [{"id": 3}]
         # Second call: CALL -> raises asyncpg error
-        mock_db_query.side_effect = [[{"id": expected_conv_id}], asyncpg.PostgresError("Procedure failed")]
+        mock_db_query.side_effect = [
+            [{"id": expected_conv_id}],
+            asyncpg.PostgresError("Procedure failed"),
+        ]
 
         result = await conv_repo.save_conversation(user_id, title)
 

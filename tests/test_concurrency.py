@@ -76,7 +76,12 @@ class TestAlertRateLimiterConcurrent:
     @pytest.mark.asyncio
     async def test_concurrent_alerts_respect_rate_limit(self):
         """Firing many alerts concurrently should still respect the 5/5min limit."""
-        from app.admin_alerts import _MAX_ALERTS, AlertSeverity, _alert_timestamps, alert_admin
+        from app.admin_alerts import (
+            _MAX_ALERTS,
+            AlertSeverity,
+            _alert_timestamps,
+            alert_admin,
+        )
 
         _alert_timestamps.clear()
 
@@ -184,7 +189,12 @@ class TestErrorPipelineConcurrent:
     @pytest.mark.asyncio
     async def test_concurrent_error_classification(self):
         """is_error_message and is_retryable_error should work correctly under concurrent calls."""
-        from app.errors import ErrorCode, is_error_message, is_retryable_error, tag_error
+        from app.errors import (
+            ErrorCode,
+            is_error_message,
+            is_retryable_error,
+            tag_error,
+        )
 
         tagged_errors = [tag_error(ErrorCode.RATE_LIMIT, f"Rate limit {i}") for i in range(50)]
         normal_texts = [f"Normal response {i}" for i in range(50)]

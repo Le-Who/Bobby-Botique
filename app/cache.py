@@ -283,7 +283,7 @@ class MultiLayerCache:
         return {
             "memory_items": memory_items,
             "memory_max_size": memory_max_size,
-            "memory_utilization": memory_items / memory_max_size * 100 if memory_max_size else 0,
+            "memory_utilization": (memory_items / memory_max_size * 100 if memory_max_size else 0),
         }
 
 

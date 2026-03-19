@@ -77,7 +77,10 @@ class DocumentProcessor:
             # Check document limit
             if not await check_document_limit(user_id):
                 await cleanup_oldest_documents(user_id, 4)
-                logging.info("Document limit exceeded for user %s, removed oldest document", user_id)
+                logging.info(
+                    "Document limit exceeded for user %s, removed oldest document",
+                    user_id,
+                )
 
             # Hash + duplicate check
             loop = asyncio.get_running_loop()
@@ -242,7 +245,12 @@ class DocumentProcessor:
     # ── PDF parsing ──────────────────────────────────────────────────────────
 
     async def _process_pdf_unified(
-        self, file_data, filename: str, user_id: int, file_hash: str, is_path: bool = False
+        self,
+        file_data,
+        filename: str,
+        user_id: int,
+        file_hash: str,
+        is_path: bool = False,
     ) -> dict[str, Any]:
         """Process a PDF document (bytes or path)."""
         try:
@@ -288,7 +296,12 @@ class DocumentProcessor:
     # ── Word parsing ─────────────────────────────────────────────────────────
 
     async def _process_word_unified(
-        self, file_data, filename: str, user_id: int, file_hash: str, is_path: bool = False
+        self,
+        file_data,
+        filename: str,
+        user_id: int,
+        file_hash: str,
+        is_path: bool = False,
     ) -> dict[str, Any]:
         """Process a Word document (bytes or path)."""
         if not is_path and not file_data.startswith(b"\x50\x4b\x03\x04"):
@@ -432,7 +445,11 @@ async def _upload_file_to_x0_at(file_data: bytes, filename: str) -> str | None:
                 logging.error("Invalid response from x0.at: %s", response.text)
                 return None
         else:
-            logging.error("Failed to upload to x0.at: %s - %s", response.status_code, response.text)
+            logging.error(
+                "Failed to upload to x0.at: %s - %s",
+                response.status_code,
+                response.text,
+            )
             return None
 
 

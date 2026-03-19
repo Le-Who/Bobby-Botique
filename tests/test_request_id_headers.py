@@ -15,7 +15,10 @@ async def test_tavily_api_call_adds_request_id_header():
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {"ok": True}
 
-    with patch("app.search_services.http_client.post", new=AsyncMock(return_value=mock_response)) as mock_post:
+    with patch(
+        "app.search_services.http_client.post",
+        new=AsyncMock(return_value=mock_response),
+    ) as mock_post:
         result = await _tavily_api_call({"query": "hello"})
 
     assert result == {"ok": True}
@@ -40,9 +43,13 @@ async def test_openrouter_request_adds_request_id_header():
 
     with (
         patch(
-            "app.providers.openrouter._openrouter_http_client.post", new=AsyncMock(return_value=mock_response)
+            "app.providers.openrouter._openrouter_http_client.post",
+            new=AsyncMock(return_value=mock_response),
         ) as mock_post,
-        patch("app.providers.openrouter.metrics_collector.record_api_call", new=AsyncMock()),
+        patch(
+            "app.providers.openrouter.metrics_collector.record_api_call",
+            new=AsyncMock(),
+        ),
         patch("app.providers.openrouter.metrics_collector.record_error", new=AsyncMock()),
         patch("app.providers.openrouter.api_logger.log_response", new=MagicMock()),
     ):

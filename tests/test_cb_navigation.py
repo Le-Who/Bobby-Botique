@@ -47,7 +47,11 @@ class TestNewTopicCallback:
 
         with (
             patch("app.handlers.cb_navigation._is_user_busy", return_value=False),
-            patch("app.handlers.cb_navigation.get_user_chat", new_callable=AsyncMock, return_value=mock_chat_state),
+            patch(
+                "app.handlers.cb_navigation.get_user_chat",
+                new_callable=AsyncMock,
+                return_value=mock_chat_state,
+            ),
             patch("app.handlers.cb_navigation.update_user_chat", new_callable=AsyncMock) as mock_update,
         ):
             await new_topic_callback(update, MagicMock())
@@ -71,10 +75,18 @@ class TestModelMenuCallback:
         mock_chat_state = MagicMock()
 
         with (
-            patch("app.handlers.cb_navigation.get_user_chat", new_callable=AsyncMock, return_value=mock_chat_state),
+            patch(
+                "app.handlers.cb_navigation.get_user_chat",
+                new_callable=AsyncMock,
+                return_value=mock_chat_state,
+            ),
             patch("app.handlers.cb_navigation.menus") as mock_menus,
         ):
-            mock_menus.get_model_menu_content.return_value = ("Model Menu", "Markdown", MagicMock())
+            mock_menus.get_model_menu_content.return_value = (
+                "Model Menu",
+                "Markdown",
+                MagicMock(),
+            )
 
             await model_menu_callback(update, context)
 
@@ -93,7 +105,11 @@ class TestToggleSearchCallback:
         mock_chat_state.search_enabled = False
 
         with (
-            patch("app.handlers.cb_navigation.get_user_chat", new_callable=AsyncMock, return_value=mock_chat_state),
+            patch(
+                "app.handlers.cb_navigation.get_user_chat",
+                new_callable=AsyncMock,
+                return_value=mock_chat_state,
+            ),
             patch("app.handlers.cb_navigation.update_user_chat", new_callable=AsyncMock) as mock_update,
         ):
             await toggle_search_callback(update, MagicMock())

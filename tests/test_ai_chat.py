@@ -32,7 +32,11 @@ def mock_boundaries():
         patch("app.metrics.role_conv_metrics.record_summarization", new_callable=AsyncMock),
     ):
         # Default happy-path setup
-        m_resolve.return_value = ({"api_key": "k", "key_hash": "h"}, "gemini-3.1-flash-lite-preview", "direct")
+        m_resolve.return_value = (
+            {"api_key": "k", "key_hash": "h"},
+            "gemini-3.1-flash-lite-preview",
+            "direct",
+        )
 
         # We need to return the expected tuple: (response_text, success, last_message_obj)
         placeholder_reply = make_telegram_message("Test reply", user_id=123)
@@ -113,7 +117,11 @@ async def test_model_exhausted_prompts_fallback_confirmation(mock_boundaries):
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
     chat_state = make_chat_state()
-    mock_boundaries["resolve"].return_value = ({"api_key": "fixed_key"}, "gemini-3-flash-preview", "confirm_fallback")
+    mock_boundaries["resolve"].return_value = (
+        {"api_key": "fixed_key"},
+        "gemini-3-flash-preview",
+        "confirm_fallback",
+    )
 
     # ── Act ──
     await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
@@ -138,7 +146,12 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
     placeholder = make_telegram_message(user_id=user_id)
 
     # Starting history has a user message and a model reply
-    chat_state = make_chat_state(history=[{"role": "user", "parts": ["Hi"]}, {"role": "model", "parts": ["Hello"]}])
+    chat_state = make_chat_state(
+        history=[
+            {"role": "user", "parts": ["Hi"]},
+            {"role": "model", "parts": ["Hello"]},
+        ]
+    )
 
     # We simulate stream_and_display failing to stream anything and returning success=False
     mock_boundaries["stream"].return_value = (None, False, None)

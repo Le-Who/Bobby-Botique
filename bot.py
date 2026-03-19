@@ -243,7 +243,10 @@ async def run_bot_with_retry():
 
         async def _bg_task_alert(exc: Exception, context: str):
             await alert_admin(
-                application, f"Background Task Failure:\n{context}", severity=AlertSeverity.CRITICAL, exc=exc
+                application,
+                f"Background Task Failure:\n{context}",
+                severity=AlertSeverity.CRITICAL,
+                exc=exc,
             )
 
         TaskManager.register_error_callback(_bg_task_alert)
@@ -454,7 +457,10 @@ async def startup_health_check():
                 if response.status_code == 200:
                     bot_info = response.json()
                     if bot_info.get("ok"):
-                        logging.info("✓ Telegram API verified - Bot: %s", bot_info["result"]["username"])
+                        logging.info(
+                            "✓ Telegram API verified - Bot: %s",
+                            bot_info["result"]["username"],
+                        )
                         telegram_ok = True
                     else:
                         raise Exception(f"Telegram API error: {bot_info}")
@@ -498,7 +504,11 @@ async def main():
 
         setup_detailed_logging(enable_structured_logging=_use_json)
 
-        if _use_json and os.environ.get("LOG_PRETTY", "").lower() in ("1", "true", "yes"):
+        if _use_json and os.environ.get("LOG_PRETTY", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
             logging.warning(
                 "LOG_PRETTY is set but structured JSON logging is active — "
                 "Rich output is disabled. Unset LOG_PRETTY or set STRUCTURED_LOGGING=0 "

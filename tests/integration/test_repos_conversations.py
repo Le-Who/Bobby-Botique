@@ -137,7 +137,8 @@ class TestConversationCRUD:
         row = await conn.fetchrow("SELECT * FROM conversations WHERE id = $1", conv_id)
         assert row is None
         msg_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = $1", conv_id
+            "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = $1",
+            conv_id,
         )
         assert msg_count == 0
 

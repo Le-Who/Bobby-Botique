@@ -192,7 +192,11 @@ async def test_monitoring_task(cb):
 
 @pytest.mark.asyncio
 async def test_get_circuit_breaker_and_shutdown_all():
-    from app.circuit_breaker import _circuit_breakers, get_circuit_breaker, shutdown_all_circuit_breakers
+    from app.circuit_breaker import (
+        _circuit_breakers,
+        get_circuit_breaker,
+        shutdown_all_circuit_breakers,
+    )
 
     _circuit_breakers.clear()
     cb1 = get_circuit_breaker("test_global_1")
@@ -256,7 +260,10 @@ async def test_monitor_loop_exception_handling(cb):
         # The monitor loop should catch the exception and log it, then next iteration will fail again if mocked,
         # but here we just want to ensure it handles one exception. Since it's a while True, if sleep always raises,
         # it might infinite loop. Let's just side_effect a single exception then CancelledError.
-        with patch("app.circuit_breaker.asyncio.sleep", side_effect=[Exception("mocked"), asyncio.CancelledError()]):
+        with patch(
+            "app.circuit_breaker.asyncio.sleep",
+            side_effect=[Exception("mocked"), asyncio.CancelledError()],
+        ):
             await cb._monitor_loop()
 
     # Should exit gracefully on CancelledError

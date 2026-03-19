@@ -366,12 +366,16 @@ class MetricsCollector:
                         search_queries=row.get("search_queries", 0) or 0,
                         cache_hits=row.get("cache_hits", 0) or 0,
                         cache_misses=row.get("cache_misses", 0) or 0,
-                        api_calls=dict(row["api_calls"])
-                        if row.get("api_calls") and isinstance(row["api_calls"], dict)
-                        else {},
-                        model_usage=dict(row["model_usage"])
-                        if row.get("model_usage") and isinstance(row["model_usage"], dict)
-                        else {},
+                        api_calls=(
+                            dict(row["api_calls"])
+                            if row.get("api_calls") and isinstance(row["api_calls"], dict)
+                            else {}
+                        ),
+                        model_usage=(
+                            dict(row["model_usage"])
+                            if row.get("model_usage") and isinstance(row["model_usage"], dict)
+                            else {}
+                        ),
                     )
                 except Exception as e:
                     logging.warning("Failed to process daily metrics row: %s, row: %s", e, row)
@@ -402,15 +406,28 @@ class MetricsCollector:
             logging.error("Error loading metrics from database: %s", e, exc_info=True)
 
     async def record_request(
-        self, _request_type: str, response_time: float, success: bool = True, user_id: int | None = None
+        self,
+        _request_type: str,
+        response_time: float,
+        success: bool = True,
+        user_id: int | None = None,
     ):
         """Записывает метрики запроса (Fast in-memory update)"""
         self._events_queue.put_nowait(
-            {"type": "request", "response_time": response_time, "success": success, "user_id": user_id}
+            {
+                "type": "request",
+                "response_time": response_time,
+                "success": success,
+                "user_id": user_id,
+            }
         )
 
     async def record_api_call(
-        self, api_name: str, model: str | None = None, request_id: str | None = None, user_id: int | None = None
+        self,
+        api_name: str,
+        model: str | None = None,
+        request_id: str | None = None,
+        user_id: int | None = None,
     ):
         """Записывает вызов API"""
         current_request_id = request_id or get_request_id()
@@ -487,15 +504,19 @@ class MetricsCollector:
                 date: {
                     "requests": metrics.request_count,
                     "errors": metrics.error_count,
-                    "avg_response_time": metrics.total_response_time / metrics.request_count
-                    if metrics.request_count > 0
-                    else 0,
+                    "avg_response_time": (
+                        metrics.total_response_time / metrics.request_count if metrics.request_count > 0 else 0
+                    ),
                 }
                 for date, metrics in self.daily_metrics.items()
             },
         }
 
-        logging.debug("Metrics summary: %d requests, %.1f%% errors", summary["total_requests"], summary["error_rate"])
+        logging.debug(
+            "Metrics summary: %d requests, %.1f%% errors",
+            summary["total_requests"],
+            summary["error_rate"],
+        )
         return summary
 
     async def initialize(self):
@@ -531,7 +552,10 @@ metrics_collector = MetricsCollector()
 
 
 # Re-export middleware for backward compatibility
-from app.utils.metrics_middleware import MetricsMiddleware, track_metrics  # noqa: F401,E402
+from app.utils.metrics_middleware import (
+    MetricsMiddleware,
+    track_metrics,
+)  # noqa: F401,E402
 
 # ============================================================================
 # ROLE AND CONVERSATION METRICS

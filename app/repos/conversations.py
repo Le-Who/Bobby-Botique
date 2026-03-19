@@ -80,7 +80,11 @@ async def save_conversation(
             try:
                 await db_query("CALL save_chat_to_conversation($1, $2)", (user_id, conv_id))
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-                logging.error("Error saving conversation messages via Procedure: %s", e, exc_info=True)
+                logging.error(
+                    "Error saving conversation messages via Procedure: %s",
+                    e,
+                    exc_info=True,
+                )
         return conv_id
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.error("Error in save_conversation: %s", e, exc_info=True)

@@ -24,7 +24,11 @@ from app.repos.chats import get_user_chat, update_user_chat
 from app.utils.formatting import escape_format_chars
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
-from app.utils.stage_indicators import STAGES_SEARCH_DEEP, STAGES_SEARCH_QUICK, update_stage
+from app.utils.stage_indicators import (
+    STAGES_SEARCH_DEEP,
+    STAGES_SEARCH_QUICK,
+    update_stage,
+)
 from app.utils.waiting_facts import get_waiting_message
 
 
@@ -81,7 +85,9 @@ async def _handle_qna_search(
     safe_tavily_answer = escape_format_chars(tavily_answer)
 
     localization_prompt = get_registry().get_task_prompt(
-        "qna_localization", user_message=safe_user_message, tavily_answer=safe_tavily_answer
+        "qna_localization",
+        user_message=safe_user_message,
+        tavily_answer=safe_tavily_answer,
     )
     # Get user_id и chat_id for логирования
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
@@ -103,7 +109,7 @@ async def _handle_qna_search(
         user_id=user_id,
         bot=placeholder_message.get_bot(),
         chat_id=chat_id or 0,
-        chat_type=placeholder_message.chat.type if placeholder_message.chat else "private",
+        chat_type=(placeholder_message.chat.type if placeholder_message.chat else "private"),
     )
 
     streamed = bool(success and final_answer)
@@ -234,7 +240,12 @@ async def _handle_research_agent(
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
 
-        await send_long_message(placeholder_message, final_answer, reply_markup=reply_markup, is_deep_dive=True)
+        await send_long_message(
+            placeholder_message,
+            final_answer,
+            reply_markup=reply_markup,
+            is_deep_dive=True,
+        )
 
         # Save to history
         chat_state.history.append({"role": "user", "parts": [actual_search_query]})
@@ -246,7 +257,11 @@ async def _handle_research_agent(
 
         if not hasattr(chat_state, "deep_dive_thread_id") or not chat_state.deep_dive_thread_id:
             chat_state.deep_dive_thread_id = str(uuid.uuid4())
-            logging.info("Generated deep dive thread_id %s for user %s", chat_state.deep_dive_thread_id, user_id)
+            logging.info(
+                "Generated deep dive thread_id %s for user %s",
+                chat_state.deep_dive_thread_id,
+                user_id,
+            )
 
         await update_user_chat(user_id, chat_state)
     else:

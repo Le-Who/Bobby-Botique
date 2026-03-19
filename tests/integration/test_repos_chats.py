@@ -49,7 +49,10 @@ class TestChatStateLifecycle:
             "gemini-2.5-flash",
         )
 
-        history = [{"role": "user", "content": "Hello"}, {"role": "model", "content": "Hi!"}]
+        history = [
+            {"role": "user", "content": "Hello"},
+            {"role": "model", "content": "Hi!"},
+        ]
         await conn.execute(
             "UPDATE chats SET model = $1, history = $2::jsonb, token_count = $3 WHERE user_id = $4",
             "gemini-2.5-flash-lite",
@@ -94,7 +97,11 @@ class TestChatStateLifecycle:
         conn = db_conn_with_user
         user_id = 999999
 
-        await conn.execute("INSERT INTO chats (user_id, model) VALUES ($1, $2)", user_id, "gemini-2.5-flash")
+        await conn.execute(
+            "INSERT INTO chats (user_id, model) VALUES ($1, $2)",
+            user_id,
+            "gemini-2.5-flash",
+        )
 
         await conn.execute("UPDATE chats SET thinking_level = $1 WHERE user_id = $2", "high", user_id)
         row = await conn.fetchrow("SELECT thinking_level FROM chats WHERE user_id = $1", user_id)

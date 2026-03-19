@@ -7,8 +7,16 @@ from app.config import get_model_hash, get_openrouter_keys, settings
 from app.document_processor import get_user_documents
 from app.metrics import get_system_status_data
 from app.prompt_registry import DEFAULT_ROLES
-from app.repos.conversations import get_conversation_count, get_role_data, get_user_conversations
-from app.repos.roles import get_custom_role_count, get_user_custom_roles, get_user_custom_roles_full
+from app.repos.conversations import (
+    get_conversation_count,
+    get_role_data,
+    get_user_conversations,
+)
+from app.repos.roles import (
+    get_custom_role_count,
+    get_user_custom_roles,
+    get_user_custom_roles_full,
+)
 from app.repos.user_stats import get_user_today_request_count
 from app.utils.formatting import TelegramFormatter, format_key_for_display
 
@@ -137,7 +145,11 @@ def get_model_menu_content(chat_state, context):
     if not all_models:
         from app.utils.keyboards import error_with_back_keyboard
 
-        return "❌ Нет доступных моделей. Проверьте настройки.", None, error_with_back_keyboard("start_menu", "⬅️ Меню")
+        return (
+            "❌ Нет доступных моделей. Проверьте настройки.",
+            None,
+            error_with_back_keyboard("start_menu", "⬅️ Меню"),
+        )
 
     # Save маппинг моделей в context for использования в callback
     if context and hasattr(context, "user_data"):

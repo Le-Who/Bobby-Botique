@@ -95,7 +95,11 @@ class TestRetryLastCallback:
         update, query = _make_update("retry_last")
 
         with (
-            patch("app.handlers.cb_ai_actions.get_user_chat", new_callable=AsyncMock, return_value=MagicMock()),
+            patch(
+                "app.handlers.cb_ai_actions.get_user_chat",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
             patch("app.handlers.cb_ai_actions.state"),
             patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
             patch("app.state.get_last_sent_message", return_value=None),
@@ -179,7 +183,11 @@ class TestBusyStateToast:
         with (
             patch("app.handlers.cb_ai_actions.set_request_id"),
             patch("app.handlers.cb_ai_actions.set_user_context"),
-            patch("app.handlers.cb_ai_actions.get_user_chat", new_callable=AsyncMock, return_value=MagicMock()),
+            patch(
+                "app.handlers.cb_ai_actions.get_user_chat",
+                new_callable=AsyncMock,
+                return_value=MagicMock(),
+            ),
             patch("app.handlers.cb_ai_actions.state.get_user_lock", return_value=lock),
             patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
             patch("app.state.get_last_sent_message", return_value="some previous text"),

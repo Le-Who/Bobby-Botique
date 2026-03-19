@@ -84,7 +84,10 @@ async def tavily_search_agent(
 
     # Detailed Tavily API request logging
     start_time = api_logger.log_request(
-        "tavily", search_type=search_type, query_length=len(query), query_preview=query[:100]
+        "tavily",
+        search_type=search_type,
+        query_length=len(query),
+        query_preview=query[:100],
     )
 
     logging.info("Performing Tavily API call (type: %s) for query: %.100s", search_type, query)
@@ -139,7 +142,11 @@ async def tavily_search_agent(
             error_message=f"HTTP {e.response.status_code}: {e.response.text}",
         )
 
-        logging.error("Tavily API call failed with status %d: %s", e.response.status_code, e.response.text)
+        logging.error(
+            "Tavily API call failed with status %d: %s",
+            e.response.status_code,
+            e.response.text,
+        )
         await metrics_collector.record_error("tavily_http", f"Status {e.response.status_code}: {e.response.text}")
         return {"error": f"Ошибка API поиска: {e.response.status_code}. Убедитесь, что ключ API валиден."}
     except Exception as e:

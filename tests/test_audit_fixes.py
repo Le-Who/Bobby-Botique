@@ -51,7 +51,10 @@ class TestIsEncryptedHardened:
         mock_settings = MagicMock()
         mock_settings.ADMIN_SECRET = "test-secret-for-audit-tests"
 
-        with patch("app.crypto.settings", mock_settings, create=True), patch("app.config.settings", mock_settings):
+        with (
+            patch("app.crypto.settings", mock_settings, create=True),
+            patch("app.config.settings", mock_settings),
+        ):
             from app.crypto import encrypt_api_key, is_encrypted, reset_fernet
 
             reset_fernet()

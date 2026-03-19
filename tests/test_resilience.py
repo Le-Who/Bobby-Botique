@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.resilience_policy import ResiliencePolicy, is_transient_error, run_with_resilience
+from app.resilience_policy import (
+    ResiliencePolicy,
+    is_transient_error,
+    run_with_resilience,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ResiliencePolicy.compute_delay

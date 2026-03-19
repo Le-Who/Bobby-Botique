@@ -23,7 +23,10 @@ async def test_init(task_queue):
 @pytest.mark.asyncio
 async def test_add_task(task_queue):
     task_id = await task_queue.add_task(
-        user_id=1, task_type="test_task", data={"key": "value"}, priority=TaskPriority.HIGH
+        user_id=1,
+        task_type="test_task",
+        data={"key": "value"},
+        priority=TaskPriority.HIGH,
     )
     assert task_id
     assert task_id in task_queue.tasks
@@ -122,7 +125,12 @@ async def test_cancel_task_wrong_user(task_queue):
 async def test_handle_document_processing(task_queue):
     # Mock app.document_processor.process_uploaded_document
     with patch("app.document_processor.process_uploaded_document", new_callable=AsyncMock) as mock_process:
-        mock_process.return_value = {"pages": 5, "text_length": 100, "paragraphs": 10, "tables": 1}
+        mock_process.return_value = {
+            "pages": 5,
+            "text_length": 100,
+            "paragraphs": 10,
+            "tables": 1,
+        }
 
         result = await task_queue._handle_document_processing(file_data=b"test", filename="test.pdf", user_id=1)
 

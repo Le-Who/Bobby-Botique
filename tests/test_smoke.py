@@ -50,7 +50,12 @@ class TestHealthEndpoint:
             data = await resp.get_json()
 
             assert "redis" in data["services"]
-            assert data["services"]["redis"] in ("connected", "disconnected", "not_configured", "unknown")
+            assert data["services"]["redis"] in (
+                "connected",
+                "disconnected",
+                "not_configured",
+                "unknown",
+            )
 
 
 # ============================================================================

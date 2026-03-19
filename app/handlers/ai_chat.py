@@ -202,7 +202,7 @@ async def _handle_regular_chat(
                 [
                     InlineKeyboardButton(
                         "✨ Начать новую тему",
-                        callback_data="deepdive:new_topic" if chat_state.is_deep_dive else "new_topic",
+                        callback_data=("deepdive:new_topic" if chat_state.is_deep_dive else "new_topic"),
                     )
                 ],
             ]
@@ -222,7 +222,9 @@ async def _handle_regular_chat(
                     try:
                         formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
                         await placeholder_message.reply_text(
-                            formatted_text, parse_mode=parse_mode, reply_markup=reply_markup
+                            formatted_text,
+                            parse_mode=parse_mode,
+                            reply_markup=reply_markup,
                         )
                     except Exception:
                         await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
@@ -233,7 +235,11 @@ async def _handle_regular_chat(
                 try:
                     if _memories_injected > 0:
                         formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
-                        await button_msg.edit_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
+                        await button_msg.edit_text(
+                            formatted_text,
+                            parse_mode=parse_mode,
+                            reply_markup=reply_markup,
+                        )
                     else:
                         await button_msg.edit_reply_markup(reply_markup=reply_markup)
                 except Exception as e:

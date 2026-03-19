@@ -27,7 +27,11 @@ async def test_admin_command_shows_help():
     update, context = make_admin_update()
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.is_admin", return_value=True),
     ):
         from app.handlers.cmd_admin import admin_command
@@ -48,7 +52,11 @@ async def test_add_user_no_args():
     update, context = make_admin_update()
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.is_admin", return_value=True),
     ):
         from app.handlers.cmd_admin import add_user_command
@@ -65,7 +73,11 @@ async def test_add_user_success():
     update, context = make_admin_update(args=["999"])
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.is_admin", return_value=True),
         patch("app.handlers.cmd_admin.authorize_user", new_callable=AsyncMock) as mock_auth,
         patch("app.handlers.cmd_admin.invalidate_user_auth_cache", new_callable=AsyncMock),
@@ -88,7 +100,11 @@ async def test_del_user_no_args():
     update, context = make_admin_update()
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.is_admin", return_value=True),
     ):
         from app.handlers.cmd_admin import del_user_command
@@ -108,9 +124,17 @@ async def test_list_users_command():
     update, context = make_admin_update()
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.is_admin", return_value=True),
-        patch("app.handlers.cmd_admin.list_authorized_users", new_callable=AsyncMock, return_value=[123, 456]),
+        patch(
+            "app.handlers.cmd_admin.list_authorized_users",
+            new_callable=AsyncMock,
+            return_value=[123, 456],
+        ),
     ):
         from app.handlers.cmd_admin import list_users_command
 
@@ -128,7 +152,11 @@ async def test_clear_cache_command():
     update, context = make_admin_update()
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.is_admin", return_value=True),
         patch("app.handlers.cmd_admin.get_cache_stats", return_value={"size": 0}),
     ):
@@ -149,7 +177,11 @@ async def test_admin_command_denied_for_non_admin():
     update, context = make_admin_update(user_id=999)
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.is_admin", return_value=False),
     ):
         from app.handlers.cmd_admin import admin_command
@@ -170,7 +202,11 @@ async def test_reload_config_command():
     update, context = make_admin_update()
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.is_admin", return_value=True),
         patch("app.handlers.cmd_admin.settings") as mock_settings,
     ):

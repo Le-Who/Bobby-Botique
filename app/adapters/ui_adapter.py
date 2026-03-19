@@ -99,7 +99,12 @@ class TelegramMessageAdapter(StreamingUIAdapter):
             else:
                 raise
 
-        return TelegramMessageAdapter(message=new_msg, bot=self._bot, chat_id=self._chat_id, draft_id=self._draft_id)
+        return TelegramMessageAdapter(
+            message=new_msg,
+            bot=self._bot,
+            chat_id=self._chat_id,
+            draft_id=self._draft_id,
+        )
 
     async def delete_placeholder(self) -> None:
         """Delete the current placeholder message to prevent dual-display with drafts."""

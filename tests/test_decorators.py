@@ -7,7 +7,13 @@ import pytest
 from app.utils.decorators import admin_only, authorized_only
 
 
-def _make_update(*, user_id: int = 111, chat_id: int = 222, update_id: int = 999, is_callback: bool = False):
+def _make_update(
+    *,
+    user_id: int = 111,
+    chat_id: int = 222,
+    update_id: int = 999,
+    is_callback: bool = False,
+):
     """Create a mock Update with standard fields."""
     update = MagicMock()
     update.effective_user.id = user_id
@@ -40,7 +46,11 @@ async def test_authorized_only_sets_user_context():
         pass
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.set_user_context") as mock_ctx,
         patch("app.utils.decorators.set_request_id"),
     ):
@@ -58,7 +68,11 @@ async def test_authorized_only_sets_request_id_for_message():
         pass
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.set_user_context"),
         patch("app.utils.decorators.set_request_id") as mock_rid,
     ):
@@ -76,7 +90,11 @@ async def test_authorized_only_sets_request_id_for_callback():
         pass
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.utils.decorators.set_user_context"),
         patch("app.utils.decorators.set_request_id") as mock_rid,
     ):
@@ -96,7 +114,11 @@ async def test_authorized_only_context_set_even_if_unauthorized():
         pass
 
     with (
-        patch("app.utils.decorators.is_authorized", new_callable=AsyncMock, return_value=False),
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
         patch("app.utils.decorators.set_user_context") as mock_ctx,
         patch("app.utils.decorators.set_request_id"),
     ):

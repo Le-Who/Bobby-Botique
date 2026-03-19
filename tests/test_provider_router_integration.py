@@ -32,7 +32,12 @@ class TestProviderRouterIntegration:
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch.object(router._rate_limiter, "check_rate_limit", new_callable=AsyncMock, return_value=True),
+            patch.object(
+                router._rate_limiter,
+                "check_rate_limit",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             text, tokens = await router.get_response(
                 preferred_model="gemini-3.1-flash-lite-preview",
@@ -64,7 +69,12 @@ class TestProviderRouterIntegration:
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch.object(router._rate_limiter, "check_rate_limit", new_callable=AsyncMock, return_value=True),
+            patch.object(
+                router._rate_limiter,
+                "check_rate_limit",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             text, tokens = await router.get_response(
                 preferred_model="openai/gpt-4o",
@@ -94,7 +104,12 @@ class TestProviderRouterIntegration:
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch.object(router._rate_limiter, "check_rate_limit", new_callable=AsyncMock, return_value=True),
+            patch.object(
+                router._rate_limiter,
+                "check_rate_limit",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             text, tokens = await router.get_response(
                 preferred_model="gemini-3.1-flash-lite-preview",
@@ -153,7 +168,12 @@ class TestProviderRouterIntegration:
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch.object(router._rate_limiter, "check_rate_limit", new_callable=AsyncMock, return_value=True),
+            patch.object(
+                router._rate_limiter,
+                "check_rate_limit",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             text, tokens = await router.get_response(
                 preferred_model="gemini-3.1-flash-lite-preview",
@@ -177,8 +197,16 @@ class TestProviderRouterIntegration:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"key_hash": "bad_key", "api_key": "bad"}, "gemini-3.1-flash-lite-preview", "resolved"),
-                ({"key_hash": "good_key", "api_key": "good"}, "gemini-3.1-flash-lite-preview", "resolved"),
+                (
+                    {"key_hash": "bad_key", "api_key": "bad"},
+                    "gemini-3.1-flash-lite-preview",
+                    "resolved",
+                ),
+                (
+                    {"key_hash": "good_key", "api_key": "good"},
+                    "gemini-3.1-flash-lite-preview",
+                    "resolved",
+                ),
             ]
         )
         mock_use_case.get_ai_response = AsyncMock(
@@ -191,7 +219,12 @@ class TestProviderRouterIntegration:
 
         with (
             patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch.object(router._rate_limiter, "check_rate_limit", new_callable=AsyncMock, return_value=True),
+            patch.object(
+                router._rate_limiter,
+                "check_rate_limit",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             text, tokens = await router.get_response(
                 preferred_model="gemini-3.1-flash-lite-preview",

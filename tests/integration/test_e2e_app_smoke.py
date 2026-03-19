@@ -42,8 +42,16 @@ def mock_external_network():
         patch("app.handlers.ai_chat.is_openrouter_model", return_value=True),
     ):
         # Default mock successful resolutions
-        mock_resolve.return_value = ({"api_key": "mock_key", "key_hash": "h"}, "gemini-2.5-flash", "direct")
-        mock_get_answer.return_value = ("Integration answer from bot", True, MagicMock())
+        mock_resolve.return_value = (
+            {"api_key": "mock_key", "key_hash": "h"},
+            "gemini-2.5-flash",
+            "direct",
+        )
+        mock_get_answer.return_value = (
+            "Integration answer from bot",
+            True,
+            MagicMock(),
+        )
 
         yield {
             "resolve": mock_resolve,
@@ -107,7 +115,8 @@ async def test_integration_full_message_flow(db_conn, mock_db_manager, mock_exte
     # ── Assert ──
     # DB Integrity Check: Verify active_chat_messages syncs
     rows = await db_conn.fetch(
-        "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC", user_id
+        "SELECT role, content FROM active_chat_messages WHERE user_id = $1 ORDER BY id ASC",
+        user_id,
     )
     assert rows, "Integration: Messages should be stored in active_chat_messages"
 

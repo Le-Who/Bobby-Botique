@@ -339,7 +339,10 @@ def strip_error_tag(text: str) -> str:
 # USER-FRIENDLY ERROR MESSAGES (tagged with codes)
 # =============================================================================
 GENERIC_ERROR = tag_error(ErrorCode.GENERIC, "❌ Произошла ошибка. Попробуйте ещё раз.")
-OVERLOADED_ERROR = tag_error(ErrorCode.OVERLOADED, "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.")
+OVERLOADED_ERROR = tag_error(
+    ErrorCode.OVERLOADED,
+    "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.",
+)
 QUOTA_ERROR = tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
 PROCESSING_ERROR = tag_error(ErrorCode.PROCESSING, "❌ Ошибка обработки запроса.")
 DOCUMENT_ERROR = tag_error(ErrorCode.DOCUMENT, "❌ Ошибка обработки содержимого документа.")
@@ -488,7 +491,14 @@ def classify_key_error(text: str) -> str:
     ]
     if any(p.lower() in text_lower or text.startswith(p) for p in permanent):
         return "permanent"
-    quota = ["🚫", "quota", "quota exceeded", "daily limit", "limit exceeded", "достигнут лимит"]
+    quota = [
+        "🚫",
+        "quota",
+        "quota exceeded",
+        "daily limit",
+        "limit exceeded",
+        "достигнут лимит",
+    ]
     if any(p.lower() in text_lower or text.startswith(p) for p in quota):
         return "quota"
     rate = ["⏱️", "rate limit", "rate_limit", "превышен лимит", "лимит запросов"]

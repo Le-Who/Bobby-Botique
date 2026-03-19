@@ -274,7 +274,11 @@ async def role_custom_retry_callback(update: Update, context: ContextTypes.DEFAU
     chat_state = await get_user_chat(user_id)
 
     # Используем универсальную функцию for получения keyа (поддерживает и Gemini, и OpenRouter)
-    from app.handlers.ai_core import _get_ai_response, _increment_key_usage, _resolve_ai_request
+    from app.handlers.ai_core import (
+        _get_ai_response,
+        _increment_key_usage,
+        _resolve_ai_request,
+    )
 
     model_for_role = chat_state.model or settings.DEFAULT_MODEL
     key_data, model_used, _ = await _resolve_ai_request(model_for_role)
@@ -340,7 +344,12 @@ async def role_delete_ask_callback(update: Update, context: ContextTypes.DEFAULT
 
     bg_text = "⚠️ *Удаление роли*\n\nВы уверены, что хотите удалить эту роль? Это действие нельзя отменить."
     kb = [
-        [InlineKeyboardButton("🗑️ Да, удалить навсегда", callback_data=f"role_delete_confirm:{role_id}")],
+        [
+            InlineKeyboardButton(
+                "🗑️ Да, удалить навсегда",
+                callback_data=f"role_delete_confirm:{role_id}",
+            )
+        ],
         [InlineKeyboardButton("❌ Отмена", callback_data=f"role_delete_cancel:{role_id}")],
     ]
     formatted, pm = TelegramFormatter.format_text(bg_text)
@@ -447,7 +456,8 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.edit_message_text(
-            "❌ Не удалось найти промпт.", reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей")
+            "❌ Не удалось найти промпт.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
         )
 
 
@@ -557,7 +567,11 @@ async def role_manual_save_callback(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    from app.state import clear_manual_role_state, get_manual_role_prompt, get_manual_role_title
+    from app.state import (
+        clear_manual_role_state,
+        get_manual_role_prompt,
+        get_manual_role_title,
+    )
 
     title = get_manual_role_title(user_id)
     prompt_text = get_manual_role_prompt(user_id)

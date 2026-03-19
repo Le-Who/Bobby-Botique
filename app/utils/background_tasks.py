@@ -59,7 +59,11 @@ class TaskManager:
         coro_name = getattr(coro, "__name__", getattr(coro, "__qualname__", str(coro)))
 
         if len(cls._tasks) >= cls.MAX_TASKS:
-            logging.warning("TaskManager at capacity (%d). Rejecting task %s", cls.MAX_TASKS, coro_name)
+            logging.warning(
+                "TaskManager at capacity (%d). Rejecting task %s",
+                cls.MAX_TASKS,
+                coro_name,
+            )
 
             async def _noop():
                 pass

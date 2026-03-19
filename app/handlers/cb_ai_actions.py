@@ -29,7 +29,10 @@ from app.request_context import set_request_id, set_user_context
 async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
-    set_user_context(query.from_user.id, getattr(query.message.chat, "id", None) if query.message else None)
+    set_user_context(
+        query.from_user.id,
+        getattr(query.message.chat, "id", None) if query.message else None,
+    )
 
     action = query.data.split(":")[1]
     placeholder_message = query.message
@@ -51,7 +54,8 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
 
         await query.answer()
         await placeholder_message.edit_text(
-            "❌ Не удалось найти оригинальное сообщение.", reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+            "❌ Не удалось найти оригинальное сообщение.",
+            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
         )
         return
 
@@ -98,7 +102,10 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
 async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
-    set_user_context(query.from_user.id, getattr(query.message.chat, "id", None) if query.message else None)
+    set_user_context(
+        query.from_user.id,
+        getattr(query.message.chat, "id", None) if query.message else None,
+    )
 
     parts = query.data.split(":", 2)
     action = parts[1] if len(parts) > 1 else ""
@@ -122,7 +129,8 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         await query.answer()
         await placeholder_message.edit_text(
-            "❌ Не удалось найти оригинальное сообщение.", reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+            "❌ Не удалось найти оригинальное сообщение.",
+            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
         )
         return
 
@@ -161,7 +169,10 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Повтор последнего пользовательского запроса по кнопке."""
     query = update.callback_query
     set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
-    set_user_context(query.from_user.id, getattr(query.message.chat, "id", None) if query.message else None)
+    set_user_context(
+        query.from_user.id,
+        getattr(query.message.chat, "id", None) if query.message else None,
+    )
     user_id = query.from_user.id
 
     # Hydrate persisted state from DB
@@ -180,7 +191,8 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await query.answer()
         await query.edit_message_text(
-            "❌ Нет запроса для повтора.", reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню")
+            "❌ Нет запроса для повтора.",
+            reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
         )
         return
 

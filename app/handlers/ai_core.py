@@ -66,7 +66,9 @@ async def handle_ai_response_error(response_text: str, placeholder_message: Mess
 
 
 async def _resolve_ai_request(
-    preferred_model: str, use_openrouter: bool | None = None, excluded_key_hashes: set | None = None
+    preferred_model: str,
+    use_openrouter: bool | None = None,
+    excluded_key_hashes: set | None = None,
 ):
     return await _agent_use_case.resolve_ai_request(preferred_model, use_openrouter, excluded_key_hashes)
 

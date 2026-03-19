@@ -73,8 +73,16 @@ async def test_unauthorized_user_rejected():
 
     with (
         patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
-        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock, return_value=False),
-        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.handlers.messages.is_authorized",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "app.handlers.messages.check_user_rate_limit",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         from app.handlers.messages import handle_request
 
@@ -92,8 +100,16 @@ async def test_rate_limited_user_gets_warning():
 
     with (
         patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
-        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock, return_value=False),
+        patch(
+            "app.handlers.messages.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "app.handlers.messages.check_user_rate_limit",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
     ):
         from app.handlers.messages import handle_request
 
@@ -129,14 +145,31 @@ async def test_happy_path_text_message(run_background_sync):
 
     with (
         patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
-        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock, return_value=True),
+        patch(
+            "app.handlers.messages.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "app.handlers.messages.check_user_rate_limit",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
         patch("app.handlers.messages.state.get_user_lock", return_value=AsyncMock()),
         patch(
-            "app.handlers.messages.heavy_request_semaphore", MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())
+            "app.handlers.messages.heavy_request_semaphore",
+            MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock()),
         ),
-        patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=fake_chat_state),
-        patch("app.handlers.agent.get_user_chat", new_callable=AsyncMock, return_value=fake_chat_state),
+        patch(
+            "app.repos.chats.get_user_chat",
+            new_callable=AsyncMock,
+            return_value=fake_chat_state,
+        ),
+        patch(
+            "app.handlers.agent.get_user_chat",
+            new_callable=AsyncMock,
+            return_value=fake_chat_state,
+        ),
         patch("app.handlers.ai_chat.update_user_chat", new_callable=AsyncMock) as m_update_chat,
         # Patch the absolute bottom of the AI layer to avoid real network
         patch(
@@ -144,7 +177,11 @@ async def test_happy_path_text_message(run_background_sync):
             new_callable=AsyncMock,
             return_value=({"api_key": "k"}, "gemini-3.1-flash-lite-preview", "direct"),
         ),
-        patch("app.streaming.stream_and_display", new_callable=AsyncMock, return_value=("Mocked joke!", True, None)),
+        patch(
+            "app.streaming.stream_and_display",
+            new_callable=AsyncMock,
+            return_value=("Mocked joke!", True, None),
+        ),
         patch("app.repos.memory.search_memories", new_callable=AsyncMock, return_value=[]),
         patch("app.repos.memory.store_memory", new_callable=AsyncMock),
         patch("app.metrics.role_conv_metrics.record_summarization", new_callable=AsyncMock),
@@ -204,14 +241,34 @@ async def test_agent_error_shows_retry_keyboard(run_background_sync):
 
     with (
         patch("app.state.ensure_state_loaded", new_callable=AsyncMock),
-        patch("app.handlers.messages.is_authorized", new_callable=AsyncMock, return_value=True),
-        patch("app.handlers.messages.check_user_rate_limit", new_callable=AsyncMock, return_value=True),
-        patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=fake_chat_state),
-        patch("app.handlers.agent.get_user_chat", new_callable=AsyncMock, return_value=fake_chat_state),
+        patch(
+            "app.handlers.messages.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "app.handlers.messages.check_user_rate_limit",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "app.repos.chats.get_user_chat",
+            new_callable=AsyncMock,
+            return_value=fake_chat_state,
+        ),
+        patch(
+            "app.handlers.agent.get_user_chat",
+            new_callable=AsyncMock,
+            return_value=fake_chat_state,
+        ),
         patch("app.metrics.metrics_collector.record_request", new_callable=AsyncMock),
         patch("app.state.set_last_sent_message", new_callable=MagicMock),
         # Cause an unexpected network failure DEEP at the API router to organically bubble up
-        patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock, side_effect=Exception("Test crash!")),
+        patch(
+            "app.handlers.ai_chat._resolve_ai_request",
+            new_callable=AsyncMock,
+            side_effect=Exception("Test crash!"),
+        ),
     ):
         mock_lock = MagicMock()
         mock_lock.__aenter__ = AsyncMock(return_value=None)

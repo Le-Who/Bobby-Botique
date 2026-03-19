@@ -62,7 +62,10 @@ class AgenticSearch:
                         parameters=types.Schema(
                             type=types.Type.OBJECT,
                             properties={
-                                "url": types.Schema(type=types.Type.STRING, description="The target URL to read.")
+                                "url": types.Schema(
+                                    type=types.Type.STRING,
+                                    description="The target URL to read.",
+                                )
                             },
                             required=["url"],
                         ),
@@ -86,7 +89,10 @@ class AgenticSearch:
         ]
 
     async def _execute_tool(
-        self, call: types.FunctionCall, user_id: int | None = None, chat_id: int | None = None
+        self,
+        call: types.FunctionCall,
+        user_id: int | None = None,
+        chat_id: int | None = None,
     ) -> dict:
         """Execute a tool requested by the model and return its result."""
         name = call.name
@@ -176,7 +182,12 @@ class AgenticSearch:
             iterations = 0
             while iterations < self.max_iterations:
                 iterations += 1
-                logger.info("Agent loop iteration %d/%d for query '%s'", iterations, self.max_iterations, query[:30])
+                logger.info(
+                    "Agent loop iteration %d/%d for query '%s'",
+                    iterations,
+                    self.max_iterations,
+                    query[:30],
+                )
 
                 try:
                     # Model thinks and decides (requires tools)
@@ -228,14 +239,20 @@ class AgenticSearch:
                         if call_name == "conclude_research":
                             logger.info("Agent decided to conclude research.")
                             concluding_answer = str(
-                                call_args.get("answer", "❌ Агент завершил работу, но не предоставил ответ.")
+                                call_args.get(
+                                    "answer",
+                                    "❌ Агент завершил работу, но не предоставил ответ.",
+                                )
                             )
                             break
 
                         # Enforce page limits
                         if call_name == "read_page":
                             if pages_read >= self.max_pages:
-                                logger.info("Agent hit max pages limit (%d). Denying read_page.", self.max_pages)
+                                logger.info(
+                                    "Agent hit max pages limit (%d). Denying read_page.",
+                                    self.max_pages,
+                                )
                                 function_responses.append(
                                     types.Part.from_function_response(
                                         name=call_name,

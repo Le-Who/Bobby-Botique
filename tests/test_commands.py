@@ -25,7 +25,11 @@ async def test_new_chat_command():
 
     # Mocking direct imports inside commands
     with (
-        patch("app.handlers.commands.get_user_chat", new_callable=AsyncMock, return_value=mock_chat_state) as mock_get,
+        patch(
+            "app.handlers.commands.get_user_chat",
+            new_callable=AsyncMock,
+            return_value=mock_chat_state,
+        ) as mock_get,
         patch("app.handlers.commands.update_user_chat", new_callable=AsyncMock) as mock_update,
         patch("app.utils.decorators.is_authorized", new_callable=AsyncMock) as mock_auth,
         patch("app.utils.decorators.set_request_id"),

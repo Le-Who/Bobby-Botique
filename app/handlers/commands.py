@@ -57,7 +57,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             InlineKeyboardButton("🎭 Роли", callback_data="help_topic:roles"),
         ],
     ]
-    await update.message.reply_text(formatted_text, parse_mode=parse_mode, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
     logging.info("Help command completed successfully for user %s", user_id)
 
 

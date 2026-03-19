@@ -103,7 +103,14 @@ class TestSaveDocumentContent:
         mock_db.db_query.assert_called_once()
         args = mock_db.db_query.call_args[0]
         assert "INSERT INTO user_documents" in args[0]
-        assert args[1] == (1, "test.pdf", "content here", 5, len("content here"), "hash123")
+        assert args[1] == (
+            1,
+            "test.pdf",
+            "content here",
+            5,
+            len("content here"),
+            "hash123",
+        )
 
 
 # ── cleanup_oldest_documents ─────────────────────────────────────────────────

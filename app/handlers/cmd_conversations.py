@@ -10,7 +10,11 @@ from app.handlers import menus
 from app.metrics import role_conv_metrics
 from app.prompt_registry import DEFAULT_ROLES
 from app.repos.chats import get_user_chat
-from app.repos.conversations import rename_conversation, save_conversation, switch_to_conversation
+from app.repos.conversations import (
+    rename_conversation,
+    save_conversation,
+    switch_to_conversation,
+)
 from app.utils.decorators import authorized_only
 
 

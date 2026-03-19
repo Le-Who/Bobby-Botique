@@ -63,7 +63,11 @@ async def test_document_question_success():
             new_callable=AsyncMock,
             return_value=("Python is great!", 10),
         ),
-        patch("app.handlers.ai_document.handle_ai_response_error", new_callable=AsyncMock, return_value=False),
+        patch(
+            "app.handlers.ai_document.handle_ai_response_error",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
         patch("app.handlers.ai_document.send_long_message", new_callable=AsyncMock) as _mock_send,
         patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
     ):
@@ -87,7 +91,11 @@ async def test_document_question_no_documents():
     chat_state = make_chat_state()
 
     with (
-        patch("app.document_processor.get_user_documents", new_callable=AsyncMock, return_value=[]),
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
     ):
         from app.handlers.ai_document import _handle_document_question
 
@@ -113,7 +121,11 @@ async def test_document_question_content_missing():
             new_callable=AsyncMock,
             return_value=[{"id": 1, "filename": "test.txt"}],
         ),
-        patch("app.document_processor.get_document_content", new_callable=AsyncMock, return_value=None),
+        patch(
+            "app.document_processor.get_document_content",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         from app.handlers.ai_document import _handle_document_question
 
@@ -140,16 +152,26 @@ async def test_document_question_empty_ai_response():
             return_value=[{"id": 1, "filename": "test.txt"}],
         ),
         patch(
-            "app.document_processor.get_document_content", new_callable=AsyncMock, return_value="Some document content"
+            "app.document_processor.get_document_content",
+            new_callable=AsyncMock,
+            return_value="Some document content",
         ),
         patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
-        patch("app.streaming.stream_and_display", new_callable=AsyncMock, return_value=("", False, AsyncMock())),
+        patch(
+            "app.streaming.stream_and_display",
+            new_callable=AsyncMock,
+            return_value=("", False, AsyncMock()),
+        ),
         patch(
             "app.handlers.ai_core._resolve_ai_request",
             new_callable=AsyncMock,
             return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
         ),
-        patch("app.handlers.ai_document._get_ai_response_with_routing", new_callable=AsyncMock, return_value=(None, 0)),
+        patch(
+            "app.handlers.ai_document._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value=(None, 0),
+        ),
     ):
         from app.handlers.ai_document import _handle_document_question
 

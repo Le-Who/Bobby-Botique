@@ -60,7 +60,10 @@ class ProviderRouter:
         # Per-user rate limiting (async — RateLimiter from security.py)
         if user_id and not await self._rate_limiter.check_rate_limit(user_id):
             return (
-                tag_error(ErrorCode.RATE_LIMIT, "⏳ Слишком много запросов. Пожалуйста, подождите минуту."),
+                tag_error(
+                    ErrorCode.RATE_LIMIT,
+                    "⏳ Слишком много запросов. Пожалуйста, подождите минуту.",
+                ),
                 None,
             )
 
@@ -94,7 +97,8 @@ class ProviderRouter:
                 if resolution == "no_keys":
                     return (
                         tag_error(
-                            ErrorCode.NO_KEYS, "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки."
+                            ErrorCode.NO_KEYS,
+                            "❌ OpenRouter не настроен. Добавьте ключи OpenRouter в настройки.",
                         ),
                         None,
                     )
@@ -107,7 +111,10 @@ class ProviderRouter:
                         None,
                     )
                 return (
-                    tag_error(ErrorCode.KEYS_EXHAUSTED, "🚫 Не удалось получить доступный ключ API. Попробуйте позже."),
+                    tag_error(
+                        ErrorCode.KEYS_EXHAUSTED,
+                        "🚫 Не удалось получить доступный ключ API. Попробуйте позже.",
+                    ),
                     None,
                 )
 
@@ -221,7 +228,10 @@ class ProviderRouter:
         from app.repos.keys import get_key_status_manager
 
         if user_id and not await self._rate_limiter.check_rate_limit(user_id):
-            yield tag_error(ErrorCode.RATE_LIMIT, "⏳ Слишком много запросов. Пожалуйста, подождите минуту.")
+            yield tag_error(
+                ErrorCode.RATE_LIMIT,
+                "⏳ Слишком много запросов. Пожалуйста, подождите минуту.",
+            )
             return
 
         if use_openrouter is None and _has_multimodal_content(history):
@@ -242,7 +252,10 @@ class ProviderRouter:
             if not key_data:
                 is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
                 provider_name = "OpenRouter" if is_or else "Gemini"
-                yield tag_error(ErrorCode.KEYS_EXHAUSTED, f"🚫 Все ключи {provider_name} недоступны.")
+                yield tag_error(
+                    ErrorCode.KEYS_EXHAUSTED,
+                    f"🚫 Все ключи {provider_name} недоступны.",
+                )
                 return
 
             assert model_used is not None
@@ -299,7 +312,10 @@ class ProviderRouter:
         # Exhausted retries
         is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
         provider_name = "OpenRouter" if is_or else "Gemini"
-        yield tag_error(ErrorCode.KEYS_EXHAUSTED, f"🚫 Все доступные ключи {provider_name} не сработали.")
+        yield tag_error(
+            ErrorCode.KEYS_EXHAUSTED,
+            f"🚫 Все доступные ключи {provider_name} не сработали.",
+        )
 
         # ── Model-level fallback ─────────────────────────────────────────
         # All keys failed for the preferred model. If every failure was

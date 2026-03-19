@@ -65,7 +65,10 @@ class DailyKeyManager:
         """
         results = await db_query(query, (model_name, today), conn=conn)
         if results:
-            return {"key_hash": results[0]["key_hash"], "api_key": safe_decrypt(results[0]["api_key"])}
+            return {
+                "key_hash": results[0]["key_hash"],
+                "api_key": safe_decrypt(results[0]["api_key"]),
+            }
         return None
 
     async def increment_usage(self, key_hash: str, model_name: str) -> list[dict[str, Any]]:
@@ -130,7 +133,10 @@ class DailyKeyManager:
             """
             keys = await db_query(query, (model_name, excluded), conn=conn)
             if keys:
-                return {"key_hash": keys[0]["key_hash"], "api_key": safe_decrypt(keys[0]["api_key"])}
+                return {
+                    "key_hash": keys[0]["key_hash"],
+                    "api_key": safe_decrypt(keys[0]["api_key"]),
+                }
             return None
 
         threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
@@ -159,7 +165,10 @@ class DailyKeyManager:
 
         for row in results:
             if row["request_count"] < threshold:
-                return {"key_hash": row["key_hash"], "api_key": safe_decrypt(row["api_key"])}
+                return {
+                    "key_hash": row["key_hash"],
+                    "api_key": safe_decrypt(row["api_key"]),
+                }
         return None
 
 
@@ -461,7 +470,10 @@ class MonthlyKeyManager:
 
         for row in results:
             if row["credit_usage"] < threshold:
-                return {"key_hash": row["key_hash"], "api_key": safe_decrypt(row["api_key"])}
+                return {
+                    "key_hash": row["key_hash"],
+                    "api_key": safe_decrypt(row["api_key"]),
+                }
         return None
 
     async def increment_usage(self, key_hash: str, cost: int) -> None:

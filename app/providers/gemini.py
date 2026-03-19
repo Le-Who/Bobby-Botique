@@ -173,7 +173,10 @@ class GeminiProvider(BaseAIProvider):
             await metrics_collector.record_error("gemini_timeout", msg)
             self._log_failure(start_time, model_name, msg, user_id, chat_id)
             return AIResponse(
-                text=tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API. Попробуйте позже."),
+                text=tag_error(
+                    ErrorCode.TIMEOUT,
+                    "⏰ Превышено время ожидания ответа от API. Попробуйте позже.",
+                ),
                 token_count=0,
                 success=False,
                 error_message=msg,
@@ -188,7 +191,10 @@ class GeminiProvider(BaseAIProvider):
 
             if "quota" in err_lower:
                 await metrics_collector.record_error("gemini_quota", str(e))
-                text = tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API (Quota Exceeded).")
+                text = tag_error(
+                    ErrorCode.QUOTA_EXCEEDED,
+                    "🚫 Достигнут лимит запросов к API (Quota Exceeded).",
+                )
             elif "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower:
                 await metrics_collector.record_error("gemini_overloaded", str(e))
                 raise  # Trigger retry in BaseAIProvider
@@ -197,10 +203,16 @@ class GeminiProvider(BaseAIProvider):
                 text = tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
             elif "invalid" in err_lower or "malformed" in err_lower:
                 await metrics_collector.record_error("gemini_invalid_request", str(e))
-                text = tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос к API. Проверьте параметры.")
+                text = tag_error(
+                    ErrorCode.INVALID_REQUEST,
+                    "❌ Некорректный запрос к API. Проверьте параметры.",
+                )
             elif "rate limit" in err_lower:
                 await metrics_collector.record_error("gemini_rate_limit", str(e))
-                text = tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов в секунду. Подождите немного.")
+                text = tag_error(
+                    ErrorCode.RATE_LIMIT,
+                    "⏱️ Превышен лимит запросов в секунду. Подождите немного.",
+                )
             else:
                 await metrics_collector.record_error("gemini_api_call", str(e))
                 text = tag_error(ErrorCode.GENERIC, f"Произошла ошибка вызова API: {e}")

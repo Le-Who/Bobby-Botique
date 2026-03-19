@@ -60,7 +60,8 @@ async def get_personalized_stat(user_id: int) -> str | None:
     try:
         # Get approximate start date from earliest metric entry
         user_record = await db.db_query(
-            "SELECT MIN(metric_date) as first_seen FROM user_metrics WHERE user_id = $1", (user_id,)
+            "SELECT MIN(metric_date) as first_seen FROM user_metrics WHERE user_id = $1",
+            (user_id,),
         )
         if not user_record:
             return None
@@ -79,16 +80,18 @@ async def get_personalized_stat(user_id: int) -> str | None:
 
         # Get total requests
         total_req_record = await db.db_query(
-            "SELECT SUM(request_count) as total FROM user_metrics WHERE user_id = $1", (user_id,)
+            "SELECT SUM(request_count) as total FROM user_metrics WHERE user_id = $1",
+            (user_id,),
         )
-        total_requests = total_req_record[0].get("total", 0) if total_req_record else 0
+        total_requests = (total_req_record[0].get("total") or 0) if total_req_record else 0
 
         # Get today requests
         today = datetime.date.today()
         today_req_record = await db.db_query(
-            "SELECT request_count FROM user_metrics WHERE user_id = $1 AND metric_date = $2", (user_id, today)
+            "SELECT request_count FROM user_metrics WHERE user_id = $1 AND metric_date = $2",
+            (user_id, today),
         )
-        today_requests = today_req_record[0].get("request_count", 0) if today_req_record else 0
+        today_requests = (today_req_record[0].get("request_count") or 0) if today_req_record else 0
 
         # Pick a random template if we have data
         templates = []

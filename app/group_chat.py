@@ -325,9 +325,9 @@ class GroupChatManager:
 
             return {
                 "total_messages": total_messages[0]["count"] if total_messages else 0,
-                "recent_messages": recent_messages[0]["count"] if recent_messages else 0,
+                "recent_messages": (recent_messages[0]["count"] if recent_messages else 0),
                 "active_users_24h": active_users[0]["count"] if active_users else 0,
-                "member_count": self.active_groups[chat_id].member_count if chat_id in self.active_groups else 0,
+                "member_count": (self.active_groups[chat_id].member_count if chat_id in self.active_groups else 0),
             }
 
         except Exception as e:

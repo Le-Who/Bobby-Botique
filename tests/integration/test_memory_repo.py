@@ -40,7 +40,11 @@ async def test_memory_storage_and_vector_search(db_conn_with_key, mock_embedding
         await store_memory(user_id, memory_text, api_key, source_type="conversation")
 
         # Verify exact insertion
-        rows = await db_query("SELECT content FROM long_term_memory WHERE user_id = $1", (user_id,), conn=conn)
+        rows = await db_query(
+            "SELECT content FROM long_term_memory WHERE user_id = $1",
+            (user_id,),
+            conn=conn,
+        )
         assert len(rows) == 1
         assert rows[0]["content"] == memory_text
 
@@ -80,7 +84,11 @@ async def test_memory_storage_enforces_max_limit(db_conn_with_key, mock_embeddin
         for i in range(3):
             await store_memory(user_id, f"Memory {i}", api_key)
 
-        rows = await db_query("SELECT count(*) as cnt FROM long_term_memory WHERE user_id = $1", (user_id,), conn=conn)
+        rows = await db_query(
+            "SELECT count(*) as cnt FROM long_term_memory WHERE user_id = $1",
+            (user_id,),
+            conn=conn,
+        )
 
         # Since it deletes the oldest 10 when hitting the limit of 2,
         # After inserting 2, count is 2. On 3rd insert, it deletes 10 (all 2), then inserts 1. So total is 1.

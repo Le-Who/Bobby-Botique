@@ -15,7 +15,13 @@ from google import genai
 from google.genai import types
 
 from app.config import settings
-from app.database import clear_user_context, db_execute_many, db_manager, db_query, set_user_context
+from app.database import (
+    clear_user_context,
+    db_execute_many,
+    db_manager,
+    db_query,
+    set_user_context,
+)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 

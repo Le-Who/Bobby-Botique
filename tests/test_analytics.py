@@ -44,17 +44,28 @@ def test_generate_auto_title_with_parts_dicts():
 
 
 def test_generate_auto_title_with_mixed_parts():
-    messages = [{"role": "user", "parts": ["Hello", {"image": b"binary_data"}, {"text": "there"}]}]
+    messages = [
+        {
+            "role": "user",
+            "parts": ["Hello", {"image": b"binary_data"}, {"text": "there"}],
+        }
+    ]
     assert generate_auto_title(messages) == "Hello there"
 
 
 def test_generate_auto_title_empty_content():
-    messages = [{"role": "user", "content": "   \n  "}, {"role": "user", "content": "Valid message"}]
+    messages = [
+        {"role": "user", "content": "   \n  "},
+        {"role": "user", "content": "Valid message"},
+    ]
     assert generate_auto_title(messages) == "Valid message"
 
 
 def test_generate_auto_title_empty_parts():
-    messages = [{"role": "user", "parts": [{"image": b"123"}]}, {"role": "user", "content": "Valid message"}]
+    messages = [
+        {"role": "user", "parts": [{"image": b"123"}]},
+        {"role": "user", "content": "Valid message"},
+    ]
     assert generate_auto_title(messages) == "Valid message"
 
 

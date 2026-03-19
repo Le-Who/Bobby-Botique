@@ -235,15 +235,24 @@ def load_settings() -> Settings:
 
         # Check Gemini models
         if settings_obj.DEFAULT_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning("DEFAULT_MODEL '%s' not in AVAILABLE_MODELS. Adding it.", settings_obj.DEFAULT_MODEL)
+            logging.warning(
+                "DEFAULT_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
+                settings_obj.DEFAULT_MODEL,
+            )
             settings_obj.AVAILABLE_MODELS.append(settings_obj.DEFAULT_MODEL)
 
         if settings_obj.QNA_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning("QNA_MODEL '%s' not in AVAILABLE_MODELS. Adding it.", settings_obj.QNA_MODEL)
+            logging.warning(
+                "QNA_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
+                settings_obj.QNA_MODEL,
+            )
             settings_obj.AVAILABLE_MODELS.append(settings_obj.QNA_MODEL)
 
         if settings_obj.RESEARCH_MODEL not in settings_obj.AVAILABLE_MODELS:
-            logging.warning("RESEARCH_MODEL '%s' not in AVAILABLE_MODELS. Adding it.", settings_obj.RESEARCH_MODEL)
+            logging.warning(
+                "RESEARCH_MODEL '%s' not in AVAILABLE_MODELS. Adding it.",
+                settings_obj.RESEARCH_MODEL,
+            )
             settings_obj.AVAILABLE_MODELS.append(settings_obj.RESEARCH_MODEL)
 
         # Check OpenRouter models
@@ -360,7 +369,10 @@ class ConfigManager:
                     all_available_models.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
 
                 if new_settings.DEFAULT_MODEL not in all_available_models:
-                    logging.error("DEFAULT_MODEL '%s' not in AVAILABLE_MODELS!", new_settings.DEFAULT_MODEL)
+                    logging.error(
+                        "DEFAULT_MODEL '%s' not in AVAILABLE_MODELS!",
+                        new_settings.DEFAULT_MODEL,
+                    )
                     raise ValueError("DEFAULT_MODEL must be in AVAILABLE_MODELS")
 
                 # Update settings

@@ -57,7 +57,12 @@ async def test_webhook_receives_update_and_processes_it(app_client, mock_applica
 
     payload = {
         "update_id": 123456789,
-        "message": {"message_id": 1, "date": 1614556800, "chat": {"id": 111, "type": "private"}, "text": "Hello bot"},
+        "message": {
+            "message_id": 1,
+            "date": 1614556800,
+            "chat": {"id": 111, "type": "private"},
+            "text": "Hello bot",
+        },
     }
 
     # ── Act ──

@@ -387,7 +387,7 @@ def setup_detailed_logging(
     for logger_name in ["api_logger", "telegram", "asyncpg", "httpx", "httpcore"]:
         _setup_logger(
             logger_name,
-            max(numeric_level, logging.WARNING) if logger_name in ("httpx", "httpcore") else numeric_level,
+            (max(numeric_level, logging.WARNING) if logger_name in ("httpx", "httpcore") else numeric_level),
             enable_structured_logging,
             enable_pretty,
         )

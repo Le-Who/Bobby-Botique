@@ -65,7 +65,11 @@ async def _handle_document_question(
         original_length = len(document_content) if document_content else 0
         if document_content and len(document_content) > max_context_length:
             document_content = document_content[:max_context_length] + "\n\n[Документ обрезан для экономии токенов]"
-            logging.info("Document content truncated from %d to %d characters", original_length, len(document_content))
+            logging.info(
+                "Document content truncated from %d to %d characters",
+                original_length,
+                len(document_content),
+            )
 
         # Безопасная обработка document_content
         try:
@@ -140,7 +144,7 @@ async def _handle_document_question(
                 settings.DEFAULT_MODEL,
                 history,
                 user_id=user_id,
-                chat_id=placeholder_message.chat.id if placeholder_message.chat else None,
+                chat_id=(placeholder_message.chat.id if placeholder_message.chat else None),
             )
 
         if response_text:
@@ -166,7 +170,12 @@ async def _handle_document_question(
                             callback_data="doc:cancel",
                         )
                     ],
-                    [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
+                    [
+                        InlineKeyboardButton(
+                            "🎭 Выбрать роль ИИ",
+                            callback_data="open_roles:from_response",
+                        )
+                    ],
                     [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
                 ]
 

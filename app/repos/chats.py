@@ -133,13 +133,19 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                 new_msgs = chat_state.history[original_length:]
                 for msg in new_msgs:
                     messages_to_insert.append(
-                        {"role": msg.get("role", "user"), "content": _extract_message_content(msg)}
+                        {
+                            "role": msg.get("role", "user"),
+                            "content": _extract_message_content(msg),
+                        }
                     )
             elif current_length < original_length:
                 should_delete = True
                 for msg in chat_state.history:
                     messages_to_insert.append(
-                        {"role": msg.get("role", "user"), "content": _extract_message_content(msg)}
+                        {
+                            "role": msg.get("role", "user"),
+                            "content": _extract_message_content(msg),
+                        }
                     )
 
             messages_json = json.dumps(messages_to_insert) if messages_to_insert else "[]"

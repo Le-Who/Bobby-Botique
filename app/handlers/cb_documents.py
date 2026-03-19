@@ -99,7 +99,8 @@ async def _handle_document_use_existing(query, context, user_id):
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.edit_message_text(
-            "❌ Документ не найден.", reply_markup=error_with_back_keyboard("doc:list", "📄 К документам")
+            "❌ Документ не найден.",
+            reply_markup=error_with_back_keyboard("doc:list", "📄 К документам"),
         )
         return
 
@@ -173,7 +174,8 @@ async def _handle_document_select(query, context, user_id):
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.edit_message_text(
-            "❌ Документ не найден.", reply_markup=error_with_back_keyboard("doc:list", "📄 К документам")
+            "❌ Документ не найден.",
+            reply_markup=error_with_back_keyboard("doc:list", "📄 К документам"),
         )
         return
 

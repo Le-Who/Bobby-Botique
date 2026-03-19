@@ -11,7 +11,11 @@ from telegram.ext import ContextTypes
 
 from app.handlers import menus
 from app.metrics import role_conv_metrics
-from app.repos.conversations import delete_conversation, get_user_conversations, switch_to_conversation
+from app.repos.conversations import (
+    delete_conversation,
+    get_user_conversations,
+    switch_to_conversation,
+)
 from app.utils.decorators import admin_only
 from app.utils.formatting import TelegramFormatter
 
@@ -123,7 +127,8 @@ async def conv_switch_to_callback(update: Update, context: ContextTypes.DEFAULT_
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.edit_message_text(
-            "❌ Ошибка при переключении на беседу.", reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
+            "❌ Ошибка при переключении на беседу.",
+            reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам"),
         )
         await query.answer("❌ Ошибка при переключении на беседу.")
 
@@ -230,7 +235,8 @@ async def conv_delete_confirm_callback(update: Update, context: ContextTypes.DEF
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.edit_message_text(
-            "❌ Ошибка при удалении беседы.", reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам")
+            "❌ Ошибка при удалении беседы.",
+            reply_markup=error_with_back_keyboard("conv_page:1", "⬅️ К беседам"),
         )
         await query.answer("❌ Ошибка при удалении беседы")
 

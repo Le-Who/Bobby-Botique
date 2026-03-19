@@ -49,7 +49,10 @@ async def test_pgvector_chunking_and_fallback(db_conn, mock_db_manager):
 
         # We store it
         success_id = await store_memory(
-            user_id=user_id, content=large_text, api_key="dummy_key", source_type="test_document"
+            user_id=user_id,
+            content=large_text,
+            api_key="dummy_key",
+            source_type="test_document",
         )
 
     # 3. Assert: Verify it succeeded and the DB has the entry
@@ -70,7 +73,10 @@ async def test_pgvector_chunking_and_fallback(db_conn, mock_db_manager):
     with patch("app.repos.memory._get_embedding", new_callable=AsyncMock) as mock_embed2:
         mock_embed2.return_value = [0.1] * 3072
         success_fail_id = await store_memory(
-            user_id=user_id, content="Small text", api_key="dummy_key", source_type="test_document"
+            user_id=user_id,
+            content="Small text",
+            api_key="dummy_key",
+            source_type="test_document",
         )
 
     # 5. Assert fallback

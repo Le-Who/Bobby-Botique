@@ -189,11 +189,20 @@ class TestStreamingWriter:
 
         # Since stream_and_display instantiates ProviderRouter itself or gets from getter,
         # we can patch the ProviderRouter class's stream_response method directly.
-        with patch("app.providers.router.ProviderRouter.stream_response", side_effect=mock_stream):
+        with patch(
+            "app.providers.router.ProviderRouter.stream_response",
+            side_effect=mock_stream,
+        ):
             with patch("app.streaming.metrics_collector") as mock_mc:
                 mock_mc.record_api_call = AsyncMock()
                 text, success, last_msg = await stream_and_display(
-                    mock_msg, "model", [], MagicMock(), chat_id=123, chat_type="private", bot=None
+                    mock_msg,
+                    "model",
+                    [],
+                    MagicMock(),
+                    chat_id=123,
+                    chat_type="private",
+                    bot=None,
                 )
                 assert success
                 assert "HelloWorld" in text.replace(" ", "")

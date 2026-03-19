@@ -100,7 +100,10 @@ class OpenRouterProvider(BaseAIProvider):
                 await metrics_collector.record_error("openrouter_timeout", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
-                    text=tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API. Попробуйте позже."),
+                    text=tag_error(
+                        ErrorCode.TIMEOUT,
+                        "⏰ Превышено время ожидания ответа от API. Попробуйте позже.",
+                    ),
                     token_count=0,
                     success=False,
                     error_message=msg,
@@ -128,7 +131,10 @@ class OpenRouterProvider(BaseAIProvider):
                 await metrics_collector.record_error("openrouter_invalid_response", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
-                    text=tag_error(ErrorCode.INVALID_RESPONSE, "❌ API вернул некорректный ответ. Попробуйте еще раз."),
+                    text=tag_error(
+                        ErrorCode.INVALID_RESPONSE,
+                        "❌ API вернул некорректный ответ. Попробуйте еще раз.",
+                    ),
                     token_count=0,
                     success=False,
                     error_message=msg,
@@ -143,7 +149,10 @@ class OpenRouterProvider(BaseAIProvider):
                 await metrics_collector.record_error("openrouter_empty_response", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
                 return AIResponse(
-                    text=tag_error(ErrorCode.EMPTY_RESPONSE, "❌ API вернул пустой ответ. Попробуйте еще раз."),
+                    text=tag_error(
+                        ErrorCode.EMPTY_RESPONSE,
+                        "❌ API вернул пустой ответ. Попробуйте еще раз.",
+                    ),
                     token_count=0,
                     success=False,
                     error_message=msg,
@@ -249,11 +258,17 @@ class OpenRouterProvider(BaseAIProvider):
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             if status == 429:
-                yield tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов. Подождите немного.")
+                yield tag_error(
+                    ErrorCode.RATE_LIMIT,
+                    "⏱️ Превышен лимит запросов. Подождите немного.",
+                )
             elif status == 401:
                 yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ. Проверьте настройки.")
             elif status == 402:
-                yield tag_error(ErrorCode.QUOTA_EXCEEDED, "💳 Недостаточно средств на счету OpenRouter.")
+                yield tag_error(
+                    ErrorCode.QUOTA_EXCEEDED,
+                    "💳 Недостаточно средств на счету OpenRouter.",
+                )
             else:
                 yield tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {status}")
         except Exception as e:
@@ -327,7 +342,10 @@ class OpenRouterProvider(BaseAIProvider):
         elif status == 402:
             text = tag_error(ErrorCode.QUOTA_EXCEEDED, "💳 Недостаточно средств на счету OpenRouter.")
         elif status == 503:
-            text = tag_error(ErrorCode.OVERLOADED, "🔄 Сервер OpenRouter перегружен. Попробуйте позже.")
+            text = tag_error(
+                ErrorCode.OVERLOADED,
+                "🔄 Сервер OpenRouter перегружен. Попробуйте позже.",
+            )
         else:
             text = tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {status}")
 

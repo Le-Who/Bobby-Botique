@@ -347,7 +347,10 @@ def should_summarize(
     threshold = int(available * 0.8)  # Trigger at 80% utilization
 
     if total_tokens > threshold:
-        return True, f"History tokens ({total_tokens}) exceed 80% of available ({threshold})"
+        return (
+            True,
+            f"History tokens ({total_tokens}) exceed 80% of available ({threshold})",
+        )
 
     if len(history) > 50:
         return True, f"Message count ({len(history)}) exceeds soft limit (50)"

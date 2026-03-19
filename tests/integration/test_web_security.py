@@ -66,7 +66,10 @@ async def test_invalid_auth_token_rejected(test_client):
     Level: Integration.
     """
     # Arrange
-    headers = {"X-Auth-Token": "invalid_or_expired_token", "Cookie": "session=invalid_session_data"}
+    headers = {
+        "X-Auth-Token": "invalid_or_expired_token",
+        "Cookie": "session=invalid_session_data",
+    }
 
     # Act
     response = await test_client.get("/api/overview", headers=headers)
@@ -86,5 +89,8 @@ async def test_health_and_metrics_are_public(test_client):
     metrics_response = await test_client.get("/metrics")
 
     # Assert
-    assert health_response.status_code in (200, 503)  # Depends on DB mock state, but not 401
+    assert health_response.status_code in (
+        200,
+        503,
+    )  # Depends on DB mock state, but not 401
     assert metrics_response.status_code == 200
