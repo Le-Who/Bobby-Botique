@@ -1,3 +1,6 @@
 ## 2024-05-18 - Missing ARIA States on Custom Navigation Tabs
 **Learning:** Found a recurring pattern where custom-built tab navigations (like the one in `dashboard.html`) only toggle visual states (e.g., CSS `.active` classes) without signaling state changes to screen readers via `aria-selected` and `aria-controls` properties, preventing users from tracking active tabs correctly.
 **Action:** When building custom tab components or enhancing existing ones, ensure the parent element has `role="tablist"`, each child button has `role="tab"`, and Javascript click handlers toggle `aria-selected` attributes identically to the visual classes. Add `role="tabpanel"` to the corresponding panel elements.
+## 2025-03-19 - [WAI-ARIA Custom Tab Pattern]
+**Learning:** When creating custom tabs in the dashboard (`.tab` and `.tab-panel` elements), it's a specific pattern for this application to implement the full WAI-ARIA specification. `role="tablist"`, `role="tab"`, and `role="tabpanel"` were present, but the explicit `aria-labelledby` linking panels back to tab buttons was missing.
+**Action:** Always verify that `.tab-panel` elements have an `aria-labelledby` attribute corresponding to the `id` of their respective `.tab` button to ensure screen reader compatibility for tabbed interfaces.
