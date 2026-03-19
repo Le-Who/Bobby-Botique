@@ -236,7 +236,7 @@ async def _handle_research_agent(
         # We successfully got an answer
         buttons = [
             [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
-            [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
+            [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
         ]
         reply_markup = InlineKeyboardMarkup(buttons)
 

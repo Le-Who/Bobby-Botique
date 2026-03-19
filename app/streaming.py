@@ -28,7 +28,7 @@ from telegram.error import TelegramError
 from app.metrics import metrics_collector
 from app.request_context import get_request_id
 from app.utils.formatting import TelegramFormatter
-from app.utils.text_format import sanitize_html_tags
+from app.utils.text_format import sanitize_html_tags, strip_formatting
 
 if TYPE_CHECKING:
     from telegram import Message
@@ -135,6 +135,10 @@ def _detect_open_markdown(text: str) -> tuple[str, str]:
     # Strip inline code before analyzing styling marks
     stripped_code = re.sub(r"`[^`]*`", "", stripped_fences)
 
+    # Strip completed markdown links — their content shouldn't affect marker counts
+    # [text](url) → text  (preserves link text for marker analysis)
+    stripped_code = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", stripped_code)
+
     # --- 4. Bold (**...**) ----------------------------------------------------
     bold_count = stripped_code.count("**")
     if bold_count % 2 == 1:
@@ -214,6 +218,18 @@ class StreamingWriter:
         self._debounce_s = EDIT_DEBOUNCE_S
         self._min_chunk = MIN_CHUNK_SIZE
 
+    def _format_for_telegram(self, text: str) -> tuple[str, str]:
+        """Format text and sanitize HTML in one step.
+
+        Ensures every path through the writer produces valid, balanced
+        Telegram HTML — prevents the bug where sanitize_html_tags was
+        missing from the draft finalize path.
+        """
+        formatted, parse_mode = TelegramFormatter.format_text(text)
+        sanitized = sanitize_html_tags(formatted)
+        assert sanitized is not None  # guaranteed: input is str, not None
+        return sanitized, parse_mode
+
     async def _prepare_draft_mode(self) -> bool:
         """One-time: delete placeholder before first draft to prevent dual-display.
 
@@ -282,8 +298,7 @@ class StreamingWriter:
                 return
 
             try:
-                formatted_text, parse_mode = TelegramFormatter.format_text(text)
-                formatted_text = sanitize_html_tags(formatted_text)
+                formatted_text, parse_mode = self._format_for_telegram(text)
 
                 if len(formatted_text) > STREAM_MSG_LIMIT:
                     if getattr(self, "_overflow_failed", False):
@@ -311,8 +326,7 @@ class StreamingWriter:
                     if self._placeholder_deleted:
                         try:
                             display = text + STREAMING_INDICATOR
-                            fmt, pm = TelegramFormatter.format_text(display)
-                            fmt = sanitize_html_tags(fmt)
+                            fmt, pm = self._format_for_telegram(display)
                             await self._adapter.send_final_message(fmt, parse_mode=pm)  # type: ignore[arg-type]
                             self._placeholder_deleted = False
                             self._last_edit_time = time.monotonic()
@@ -327,7 +341,7 @@ class StreamingWriter:
         # Draft mode finalize — send new permanent message (placeholder was deleted)
         if self._placeholder_deleted and final:
             try:
-                formatted_text, parse_mode = TelegramFormatter.format_text(text)
+                formatted_text, parse_mode = self._format_for_telegram(text)
 
                 if len(formatted_text) > STREAM_MSG_LIMIT:
                     if getattr(self, "_overflow_failed", False):
@@ -354,11 +368,7 @@ class StreamingWriter:
         display_text = text if final else text + STREAMING_INDICATOR
 
         try:
-            formatted_text, parse_mode = TelegramFormatter.format_text(display_text)
-
-            # Mid-stream flushes may have unclosed HTML tags from incomplete markdown
-            if not final:
-                formatted_text = sanitize_html_tags(formatted_text)
+            formatted_text, parse_mode = self._format_for_telegram(display_text)
 
             if len(formatted_text) > STREAM_MSG_LIMIT and not final:
                 if getattr(self, "_overflow_failed", False):
@@ -389,8 +399,8 @@ class StreamingWriter:
     async def _overflow_to_new_message(self) -> None:
         """Finalize current message and create new placeholder for continued streaming."""
         # 1. Finalize the current message with the text that fits
-        #    Find the last paragraph break that keeps formatted text under limit
-        split_point = self._find_split_point()
+        #    Two-phase split: returns (split_point, pre-formatted HTML)
+        split_point, pre_formatted = self._find_split_point()
 
         if split_point > 0:
             frozen_text = self._buffer[:split_point]
@@ -405,13 +415,19 @@ class StreamingWriter:
         md_suffix, md_prefix = _detect_open_markdown(frozen_text)
         if md_suffix:
             frozen_text += md_suffix
+            pre_formatted = None  # Invalidate: frozen_text was modified
         if md_prefix and remainder:
             remainder = md_prefix + remainder
 
         # Freeze current message (or send new if placeholder was deleted)
         try:
-            formatted_frozen, parse_mode = TelegramFormatter.format_text(frozen_text)
-            formatted_frozen = sanitize_html_tags(formatted_frozen)
+            if pre_formatted is not None:
+                # Reuse the formatted text from _find_split_point (avoids re-formatting)
+                formatted_frozen = pre_formatted
+                parse_mode = "HTML"
+            else:
+                formatted_frozen, parse_mode = self._format_for_telegram(frozen_text)
+
             if self._placeholder_deleted:
                 # No placeholder to edit — send frozen text as new message
                 await self._adapter.send_final_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
@@ -431,8 +447,7 @@ class StreamingWriter:
         # 2. Create new message with cursor indicator
         try:
             initial_text = remainder + STREAMING_INDICATOR if remainder.strip() else STREAMING_INDICATOR
-            formatted_initial, parse_mode = TelegramFormatter.format_text(initial_text)
-            formatted_initial = sanitize_html_tags(formatted_initial)
+            formatted_initial, parse_mode = self._format_for_telegram(initial_text)
 
             self._adapter = await self._adapter.reply_new_message(
                 formatted_initial,
@@ -449,42 +464,80 @@ class StreamingWriter:
                 len(frozen_text),
             )
         except Exception as e:
-            logging.error("Failed to create overflow message: %s", e)
-            # If we can't create a new message, stop further edits
-            # but don't lose text (it's still in _full_text)
-            self._overflow_failed = True
-            self._last_edit_time = time.monotonic() + 5.0  # Backoff
+            self._overflow_retries = getattr(self, "_overflow_retries", 0) + 1
+            if self._overflow_retries < 3:
+                logging.warning(
+                    "Overflow retry %d/3: %s",
+                    self._overflow_retries,
+                    e,
+                )
+                self._last_edit_time = time.monotonic() + 2.0  # Backoff
+                return  # Will retry on next flush
 
-    def _find_split_point(self) -> int:
+            # 3 retries exhausted → fallback: send plain text
+            logging.error(
+                "Overflow failed after 3 retries (%d chars buffered). "
+                "Sending plain text fallback.",
+                len(self._buffer),
+                exc_info=True,
+            )
+            try:
+                plain = strip_formatting(self._buffer)
+                await self._adapter.edit_message(
+                    plain[:STREAM_MSG_LIMIT],
+                    parse_mode="",  # type: ignore[arg-type]
+                )
+            except Exception:
+                pass  # Last resort — text is still in _full_text
+            self._overflow_failed = True
+
+    def _find_split_point(self) -> tuple[int, str | None]:
         """Find the best point to split the buffer so the formatted head fits within limits.
 
-        Searches backward from the buffer end for a paragraph or line break.
+        Uses a two-phase approach to minimize expensive format_text calls:
+        1. Estimate a raw-text limit from the expansion ratio of the full buffer.
+        2. Find a natural break near that estimate and verify with one format call.
+
+        Returns:
+            (split_point, formatted_text) — formatted_text is the pre-formatted
+            HTML for the frozen chunk (or None if it couldn't be determined),
+            allowing the caller to skip a redundant format_text call.
         """
         text = self._buffer
 
-        # Try progressively shorter prefixes at natural break points
-        for sep in ["\n\n", "\n", ". ", " "]:
-            # Look for breaks in the last 30% of the buffer (near the limit)
-            search_start = max(0, len(text) * 7 // 10)
-            idx = text.rfind(sep, search_start)
-            if idx > 0:
-                candidate = text[: idx + len(sep)]
-                formatted, _ = TelegramFormatter.format_text(candidate)
-                if len(formatted) <= STREAM_MSG_LIMIT:
-                    return idx + len(sep)
+        # Phase 1: estimate the expansion ratio (raw → HTML)
+        full_formatted, _ = self._format_for_telegram(text)
+        ratio = len(full_formatted) / max(len(text), 1)
+        estimated_raw_limit = int(STREAM_MSG_LIMIT / ratio * 0.95)  # 5% safety margin
 
-        # Fallback: binary search for a length that fits
-        lo, hi = 0, len(text)
-        best = 0
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            formatted, _ = TelegramFormatter.format_text(text[:mid])
+        # Phase 2: find a natural break near the estimated limit
+        search_lo = max(0, estimated_raw_limit - 500)
+        search_hi = min(len(text), estimated_raw_limit + 100)
+
+        for sep in ["\n\n", "\n", ". ", " "]:
+            idx = text.rfind(sep, search_lo, search_hi)
+            if idx > 0:
+                end = idx + len(sep)
+                formatted, _ = self._format_for_telegram(text[:end])
+                if len(formatted) <= STREAM_MSG_LIMIT:
+                    return end, formatted
+
+        # Fallback: try the raw estimate directly
+        formatted, _ = self._format_for_telegram(text[:estimated_raw_limit])
+        if len(formatted) <= STREAM_MSG_LIMIT:
+            return estimated_raw_limit, formatted
+
+        # Last resort: step back in larger increments
+        step = max(estimated_raw_limit // 10, 50)
+        for offset in range(step, estimated_raw_limit, step):
+            candidate_len = estimated_raw_limit - offset
+            if candidate_len <= 0:
+                break
+            formatted, _ = self._format_for_telegram(text[:candidate_len])
             if len(formatted) <= STREAM_MSG_LIMIT:
-                best = mid
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        return best
+                return candidate_len, formatted
+
+        return 0, None
 
     @property
     def last_message(self):

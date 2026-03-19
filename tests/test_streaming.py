@@ -605,7 +605,7 @@ class TestOverflowRetryStorm:
 
     @pytest.mark.asyncio
     async def test_circuit_breaker_on_overflow_failure(self):
-        """If reply_new_message fails, it should circuit-break and not hot-loop."""
+        """If reply_new_message fails 3 times, it should circuit-break and not hot-loop."""
         from app.streaming import STREAM_MSG_LIMIT, StreamingWriter
 
         adapter = MagicMock()
@@ -621,11 +621,18 @@ class TestOverflowRetryStorm:
 
         oversized = "A" * (STREAM_MSG_LIMIT + 100)
 
-        # Write 1: hits overflow, replies new message, throws error.
-        # Should record the failure.
+        # Write 1: hits overflow, replies new message, 1st failure → retry
         await writer.write(oversized)
+        assert not getattr(writer, "_overflow_failed", False), "Should not circuit-break after 1 retry"
 
-        # Verify the exception was handled and state was updated to prevent hot loop
+        # Write 2: 2nd failure → retry again
+        writer._last_edit_time = 0  # Force flush
+        await writer.write("")
+        assert not getattr(writer, "_overflow_failed", False), "Should not circuit-break after 2 retries"
+
+        # Write 3: 3rd failure → circuit breaker engages
+        writer._last_edit_time = 0  # Force flush
+        await writer.write("")
         assert hasattr(writer, "_overflow_failed")
         assert writer._overflow_failed is True
 

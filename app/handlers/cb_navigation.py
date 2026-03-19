@@ -86,6 +86,8 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_state.token_count = 0
     chat_state.system_prompt = None
     chat_state.context_summary = None
+    chat_state.is_deep_dive = False
+    chat_state.deep_dive_thread_id = None
     await update_user_chat(user_id, chat_state)
 
     # Remove the old inline keyboard
@@ -109,6 +111,8 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     chat_state.token_count = 0
     chat_state.system_prompt = None
     chat_state.context_summary = None
+    chat_state.is_deep_dive = False
+    chat_state.deep_dive_thread_id = None
     await update_user_chat(user_id, chat_state)
 
     text = "✨ **Новый чат начат!**\n\nКонтекст и роль сброшены. Напишите что-нибудь. 👇"

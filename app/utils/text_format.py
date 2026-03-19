@@ -187,7 +187,9 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[str
         return [text]
 
     chunks = []
-    while text:
+    for _guard in range(200):  # Hard cap: max 200 chunks (safety net)
+        if not text:
+            break
         if len(text) <= max_length:
             chunks.append(text)
             break
@@ -280,8 +282,10 @@ def split_text_safe(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list[str
         if remaining:
             remaining = opening_str + remaining
 
-        # Infinite loop prevention: Force a hard cut if no text content was processed
-        if remaining == text:
+        # Infinite loop prevention: Force a hard cut if no text content was consumed.
+        # After tag balancing, `remaining` may have prepended opening tags, so a
+        # simple `remaining == text` misses zero-progress cases.
+        if cut_point <= 0 or remaining == text or len(remaining) >= len(text):
             cut_point = limit
             chunk = text[:cut_point]
             remaining = text[cut_point:].lstrip()
