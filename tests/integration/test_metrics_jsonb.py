@@ -159,7 +159,7 @@ class TestMetricsJsonbRoundtrip:
             5,
             1,
             json.dumps({"gemini_streaming": 7, "gemini_search": 1}),
-            json.dumps({"gemini-2.5-flash": 5, "gemini-3.1-flash-lite": 2}),
+            json.dumps({"gemini-2.5-flash": 5, "gemini-3.1-flash-lite-preview": 2}),
         )
 
         rows = await db_conn.fetch(LOAD_API_CALLS_SQL)
@@ -168,7 +168,7 @@ class TestMetricsJsonbRoundtrip:
 
         rows = await db_conn.fetch(LOAD_MODEL_USAGE_SQL)
         result = {row["key"]: int(row["total"]) for row in rows}
-        assert result == {"gemini-2.5-flash": 7, "gemini-3.1-flash-lite": 2}
+        assert result == {"gemini-2.5-flash": 7, "gemini-3.1-flash-lite-preview": 2}
 
     @pytest.mark.asyncio
     async def test_empty_jsonb_object_handled(self, db_conn):

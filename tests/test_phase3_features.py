@@ -24,7 +24,7 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 "gemini-2.5-flash",
             ]
             result = select_model("Привет!", current_model="gemini-2.5-flash")
@@ -36,7 +36,7 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 "gemini-2.5-flash",
             ]
             result = select_model(
@@ -51,7 +51,7 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 "gemini-2.5-flash",
             ]
             result = select_model(
@@ -65,10 +65,10 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 "gemini-2.5-flash",
             ]
-            result = select_model("Привет!", current_model="gemini-3.1-flash-lite")
+            result = select_model("Привет!", current_model="gemini-3.1-flash-lite-preview")
             assert result is None
 
     def test_no_suggestion_for_medium_message(self):
@@ -76,12 +76,12 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = [
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 "gemini-2.5-flash",
             ]
             result = select_model(
                 "Расскажи о погоде в Москве сегодня",
-                current_model="gemini-3.1-flash-lite",
+                current_model="gemini-3.1-flash-lite-preview",
             )
             # No strong signal → should return None
             assert result is None
@@ -91,7 +91,7 @@ class TestModelSelector:
 
         with patch("app.model_selector.settings") as mock_settings:
             mock_settings.AVAILABLE_MODELS = []
-            result = select_model("test", current_model="gemini-3.1-flash-lite")
+            result = select_model("test", current_model="gemini-3.1-flash-lite-preview")
             assert result is None
 
 

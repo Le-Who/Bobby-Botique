@@ -26,7 +26,7 @@ class TestAIResponse:
             token_count=10,
             success=True,
             provider="gemini",
-            model="gemini-3.1-flash-lite",
+            model="gemini-3.1-flash-lite-preview",
         )
         assert response.text == "Hello, world!"
         assert response.token_count == 10
@@ -64,8 +64,8 @@ class TestIsOpenRouterModel:
 
     def test_gemini_model(self):
         """Gemini models don't contain a slash."""
-        assert is_openrouter_model("gemini-3.1-flash-lite") is False
-        assert is_openrouter_model("gemini-3.0-flash") is False
+        assert is_openrouter_model("gemini-3.1-flash-lite-preview") is False
+        assert is_openrouter_model("gemini-3-flash-preview") is False
         assert is_openrouter_model("gemini-pro-vision") is False
 
 
@@ -208,7 +208,7 @@ class TestProviders:
 
             response = await wrapper._execute_request(
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite",
+                model_name="gemini-3.1-flash-lite-preview",
                 system_instruction=None,
                 user_id=None,
                 chat_id=None,
@@ -244,7 +244,7 @@ class TestProviders:
 
             response = await wrapper._execute_request(
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite",
+                model_name="gemini-3.1-flash-lite-preview",
                 system_instruction=None,
                 user_id=None,
                 chat_id=None,
@@ -304,7 +304,7 @@ class TestGetAIResponse:
             text, tokens = await get_ai_response(
                 api_key="key",
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite",
+                model_name="gemini-3.1-flash-lite-preview",
             )
 
             assert text == "Gemini response"

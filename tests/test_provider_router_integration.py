@@ -23,7 +23,7 @@ class TestProviderRouterIntegration:
         mock_use_case.resolve_ai_request = AsyncMock(
             return_value=(
                 {"key_hash": "abc", "api_key": "test-key"},
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 "resolved",
             )
         )
@@ -35,7 +35,7 @@ class TestProviderRouterIntegration:
             patch.object(router._rate_limiter, "check_rate_limit", new_callable=AsyncMock, return_value=True),
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite",
+                preferred_model="gemini-3.1-flash-lite-preview",
                 history=[{"role": "user", "parts": ["hi"]}],
                 user_id=123,
             )
@@ -97,7 +97,7 @@ class TestProviderRouterIntegration:
             patch.object(router._rate_limiter, "check_rate_limit", new_callable=AsyncMock, return_value=True),
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite",
+                preferred_model="gemini-3.1-flash-lite-preview",
                 history=[{"role": "user", "parts": ["hi"]}],
                 user_id=1,
             )
@@ -119,7 +119,7 @@ class TestProviderRouterIntegration:
             return_value=False,
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite",
+                preferred_model="gemini-3.1-flash-lite-preview",
                 history=[{"role": "user", "parts": ["hi"]}],
                 user_id=123,
             )
@@ -144,7 +144,7 @@ class TestProviderRouterIntegration:
         mock_use_case.resolve_ai_request = AsyncMock(
             return_value=(
                 {"key_hash": "abc", "api_key": "test-key"},
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 "resolved",
             )
         )
@@ -156,7 +156,7 @@ class TestProviderRouterIntegration:
             patch.object(router._rate_limiter, "check_rate_limit", new_callable=AsyncMock, return_value=True),
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite",
+                preferred_model="gemini-3.1-flash-lite-preview",
                 history=history,
                 user_id=1,
             )
@@ -164,7 +164,7 @@ class TestProviderRouterIntegration:
         assert text == "Image desc"
         # resolve_ai_request should have been called with use_openrouter=False
         call_kwargs = mock_use_case.resolve_ai_request.call_args
-        assert call_kwargs[1].get("use_openrouter") is False or call_kwargs[0][0] == "gemini-3.1-flash-lite"
+        assert call_kwargs[1].get("use_openrouter") is False or call_kwargs[0][0] == "gemini-3.1-flash-lite-preview"
 
     @pytest.mark.asyncio
     async def test_key_failure_triggers_retry(self):
@@ -177,8 +177,8 @@ class TestProviderRouterIntegration:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"key_hash": "bad_key", "api_key": "bad"}, "gemini-3.1-flash-lite", "resolved"),
-                ({"key_hash": "good_key", "api_key": "good"}, "gemini-3.1-flash-lite", "resolved"),
+                ({"key_hash": "bad_key", "api_key": "bad"}, "gemini-3.1-flash-lite-preview", "resolved"),
+                ({"key_hash": "good_key", "api_key": "good"}, "gemini-3.1-flash-lite-preview", "resolved"),
             ]
         )
         mock_use_case.get_ai_response = AsyncMock(
@@ -194,7 +194,7 @@ class TestProviderRouterIntegration:
             patch.object(router._rate_limiter, "check_rate_limit", new_callable=AsyncMock, return_value=True),
         ):
             text, tokens = await router.get_response(
-                preferred_model="gemini-3.1-flash-lite",
+                preferred_model="gemini-3.1-flash-lite-preview",
                 history=[{"role": "user", "parts": ["hi"]}],
                 user_id=1,
             )

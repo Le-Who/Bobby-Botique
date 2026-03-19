@@ -26,7 +26,7 @@ class TestAIResponseLifecycle:
             token_count=15,
             success=True,
             provider="gemini",
-            model="gemini-3.1-flash-lite",
+            model="gemini-3.1-flash-lite-preview",
         )
 
         with patch("app.providers.base.get_provider_for_model") as mock_factory:
@@ -37,12 +37,12 @@ class TestAIResponseLifecycle:
             text, tokens = await get_ai_response(
                 api_key="test-key",
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite",
+                model_name="gemini-3.1-flash-lite-preview",
             )
 
         assert text == "Hello from Gemini!"
         assert tokens == 15
-        mock_factory.assert_called_once_with("gemini-3.1-flash-lite", "test-key")
+        mock_factory.assert_called_once_with("gemini-3.1-flash-lite-preview", "test-key")
         mock_provider.get_response.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -92,7 +92,7 @@ class TestAIResponseLifecycle:
             text, tokens = await get_ai_response(
                 api_key="key",
                 history=[{"role": "user", "parts": ["hi"]}],
-                model_name="gemini-3.1-flash-lite",
+                model_name="gemini-3.1-flash-lite-preview",
             )
 
         assert "❌" in text
@@ -119,7 +119,7 @@ class TestKeyRotationFlow:
         mock_db.return_value = [{"key_hash": "abc123", "api_key": "enc_key_1", "request_count": 5}]
 
         with patch("app.repos.keys.safe_decrypt", return_value="decrypted_key"):
-            result = await km.get_available_key("gemini-3.1-flash-lite")
+            result = await km.get_available_key("gemini-3.1-flash-lite-preview")
         assert result is not None
         assert result["key_hash"] == "abc123"
         assert result["api_key"] == "decrypted_key"
@@ -135,7 +135,7 @@ class TestKeyRotationFlow:
         km = DailyKeyManager("api_keys", "key_usage")
         mock_db.return_value = []  # No keys under limit
 
-        result = await km.get_available_key("gemini-3.1-flash-lite")
+        result = await km.get_available_key("gemini-3.1-flash-lite-preview")
         assert result is None
 
     @pytest.mark.asyncio
@@ -146,7 +146,7 @@ class TestKeyRotationFlow:
         km = DailyKeyManager("api_keys", "key_usage")
         mock_db.return_value = [{"request_count": 6}]
 
-        result = await km.increment_usage("abc123", "gemini-3.1-flash-lite")
+        result = await km.increment_usage("abc123", "gemini-3.1-flash-lite-preview")
         assert result is not None
         assert result[0]["request_count"] == 6
         sql = mock_db.call_args[0][0]
@@ -163,7 +163,7 @@ class TestKeyRotationFlow:
         daily_limit = 100
         _threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
 
-        result = await km.is_key_available("abc123", "gemini-3.1-flash-lite", daily_limit)
+        result = await km.is_key_available("abc123", "gemini-3.1-flash-lite-preview", daily_limit)
         # 10 < threshold (e.g., 90% of 100 = 90)
         assert result is True
 
@@ -177,7 +177,7 @@ class TestKeyRotationFlow:
         mock_db.return_value = [{"request_count": 95}]
         daily_limit = 100
 
-        result = await km.is_key_available("abc123", "gemini-3.1-flash-lite", daily_limit)
+        result = await km.is_key_available("abc123", "gemini-3.1-flash-lite-preview", daily_limit)
         assert result is False
 
     @pytest.mark.asyncio

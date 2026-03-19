@@ -13,7 +13,7 @@ except ImportError:
 
 def make_chat_state(
     history=None,
-    model="gemini-3.1-flash-lite",
+    model="gemini-3.1-flash-lite-preview",
     system_prompt=None,
     token_count=0,
     is_deep_dive=False,

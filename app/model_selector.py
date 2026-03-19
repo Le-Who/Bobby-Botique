@@ -2,7 +2,7 @@
 """Smart model auto-selection based on message content.
 
 Analyzes user input characteristics to recommend the optimal model:
-- Short queries → fast models (e.g. gemini-3.1-flash-lite)
+- Short queries → fast models (e.g. gemini-3.1-flash-lite-preview)
 - Complex reasoning → thinking models (e.g. gemini-2.5-flash)
 - Image analysis → multimodal models
 - Code tasks → code-optimized models
@@ -34,7 +34,7 @@ class SelectionResult:
 # Order matters: first match wins within _find_model.
 # Models are ranked roughly by capability tier.
 _MODEL_TIER = {
-    "3.0-flash": 5,  # flagship
+    "3-flash-preview": 5,  # flagship
     "3.1-flash-lite": 4,  # excellent performance, better than 2.5
     "2.5-flash": 3,  # standard
     "2.5-flash-lite": 1,  # low latency fallback
@@ -51,7 +51,7 @@ def _get_tier(model_name: str) -> int:
         return 1
     if "luma" in name or "dall-e" in name:
         return 1
-    if "3.0-flash" in name:
+    if "3-flash-preview" in name:
         return 5
     if "2.5-flash" in name:
         return 3
@@ -109,7 +109,7 @@ def select_model(
 
     # ── Code tasks → best available model ────────────────────────────────
     if _CODE_PATTERNS.search(user_message):
-        code_model = _find_model(available, ["3.0-flash", "3.1-flash-lite", "2.5-flash"])
+        code_model = _find_model(available, ["3-flash-preview", "3.1-flash-lite", "2.5-flash"])
         if code_model and code_model != current_model and _get_tier(code_model) > current_tier:
             return SelectionResult(
                 model=code_model,
@@ -119,7 +119,7 @@ def select_model(
 
     # ── Deep reasoning → thinking model ──────────────────────────────────
     if _REASONING_PATTERNS.search(user_message) or msg_len > 1000:
-        reasoning_model = _find_model(available, ["3.0-flash", "3.1-flash-lite", "2.5-flash"])
+        reasoning_model = _find_model(available, ["3-flash-preview", "3.1-flash-lite", "2.5-flash"])
         if reasoning_model and reasoning_model != current_model and _get_tier(reasoning_model) > current_tier:
             return SelectionResult(
                 model=reasoning_model,

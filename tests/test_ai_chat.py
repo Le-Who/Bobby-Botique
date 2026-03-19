@@ -32,7 +32,7 @@ def mock_boundaries():
         patch("app.metrics.role_conv_metrics.record_summarization", new_callable=AsyncMock),
     ):
         # Default happy-path setup
-        m_resolve.return_value = ({"api_key": "k", "key_hash": "h"}, "gemini-3.1-flash-lite", "direct")
+        m_resolve.return_value = ({"api_key": "k", "key_hash": "h"}, "gemini-3.1-flash-lite-preview", "direct")
 
         # We need to return the expected tuple: (response_text, success, last_message_obj)
         placeholder_reply = make_telegram_message("Test reply", user_id=123)
@@ -113,7 +113,7 @@ async def test_model_exhausted_prompts_fallback_confirmation(mock_boundaries):
     user_id = 123
     placeholder = make_telegram_message(user_id=user_id)
     chat_state = make_chat_state()
-    mock_boundaries["resolve"].return_value = ({"api_key": "fixed_key"}, "gemini-3.0-flash", "confirm_fallback")
+    mock_boundaries["resolve"].return_value = ({"api_key": "fixed_key"}, "gemini-3-flash-preview", "confirm_fallback")
 
     # ── Act ──
     await _handle_regular_chat(placeholder, user_id, "Hi", chat_state)
@@ -122,7 +122,7 @@ async def test_model_exhausted_prompts_fallback_confirmation(mock_boundaries):
     placeholder.edit_text.assert_awaited_once()
     call_args, call_kwargs = placeholder.edit_text.call_args
     assert "reply_markup" in call_kwargs, "Expected inline keyboard for fallback confirmation"
-    assert "gemini-3.0-flash" in call_args[0], "Expected fallback model name in prompt"
+    assert "gemini-3-flash-preview" in call_args[0], "Expected fallback model name in prompt"
     # Ensure stream was bypassed while we wait for user confirmation
     mock_boundaries["stream"].assert_not_called()
 

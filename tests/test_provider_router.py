@@ -18,7 +18,7 @@ class TestProviderRouter:
 
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
-            return_value=({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite", None)
+            return_value=({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None)
         )
         mock_use_case.get_ai_response = AsyncMock(return_value=("Hello!", 10))
         mock_use_case.increment_key_usage = AsyncMock()
@@ -31,13 +31,13 @@ class TestProviderRouter:
             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
         ):
             text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 [{"role": "user", "parts": ["hi"]}],
             )
 
         assert text == "Hello!"
         assert tokens == 10
-        mock_status_mgr.record_success.assert_called_once_with("hash1", "gemini-3.1-flash-lite")
+        mock_status_mgr.record_success.assert_called_once_with("hash1", "gemini-3.1-flash-lite-preview")
 
     @pytest.mark.asyncio
     async def test_all_keys_exhausted(self):
@@ -51,7 +51,7 @@ class TestProviderRouter:
             patch("app.repos.keys.get_key_status_manager"),
         ):
             text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 [{"role": "user", "parts": ["hi"]}],
             )
 
@@ -69,8 +69,8 @@ class TestProviderRouter:
         # First call returns a key that produces an error, second call succeeds
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite", None),
-                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3.1-flash-lite", None),
+                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
+                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3.1-flash-lite-preview", None),
             ]
         )
         mock_use_case.get_ai_response = AsyncMock(
@@ -90,7 +90,7 @@ class TestProviderRouter:
             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
         ):
             text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 [{"role": "user", "parts": ["hi"]}],
                 max_key_retries=3,
             )
@@ -100,12 +100,12 @@ class TestProviderRouter:
         # First key should have been suspended with "permanent" category
         mock_status_mgr.suspend_key.assert_called_once_with(
             "hash1",
-            "gemini-3.1-flash-lite",
+            "gemini-3.1-flash-lite-preview",
             "permanent",
             "🔑 Неверный API ключ."[:200],
         )
         # Second key should have been recorded as success
-        mock_status_mgr.record_success.assert_called_once_with("hash2", "gemini-3.1-flash-lite")
+        mock_status_mgr.record_success.assert_called_once_with("hash2", "gemini-3.1-flash-lite-preview")
 
     @pytest.mark.asyncio
     async def test_quota_error_suspends_with_quota_category(self):
@@ -115,7 +115,7 @@ class TestProviderRouter:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite", None),
+                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
                 (None, None, "all_exhausted"),
             ]
         )
@@ -131,7 +131,7 @@ class TestProviderRouter:
             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
         ):
             text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 [{"role": "user", "parts": ["hi"]}],
                 max_key_retries=2,
             )
@@ -150,8 +150,8 @@ class TestProviderRouter:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite", None),
-                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3.1-flash-lite", None),
+                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
+                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3.1-flash-lite-preview", None),
             ]
         )
         mock_use_case.get_ai_response = AsyncMock(
@@ -171,7 +171,7 @@ class TestProviderRouter:
             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
         ):
             text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 [{"role": "user", "parts": ["hi"]}],
                 max_key_retries=3,
             )
@@ -208,7 +208,7 @@ class TestProviderRouter:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite", None),
+                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
                 (None, None, "all_exhausted"),
             ]
         )
@@ -223,7 +223,7 @@ class TestProviderRouter:
             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
         ):
             await router.get_response(
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 [{"role": "user", "parts": ["hi"]}],
                 max_key_retries=2,
             )
@@ -297,9 +297,9 @@ class TestProviderRouter:
         mock_use_case = MagicMock()
         mock_use_case.resolve_ai_request = AsyncMock(
             side_effect=[
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite", None),
-                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3.1-flash-lite", None),
-                ({"api_key": "key3", "key_hash": "hash3"}, "gemini-3.1-flash-lite", None),
+                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-3.1-flash-lite-preview", None),
+                ({"api_key": "key2", "key_hash": "hash2"}, "gemini-3.1-flash-lite-preview", None),
+                ({"api_key": "key3", "key_hash": "hash3"}, "gemini-3.1-flash-lite-preview", None),
             ]
         )
         mock_use_case.get_ai_response = AsyncMock(
@@ -318,7 +318,7 @@ class TestProviderRouter:
             patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
         ):
             text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite",
+                "gemini-3.1-flash-lite-preview",
                 [{"role": "user", "parts": ["hi"]}],
                 max_key_retries=3,
             )

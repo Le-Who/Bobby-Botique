@@ -11,10 +11,10 @@ class TestGetTier:
     """Tier ranking should follow the hierarchy: 3.0-flash > 3.1-flash-lite > 2.5-flash > 2.5-flash-lite."""
 
     def test_3_0_flash_is_highest(self):
-        assert _get_tier("gemini-3.0-flash") == 5
+        assert _get_tier("gemini-3-flash-preview") == 5
 
     def test_3_1_flash_lite_is_tier_4(self):
-        assert _get_tier("gemini-3.1-flash-lite") == 4
+        assert _get_tier("gemini-3.1-flash-lite-preview") == 4
 
     def test_2_5_flash_is_tier_3(self):
         assert _get_tier("gemini-2.5-flash") == 3
@@ -36,9 +36,9 @@ class TestFindModel:
     """First preferred model that's available should be returned."""
 
     def test_returns_first_match(self):
-        available = ["gemini-3.1-flash-lite", "gemini-2.5-flash"]
+        available = ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash"]
         result = _find_model(available, ["3.1-flash-lite", "2.5-flash"])
-        assert result == "gemini-3.1-flash-lite"
+        assert result == "gemini-3.1-flash-lite-preview"
 
     def test_returns_none_when_no_match(self):
         available = ["gemini-2.5-flash-lite"]
@@ -65,7 +65,7 @@ class TestSelectModel:
 
         mock_settings = MagicMock()
         mock_settings.AVAILABLE_MODELS = [
-            "gemini-3.1-flash-lite",
+            "gemini-3.1-flash-lite-preview",
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
         ]
@@ -120,7 +120,7 @@ class TestSelectModel:
 
     def test_same_model_not_suggested(self):
         """Should not suggest switching to the same model (already at top available tier)."""
-        result = select_model("```\ncode block\n```", current_model="gemini-3.1-flash-lite")
+        result = select_model("```\ncode block\n```", current_model="gemini-3.1-flash-lite-preview")
         assert result is None
 
     # ── SelectionResult structure ────────────────────────────────────────

@@ -142,7 +142,7 @@ async def db_conn_with_metrics(db_conn_with_user):
     """
     await db_conn_with_user.execute(
         """INSERT INTO user_metrics (user_id, metric_date, request_count, model_usage)
-           VALUES ($1, CURRENT_DATE, 10, '{"gemini-2.5-flash": 7, "gemini-3.1-flash-lite": 3}'::jsonb)""",
+           VALUES ($1, CURRENT_DATE, 10, '{"gemini-2.5-flash": 7, "gemini-3.1-flash-lite-preview": 3}'::jsonb)""",
         TEST_USER_ID,
     )
     return db_conn_with_user

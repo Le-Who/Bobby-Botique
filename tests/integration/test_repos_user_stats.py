@@ -81,7 +81,7 @@ class TestUserStatsQueries:
         assert len(rows) == 2
         assert rows[0]["model_name"] == "gemini-2.5-flash"
         assert rows[0]["cnt"] == 7
-        assert rows[1]["model_name"] == "gemini-3.1-flash-lite"
+        assert rows[1]["model_name"] == "gemini-3.1-flash-lite-preview"
         assert rows[1]["cnt"] == 3
 
     @pytest.mark.asyncio
