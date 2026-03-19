@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2026-03-19 - [IP Spoofing / DoS] Reverse Proxy Client IP Resolution
+**Vulnerability:** The `/login` endpoint rate limiter relied on `request.remote_addr` which returned the proxy's IP. A single attacker getting rate limited would DoS all users behind the same proxy.
+**Learning:** When deployed behind a trusted reverse proxy, the client's actual IP is located in the `X-Forwarded-For` header.
+**Prevention:** Create a helper to safely extract the rightmost IP from the `X-Forwarded-For` header (ensuring it handles proxy appended headers securely) and use this for security mechanisms like rate limiting.
