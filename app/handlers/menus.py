@@ -1,10 +1,11 @@
+import asyncio
 import logging
 from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import get_model_hash, get_openrouter_keys, settings
-from app.document_processor import get_user_documents
+from app.document_processor import document_processor, get_user_documents
 from app.metrics import get_system_status_data
 from app.prompt_registry import DEFAULT_ROLES
 from app.repos.conversations import (
@@ -36,13 +37,18 @@ async def get_start_menu_content(chat_state, user_id=None):
     activity_line = ""
     if user_id:
         try:
-            today_requests = await get_user_today_request_count(user_id)
+            # ⚡ Bolt: Fetch metrics concurrently to avoid sequential waterfall,
+            # and use get_user_document_stats() for an O(1) DB COUNT(*) instead
+            # of fetching all document metadata into memory just for a length check.
+            today_requests_task = get_user_today_request_count(user_id)
+            docs_task = document_processor.get_user_document_stats(user_id)
+            conv_task = get_conversation_count(user_id)
+
+            today_requests, docs_stats, conv_count = await asyncio.gather(
+                today_requests_task, docs_task, conv_task
+            )
             req_count = today_requests
-
-            docs = await get_user_documents(user_id)
-            doc_count = len(docs) if docs else 0
-
-            conv_count = await get_conversation_count(user_id)
+            doc_count = docs_stats.get("document_count", 0)
 
             if req_count > 0 or doc_count > 0 or conv_count > 0:
                 activity_line = f"📈 Сегодня: {req_count} запр. · {doc_count} док. · {conv_count} бесед\n\n"
