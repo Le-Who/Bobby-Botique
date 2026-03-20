@@ -218,7 +218,7 @@ class AgenticSearch:
                 temperature=0.2,  # Changed from 0.4 to 0.2
                 tools=self._get_tools(),
             )
-            
+
             tc = _build_thinking_config(self.model_name, thinking_level)
             if tc:
                 config.thinking_config = tc
