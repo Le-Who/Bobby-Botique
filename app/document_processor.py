@@ -408,6 +408,11 @@ async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
     return await document_processor.get_user_documents(user_id)
 
 
+async def get_user_document_stats(user_id: int) -> dict[str, Any]:
+    """Get user document statistics."""
+    return await document_processor.get_user_document_stats(user_id)
+
+
 async def get_document_content(document_id: int, user_id: int) -> str | None:
     """Get document content."""
     return await document_processor.get_document_content(document_id, user_id)
