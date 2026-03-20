@@ -476,8 +476,7 @@ class StreamingWriter:
 
             # 3 retries exhausted → fallback: send plain text
             logging.error(
-                "Overflow failed after 3 retries (%d chars buffered). "
-                "Sending plain text fallback.",
+                "Overflow failed after 3 retries (%d chars buffered). Sending plain text fallback.",
                 len(self._buffer),
                 exc_info=True,
             )

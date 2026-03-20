@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.agentic import AgenticResult
+
 
 def make_chat_state(
     model="gemini-3.1-flash-lite-preview",
@@ -122,7 +124,7 @@ async def test_research_agent_search_exception():
         patch("app.repos.keys.get_available_gemini_key", new_callable=AsyncMock) as mock_get_key,
     ):
         mock_metrics.record_search_query = AsyncMock()
-        mock_get_key.return_value = {"api_key": "fake"}
+        mock_get_key.return_value = {"api_key": "fake", "key_hash": "hash123"}
         mock_agent_instance = MagicMock()
         mock_agent_instance.run = AsyncMock(side_effect=Exception("Network fail"))
         mock_agent_class.return_value = mock_agent_instance
@@ -152,10 +154,12 @@ async def test_research_agent_no_results():
         patch("app.repos.keys.get_available_gemini_key", new_callable=AsyncMock) as mock_get_key,
     ):
         mock_metrics.record_search_query = AsyncMock()
-        mock_get_key.return_value = {"api_key": "fake"}
+        mock_get_key.return_value = {"api_key": "fake", "key_hash": "hash123"}
         mock_agent_instance = MagicMock()
         mock_agent_instance.run = AsyncMock(
-            return_value="❌ К сожалению, агенту не удалось собрать достаточно информации для ответа в отведенное время."
+            return_value=AgenticResult(
+                answer="❌ К сожалению, агенту не удалось собрать достаточно информации для ответа в отведенное время.",
+            )
         )
         mock_agent_class.return_value = mock_agent_instance
 
@@ -184,9 +188,13 @@ async def test_research_agent_tavily_error():
         patch("app.repos.keys.get_available_gemini_key", new_callable=AsyncMock) as mock_get_key,
     ):
         mock_metrics.record_search_query = AsyncMock()
-        mock_get_key.return_value = {"api_key": "fake"}
+        mock_get_key.return_value = {"api_key": "fake", "key_hash": "hash123"}
         mock_agent_instance = MagicMock()
-        mock_agent_instance.run = AsyncMock(return_value="❌ Ошибка при запуске агента: Rate limit exceeded")
+        mock_agent_instance.run = AsyncMock(
+            return_value=AgenticResult(
+                answer="❌ Ошибка при запуске агента: Rate limit exceeded",
+            )
+        )
         mock_agent_class.return_value = mock_agent_instance
 
         from app.handlers.ai_search import _handle_research_agent

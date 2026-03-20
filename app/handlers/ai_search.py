@@ -12,7 +12,7 @@ from telegram.error import BadRequest, NetworkError
 
 from app import search_services
 from app.config import get_openrouter_keys, settings
-from app.core.agentic import AgenticSearch
+from app.core.agentic import AgenticResult, AgenticSearch
 from app.database import ChatState
 from app.handlers.ai_core import (
     _get_ai_response_with_routing,
@@ -176,7 +176,7 @@ async def _handle_research_agent(
     trace_chat_id: int | None = placeholder_message.chat.id if placeholder_message.chat else None
 
     # Get the key and model for AgenticSearch. Fallback to default if no OpenRouter/override
-    from app.repos.keys import get_available_gemini_key
+    from app.repos.keys import get_available_gemini_key, increment_gemini_key_usage
 
     model_used = model_override or chat_state.model or settings.AGENTIC_MODEL or settings.RESEARCH_MODEL
     key_data = await get_available_gemini_key(model_used)
@@ -192,7 +192,19 @@ async def _handle_research_agent(
             pass
         return
 
-    agent = AgenticSearch(model_name=model_used, api_key=key_data["api_key"])
+    key_hash = key_data["key_hash"]
+
+    # Callback fired after every generate_content call inside the agentic loop.
+    # Each invocation records +1 request against this key in the DB.
+    async def _on_key_used() -> None:
+        await increment_gemini_key_usage(key_hash, model_used)
+        await metrics_collector.record_api_call("gemini_agentic", model=model_used, user_id=trace_user_id)
+
+    agent = AgenticSearch(
+        model_name=model_used,
+        api_key=key_data["api_key"],
+        on_key_used=_on_key_used,
+    )
 
     # Define the status callback that will show stages + fun facts
     last_fact_time = 0.0
@@ -214,12 +226,18 @@ async def _handle_research_agent(
 
     # Run the agentic loop
     try:
-        final_answer = await agent.run(
+        result: AgenticResult = await agent.run(
             query=actual_search_query,
             on_status=on_status,
             user_id=trace_user_id,
             chat_id=trace_chat_id,
             history=chat_state.history if chat_state.history else None,
+        )
+        final_answer = result.answer
+        logging.info(
+            "AgenticSearch finished: %d LLM calls, %d total tokens",
+            result.llm_calls,
+            result.total_tokens,
         )
     except Exception as ai_error:
         logging.error("Error in AgenticSearch run: %s", ai_error, exc_info=True)

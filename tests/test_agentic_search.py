@@ -34,7 +34,7 @@ async def test_agentic_search_direct_answer(mock_agent, mock_status_callback):
 
     result = await mock_agent.run("What is 2+2?", mock_status_callback)
 
-    assert result == "Direct answer"
+    assert result.answer == "Direct answer"
     mock_agent.client.aio.models.generate_content.assert_called_once()
     mock_status_callback.assert_called_with("Планирую исследование...")
 
@@ -58,7 +58,7 @@ async def test_agentic_search_conclude_tool(mock_agent, mock_status_callback):
 
     result = await mock_agent.run("Conclude this", mock_status_callback)
 
-    assert result == "Concluded answer"
+    assert result.answer == "Concluded answer"
     mock_agent.client.aio.models.generate_content.assert_called_once()
 
 
@@ -95,7 +95,7 @@ async def test_agentic_search_tool_loop(mock_agent, mock_status_callback):
 
         result = await mock_agent.run("Do a search", mock_status_callback)
 
-        assert result == "Final synthesized answer"
+        assert result.answer == "Final synthesized answer"
         assert mock_agent.client.aio.models.generate_content.call_count == 2
         mock_search.assert_called_once_with(["test query"], user_id=None, chat_id=None, max_results=10)
 
@@ -136,6 +136,6 @@ async def test_agentic_search_max_pages_enforcement(mock_agent, mock_status_call
 
         result = await mock_agent.run("Read two pages", mock_status_callback)
 
-        assert result == "Done reading"
+        assert result.answer == "Done reading"
         # read_url should only be called ONCE because the second call hits the limit
         mock_read.assert_called_once_with("http://page1.com", timeout=12.0)

@@ -3,6 +3,41 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.47] - 2026-03-20 - Agentic Key Usage Tracking Fix
+
+### 🔴 Critical Fix
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Agentic loop bypassed key usage tracking | `agentic.py`, `ai_search.py` | `AgenticSearch.run()` made 2–6 direct `generate_content` calls per session but never called `increment_gemini_key_usage`. This created a loophole where the `DailyKeyManager` believed the key was idle while its real Google quota was being exhausted. |
+
+### 🏗️ Architecture Changes
+
+| Change | File | Detail |
+|--------|------|--------|
+| New `AgenticResult` dataclass | `agentic.py` | `run()` now returns `AgenticResult(answer, total_tokens, llm_calls)` instead of a raw string, enabling callers to track resource consumption. |
+| `on_key_used` callback pattern | `agentic.py` | New constructor parameter `on_key_used: Callable[[], Awaitable[None]]` fires after **every** `generate_content` call (loop iterations + forced synthesis). Each invocation = +1 in `key_usage`. |
+| Per-call metrics recording | `ai_search.py` | `_on_key_used` closure calls `increment_gemini_key_usage(key_hash, model)` and `record_api_call("gemini_agentic")` per LLM invocation. Logs total LLM calls and tokens on completion. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Tests | **1256 passed**, 0 failed (76s, 12 workers) |
+| Ruff lint | Pass |
+| Ruff format | Pass |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/core/agentic.py` | Added `AgenticResult`, `on_key_used` callback, `_notify_key_used()`, `_extract_token_count()`. All `return` paths now return `AgenticResult`. |
+| `app/handlers/ai_search.py` | `_handle_research_agent` wires `_on_key_used` callback, handles `AgenticResult`. |
+| `tests/test_agentic_search.py` | Updated 4 tests: `result.answer` assertions. |
+| `tests/test_ai_search.py` | Updated 3 tests: added `key_hash` to mocks, `AgenticResult` return values. |
+
+---
+
 ## [2.8.46] - 2026-03-18 - Model Hierarchy Modernization
 
 ### ⚙️ Model Tier Overhaul

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import dataclasses
 import gc
@@ -17,14 +19,31 @@ from app.web_reader import read_url
 logger = logging.getLogger(__name__)
 
 
+@dataclasses.dataclass(slots=True)
+class AgenticResult:
+    """Return value of AgenticSearch.run()."""
+
+    answer: str
+    total_tokens: int = 0
+    llm_calls: int = 0
+
+
 class AgenticSearch:
-    def __init__(self, model_name: str, api_key: str):
+    def __init__(
+        self,
+        model_name: str,
+        api_key: str,
+        on_key_used: Callable[[], Awaitable[None]] | None = None,
+    ):
         self.model_name = model_name
         self.api_key = api_key
         # Reuse cached genai.Client to avoid per-request TLS/TCP setup
         self.client = get_cached_genai_client(api_key)
         self.max_iterations = settings.AGENTIC_MAX_ITERATIONS
         self.max_pages = settings.AGENTIC_MAX_PAGES
+        # Called after every generate_content call so the handler can
+        # increment key usage (+1 per LLM invocation).
+        self._on_key_used = on_key_used
 
     def _get_system_instruction(self) -> str:
         """Compose the RESEARCH_AGENT_SYSTEM prompt with configuration injected."""
@@ -127,6 +146,25 @@ class AgenticSearch:
             logger.error(f"Error executing tool {name}: {e}", exc_info=True)
             return {"error": f"Execution failed: {str(e)}"}
 
+    async def _notify_key_used(self) -> None:
+        """Fire the on_key_used callback (if set) after each LLM call."""
+        if self._on_key_used:
+            try:
+                await self._on_key_used()
+            except Exception as e:
+                logger.warning("on_key_used callback failed: %s", e)
+
+    @staticmethod
+    def _extract_token_count(response: Any) -> int:
+        """Safely extract total_token_count from response.usage_metadata."""
+        try:
+            meta = getattr(response, "usage_metadata", None)
+            if meta:
+                return getattr(meta, "total_token_count", 0) or 0
+        except Exception:
+            pass
+        return 0
+
     async def run(
         self,
         query: str,
@@ -134,7 +172,7 @@ class AgenticSearch:
         user_id: int | None = None,
         chat_id: int | None = None,
         history: list[dict[str, Any]] | None = None,
-    ) -> str:
+    ) -> AgenticResult:
         """
         Execute the agentic research loop.
 
@@ -146,12 +184,14 @@ class AgenticSearch:
             history: Optional conversation history from prior turns.
 
         Returns:
-            The final synthesized answer string.
+            AgenticResult with the final answer, total tokens, and LLM call count.
         """
         await on_status(STAGES_AGENTIC_RESEARCH[0][1])  # "Планирую исследование..."
         # 1. Prepare configuration and context
         contents: list[Any] = []
         concluding_answer: str | None = None
+        total_tokens = 0
+        llm_calls = 0
 
         try:
             # Inject conversation history so the agent has context from prior turns
@@ -196,9 +236,17 @@ class AgenticSearch:
                         contents=contents,
                         config=config,
                     )
+                    # Track usage: +1 API call, accumulate tokens
+                    llm_calls += 1
+                    total_tokens += self._extract_token_count(response)
+                    await self._notify_key_used()
                 except Exception as e:
                     logger.error("GenAI call failed in loop: %s", e)
-                    return "❌ Возникла ошибка при обращении к языковой модели."
+                    return AgenticResult(
+                        answer="❌ Возникла ошибка при обращении к языковой модели.",
+                        total_tokens=total_tokens,
+                        llm_calls=llm_calls,
+                    )
 
                 if not response.candidates:
                     logger.warning("Agent returned no candidates")
@@ -282,7 +330,11 @@ class AgenticSearch:
                         # Agent has reached a conclusion
                         logger.info("Agent concluded research successfully.")
                         await on_status(STAGES_AGENTIC_RESEARCH[4][1])  # "Формирую итоговый ответ..."
-                        return concluding_answer
+                        return AgenticResult(
+                            answer=concluding_answer,
+                            total_tokens=total_tokens,
+                            llm_calls=llm_calls,
+                        )
 
                     # Append all tool results to history for the model to see in the next turn
                     if function_responses:
@@ -301,7 +353,12 @@ class AgenticSearch:
                 else:
                     # No function calls - this means the model decided to answer directly as text
                     logger.info("Agent provided direct text answer without using conclude_research.")
-                    return str(parts[0].text) if parts and parts[0].text else "❌ Отсутствует текст в ответе."
+                    direct_text = str(parts[0].text) if parts and parts[0].text else "❌ Отсутствует текст в ответе."
+                    return AgenticResult(
+                        answer=direct_text,
+                        total_tokens=total_tokens,
+                        llm_calls=llm_calls,
+                    )
 
             # 3. Force conclusion if loop maxed out or broke unexpectedly
             logger.warning("Agentic loop finished without explicit conclusion. Forcing synthesis.")
@@ -326,12 +383,24 @@ class AgenticSearch:
                     contents=contents,
                     config=config,
                 )
+                # Track usage for the forced synthesis call
+                llm_calls += 1
+                total_tokens += self._extract_token_count(response)
+                await self._notify_key_used()
                 if response.text:
-                    return response.text
+                    return AgenticResult(
+                        answer=response.text,
+                        total_tokens=total_tokens,
+                        llm_calls=llm_calls,
+                    )
             except Exception as e:
                 logger.error("Forced synthesis failed: %s", e)
 
-            return "❌ К сожалению, агенту не удалось собрать достаточно информации для ответа в отведенное время."
+            return AgenticResult(
+                answer="❌ К сожалению, агенту не удалось собрать достаточно информации для ответа в отведенное время.",
+                total_tokens=total_tokens,
+                llm_calls=llm_calls,
+            )
 
         finally:
             # MEMORY LEAK FIX:
