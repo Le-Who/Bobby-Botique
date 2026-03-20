@@ -11,6 +11,7 @@ from google.genai import types
 
 from app.config import settings
 from app.prompt_registry import get_registry
+from app.providers.base import _build_thinking_config
 from app.providers.gemini import get_cached_genai_client
 from app.search_services import parallel_search
 from app.utils.stage_indicators import STAGES_AGENTIC_RESEARCH
@@ -172,6 +173,7 @@ class AgenticSearch:
         user_id: int | None = None,
         chat_id: int | None = None,
         history: list[dict[str, Any]] | None = None,
+        thinking_level: str | None = None,
     ) -> AgenticResult:
         """
         Execute the agentic research loop.
@@ -216,6 +218,10 @@ class AgenticSearch:
                 temperature=0.2,  # Changed from 0.4 to 0.2
                 tools=self._get_tools(),
             )
+            
+            tc = _build_thinking_config(self.model_name, thinking_level)
+            if tc:
+                config.thinking_config = tc
 
             # 2. Main reasoning loop
             pages_read = 0

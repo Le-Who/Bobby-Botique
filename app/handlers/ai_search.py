@@ -232,6 +232,7 @@ async def _handle_research_agent(
             user_id=trace_user_id,
             chat_id=trace_chat_id,
             history=chat_state.history if chat_state.history else None,
+            thinking_level=chat_state.thinking_level,
         )
         final_answer = result.answer
         logging.info(
