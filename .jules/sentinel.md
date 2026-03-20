@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2024-05-18 - [IP Spoofing / Proxy Resolution in Web Dashboard]
+**Vulnerability:** The web dashboard (`app/web.py`) used `request.remote_addr` for brute-force login protection (`_login_limiter`). Behind a trusted reverse proxy (Northflank), this would always return the proxy's IP, meaning one attacker's failed login attempts would lock out all legitimate users via the proxy IP, and attackers could distribute their attacks.
+**Learning:** When deploying behind a trusted reverse proxy, `request.remote_addr` is insufficient for rate limiting and IP tracking. The `X-Forwarded-For` header must be parsed, and because the proxy appends to it, the *rightmost* IP is the securely resolved client IP.
+**Prevention:** Always implement an IP resolution helper (like `_get_client_ip()`) that extracts the rightmost IP from the `X-Forwarded-For` header when behind a known trusted proxy, and use it consistently for all security mechanisms like rate limiting and audit logging.
