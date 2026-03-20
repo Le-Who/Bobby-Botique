@@ -167,6 +167,7 @@ class Settings(BaseModel):
     ALERT_COOLDOWN_SECONDS: int = 3600
     MAX_DOCUMENTS_PER_USER: int = 5
     MAX_CONCURRENT_HEAVY_REQUESTS: int = 4
+    MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS: int = 1
 
     # --- AGENTIC RESEARCH ---
     JINA_API_KEY: str = ""
@@ -224,6 +225,7 @@ def load_settings() -> Settings:
             ),
             "DAILY_LIMITS": _load_daily_limits(),
             "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
+            "MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS", "1")),
             "JINA_API_KEY": os.getenv("JINA_API_KEY", ""),
             "AGENTIC_MAX_ITERATIONS": int(os.getenv("AGENTIC_MAX_ITERATIONS", "5")),
             "AGENTIC_MAX_PAGES": int(os.getenv("AGENTIC_MAX_PAGES", "3")),

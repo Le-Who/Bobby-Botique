@@ -85,7 +85,9 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
 
         async def task_wrapper() -> None:
             try:
-                async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                from app.adapters.concurrency import ultra_heavy_semaphore
+
+                async with ultra_heavy_semaphore, user_lock:
                     await task_to_run
             except Exception as e:
                 logging.error("complex_search task failed: %s", e, exc_info=True)
