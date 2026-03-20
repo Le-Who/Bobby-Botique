@@ -153,18 +153,22 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             await reconnect_database()
 
         async with db_manager.pool.acquire() as conn, conn.transaction():
-            conv_data = await db_query(
-                "SELECT role_type, role_id, summary FROM conversations WHERE id = $1 AND user_id = $2",
-                (conversation_id, user_id),
-                conn=conn,
-            )
+            # ⚡ Bolt Optimization: Use LEFT JOIN to fetch conversation and its optional role prompt in 1 query instead of 3.
+            query = """
+                SELECT c.role_type, c.role_id, c.summary,
+                       COALESCE(r.prompt, ur.prompt) as role_prompt
+                FROM conversations c
+                LEFT JOIN roles r ON c.role_type = 'role' AND c.role_id = r.id
+                LEFT JOIN user_roles ur ON c.role_type = 'user_role' AND c.role_id = ur.id
+                WHERE c.id = $1 AND c.user_id = $2
+            """
+            conv_data = await db_query(query, (conversation_id, user_id), conn=conn)
+
             if not conv_data:
                 return False
-            role_type, role_id, _ = (
-                conv_data[0]["role_type"],
-                conv_data[0]["role_id"],
-                conv_data[0]["summary"],
-            )
+
+            role_prompt = conv_data[0]["role_prompt"]
+
             messages = await get_conversation_messages(conversation_id, user_id, conn=conn)
             if messages is None:
                 return False
@@ -182,33 +186,19 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                     conn=conn,
                 )
 
-            await db_query(
-                "UPDATE chats SET token_count = 0 WHERE user_id = $1",
-                (user_id,),
-                conn=conn,
-            )
-
-            if role_type and role_id:
-                role_data = None
-                if role_type == "role":
-                    role_data = await db_query(
-                        "SELECT prompt FROM roles WHERE id = $1",
-                        (role_id,),
-                        conn=conn,
-                    )
-                elif role_type == "user_role":
-                    role_data = await db_query(
-                        "SELECT prompt FROM user_roles WHERE id = $1",
-                        (role_id,),
-                        conn=conn,
-                    )
-
-                if role_data:
-                    await db_query(
-                        "UPDATE chats SET system_prompt = $1 WHERE user_id = $2",
-                        (role_data[0]["prompt"], user_id),
-                        conn=conn,
-                    )
+            # ⚡ Bolt Optimization: Combine token_count and system_prompt updates into 1 query
+            if role_prompt is not None:
+                await db_query(
+                    "UPDATE chats SET token_count = 0, system_prompt = $1 WHERE user_id = $2",
+                    (role_prompt, user_id),
+                    conn=conn,
+                )
+            else:
+                await db_query(
+                    "UPDATE chats SET token_count = 0 WHERE user_id = $1",
+                    (user_id,),
+                    conn=conn,
+                )
 
         return True
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
