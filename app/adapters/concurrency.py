@@ -15,11 +15,11 @@ class GlobalLLMSemaphore:
     Backed by Redis ZSET for distributed tracking with graceful degradation to asyncio.Semaphore.
     """
 
-    def __init__(self, limit: int, timeout: int = 120):
+    def __init__(self, limit: int, timeout: int = 120, redis_key: str = "llm_req_semaphore"):
         self._limit = limit
         self._timeout = timeout
         self._local_semaphore = asyncio.Semaphore(limit)
-        self._key = "llm_req_semaphore"
+        self._key = redis_key
 
     async def __aenter__(self):
         # 1. Acquire local semaphore first (limits per-node concurrency to max limit)
@@ -71,4 +71,7 @@ class GlobalLLMSemaphore:
 
 
 _HEAVY_REQUEST_LIMIT = max(1, settings.MAX_CONCURRENT_HEAVY_REQUESTS)
-heavy_request_semaphore = GlobalLLMSemaphore(_HEAVY_REQUEST_LIMIT)
+heavy_request_semaphore = GlobalLLMSemaphore(_HEAVY_REQUEST_LIMIT, redis_key="llm_req_semaphore")
+
+_ULTRA_HEAVY_LIMIT = max(1, settings.MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS)
+ultra_heavy_semaphore = GlobalLLMSemaphore(_ULTRA_HEAVY_LIMIT, redis_key="llm_ultra_heavy_semaphore")

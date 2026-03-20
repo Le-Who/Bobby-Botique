@@ -157,10 +157,6 @@ async def test_happy_path_text_message(run_background_sync):
         ),
         patch("app.handlers.messages.state.get_user_lock", return_value=AsyncMock()),
         patch(
-            "app.handlers.messages.heavy_request_semaphore",
-            MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock()),
-        ),
-        patch(
             "app.repos.chats.get_user_chat",
             new_callable=AsyncMock,
             return_value=fake_chat_state,
@@ -276,10 +272,6 @@ async def test_agent_error_shows_retry_keyboard(run_background_sync):
 
         with (
             patch("app.state.get_user_lock", return_value=mock_lock),
-            patch(
-                "app.handlers.messages.heavy_request_semaphore",
-                MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock()),
-            ),
         ):
             from app.handlers.messages import handle_request
 

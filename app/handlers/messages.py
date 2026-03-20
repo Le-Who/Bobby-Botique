@@ -16,9 +16,6 @@ from telegram.error import BadRequest, NetworkError
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from app import state
-
-# Concurrency limiter for heavy AI tasks
-from app.adapters.concurrency import heavy_request_semaphore
 from app.config import settings
 from app.handlers.msg_document import handle_document, handle_document_mode_interaction
 from app.handlers.msg_media import (
@@ -160,21 +157,21 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             try:
                 # Lock inversion fix: acquire user lock BEFORE the global semaphore.
                 # This ensures a single user doesn't consume all global slots while waiting for their own lock.
+                # Semaphore is now acquired inside process_long_request based on request classification.
                 async with state.get_user_lock(user_id):
-                    async with heavy_request_semaphore:
-                        logging.info("Starting task processing for user %s", user_id)
+                    logging.info("Starting task processing for user %s", user_id)
 
-                        try:
-                            from app.handlers.agent import process_long_request
+                    try:
+                        from app.handlers.agent import process_long_request
 
-                            await process_long_request(placeholder_message, update, context)
-                        except ImportError:
-                            stop_heartbeat(placeholder_message.message_id)
-                            await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
-
+                        await process_long_request(placeholder_message, update, context)
+                    except ImportError:
                         stop_heartbeat(placeholder_message.message_id)
+                        await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
 
-                        logging.info("Completed task processing for user %s", user_id)
+                    stop_heartbeat(placeholder_message.message_id)
+
+                    logging.info("Completed task processing for user %s", user_id)
 
                     import time as _time
 

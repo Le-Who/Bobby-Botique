@@ -18,6 +18,9 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
+# ── Concurrency tiers ────────────────────────────────────────────────────────
+from app.adapters.concurrency import heavy_request_semaphore, ultra_heavy_semaphore
+
 # ── Re-exports from ai_chat ──────────────────────────────────────────────────
 from app.handlers.ai_chat import _handle_regular_chat  # noqa: F401
 
@@ -62,56 +65,68 @@ async def process_long_request(
         text = update.message.text or update.message.caption or ""
         chat_state = await get_user_chat(update.effective_user.id)
 
-        if is_photo and (text.startswith(("?", "??"))):
-            keyboard = [
-                [InlineKeyboardButton("🖼️ Только описать фото", callback_data="complex:vision_only")],
-                [InlineKeyboardButton("🔎 Выполнить сложный поиск", callback_data="complex:confirm")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")],
-            ]
+        # ── Classify request tier ────────────────────────────────────────
+        # Ultra-heavy: all agentic/search paths (high RAM, multiple LLM calls)
+        # Regular: conversational chat and simple photo analysis
+        is_ultra_heavy = (
+            text.startswith(("?", "??"))
+            or (is_photo and text.startswith(("?", "??")))
+            or (not is_photo and chat_state.search_enabled)
+            or chat_state.is_deep_dive
+        )
+        semaphore = ultra_heavy_semaphore if is_ultra_heavy else heavy_request_semaphore
 
-            # Save оригинальное message в contextе
-            if not hasattr(context, "user_data"):
-                context.user_data = {}
-            if context.user_data is not None:
-                context.user_data["original_message"] = update.message
+        async with semaphore:
+            if is_photo and (text.startswith(("?", "??"))):
+                keyboard = [
+                    [InlineKeyboardButton("🖼️ Только описать фото", callback_data="complex:vision_only")],
+                    [InlineKeyboardButton("🔎 Выполнить сложный поиск", callback_data="complex:confirm")],
+                    [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")],
+                ]
 
-            # Не удаляем placeholder message, а редактируем его
-            try:
-                stop_heartbeat(placeholder_message.message_id)
-                await placeholder_message.edit_text(
-                    "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
+                # Save оригинальное message в contextе
+                if not hasattr(context, "user_data"):
+                    context.user_data = {}
+                if context.user_data is not None:
+                    context.user_data["original_message"] = update.message
+
+                # Не удаляем placeholder message, а редактируем его
+                try:
+                    stop_heartbeat(placeholder_message.message_id)
+                    await placeholder_message.edit_text(
+                        "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    )
+                except Exception as edit_error:
+                    logging.error("Could not edit placeholder message: %s", edit_error)
+                    # If не можем отредактировать, отправляем new message
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                    )
+                return
+
+            if is_photo and update.message:
+                await _handle_photo(placeholder_message, update.message, chat_state)
+                return
+
+            if text.startswith("??"):
+                await _handle_research_agent(
+                    placeholder_message,
+                    update.effective_user.id,
+                    text[2:].strip(),
+                    chat_state,
                 )
-            except Exception as edit_error:
-                logging.error("Could not edit placeholder message: %s", edit_error)
-                # If не можем отредактировать, отправляем new message
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                )
-            return
-
-        if is_photo and update.message:
-            await _handle_photo(placeholder_message, update.message, chat_state)
-            return
-
-        if text.startswith("??"):
-            await _handle_research_agent(
-                placeholder_message,
-                update.effective_user.id,
-                text[2:].strip(),
-                chat_state,
-            )
-        elif text.startswith("?"):
-            await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
-        elif chat_state.search_enabled:
-            await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
-        elif chat_state.is_deep_dive:
-            # Continue deep dive session — route follow-ups through agentic search
-            await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
-        else:
-            await _handle_regular_chat(placeholder_message, update.effective_user.id, text, chat_state)
+            elif text.startswith("?"):
+                await _handle_qna_search(placeholder_message, text[1:].strip(), chat_state)
+            elif chat_state.search_enabled:
+                await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
+            elif chat_state.is_deep_dive:
+                # Continue deep dive session — route follow-ups through agentic search
+                await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
+            else:
+                await _handle_regular_chat(placeholder_message, update.effective_user.id, text, chat_state)
 
     except Exception as e:
         logging.error("Error in background task dispatcher: %s", e, exc_info=True)
