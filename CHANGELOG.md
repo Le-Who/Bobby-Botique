@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.48] - 2026-03-20 - Multi-Tier Semaphore Architecture & E2E Hardening
+
+### 🏗️ Architecture Changes
+
+| Change | File | Detail |
+|--------|------|--------|
+| Multi-Tier Semaphores | `concurrency.py`, `agent.py` | Extracted and exported `ultra_heavy_semaphore` alongside `heavy_request_semaphore` globally. Moved semaphore acquisition to `process_long_request` for dynamic routing based on computational cost (e.g., isolating deep dives). |
+| Concurrency Isolation | `messages.py` | Removed synchronous semaphore acquisition from the top-level `task_wrapper` allowing background tasks to route unblocked. |
+| E2E Database Fixes | `test_chat_happy_path.py`  | Hardened integration tests against `asyncpg` Task/Connection starvation constraints. Added targeted background task yielding (`asyncio.sleep`) and local `asyncio.Semaphore(1)` patching to resolve race conditions with `TransactionalPool` during E2E test evaluation. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Tests | **1256 passed**, 0 failed (71s, 12 workers) |
+| Ruff lint | Pass |
+| Ruff format | Pass |
+
+---
+
 ## [2.8.47] - 2026-03-20 - Agentic Key Usage Tracking Fix
 
 ### 🔴 Critical Fix

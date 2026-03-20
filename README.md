@@ -16,7 +16,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Agentic Web Browsing**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops. Hardened against memory leaks caused by gRPC protobuf cyclic references during long-running iterations. Per-call API key usage tracking ensures accurate quota accounting across all LLM invocations within the agentic loop.
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
 - **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall. User-toggleable via `/settings`; transparent `🧠` indicator when memories influence a response.
-- **Distributed Concurrency**: Redis-backed global semaphores to prevent API quota starvation in multi-replica deployments.
+- **Distributed Concurrency**: Multi-tier Redis-backed global semaphores (heavy and ultra-heavy limits) to prevent API quota starvation in multi-replica deployments while guaranteeing isolation between standard queries and intensive Agentic research loops.
 - **Resilient Operations**: Background task manager with exponential backoff and admin alerting hooks.
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
 - **Context Summarization**: Automatic token compression for large chats.
@@ -114,7 +114,8 @@ All configuration variables are loaded from the environment (or a `.env` file).
 | `OPENROUTER_DEFAULT_MODEL` / ...    | ❌       | `stepfun/step-3.5-flash:free` | Default OpenRouter models for operations.                          | `config.py`                        |
 | `DAILY_LIMITS`                      | ❌       | Default dict                  | JSON or compact `model:limit` format for daily rate limits.        | `config.py`                        |
 | `USE_OPENROUTER`                    | ❌       | `false`                       | Force OpenRouter as the default provider instead of Gemini.        | `config.py`                        |
-| `MAX_CONCURRENT_HEAVY_REQUESTS`     | ❌       | `4`                           | Max parallel AI request handlers to prevent exhaustion.            | `config.py`                        |
+| `MAX_CONCURRENT_HEAVY_REQUESTS`     | ❌       | `4`                           | Max parallel normal AI request handlers to prevent exhaustion.     | `config.py`                        |
+| `MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS` | ❌       | `1`                           | Max parallel isolated ultra-heavy tasks (e.g., Agentic Research).  | `config.py`                        |
 
 ## Run
 
