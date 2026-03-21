@@ -51,6 +51,7 @@ def mock_external_network():
             "Integration answer from bot",
             True,
             MagicMock(),
+            0,
         )
 
         yield {

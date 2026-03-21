@@ -51,7 +51,7 @@ async def test_document_question_success():
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("Python is great!", True, AsyncMock()),
+            return_value=("Python is great!", True, AsyncMock(), 0),
         ),
         patch(
             "app.handlers.ai_core._resolve_ai_request",
@@ -160,7 +160,7 @@ async def test_document_question_empty_ai_response():
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("", False, AsyncMock()),
+            return_value=("", False, AsyncMock(), 0),
         ),
         patch(
             "app.handlers.ai_core._resolve_ai_request",

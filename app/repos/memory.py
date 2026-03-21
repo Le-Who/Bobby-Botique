@@ -2,7 +2,7 @@
 """Long-term memory repository — semantic search over past conversations.
 
 Uses pgvector for embedding storage and HNSW-indexed cosine similarity search.
-Embeddings are generated via Gemini's embedding API (text-embedding-004, 768-dim).
+Embeddings are generated via Gemini's embedding API (gemini-embedding-001, 3072-dim).
 """
 
 import asyncio
@@ -11,7 +11,6 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from google import genai
 from google.genai import types
 
 from app.config import settings
@@ -22,6 +21,7 @@ from app.database import (
     db_query,
     set_user_context,
 )
+from app.providers.gemini import get_cached_genai_client
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -47,7 +47,7 @@ async def _get_embedding(
     Returns None on failure (non-critical — memory just won't be stored).
     """
     try:
-        client = genai.Client(api_key=api_key)
+        client = get_cached_genai_client(api_key)  # Reuse cached client (HTTP/2 multiplexing)
         result = await client.aio.models.embed_content(
             model=EMBEDDING_MODEL,
             contents=text[:8000],  # Truncate to model limit
@@ -57,6 +57,13 @@ async def _get_embedding(
             return result.embeddings[0].values
     except Exception as e:
         logging.warning("Embedding generation failed: %s", e)
+        # Emit metric for observability (Change 2: LTM failure tracking)
+        try:
+            from app.metrics import metrics_collector
+
+            await metrics_collector.record_error("ltm_embedding_fail", str(e))
+        except Exception:
+            pass  # Metrics emission must not block
     return None
 
 

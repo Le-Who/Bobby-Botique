@@ -51,7 +51,7 @@ async def test_qna_search_happy_path():
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("Localized answer", True, AsyncMock()),
+            return_value=("Localized answer", True, AsyncMock(), 0),
         ),
         patch(
             "app.handlers.ai_core._resolve_ai_request",

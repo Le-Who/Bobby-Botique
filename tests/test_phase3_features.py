@@ -195,7 +195,7 @@ class TestStreamingWriter:
         ):
             with patch("app.streaming.metrics_collector") as mock_mc:
                 mock_mc.record_api_call = AsyncMock()
-                text, success, last_msg = await stream_and_display(
+                text, success, last_msg, _tokens = await stream_and_display(
                     mock_msg,
                     "model",
                     [],

@@ -104,6 +104,12 @@ def select_model(
     if not available:
         return None
 
+    # Skip suggestions for OpenRouter models — different provider, tier logic inapplicable
+    from app.providers import is_openrouter_model
+
+    if current_model and is_openrouter_model(current_model):
+        return None
+
     current_tier = _get_tier(current_model) if current_model else 0
     msg_len = len(user_message)
 
@@ -124,6 +130,16 @@ def select_model(
             return SelectionResult(
                 model=reasoning_model,
                 reason="Сложный аналитический запрос — используем продвинутую модель",
+                confidence=0.5,
+            )
+
+    # ── Creative tasks → flagship model ──────────────────────────────────
+    if _CREATIVE_PATTERNS.search(user_message):
+        creative_model = _find_model(available, ["3-flash-preview", "3.1-flash-lite", "2.5-flash"])
+        if creative_model and creative_model != current_model and _get_tier(creative_model) > current_tier:
+            return SelectionResult(
+                model=creative_model,
+                reason="Творческая задача — используем продвинутую модель",
                 confidence=0.5,
             )
 

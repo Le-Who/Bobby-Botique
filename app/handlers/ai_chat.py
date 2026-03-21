@@ -107,7 +107,7 @@ async def _handle_regular_chat(
                     _memories_injected = len(memories)
                     logging.info("Injected %d memories for user %s", _memories_injected, user_id)
         except Exception as mem_err:
-            logging.debug("Memory recall skipped: %s", mem_err)
+            logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
 
     if assembled.was_truncated:
         logging.info(
@@ -165,7 +165,7 @@ async def _handle_regular_chat(
 
     from app.streaming import stream_and_display
 
-    response_text, success, stream_last_msg = await stream_and_display(
+    response_text, success, stream_last_msg, actual_tokens = await stream_and_display(
         placeholder_message,
         model_name=model_used,
         history=chat_state.history,
@@ -179,10 +179,13 @@ async def _handle_regular_chat(
 
     if success and response_text:
         streamed = True
-        # Token count is approximate for streamed responses right now unless tracked at provider level
-        from app.prompt_registry import estimate_tokens_cyrillic
+        # Prefer actual token count from provider; fall back to heuristic estimate
+        if actual_tokens > 0:
+            new_token_count = actual_tokens
+        else:
+            from app.prompt_registry import estimate_tokens_cyrillic
 
-        new_token_count = estimate_tokens_cyrillic(response_text)
+            new_token_count = estimate_tokens_cyrillic(response_text)
 
     if response_text:
         # Check if response is an error

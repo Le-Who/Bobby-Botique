@@ -288,6 +288,14 @@ class GeminiProvider(BaseAIProvider):
                             from app.streaming import set_last_finish_reason
 
                             set_last_finish_reason(str(fr))
+                    # Extract usage_metadata from the last chunk (Gemini provides it on final chunk)
+                    usage = getattr(chunk, "usage_metadata", None)
+                    if usage:
+                        total = getattr(usage, "total_token_count", 0) or 0
+                        if total > 0:
+                            from app.streaming import set_last_token_count
+
+                            set_last_token_count(total)
                 except Exception as e:
                     logging.debug("Error extracting stream finish_reason: %s", e)
 

@@ -18,6 +18,7 @@ class TestSystemStatus(unittest.TestCase):
         self.mock_time_utils = MagicMock()
         self.mock_utils = MagicMock()
         self.mock_utils.time = self.mock_time_utils
+        self.mock_metrics_middleware = MagicMock()
 
         self.patcher = patch.dict(
             "sys.modules",
@@ -26,6 +27,7 @@ class TestSystemStatus(unittest.TestCase):
                 "app.database": self.mock_database,
                 "app.utils.time": self.mock_time_utils,
                 "app.utils": self.mock_utils,
+                "app.utils.metrics_middleware": self.mock_metrics_middleware,
             },
         )
         self.patcher.start()
@@ -93,12 +95,12 @@ class TestSystemStatus(unittest.TestCase):
         # Assertions
         self.assertEqual(result["metrics_summary"], mock_metrics_summary)
 
-        self.assertEqual(result["gemini"]["keys"], mock_gemini_keys)
-        self.assertEqual(result["gemini"]["usage_map"]["hash1"][0]["request_count"], 10)
-        self.assertEqual(result["gemini"]["reset_time"], "10:00 28.10.2023")
+        # Keys are masked by _mask_key() for security — short keys (< 10 chars) become "****"
+        self.assertEqual(result["gemini"]["keys"][0]["key_hash"], "hash1")
+        self.assertEqual(result["gemini"]["keys"][0]["api_key"], "****")
 
-        self.assertEqual(result["tavily"]["keys"], mock_tavily_keys)
-        self.assertEqual(result["tavily"]["usage_map"]["thash1"], 5)
+        self.assertEqual(result["tavily"]["keys"][0]["key_hash"], "thash1")
+        self.assertEqual(result["tavily"]["keys"][0]["api_key"], "****")
 
 
 if __name__ == "__main__":

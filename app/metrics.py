@@ -33,9 +33,9 @@ class MetricsCollector:
 
     def __init__(self):
         self.metrics = PerformanceMetrics()
-        self.response_times = deque(maxlen=1000)  # Храним afterдние 1000 requestов
-        self.error_log = deque(maxlen=100)  # Храним afterдние 100 ошибок
-        self.api_event_log = deque(maxlen=200)  # Храним afterдние API события
+        self.response_times = deque(maxlen=1000)  # Храним последние 1000 requestов
+        self.error_log = deque(maxlen=100)  # Храним последние 100 ошибок
+        self.api_event_log = deque(maxlen=200)  # Храним последние API события
         self.daily_metrics: dict[str, PerformanceMetrics] = defaultdict(PerformanceMetrics)
         # Per-user daily metrics: key = (date_str, user_id)
         self._user_daily: dict[tuple, dict[str, Any]] = defaultdict(lambda: {"request_count": 0, "model_usage": {}})
@@ -43,6 +43,7 @@ class MetricsCollector:
         self._last_save_time = time.time()
         self._save_interval = 300  # Save каждые 5 минут
         self._bg_save_task = None
+        self._lock = asyncio.Lock()  # Protects daily_metrics reset in _save_metrics_to_db
 
     async def _event_processor(self):
         """Background task to process events and periodically save metrics"""
@@ -240,7 +241,7 @@ class MetricsCollector:
 
                 # Reset in-memory counters after successful save to prevent double-counting
                 async with self._lock:
-                    daily = self._daily_metrics[self._today_key()]
+                    daily = self.daily_metrics[date.today().isoformat()]
                     daily.request_count = 0
                     daily.total_response_time = 0.0
                     daily.error_count = 0

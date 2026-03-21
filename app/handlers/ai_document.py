@@ -125,7 +125,7 @@ async def _handle_document_question(
         parts = [document_prompt] if document_prompt else []
         history = [{"role": "user", "parts": parts}]
 
-        response_text, success, stream_last_msg = await stream_and_display(
+        response_text, success, stream_last_msg, _tokens = await stream_and_display(
             placeholder_message,
             model_name=model_used,
             history=history,

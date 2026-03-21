@@ -11,6 +11,7 @@ Design goals:
 
 import functools
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
 
@@ -121,6 +122,7 @@ class PromptTemplate:
     purpose: str
     estimated_tokens: int = 0  # Pre-calculated for budget planning
     tags: tuple[str, ...] = field(default_factory=tuple)
+    required_vars: tuple[str, ...] = field(default_factory=tuple)  # Variables that MUST be provided
 
     def __post_init__(self):
         if self.estimated_tokens == 0:
@@ -671,6 +673,13 @@ class PromptRegistry:
             raise KeyError(f"Prompt template '{name}' not found")
 
         text = tmpl.text
+
+        # Validate required variables are provided
+        if tmpl.required_vars:
+            missing = [v for v in tmpl.required_vars if v not in kwargs]
+            if missing:
+                raise ValueError(f"Template '{name}' missing required vars: {missing}")
+
         # Substitute shared formatting rules
         text = text.replace("{formatting_rules}", FORMATTING_RULES)
         text = text.replace("{formatting_rules_compact}", FORMATTING_RULES_COMPACT)
@@ -678,6 +687,12 @@ class PromptRegistry:
         # Substitute user variables
         for key, value in kwargs.items():
             text = text.replace("{" + key + "}", str(value))
+
+        # Post-check: warn about remaining placeholders (excluding false positives)
+        _SHARED_VARS = {"formatting_rules", "formatting_rules_compact"}
+        remaining = [m for m in re.findall(r"\{(\w+)\}", text) if m not in _SHARED_VARS]
+        if remaining:
+            logging.warning("Template '%s' has unresolved vars: %s", name, remaining)
 
         return text
 

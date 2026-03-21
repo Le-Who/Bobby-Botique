@@ -100,7 +100,7 @@ async def _handle_qna_search(
     history = [{"role": "user", "parts": [localization_prompt]}]
     system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
 
-    final_answer, success, stream_last_msg = await stream_and_display(
+    final_answer, success, stream_last_msg, _tokens = await stream_and_display(
         placeholder_message,
         model_name=model_used,
         history=history,

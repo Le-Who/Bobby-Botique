@@ -3,6 +3,81 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.50] - 2026-03-21 - Reliability Improvements & Metrics Fixes (7 Improvements + 5 Bug Fixes)
+
+### 🔴 P1 — Critical
+
+| Change | File | Detail |
+|--------|------|--------|
+| Embedding client reuse | `repos/memory.py` | Replaced per-call `genai.Client()` with `get_cached_genai_client()`, eliminating FD leak and ~200ms TLS overhead per embedding call. |
+| LTM failure observability | `repos/memory.py`, `ai_chat.py` | Added `record_error("ltm_embedding_fail")` metric emission. Elevated memory recall logging from `debug` → `warning` for production visibility. |
+| Web API rate limiting + bug fix | `web.py` | Added `rate_limit_api` decorator (60 req/min/IP) to all 8 API endpoints. Fixed `_recent_errors` → `error_log` attribute name in `/api/errors`. |
+
+### 🟡 P2 — Important
+
+| Change | File | Detail |
+|--------|------|--------|
+| DatabaseManager init cleanup | `database.py` | Refactored from `__new__` to `__init__` with `_initialized` guard. `_cache_lock` now a lazy property (Python 3.12+ compat). |
+| Prompt template validation | `prompt_registry.py` | Added `required_vars` field to `PromptTemplate`. Pre-substitution validation raises `ValueError` for missing vars. Post-substitution regex warns about unresolved `{placeholder}` leaks. |
+| Token count accuracy | `streaming.py`, `gemini.py`, 4 handlers | Added `_last_token_count` contextvar + `set_last_token_count()`. Gemini streaming extracts `usage_metadata.total_token_count` from final chunk. `ai_chat.py` prefers API count over heuristic. `stream_and_display` now returns 4-tuple. |
+
+### 🟠 P3 — Nice to Have
+
+| Change | File | Detail |
+|--------|------|--------|
+| Model selector improvements | `model_selector.py` | Activated dead `_CREATIVE_PATTERNS` regex for creative task suggestions. Added OpenRouter model guard (skips irrelevant tier-based suggestions). |
+
+### 🐛 Bug Fixes in `metrics.py` (from audit commit `8a5e9cb`)
+
+| Fix | Root Cause | Detail |
+|-----|-----------|--------|
+| `MetricsCollector._lock` missing | Never initialized in `__init__` | Added `self._lock = asyncio.Lock()` to protect daily_metrics reset. |
+| `self._daily_metrics` wrong name | Attribute is `self.daily_metrics` | Fixed naming mismatch at line 244. |
+| `self._today_key()` nonexistent | Method doesn't exist | Replaced with `date.today().isoformat()` (established codebase pattern). |
+
+### 🧪 Test Fixes
+
+| Fix | File | Detail |
+|-----|------|--------|
+| `test_system_status` import error | `test_system_status.py` | `sys.modules` mock replaced `app.utils` with `MagicMock`, breaking `from app.utils.metrics_middleware import`. Added `metrics_middleware` to mock dict. |
+| Stale key masking assertions | `test_system_status.py` | `get_system_status_data()` now masks keys via `_mask_key()`. Updated assertions to expect `"****"`. |
+| `stream_and_display` mock tuples | 8 test files | Updated all mock return values from 3-tuple to 4-tuple for token count. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Ruff format | 234 files clean |
+| Tests | **1259 passed**, 0 failed (69s, 12 workers) |
+
+### Files Changed (20 files)
+
+| File | Change |
+|------|--------|
+| `app/repos/memory.py` | Cached embedding client + error metrics |
+| `app/web.py` | Rate limiting + `/api/errors` bug fix |
+| `app/handlers/ai_chat.py` | 4-tuple return + actual token count preference |
+| `app/handlers/ai_document.py` | 4-tuple return |
+| `app/handlers/ai_search.py` | 4-tuple return |
+| `app/handlers/ai_photo.py` | 4-tuple return (2 sites) |
+| `app/database.py` | `__init__` refactor + lazy `_cache_lock` |
+| `app/prompt_registry.py` | `required_vars` validation |
+| `app/streaming.py` | `_last_token_count` contextvar + 4-tuple return |
+| `app/providers/gemini.py` | `usage_metadata` extraction in streaming |
+| `app/model_selector.py` | Creative patterns + OpenRouter guard |
+| `app/metrics.py` | `_lock` init + `_daily_metrics` fix + `_today_key` fix |
+| `tests/test_ai_chat.py` | 4-tuple mocks |
+| `tests/test_ai_search.py` | 4-tuple mocks |
+| `tests/test_ai_photo.py` | 4-tuple mocks |
+| `tests/test_ai_document.py` | 4-tuple mocks |
+| `tests/test_integration_flow.py` | 4-tuple mocks |
+| `tests/integration/test_e2e_app_smoke.py` | 4-tuple mocks |
+| `tests/test_phase3_features.py` | 4-tuple unpacking |
+| `tests/test_system_status.py` | Import fix + key masking assertions |
+
+---
+
 ## [2.8.49] - 2026-03-21 - Comprehensive Codebase Audit (10 Fixes)
 
 ### 🔴 P1 — Critical

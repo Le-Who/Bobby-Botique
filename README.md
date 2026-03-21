@@ -17,11 +17,11 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
 - **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall. User-toggleable via `/settings`; transparent `🧠` indicator when memories influence a response.
 - **Distributed Concurrency**: Multi-tier Redis-backed global semaphores (heavy and ultra-heavy limits) to prevent API quota starvation in multi-replica deployments while guaranteeing isolation between standard queries and intensive Agentic research loops.
-- **Resilient Operations**: Instance-based background task manager with exponential backoff, bare-coroutine safety guard, and admin alerting hooks. Atomic metrics persistence with delta-based increments prevents data loss on restart.
+- **Resilient Operations**: Instance-based background task manager with exponential backoff, bare-coroutine safety guard, and admin alerting hooks. Atomic metrics persistence with delta-based increments prevents data loss on restart. Prompt registry validates required variables at render time to prevent silent placeholder leaks.
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
 - **Context Summarization**: Automatic token compression for large chats.
 - **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`) and system health overviews.
-- **Security & GDPR**: CSRF-protected dashboard authentication, brute-force rate limiting, API key masking in status endpoints, and Telegram commands for data export (`/mydata`) and deletion (`/deleteme`).
+- **Security & GDPR**: CSRF-protected dashboard authentication, brute-force rate limiting (60 req/min/IP on all API endpoints), API key masking in status endpoints, and Telegram commands for data export (`/mydata`) and deletion (`/deleteme`).
 
 ## Non-Goals / Limitations
 
@@ -144,7 +144,7 @@ docker-compose -f docker-compose.northflank.yml up -d
 
 ## Testing
 
-The application features a heavily engineered test suite (**1256+ unit and integration tests, 60% line coverage**) with **parallel execution** via `pytest-xdist`.
+The application features a heavily engineered test suite (**1259+ unit and integration tests, 60% line coverage**) with **parallel execution** via `pytest-xdist`.
 
 - **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.

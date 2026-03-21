@@ -54,11 +54,17 @@ STREAM_MSG_LIMIT = 4000
 import contextvars
 
 _last_finish_reason: contextvars.ContextVar[str | None] = contextvars.ContextVar("last_finish_reason", default=None)
+_last_token_count: contextvars.ContextVar[int] = contextvars.ContextVar("last_token_count", default=0)
 
 
 def set_last_finish_reason(reason: str | None) -> None:
     """Pass finish_reason from the provider back to the streaming loop."""
     _last_finish_reason.set(reason)
+
+
+def set_last_token_count(count: int) -> None:
+    """Pass total token count from the provider back to the streaming caller."""
+    _last_token_count.set(count)
 
 
 # Finish reasons that indicate the model was blocked mid-response
@@ -572,7 +578,7 @@ async def stream_and_display(
     chat_id: int = 0,
     chat_type: str = "private",
     reply_markup: Any | None = None,
-) -> tuple[str, bool, Message | None]:
+) -> tuple[str, bool, Message | None, int]:
     """High-level: stream AI response and progressively update Telegram message.
 
     Supports multi-message streaming: when a single message exceeds
@@ -597,7 +603,8 @@ async def stream_and_display(
             final message (avoids a separate edit_reply_markup call).
 
     Returns:
-        (response_text, success, last_message) tuple.
+        (response_text, success, last_message, token_count) tuple.
+        token_count is 0 when not available from the provider.
         last_message is the final message in the chain (may differ from
         placeholder_message if overflow occurred). Callers should use it
         for post-stream edits like adding buttons.
@@ -635,7 +642,7 @@ async def stream_and_display(
         final_text = await writer.finalize(reply_markup=reply_markup)
 
         if not final_text.strip():
-            return "", False, placeholder_message
+            return "", False, placeholder_message, 0
 
         # Check finish_reason for blocked/truncated responses
         fr = _last_finish_reason.get()
@@ -678,7 +685,8 @@ async def stream_and_display(
             fr,
         )
         await metrics_collector.record_api_call("gemini_streaming", model_name)
-        return final_text, True, writer.last_message
+        actual_tokens = _last_token_count.get()
+        return final_text, True, writer.last_message, actual_tokens
 
     except TimeoutError:
         partial = writer.text
@@ -688,11 +696,13 @@ async def stream_and_display(
                 partial + "\n\n⏰ _(ответ был прерван по таймауту)_",
                 True,
                 writer.last_message,
+                0,
             )
         return (
             "⏰ Превышено время ожидания ответа. Попробуйте позже.",
             False,
             placeholder_message,
+            0,
         )
 
     except APIError as e:
@@ -704,11 +714,13 @@ async def stream_and_display(
                 partial + "\n\n⚠️ _(ответ был прерван из-за ошибки API)_",
                 True,
                 writer.last_message,
+                0,
             )
         return (
             "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.",
             False,
             placeholder_message,
+            0,
         )
 
     except Exception as e:
@@ -717,4 +729,5 @@ async def stream_and_display(
             "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.",
             False,
             placeholder_message,
+            0,
         )

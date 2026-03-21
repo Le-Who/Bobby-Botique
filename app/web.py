@@ -145,6 +145,20 @@ import contextlib
 from app.security import SyncRateLimiter  # noqa: E402
 
 _login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
+_api_limiter = SyncRateLimiter(max_requests=60, window_seconds=60)
+
+
+def rate_limit_api(f):
+    """Rate-limit decorator for API endpoints (60 req/min per IP)."""
+
+    @wraps(f)
+    async def decorated(*args, **kwargs):
+        client_ip = request.remote_addr or "unknown"
+        if not _api_limiter.check(client_ip):
+            return jsonify({"error": "Rate limit exceeded"}), 429
+        return await f(*args, **kwargs)
+
+    return decorated
 
 
 @quart_app.route("/login", methods=["GET", "POST"])
@@ -258,6 +272,7 @@ async def health_check_endpoint():
 
 
 @quart_app.route("/metrics")
+@rate_limit_api
 async def prometheus_metrics():
     """Prometheus text exposition endpoint (unauthenticated for scraping)."""
     try:
@@ -277,6 +292,7 @@ async def prometheus_metrics():
 
 @quart_app.route("/api/overview")
 @require_auth
+@rate_limit_api
 async def api_overview():
     """High-level system overview: system health, bot uptime, key counts."""
     try:
@@ -344,6 +360,7 @@ async def api_overview():
 
 @quart_app.route("/api/keys")
 @require_auth
+@rate_limit_api
 async def api_keys():
     """API key usage statistics for all models."""
     try:
@@ -391,6 +408,7 @@ async def api_keys():
 
 @quart_app.route("/api/errors")
 @require_auth
+@rate_limit_api
 async def api_errors():
     """Recent errors from metrics collector."""
     try:
@@ -402,7 +420,7 @@ async def api_errors():
                 "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
                 "error_count": summary.get("error_count", 0),
                 "error_rate": summary.get("error_rate_percent", 0),
-                "recent_errors": getattr(metrics_collector, "_recent_errors", []),
+                "recent_errors": list(metrics_collector.error_log)[-10:],
             }
         )
     except Exception as e:
@@ -412,6 +430,7 @@ async def api_errors():
 
 @quart_app.route("/api/cache")
 @require_auth
+@rate_limit_api
 async def api_cache():
     """Cache performance statistics."""
     try:
@@ -433,6 +452,7 @@ async def api_cache():
 
 @quart_app.route("/api/queue")
 @require_auth
+@rate_limit_api
 async def api_queue():
     """Task queue statistics."""
     try:
@@ -452,6 +472,7 @@ async def api_queue():
 
 @quart_app.route("/api/database")
 @require_auth
+@rate_limit_api
 async def api_database():
     """Database connection pool and health stats."""
     try:
@@ -469,6 +490,7 @@ async def api_database():
 
 @quart_app.route("/api/circuit-breakers")
 @require_auth
+@rate_limit_api
 async def api_circuit_breakers():
     """Circuit breaker states."""
     try:
@@ -491,6 +513,7 @@ async def api_circuit_breakers():
 
 @quart_app.route("/api/memory")
 @require_auth
+@rate_limit_api
 async def api_memory():
     """Memory manager statistics."""
     try:

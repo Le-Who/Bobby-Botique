@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
+from cachetools import TTLCache
 
 from app.config import settings
 from app.errors import (
@@ -33,30 +34,41 @@ class ChatState:
 class DatabaseManager:
     _instance = None
 
-    # Type declarations for attributes set in __new__
+    # Type declarations for attributes set in __init__
     pool: Any
     _active_keys_cache: Any
     _user_auth_cache: Any
     _model_config_cache: Any
     _active_chats_cache: Any
-    _cache_lock: Any
     _monitor_task: Any
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance.pool = None
-
-            from cachetools import TTLCache
-
-            # TTL Caches to avoid manual background cleanup
-            cls._instance._active_keys_cache = TTLCache(maxsize=100, ttl=300)
-            cls._instance._user_auth_cache = TTLCache(maxsize=1000, ttl=300)
-            cls._instance._model_config_cache = TTLCache(maxsize=50, ttl=3600)
-
-            cls._instance._cache_lock = asyncio.Lock()
-            cls._instance._monitor_task = None
+            cls._instance._initialized = False
         return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
+        self.pool = None
+
+        # TTL Caches to avoid manual background cleanup
+        self._active_keys_cache = TTLCache(maxsize=100, ttl=300)
+        self._user_auth_cache = TTLCache(maxsize=1000, ttl=300)
+        self._model_config_cache = TTLCache(maxsize=50, ttl=3600)
+
+        # Lock lazily created via property to avoid asyncio.Lock() before event loop
+        self._cache_lock_instance: asyncio.Lock | None = None
+        self._monitor_task = None
+
+    @property
+    def _cache_lock(self) -> asyncio.Lock:
+        """Lazily create asyncio.Lock on first access (avoids Python 3.12+ DeprecationWarning)."""
+        if self._cache_lock_instance is None:
+            self._cache_lock_instance = asyncio.Lock()
+        return self._cache_lock_instance
 
     def _is_pool_closed(self) -> bool:
         """Check if the connection pool is closed, wrapping asyncpg internals."""
