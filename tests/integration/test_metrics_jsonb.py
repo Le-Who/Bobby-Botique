@@ -61,8 +61,8 @@ class TestMetricsJsonbRoundtrip:
     @pytest.mark.asyncio
     async def test_single_upsert_then_read(self, db_conn):
         """First save, then read — basic happy path."""
-        api_calls = json.dumps({"gemini_streaming": 5})
-        model_usage = json.dumps({"gemini-2.5-flash": 3})
+        api_calls = {"gemini_streaming": 5}
+        model_usage = {"gemini-2.5-flash": 3}
 
         await db_conn.execute(
             UPSERT_SQL,
@@ -92,8 +92,8 @@ class TestMetricsJsonbRoundtrip:
         This is the exact scenario that caused the jsonb_each_text crash
         when the old code used || to merge JSONB objects.
         """
-        api_calls_v1 = json.dumps({"gemini_streaming": 3})
-        model_usage_v1 = json.dumps({"gemini-2.5-flash": 2})
+        api_calls_v1 = {"gemini_streaming": 3}
+        model_usage_v1 = {"gemini-2.5-flash": 2}
 
         await db_conn.execute(
             UPSERT_SQL,
@@ -109,8 +109,8 @@ class TestMetricsJsonbRoundtrip:
         )
 
         # Second save — same date, updated values
-        api_calls_v2 = json.dumps({"gemini_streaming": 7, "gemini_search": 2})
-        model_usage_v2 = json.dumps({"gemini-2.5-flash": 5})
+        api_calls_v2 = {"gemini_streaming": 7, "gemini_search": 2}
+        model_usage_v2 = {"gemini-2.5-flash": 5}
 
         await db_conn.execute(
             UPSERT_SQL,
@@ -146,8 +146,8 @@ class TestMetricsJsonbRoundtrip:
             1,
             2,
             0,
-            json.dumps({"gemini_streaming": 3}),
-            json.dumps({"gemini-2.5-flash": 2}),
+            {"gemini_streaming": 3},
+            {"gemini-2.5-flash": 2},
         )
         await db_conn.execute(
             UPSERT_SQL,
@@ -158,8 +158,8 @@ class TestMetricsJsonbRoundtrip:
             2,
             5,
             1,
-            json.dumps({"gemini_streaming": 7, "gemini_search": 1}),
-            json.dumps({"gemini-2.5-flash": 5, "gemini-3.1-flash-lite-preview": 2}),
+            {"gemini_streaming": 7, "gemini_search": 1},
+            {"gemini-2.5-flash": 5, "gemini-3.1-flash-lite-preview": 2},
         )
 
         rows = await db_conn.fetch(LOAD_API_CALLS_SQL)
@@ -182,8 +182,8 @@ class TestMetricsJsonbRoundtrip:
             0,
             0,
             0,
-            json.dumps({}),
-            json.dumps({}),
+            {},
+            {},
         )
 
         rows = await db_conn.fetch(LOAD_API_CALLS_SQL)
@@ -205,8 +205,8 @@ class TestMetricsJsonbRoundtrip:
             0,
             0,
             0,
-            json.dumps({"gemini_streaming": 3}),
-            json.dumps({"gemini-2.5-flash": 2}),
+            {"gemini_streaming": 3},
+            {"gemini-2.5-flash": 2},
         )
         # Manually corrupt another row to be an array
         await db_conn.execute(

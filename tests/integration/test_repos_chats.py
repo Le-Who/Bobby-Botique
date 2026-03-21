@@ -35,7 +35,7 @@ class TestChatStateLifecycle:
         assert row["model"] == "gemini-2.5-flash"
         assert row["token_count"] == 0
         assert row["search_enabled"] is False
-        assert row["history"] == "[]"
+        assert row["history"] == []
 
     @pytest.mark.asyncio
     async def test_update_chat_model_and_history(self, db_conn_with_user):

@@ -233,8 +233,8 @@ class MetricsCollector:
                         snapshot_data["search_queries"],
                         snapshot_data["cache_hits"],
                         snapshot_data["cache_misses"],
-                        json.dumps(snapshot_data["api_calls"]),
-                        json.dumps(snapshot_data["model_usage"]),
+                        snapshot_data["api_calls"],
+                        snapshot_data["model_usage"],
                     ),
                 )
 
@@ -271,7 +271,7 @@ class MetricsCollector:
                         uid,
                         snapshot_data["date"],
                         data["request_count"],
-                        json.dumps(data["model_usage"]),
+                        data["model_usage"],
                     )
                     for uid, data in user_items
                 ]

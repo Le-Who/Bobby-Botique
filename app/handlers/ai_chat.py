@@ -34,7 +34,7 @@ async def _handle_regular_chat(
 ):
     # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
-    _, model_used, resolution = await _resolve_ai_request(model_for_this_request)
+    key_data, model_used, resolution = await _resolve_ai_request(model_for_this_request)
 
     if resolution == "all_exhausted":
         result = classify_resolution(resolution, model_for_this_request)
@@ -90,16 +90,15 @@ async def _handle_regular_chat(
 
     # ── Inject long-term memories (semantic recall) ──────────────────────
     _memories_injected = 0
-    if chat_state.ltm_enabled:
+    if chat_state.ltm_enabled and key_data:
         try:
             from app.repos.memory import search_memories
 
-            key_data_for_mem, _, _ = await _resolve_ai_request(model_used)
-            if key_data_for_mem and user_message and len(user_message) > 15:
+            if user_message and len(user_message) > 15:
                 memories = await search_memories(
                     user_id,
                     user_message,
-                    key_data_for_mem["api_key"],
+                    key_data["api_key"],
                     limit=3,
                     min_similarity=0.72,
                 )
@@ -252,8 +251,7 @@ async def _handle_regular_chat(
 
             # ── Store exchange as memory (background, non-blocking) ──────
             try:
-                key_data_for_store, _, _ = await _resolve_ai_request(model_used)
-                if key_data_for_store and len(user_message) > 30:
+                if key_data and len(user_message) > 30:
                     import asyncio
 
                     from app.repos.memory import store_memory
@@ -264,13 +262,13 @@ async def _handle_regular_chat(
                         await store_memory(
                             user_id,
                             exchange,
-                            key_data_for_store["api_key"],
+                            key_data["api_key"],
                             source_type="conversation",
                         )
 
-                    from app.utils.background_tasks import submit_task
+                    from app.utils.background_tasks import submit_retryable
 
-                    submit_task(_bg_store(), retry=3)
+                    submit_retryable(_bg_store, retry=3)
             except Exception:
                 pass
 

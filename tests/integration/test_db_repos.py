@@ -57,7 +57,7 @@ class TestChatsTable:
         assert row["model"] == "gemini-2.5-flash"
         assert row["token_count"] == 0
         assert row["search_enabled"] is False
-        assert row["history"] == "[]"
+        assert row["history"] == []
         assert row["context_summary"] is None
 
     @pytest.mark.asyncio

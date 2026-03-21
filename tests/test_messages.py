@@ -160,7 +160,7 @@ async def test_handle_request_text_message_happy_path():
     # waiting on unmocked infrastructure like process_long_request).
     captured_coros = []
 
-    def capture_submit(coro, **kwargs):
+    def capture_submit(coro, *args, **kwargs):
         captured_coros.append(coro)
         noop_task = AsyncMock()
         noop_task.cancel = MagicMock()
@@ -212,7 +212,7 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
     # Capture coroutines so we can drive them deterministically.
     captured_coros = []
 
-    def capture_submit(coro, **kwargs):
+    def capture_submit(coro, *args, **kwargs):
         captured_coros.append(coro)
         noop_task = AsyncMock()
         noop_task.cancel = MagicMock()
@@ -279,6 +279,13 @@ async def test_handle_request_photo_message():
         created_tasks.append(task)
         return task
 
+    captured_coros = []
+    def capture_submit(coro, *args, **kwargs):
+        captured_coros.append(coro)
+        noop_task = AsyncMock()
+        noop_task.cancel = MagicMock()
+        return noop_task
+
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
@@ -289,6 +296,7 @@ async def test_handle_request_photo_message():
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("asyncio.create_task", side_effect=side_effect_create_task),
+        patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -301,8 +309,11 @@ async def test_handle_request_photo_message():
 
         message.reply_text.assert_awaited_with("🖼️ Обрабатываю изображение...")
 
+        for coro in captured_coros:
+            await coro
+
         if created_tasks:
-            await asyncio.gather(*created_tasks)
+            await asyncio.gather(*created_tasks, return_exceptions=True)
 
         mock_agent_process.assert_awaited_once()
 
@@ -353,6 +364,13 @@ async def test_handle_request_exception_handling():
         created_tasks.append(task)
         return task
 
+    captured_coros = []
+    def capture_submit(coro, *args, **kwargs):
+        captured_coros.append(coro)
+        noop_task = AsyncMock()
+        noop_task.cancel = MagicMock()
+        return noop_task
+
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
@@ -363,6 +381,7 @@ async def test_handle_request_exception_handling():
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("asyncio.create_task", side_effect=side_effect_create_task),
+        patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -376,8 +395,11 @@ async def test_handle_request_exception_handling():
 
         await messages.handle_request(update, context)
 
+        for coro in captured_coros:
+            await coro
+
         if created_tasks:
-            await asyncio.gather(*created_tasks)
+            await asyncio.gather(*created_tasks, return_exceptions=True)
 
         # Verify that placeholder message was edited to show error
         placeholder_mock = message.reply_text.return_value

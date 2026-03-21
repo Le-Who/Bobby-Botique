@@ -55,8 +55,33 @@ class TaskManager:
         cls._error_callback = callback
 
     @classmethod
-    def submit(cls, coro: Coroutine[Any, Any, Any], retry: int = 0) -> asyncio.Task:
-        coro_name = getattr(coro, "__name__", getattr(coro, "__qualname__", str(coro)))
+    def submit(cls, coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+        """Run a background task (fire-and-forget, no retries)."""
+        return cls._schedule(coro, coro_factory=None, retry=0)
+
+    @classmethod
+    def submit_retryable(
+        cls,
+        factory: Callable[[], Coroutine[Any, Any, Any]],
+        retry: int = 3,
+    ) -> asyncio.Task:
+        """Run a background task with retry capabilities.
+        
+        The factory must return a fresh coroutine on each call.
+        """
+        return cls._schedule(None, coro_factory=factory, retry=retry)
+
+    @classmethod
+    def _schedule(
+        cls,
+        coro: Coroutine[Any, Any, Any] | None,
+        *,
+        coro_factory: Callable[[], Coroutine[Any, Any, Any]] | None,
+        retry: int,
+    ) -> asyncio.Task:
+        # Determine task name for logging
+        name_source = coro_factory if coro_factory else coro
+        coro_name = getattr(name_source, "__name__", getattr(name_source, "__qualname__", str(name_source)))
 
         if len(cls._tasks) >= cls.MAX_TASKS:
             logging.warning(
@@ -74,7 +99,9 @@ class TaskManager:
             attempts = 0
             while attempts <= retry:
                 try:
-                    await coro
+                    target = coro_factory() if coro_factory else coro
+                    # Note: bare coroutines can only be awaited once, but retry is 0 for them.
+                    await target  # type: ignore[misc]
                     return
                 except asyncio.CancelledError:
                     raise
@@ -126,5 +153,6 @@ class TaskManager:
             await asyncio.sleep(0.1)
 
 
-# Global helper
+# Global helpers
 submit_task = TaskManager.submit
+submit_retryable = TaskManager.submit_retryable

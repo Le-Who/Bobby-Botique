@@ -7,6 +7,7 @@ Uses TEST_DATABASE_URL from .env to connect to a dedicated empty Supabase projec
 Each test runs inside a transaction that is ROLLED BACK — no data persists.
 """
 
+import json
 import os
 
 import asyncpg
@@ -56,6 +57,9 @@ async def db_conn(test_db_url):
     - Rolls back ALL changes after test completes
     """
     conn = await asyncpg.connect(test_db_url, statement_cache_size=0)
+    # Register JSONB codec to match production db_manager behavior
+    await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+    
     # Ensure schema is up-to-date for integration tests (idempotent)
     await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
     tx = conn.transaction()

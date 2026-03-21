@@ -100,3 +100,50 @@ async def test_cancel_background_task_noop_when_none():
 
     await cancel_background_task(owner, "_task")
     # Should not raise
+
+# ── TaskManager ───────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_taskmanager_submit_retryable():
+    from app.utils.background_tasks import TaskManager
+    
+    from unittest.mock import AsyncMock, patch
+
+    attempts = 0
+    success = False
+    
+    async def failing_factory():
+        nonlocal attempts, success
+        attempts += 1
+        if attempts < 3:
+            raise ValueError("Intentional failure")
+        success = True
+        return attempts
+
+    import asyncio
+    original_sleep = asyncio.sleep
+
+    async def fast_sleep(delay, *args, **kwargs):
+        await original_sleep(0.01)
+
+    with patch("asyncio.sleep", side_effect=fast_sleep):
+        task = TaskManager.submit_retryable(failing_factory, retry=3)
+        await TaskManager.drain(timeout=2.0)
+    
+    assert success is True
+    assert attempts == 3
+
+@pytest.mark.asyncio
+async def test_taskmanager_submit_fire_and_forget():
+    from app.utils.background_tasks import TaskManager
+    
+    done = False
+    
+    async def work():
+        nonlocal done
+        done = True
+        
+    task = TaskManager.submit(work())
+    await TaskManager.drain(timeout=2.0)
+    
+    assert done is True
