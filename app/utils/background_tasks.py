@@ -43,50 +43,60 @@ async def cancel_background_task(owner: object, attr_name: str) -> None:
 
 
 class TaskManager:
-    """Robust background task manager preventing silent failures."""
+    """Robust background task manager preventing silent failures.
+
+    Instance-based design: state is per-instance (not class-level) for
+    proper test isolation and multi-context safety.  A global singleton
+    ``task_manager`` is provided for production use.
+    """
 
     MAX_TASKS = 100  # Prevent unbounded background task accumulation
-    _tasks: set[asyncio.Task] = set()
-    _error_callback: Callable[[Exception, str], Any] | None = None
 
-    @classmethod
-    def register_error_callback(cls, callback: Callable[[Exception, str], Any]) -> None:
+    def __init__(self) -> None:
+        self._tasks: set[asyncio.Task] = set()
+        self._error_callback: Callable[[Exception, str], Any] | None = None
+
+    def register_error_callback(self, callback: Callable[[Exception, str], Any]) -> None:
         """Register a callback to be invoked when a background task exhausts all retries."""
-        cls._error_callback = callback
+        self._error_callback = callback
 
-    @classmethod
-    def submit(cls, coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
+    def submit(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
         """Run a background task (fire-and-forget, no retries)."""
-        return cls._schedule(coro, coro_factory=None, retry=0)
+        return self._schedule(coro, coro_factory=None, retry=0)
 
-    @classmethod
     def submit_retryable(
-        cls,
+        self,
         factory: Callable[[], Coroutine[Any, Any, Any]],
         retry: int = 3,
     ) -> asyncio.Task:
         """Run a background task with retry capabilities.
-        
+
         The factory must return a fresh coroutine on each call.
         """
-        return cls._schedule(None, coro_factory=factory, retry=retry)
+        return self._schedule(None, coro_factory=factory, retry=retry)
 
-    @classmethod
     def _schedule(
-        cls,
+        self,
         coro: Coroutine[Any, Any, Any] | None,
         *,
         coro_factory: Callable[[], Coroutine[Any, Any, Any]] | None,
         retry: int,
     ) -> asyncio.Task:
+        # ── Audit Fix 2: guard against bare-coroutine + retry > 0 ────────
+        if retry > 0 and coro_factory is None:
+            raise ValueError(
+                "Retryable tasks require coro_factory (not a bare coroutine). "
+                "Use submit_retryable() with a factory function."
+            )
+
         # Determine task name for logging
         name_source = coro_factory if coro_factory else coro
         coro_name = getattr(name_source, "__name__", getattr(name_source, "__qualname__", str(name_source)))
 
-        if len(cls._tasks) >= cls.MAX_TASKS:
+        if len(self._tasks) >= self.MAX_TASKS:
             logging.warning(
                 "TaskManager at capacity (%d). Rejecting task %s",
-                cls.MAX_TASKS,
+                self.MAX_TASKS,
                 coro_name,
             )
 
@@ -118,31 +128,30 @@ class TaskManager:
                     if attempts <= retry:
                         await asyncio.sleep(2**attempts)  # Exponential backoff
                     else:
-                        if cls._error_callback:
+                        if self._error_callback:
                             try:
-                                res = cls._error_callback(e, f"Task {coro_name}")
+                                res = self._error_callback(e, f"Task {coro_name}")
                                 # Execute asynchronously if it's a coroutine
                                 if asyncio.iscoroutine(res):
                                     cb_task = asyncio.create_task(res)
-                                    cls._tasks.add(cb_task)
-                                    cb_task.add_done_callback(cls._tasks.discard)
+                                    self._tasks.add(cb_task)
+                                    cb_task.add_done_callback(self._tasks.discard)
                             except Exception as cb_err:
                                 logging.error("TaskManager error callback failed: %s", cb_err)
 
         task = asyncio.create_task(_wrapper())
-        cls._tasks.add(task)
-        task.add_done_callback(cls._tasks.discard)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
         return task
 
-    @classmethod
-    async def drain(cls, timeout: float = 10.0) -> None:
+    async def drain(self, timeout: float = 10.0) -> None:
         """Await all running tasks with a timeout for graceful shutdown."""
-        if not cls._tasks:
+        if not self._tasks:
             return
 
-        logging.info("Draining %d background tasks...", len(cls._tasks))
+        logging.info("Draining %d background tasks...", len(self._tasks))
         # wait doesn't cancel, it just waits up to timeout
-        _done, pending = await asyncio.wait(cls._tasks, timeout=timeout)
+        _done, pending = await asyncio.wait(self._tasks, timeout=timeout)
 
         if pending:
             logging.warning("Timeout draining background tasks. Cancelling %d tasks.", len(pending))
@@ -153,6 +162,14 @@ class TaskManager:
             await asyncio.sleep(0.1)
 
 
-# Global helpers
-submit_task = TaskManager.submit
-submit_retryable = TaskManager.submit_retryable
+# ── Global singleton ─────────────────────────────────────────────────────────
+_task_manager = TaskManager()
+
+# Public API: module-level functions delegate to the singleton.
+submit_task = _task_manager.submit
+submit_retryable = _task_manager.submit_retryable
+
+
+def get_task_manager() -> TaskManager:
+    """Return the global TaskManager singleton."""
+    return _task_manager

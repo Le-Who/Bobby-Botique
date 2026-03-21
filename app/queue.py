@@ -3,7 +3,7 @@ import logging
 import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
@@ -151,7 +151,7 @@ class TaskQueue:
             data=data,
             priority=priority,
             status=TaskStatus.PENDING,
-            created_at=datetime.now(),
+            created_at=datetime.now(tz=UTC),
         )
 
         async with self._lock:
@@ -186,7 +186,7 @@ class TaskQueue:
 
             if task.status in [TaskStatus.PENDING, TaskStatus.RUNNING]:
                 task.status = TaskStatus.CANCELLED
-                task.completed_at = datetime.now()
+                task.completed_at = datetime.now(tz=UTC)
                 return True
 
             return False
@@ -210,7 +210,7 @@ class TaskQueue:
                             continue
 
                         task.status = TaskStatus.RUNNING
-                        task.started_at = datetime.now()
+                        task.started_at = datetime.now(tz=UTC)
 
                     logging.info("Worker %s processing task %s", worker_name, task_id)
 
@@ -220,7 +220,7 @@ class TaskQueue:
 
                         async with self._lock:
                             task.status = TaskStatus.COMPLETED
-                            task.completed_at = datetime.now()
+                            task.completed_at = datetime.now(tz=UTC)
                             task.result = result
 
                         logging.info("Task %s completed successfully", task_id)
@@ -238,7 +238,7 @@ class TaskQueue:
                                 await self.queue.put((-task.priority.value + 1, task_id))
                             else:
                                 task.status = TaskStatus.FAILED
-                                task.completed_at = datetime.now()
+                                task.completed_at = datetime.now(tz=UTC)
                 finally:
                     self.queue.task_done()
 
@@ -316,7 +316,7 @@ class TaskQueue:
             try:
                 await asyncio.sleep(3600)  # Check каждый час
 
-                cutoff_time = datetime.now() - timedelta(days=7)  # Delete задачи старше недели
+                cutoff_time = datetime.now(tz=UTC) - timedelta(days=7)  # Delete задачи старше недели
 
                 async with self._lock:
                     tasks_to_remove = [

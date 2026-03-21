@@ -62,6 +62,9 @@ class CircuitBreaker:
         # Async lock for thread safety
         self._lock = asyncio.Lock()
 
+        # HALF_OPEN probing: only one probe request at a time (Audit Fix 3)
+        self._half_open_probe_active = False
+
         # Start monitoring task (deferred if no event loop is running)
         self._monitor_task: asyncio.Task | None = None
         try:
@@ -91,6 +94,11 @@ class CircuitBreaker:
             # Check if circuit is open
             if self._state == CircuitState.OPEN:
                 if self._should_attempt_reset():
+                    if self._half_open_probe_active:
+                        raise CircuitBreakerOpenError(
+                            f"Circuit Breaker '{self.name}' is HALF_OPEN and probe already in flight."
+                        )
+                    self._half_open_probe_active = True
                     await self._set_state(CircuitState.HALF_OPEN)
                     logging.info("Circuit Breaker '%s' moved to HALF_OPEN state", self.name)
                 else:
@@ -108,6 +116,7 @@ class CircuitBreaker:
         except Exception as e:
             # Reacquire lock to record failure
             async with self._lock:
+                self._half_open_probe_active = False
                 if isinstance(e, self.config.expected_exception):
                     await self._on_failure(e)
                     raise
@@ -121,6 +130,7 @@ class CircuitBreaker:
 
         # Reacquire lock to record success
         async with self._lock:
+            self._half_open_probe_active = False
             if self._state == CircuitState.HALF_OPEN:
                 await self._set_state(CircuitState.CLOSED)
                 logging.info("Circuit Breaker '%s' recovered, moved to CLOSED state", self.name)

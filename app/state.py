@@ -77,7 +77,7 @@ class _UserStateStore:
     via ``_ensure_loaded``, so no data is lost.
     """
 
-    def __init__(self, maxsize: int = 10_000):
+    def __init__(self, maxsize: int = 50_000):
         from cachetools import LRUCache
 
         self._states: LRUCache = LRUCache(maxsize=maxsize)
@@ -283,12 +283,18 @@ def get_generated_role(user_id: int) -> dict | None:
 
 def is_in_document_mode(user_id: int) -> bool:
     """Check if user is in document mode."""
-    return get_user_state(user_id).document_mode
+    state = get_user_state(user_id)
+    if not state._loaded_from_db:
+        logging.warning("Reading document_mode for user %s before state loaded from DB", user_id)
+    return state.document_mode
 
 
 def get_selected_document_id(user_id: int) -> int | None:
     """Get the selected document ID."""
-    return get_user_state(user_id).selected_document_id
+    state = get_user_state(user_id)
+    if not state._loaded_from_db:
+        logging.warning("Reading selected_document_id for user %s before state loaded from DB", user_id)
+    return state.selected_document_id
 
 
 # --- Last message (for retry button) ---

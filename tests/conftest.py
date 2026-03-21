@@ -57,5 +57,3 @@ def _cancel_db_background_tasks():
                 task.cancel()
     except Exception:
         pass
-
-

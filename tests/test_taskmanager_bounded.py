@@ -9,10 +9,8 @@ from app.utils.background_tasks import TaskManager
 async def test_taskmanager_bounded_and_drain():
     """Verify TaskManager limits concurrent tasks and supports draining."""
 
-    # Store old max
-    old_max = TaskManager.MAX_TASKS
-    TaskManager.MAX_TASKS = 3
-    TaskManager._tasks.clear()
+    tm = TaskManager()  # fresh instance for test isolation
+    tm.MAX_TASKS = 3
 
     try:
         release_event = asyncio.Event()
@@ -27,7 +25,7 @@ async def test_taskmanager_bounded_and_drain():
         # Track coroutines so we can close rejected ones (avoids RuntimeWarning).
         coroutines = [slow_work() for _ in range(5)]
         for coro in coroutines:
-            TaskManager.submit(coro)
+            tm.submit(coro)
 
         # Yield to allow wrapper tasks to start `slow_work`
         await asyncio.sleep(0.01)
@@ -35,21 +33,20 @@ async def test_taskmanager_bounded_and_drain():
         # Only 3 tasks should actually run
         assert started_count == 3
         # Ensure _tasks set is at the limit
-        assert len(TaskManager._tasks) == 3
+        assert len(tm._tasks) == 3
 
         # Drain should complete quickly if we release
-        drain_task = asyncio.create_task(TaskManager.drain(timeout=2.0))
+        drain_task = asyncio.create_task(tm.drain(timeout=2.0))
         await asyncio.sleep(0.01)  # let drain start waiting
         release_event.set()
         await drain_task
 
         # All tasks should be cleaned up
-        assert len(TaskManager._tasks) == 0
+        assert len(tm._tasks) == 0
 
         # Explicitly close any rejected coroutines to avoid RuntimeWarning
         for coro in coroutines:
             coro.close()
 
     finally:
-        TaskManager.MAX_TASKS = old_max
-        TaskManager._tasks.clear()
+        tm._tasks.clear()

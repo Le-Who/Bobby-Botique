@@ -278,7 +278,7 @@ class StreamingWriter:
         await self._flush(final=True, reply_markup=reply_markup)
         return self._full_text
 
-    async def _flush(self, *, final: bool = False, reply_markup: object | None = None) -> None:
+    async def _flush(self, *, final: bool = False, reply_markup: object | None = None, _depth: int = 0) -> None:
         """Send the current buffer to Telegram.
 
         Draft mode: calls ``send_message_draft`` for mid-stream updates.
@@ -378,13 +378,13 @@ class StreamingWriter:
                 return
 
             if len(formatted_text) > STREAM_MSG_LIMIT and final:
-                if getattr(self, "_overflow_failed", False):
+                if getattr(self, "_overflow_failed", False) or _depth > 5 or self._msg_count > 8:
                     formatted_text = sanitize_html_tags(formatted_text[:STREAM_MSG_LIMIT])
                 else:
                     # Final flush overflows — split into finalize + new message
                     await self._overflow_to_new_message()
                     # Now flush the remainder (recursion with reduced buffer)
-                    await self._flush(final=True, reply_markup=reply_markup)
+                    await self._flush(final=True, reply_markup=reply_markup, _depth=_depth + 1)
                     return
 
             await self._adapter.edit_message(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)  # type: ignore[arg-type]

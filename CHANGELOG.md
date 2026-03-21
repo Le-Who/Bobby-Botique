@@ -3,6 +3,65 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.49] - 2026-03-21 - Comprehensive Codebase Audit (10 Fixes)
+
+### 🔴 P1 — Critical
+
+| Fix | File | Detail |
+|-----|------|--------|
+| TaskManager class-level mutable state | `background_tasks.py` | Refactored from class-level `_tasks` set to instance-based design with global singleton via `get_task_manager()`. Ensures proper test isolation and multi-context safety. |
+| Bare coroutine retry guard | `background_tasks.py` | `_schedule()` now raises `ValueError` when `retry > 0` but no `coro_factory` is provided, preventing silent crashes from double-awaiting bare coroutines. |
+| Metrics upsert data loss | `metrics.py` | Changed `ON CONFLICT SET = EXCLUDED.*` to atomic increments (`metrics.X + EXCLUDED.X`) for both `metrics` and `user_metrics` tables. In-memory counters reset after successful DB save to prevent double-counting. |
+
+### 🟡 P2 — High
+
+| Fix | File | Detail |
+|-----|------|--------|
+| CircuitBreaker HALF_OPEN race | `circuit_breaker.py` | Added `_half_open_probe_active` flag — only one probe request enters HALF_OPEN state; concurrent requests get `CircuitBreakerOpenError`. Flag cleared on both success and failure. |
+| State read-before-load | `state.py` | Increased LRU `maxsize` from 10K to 50K. Added `logging.warning` in sync getters when state hasn't been loaded from DB. |
+| API key exposure | `metrics.py` | Added `_mask_key()` helper (shows first/last 4 chars). Applied to Gemini and Tavily key listing in `get_system_status_data()`. |
+
+### 🟠 P3 — Medium
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Agentic config mutation | `agentic.py` | Replaced in-place `config.tools = None` mutation with a fresh `synthesis_config` object. Propagates `thinking_config` from original. |
+| Streaming recursion depth | `streaming.py` | Added `_depth` counter to `_flush()`. Truncates at `_depth > 5` or `msg_count > 8` instead of unbounded recursion. |
+
+### 🟢 P4 — Low
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Redundant SQL subquery | `conversations.py` | Simplified `WHERE conversation_id = $1 AND conversation_id IN (SELECT ...)` to just the subquery. |
+| `datetime.now()` without timezone | `queue.py` | All 6 `datetime.now()` calls → `datetime.now(tz=timezone.utc)`. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Ruff format | 235 files clean |
+| Tests (targeted) | **101 passed**, 0 failed (6.55s) |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/utils/background_tasks.py` | Instance-based TaskManager + retry guard |
+| `app/metrics.py` | Atomic upsert + counter reset + `_mask_key()` |
+| `app/circuit_breaker.py` | HALF_OPEN probe flag |
+| `app/state.py` | LRU 50K + read-before-load warning |
+| `app/core/agentic.py` | Fresh synthesis config |
+| `app/streaming.py` | `_flush()` depth guard |
+| `app/repos/conversations.py` | SQL simplification |
+| `app/queue.py` | UTC-aware datetime |
+| `bot.py` | Updated TaskManager caller API |
+| `tests/test_background_tasks.py` | Instance-based tests + bare-coro guard test |
+| `tests/test_taskmanager_bounded.py` | Instance-based bounded test |
+| `tests/e2e/test_chat_happy_path.py` | Updated patch target |
+
+---
+
 ## [2.8.48] - 2026-03-20 - Multi-Tier Semaphore Architecture & E2E Hardening
 
 ### 🏗️ Architecture Changes

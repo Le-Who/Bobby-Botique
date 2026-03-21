@@ -215,14 +215,14 @@ class MetricsCollector:
                                        search_queries, cache_hits, cache_misses, api_calls, model_usage, updated_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CURRENT_TIMESTAMP)
                     ON CONFLICT (metric_date) DO UPDATE SET
-                        request_count = EXCLUDED.request_count,
-                        total_response_time = EXCLUDED.total_response_time,
-                        error_count = EXCLUDED.error_count,
-                        search_queries = EXCLUDED.search_queries,
-                        cache_hits = EXCLUDED.cache_hits,
-                        cache_misses = EXCLUDED.cache_misses,
-                        api_calls = EXCLUDED.api_calls,
-                        model_usage = EXCLUDED.model_usage,
+                        request_count = metrics.request_count + EXCLUDED.request_count,
+                        total_response_time = metrics.total_response_time + EXCLUDED.total_response_time,
+                        error_count = metrics.error_count + EXCLUDED.error_count,
+                        search_queries = metrics.search_queries + EXCLUDED.search_queries,
+                        cache_hits = metrics.cache_hits + EXCLUDED.cache_hits,
+                        cache_misses = metrics.cache_misses + EXCLUDED.cache_misses,
+                        api_calls = COALESCE(metrics.api_calls, '{}'::jsonb) || EXCLUDED.api_calls,
+                        model_usage = COALESCE(metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
                         updated_at = CURRENT_TIMESTAMP
                 """,
                     (
@@ -237,6 +237,18 @@ class MetricsCollector:
                         snapshot_data["model_usage"],
                     ),
                 )
+
+                # Reset in-memory counters after successful save to prevent double-counting
+                async with self._lock:
+                    daily = self._daily_metrics[self._today_key()]
+                    daily.request_count = 0
+                    daily.total_response_time = 0.0
+                    daily.error_count = 0
+                    daily.search_queries = 0
+                    daily.cache_hits = 0
+                    daily.cache_misses = 0
+                    daily.api_calls.clear()
+                    daily.model_usage.clear()
 
             # Save new errors
             if errors_to_process:
@@ -280,12 +292,17 @@ class MetricsCollector:
                     INSERT INTO user_metrics (user_id, metric_date, request_count, model_usage, updated_at)
                     VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
                     ON CONFLICT (user_id, metric_date) DO UPDATE SET
-                        request_count = EXCLUDED.request_count,
+                        request_count = user_metrics.request_count + EXCLUDED.request_count,
                         model_usage = COALESCE(user_metrics.model_usage, '{}'::jsonb) || EXCLUDED.model_usage,
                         updated_at = CURRENT_TIMESTAMP
                     """,
                     params_list,
                 )
+
+                # Reset user counters after successful save
+                for _uid, data in user_items:
+                    data["request_count"] = 0
+                    data["model_usage"] = {}
                 logging.debug("Per-user metrics saved for %s users", len(user_items))
 
                 # Update streaks for active users
@@ -713,6 +730,13 @@ class RoleConversationMetricsCollector:
 role_conv_metrics = RoleConversationMetricsCollector()
 
 
+def _mask_key(key: str | None) -> str:
+    """Return a masked version of an API key, showing only first/last 4 chars."""
+    if not key or len(key) < 10:
+        return "****"
+    return f"{key[:4]}{'*' * (len(key) - 8)}{key[-4:]}"
+
+
 async def get_system_status_data() -> dict[str, Any]:
     """
     Агрегирует все системные metrics, вkeyая проfromводительность,
@@ -724,7 +748,13 @@ async def get_system_status_data() -> dict[str, Any]:
     # 2. Статус keyей Gemini
     today_pacific = time_utils.get_pacific_date()
     gemini_keys_raw = await db.db_query("SELECT key_hash, api_key FROM api_keys")
-    gemini_keys = [{"key_hash": row["key_hash"], "api_key": safe_decrypt(row["api_key"])} for row in gemini_keys_raw]
+    gemini_keys = [
+        {
+            "key_hash": row["key_hash"],
+            "api_key": _mask_key(safe_decrypt(row["api_key"])),
+        }
+        for row in gemini_keys_raw
+    ]
 
     # Get использование keyей Gemini за сегодня
     gemini_usage_map: dict[str, list[Any]] = {}
@@ -743,7 +773,13 @@ async def get_system_status_data() -> dict[str, Any]:
     # 3. Статус кредитов Tavily
     current_month = time_utils.get_current_month_str()
     tavily_keys_raw = await db.db_query("SELECT key_hash, api_key FROM tavily_api_keys")
-    tavily_keys = [{"key_hash": row["key_hash"], "api_key": safe_decrypt(row["api_key"])} for row in tavily_keys_raw]
+    tavily_keys = [
+        {
+            "key_hash": row["key_hash"],
+            "api_key": _mask_key(safe_decrypt(row["api_key"])),
+        }
+        for row in tavily_keys_raw
+    ]
 
     # Get использование keyей Tavily за месяц
     tavily_usage_map = {}

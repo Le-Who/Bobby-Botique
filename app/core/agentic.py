@@ -371,9 +371,15 @@ class AgenticSearch:
             await on_status(STAGES_AGENTIC_RESEARCH[-1][1])  # "Формирую ответ..."
 
             try:
-                # Drop tools and ask it to synthesize everything it knows so far
-                config.tools = None
-                config.system_instruction = "Synthesize all the gathered information so far into a coherent final answer to the user's original query. Do not ask for tools. Format in Markdown."
+                # Build a fresh config for synthesis — do NOT mutate the loop's config
+                synthesis_config = types.GenerateContentConfig(
+                    system_instruction="Synthesize all the gathered information so far into a coherent final answer to the user's original query. Do not ask for tools. Format in Markdown.",
+                    temperature=0.2,
+                    tools=None,
+                )
+                # Propagate thinking_config if present on the original
+                if hasattr(config, "thinking_config") and config.thinking_config:
+                    synthesis_config.thinking_config = config.thinking_config
                 contents.append(
                     types.Content(
                         role="user",
@@ -387,7 +393,7 @@ class AgenticSearch:
                 response = await self.client.aio.models.generate_content(
                     model=self.model_name,
                     contents=contents,
-                    config=config,
+                    config=synthesis_config,
                 )
                 # Track usage for the forced synthesis call
                 llm_calls += 1

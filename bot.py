@@ -239,7 +239,7 @@ async def run_bot_with_retry():
 
         # Register TaskManager error callback for critical background alerts
         from app.admin_alerts import AlertSeverity, alert_admin
-        from app.utils.background_tasks import TaskManager
+        from app.utils.background_tasks import get_task_manager
 
         async def _bg_task_alert(exc: Exception, context: str):
             await alert_admin(
@@ -249,7 +249,7 @@ async def run_bot_with_retry():
                 exc=exc,
             )
 
-        TaskManager.register_error_callback(_bg_task_alert)
+        get_task_manager().register_error_callback(_bg_task_alert)
 
         await application.start()
 
@@ -385,9 +385,9 @@ async def run_bot_and_server():
         logging.info("Starting graceful shutdown...")
 
         try:
-            from app.utils.background_tasks import TaskManager
+            from app.utils.background_tasks import get_task_manager
 
-            await TaskManager.drain(timeout=10.0)
+            await get_task_manager().drain(timeout=10.0)
         except Exception as e:
             logging.error(f"Error draining background tasks: {e}")
 

@@ -17,11 +17,11 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
 - **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall. User-toggleable via `/settings`; transparent `🧠` indicator when memories influence a response.
 - **Distributed Concurrency**: Multi-tier Redis-backed global semaphores (heavy and ultra-heavy limits) to prevent API quota starvation in multi-replica deployments while guaranteeing isolation between standard queries and intensive Agentic research loops.
-- **Resilient Operations**: Background task manager with exponential backoff and admin alerting hooks.
+- **Resilient Operations**: Instance-based background task manager with exponential backoff, bare-coroutine safety guard, and admin alerting hooks. Atomic metrics persistence with delta-based increments prevents data loss on restart.
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
 - **Context Summarization**: Automatic token compression for large chats.
 - **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`) and system health overviews.
-- **Security & GDPR**: CSRF-protected dashboard authentication, brute-force rate limiting, and Telegram commands for data export (`/mydata`) and deletion (`/deleteme`).
+- **Security & GDPR**: CSRF-protected dashboard authentication, brute-force rate limiting, API key masking in status endpoints, and Telegram commands for data export (`/mydata`) and deletion (`/deleteme`).
 
 ## Non-Goals / Limitations
 

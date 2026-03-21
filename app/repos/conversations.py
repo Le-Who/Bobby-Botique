@@ -229,8 +229,8 @@ async def delete_conversation(user_id: int, conversation_id: int) -> bool:
             # Single atomic operation: delete messages then conversation
             # No TOCTOU — if the conversation doesn't exist, no harm done
             await db_query(
-                "DELETE FROM conversation_messages WHERE conversation_id = $1 "
-                "AND conversation_id IN (SELECT id FROM conversations WHERE id = $1 AND user_id = $2)",
+                "DELETE FROM conversation_messages WHERE conversation_id IN "
+                "(SELECT id FROM conversations WHERE id = $1 AND user_id = $2)",
                 (conversation_id, user_id),
                 conn=conn,
             )

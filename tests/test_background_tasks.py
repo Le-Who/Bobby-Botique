@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.utils.background_tasks import cancel_background_task, start_background_task
+from app.utils.background_tasks import TaskManager, cancel_background_task, start_background_task
 
 # ── start_background_task ─────────────────────────────────────────────────────
 
@@ -101,17 +101,19 @@ async def test_cancel_background_task_noop_when_none():
     await cancel_background_task(owner, "_task")
     # Should not raise
 
-# ── TaskManager ───────────────────────────────────────────────────────────────
+
+# ── TaskManager (instance-based) ─────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_taskmanager_submit_retryable():
-    from app.utils.background_tasks import TaskManager
-    
-    from unittest.mock import AsyncMock, patch
+    tm = TaskManager()  # fresh instance for test isolation
+
+    from unittest.mock import patch
 
     attempts = 0
     success = False
-    
+
     async def failing_factory():
         nonlocal attempts, success
         attempts += 1
@@ -120,30 +122,43 @@ async def test_taskmanager_submit_retryable():
         success = True
         return attempts
 
-    import asyncio
     original_sleep = asyncio.sleep
 
     async def fast_sleep(delay, *args, **kwargs):
         await original_sleep(0.01)
 
     with patch("asyncio.sleep", side_effect=fast_sleep):
-        task = TaskManager.submit_retryable(failing_factory, retry=3)
-        await TaskManager.drain(timeout=2.0)
-    
+        tm.submit_retryable(failing_factory, retry=3)
+        await tm.drain(timeout=2.0)
+
     assert success is True
     assert attempts == 3
 
+
 @pytest.mark.asyncio
 async def test_taskmanager_submit_fire_and_forget():
-    from app.utils.background_tasks import TaskManager
-    
+    tm = TaskManager()  # fresh instance for test isolation
+
     done = False
-    
+
     async def work():
         nonlocal done
         done = True
-        
-    task = TaskManager.submit(work())
-    await TaskManager.drain(timeout=2.0)
-    
+
+    tm.submit(work())
+    await tm.drain(timeout=2.0)
+
     assert done is True
+
+
+@pytest.mark.asyncio
+async def test_taskmanager_rejects_bare_coro_with_retry():
+    """Fix 2: bare coroutine + retry > 0 must raise ValueError."""
+    tm = TaskManager()
+
+    with pytest.raises(ValueError, match="Retryable tasks require coro_factory"):
+
+        async def dummy():
+            pass
+
+        tm._schedule(dummy(), coro_factory=None, retry=2)

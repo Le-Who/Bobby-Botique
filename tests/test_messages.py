@@ -280,6 +280,7 @@ async def test_handle_request_photo_message():
         return task
 
     captured_coros = []
+
     def capture_submit(coro, *args, **kwargs):
         captured_coros.append(coro)
         noop_task = AsyncMock()
@@ -365,6 +366,7 @@ async def test_handle_request_exception_handling():
         return task
 
     captured_coros = []
+
     def capture_submit(coro, *args, **kwargs):
         captured_coros.append(coro)
         noop_task = AsyncMock()
