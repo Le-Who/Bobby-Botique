@@ -15,7 +15,7 @@ from app.metrics import metrics_collector
 from app.providers.base import AIResponse, BaseAIProvider
 from app.request_context import get_request_id
 from app.utils.api_logger import api_logger
-from app.utils.image_utils import save_image_as_bytes
+from app.utils.image_utils import TaggedImage, save_image_as_bytes
 from app.utils.network import NetworkErrorHandler
 
 # Module-level httpx client for OpenRouter
@@ -298,7 +298,22 @@ class OpenRouterProvider(BaseAIProvider):
 
             content_parts = []
             for part in parts:
-                if isinstance(part, (bytes, bytearray, Image.Image)):
+                if isinstance(part, TaggedImage):
+                    if part.pre_compressed:
+                        img_bytes = part.data
+                    else:
+                        img_bytes = await save_image_as_bytes(
+                            part.data, cache_key=part.cache_key, task_type=part.task_type
+                        )
+                    if img_bytes:
+                        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
+                        content_parts.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                            }
+                        )
+                elif isinstance(part, (bytes, bytearray, Image.Image)):
                     img_bytes = await save_image_as_bytes(part)
                     if img_bytes:
                         img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
@@ -375,7 +390,7 @@ def _has_multimodal_content(history: list) -> bool:
     for message in history:
         parts = message.get("parts", [])
         for part in parts:
-            if isinstance(part, Image.Image):
+            if isinstance(part, (Image.Image, TaggedImage)):
                 return True
             if isinstance(part, (bytes, bytearray)):
                 return True

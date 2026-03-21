@@ -17,7 +17,7 @@ from app.errors import ErrorCode, tag_error
 from app.metrics import metrics_collector
 from app.providers.base import AIResponse, BaseAIProvider, _build_thinking_config
 from app.utils.api_logger import api_logger
-from app.utils.image_utils import save_image_as_bytes
+from app.utils.image_utils import TaggedImage, save_image_as_bytes
 
 # Global cache for genai.Client instances to reuse connection pools (TLS/TCP)
 # Key: API Key (string), Value: genai.Client
@@ -338,7 +338,23 @@ class GeminiProvider(BaseAIProvider):
 
                 processed = []
                 for part in parts:
-                    if isinstance(part, (bytes, bytearray, Image.Image)):
+                    if isinstance(part, TaggedImage):
+                        if part.pre_compressed:
+                            img_bytes = part.data
+                        else:
+                            img_bytes = await save_image_as_bytes(
+                                part.data, cache_key=part.cache_key, task_type=part.task_type
+                            )
+                        if img_bytes:
+                            try:
+                                processed.append(
+                                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=img_bytes))
+                                )
+                            except (TypeError, ValueError) as e:
+                                logging.warning("Failed to create image part: %s", e)
+                        else:
+                            logging.warning("Skipping TaggedImage part due to processing error")
+                    elif isinstance(part, (bytes, bytearray, Image.Image)):
                         img_bytes = await save_image_as_bytes(part)
                         if img_bytes:
                             try:

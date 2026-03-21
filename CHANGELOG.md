@@ -3,6 +3,60 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.51] - 2026-03-21 - Image Processing Module Overhaul (7 Improvements)
+
+### 🏗️ Architecture: DRY Unification
+
+| Change | File | Detail |
+|--------|------|--------|
+| Shared vision helpers | `ai_photo.py` | Extracted `_build_vision_prompt()`, `_send_vision_response()`, `_process_ai_vision()` — eliminated ~60 lines of duplication between `_handle_photo` and `_handle_media_group_photos`. |
+| Error sentinel pattern | `ai_photo.py` | Introduced `_VISION_ERROR_HANDLED` sentinel to distinguish error-handled vs genuinely empty AI responses, preventing premature error messages. |
+| Prompt transliteration fix | `ai_photo.py` | Corrected garbled transliterations in complex media group search prompt. |
+
+### ⚡ Performance: Adaptive Resize & TTL Cache
+
+| Change | File | Detail |
+|--------|------|--------|
+| Context-aware dimension capping | `image_utils.py` | New `TASK_DIMS` dict (`describe: 1280`, `search: 768`, `ocr: 2048`) + 3-stage pipeline: thumbnail → JPEG q85 → fallback q75/65. Saves 60-90% tokens on 4K images. |
+| Compressed image cache | `image_utils.py` | `TTLCache(maxsize=200, ttl=600)` keyed by `cache_key` (e.g. `file_unique_id`). Eliminates recompression on retries/follow-ups. |
+| `TaggedImage` metadata carrier | `image_utils.py`, `gemini.py`, `openrouter.py` | Frozen dataclass carrying `cache_key`, `task_type`, `pre_compressed` across handler→provider boundary. Pre-compressed images skip reprocessing entirely. |
+
+### ✨ UX: Media Group Progress
+
+| Change | File | Detail |
+|--------|------|--------|
+| Semaphore-limited download | `ai_photo.py` | `asyncio.Semaphore(5)` prevents overwhelming Telegram API during media group downloads. |
+| Debounced progress indicator | `ai_photo.py` | Placeholder message updated every 2s with `📸 Загружено N/M...` during media group downloads. |
+| Thread-safe progress counter | `ai_photo.py` | Per-call `asyncio.Lock()` guards progress dict updates with documented thread-safety contract. |
+
+### 🧪 Test Fixes
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Module-level import patches | `test_ai_photo.py` | Updated patches to target consumer path (`app.handlers.ai_photo.*`) instead of source modules. |
+| Missing mock restoration | `test_ai_photo.py` | Re-added `_get_ai_response_with_routing` mock for empty/error tests. |
+| Fixture gap | `test_ai_photo.py` | Added `context_summary` attribute to `make_chat_state`. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Mypy | 6 pre-existing only, 0 new |
+| Tests | **1259 passed**, 0 failed (72s, 12 workers) |
+
+### Files Changed (5 files)
+
+| File | Change |
+|------|--------|
+| `app/handlers/ai_photo.py` | DRY helpers, TaggedImage wrapping, Semaphore download, progress, Lock |
+| `app/utils/image_utils.py` | TaggedImage dataclass, TASK_DIMS, 3-stage pipeline, TTLCache |
+| `app/providers/gemini.py` | TaggedImage handling in `_build_contents` |
+| `app/providers/openrouter.py` | TaggedImage handling in `_build_messages` + `_has_multimodal_content` |
+| `tests/test_ai_photo.py` | Patch targets, missing mocks, fixture gap |
+
+---
+
 ## [2.8.50] - 2026-03-21 - Reliability Improvements & Metrics Fixes (7 Improvements + 5 Bug Fixes)
 
 ### 🔴 P1 — Critical

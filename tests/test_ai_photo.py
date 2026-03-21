@@ -43,6 +43,7 @@ def make_chat_state():
         is_deep_dive=False,
         search_enabled=False,
         thinking_level=None,
+        context_summary=None,
     )
 
 
@@ -59,12 +60,12 @@ async def test_handle_photo_success():
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
         patch(
-            "app.streaming.stream_and_display",
+            "app.handlers.ai_photo.stream_and_display",
             new_callable=AsyncMock,
             return_value=("This is a mountain landscape.", True, AsyncMock(), 0),
         ),
         patch(
-            "app.handlers.ai_core._resolve_ai_request",
+            "app.handlers.ai_photo._resolve_ai_request",
             new_callable=AsyncMock,
             return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
         ),
@@ -104,7 +105,7 @@ async def test_handle_photo_empty_response():
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
         patch(
-            "app.streaming.stream_and_display",
+            "app.handlers.ai_photo.stream_and_display",
             new_callable=AsyncMock,
             return_value=("", False, AsyncMock(), 0),
         ),
@@ -114,7 +115,7 @@ async def test_handle_photo_empty_response():
             return_value=(None, 0),
         ),
         patch(
-            "app.handlers.ai_core._resolve_ai_request",
+            "app.handlers.ai_photo._resolve_ai_request",
             new_callable=AsyncMock,
             return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
         ),
@@ -147,7 +148,7 @@ async def test_handle_photo_ai_error():
     with (
         patch("app.handlers.ai_photo.update_stage", new_callable=AsyncMock),
         patch(
-            "app.streaming.stream_and_display",
+            "app.handlers.ai_photo.stream_and_display",
             new_callable=AsyncMock,
             return_value=("? API Error", False, AsyncMock(), 0),
         ),
@@ -157,7 +158,7 @@ async def test_handle_photo_ai_error():
             return_value=("❌ API Error", 0),
         ),
         patch(
-            "app.handlers.ai_core._resolve_ai_request",
+            "app.handlers.ai_photo._resolve_ai_request",
             new_callable=AsyncMock,
             return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
         ),
