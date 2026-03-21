@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2024-06-25 - Secure Client IP Resolution Behind Reverse Proxy
+**Vulnerability:** IP Spoofing
+**Learning:** The application runs behind a reverse proxy (Northflank), but the `request.remote_addr` might not reflect the actual client IP, or trusting the entire `X-Forwarded-For` header blindly can lead to IP spoofing if a malicious client sets the header and the proxy simply appends to it. We need to securely resolve the client IP from the rightmost address in the `X-Forwarded-For` header to correctly apply rate limits and log authentication attempts.
+**Prevention:** Always use a helper function to extract the rightmost IP address from the `X-Forwarded-For` header when deployed behind a reverse proxy.
