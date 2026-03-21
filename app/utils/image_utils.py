@@ -31,6 +31,7 @@ class TaggedImage:
     task_type: str = "default"
     pre_compressed: bool = False  # True → provider skips recompression
 
+
 # Global process pool for image processing outside the GIL
 _image_process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=2)
 
@@ -42,10 +43,10 @@ _compressed_cache: TTLCache[str, bytes] = TTLCache(maxsize=200, ttl=600)
 # Maps task_type → max dimension (longest side).
 # These values balance token cost vs. visual detail for each use case.
 TASK_DIMS: dict[str, int] = {
-    "describe": 1280,   # General description — good detail at moderate cost
-    "search": 768,      # Search query extraction — content matters, not pixels
-    "ocr": 2048,        # Text recognition — needs higher resolution
-    "default": 1280,    # Fallback
+    "describe": 1280,  # General description — good detail at moderate cost
+    "search": 768,  # Search query extraction — content matters, not pixels
+    "ocr": 2048,  # Text recognition — needs higher resolution
+    "default": 1280,  # Fallback
 }
 
 # Fallback JPEG quality levels when the result exceeds max_size_mb
@@ -128,9 +129,7 @@ async def save_image_as_bytes(
     loop = asyncio.get_running_loop()
     try:
         result = await asyncio.wait_for(
-            loop.run_in_executor(
-                _image_process_pool, _image_worker, image_data, max_size_mb, task_type
-            ),
+            loop.run_in_executor(_image_process_pool, _image_worker, image_data, max_size_mb, task_type),
             timeout=timeout,
         )
         if cache_key and result is not None:

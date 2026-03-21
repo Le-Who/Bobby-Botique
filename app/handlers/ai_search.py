@@ -210,14 +210,20 @@ async def _handle_research_agent(
     last_fact_time = 0.0
     current_fact = ""
 
-    async def on_status(stage_text: str):
+    async def on_status(stage_text: str, *, detail: str | None = None):
         nonlocal last_fact_time, current_fact
         now = time.monotonic()
         if now - last_fact_time > 10.0 or not current_fact:
             current_fact = await get_waiting_message(trace_user_id)
             last_fact_time = now
 
-        full_text = f"{stage_text}\n\n{current_fact}"
+        # Build rich status: stage + optional detail + fun fact
+        parts = [stage_text]
+        if detail:
+            parts.append(detail)
+        parts.append(current_fact)
+        full_text = "\n\n".join(parts)
+
         try:
             await placeholder_message.edit_text(full_text)
         except (BadRequest, NetworkError) as edit_error:

@@ -3,6 +3,67 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.52] - 2026-03-22 - Agentic Research Module Overhaul (5 Improvements)
+
+### ⚡ Improvement 1: Parallel Tool Execution
+
+| Change | File | Detail |
+|--------|------|--------|
+| Concurrent tool calls | `agentic.py` | Multiple tool calls in a single LLM turn now execute via `asyncio.gather()` with `Semaphore(3)`. Page limits validated in batch BEFORE execution to prevent race conditions. |
+
+### 💾 Improvement 2: Page Content Caching
+
+| Change | File | Detail |
+|--------|------|--------|
+| Two-layer cache | `agentic.py` | Session-local `dict` + global `dict` with 30-min TTL (maxsize=500). Same URL in one research session → only 1 Jina API call. SHA256 cache keys eliminate collision risk. |
+
+### 🏅 Improvement 3: Source Quality Scoring & Citation Validation
+
+| Change | File | Detail |
+|--------|------|--------|
+| Domain classification | `agentic.py` | Search results enriched with `domain_type` (official_docs, academic, community, etc.), `quality_tier` (A/B/C), and `freshness` (recent/this_year/older). 20+ known domains classified. |
+| Citation validator | `agentic.py` | Post-processing log-only check flags cited URLs not found in search results (observability, no blocking). |
+
+### 🎯 Improvement 4: Adaptive Iteration Budget
+
+| Change | File | Detail |
+|--------|------|--------|
+| Query deduplication | `agentic.py` | Word-level Jaccard similarity (≥0.85) detects duplicate queries. Sends soft advisory instead of re-executing. |
+| Token budget cap | `agentic.py`, `config.py` | New `AGENTIC_MAX_TOKENS` (default 100K). Checked BEFORE each LLM call → forces synthesis when exceeded. |
+| Time cutoff | `agentic.py`, `config.py` | New `AGENTIC_TIMEOUT_SECONDS` (default 90s). Checked BEFORE each LLM call → forces synthesis when exceeded. |
+
+### 📡 Improvement 5: Streaming Research Progress
+
+| Change | File | Detail |
+|--------|------|--------|
+| Rich status updates | `agentic.py`, `ai_search.py` | `on_status(text, *, detail=None)` now shows search queries (`🔍 «query»`), page domains (`📖 example.com`), and iteration counters (`Итерация 2/5 • 1 стр. • 8 источников`). Backward-compatible via keyword-only `detail` arg. |
+
+### 🛡️ Defensive Fix
+
+| Fix | File | Detail |
+|-----|------|--------|
+| `_extract_token_count` mock safety | `agentic.py` | Coerces raw value via `int()` with `TypeError`/`ValueError` guard. Prevents MagicMock leaking through in tests. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Mypy | 0 new errors |
+| Tests | **1295 passed**, 0 failed (71s, 12 workers) |
+| New tests | 36 tests in `test_agentic_improvements.py` |
+
+### Files Changed (4 files)
+
+| File | Change |
+|------|--------|
+| `app/core/agentic.py` | Full rewrite: parallel execution, caching, scoring, adaptive budget, streaming |
+| `app/handlers/ai_search.py` | `on_status` accepts `detail` kwarg for rich progress |
+| `app/config.py` | Added `AGENTIC_MAX_TOKENS`, `AGENTIC_TIMEOUT_SECONDS` |
+| `tests/test_agentic_improvements.py` | [NEW] 36 tests covering all 5 improvements |
+
+---
+
 ## [2.8.51] - 2026-03-21 - Image Processing Module Overhaul (7 Improvements)
 
 ### 🏗️ Architecture: DRY Unification

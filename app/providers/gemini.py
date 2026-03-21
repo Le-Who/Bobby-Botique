@@ -342,7 +342,7 @@ class GeminiProvider(BaseAIProvider):
                         if part.pre_compressed:
                             img_bytes = part.data
                         else:
-                            img_bytes = await save_image_as_bytes(
+                            img_bytes = await save_image_as_bytes(  # type: ignore[assignment]  # bytes | None from save_image_as_bytes
                                 part.data, cache_key=part.cache_key, task_type=part.task_type
                             )
                         if img_bytes:
@@ -355,11 +355,11 @@ class GeminiProvider(BaseAIProvider):
                         else:
                             logging.warning("Skipping TaggedImage part due to processing error")
                     elif isinstance(part, (bytes, bytearray, Image.Image)):
-                        img_bytes = await save_image_as_bytes(part)
-                        if img_bytes:
+                        img_bytes_raw: bytes | None = await save_image_as_bytes(part)
+                        if img_bytes_raw:
                             try:
                                 processed.append(
-                                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=img_bytes))
+                                    types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=img_bytes_raw))
                                 )
                             except (TypeError, ValueError) as e:
                                 logging.warning("Failed to create image part: %s", e)

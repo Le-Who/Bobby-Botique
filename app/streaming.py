@@ -224,7 +224,7 @@ class StreamingWriter:
         self._debounce_s = EDIT_DEBOUNCE_S
         self._min_chunk = MIN_CHUNK_SIZE
 
-    def _format_for_telegram(self, text: str) -> tuple[str, str]:
+    def _format_for_telegram(self, text: str) -> tuple[str, str | None]:
         """Format text and sanitize HTML in one step.
 
         Ensures every path through the writer produces valid, balanced
@@ -432,7 +432,7 @@ class StreamingWriter:
                 formatted_frozen = pre_formatted
                 parse_mode = "HTML"
             else:
-                formatted_frozen, parse_mode = self._format_for_telegram(frozen_text)
+                formatted_frozen, parse_mode = self._format_for_telegram(frozen_text)  # type: ignore[assignment]  # parse_mode is always str from TelegramFormatter
 
             if self._placeholder_deleted:
                 # No placeholder to edit — send frozen text as new message
@@ -453,7 +453,7 @@ class StreamingWriter:
         # 2. Create new message with cursor indicator
         try:
             initial_text = remainder + STREAMING_INDICATOR if remainder.strip() else STREAMING_INDICATOR
-            formatted_initial, parse_mode = self._format_for_telegram(initial_text)
+            formatted_initial, parse_mode = self._format_for_telegram(initial_text)  # type: ignore[assignment]  # parse_mode always str
 
             self._adapter = await self._adapter.reply_new_message(
                 formatted_initial,

@@ -302,7 +302,7 @@ class OpenRouterProvider(BaseAIProvider):
                     if part.pre_compressed:
                         img_bytes = part.data
                     else:
-                        img_bytes = await save_image_as_bytes(
+                        img_bytes = await save_image_as_bytes(  # type: ignore[assignment]  # bytes | None from save_image_as_bytes
                             part.data, cache_key=part.cache_key, task_type=part.task_type
                         )
                     if img_bytes:
@@ -314,9 +314,9 @@ class OpenRouterProvider(BaseAIProvider):
                             }
                         )
                 elif isinstance(part, (bytes, bytearray, Image.Image)):
-                    img_bytes = await save_image_as_bytes(part)
-                    if img_bytes:
-                        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
+                    img_bytes_raw: bytes | None = await save_image_as_bytes(part)
+                    if img_bytes_raw:
+                        img_b64 = await asyncio.to_thread(lambda b=img_bytes_raw: base64.b64encode(b).decode("utf-8"))  # type: ignore[misc]  # lambda default-arg pattern
                         content_parts.append(
                             {
                                 "type": "image_url",

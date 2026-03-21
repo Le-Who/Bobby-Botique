@@ -187,17 +187,17 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
 
         # Pre-compress with cache_key for retry savings
         file_unique_id = original_message.photo[-1].file_unique_id
-        compressed = await save_image_as_bytes(
-            img_raw, task_type="describe", cache_key=file_unique_id
-        )
+        compressed = await save_image_as_bytes(img_raw, task_type="describe", cache_key=file_unique_id)
 
         formatted_prompt = _build_vision_prompt(original_message.caption, image_count=1)
 
         # Wrap as TaggedImage so providers skip recompression
         if compressed:
             tagged = TaggedImage(
-                data=compressed, cache_key=file_unique_id,
-                task_type="describe", pre_compressed=True,
+                data=compressed,
+                cache_key=file_unique_id,
+                task_type="describe",
+                pre_compressed=True,
             )
             parts = [formatted_prompt, tagged]
         else:
@@ -209,7 +209,11 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
         response_text, streamed, stream_last_msg = await _process_ai_vision(
-            placeholder_message, parts, chat_state, user_id=user_id, chat_id=chat_id,
+            placeholder_message,
+            parts,
+            chat_state,
+            user_id=user_id,
+            chat_id=chat_id,
         )
 
         if response_text is _VISION_ERROR_HANDLED:
@@ -217,7 +221,10 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
             return
 
         sent_ok = await _send_vision_response(
-            placeholder_message, response_text, streamed, stream_last_msg,  # type: ignore[arg-type]  # sentinel narrowed above
+            placeholder_message,
+            response_text,
+            streamed,
+            stream_last_msg,  # type: ignore[arg-type]  # sentinel narrowed above
             error_fallback="Не удалось обработать изображение.",
         )
 
@@ -227,9 +234,7 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
             chat_state.history.append({"role": "model", "parts": [response_text]})
             await update_user_chat(user_id, chat_state)
         else:
-            logging.warning(
-                "Empty response from Gemini API for image processing by user %s", user_id
-            )
+            logging.warning("Empty response from Gemini API for image processing by user %s", user_id)
 
     except Exception as e:
         logging.error("Error processing photo: %s", e, exc_info=True)
@@ -367,7 +372,8 @@ async def _handle_media_group_photos(
 
         # Wrap raw bytes as TaggedImage with task_type="describe"
         tagged_images = [
-            TaggedImage(data=img, task_type="describe") for img in images  # type: ignore[arg-type]  # download_one returns bytes
+            TaggedImage(data=img, task_type="describe")
+            for img in images  # type: ignore[arg-type]  # download_one returns bytes
         ]
 
         # Create parts for Gemini API: text + все images
@@ -378,7 +384,11 @@ async def _handle_media_group_photos(
         chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
         response_text, streamed, stream_last_msg = await _process_ai_vision(
-            placeholder_message, parts, chat_state, user_id=user_id, chat_id=chat_id,
+            placeholder_message,
+            parts,
+            chat_state,
+            user_id=user_id,
+            chat_id=chat_id,
         )
 
         if response_text is _VISION_ERROR_HANDLED:
@@ -386,7 +396,10 @@ async def _handle_media_group_photos(
             return
 
         await _send_vision_response(
-            placeholder_message, response_text, streamed, stream_last_msg,  # type: ignore[arg-type]  # sentinel narrowed above
+            placeholder_message,
+            response_text,
+            streamed,
+            stream_last_msg,  # type: ignore[arg-type]  # sentinel narrowed above
             error_fallback="Не удалось обработать группу изображений.",
         )
 
@@ -423,7 +436,9 @@ async def _handle_complex_media_group_search(
 
     try:
         # Load все images from groups
-        images = await _download_images_concurrently(messages, log_context="для анализа", placeholder=placeholder_message)
+        images = await _download_images_concurrently(
+            messages, log_context="для анализа", placeholder=placeholder_message
+        )
 
         if not images:
             await placeholder_message.edit_text("❌ Не удалось загрузить ни одного изображения для анализа.")
@@ -472,7 +487,8 @@ cooking process step by step recipe preparation
 
         # Wrap raw bytes as TaggedImage with task_type="search"
         tagged_images = [
-            TaggedImage(data=img, task_type="search") for img in images  # type: ignore[arg-type]  # download_one returns bytes
+            TaggedImage(data=img, task_type="search")
+            for img in images  # type: ignore[arg-type]  # download_one returns bytes
         ]
 
         # Create parts for анализа: промпт + все images

@@ -173,6 +173,8 @@ class Settings(BaseModel):
     JINA_API_KEY: str = ""
     AGENTIC_MAX_ITERATIONS: int = 5
     AGENTIC_MAX_PAGES: int = 3
+    AGENTIC_MAX_TOKENS: int = 100_000  # Token budget cap for the entire agentic session
+    AGENTIC_TIMEOUT_SECONDS: int = 90  # Wall-clock timeout for the agentic loop
     AGENTIC_MODEL: str = ""  # Defaults to RESEARCH_MODEL if empty
 
     # --- SAFETY ---
@@ -229,6 +231,8 @@ def load_settings() -> Settings:
             "JINA_API_KEY": os.getenv("JINA_API_KEY", ""),
             "AGENTIC_MAX_ITERATIONS": int(os.getenv("AGENTIC_MAX_ITERATIONS", "5")),
             "AGENTIC_MAX_PAGES": int(os.getenv("AGENTIC_MAX_PAGES", "3")),
+            "AGENTIC_MAX_TOKENS": int(os.getenv("AGENTIC_MAX_TOKENS", "100000")),
+            "AGENTIC_TIMEOUT_SECONDS": int(os.getenv("AGENTIC_TIMEOUT_SECONDS", "90")),
             "AGENTIC_MODEL": os.getenv("AGENTIC_MODEL", ""),
         }
 
