@@ -217,7 +217,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         from app.utils.background_tasks import submit_task
 
-        submit_task(task_wrapper(), retry=0)
+        submit_task(task_wrapper())
 
 
 def register(application: Application) -> None:
