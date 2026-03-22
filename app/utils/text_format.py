@@ -169,9 +169,37 @@ def markdown_to_html(text: str) -> str:
 
             # Links: [text](url)
             # Since we already escaped HTML, the url might contain &amp; etc.
-            # We match strict []() pattern.
-            link_pattern = r"\[([^\]]+)\]\(([^)]+)\)"
-            escaped_text = re.sub(link_pattern, r'<a href="\2">\1</a>', escaped_text)
+            # We match []() pattern, allowing one level of nested parentheses in the URL without ReDoS
+            link_pattern = r"\[([^\]]+)\]\(([^()]+(?:\([^()]*\)[^()]*)*)\)"
+
+            from urllib.parse import urlparse
+            def sanitize_link(match: re.Match) -> str:
+                link_text = match.group(1)
+                link_url = match.group(2)
+
+                # Keep unescaping to handle deeply obfuscated HTML entities like `&amp;#x6a;avascript:`
+                unquoted_url = link_url
+                for _ in range(5):  # Max 5 levels of encoding to prevent infinite loops
+                    new_url = html.unescape(unquoted_url)
+                    if new_url == unquoted_url:
+                        break
+                    unquoted_url = new_url
+
+                # Strip whitespace and control characters [\x00-\x20\x7f]
+                cleaned_url = re.sub(r'[\x00-\x20\x7f]', '', unquoted_url)
+
+                try:
+                    parsed = urlparse(cleaned_url)
+                    scheme = parsed.scheme.lower()
+                    if scheme and scheme not in ('http', 'https', 'tg', 'mailto'):
+                        return link_text
+                except ValueError:
+                    return link_text
+
+                safe_url = html.escape(cleaned_url)
+                return f'<a href="{safe_url}">{link_text}</a>'
+
+            escaped_text = re.sub(link_pattern, sanitize_link, escaped_text)
 
             html_parts.append(escaped_text)
 

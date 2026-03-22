@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-25 - [XSS] ReDoS via Nested Parentheses Regex
+**Vulnerability:** When fixing an XSS vulnerability in Markdown link parsing (`markdown_to_html`), the initial regex attempt to support nested parentheses (`\[([^\]]+)\]\(((?:[^()]+|\([^()]*\))+)\)`) introduced a critical Regular Expression Denial of Service (ReDoS) vulnerability due to catastrophic backtracking with nested `+` quantifiers.
+**Learning:** Security fixes can easily introduce availability vulnerabilities (DoS). When writing complex regexes to parse structural elements like balanced parentheses, overlapping quantifiers are extremely dangerous.
+**Prevention:** Avoid regex for complex structural parsing if possible. If required, use strictly deterministic patterns (e.g., `\[([^\]]+)\]\(([^()]+(?:\([^()]*\)[^()]*)*)\)`) that ensure matching branches are disjoint and consume text linearly.

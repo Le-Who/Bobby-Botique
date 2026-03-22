@@ -159,6 +159,28 @@ def test_format_text_non_html():
     assert mode == "Markdown"
 
 
+def test_markdown_to_html_xss_prevention():
+    # Regular safe links should pass
+    assert format_text("[Safe link](https://example.com)")[0] == '<a href="https://example.com">Safe link</a>'
+    assert format_text("[Safe link](tg://resolve?domain=test)")[0] == '<a href="tg://resolve?domain=test">Safe link</a>'
+
+    # Dangerous schemes should be stripped
+    assert format_text("[XSS link](javascript:alert('XSS'))")[0] == "XSS link"
+    assert format_text("[VBScript link](vbscript:msgbox('XSS'))")[0] == "VBScript link"
+    assert format_text("[Data URI](data:text/html;base64,PHNjcmlwdD5hbGVydCgnWFNTJyk8L3NjcmlwdD4=)")[0] == "Data URI"
+
+    # Nested parentheses in the URL should work (up to one level)
+    assert format_text("[Wiki link](https://en.wikipedia.org/wiki/Python_(programming_language))")[0] == '<a href="https://en.wikipedia.org/wiki/Python_(programming_language)">Wiki link</a>'
+
+    # Obfuscated XSS with HTML entities
+    assert format_text("[Obfuscated](&#x6a;avascript:alert(1))")[0] == "Obfuscated"
+    assert format_text("[Obfuscated 2](&amp;#x6a;avascript:alert(1))")[0] == "Obfuscated 2"
+
+    # Obfuscated XSS with control characters
+    assert format_text("[Control Char](java\x00script:alert(1))")[0] == "Control Char"
+    assert format_text("[Control Char 2](javascript\x09:alert(1))")[0] == "Control Char 2"
+
+
 def test_markdown_to_html_formatting():
     # Bold
     assert format_text("**bold**")[0] == "<b>bold</b>"
