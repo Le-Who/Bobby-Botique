@@ -3,6 +3,47 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.54] - 2026-03-22 - Schema Bootstrapping Consolidation
+
+### 🏗️ Architecture: Complete Schema Source of Truth
+
+Previously `app/db/schema.py` was a no-op and 7 tables were missing from `000_init_schema.sql`, scattered across later migrations, runtime Python code, or not captured at all (`long_term_memory`). Fresh deploys would fail.
+
+| Change | File | Detail |
+|--------|------|--------|
+| Added 7 missing tables to init schema | `000_init_schema.sql` | `user_metrics`, `model_configuration`, `active_chat_messages`, `long_term_memory`, `group_chats`, `group_members`, `group_messages` — all with production-accurate types, FKs, defaults |
+| Backfill migration for existing DBs | `018_add_missing_table_definitions.sql` | [NEW] Creates missing tables with `IF NOT EXISTS` + HNSW index for `long_term_memory` |
+| Drop dead `chats.history` column | `019_drop_chats_history_column.sql` | [NEW] Column was dropped from production but still in init schema. App uses `active_chat_messages` |
+| Startup schema validation | `schema.py` | Replaced no-op with 25-table inventory check against `pg_tables` |
+| DDL removed from runtime code | `group_chat.py` | Inline `CREATE TABLE` statements removed — tables now come from migrations |
+| README Schema Management section | `README.md` | Documents migration workflow, removed "Incomplete Schema Bootstrapping" known gap |
+
+### 🔍 Verified Against Production (Supabase MCP)
+
+All table definitions compared against live `TEST_gemaibotv2` schema. Fixed: `long_term_memory.id` → BIGSERIAL, group timestamps → TIMESTAMPTZ, added FK constraints on group tables.
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Tests | **1295 passed**, 0 failed (72s, 12 workers) |
+| Ruff lint | 0 errors |
+
+### Files Changed (8 files)
+
+| File | Change |
+|------|--------|
+| `scripts/migrations/000_init_schema.sql` | +7 tables, -dead `history` column |
+| `scripts/migrations/018_add_missing_table_definitions.sql` | [NEW] Backfill migration |
+| `scripts/migrations/019_drop_chats_history_column.sql` | [NEW] Cleanup migration |
+| `app/db/schema.py` | Startup validation (25 expected tables) |
+| `app/db/__init__.py` | Updated docstring |
+| `app/group_chat.py` | Removed inline CREATE TABLE DDL |
+| `tests/test_group_chat.py` | Updated assertions for new initialize() behavior |
+| `README.md` | Schema Management section + removed known gap |
+
+---
+
 ## [2.8.53] - 2026-03-22 - Edit Prompt for Custom Roles
 
 ### ✨ New Feature: Edit Role Prompt

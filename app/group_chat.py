@@ -44,41 +44,9 @@ class GroupChatManager:
     async def initialize(self):
         """Инициализирует менеджер групповых чатов"""
         try:
-            # Create таблицы for групповых chatов
-            await db.db_query("""
-                CREATE TABLE IF NOT EXISTS group_chats (
-                    chat_id BIGINT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    member_count INTEGER DEFAULT 0,
-                    admin_user_id BIGINT NOT NULL,
-                    settings JSONB DEFAULT '{}'
-                )
-            """)
-
-            await db.db_query("""
-                CREATE TABLE IF NOT EXISTS group_members (
-                    chat_id BIGINT,
-                    user_id BIGINT,
-                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_admin BOOLEAN DEFAULT FALSE,
-                    PRIMARY KEY (chat_id, user_id)
-                )
-            """)
-
-            await db.db_query("""
-                CREATE TABLE IF NOT EXISTS group_messages (
-                    id SERIAL PRIMARY KEY,
-                    chat_id BIGINT NOT NULL,
-                    user_id BIGINT NOT NULL,
-                    message_text TEXT,
-                    message_type TEXT DEFAULT 'text',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_bot_response BOOLEAN DEFAULT FALSE
-                )
-            """)
+            # NOTE: group_chats, group_members, and group_messages tables
+            # are created by SQL migrations (000_init_schema + 018 backfill).
+            # No inline DDL needed here.
 
             # Load active groups
             await self._load_active_groups()

@@ -26,22 +26,16 @@ async def test_singleton_behavior():
 async def test_initialize(group_chat_manager):
     with patch("app.database.db_query", new_callable=AsyncMock) as mock_db_query:
         # Setup mock return for initialize
-        # 1. create group_chats
-        # 2. create group_members
-        # 3. create group_messages
-        # 4. load active groups (returns empty list)
+        # 1. load active groups (returns empty list) — no more CREATE TABLE calls
         mock_db_query.side_effect = [
-            None,
-            None,
-            None,
             [],
         ]
 
         await group_chat_manager.initialize()
 
-        assert mock_db_query.call_count == 4
-        # Verify tables creation queries
-        assert "CREATE TABLE IF NOT EXISTS group_chats" in mock_db_query.call_args_list[0][0][0]
+        assert mock_db_query.call_count == 1
+        # Verify it loads active groups (tables created by migrations)
+        assert "SELECT" in mock_db_query.call_args_list[0][0][0]
 
 
 @pytest.mark.asyncio

@@ -29,7 +29,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **No Voice/Audio Support**: Does not currently process or transcribe Telegram voice messages.
 - **OpenRouter Limitations**: Multimodal detection (images) strictly forces Gemini; OpenRouter is not utilized for vision tasks.
 - **Local Rate Limits**: Heavy request limits are rigidly enforced per user to prevent API quota drain (`MAX_CONCURRENT_HEAVY_REQUESTS`).
-- **Incomplete Schema Bootstrapping**: The codebase relies on historical SQL migration scripts (`scripts/migrations`) for full database schema setups; `app/db/schema.py` alone may be insufficient to build all tables from scratch.
+- **No ORM**: Raw SQL via asyncpg; no SQLAlchemy or Alembic.
 
 ## Architecture
 
@@ -64,7 +64,7 @@ graph TD;
 | `app/repos/`          | Database repository pattern implementations (queries for chats, memory, keys). |
 | `app/templates/`      | HTML Jinja2 templates for the admin web dashboard.                             |
 | `docs/`               | Extended architectural documentation.                                          |
-| `scripts/migrations/` | Numbered SQL migration files for Database updates.                             |
+| `scripts/migrations/` | Numbered SQL migration files — single source of truth for all DDL.             |
 | `tests/`              | Comprehensive test suite (Unit and Integration).                               |
 | `bot.py`              | Main application entry point uniting Quart and the Telegram updater.           |
 
@@ -88,7 +88,7 @@ graph TD;
    pip install -r requirements.txt
    ```
 4. Copy `.env.example` to `.env` (if applicable) and fill in necessary configuration.
-5. Create PostgreSQL database and apply schemas using DDL scripts in `scripts/migrations/`.
+5. Create PostgreSQL database with `pgvector` extension. Schema is applied automatically on first startup via `scripts/migrations/`.
 
 ## Configuration
 
@@ -136,6 +136,24 @@ python bot.py
 # OR via docker-compose:
 docker-compose -f docker-compose.northflank.yml up -d
 ```
+
+## Schema Management
+
+All database DDL is managed via **numbered SQL migration files** in `scripts/migrations/`.
+
+| Component | Role |
+|---|---|
+| `scripts/migrations/000_init_schema.sql` | Complete table definitions (24 tables) — the full bootstrap DDL |
+| `scripts/migrations/001-017_*.sql` | Incremental schema changes (ALTER, indexes, RLS, triggers) |
+| `scripts/migrations/018_add_missing_table_definitions.sql` | Backfill migration for databases that applied `000` without all tables |
+| `app/db/migrations.py` | Migration runner — applies SQL files with version tracking (`schema_migrations` table) |
+| `app/db/schema.py` | Startup validation — verifies all expected tables exist after migrations |
+| `app/db/rls.py` | Row Level Security policy management |
+| `app/db/seed.py` | Initial data seeding (admin user, API keys, indexes) |
+
+**Workflow:** On startup, `init_db()` → `create_tables()` (validation) → `setup_row_level_security()` → `run_migrations()` → `insert_initial_data()`.
+
+**Adding new tables:** Create a new numbered `.sql` file in `scripts/migrations/`, add the table name to `EXPECTED_TABLES` in `app/db/schema.py`, and add RLS configuration to `app/db/rls.py` if needed.
 
 ## Scripts
 
@@ -224,7 +242,6 @@ The application features a heavily engineered test suite (**1295+ unit and integ
 
 ## Known Documentation Gaps
 
-- **Code/Schema Mismatch**: The repository utilizes `app/db/schema.py` for initial creation, but completely depends on `scripts/migrations/` DDL logic (e.g., `008_upgrade_embedding_3072.sql`) to instantiate `long_term_memory` structures and `pgvector` sizing. Attempting to deploy _only_ via `schema.py` natively will crash memory pipelines since the database tables rely on historical manual patch migration scripts.
 - **Bot Config vs Environment Discrepancy**: Northflank compose config explicitly enables `LOG_JSON=true`, however, runtime application checks environment variable `STRUCTURED_LOGGING` and `LOG_FORMAT` in `bot.py`.
 - **OpenRouter Multimodal Capabilities**: OpenRouter is explicitly disabled for multimodality interactions in current abstractions; however, this architecture distinction is under-represented in internal application documentation.
 
