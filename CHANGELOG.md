@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.55] - 2026-03-22 - AI Prompt Editing Refinements
+
+### ✨ UX Improvements
+
+| Detail | Description |
+|--------|-------------|
+| Full Prompt Preview | Removed 300-character truncation in AI enhancement preview. The entire prompt is now visible and copyable. |
+| AI Tweak Mode | Added a `✏️ Редактировать` button during AI preview to smoothly transition into manual edit mode without losing the generated text. |
+
+### Files Changed (2 files)
+
+| File | Change |
+|------|--------|
+| `app/handlers/cb_roles.py` | Added `role_edit_ai_tweak_callback` |
+| `app/handlers/msg_roles.py` | Removed truncation, added Tweak button to markup |
+
+---
+
 ## [2.8.54] - 2026-03-22 - Schema Bootstrapping Consolidation
 
 ### 🏗️ Architecture: Complete Schema Source of Truth

@@ -103,6 +103,7 @@ def register(application: Application) -> None:
         role_detail_callback,
         role_edit_ai_callback,
         role_edit_ai_save_callback,
+        role_edit_ai_tweak_callback,
         role_edit_cancel_callback,
         role_edit_manual_callback,
         role_edit_prompt_callback,
@@ -168,6 +169,7 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(role_edit_manual_callback, pattern="^role_edit_manual:"))
     application.add_handler(CallbackQueryHandler(role_edit_ai_callback, pattern="^role_edit_ai:"))
     application.add_handler(CallbackQueryHandler(role_edit_ai_save_callback, pattern="^role_edit_ai_save$"))
+    application.add_handler(CallbackQueryHandler(role_edit_ai_tweak_callback, pattern="^role_edit_ai_tweak:"))
     application.add_handler(CallbackQueryHandler(role_edit_cancel_callback, pattern="^role_edit_cancel:"))
     application.add_handler(CallbackQueryHandler(role_delete_ask_callback, pattern="^role_delete_ask:"))
     application.add_handler(CallbackQueryHandler(role_delete_confirm_callback, pattern="^role_delete_confirm:"))

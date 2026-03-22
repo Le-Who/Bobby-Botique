@@ -564,6 +564,46 @@ async def role_edit_ai_callback(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 
+async def role_edit_ai_tweak_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Transition from AI preview to manual edit, keeping text visible for copying."""
+    query = update.callback_query
+    await query.answer()
+
+    role_key = query.data.split(":", 1)[1]
+
+    if not role_key.startswith("user_role:"):
+        return
+
+    role_id = int(role_key.split(":")[1])
+
+    if context.user_data is not None:
+        # Clear AI save state so we don't accidentally save
+        context.user_data.pop("edit_prompt_ai_save_role_id", None)
+        context.user_data.pop("edit_prompt_ai_save_role_key", None)
+        
+        # Transition to manual edit state
+        context.user_data["edit_prompt_role_id"] = role_id
+        context.user_data["edit_prompt_role_key"] = role_key
+
+    # Keep the text, just update the keyboard and add instructions
+    if context.user_data and "edit_prompt_ai_preview" in context.user_data:
+        preview = context.user_data["edit_prompt_ai_preview"]
+        text = (
+            f"✨ **Улучшенный промпт** (скопируйте текст ниже):\n\n"
+            f"`{preview}`\n\n"
+            f"📝 Отправьте измененный текст промпта следующим сообщением."
+        )
+    else:
+        text = "📝 Ок, отправьте новый текст промпта следующим сообщением."
+
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]]
+    )
+    from app.utils.formatting import TelegramFormatter
+    fmt_text, fmt_pm = TelegramFormatter.format_text(text)
+    await query.edit_message_text(fmt_text, parse_mode=fmt_pm, reply_markup=kb)
+
+
 async def role_edit_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Cancel edit prompt — clear state and return to role details."""
     query = update.callback_query

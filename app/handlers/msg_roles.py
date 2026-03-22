@@ -143,15 +143,15 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 # Keep current prompt for active-role check on save
                 context.user_data["edit_prompt_ai_current"] = current_prompt
 
-            preview_len = 300
-            preview = enhanced_prompt[:preview_len] + "..." if len(enhanced_prompt) > preview_len else enhanced_prompt
             preview_text = (
-                f"✨ **Улучшенный промпт:**\n\n`{preview}`\n\n"
-                f"Сохранить этот вариант?"
+                f"✨ **Улучшенный промпт** (удерживайте для копирования):\n\n"
+                f"`{enhanced_prompt}`\n\n"
+                f"Сохранить, отредактировать вручную или отменить?"
             )
             kb = InlineKeyboardMarkup(
                 [
                     [InlineKeyboardButton("💾 Сохранить", callback_data="role_edit_ai_save")],
+                    [InlineKeyboardButton("✏️ Редактировать", callback_data=f"role_edit_ai_tweak:{role_key}")],
                     [InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")],
                 ]
             )
