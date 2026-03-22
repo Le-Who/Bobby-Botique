@@ -16,7 +16,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Agentic Web Browsing**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops. Hardened against memory leaks caused by gRPC protobuf cyclic references during long-running iterations. Per-call API key usage tracking ensures accurate quota accounting across all LLM invocations within the agentic loop. Features parallel tool execution (`asyncio.gather` with semaphore), two-layer page content caching (session + global, 30-min TTL), source quality scoring (domain classification, freshness labels, citation validation), adaptive iteration budget (query deduplication, configurable token cap and wall-clock timeout), and rich streaming progress with search queries and iteration counters.
 - **Image Processing Pipeline**: Context-aware adaptive resize (`TASK_DIMS`: describe 1280px, search 768px, OCR 2048px) with 3-stage compression (thumbnail → JPEG q85 → fallback q75/65), TTL-cached results (`cache_key` by `file_unique_id`), and `TaggedImage` metadata carrier across handler→provider boundary to eliminate redundant recompression. Media group downloads use `Semaphore(5)` with debounced progress indicator.
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
-- **Persistent Long-Term Memory**: Uses `pgvector` (`halfvec(3072)`) for semantic search and conversational recall. User-toggleable via `/settings`; transparent `🧠` indicator when memories influence a response.
+- **Persistent Long-Term Memory**: Semantic recall via `pgvector` (`halfvec(3072)`) with hybrid RRF retrieval (cosine similarity + `pg_trgm` keyword matching). Memories injected into `system_instruction` as structured `<long_term_memory><fact>` XML tags (Context Engineering). Only user intent is embedded for maximum vector density (`source_type='user_intent'`). Dynamic consolidation triggers at ~8,000 tokens or 7 days, extracting atomic persona facts via LLM. User-manageable via `/memory` (paginated inline UI with per-item delete) and toggleable via `/settings`.
 - **Distributed Concurrency**: Multi-tier Redis-backed global semaphores (heavy and ultra-heavy limits) to prevent API quota starvation in multi-replica deployments while guaranteeing isolation between standard queries and intensive Agentic research loops.
 - **Resilient Operations**: Instance-based background task manager with exponential backoff, bare-coroutine safety guard, and admin alerting hooks. Atomic metrics persistence with delta-based increments prevents data loss on restart. Prompt registry validates required variables at render time to prevent silent placeholder leaks.
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
@@ -144,7 +144,8 @@ All database DDL is managed via **numbered SQL migration files** in `scripts/mig
 | Component | Role |
 |---|---|
 | `scripts/migrations/000_init_schema.sql` | Complete table definitions (24 tables) — the full bootstrap DDL |
-| `scripts/migrations/001-017_*.sql` | Incremental schema changes (ALTER, indexes, RLS, triggers) |
+| `scripts/migrations/001-019_*.sql` | Incremental schema changes (ALTER, indexes, RLS, triggers, cleanup) |
+| `scripts/migrations/020_add_trgm_hybrid_search.sql` | Enables `pg_trgm` extension + GIN index for hybrid keyword+semantic memory search |
 | `scripts/migrations/018_add_missing_table_definitions.sql` | Backfill migration for databases that applied `000` without all tables |
 | `app/db/migrations.py` | Migration runner — applies SQL files with version tracking (`schema_migrations` table) |
 | `app/db/schema.py` | Startup validation — verifies all expected tables exist after migrations |
@@ -154,6 +155,43 @@ All database DDL is managed via **numbered SQL migration files** in `scripts/mig
 **Workflow:** On startup, `init_db()` → `create_tables()` (validation) → `setup_row_level_security()` → `run_migrations()` → `insert_initial_data()`.
 
 **Adding new tables:** Create a new numbered `.sql` file in `scripts/migrations/`, add the table name to `EXPECTED_TABLES` in `app/db/schema.py`, and add RLS configuration to `app/db/rls.py` if needed.
+
+## Long-Term Memory Architecture
+
+Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `halfvec(3072)`).
+
+| Parameter | Value | Config Location |
+|-----------|-------|-----------------|
+| Embedding model | `gemini-embedding-001` (3072 dims) | `app/repos/memory.py` |
+| Max memories per user | 500 | `MAX_MEMORIES_PER_USER` |
+| Default TTL | 90 days | `DEFAULT_MEMORY_TTL_DAYS` |
+| Min query length (store) | 30 chars | `ai_chat.py` threshold |
+| Min query length (recall) | 15 chars | `ai_chat.py` threshold |
+| Similarity threshold | 0.72 | `ai_chat.py` `min_similarity` |
+| Recall limit | 3 memories | `ai_chat.py` `limit` |
+
+**Storage:** Only user intent is embedded (`user_message[:500]`, `source_type='user_intent'`). Bot replies are discarded to maximize vector density. Saving is asynchronous and non-blocking via `submit_retryable()` with 3 retries.
+
+**Retrieval:** Hybrid Reciprocal Rank Fusion (RRF) combining `pgvector` cosine similarity with `pg_trgm` trigram keyword matching (`k=60` smoothing). Falls back to pure semantic search if `pg_trgm` is not installed. Query embeddings use `task_type='RETRIEVAL_QUERY'`.
+
+**Injection:** Retrieved memories are formatted as XML tags and appended to `system_instruction` (Context Engineering pattern):
+```xml
+<long_term_memory>
+  <fact source="2026-03-20">User prefers Python for backend</fact>
+  <fact source="2026-03-18">User works at a fintech startup</fact>
+</long_term_memory>
+```
+
+**Consolidation:** When raw memories exceed ~8,000 tokens OR 7 days since last consolidation, `gemini-2.0-flash-lite` extracts 5-8 atomic persona facts. Raw memories are deleted and replaced with consolidated facts (`source_type='consolidated'`) in a single transaction.
+
+**Scope:** Memory operates globally — all standard chat messages trigger store/recall when `ltm_enabled=True`. Agentic research (`??`) does not store memories but can recall from them.
+
+**User Control:** `/memory` shows paginated viewer with per-item delete. `/clearmemory` wipes all. `/settings` toggles `ltm_enabled`. `/deleteme CONFIRM` deletes all data including memories (GDPR Art. 17).
+
+**Operational Notes:**
+- To manually prune: `DELETE FROM long_term_memory WHERE created_at < now() - interval '180 days'`
+- The GIN index `idx_ltm_content_trgm` supports the `%` operator for keyword matching; rebuild with `REINDEX INDEX idx_ltm_content_trgm` if needed
+- Monitor memory count per user via `get_memory_stats(user_id)` or the admin dashboard
 
 ## Scripts
 

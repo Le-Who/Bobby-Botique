@@ -230,6 +230,11 @@ async def run_bot_with_retry():
         commands.register(application)
         callbacks.register(application)
         messages.register(application)
+
+        # Memory management commands (/memory, inline delete callbacks)
+        from app.handlers import memory_commands
+        memory_commands.register(application)
+
         application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
 
         # Register global error handler

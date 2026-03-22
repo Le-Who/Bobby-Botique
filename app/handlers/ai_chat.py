@@ -14,7 +14,7 @@ from app.handlers.ai_core import (
     _resolve_ai_request,
     handle_ai_response_error,
 )
-from app.handlers.chat_logic import build_memory_context, classify_resolution
+from app.handlers.chat_logic import classify_resolution, format_memories_for_system_prompt
 from app.prompt_registry import get_registry
 from app.providers import GeminiProvider, is_openrouter_model
 from app.repos.chats import update_user_chat
@@ -103,9 +103,11 @@ async def _handle_regular_chat(
                     min_similarity=0.72,
                 )
                 if memories:
-                    chat_state.history = build_memory_context(memories, chat_state.history)
+                    memory_xml = format_memories_for_system_prompt(memories)
+                    if memory_xml:
+                        system_instruction = system_instruction + "\n\n" + memory_xml
                     _memories_injected = len(memories)
-                    logging.info("Injected %d memories for user %s", _memories_injected, user_id)
+                    logging.info("Injected %d memories into system_instruction for user %s", _memories_injected, user_id)
         except Exception as mem_err:
             logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
 
@@ -252,22 +254,33 @@ async def _handle_regular_chat(
             chat_state.token_count = new_token_count
             await update_user_chat(user_id, chat_state)
 
-            # ── Store exchange as memory (background, non-blocking) ──────
+            # ── Store user intent as memory (background, non-blocking) ────
             try:
                 if key_data and len(user_message) > 30:
-                    import asyncio
-
                     from app.repos.memory import store_memory
 
-                    exchange = f"Q: {user_message[:500]}\nA: {response_text[:500]}"
+                    # Change 2: store only user intent for maximum semantic density
+                    memory_content = user_message[:500]
+                    _api_key = key_data["api_key"]
 
                     async def _bg_store():
                         await store_memory(
                             user_id,
-                            exchange,
-                            key_data["api_key"],
-                            source_type="conversation",
+                            memory_content,
+                            _api_key,
+                            source_type="user_intent",
                         )
+                        # Change 5: check consolidation after storing
+                        try:
+                            from app.repos.memory_consolidation import (
+                                consolidate_memories,
+                                should_consolidate,
+                            )
+
+                            if await should_consolidate(user_id):
+                                await consolidate_memories(user_id, _api_key)
+                        except Exception as cons_err:
+                            logging.debug("Consolidation check skipped: %s", cons_err)
 
                     from app.utils.background_tasks import submit_retryable
 

@@ -3,6 +3,69 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.56] - 2026-03-22 - Long-Term Memory Overhaul (5 Changes)
+
+### 🧠 Change 1: System Prompt Injection (Context Engineering)
+
+| Change | File | Detail |
+|--------|------|--------|
+| XML memory injection | `chat_logic.py` | New `format_memories_for_system_prompt()` renders memories as `<long_term_memory><fact source="date">...</fact></long_term_memory>` XML block for `system_instruction` |
+| History mutation removed | `ai_chat.py` | Memories no longer prepended as fake user/model turns. Injected into `system_instruction` string instead |
+| Backward compat | `chat_logic.py` | `build_memory_context()` preserved as deprecated wrapper with `DeprecationWarning` |
+
+### 💾 Change 2: User-Intent-Only Storage
+
+| Change | File | Detail |
+|--------|------|--------|
+| Semantic density optimization | `ai_chat.py` | Stores `user_message[:500]` with `source_type='user_intent'` instead of `"Q: ... A: ..."` with `source_type='conversation'`. Eliminates verbose bot replies from vector space |
+
+### 🔍 Change 3: Hybrid Retrieval (RRF)
+
+| Change | File | Detail |
+|--------|------|--------|
+| RRF hybrid search | `memory.py` | `search_memories()` now uses Reciprocal Rank Fusion: `pgvector` cosine similarity (semantic CTE) + `pg_trgm` keyword matching (keyword CTE) with `k=60` smoothing. Graceful fallback to pure semantic if `pg_trgm` unavailable |
+| Extension + index | `020_add_trgm_hybrid_search.sql` | `CREATE EXTENSION pg_trgm` + `CREATE INDEX USING gin (content gin_trgm_ops)` |
+| New repo functions | `memory.py` | Added `delete_memory()`, `list_memories()`, `_check_trgm_available()` |
+| Stats modernization | `memory.py` | `get_memory_stats()` now counts `user_intent` + `consolidated` source types |
+
+### 👤 Change 4: `/memory` User Control Command
+
+| Change | File | Detail |
+|--------|------|--------|
+| Paginated memory viewer | `memory_commands.py` | [NEW] `/memory` shows paginated inline UI (5/page) with per-memory 🗑 delete buttons and ⬅️/➡️ navigation |
+| Handler registration | `bot.py` | `memory_commands.register(application)` wired after core handlers |
+
+### ⚡ Change 5: Dynamic Memory Consolidation
+
+| Change | File | Detail |
+|--------|------|--------|
+| Token + temporal trigger | `memory_consolidation.py` | [NEW] `should_consolidate()` checks: ≥8,000 estimated tokens OR ≥7 days since last consolidation |
+| LLM fact extraction | `memory_consolidation.py` | `_extract_persona_facts()` uses `gemini-2.0-flash-lite` to distill 5-8 atomic facts from raw memories |
+| Transactional replacement | `memory_consolidation.py` | `consolidate_memories()` deletes raw batch + inserts facts with embeddings in a single DB transaction |
+| Background trigger | `ai_chat.py` | Consolidation check runs after each `store_memory` call in the background task |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Tests | **1295 passed**, 0 failed (77s) |
+| Migration | Applied to production via Supabase MCP |
+
+### Files Changed (7 files, 2 new)
+
+| File | Change |
+|------|--------|
+| `app/handlers/chat_logic.py` | `format_memories_for_system_prompt()` + deprecated `build_memory_context()` |
+| `app/handlers/ai_chat.py` | XML injection, user-intent storage, consolidation trigger |
+| `app/repos/memory.py` | RRF hybrid search, `delete_memory`, `list_memories`, stats update |
+| `app/handlers/memory_commands.py` | [NEW] `/memory` command with inline pagination and delete |
+| `app/repos/memory_consolidation.py` | [NEW] Dynamic consolidation with LLM fact extraction |
+| `scripts/migrations/020_add_trgm_hybrid_search.sql` | [NEW] `pg_trgm` + GIN index |
+| `bot.py` | Memory commands registration |
+
+---
+
 ## [2.8.55] - 2026-03-22 - AI Prompt Editing Refinements
 
 ### ✨ UX Improvements

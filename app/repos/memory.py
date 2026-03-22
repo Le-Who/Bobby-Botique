@@ -30,6 +30,9 @@ EMBEDDING_DIMENSION = 3072
 MAX_MEMORIES_PER_USER = 500
 DEFAULT_MEMORY_TTL_DAYS = 90
 
+# Cached flag: True if pg_trgm extension is available in this database
+_trgm_available: bool | None = None
+
 
 async def _get_embedding(
     text: str,
@@ -142,6 +145,22 @@ async def store_memory(
     return None
 
 
+async def _check_trgm_available() -> bool:
+    """Check (and cache) whether pg_trgm extension is installed."""
+    global _trgm_available
+    if _trgm_available is not None:
+        return _trgm_available
+    try:
+        result = await db_query(
+            "SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'",
+            (),
+        )
+        _trgm_available = bool(result)
+    except Exception:
+        _trgm_available = False
+    return _trgm_available
+
+
 async def search_memories(
     user_id: int,
     query: str,
@@ -150,7 +169,11 @@ async def search_memories(
     limit: int = 5,
     min_similarity: float = 0.5,
 ) -> list[dict[str, Any]]:
-    """Search memories by semantic similarity.
+    """Search memories by semantic similarity with optional keyword boost (RRF).
+
+    Uses Reciprocal Rank Fusion to combine pgvector cosine similarity with
+    pg_trgm keyword matching.  Falls back to pure semantic search if pg_trgm
+    is not installed.
 
     Args:
         user_id: Owner of the memories.
@@ -167,30 +190,70 @@ async def search_memories(
         return []
 
     embedding_str = f"[{','.join(str(v) for v in query_embedding)}]"
+    use_trgm = await _check_trgm_available()
 
     try:
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)
             try:
-                results = await db_query(
-                    """
-                    SELECT id, content, source_type, metadata, created_at,
-                           1 - (embedding <=> $2::halfvec) AS similarity
-                    FROM long_term_memory
-                    WHERE user_id = $1
-                      AND (expires_at IS NULL OR expires_at > now())
-                      AND 1 - (embedding <=> $2::halfvec) >= $3
-                    ORDER BY similarity DESC
-                    LIMIT $4
-                    """,
-                    (user_id, embedding_str, min_similarity, limit),
-                    conn=conn,
-                )
+                if use_trgm:
+                    # RRF hybrid: cosine similarity + keyword trigram
+                    results = await db_query(
+                        """
+                        WITH semantic AS (
+                            SELECT id, content, source_type, metadata, created_at,
+                                   1 - (embedding <=> $2::halfvec) AS sim,
+                                   ROW_NUMBER() OVER (ORDER BY embedding <=> $2::halfvec) AS rank_s
+                            FROM long_term_memory
+                            WHERE user_id = $1
+                              AND (expires_at IS NULL OR expires_at > now())
+                            ORDER BY embedding <=> $2::halfvec
+                            LIMIT 20
+                        ),
+                        keyword AS (
+                            SELECT id,
+                                   ROW_NUMBER() OVER (ORDER BY similarity(content, $5) DESC) AS rank_k
+                            FROM long_term_memory
+                            WHERE user_id = $1
+                              AND (expires_at IS NULL OR expires_at > now())
+                              AND content % $5
+                            ORDER BY similarity(content, $5) DESC
+                            LIMIT 20
+                        )
+                        SELECT s.id, s.content, s.source_type, s.metadata, s.created_at,
+                               s.sim,
+                               (1.0/(60+s.rank_s)) + COALESCE(1.0/(60+k.rank_k), 0) AS rrf_score
+                        FROM semantic s
+                        LEFT JOIN keyword k ON s.id = k.id
+                        WHERE s.sim >= $3
+                        ORDER BY rrf_score DESC
+                        LIMIT $4
+                        """,
+                        (user_id, embedding_str, min_similarity, limit, query[:500]),
+                        conn=conn,
+                    )
+                else:
+                    # Pure semantic fallback
+                    results = await db_query(
+                        """
+                        SELECT id, content, source_type, metadata, created_at,
+                               1 - (embedding <=> $2::halfvec) AS similarity
+                        FROM long_term_memory
+                        WHERE user_id = $1
+                          AND (expires_at IS NULL OR expires_at > now())
+                          AND 1 - (embedding <=> $2::halfvec) >= $3
+                        ORDER BY similarity DESC
+                        LIMIT $4
+                        """,
+                        (user_id, embedding_str, min_similarity, limit),
+                        conn=conn,
+                    )
+
                 return [
                     {
                         "id": r["id"],
                         "content": r["content"],
-                        "similarity": float(r["similarity"]),
+                        "similarity": float(r.get("sim", r.get("similarity", 0))),
                         "source_type": r["source_type"],
                         "created_at": r["created_at"],
                     }
@@ -224,6 +287,64 @@ async def delete_user_memories(user_id: int) -> int:
         return 0
 
 
+async def delete_memory(user_id: int, memory_id: int) -> bool:
+    """Delete a single memory by ID (RLS-safe: scoped to user_id)."""
+    try:
+        async with db_manager.pool.acquire() as conn:
+            await set_user_context(user_id, False, conn=conn)
+            try:
+                result = await db_query(
+                    "DELETE FROM long_term_memory WHERE id = $1 AND user_id = $2 RETURNING id",
+                    (memory_id, user_id),
+                    conn=conn,
+                )
+                return bool(result)
+            finally:
+                await clear_user_context(conn=conn)
+    except Exception as e:
+        logging.error("Failed to delete memory %d for user %d: %s", memory_id, user_id, e, exc_info=True)
+        return False
+
+
+async def list_memories(
+    user_id: int,
+    *,
+    offset: int = 0,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """List memories for a user, ordered by newest first (for /memory UI)."""
+    try:
+        async with db_manager.pool.acquire() as conn:
+            await set_user_context(user_id, False, conn=conn)
+            try:
+                results = await db_query(
+                    """
+                    SELECT id, content, source_type, created_at
+                    FROM long_term_memory
+                    WHERE user_id = $1
+                      AND (expires_at IS NULL OR expires_at > now())
+                    ORDER BY created_at DESC
+                    LIMIT $2 OFFSET $3
+                    """,
+                    (user_id, limit, offset),
+                    conn=conn,
+                )
+                return [
+                    {
+                        "id": r["id"],
+                        "content": r["content"],
+                        "source_type": r["source_type"],
+                        "created_at": r["created_at"],
+                    }
+                    for r in (results or [])
+                ]
+            finally:
+                await clear_user_context(conn=conn)
+    except Exception as e:
+        logging.error("Failed to list memories for user %d: %s", user_id, e, exc_info=True)
+        return []
+
+
 async def cleanup_expired_memories() -> int:
     """Delete all expired memories across all users. Returns count deleted."""
     try:
@@ -250,8 +371,8 @@ async def get_memory_stats(user_id: int) -> dict[str, Any]:
                     """
                     SELECT
                         COUNT(*) as total,
-                        COUNT(*) FILTER (WHERE source_type = 'conversation') as conversations,
-                        COUNT(*) FILTER (WHERE source_type = 'summary') as summaries,
+                        COUNT(*) FILTER (WHERE source_type IN ('conversation', 'user_intent')) as memories,
+                        COUNT(*) FILTER (WHERE source_type = 'consolidated') as consolidated,
                         MIN(created_at) as oldest,
                         MAX(created_at) as newest
                     FROM long_term_memory
@@ -264,9 +385,9 @@ async def get_memory_stats(user_id: int) -> dict[str, Any]:
                 if result:
                     r = result[0]
                     return {
-                        "total": r["total"],
-                        "conversations": r["conversations"],
-                        "summaries": r["summaries"],
+                        "total_memories": r["total"],
+                        "raw_memories": r["memories"],
+                        "consolidated": r["consolidated"],
                         "oldest": r["oldest"],
                         "newest": r["newest"],
                         "limit": MAX_MEMORIES_PER_USER,

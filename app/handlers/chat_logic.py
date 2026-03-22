@@ -67,24 +67,60 @@ def classify_resolution(
 # ─── Memory injection ───────────────────────────────────────────────────────
 
 
+def format_memories_for_system_prompt(
+    memories: list[dict[str, Any]],
+    max_content_length: int = 300,
+) -> str:
+    """
+    Format retrieved memories as an XML block for system_instruction injection.
+
+    Pure function — no I/O.  Returns an empty string if no memories.
+
+    The XML structure is designed so the LLM can cleanly distinguish
+    declarative user facts from conversational history (Context Engineering).
+
+    Args:
+        memories: List of memory dicts with "content" and optionally "created_at".
+        max_content_length: Max chars per memory snippet.
+
+    Returns:
+        XML string to append to the system instruction, or "".
+    """
+    if not memories:
+        return ""
+
+    lines: list[str] = ["<long_term_memory>"]
+    for m in memories:
+        snippet = m["content"][:max_content_length].replace("&", "&amp;").replace("<", "&lt;")
+        source = ""
+        if "created_at" in m and m["created_at"]:
+            source = f' source="{str(m["created_at"])[:10]}"'
+        lines.append(f"  <fact{source}>{snippet}</fact>")
+    lines.append("</long_term_memory>")
+    return "\n".join(lines)
+
+
 def build_memory_context(
     memories: list[dict[str, Any]],
     history: list[dict[str, Any]],
     max_content_length: int = 300,
 ) -> list[dict[str, Any]]:
     """
-    Inject memory preamble into conversation history.
+    **DEPRECATED** — Use ``format_memories_for_system_prompt`` instead.
 
-    Pure function — no I/O. Returns a new list (does not mutate input).
-
-    Args:
-        memories: List of memory dicts with "content" key.
-        history: Current conversation history.
-        max_content_length: Max chars per memory snippet.
-
-    Returns:
-        New history list with memory preamble prepended.
+    Kept for backward compatibility with tests and callers that have not
+    migrated yet.  Logs a one-time deprecation warning.
     """
+    import logging
+    import warnings
+
+    warnings.warn(
+        "build_memory_context is deprecated; use format_memories_for_system_prompt",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    logging.warning("build_memory_context is deprecated — migrate to format_memories_for_system_prompt")
+
     if not memories:
         return history
 
