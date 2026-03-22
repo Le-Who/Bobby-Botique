@@ -27,15 +27,27 @@ def _extract_message_content(msg: dict) -> str:
         content = msg["content"]
         if isinstance(content, str):
             return content
-        if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
-    if "parts" in msg:
+        parts = content if isinstance(content, list) else [content]
+    elif "parts" in msg:
         parts = msg["parts"]
-        if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
-        return str(parts)
-    return ""
+        if not isinstance(parts, list):
+            return str(parts)
+    else:
+        return ""
+
+    text_parts: list[str] = []
+    for p in parts:
+        if isinstance(p, (bytes, bytearray)):
+            continue
+        if isinstance(p, dict):
+            # Bolt optimization: prevent O(N) memory allocation by skipping massive base64/image payloads
+            if "inline_data" in p or "image_url" in p:
+                continue
+            if "text" in p:
+                text_parts.append(str(p["text"]))
+        else:
+            text_parts.append(str(p))
+    return " ".join(text_parts)
 
 
 import json

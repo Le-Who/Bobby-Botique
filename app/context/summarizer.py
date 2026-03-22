@@ -170,14 +170,20 @@ def _extract_text(msg: dict[str, Any]) -> str:
         content = msg.get("content", "")
         if isinstance(content, str):
             return content
-        if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+        parts = content if isinstance(content, list) else [content]
 
     text_parts: list[str] = []
     for part in parts:
+        if isinstance(part, (bytes, bytearray)):
+            continue
         if isinstance(part, str):
             text_parts.append(part)
-        elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+        elif isinstance(part, dict):
+            # Bolt optimization: prevent O(N) memory allocation by skipping massive base64/image payloads
+            if "inline_data" in part or "image_url" in part:
+                continue
+            if "text" in part:
+                text_parts.append(str(part["text"]))
+        else:
+            text_parts.append(str(part))
     return " ".join(text_parts)
