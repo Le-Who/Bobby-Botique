@@ -57,3 +57,12 @@ async def rename_custom_role(role_id: int, user_id: int, new_title: str) -> None
         "UPDATE user_roles SET title = $1 WHERE id = $2 AND user_id = $3",
         (new_title, role_id, user_id),
     )
+
+
+async def update_custom_role_prompt(role_id: int, user_id: int, new_prompt: str) -> bool:
+    """Updates the prompt of a custom role. Returns True if updated."""
+    result = await db.db_query(
+        "UPDATE user_roles SET prompt = $1 WHERE id = $2 AND user_id = $3 RETURNING id",
+        (new_prompt, role_id, user_id),
+    )
+    return bool(result)

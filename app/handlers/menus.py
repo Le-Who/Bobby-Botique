@@ -305,10 +305,16 @@ async def _get_roles_details_content(user_id, role_key, active_role_key):
     row_actions.append(InlineKeyboardButton("👁️ Промпт", callback_data=f"role_view_prompt:{role_key}"))
 
     if is_custom:
-        row_actions.append(InlineKeyboardButton("✏️ Переим.", callback_data=f"role_rename_pick:{role_id}"))
-        row_actions.append(InlineKeyboardButton("🗑️ Удалить", callback_data=f"role_delete_ask:{role_id}"))
+        row_actions.append(InlineKeyboardButton("✏️ Промпт", callback_data=f"role_edit_prompt:{role_key}"))
 
     keyboard.append(row_actions)
+
+    # 2b. Second action row for custom roles: rename + delete
+    if is_custom:
+        row_actions2 = []
+        row_actions2.append(InlineKeyboardButton("✏️ Переим.", callback_data=f"role_rename_pick:{role_id}"))
+        row_actions2.append(InlineKeyboardButton("🗑️ Удалить", callback_data=f"role_delete_ask:{role_id}"))
+        keyboard.append(row_actions2)
 
     # 3. Назад
     # Определяем, куда возвращаться (в Мои or Системные)

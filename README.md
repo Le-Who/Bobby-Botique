@@ -176,7 +176,7 @@ The application features a heavily engineered test suite (**1295+ unit and integ
   - `/settings` — Quick access menu for models, search, and memory toggles.
   - `/stats` — Personal usage metrics, streaks, and API usage stats.
   - `/documents` — Manage and query uploaded PDF/DOCX files.
-  - `/roles` — Switch between different AI personas/roles.
+  - `/roles` — Switch between AI personas/roles. Custom roles support prompt editing (manual replacement or AI-enhanced rewrite with preview).
   - `/setprompt` — Set a custom system instruction for the current chat.
   - `/save`, `/conversations`, `/switch`, `/rename`, `/delete` — Advanced conversation management (persistence).
   - `/export` — Export the current chat history.

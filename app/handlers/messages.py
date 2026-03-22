@@ -28,6 +28,7 @@ from app.handlers.msg_media import (
 from app.handlers.msg_roles import (
     handle_conversation_rename,
     handle_custom_role_generation,
+    handle_edit_prompt,
     handle_manual_role_input,
     handle_role_rename,
 )
@@ -119,6 +120,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # ── 5. State-machine dispatchers (role/rename flows) ─────────────────
         if await handle_role_rename(update, context, user_id):
+            return
+        if await handle_edit_prompt(update, context, user_id):
             return
         if await handle_conversation_rename(update, context, user_id):
             return

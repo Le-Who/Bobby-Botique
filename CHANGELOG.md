@@ -3,6 +3,46 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.53] - 2026-03-22 - Edit Prompt for Custom Roles
+
+### ✨ New Feature: Edit Role Prompt
+
+Two modes for editing custom role prompts directly from the role details view:
+
+| Mode | Flow |
+|------|------|
+| **📝 Manual replacement** | Shows full current prompt (copyable code block) → user sends new text → UPDATE DB |
+| **✨ AI-enhanced editing** | User describes desired changes → LLM generates enhanced prompt → preview → confirm/cancel |
+
+### Key Details
+
+| Detail | Description |
+|--------|-------------|
+| Active role sync | If the edited role is currently active, `system_prompt` is updated automatically |
+| AI prompt design | Minimal instruction — no safety guardrails injected per design |
+| State management | Uses `context.user_data` (volatile, non-persistent) following the existing rename flow pattern |
+| UI layout | Role details now has 3 rows: View+Edit prompt → Rename+Delete → Back |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Tests | **9 passed** (`test_roles_menu.py`), 0 failed |
+
+### Files Changed (6 files)
+
+| File | Change |
+|------|--------|
+| `app/repos/roles.py` | Added `update_custom_role_prompt()` with `RETURNING id` for safety |
+| `app/handlers/cb_roles.py` | 6 new callbacks: `role_edit_prompt`, `role_edit_manual`, `role_edit_ai`, `role_edit_cancel`, `role_edit_ai_save` |
+| `app/handlers/msg_roles.py` | New `handle_edit_prompt()` — dual-mode message handler (manual + AI) |
+| `app/handlers/menus.py` | Added "✏️ Промпт" button; separated rename/delete into own row |
+| `app/handlers/callbacks.py` | 5 new callback registrations |
+| `app/handlers/messages.py` | `handle_edit_prompt` added to dispatch chain |
+
+---
+
 ## [2.8.52] - 2026-03-22 - Agentic Research Module Overhaul (5 Improvements)
 
 ### ⚡ Improvement 1: Parallel Tool Execution

@@ -101,6 +101,11 @@ def register(application: Application) -> None:
         role_delete_cancel_callback,
         role_delete_confirm_callback,
         role_detail_callback,
+        role_edit_ai_callback,
+        role_edit_ai_save_callback,
+        role_edit_cancel_callback,
+        role_edit_manual_callback,
+        role_edit_prompt_callback,
         role_manual_cancel_callback,
         role_manual_save_callback,
         role_nav_callback,
@@ -159,6 +164,11 @@ def register(application: Application) -> None:
     # Role management
     application.add_handler(CallbackQueryHandler(role_detail_callback, pattern="^role_detail:"))
     application.add_handler(CallbackQueryHandler(role_view_prompt_callback, pattern="^role_view_prompt:"))
+    application.add_handler(CallbackQueryHandler(role_edit_prompt_callback, pattern="^role_edit_prompt:"))
+    application.add_handler(CallbackQueryHandler(role_edit_manual_callback, pattern="^role_edit_manual:"))
+    application.add_handler(CallbackQueryHandler(role_edit_ai_callback, pattern="^role_edit_ai:"))
+    application.add_handler(CallbackQueryHandler(role_edit_ai_save_callback, pattern="^role_edit_ai_save$"))
+    application.add_handler(CallbackQueryHandler(role_edit_cancel_callback, pattern="^role_edit_cancel:"))
     application.add_handler(CallbackQueryHandler(role_delete_ask_callback, pattern="^role_delete_ask:"))
     application.add_handler(CallbackQueryHandler(role_delete_confirm_callback, pattern="^role_delete_confirm:"))
     application.add_handler(CallbackQueryHandler(role_delete_cancel_callback, pattern="^role_delete_cancel:"))

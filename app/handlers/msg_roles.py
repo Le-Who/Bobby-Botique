@@ -27,6 +27,151 @@ from app.utils.formatting import TelegramFormatter
 from app.utils.json_utils import extract_json_object
 
 
+async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
+    """Handle text input for role prompt editing (manual or AI-enhanced).
+
+    Returns True if the message was consumed by the edit prompt flow.
+    """
+    if not update.message or not update.message.text:
+        return False
+
+    message_text = update.message.text.strip()
+    if not message_text:
+        return False
+
+    # ── Mode 1: Manual prompt replacement ────────────────────────────────
+    edit_role_id = context.user_data.get("edit_prompt_role_id") if context.user_data else None
+    if edit_role_id:
+        try:
+            role_id = int(edit_role_id)
+            role_key = context.user_data.get("edit_prompt_role_key", f"user_role:{role_id}")
+
+            from app.repos.roles import get_custom_role_prompt, update_custom_role_prompt
+
+            old_prompt = await get_custom_role_prompt(role_id, user_id)
+            success = await update_custom_role_prompt(role_id, user_id, message_text)
+
+            # Clean up state
+            context.user_data.pop("edit_prompt_role_id", None)
+            context.user_data.pop("edit_prompt_role_key", None)
+
+            if not success:
+                await update.message.reply_text("❌ Не удалось обновить промпт. Роль не найдена.")
+                return True
+
+            # If this role is currently active, update system_prompt
+            chat_state = await get_user_chat(user_id)
+            if old_prompt and chat_state.system_prompt == old_prompt:
+                chat_state.system_prompt = message_text
+                from app.repos.chats import update_user_chat
+
+                await update_user_chat(user_id, chat_state)
+
+            await update.message.reply_text("✅ Промпт роли обновлён!")
+
+            # Show updated role details
+            text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+                user_id, chat_state, view_mode="role_details", role_key=role_key
+            )
+            await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            return True
+
+        except Exception as e:
+            logging.error("Error updating role prompt: %s", e, exc_info=True)
+            await update.message.reply_text("❌ Не удалось обновить промпт. Попробуйте позже.")
+            context.user_data.pop("edit_prompt_role_id", None)
+            context.user_data.pop("edit_prompt_role_key", None)
+            return True
+
+    # ── Mode 2: AI-enhanced prompt editing ───────────────────────────────
+    ai_role_id = context.user_data.get("edit_prompt_ai_role_id") if context.user_data else None
+    if ai_role_id:
+        try:
+            role_id = int(ai_role_id)
+            role_key = context.user_data.get("edit_prompt_ai_role_key", f"user_role:{role_id}")
+            current_prompt = context.user_data.get("edit_prompt_ai_current", "")
+
+            # Clear the "awaiting" state so we don't loop
+            context.user_data.pop("edit_prompt_ai_role_id", None)
+            context.user_data.pop("edit_prompt_ai_role_key", None)
+
+            progress_msg = await update.message.reply_text("✨ Улучшаю промпт через AI…")
+
+            # Build the enhancement prompt — minimal, no safety injection
+            enhance_instruction = (
+                "Generate an enhanced version of this prompt "
+                "(reply with only the enhanced prompt — no conversation, "
+                "explanations, lead-in, bullet points, placeholders, or surrounding quotes):\n\n"
+                f"{current_prompt}\n\n"
+                f"User's requested changes: {message_text}"
+            )
+
+            # Use the same AI pipeline as role generation
+            from app.config import settings
+            from app.handlers.ai_core import _get_ai_response, _increment_key_usage, _resolve_ai_request
+
+            chat_state = await get_user_chat(user_id)
+            model_for_edit = chat_state.model or settings.DEFAULT_MODEL
+            key_data, model_used, _ = await _resolve_ai_request(model_for_edit)
+
+            if not key_data:
+                await progress_msg.edit_text("❌ Нет доступных ключей API.")
+                return True
+
+            history = [{"role": "user", "parts": [enhance_instruction]}]
+            response_text, _ = await _get_ai_response(
+                key_data["api_key"],
+                history,
+                model_used,
+                user_id=user_id,
+                chat_id=user_id,
+            )
+
+            await _increment_key_usage(key_data["key_hash"], model_used)
+
+            if not response_text or not response_text.strip():
+                await progress_msg.edit_text("❌ AI не вернул результат. Попробуйте ещё раз.")
+                return True
+
+            enhanced_prompt = response_text.strip()
+
+            # Store preview for save callback
+            if context.user_data is not None:
+                context.user_data["edit_prompt_ai_preview"] = enhanced_prompt
+                context.user_data["edit_prompt_ai_save_role_id"] = role_id
+                context.user_data["edit_prompt_ai_save_role_key"] = role_key
+                # Keep current prompt for active-role check on save
+                context.user_data["edit_prompt_ai_current"] = current_prompt
+
+            preview_len = 300
+            preview = enhanced_prompt[:preview_len] + "..." if len(enhanced_prompt) > preview_len else enhanced_prompt
+            preview_text = (
+                f"✨ **Улучшенный промпт:**\n\n`{preview}`\n\n"
+                f"Сохранить этот вариант?"
+            )
+            kb = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("💾 Сохранить", callback_data="role_edit_ai_save")],
+                    [InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")],
+                ]
+            )
+            fmt_text, fmt_pm = TelegramFormatter.format_text(preview_text)
+            await progress_msg.edit_text(fmt_text, parse_mode=fmt_pm, reply_markup=kb)
+            return True
+
+        except Exception as e:
+            logging.error("Error in AI prompt enhancement: %s", e, exc_info=True)
+            await update.message.reply_text("❌ Ошибка при улучшении промпта. Попробуйте позже.")
+            # Clean up
+            if context.user_data is not None:
+                context.user_data.pop("edit_prompt_ai_role_id", None)
+                context.user_data.pop("edit_prompt_ai_role_key", None)
+                context.user_data.pop("edit_prompt_ai_current", None)
+            return True
+
+    return False
+
+
 async def handle_conversation_rename(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
     """Handle text input for conversation rename. Returns True if consumed."""
     rename_conv_id = context.user_data.get("rename_conv_id")

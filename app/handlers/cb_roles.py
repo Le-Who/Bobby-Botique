@@ -461,6 +461,207 @@ async def role_view_prompt_callback(update: Update, context: ContextTypes.DEFAUL
         )
 
 
+# ── Edit prompt callbacks ────────────────────────────────────────────────────
+
+
+async def role_edit_prompt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Shows the full prompt (copyable) + buttons for manual replace / AI enhance."""
+    query = update.callback_query
+    await query.answer()
+
+    role_key = query.data.split(":", 1)[1]
+    user_id = query.from_user.id
+
+    role_data = await get_role_data(role_key, user_id)
+    if not role_data or not role_data.get("is_custom"):
+        from app.utils.keyboards import error_with_back_keyboard
+
+        await query.edit_message_text(
+            "❌ Можно редактировать только кастомные роли.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
+        )
+        return
+
+    prompt = role_data.get("prompt", "")
+    title = role_data.get("title", "")
+
+    edit_text = (
+        f"✏️ **Редактирование роли** «{title}»\n\n"
+        f"📋 **Текущий промпт** (удерживайте для копирования):\n"
+        f"`{prompt}`\n\n"
+        f"Выберите способ редактирования:"
+    )
+    kb = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("📝 Заменить вручную", callback_data=f"role_edit_manual:{role_key}")],
+            [InlineKeyboardButton("✨ Улучшить через AI", callback_data=f"role_edit_ai:{role_key}")],
+            [InlineKeyboardButton("↩️ Отмена", callback_data=f"role_detail:{role_key}")],
+        ]
+    )
+    fmt_text, fmt_pm = TelegramFormatter.format_text(edit_text)
+    await query.edit_message_text(fmt_text, parse_mode=fmt_pm, reply_markup=kb)
+
+
+async def role_edit_manual_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sets up state for manual prompt replacement."""
+    query = update.callback_query
+    await query.answer()
+
+    role_key = query.data.split(":", 1)[1]
+
+    if not role_key.startswith("user_role:"):
+        return
+
+    role_id = int(role_key.split(":")[1])
+
+    if context.user_data is not None:
+        context.user_data["edit_prompt_role_id"] = role_id
+        context.user_data["edit_prompt_role_key"] = role_key
+
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]]
+    )
+    await query.edit_message_text(
+        "📝 Отправьте новый промпт для этой роли:",
+        reply_markup=kb,
+    )
+
+
+async def role_edit_ai_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sets up state for AI-enhanced prompt editing."""
+    query = update.callback_query
+    await query.answer()
+
+    role_key = query.data.split(":", 1)[1]
+    user_id = query.from_user.id
+
+    if not role_key.startswith("user_role:"):
+        return
+
+    role_id = int(role_key.split(":")[1])
+    role_data = await get_role_data(role_key, user_id)
+    if not role_data:
+        from app.utils.keyboards import error_with_back_keyboard
+
+        await query.edit_message_text(
+            "❌ Роль не найдена.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
+        )
+        return
+
+    if context.user_data is not None:
+        context.user_data["edit_prompt_ai_role_id"] = role_id
+        context.user_data["edit_prompt_ai_role_key"] = role_key
+        context.user_data["edit_prompt_ai_current"] = role_data.get("prompt", "")
+
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]]
+    )
+    await query.edit_message_text(
+        "✨ Опишите, что нужно изменить в промпте.\n"
+        "Например: «добавь правило всегда отвечать примерами» или «сделай тон более формальным».",
+        reply_markup=kb,
+    )
+
+
+async def role_edit_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Cancel edit prompt — clear state and return to role details."""
+    query = update.callback_query
+    await query.answer("❌ Редактирование отменено")
+
+    role_key = query.data.split(":", 1)[1]
+
+    # Clear all edit prompt state
+    if context.user_data is not None:
+        context.user_data.pop("edit_prompt_role_id", None)
+        context.user_data.pop("edit_prompt_role_key", None)
+        context.user_data.pop("edit_prompt_ai_role_id", None)
+        context.user_data.pop("edit_prompt_ai_role_key", None)
+        context.user_data.pop("edit_prompt_ai_current", None)
+
+    user_id = query.from_user.id
+    chat_state = await get_user_chat(user_id)
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+        user_id, chat_state, view_mode="role_details", role_key=role_key
+    )
+    try:
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except telegram.error.BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise e
+
+
+async def role_edit_ai_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Save the AI-enhanced prompt that was previewed."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    # Retrieve the previewed prompt from user_data
+    new_prompt = context.user_data.get("edit_prompt_ai_preview") if context.user_data else None
+    role_id = context.user_data.get("edit_prompt_ai_save_role_id") if context.user_data else None
+    role_key = context.user_data.get("edit_prompt_ai_save_role_key") if context.user_data else None
+
+    if not new_prompt or not role_id:
+        from app.utils.keyboards import error_with_back_keyboard
+
+        await query.edit_message_text(
+            "❌ Нет данных для сохранения. Попробуйте ещё раз.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
+        )
+        return
+
+    from app.repos.roles import update_custom_role_prompt
+
+    success = await update_custom_role_prompt(role_id, user_id, new_prompt)
+    if not success:
+        from app.utils.keyboards import error_with_back_keyboard
+
+        await query.edit_message_text(
+            "❌ Не удалось обновить промпт.",
+            reply_markup=error_with_back_keyboard("open_roles", "🎭 Меню ролей"),
+        )
+        return
+
+    # If this role is currently active, update system_prompt
+    chat_state = await get_user_chat(user_id)
+    from app.repos.roles import get_custom_role_prompt as _get_old
+
+    # The role's old prompt may have been the active one — check against the stored current
+    old_prompt = context.user_data.get("edit_prompt_ai_current") if context.user_data else None
+    if old_prompt and chat_state.system_prompt == old_prompt:
+        chat_state.system_prompt = new_prompt
+        from app.repos.chats import update_user_chat
+
+        await update_user_chat(user_id, chat_state)
+
+    # Clean up state
+    if context.user_data is not None:
+        for key in [
+            "edit_prompt_ai_preview",
+            "edit_prompt_ai_save_role_id",
+            "edit_prompt_ai_save_role_key",
+            "edit_prompt_ai_current",
+        ]:
+            context.user_data.pop(key, None)
+
+    # Return to role details
+    if not role_key:
+        role_key = f"user_role:{role_id}"
+
+    text, parse_mode, reply_markup = await menus.get_roles_menu_content(
+        user_id, chat_state, view_mode="role_details", role_key=role_key
+    )
+    try:
+        await query.edit_message_text(
+            f"✅ Промпт обновлён через AI!\n\n{text}",
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        )
+    except telegram.error.BadRequest:
+        pass
+
+
 async def role_nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
