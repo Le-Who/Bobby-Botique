@@ -171,13 +171,18 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            # Performance: skip large binary blobs when stringifying to avoid massive memory allocation
+            return " ".join(
+                str(p) for p in content if not isinstance(p, (bytes, bytearray))
+                and not (isinstance(p, dict) and ("inline_data" in p or "image_url" in p))
+            )
+        return str(content) if not isinstance(content, (bytes, bytearray)) else ""
 
     text_parts: list[str] = []
     for part in parts:
         if isinstance(part, str):
             text_parts.append(part)
-        elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+        elif isinstance(part, dict):
+            if "text" in part:
+                text_parts.append(str(part["text"]))
     return " ".join(text_parts)
