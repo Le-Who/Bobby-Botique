@@ -8,6 +8,7 @@ then replaces the batch with the consolidated facts.
 """
 
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -23,8 +24,53 @@ TEMPORAL_THRESHOLD_DAYS = 7
 MAX_PERSONA_FACTS = 8
 MIN_PERSONA_FACTS = 5
 
-# Consolidation model — use cheapest available Flash variant
-_CONSOLIDATION_MODEL = "gemini-2.0-flash-lite"
+# Consolidation model — use cheapest available free-tier model
+_CONSOLIDATION_MODEL = "gemini-3.1-flash-lite-preview"
+
+# ── Debounce gate constants ─────────────────────────────────────────────
+_MSG_GATE = 20       # check should_consolidate every Nth message
+_TIME_GATE = 900.0   # or every 15 minutes (seconds)
+_consolidation_state: dict[int, dict] = {}  # {user_id: {"msg_count": int, "last_check_ts": float}}
+
+
+def should_check_consolidation(user_id: int) -> bool:
+    """O(1) in-memory gate — returns True only when it's time to call should_consolidate().
+
+    Prevents firing a DB SELECT + potential LLM call on every single message.
+    Triggers when:
+    - msg_count >= _MSG_GATE (every 20th message), OR
+    - time since last check >= _TIME_GATE (every 15 minutes)
+    """
+    now = time.monotonic()
+    state = _consolidation_state.get(user_id)
+
+    if state is None:
+        _consolidation_state[user_id] = {"msg_count": 1, "last_check_ts": now}
+        return False
+
+    state["msg_count"] += 1
+
+    # Message count gate
+    if state["msg_count"] >= _MSG_GATE:
+        state["msg_count"] = 0
+        state["last_check_ts"] = now
+        return True
+
+    # Time gate
+    if (now - state["last_check_ts"]) >= _TIME_GATE:
+        state["msg_count"] = 0
+        state["last_check_ts"] = now
+        return True
+
+    return False
+
+
+def reset_consolidation_state(user_id: int | None = None) -> None:
+    """Reset debounce state for a user (or all users). Useful for testing."""
+    if user_id is None:
+        _consolidation_state.clear()
+    else:
+        _consolidation_state.pop(user_id, None)
 
 
 def _estimate_tokens(text: str) -> int:

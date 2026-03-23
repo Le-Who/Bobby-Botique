@@ -3,6 +3,82 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.57] - 2026-03-23 - Reliability & Intelligence Improvements (6 Changes)
+
+### 🔧 Change 1: Metrics Snapshot Race Fix (P0)
+
+| Change | File | Detail |
+|--------|------|--------|
+| Atomic snapshot+reset | `metrics.py` | `_save_metrics_to_db()` now snapshots counters under `self._lock` BEFORE any DB I/O. Eliminates window where events during write were silently lost |
+| Compensating re-add | `metrics.py` | On DB failure, snapshotted values are atomically re-added to live counters — zero-loss guarantee |
+
+### ⚡ Change 2: Redis-Backed Persistent Queue (P1)
+
+| Change | File | Detail |
+|--------|------|--------|
+| Redis Lists backend | `queue.py` | Full rewrite: `LPUSH`/`RPOPLPUSH` per priority level. Tasks survive restarts |
+| RPOP polling | `queue.py` | Uses `RPOP` instead of `BRPOP` — compatible with Upstash connection limits |
+| Crash recovery | `queue.py` | On startup, re-queues any tasks stuck in processing list |
+| In-memory fallback | `queue.py` | Degrades to `asyncio.PriorityQueue` when Redis unavailable |
+| Test update | `test_task_queue.py` | Updated attribute references (`queue` → `_fallback_queue`) |
+
+### 🧠 Change 3: LTM Consolidation Debounce (P1)
+
+| Change | File | Detail |
+|--------|------|--------|
+| In-memory gate | `memory_consolidation.py` | `should_check_consolidation()` — O(1) check, fires only every 20 msgs or 15 min |
+| Model update | `memory_consolidation.py` | Updated model to `gemini-3.1-flash-lite-preview` |
+| Gate integration | `ai_chat.py` | Wired gate before `should_consolidate()` call |
+
+### 📄 Change 4: Document Chunking at Retrieval Time (P2)
+
+| Change | File | Detail |
+|--------|------|--------|
+| Chunking module | `documents/chunking.py` | [NEW] Three strategies: `recursive_chunk` (paragraph/sentence/word), `hierarchical_chunk` (parent/child), `chunk_for_context` (relevance scoring + budget assembly) |
+| Pipeline integration | `ai_document.py` | Replaced naïve `[:30000]` hard-truncation with `chunk_for_context(text, query=user_message, max_context_tokens=8500)`. Query-aware relevance scoring selects best chunks |
+
+### 📰 Change 5: Scheduled Intelligence Briefs (P3)
+
+| Change | File | Detail |
+|--------|------|--------|
+| Brief handler | `handlers/scheduled_briefs.py` | [NEW] Full pipeline: subscription CRUD, LTM topic extraction → Tavily search → Gemini summary → Telegram delivery |
+| Migration | `021_add_brief_subscriptions.sql` | [NEW] Table with FK, unique constraint, partial index, RLS policies. Applied to production |
+| Command registration | `commands.py` | `/subscribe` and `/unsubscribe` handlers registered |
+| Hourly scheduler | `bot.py` | `check_and_send_briefs` via `application.job_queue.run_repeating` (interval=3600s, first=60s) |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Tests | **1343 passed**, 0 failed (73s) |
+| New tests | 46 tests across 5 new test files |
+| Migration | Applied to production via Supabase MCP |
+| Security advisors | No new warnings. RLS enabled |
+
+### Files Changed (17 files, 8 new)
+
+| File | Change |
+|------|--------|
+| `app/metrics.py` | Atomic snapshot+reset, compensating re-add |
+| `app/queue.py` | Redis Lists backend with fallback |
+| `app/repos/memory_consolidation.py` | Debounce gate + model update |
+| `app/handlers/ai_chat.py` | Consolidation gate integration |
+| `app/documents/chunking.py` | [NEW] 3-strategy retrieval-time chunking |
+| `app/handlers/ai_document.py` | Query-aware chunking integration |
+| `app/handlers/scheduled_briefs.py` | [NEW] Full briefs pipeline |
+| `app/handlers/commands.py` | /subscribe, /unsubscribe registration |
+| `bot.py` | Hourly briefs scheduler |
+| `scripts/migrations/021_add_brief_subscriptions.sql` | [NEW] Brief subscriptions table |
+| `tests/test_metrics_snapshot.py` | [NEW] 5 tests |
+| `tests/test_metrics_integration.py` | Updated for new behavior |
+| `tests/test_redis_queue.py` | [NEW] 10 tests |
+| `tests/test_task_queue.py` | Attribute reference fixes |
+| `tests/test_consolidation_debounce.py` | [NEW] 8 tests |
+| `tests/test_chunking.py` | [NEW] 16 tests |
+| `tests/test_scheduled_briefs.py` | [NEW] 7 tests |
+
+---
+
 ## [2.8.56] - 2026-03-22 - Long-Term Memory Overhaul (5 Changes)
 
 ### 🧠 Change 1: System Prompt Injection (Context Engineering)

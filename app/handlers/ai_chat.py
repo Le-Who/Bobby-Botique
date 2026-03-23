@@ -270,14 +270,15 @@ async def _handle_regular_chat(
                             _api_key,
                             source_type="user_intent",
                         )
-                        # Change 5: check consolidation after storing
+                        # Change 5: check consolidation after storing (debounced)
                         try:
                             from app.repos.memory_consolidation import (
                                 consolidate_memories,
+                                should_check_consolidation,
                                 should_consolidate,
                             )
 
-                            if await should_consolidate(user_id):
+                            if should_check_consolidation(user_id) and await should_consolidate(user_id):
                                 await consolidate_memories(user_id, _api_key)
                         except Exception as cons_err:
                             logging.debug("Consolidation check skipped: %s", cons_err)

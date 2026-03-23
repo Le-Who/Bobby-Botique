@@ -170,46 +170,68 @@ class MetricsCollector:
             )
 
     async def _save_metrics_to_db(self):
-        """Сохраняет текущие метрики в базу данных (Non-blocking)"""
-        # Phase 1: Snapshot data under lock (Fast)
+        """Сохраняет текущие метрики в базу данных (Non-blocking).
+
+        Uses atomic snapshot-then-reset under lock to prevent race conditions:
+        events arriving during DB I/O are NOT lost.
+        """
         snapshot_data = None
+        user_snapshot: list[tuple[int, dict]] = []
 
-        # Phase 1: Snapshot data
+        # ── Phase 1: Atomic snapshot + reset under lock (O(1), no I/O) ────
         try:
-            today = date.today()
-            today_str = today.isoformat()
+            async with self._lock:
+                today = date.today()
+                today_str = today.isoformat()
 
-            # Snapshot daily metrics
-            daily = self.daily_metrics.get(today_str, PerformanceMetrics())
+                daily = self.daily_metrics.get(today_str, PerformanceMetrics())
 
-            # Deep copy dicts to avoid concurrent modification issues during JSON serialization
-            api_calls_copy = dict(daily.api_calls)
-            model_usage_copy = dict(daily.model_usage)
+                # Snapshot daily metrics
+                snapshot_data = {
+                    "date": today,
+                    "request_count": daily.request_count,
+                    "total_response_time": daily.total_response_time,
+                    "error_count": daily.error_count,
+                    "search_queries": daily.search_queries,
+                    "cache_hits": daily.cache_hits,
+                    "cache_misses": daily.cache_misses,
+                    "api_calls": dict(daily.api_calls),
+                    "model_usage": dict(daily.model_usage),
+                }
 
-            snapshot_data = {
-                "date": today,
-                "request_count": daily.request_count,
-                "total_response_time": daily.total_response_time,
-                "error_count": daily.error_count,
-                "search_queries": daily.search_queries,
-                "cache_hits": daily.cache_hits,
-                "cache_misses": daily.cache_misses,
-                "api_calls": api_calls_copy,
-                "model_usage": model_usage_copy,
-            }
+                # Reset immediately — events arriving after this point
+                # will accumulate in fresh counters, not be lost
+                daily.request_count = 0
+                daily.total_response_time = 0.0
+                daily.error_count = 0
+                daily.search_queries = 0
+                daily.cache_hits = 0
+                daily.cache_misses = 0
+                daily.api_calls.clear()
+                daily.model_usage.clear()
 
-            # Snapshot unsaved errors
+                # Snapshot per-user metrics
+                user_snapshot = [
+                    (uid, {"request_count": data["request_count"], "model_usage": dict(data["model_usage"])})
+                    for (d, uid), data in self._user_daily.items()
+                    if d == today_str and data["request_count"] > 0
+                ]
+                # Reset per-user counters
+                for (d, uid), data in self._user_daily.items():
+                    if d == today_str and data["request_count"] > 0:
+                        data["request_count"] = 0
+                        data["model_usage"] = {}
+
+            # Snapshot unsaved errors (outside lock — error_log only appended, safe to read)
             errors_to_process = [error for error in self.error_log if not error.get("saved", False)]
 
         except Exception as e:
             logging.error("Error creating metrics snapshot: %s", e, exc_info=True)
             return
 
-        # Phase 2: Save to DB (IO - No Lock)
+        # ── Phase 2: Save to DB (I/O, no lock held) ──────────────────────
         try:
-            if snapshot_data:
-                # Update or вставляем metrics за сегодня
-                # Using SET (upsert replacement) to handle updates correctly
+            if snapshot_data and snapshot_data["request_count"] > 0:
                 await db.db_query(
                     """
                     INSERT INTO metrics (metric_date, request_count, total_response_time, error_count,
@@ -239,18 +261,6 @@ class MetricsCollector:
                     ),
                 )
 
-                # Reset in-memory counters after successful save to prevent double-counting
-                async with self._lock:
-                    daily = self.daily_metrics[date.today().isoformat()]
-                    daily.request_count = 0
-                    daily.total_response_time = 0.0
-                    daily.error_count = 0
-                    daily.search_queries = 0
-                    daily.cache_hits = 0
-                    daily.cache_misses = 0
-                    daily.api_calls.clear()
-                    daily.model_usage.clear()
-
             # Save new errors
             if errors_to_process:
                 unsaved_errors = [e for e in errors_to_process if not e.get("saved", False)]
@@ -269,16 +279,10 @@ class MetricsCollector:
                         error["saved"] = True
 
             self._last_save_time = time.time()
-            logging.info("Metrics saved (bg): %s reqs", snapshot_data["request_count"])
+            logging.info("Metrics saved (bg): %s reqs", snapshot_data["request_count"] if snapshot_data else 0)
 
-            # Phase 3: Save per-user metrics
-            today_str = date.today().isoformat()
-            user_items = [
-                (uid, data)
-                for (d, uid), data in self._user_daily.items()
-                if d == today_str and data["request_count"] > 0
-            ]
-            if user_items:
+            # Save per-user metrics
+            if user_snapshot:
                 params_list = [
                     (
                         uid,
@@ -286,7 +290,7 @@ class MetricsCollector:
                         data["request_count"],
                         data["model_usage"],
                     )
-                    for uid, data in user_items
+                    for uid, data in user_snapshot
                 ]
                 await db.db_execute_many(
                     """
@@ -299,24 +303,45 @@ class MetricsCollector:
                     """,
                     params_list,
                 )
-
-                # Reset user counters after successful save
-                for _uid, data in user_items:
-                    data["request_count"] = 0
-                    data["model_usage"] = {}
-                logging.debug("Per-user metrics saved for %s users", len(user_items))
+                logging.debug("Per-user metrics saved for %s users", len(user_snapshot))
 
                 # Update streaks for active users
                 try:
                     from app.repos.analytics import record_daily_activity
 
-                    for uid, _ in user_items:
+                    for uid, _ in user_snapshot:
                         await record_daily_activity(uid)
                 except Exception as streak_err:
                     logging.debug("Streak update skipped: %s", streak_err)
 
         except Exception as e:
             logging.error("Error saving metrics to database: %s", e, exc_info=True)
+            # ── Compensate: re-add snapshot values so they aren't lost ────
+            if snapshot_data and snapshot_data["request_count"] > 0:
+                try:
+                    async with self._lock:
+                        today_str = date.today().isoformat()
+                        daily = self.daily_metrics[today_str]
+                        daily.request_count += snapshot_data["request_count"]
+                        daily.total_response_time += snapshot_data["total_response_time"]
+                        daily.error_count += snapshot_data["error_count"]
+                        daily.search_queries += snapshot_data["search_queries"]
+                        daily.cache_hits += snapshot_data["cache_hits"]
+                        daily.cache_misses += snapshot_data["cache_misses"]
+                        for k, v in snapshot_data["api_calls"].items():
+                            daily.api_calls[k] = daily.api_calls.get(k, 0) + v
+                        for k, v in snapshot_data["model_usage"].items():
+                            daily.model_usage[k] = daily.model_usage.get(k, 0) + v
+                        # Re-add per-user data
+                        for uid, data in user_snapshot:
+                            ukey = (today_str, uid)
+                            self._user_daily[ukey]["request_count"] += data["request_count"]
+                            for k, v in data["model_usage"].items():
+                                self._user_daily[ukey]["model_usage"][k] = (
+                                    self._user_daily[ukey]["model_usage"].get(k, 0) + v
+                                )
+                except Exception as comp_err:
+                    logging.error("Metrics compensation failed: %s", comp_err, exc_info=True)
 
     async def _load_metrics_from_db(self):
         """Загружает метрики из базы данных"""

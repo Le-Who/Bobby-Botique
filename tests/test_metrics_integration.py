@@ -42,6 +42,8 @@ class TestMetricsIntegration(unittest.TestCase):
             mock_db_manager.is_connected = True
 
             async def simulate_events():
+                # 0. Record a request so request_count > 0 (required for metrics upsert)
+                await self.collector.record_request("test_handler", 0.15, success=True, user_id=42)
                 # 1. Record API Call
                 await self.collector.record_api_call("gemini", model="gemini-2.5-flash")
                 # 2. Record Error (1)
@@ -49,8 +51,8 @@ class TestMetricsIntegration(unittest.TestCase):
                 # 3. Record Error (2)
                 await self.collector.record_error("AuthError", "Simulated Error 2")
 
-                # Check that queue has 3 items
-                self.assertEqual(self.collector._events_queue.qsize(), 3)
+                # Check that queue has 4 items
+                self.assertEqual(self.collector._events_queue.qsize(), 4)
 
                 # Drain the queue manually (simulate the background worker)
                 while not self.collector._events_queue.empty():
@@ -75,10 +77,11 @@ class TestMetricsIntegration(unittest.TestCase):
                 # Verify that db_query was called for daily aggregations (UPSERT logic)
                 self.assertTrue(mock_query.called)
 
-                # Verify that execute_many was called for batched errors
+                # Verify that execute_many was called (errors + per-user metrics)
                 self.assertTrue(mock_execute_many.called)
 
-                args, _ = mock_execute_many.call_args
+                # First call should be for error_logs batch insert
+                args, _ = mock_execute_many.call_args_list[0]
                 query, params_list, *rest = args
 
                 self.assertIn("INSERT INTO error_logs", query)

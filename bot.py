@@ -299,6 +299,21 @@ async def run_bot_with_retry():
         except Exception:
             pass  # Non-critical
 
+        # Schedule hourly briefs checker
+        try:
+            from app.handlers.scheduled_briefs import check_and_send_briefs
+
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    check_and_send_briefs,
+                    interval=3600,   # Every hour
+                    first=60,        # First run 60s after boot
+                    name="briefs_scheduler",
+                )
+                logging.info("Scheduled briefs hourly job registered")
+        except Exception as e:
+            logging.warning("Failed to register briefs scheduler: %s", e)
+
         # Wait for shutdown event
         try:
             await shutdown_event.wait()

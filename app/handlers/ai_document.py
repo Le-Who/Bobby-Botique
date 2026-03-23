@@ -60,13 +60,19 @@ async def _handle_document_question(
             # If не можем отредактировать, отправляем new message
             placeholder_message = await placeholder_message.reply_text("📄 Анализирую документ...")
 
-        # Ограничиваем размер contextа documentа
-        max_context_length = 30000  # Ограничиваем до 30K символов
+        # Chunk document intelligently based on user's question
+        from app.documents.chunking import chunk_for_context
+
         original_length = len(document_content) if document_content else 0
-        if document_content and len(document_content) > max_context_length:
-            document_content = document_content[:max_context_length] + "\n\n[Документ обрезан для экономии токенов]"
+        document_content = chunk_for_context(
+            document_content,
+            query=user_message,
+            max_context_tokens=8500,  # ~30K chars, matching previous budget
+        )
+        if len(document_content) < original_length:
+            document_content += "\n\n[Документ сокращён до наиболее релевантных фрагментов]"
             logging.info(
-                "Document content truncated from %d to %d characters",
+                "Document chunked from %d to %d chars (query-aware)",
                 original_length,
                 len(document_content),
             )

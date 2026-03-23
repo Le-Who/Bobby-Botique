@@ -600,3 +600,9 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("switch", switch_conversation_command))
     application.add_handler(CommandHandler("rename", rename_conversation_command))
     application.add_handler(CommandHandler("delete", delete_conversation_command))
+
+    # Scheduled briefs commands (from scheduled_briefs)
+    from app.handlers.scheduled_briefs import subscribe_command, unsubscribe_command
+
+    application.add_handler(CommandHandler("subscribe", subscribe_command))
+    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
