@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.58] - 2026-03-23 - Dependency Hotfixes (2 Fixes)
+
+### 🔴 Critical Fix
+
+| Fix | File | Detail |
+|-----|------|--------|
+| PTB JobQueue warning | `requirements.txt` | Added `[job-queue]` extra to `python-telegram-bot` dependency. Resolves the `PTBUserWarning` on startup and ensures the `scheduled_briefs` background job can be configured via `application.job_queue`. |
+
+### 🟡 Medium Fix
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Local `textual` conflict | `requirements.txt`, `requirements-dev.txt` | Expanded `rich` version bounds from `<14.0.0` to `<15.0.0`. Resolves `pip` dependency resolver conflicts in local developer environments that have modern `textual` installed (which requires `rich>=14.2.0`). |
+
+---
+
 ## [2.8.57] - 2026-03-23 - Reliability & Intelligence Improvements (6 Changes)
 
 ### 🔧 Change 1: Metrics Snapshot Race Fix (P0)
