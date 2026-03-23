@@ -283,6 +283,13 @@ The application features a heavily engineered test suite (**1295+ unit and integ
 - **Bot Config vs Environment Discrepancy**: Northflank compose config explicitly enables `LOG_JSON=true`, however, runtime application checks environment variable `STRUCTURED_LOGGING` and `LOG_FORMAT` in `bot.py`.
 - **OpenRouter Multimodal Capabilities**: OpenRouter is explicitly disabled for multimodality interactions in current abstractions; however, this architecture distinction is under-represented in internal application documentation.
 
+## Future / Roadmap
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| **Debate Mode** | Multi-model argument synthesis — the bot queries 2–3 models with opposing viewpoints, then synthesizes a balanced answer highlighting agreements, disagreements, and confidence levels. Ideal for complex or controversial topics. | Planned |
+| **Shared Group Brain** | Group-level long-term memory — when the bot is added to a Telegram group, it builds a shared LTM across all group members. Group memories are tagged by contributor and searchable by any member. Includes configurable privacy controls (opt-in/opt-out per user). | Planned |
+
 ## Contributing
 
 1. Create a descriptive PR.
