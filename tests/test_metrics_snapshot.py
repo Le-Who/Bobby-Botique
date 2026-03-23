@@ -69,9 +69,7 @@ class TestMetricsSnapshotAtomicity:
 
         # The 3 events that arrived during DB write must be preserved
         daily = metrics_collector.daily_metrics[today]
-        assert daily.request_count == 3, (
-            f"Expected 3 (events during save), got {daily.request_count}"
-        )
+        assert daily.request_count == 3, f"Expected 3 (events during save), got {daily.request_count}"
         assert daily.total_response_time == 1.0
         assert daily.cache_hits == 2
 
@@ -91,9 +89,7 @@ class TestMetricsSnapshotAtomicity:
 
         # After failure: counters must be back to original values
         daily = metrics_collector.daily_metrics[today]
-        assert daily.request_count == 10, (
-            f"Expected 10 (compensated), got {daily.request_count}"
-        )
+        assert daily.request_count == 10, f"Expected 10 (compensated), got {daily.request_count}"
         assert daily.error_count == 2
         assert daily.cache_misses == 5
         assert daily.api_calls.get("gemini") == 7
@@ -111,15 +107,13 @@ class TestMetricsSnapshotAtomicity:
 
         with (
             patch("app.metrics.db.db_query", new_callable=AsyncMock),
-            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock) as mock_exec_many,
+            patch("app.metrics.db.db_execute_many", new_callable=AsyncMock),
         ):
             await metrics_collector._save_metrics_to_db()
 
         # Per-user counters must be reset after save
         user_data = metrics_collector._user_daily[(today, 42)]
-        assert user_data["request_count"] == 0, (
-            f"Expected 0 (reset after save), got {user_data['request_count']}"
-        )
+        assert user_data["request_count"] == 0, f"Expected 0 (reset after save), got {user_data['request_count']}"
         assert user_data["model_usage"] == {}
 
     @pytest.mark.asyncio

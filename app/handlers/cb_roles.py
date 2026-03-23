@@ -518,9 +518,7 @@ async def role_edit_manual_callback(update: Update, context: ContextTypes.DEFAUL
         context.user_data["edit_prompt_role_id"] = role_id
         context.user_data["edit_prompt_role_key"] = role_key
 
-    kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]]
-    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]])
     await query.edit_message_text(
         "📝 Отправьте новый промпт для этой роли:",
         reply_markup=kb,
@@ -554,9 +552,7 @@ async def role_edit_ai_callback(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data["edit_prompt_ai_role_key"] = role_key
         context.user_data["edit_prompt_ai_current"] = role_data.get("prompt", "")
 
-    kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]]
-    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]])
     await query.edit_message_text(
         "✨ Опишите, что нужно изменить в промпте.\n"
         "Например: «добавь правило всегда отвечать примерами» или «сделай тон более формальным».",
@@ -580,7 +576,7 @@ async def role_edit_ai_tweak_callback(update: Update, context: ContextTypes.DEFA
         # Clear AI save state so we don't accidentally save
         context.user_data.pop("edit_prompt_ai_save_role_id", None)
         context.user_data.pop("edit_prompt_ai_save_role_key", None)
-        
+
         # Transition to manual edit state
         context.user_data["edit_prompt_role_id"] = role_id
         context.user_data["edit_prompt_role_key"] = role_key
@@ -596,10 +592,9 @@ async def role_edit_ai_tweak_callback(update: Update, context: ContextTypes.DEFA
     else:
         text = "📝 Ок, отправьте новый текст промпта следующим сообщением."
 
-    kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]]
-    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")]])
     from app.utils.formatting import TelegramFormatter
+
     fmt_text, fmt_pm = TelegramFormatter.format_text(text)
     await query.edit_message_text(fmt_text, parse_mode=fmt_pm, reply_markup=kb)
 

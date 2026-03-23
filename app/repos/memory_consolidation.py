@@ -28,8 +28,8 @@ MIN_PERSONA_FACTS = 5
 _CONSOLIDATION_MODEL = "gemini-3.1-flash-lite-preview"
 
 # ── Debounce gate constants ─────────────────────────────────────────────
-_MSG_GATE = 20       # check should_consolidate every Nth message
-_TIME_GATE = 900.0   # or every 15 minutes (seconds)
+_MSG_GATE = 20  # check should_consolidate every Nth message
+_TIME_GATE = 900.0  # or every 15 minutes (seconds)
 _consolidation_state: dict[int, dict] = {}  # {user_id: {"msg_count": int, "last_check_ts": float}}
 
 
@@ -149,7 +149,9 @@ async def should_consolidate(user_id: int) -> bool:
     if total_tokens >= TOKEN_THRESHOLD:
         logging.info(
             "Consolidation triggered for user %d: %d tokens >= %d threshold",
-            user_id, total_tokens, TOKEN_THRESHOLD,
+            user_id,
+            total_tokens,
+            TOKEN_THRESHOLD,
         )
         return True
 
@@ -162,13 +164,15 @@ async def should_consolidate(user_id: int) -> bool:
         if oldest and (now - oldest) > timedelta(days=TEMPORAL_THRESHOLD_DAYS):
             logging.info(
                 "Consolidation triggered for user %d: oldest memory is %s days old",
-                user_id, (now - oldest).days,
+                user_id,
+                (now - oldest).days,
             )
             return True
     elif (now - last_ts) > timedelta(days=TEMPORAL_THRESHOLD_DAYS):
         logging.info(
             "Consolidation triggered for user %d: %s days since last consolidation",
-            user_id, (now - last_ts).days,
+            user_id,
+            (now - last_ts).days,
         )
         return True
 
@@ -255,7 +259,9 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
 
     logging.info(
         "Consolidation for user %d: %d raw memories -> %d persona facts",
-        user_id, len(raw_memories), len(facts),
+        user_id,
+        len(raw_memories),
+        len(facts),
     )
 
     # Store consolidated facts and delete raw memories in a transaction
@@ -292,13 +298,13 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
 
                     logging.info(
                         "Consolidation complete for user %d: deleted %d raw, inserted %d facts",
-                        user_id, len(raw_ids), len(facts),
+                        user_id,
+                        len(raw_ids),
+                        len(facts),
                     )
                     return len(facts)
             finally:
                 await clear_user_context(conn=conn)
     except Exception as e:
-        logging.error(
-            "Consolidation transaction failed for user %d: %s", user_id, e, exc_info=True
-        )
+        logging.error("Consolidation transaction failed for user %d: %s", user_id, e, exc_info=True)
         return 0

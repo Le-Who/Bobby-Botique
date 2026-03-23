@@ -125,6 +125,4 @@ async def memory_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 def register(application) -> None:
     """Register /memory command and callback handlers."""
     application.add_handler(CommandHandler("memory", memory_command))
-    application.add_handler(
-        CallbackQueryHandler(memory_callback_handler, pattern=r"^mem:")
-    )
+    application.add_handler(CallbackQueryHandler(memory_callback_handler, pattern=r"^mem:"))

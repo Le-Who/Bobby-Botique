@@ -55,9 +55,9 @@ class TestRecursiveChunk:
         if len(chunks) >= 2:
             # Last part of chunk[0] should appear in beginning of chunk[1]
             tail = chunks[0][-20:]
-            assert tail in chunks[1] or any(
-                word in chunks[1][:50] for word in tail.split()
-            ), "No overlap detected between consecutive chunks"
+            assert tail in chunks[1] or any(word in chunks[1][:50] for word in tail.split()), (
+                "No overlap detected between consecutive chunks"
+            )
 
 
 class TestHierarchicalChunk:

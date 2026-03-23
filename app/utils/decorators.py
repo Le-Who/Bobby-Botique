@@ -24,17 +24,27 @@ def authorized_only(func):
         else:
             set_request_id(f"tgcmd-{chat_id}-{getattr(update, 'update_id', 'na')}")
             # Protect against state leakage: clear volatile UI mode flags on any new command
-            if update.message and update.message.text and update.message.text.startswith("/") and getattr(context, "user_data", None) is not None:
-                    volatile_keys = [
-                        "rename_role_id", "rename_role_key",
-                        "edit_prompt_role_id", "edit_prompt_role_key",
-                        "edit_prompt_ai_role_id", "edit_prompt_ai_role_key",
-                        "edit_prompt_ai_current", "edit_prompt_ai_save_role_id",
-                        "edit_prompt_ai_save_role_key", "rename_conv_id",
-                        "edit_prompt_ai_preview",
-                    ]
-                    for key in volatile_keys:
-                        context.user_data.pop(key, None)
+            if (
+                update.message
+                and update.message.text
+                and update.message.text.startswith("/")
+                and getattr(context, "user_data", None) is not None
+            ):
+                volatile_keys = [
+                    "rename_role_id",
+                    "rename_role_key",
+                    "edit_prompt_role_id",
+                    "edit_prompt_role_key",
+                    "edit_prompt_ai_role_id",
+                    "edit_prompt_ai_role_key",
+                    "edit_prompt_ai_current",
+                    "edit_prompt_ai_save_role_id",
+                    "edit_prompt_ai_save_role_key",
+                    "rename_conv_id",
+                    "edit_prompt_ai_preview",
+                ]
+                for key in volatile_keys:
+                    context.user_data.pop(key, None)
         if not await is_authorized(user_id):
             logging.warning("Unauthorized access attempt by user %s to %s", user_id, func.__name__)
             if update.message:

@@ -106,16 +106,20 @@ async def get_due_subscriptions(current_hour_utc: int) -> list[dict[str, Any]]:
             """,
             (current_hour_utc,),
         )
-        return [
-            {
-                "user_id": row["user_id"],
-                "subscription_type": row["subscription_type"],
-                "timezone": row["timezone"],
-                "preferred_hour": row["preferred_hour"],
-                "last_sent_at": row["last_sent_at"],
-            }
-            for row in result
-        ] if result else []
+        return (
+            [
+                {
+                    "user_id": row["user_id"],
+                    "subscription_type": row["subscription_type"],
+                    "timezone": row["timezone"],
+                    "preferred_hour": row["preferred_hour"],
+                    "last_sent_at": row["last_sent_at"],
+                }
+                for row in result
+            ]
+            if result
+            else []
+        )
     except Exception as e:
         logger.error("Error getting due subscriptions: %s", e, exc_info=True)
         return []
@@ -178,11 +182,13 @@ async def _search_for_topics(topics: list[str]) -> list[dict[str, str]]:
                 results = await search_tavily(topic, max_results=2)
                 if results:
                     for r in results:
-                        articles.append({
-                            "title": r.get("title", ""),
-                            "content": r.get("content", "")[:500],
-                            "url": r.get("url", ""),
-                        })
+                        articles.append(
+                            {
+                                "title": r.get("title", ""),
+                                "content": r.get("content", "")[:500],
+                                "url": r.get("url", ""),
+                            }
+                        )
             except Exception as e:
                 logger.debug("Tavily search failed for topic '%s': %s", topic[:30], e)
                 continue
@@ -212,7 +218,7 @@ async def _generate_brief_summary(topics: list[str], articles: list[dict[str, st
         prompt = f"""Create a concise morning intelligence brief (3-5 bullet points) based on:
 
 User's recent topics of interest:
-{chr(10).join(f'- {t}' for t in topics)}
+{chr(10).join(f"- {t}" for t in topics)}
 
 {articles_text}
 

@@ -233,6 +233,7 @@ async def run_bot_with_retry():
 
         # Memory management commands (/memory, inline delete callbacks)
         from app.handlers import memory_commands
+
         memory_commands.register(application)
 
         application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
@@ -306,8 +307,8 @@ async def run_bot_with_retry():
             if application.job_queue:
                 application.job_queue.run_repeating(
                     check_and_send_briefs,
-                    interval=3600,   # Every hour
-                    first=60,        # First run 60s after boot
+                    interval=3600,  # Every hour
+                    first=60,  # First run 60s after boot
                     name="briefs_scheduler",
                 )
                 logging.info("Scheduled briefs hourly job registered")

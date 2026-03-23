@@ -115,6 +115,7 @@ def _hard_split(text: str, max_chars: int, overlap_chars: int) -> list[str]:
 @dataclass
 class HierarchicalChunk:
     """A parent chunk containing child chunks for relevance scoring."""
+
     parent: str
     children: list[str]
 

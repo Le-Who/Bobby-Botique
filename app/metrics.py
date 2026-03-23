@@ -217,7 +217,7 @@ class MetricsCollector:
                     if d == today_str and data["request_count"] > 0
                 ]
                 # Reset per-user counters
-                for (d, uid), data in self._user_daily.items():
+                for (d, _uid), data in self._user_daily.items():
                     if d == today_str and data["request_count"] > 0:
                         data["request_count"] = 0
                         data["model_usage"] = {}

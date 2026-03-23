@@ -107,7 +107,9 @@ async def _handle_regular_chat(
                     if memory_xml:
                         system_instruction = system_instruction + "\n\n" + memory_xml
                     _memories_injected = len(memories)
-                    logging.info("Injected %d memories into system_instruction for user %s", _memories_injected, user_id)
+                    logging.info(
+                        "Injected %d memories into system_instruction for user %s", _memories_injected, user_id
+                    )
         except Exception as mem_err:
             logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
 

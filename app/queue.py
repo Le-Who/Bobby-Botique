@@ -46,10 +46,10 @@ class Task:
 
 
 # ── Redis key constants ─────────────────────────────────────────────────
-_QUEUE_PREFIX = "gemaibotv2:queue"             # List per priority: gemaibotv2:queue:4, :3, :2, :1
-_PROCESSING_KEY = "gemaibotv2:processing"      # List of task JSONs currently being processed
-_TASK_HASH_PREFIX = "gemaibotv2:task"           # Hash per task: gemaibotv2:task:{id}
-_POLL_INTERVAL = 0.5                            # seconds between RPOP polls
+_QUEUE_PREFIX = "gemaibotv2:queue"  # List per priority: gemaibotv2:queue:4, :3, :2, :1
+_PROCESSING_KEY = "gemaibotv2:processing"  # List of task JSONs currently being processed
+_TASK_HASH_PREFIX = "gemaibotv2:task"  # Hash per task: gemaibotv2:task:{id}
+_POLL_INTERVAL = 0.5  # seconds between RPOP polls
 
 
 def _queue_key(priority: TaskPriority) -> str:
@@ -58,21 +58,23 @@ def _queue_key(priority: TaskPriority) -> str:
 
 def _task_to_json(task: Task) -> str:
     """Serialize a Task to JSON for Redis storage."""
-    return json.dumps({
-        "id": task.id,
-        "user_id": task.user_id,
-        "task_type": task.task_type,
-        "data": task.data,
-        "priority": task.priority.value,
-        "status": task.status.value,
-        "created_at": task.created_at.isoformat(),
-        "started_at": task.started_at.isoformat() if task.started_at else None,
-        "completed_at": task.completed_at.isoformat() if task.completed_at else None,
-        "result": task.result,
-        "error": task.error,
-        "retry_count": task.retry_count,
-        "max_retries": task.max_retries,
-    })
+    return json.dumps(
+        {
+            "id": task.id,
+            "user_id": task.user_id,
+            "task_type": task.task_type,
+            "data": task.data,
+            "priority": task.priority.value,
+            "status": task.status.value,
+            "created_at": task.created_at.isoformat(),
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+            "result": task.result,
+            "error": task.error,
+            "retry_count": task.retry_count,
+            "max_retries": task.max_retries,
+        }
+    )
 
 
 def _task_from_json(raw: str | bytes) -> Task:
@@ -100,6 +102,7 @@ def _task_from_json(raw: str | bytes) -> Task:
 def _get_redis():
     """Lazy import to avoid circular dependencies with cache.py."""
     from app.cache import redis_client
+
     return redis_client
 
 
@@ -270,9 +273,7 @@ class TaskQueue:
 
         # Fallback to in-memory queue
         try:
-            await asyncio.wait_for(
-                self._fallback_queue.put((-priority.value, task_id)), timeout=2.0
-            )
+            await asyncio.wait_for(self._fallback_queue.put((-priority.value, task_id)), timeout=2.0)
         except TimeoutError:
             async with self._lock:
                 self.tasks.pop(task_id, None)
@@ -309,9 +310,7 @@ class TaskQueue:
                 try:
                     # Poll priority lists from highest (4=URGENT) to lowest (1=LOW)
                     for prio_val in (4, 3, 2, 1):
-                        raw = await redis.rpoplpush(
-                            f"{_QUEUE_PREFIX}:{prio_val}", _PROCESSING_KEY
-                        )
+                        raw = await redis.rpoplpush(f"{_QUEUE_PREFIX}:{prio_val}", _PROCESSING_KEY)
                         if raw:
                             task = _task_from_json(raw)
                             return task

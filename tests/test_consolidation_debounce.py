@@ -18,8 +18,10 @@ import pytest
 
 # ── Mock all transitive deps of memory_consolidation before import ────
 for mod_name in (
-    "google", "google.generativeai",
-    "app.database", "app.repos.db_helpers",
+    "google",
+    "google.generativeai",
+    "app.database",
+    "app.repos.db_helpers",
 ):
     sys.modules.setdefault(mod_name, MagicMock())
 

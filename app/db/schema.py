@@ -10,37 +10,39 @@ import logging
 
 # Every table the application depends on.  Kept in sync with 000_init_schema.sql
 # and subsequent CREATE TABLE migrations.
-EXPECTED_TABLES = frozenset({
-    # Core (000_init_schema)
-    "users",
-    "chats",
-    "roles",
-    "user_roles",
-    "conversations",
-    "conversation_messages",
-    "api_keys",
-    "key_usage",
-    "metrics",
-    "error_logs",
-    "tavily_api_keys",
-    "tavily_key_usage",
-    "openrouter_api_keys",
-    "openrouter_key_usage",
-    "key_model_status",
-    "user_documents",
-    "user_state",
-    "feedback",
-    # Added by later migrations / 018 backfill
-    "user_metrics",
-    "model_configuration",
-    "active_chat_messages",
-    "long_term_memory",
-    "group_chats",
-    "group_members",
-    "group_messages",
-    # Infrastructure
-    "schema_migrations",
-})
+EXPECTED_TABLES = frozenset(
+    {
+        # Core (000_init_schema)
+        "users",
+        "chats",
+        "roles",
+        "user_roles",
+        "conversations",
+        "conversation_messages",
+        "api_keys",
+        "key_usage",
+        "metrics",
+        "error_logs",
+        "tavily_api_keys",
+        "tavily_key_usage",
+        "openrouter_api_keys",
+        "openrouter_key_usage",
+        "key_model_status",
+        "user_documents",
+        "user_state",
+        "feedback",
+        # Added by later migrations / 018 backfill
+        "user_metrics",
+        "model_configuration",
+        "active_chat_messages",
+        "long_term_memory",
+        "group_chats",
+        "group_members",
+        "group_messages",
+        # Infrastructure
+        "schema_migrations",
+    }
+)
 
 
 async def create_tables(db_query):
@@ -51,9 +53,7 @@ async def create_tables(db_query):
     warnings for any that are missing so operators can investigate.
     """
     try:
-        rows = await db_query(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-        )
+        rows = await db_query("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
         existing = {row["tablename"] for row in rows}
         missing = EXPECTED_TABLES - existing
 
