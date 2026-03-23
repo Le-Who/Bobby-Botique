@@ -49,7 +49,7 @@ class Task:
 _QUEUE_PREFIX = "gemaibotv2:queue"  # List per priority: gemaibotv2:queue:4, :3, :2, :1
 _PROCESSING_KEY = "gemaibotv2:processing"  # List of task JSONs currently being processed
 _TASK_HASH_PREFIX = "gemaibotv2:task"  # Hash per task: gemaibotv2:task:{id}
-_POLL_INTERVAL = 0.5  # seconds between RPOP polls
+_IDLE_POLL_TIMEOUT = 30.0  # seconds — fallback poll when Event not fired
 
 
 def _queue_key(priority: TaskPriority) -> str:
@@ -124,6 +124,8 @@ class TaskQueue:
         # In-memory fallback queue (used when Redis unavailable)
         self._fallback_queue: asyncio.PriorityQueue = asyncio.PriorityQueue(maxsize=100)
         self._use_redis = False
+        # Event-driven wakeup: workers sleep on this Event instead of polling
+        self._work_available = asyncio.Event()
         # Initialize task handlers
         self._init_task_handlers()
 
@@ -266,6 +268,7 @@ class TaskQueue:
                 redis = _get_redis()
                 if redis:
                     await redis.lpush(_queue_key(priority), _task_to_json(task).encode())
+                    self._work_available.set()  # Wake idle workers
                     logging.info("Added task %s (type=%s, user=%s) to Redis queue", task_id, task_type, user_id)
                     return task_id
             except Exception as e:
@@ -280,6 +283,7 @@ class TaskQueue:
             logging.warning("Task queue put timeout. Rejecting task %s", task_id)
             return ""
 
+        self._work_available.set()  # Wake idle workers
         logging.info("Added task %s (type=%s, user=%s) to in-memory queue", task_id, task_type, user_id)
         return task_id
 
@@ -302,8 +306,13 @@ class TaskQueue:
 
             return False
 
-    async def _dequeue_task(self) -> Task | None:
-        """Dequeue a task from Redis (priority-ordered) or fallback queue."""
+    async def _dequeue_task(self) -> tuple[Task | None, bytes | None]:
+        """Dequeue a task from Redis (priority-ordered) or fallback queue.
+
+        Returns:
+            (task, original_json_bytes) — original_json_bytes is the raw Redis
+            value needed by _ack_task/_nack_task for exact LREM matching.
+        """
         if self._use_redis:
             redis = _get_redis()
             if redis:
@@ -313,101 +322,123 @@ class TaskQueue:
                         raw = await redis.rpoplpush(f"{_QUEUE_PREFIX}:{prio_val}", _PROCESSING_KEY)
                         if raw:
                             task = _task_from_json(raw)
-                            return task
+                            # Preserve original bytes for ack/nack (task fields mutate later)
+                            original = raw if isinstance(raw, bytes) else raw.encode()
+                            return task, original
                 except Exception as e:
                     logging.error("Redis dequeue failed: %s", e, exc_info=True)
-                return None
+                return None, None
 
         # Fallback: in-memory queue
         try:
             _, task_id = self._fallback_queue.get_nowait()
             async with self._lock:
-                return self.tasks.get(task_id)
+                return self.tasks.get(task_id), None
         except asyncio.QueueEmpty:
-            return None
+            return None, None
 
-    async def _ack_task(self, task: Task):
-        """Acknowledge task completion — remove from processing list."""
-        if self._use_redis:
+    async def _ack_task(self, original_json: bytes | None):
+        """Acknowledge task completion — remove from processing list.
+
+        Args:
+            original_json: The exact bytes returned by rpoplpush at dequeue time.
+                          Using the original (not re-serialized) bytes guarantees
+                          LREM will find and remove the correct entry.
+        """
+        if original_json and self._use_redis:
             redis = _get_redis()
             if redis:
                 try:
-                    task_json = _task_to_json(task).encode()
-                    await redis.lrem(_PROCESSING_KEY, 1, task_json)
+                    await redis.lrem(_PROCESSING_KEY, 1, original_json)
                 except Exception as e:
                     logging.debug("Redis ack cleanup: %s", e)
 
-    async def _nack_task(self, task: Task):
+    async def _nack_task(self, task: Task, original_json: bytes | None):
         """Return a failed task to the queue for retry."""
         if self._use_redis:
             redis = _get_redis()
             if redis:
                 try:
-                    # Remove from processing list
-                    old_json = _task_to_json(task).encode()
-                    await redis.lrem(_PROCESSING_KEY, 1, old_json)
+                    # Remove from processing list using original bytes
+                    if original_json:
+                        await redis.lrem(_PROCESSING_KEY, 1, original_json)
                     # Re-enqueue with updated state
                     task.status = TaskStatus.PENDING
                     await redis.lpush(_queue_key(task.priority), _task_to_json(task).encode())
+                    self._work_available.set()  # Wake workers for retry
                 except Exception as e:
                     logging.error("Redis nack failed: %s", e, exc_info=True)
         else:
             try:
                 await self._fallback_queue.put((-task.priority.value + 1, task.id))
+                self._work_available.set()  # Wake workers for retry
             except Exception:
                 pass
 
     async def _worker(self, worker_name: str):
-        """Worker that processes tasks from Redis or fallback queue."""
+        """Worker that processes tasks from Redis or fallback queue.
+
+        Uses asyncio.Event for wakeup instead of constant RPOP polling.
+        Workers sleep until add_task() signals _work_available, or until
+        a 30-second fallback timeout fires (catches crash-recovery and
+        external Redis enqueues).
+        """
         logging.info("Worker %s started", worker_name)
         while True:
             try:
-                task = await self._dequeue_task()
-                if task is None:
-                    # No work available — poll interval
-                    await asyncio.sleep(_POLL_INTERVAL)
-                    continue
-
-                # Check if cancelled
-                async with self._lock:
-                    cached = self.tasks.get(task.id)
-                    if cached and cached.status == TaskStatus.CANCELLED:
-                        await self._ack_task(task)
-                        continue
-
-                    # Update status
-                    task.status = TaskStatus.RUNNING
-                    task.started_at = datetime.now(tz=UTC)
-                    self.tasks[task.id] = task
-
-                logging.info("Worker %s processing task %s", worker_name, task.id)
-
+                # Wait for work signal or fallback timeout
                 try:
-                    result = await self._execute_task(task)
+                    await asyncio.wait_for(self._work_available.wait(), timeout=_IDLE_POLL_TIMEOUT)
+                except TimeoutError:
+                    pass  # Periodic fallback poll
 
+                # Drain all available tasks before going back to sleep
+                while True:
+                    task, original_json = await self._dequeue_task()
+                    if task is None:
+                        self._work_available.clear()  # Nothing left — reset signal
+                        break
+
+                    # Check if cancelled
                     async with self._lock:
-                        task.status = TaskStatus.COMPLETED
-                        task.completed_at = datetime.now(tz=UTC)
-                        task.result = result
+                        cached = self.tasks.get(task.id)
+                        if cached and cached.status == TaskStatus.CANCELLED:
+                            await self._ack_task(original_json)
+                            continue
+
+                        # Update status
+                        task.status = TaskStatus.RUNNING
+                        task.started_at = datetime.now(tz=UTC)
                         self.tasks[task.id] = task
 
-                    await self._ack_task(task)
-                    logging.info("Task %s completed successfully", task.id)
+                    logging.info("Worker %s processing task %s", worker_name, task.id)
 
-                except Exception as e:
-                    logging.error("Task %s failed: %s", task.id, e, exc_info=True)
+                    try:
+                        result = await self._execute_task(task)
 
-                    async with self._lock:
-                        task.error = str(e)
-                        task.retry_count += 1
-
-                        if task.retry_count < task.max_retries:
-                            await self._nack_task(task)
-                        else:
-                            task.status = TaskStatus.FAILED
+                        async with self._lock:
+                            task.status = TaskStatus.COMPLETED
                             task.completed_at = datetime.now(tz=UTC)
-                            await self._ack_task(task)
-                        self.tasks[task.id] = task
+                            task.result = result
+                            self.tasks[task.id] = task
+
+                        await self._ack_task(original_json)
+                        logging.info("Task %s completed successfully", task.id)
+
+                    except Exception as e:
+                        logging.error("Task %s failed: %s", task.id, e, exc_info=True)
+
+                        async with self._lock:
+                            task.error = str(e)
+                            task.retry_count += 1
+
+                            if task.retry_count < task.max_retries:
+                                await self._nack_task(task, original_json)
+                            else:
+                                task.status = TaskStatus.FAILED
+                                task.completed_at = datetime.now(tz=UTC)
+                                await self._ack_task(original_json)
+                            self.tasks[task.id] = task
 
             except asyncio.CancelledError:
                 break

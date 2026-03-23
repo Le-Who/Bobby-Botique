@@ -56,18 +56,19 @@ async def test_worker_success(task_queue):
     # Mock _execute_task to return a result
     task_queue._execute_task = AsyncMock(return_value={"success": True})
 
-    await task_queue.start()
+    with patch("app.queue._get_redis", return_value=None):
+        await task_queue.start()
 
-    task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
+        task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
 
-    # Wait for task completion
-    for _ in range(10):
-        task = await task_queue.get_task_status(task_id)
-        if task.status == TaskStatus.COMPLETED:
-            break
-        await asyncio.sleep(0.1)
+        # Wait for task completion (Event-based wakeup should be near-instant)
+        for _ in range(20):
+            task = await task_queue.get_task_status(task_id)
+            if task.status == TaskStatus.COMPLETED:
+                break
+            await asyncio.sleep(0.1)
 
-    await task_queue.stop()
+        await task_queue.stop()
 
     assert task.status == TaskStatus.COMPLETED
     assert task.result == {"success": True}
@@ -79,18 +80,19 @@ async def test_worker_failure_retry(task_queue):
     # Mock _execute_task to raise exception
     task_queue._execute_task = AsyncMock(side_effect=Exception("Test Error"))
 
-    await task_queue.start()
+    with patch("app.queue._get_redis", return_value=None):
+        await task_queue.start()
 
-    task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
+        task_id = await task_queue.add_task(user_id=1, task_type="test_task", data={"key": "value"})
 
-    # Wait for task failure (after retries)
-    for _ in range(50):  # 5 seconds max
-        task = await task_queue.get_task_status(task_id)
-        if task.status == TaskStatus.FAILED:
-            break
-        await asyncio.sleep(0.1)
+        # Wait for task failure (after retries) — Event wakeup + re-enqueue cycles
+        for _ in range(100):  # 10 seconds max
+            task = await task_queue.get_task_status(task_id)
+            if task.status == TaskStatus.FAILED:
+                break
+            await asyncio.sleep(0.1)
 
-    await task_queue.stop()
+        await task_queue.stop()
 
     assert task.status == TaskStatus.FAILED
     assert task.error == "Test Error"

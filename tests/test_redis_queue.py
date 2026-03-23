@@ -153,10 +153,11 @@ class TestTaskQueueRedis:
             queue = TaskQueue(max_workers=1)
             queue._use_redis = True
 
-            task = await queue._dequeue_task()
+            task, original_json = await queue._dequeue_task()
 
             assert task is not None
             assert task.id == "low-task"
+            assert original_json is not None
             assert call_count == 4  # Checked all 4 priority levels
 
     @pytest.mark.asyncio

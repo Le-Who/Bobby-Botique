@@ -146,7 +146,9 @@ class TestBriefGeneration:
         async def mock_db_query(query, params=None):
             nonlocal call_count
             call_count += 1
-            if "memory_items" in query:
+            if "long_term_memory" in query and "consolidated" in query:
+                return []  # No consolidated facts, triggers fallback
+            if "long_term_memory" in query and "user_intent" in query:
                 return mock_memory_rows
             return None
 

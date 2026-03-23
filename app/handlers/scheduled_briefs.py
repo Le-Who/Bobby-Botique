@@ -142,15 +142,21 @@ async def mark_sent(user_id: int, sub_type: str = "morning_brief") -> None:
 async def _get_user_topics(user_id: int) -> list[str]:
     """Extract recent discussion topics from user's LTM."""
     try:
+        # Prefer consolidated facts (already distilled by LLM)
         result = await db.db_query(
-            """
-            SELECT content FROM memory_items
-            WHERE user_id = $1
-            ORDER BY updated_at DESC
-            LIMIT 10
-            """,
+            "SELECT content FROM long_term_memory "
+            "WHERE user_id = $1 AND source_type = 'consolidated' "
+            "ORDER BY updated_at DESC LIMIT 5",
             (user_id,),
         )
+        # Fallback to raw user intents
+        if not result:
+            result = await db.db_query(
+                "SELECT content FROM long_term_memory "
+                "WHERE user_id = $1 AND source_type = 'user_intent' "
+                "ORDER BY updated_at DESC LIMIT 10",
+                (user_id,),
+            )
         if not result:
             return []
 
