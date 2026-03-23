@@ -1,5 +1,5 @@
 # Core bot dependencies
-python-telegram-bot>=20.7,<23.0
+python-telegram-bot[job-queue]>=20.7,<23.0
 google-genai>=0.3.0,<2.0.0
 httpx>=0.25.0,<1.0.0
 
@@ -27,7 +27,7 @@ Pillow>=9.5.0,<13.0.0
 tavily-python>=0.3.0,<1.0.0
 
 # Logging (pretty console output)
-rich>=13.0.0,<14.0.0
+rich>=13.0.0,<15.0.0
 
 # Performance (Linux/Docker only — 2-4× event loop throughput)
 uvloop>=0.19.0,<1.0.0; sys_platform != "win32"
