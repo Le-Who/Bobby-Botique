@@ -9,6 +9,8 @@ from tenacity import (
 )
 
 from app.config import settings
+from app.errors import InputSanitizationError
+from app.security import sanitize_input
 
 MAX_PAGE_CHARS = 15_000  # ~5K tokens
 
@@ -48,13 +50,17 @@ async def read_url(url: str, timeout: float = 10.0) -> str:
     Truncates content to MAX_PAGE_CHARS.
     """
     try:
-        content = await _fetch_jina(url, timeout)
+        sanitized_url = sanitize_input(url, input_type="url")
+        content = await _fetch_jina(sanitized_url, timeout)
 
         if len(content) > MAX_PAGE_CHARS:
             content = content[:MAX_PAGE_CHARS] + "\n\n[...truncated due to length]"
 
         return content
 
+    except InputSanitizationError as e:
+        logger.warning(f"Invalid or dangerous URL provided: {url} - {e}")
+        return f"[Error: Invalid or dangerous URL provided: {url}]"
     except httpx.TimeoutException:
         logger.warning(f"Timeout fetching URL {url} via Jina Reader")
         return f"[Error: Timeout reading URL {url}]"
