@@ -28,12 +28,33 @@ def _extract_message_content(msg: dict) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            text_parts = []
+            for p in content:
+                # ⚡ Bolt Optimization: Skip binary data and large payload dictionaries
+                # to prevent O(N) string allocation overhead during history extraction
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, dict) and any(k in p for k in ("inline_data", "image_url", "file_data")):
+                    continue
+                text_parts.append(str(p.get("text", p) if isinstance(p, dict) else p))
+            return " ".join(text_parts)
         return str(content)
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
+            text_parts = []
+            for p in parts:
+                # ⚡ Bolt Optimization: Skip binary data and large payload dictionaries
+                # to prevent O(N) string allocation overhead during history extraction
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, dict):
+                    if any(k in p for k in ("inline_data", "image_url", "file_data")):
+                        continue
+                    text_parts.append(str(p.get("text", p)))
+                else:
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
         return str(parts)
     return ""
 
