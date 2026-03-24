@@ -148,12 +148,25 @@ _login_limiter = SyncRateLimiter(max_requests=5, window_seconds=300)
 _api_limiter = SyncRateLimiter(max_requests=60, window_seconds=60)
 
 
+def _get_client_ip() -> str:
+    """
+    Securely resolve the client IP from the rightmost address in the
+    X-Forwarded-For header, ensuring accurate rate limiting and mitigating
+    reverse-proxy IP spoofing. Fallback to request.remote_addr.
+    """
+    xff = request.headers.get("X-Forwarded-For")
+    if xff:
+        # The rightmost IP is the one appended by the trusted reverse proxy
+        return xff.split(",")[-1].strip()
+    return request.remote_addr or "unknown"
+
+
 def rate_limit_api(f):
     """Rate-limit decorator for API endpoints (60 req/min per IP)."""
 
     @wraps(f)
     async def decorated(*args, **kwargs):
-        client_ip = request.remote_addr or "unknown"
+        client_ip = _get_client_ip()
         if not _api_limiter.check(client_ip):
             return jsonify({"error": "Rate limit exceeded"}), 429
         return await f(*args, **kwargs)
@@ -165,7 +178,7 @@ def rate_limit_api(f):
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
-    client_ip = request.remote_addr or "unknown"
+    client_ip = _get_client_ip()
 
     if request.method == "POST":
         # Check brute-force rate limit
