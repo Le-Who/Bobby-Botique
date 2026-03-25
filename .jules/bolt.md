@@ -5,3 +5,7 @@
 ## 2024-05-15 - Unsafe RLS with CTEs
 **Learning:** You cannot use `set_config` inside a Common Table Expression (CTE) to safely set Row Level Security (RLS) context for the main query. PostgreSQL does not guarantee that the CTE will be evaluated before the RLS policies on the main query's table scan, leading to unpredictable failures or bypassed security.
 **Action:** When optimizing database roundtrips involving RLS context (e.g., `set_user_context`), avoid CTEs. Look for opportunities to reduce sequential queries inside the transaction instead (e.g., using `LEFT JOIN`s or combining `UPDATE` statements).
+
+## 2024-05-18 - Avoid sequential database calls when gathering status data
+**Learning:** Sequential queries and fetching full object lists (like `get_user_documents`) just to get a `COUNT` leads to substantial DB serialization and memory overhead, notably increasing latency in UI handlers like `get_start_menu_content`.
+**Action:** When populating menus or dashboards with counts from independent sources, always execute them concurrently with `asyncio.gather()` and ensure underlying methods execute `COUNT(*)` queries (e.g., `get_user_document_stats()`) rather than fetching full rows.
