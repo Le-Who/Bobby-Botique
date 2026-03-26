@@ -13,6 +13,7 @@ from telegram.error import BadRequest, NetworkError
 from app.config import settings
 from app.core.agentic import AgenticResult, AgenticSearch
 from app.database import ChatState
+from app.errors import _TAG_PREFIX, is_error_message
 from app.handlers.ai_core import (
     _get_ai_response_with_routing,
     handle_ai_response_error,
@@ -87,8 +88,8 @@ async def _handle_qna_search(
 
     for attempt_idx, model in enumerate(fallback_chain):
         try:
+            logging.info("QnA search: trying model %s (attempt %d/%d)", model, attempt_idx + 1, len(fallback_chain))
             if attempt_idx > 0:
-                logging.info("QnA search: falling back to model %s (attempt %d)", model, attempt_idx + 1)
                 try:
                     await update_stage(placeholder_message, STAGES_SEARCH_QUICK, 0)
                 except (BadRequest, NetworkError):
@@ -107,7 +108,20 @@ async def _handle_qna_search(
                 enable_web_search=True,
             )
 
+            # Detect error-tagged responses (e.g., 429 quota error yielded
+            # mid-stream). stream_and_display returns success=True because
+            # the generator completed, but the text contains an error tag.
+            # Check for error tag ANYWHERE in text (not just at start) since
+            # partial real content may precede the error tag.
+            if final_answer and (_TAG_PREFIX in final_answer or is_error_message(final_answer)):
+                logging.warning(
+                    "QnA search: model %s returned error-tagged response, trying next model",
+                    model,
+                )
+                continue
+
             if success and final_answer and final_answer.strip():
+                logging.info("QnA search: model %s succeeded (%d chars)", model, len(final_answer))
                 break  # Success — exit fallback loop
             else:
                 logging.warning("QnA search: model %s returned empty/no-success, trying next", model)

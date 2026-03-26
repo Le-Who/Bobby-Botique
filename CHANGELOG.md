@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.61] - 2026-03-26 - QnA Search Fallback Fix & Model Logging (2 Changes)
+
+### 🐛 Bug Fix
+
+| Fix | File | Detail |
+|-----|------|--------|
+| 429 mid-stream error breaks fallback chain | `ai_search.py` | When Gemini streaming hit a 429 RESOURCE_EXHAUSTED error mid-stream (after AFC's first call succeeded), the error-tagged text was returned as `success=True` by `stream_and_display`. The fallback loop exited without trying the next model. Fix: detect error tag (`_TAG_PREFIX`) anywhere in `final_answer` and continue to next model in the fallback chain. |
+
+### 📡 Observability
+
+| Change | File | Detail |
+|--------|------|--------|
+| Model name in QnA logs | `ai_search.py` | All `_handle_qna_search` log lines now include the exact model name and attempt number (e.g., `QnA search: trying model gemini-3.1-flash-lite-preview (attempt 1/2)`). |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Tests | **1343 passed**, 0 failed |
+
+---
+
 ## [2.8.60] - 2026-03-26 - Google Search Grounding for Quick Search (1 Change)
 
 ### ⚡ Performance & Architecture
