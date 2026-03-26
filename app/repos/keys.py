@@ -82,7 +82,21 @@ class DailyKeyManager:
             DO UPDATE SET request_count = {self.usage_table}.request_count + 1
             RETURNING request_count;
         """
-        return await db_query(query, (key_hash, model_name, today))
+        result = await db_query(query, (key_hash, model_name, today))
+        # Structured observability: log threshold approach
+        if result:
+            count = result[0]["request_count"]
+            if count == 1:
+                logging.info(
+                    "KEY_EVENT key_first_use key=%s… model=%s provider=%s",
+                    key_hash[:8], model_name, self.keys_table,
+                )
+            elif count % 100 == 0:
+                logging.info(
+                    "KEY_EVENT key_usage_milestone key=%s… model=%s count=%d provider=%s",
+                    key_hash[:8], model_name, count, self.keys_table,
+                )
+        return result
 
     async def is_key_available(self, key_hash: str, model_name: str, daily_limit: int | None, conn=None) -> bool:
         """Check if a key is under its daily threshold."""
@@ -285,9 +299,19 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
     daily_limit = await get_model_daily_limit(model_name)
     if daily_limit:
         threshold = daily_limit * settings.LIMIT_THRESHOLD_PERCENT
+        usage_pct = (current_usage / daily_limit) * 100
 
         if current_usage >= threshold:
+            logging.warning(
+                "KEY_EVENT key_threshold_reached key=%s… model=%s usage=%d/%d (%.0f%%) — rotating",
+                key_hash[:8], model_name, current_usage, daily_limit, usage_pct,
+            )
             await invalidate_key_cache(model_name)
+        elif usage_pct >= 70:
+            logging.info(
+                "KEY_EVENT key_nearing_limit key=%s… model=%s usage=%d/%d (%.0f%%)",
+                key_hash[:8], model_name, current_usage, daily_limit, usage_pct,
+            )
 
 
 # ─── KeyStatusManager (per-model key health, DB-backed) ─────────────────────
@@ -411,6 +435,30 @@ class KeyStatusManager:
             "failure_count, last_error, updated_at "
             "FROM key_model_status ORDER BY updated_at DESC"
         )
+
+    async def get_health_summary(self) -> dict[str, Any]:
+        """Return a summary of key health for observability dashboard."""
+        statuses = await self.get_all_statuses()
+        active = sum(1 for s in statuses if s["status"] == "active")
+        suspended = sum(1 for s in statuses if s["status"] == "suspended")
+        total_failures = sum(s.get("failure_count", 0) for s in statuses)
+        return {
+            "total_keys_tracked": len(statuses),
+            "active": active,
+            "suspended": suspended,
+            "total_failures": total_failures,
+            "keys": [
+                {
+                    "key": s["key_hash"][:8] + "…",
+                    "model": s["model_name"],
+                    "status": s["status"],
+                    "failures": s.get("failure_count", 0),
+                    "suspended_until": s["suspended_until"].isoformat() if s.get("suspended_until") else None,
+                    "last_error": s.get("last_error", "")[:100],
+                }
+                for s in statuses[:20]  # Cap at 20 for dashboard
+            ],
+        }
 
 
 # Singleton

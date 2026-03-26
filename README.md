@@ -21,8 +21,16 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Distributed Concurrency**: Multi-tier Redis-backed global semaphores (heavy and ultra-heavy limits) to prevent API quota starvation in multi-replica deployments while guaranteeing isolation between standard queries and intensive Agentic research loops.
 - **Resilient Operations**: Instance-based background task manager with exponential backoff, bare-coroutine safety guard, and admin alerting hooks. Atomic metrics persistence with delta-based increments prevents data loss on restart. Prompt registry validates required variables at render time to prevent silent placeholder leaks.
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
+- **Adaptive Thinking Budget**: Automatic `thinking_level` selection via 14 regex heuristics + context-aware escalation. Simple greetings get `low`, code/math/multi-step queries get `high`. User explicit preference always overrides.
+- **Conversation Branching**: Fork current chat into a "what-if" branch via snapshot. Explore alternative conversation paths without losing the main thread. One-click restore to the original context.
+- **Smart Context Window**: Model-specific token budgets (flash-lite: 32K, flash/pro: 128K, ultra: 200K) with automatic context trimming and LLM-backed summarization of dropped history.
+- **Proactive Follow-ups**: DB-persisted user reminders (`/remind` command) with 60s poll-based delivery. Context-aware: captures conversation snapshot at creation time for contextual follow-up generation.
 - **Context Summarization**: Automatic token compression for large chats.
-- **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`) and system health overviews.
+- **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`), system health overviews, and batch API (`/api/dashboard` — 8 metrics in 1 RTT).
+- **Key Rotation Observability**: Structured `KEY_EVENT` logging for usage milestones, near-limit warnings (70%), threshold rotations, and a `get_health_summary()` dashboard API with per-key status snapshots.
+- **Structured Error Classification**: O(1) type-based error classification via `ErrorCode` enum (17 exception types + 8 HTTP status codes), replacing fragile emoji/text pattern matching. Full error-to-user-message mapping.
+- **Graceful Shutdown**: Two-phase drain (pending state persists + task queue) before resource cleanup, preventing data loss during deploys.
+- **Streaming Reliability**: Exponential backoff retry (0.5→1→2s + jitter) for Telegram rate-limit errors with adaptive debounce escalation (auto-scales up to 3s).
 - **Security & GDPR**: CSRF-protected dashboard authentication, brute-force rate limiting (60 req/min/IP on all API endpoints), API key masking in status endpoints, and Telegram commands for data export (`/mydata`) and deletion (`/deleteme`).
 
 ## Non-Goals / Limitations

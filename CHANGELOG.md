@@ -3,6 +3,64 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.62] - 2026-03-27 - Architectural Refactoring & New Features (12 Changes)
+
+### ✨ New Features
+
+| Feature | Files | Detail |
+|---------|-------|--------|
+| Adaptive Thinking Budget | `thinking_classifier.py` [NEW], `ai_chat.py`, `config.py` | 14 regex heuristics (8 HIGH, 6 LOW) + context-aware escalation. `resolve_thinking_level()` auto-selects `low`/`medium`/`high` when user has no explicit preference. `ADAPTIVE_THINKING_ENABLED` toggle. |
+| Conversation Branching | `repos/branches.py` [NEW], `022_add_branches_and_reminders.sql` [NEW] | Fork chat history into a temporary "what-if" branch via `create_branch()` → `restore_branch()`. `conversation_branches` table with JSONB snapshot, RLS policies. |
+| Smart Context Window | `config.py`, `ai_chat.py` | `MODEL_CONTEXT_BUDGETS` maps model patterns to token budgets (flash-lite: 32K, flash/pro: 128K, ultra: 200K). Dynamic `token_budget` passed to `ContextAssembler.assemble()`. |
+| Proactive Follow-ups | `repos/reminders.py` [NEW], `022_add_branches_and_reminders.sql` [NEW] | DB-persisted user reminders with `trigger_at`, `prompt`, `context_history`. `get_pending_reminders()` for 60s poll-based delivery. `user_reminders` table with partial index on pending items. |
+
+### ⚡ Improvements
+
+| Improvement | Files | Detail |
+|-------------|-------|--------|
+| Streaming Reliability | `streaming.py` | `_retry_edit()` with 3-retry exponential backoff (0.5→1→2s + jitter) for Telegram 429/flood errors. Adaptive debounce escalation: `self._debounce_s *= 1.5` on rate-limit, capped at 3s. |
+| State Persistence Debounce | `state.py` | Replaced fire-and-forget `_schedule_persist` with 300ms debounced `TimerHandle` per user_id. Multiple rapid mutations → 1 DB write with final state. |
+| Error Classification Migration | `errors.py` | `classify_error_from_exception()` with O(1) type→ErrorCode lookup (17 types + MRO walk), `classify_error_from_status_code()` (8 HTTP codes), `_ERROR_CODE_MESSAGES` (16 entries). `user_friendly_error()` uses typed classification as primary path. |
+| Dashboard Batch API | `web.py` | `/api/dashboard` endpoint aggregates 8 metrics via `asyncio.gather()` with `_safe_fetch()` failure isolation. Replaces 8 frontend `fetch()` calls with 1 HTTP RTT. |
+| Key Rotation Observability | `repos/keys.py` | Structured `KEY_EVENT` logs: `key_first_use`, `key_usage_milestone` (every 100), `key_nearing_limit` (70%), `key_threshold_reached` (rotation). `get_health_summary()` dashboard endpoint. |
+| Agentic Source Dedup | `agentic.py`, `config.py` | `_normalize_url()` strips 16 tracking params, URL dedup in `search_web`, content truncation at `AGENTIC_PAGE_CONTENT_LIMIT` (8192 chars). |
+| Graceful Shutdown | `bot.py` | Drains pending `_pending_persists` (5s timeout) + task queue (10s timeout) before closing DB/Redis. |
+
+### 🗄️ Database Migrations
+
+| Migration | Tables |
+|-----------|--------|
+| `022_add_branches_and_reminders.sql` | `conversation_branches` (branching snapshots) + `user_reminders` (follow-ups). Indexes, FK constraints, RLS policies. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint (modified files) | 0 errors |
+| Pre-existing lint | 2 SIM108 in `document_processor.py` (unrelated) |
+
+### Files Changed (15 files, 4 new)
+
+| File | Change |
+|------|--------|
+| `app/thinking_classifier.py` | [NEW] 14-pattern classifier |
+| `app/repos/branches.py` | [NEW] Conversation branching CRUD |
+| `app/repos/reminders.py` | [NEW] User reminders CRUD |
+| `scripts/migrations/022_add_branches_and_reminders.sql` | [NEW] DB migration |
+| `app/errors.py` | Type-based error classification |
+| `app/repos/keys.py` | KEY_EVENT logging + `get_health_summary()` |
+| `app/streaming.py` | `_retry_edit()` + adaptive debounce |
+| `app/state.py` | Debounced persistence |
+| `app/web.py` | `/api/dashboard` batch endpoint |
+| `app/config.py` | `ADAPTIVE_THINKING_ENABLED`, `AGENTIC_PAGE_CONTENT_LIMIT`, `MODEL_CONTEXT_BUDGETS` |
+| `app/handlers/ai_chat.py` | Thinking level + context budget integration |
+| `app/core/agentic.py` | URL normalization + dedup + truncation |
+| `app/db/schema.py` | +2 tables in `EXPECTED_TABLES` |
+| `bot.py` | Graceful shutdown drain logic |
+| `README.md` | Updated feature list |
+
+---
+
 ## [2.8.61] - 2026-03-26 - QnA Search Fallback Fix & Observability (5 Changes)
 
 ### 🐛 Bug Fixes

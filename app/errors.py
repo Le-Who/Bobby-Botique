@@ -354,10 +354,111 @@ NETWORK_ERROR_MSG = tag_error(ErrorCode.NETWORK, "🌐 Ошибка сети. П
 # ERROR CLASSIFICATION FUNCTIONS — code-based with text fallback
 # =============================================================================
 
+# Exception type → ErrorCode mapping (O(1) classification)
+_EXCEPTION_TYPE_MAP: dict[type, ErrorCode] = {
+    DatabaseConnectionError: ErrorCode.TIMEOUT,
+    DatabaseRateLimitError: ErrorCode.RATE_LIMIT,
+    DatabaseQueryError: ErrorCode.PROCESSING,
+    DatabasePoolError: ErrorCode.TIMEOUT,
+    ConnectionTimeoutError: ErrorCode.TIMEOUT,
+    ServiceConnectionRefusedError: ErrorCode.NETWORK,
+    CircuitBreakerOpenError: ErrorCode.OVERLOADED,
+    APIQuotaExceededError: ErrorCode.QUOTA_EXCEEDED,
+    APIInvalidResponseError: ErrorCode.INVALID_RESPONSE,
+    GeminiAPIError: ErrorCode.PROCESSING,
+    TavilyAPIError: ErrorCode.NETWORK,
+    NetworkError: ErrorCode.NETWORK,
+    InputValidationError: ErrorCode.INVALID_REQUEST,
+    DocumentProcessingError: ErrorCode.DOCUMENT,
+    UserLimitExceededError: ErrorCode.USER_RATE_LIMIT,
+    DecryptionError: ErrorCode.DECRYPTION_FAILED,
+    AuthenticationError: ErrorCode.INVALID_KEY,
+}
+
+# HTTP status code → ErrorCode mapping
+_STATUS_CODE_MAP: dict[int, ErrorCode] = {
+    429: ErrorCode.RATE_LIMIT,
+    503: ErrorCode.OVERLOADED,
+    502: ErrorCode.NETWORK,
+    504: ErrorCode.TIMEOUT,
+    401: ErrorCode.INVALID_KEY,
+    403: ErrorCode.INVALID_KEY,
+    400: ErrorCode.INVALID_REQUEST,
+    500: ErrorCode.PROCESSING,
+}
+
+# ErrorCode → user-facing message
+_ERROR_CODE_MESSAGES: dict[ErrorCode, str] = {
+    ErrorCode.TIMEOUT: TIMEOUT_ERROR,
+    ErrorCode.OVERLOADED: OVERLOADED_ERROR,
+    ErrorCode.NETWORK: NETWORK_ERROR_MSG,
+    ErrorCode.RATE_LIMIT: QUOTA_ERROR,
+    ErrorCode.QUOTA_EXCEEDED: QUOTA_ERROR,
+    ErrorCode.INVALID_KEY: tag_error(ErrorCode.INVALID_KEY, "🔑 Ошибка API ключа. Обратитесь к администратору."),
+    ErrorCode.KEYS_EXHAUSTED: tag_error(ErrorCode.KEYS_EXHAUSTED, "🔑 Все ключи исчерпаны. Попробуйте позже."),
+    ErrorCode.DECRYPTION_FAILED: tag_error(ErrorCode.DECRYPTION_FAILED, "🔐 Ошибка дешифровки ключей."),
+    ErrorCode.NO_KEYS: tag_error(ErrorCode.NO_KEYS, "⚙️ Провайдер не настроен."),
+    ErrorCode.INVALID_REQUEST: tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос."),
+    ErrorCode.INVALID_RESPONSE: tag_error(ErrorCode.INVALID_RESPONSE, "❌ Некорректный ответ от API."),
+    ErrorCode.EMPTY_RESPONSE: tag_error(ErrorCode.EMPTY_RESPONSE, "❌ Пустой ответ от модели."),
+    ErrorCode.PROCESSING: PROCESSING_ERROR,
+    ErrorCode.DOCUMENT: DOCUMENT_ERROR,
+    ErrorCode.USER_RATE_LIMIT: tag_error(ErrorCode.USER_RATE_LIMIT, "⏱️ Превышен лимит запросов. Подождите."),
+    ErrorCode.GENERIC: GENERIC_ERROR,
+}
+
+
+def classify_error_from_exception(exc: Exception) -> ErrorCode:
+    """Classify an exception to an ErrorCode by type (O(1) MRO walk).
+
+    Falls back to string-based detection for unregistered exception types.
+    """
+    # Direct type match
+    exc_type = type(exc)
+    if exc_type in _EXCEPTION_TYPE_MAP:
+        return _EXCEPTION_TYPE_MAP[exc_type]
+
+    # MRO walk for subclass matches
+    for base in exc_type.__mro__:
+        if base in _EXCEPTION_TYPE_MAP:
+            return _EXCEPTION_TYPE_MAP[base]
+
+    # HTTP status code extraction (google.genai.errors.APIError, httpx, etc.)
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    if isinstance(status, int) and status in _STATUS_CODE_MAP:
+        return _STATUS_CODE_MAP[status]
+
+    # String fallback for unknown exception types
+    msg = str(exc).lower()
+    if "timeout" in msg or "timed out" in msg:
+        return ErrorCode.TIMEOUT
+    if "503" in msg or "overloaded" in msg or "unavailable" in msg:
+        return ErrorCode.OVERLOADED
+    if "429" in msg or "rate" in msg:
+        return ErrorCode.RATE_LIMIT
+    if "quota" in msg or "limit" in msg:
+        return ErrorCode.QUOTA_EXCEEDED
+
+    return ErrorCode.GENERIC
+
+
+def classify_error_from_status_code(status_code: int) -> ErrorCode:
+    """Classify an HTTP status code to an ErrorCode."""
+    return _STATUS_CODE_MAP.get(status_code, ErrorCode.GENERIC)
+
 
 def user_friendly_error(raw_error: Exception | str) -> str:
-    """Возвращает короткое дружелюбное сообщение для пользователя."""
-    text = str(raw_error) if isinstance(raw_error, Exception) else raw_error
+    """Возвращает короткое дружелюбное сообщение для пользователя.
+
+    Uses typed exception classification first, falls back to text matching.
+    """
+    # Type-based classification (primary path)
+    if isinstance(raw_error, Exception):
+        code = classify_error_from_exception(raw_error)
+        return _ERROR_CODE_MESSAGES.get(code, GENERIC_ERROR)
+
+    # Text-based classification (legacy path)
+    text = raw_error
     low = (text or "").lower()
     if any(x in low for x in ["503", "unavailable", "overloaded"]):
         return OVERLOADED_ERROR

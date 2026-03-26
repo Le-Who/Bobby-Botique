@@ -161,21 +161,43 @@ async def _persist(state: UserState) -> None:
         logging.warning("Could not persist state for %s: %s", state._user_id, e)
 
 
-def _schedule_persist(state: UserState) -> None:
-    """Schedule a non-blocking persistence task on the running event loop."""
+_PERSIST_DEBOUNCE_SEC = 0.3  # 300ms debounce window
+_pending_persists: dict[int, asyncio.TimerHandle] = {}
 
-    def _on_done(task):
+
+def _schedule_persist(state: UserState) -> None:
+    """Schedule a debounced persistence task on the running event loop.
+
+    If called multiple times for the same user within ``_PERSIST_DEBOUNCE_SEC``,
+    only the last call actually triggers a DB write. This eliminates race
+    conditions where rapid sequential mutations could cause stale state to
+    be written after newer state.
+    """
+
+    def _fire() -> None:
+        _pending_persists.pop(state._user_id, None)
+        task = loop.create_task(_persist(state))
+        task.add_done_callback(_on_done)
+
+    def _on_done(task: asyncio.Task) -> None:
         exc = task.exception() if not task.cancelled() else None
         if exc:
             logging.warning("Persist task failed for user %s: %s", state._user_id, exc)
 
     try:
         loop = asyncio.get_running_loop()
-        task = loop.create_task(_persist(state))
-        task.add_done_callback(_on_done)
     except RuntimeError:
         # No running event loop (e.g. during tests) — skip persistence
-        pass
+        return
+
+    # Cancel any pending persist for this user
+    old_handle = _pending_persists.pop(state._user_id, None)
+    if old_handle is not None:
+        old_handle.cancel()
+
+    # Schedule new debounced persist
+    handle = loop.call_later(_PERSIST_DEBOUNCE_SEC, _fire)
+    _pending_persists[state._user_id] = handle
 
 
 # =============================================================================

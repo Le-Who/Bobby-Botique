@@ -166,6 +166,38 @@ async def _cleanup_application(application, reason: str = "cleanup"):
     except Exception:
         pass  # Best-effort
 
+    # ── Drain pending state persists ──────────────────────────────────────
+    # Flush all debounced _schedule_persist timers so no user state is lost.
+    try:
+        from app.state import USER_STATES, _pending_persists, _persist
+
+        if _pending_persists:
+            logging.info("Draining %d pending state persists...", len(_pending_persists))
+            # Cancel all timers and flush immediately
+            tasks = []
+            for user_id, handle in list(_pending_persists.items()):
+                handle.cancel()
+                if user_id in USER_STATES:
+                    state = USER_STATES[user_id]
+                    tasks.append(_persist(state))
+            _pending_persists.clear()
+            if tasks:
+                await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=5.0,
+                )
+                logging.info("Flushed %d state persists on shutdown", len(tasks))
+    except Exception as e:
+        logging.warning("State drain on shutdown failed: %s", e)
+
+    # ── Stop task queue (let running tasks finish) ────────────────────────
+    try:
+        await asyncio.wait_for(stop_task_queue(), timeout=10.0)
+    except TimeoutError:
+        logging.warning("Task queue drain timed out after 10s")
+    except Exception as e:
+        logging.warning("Task queue drain error: %s", e)
+
     try:
         if hasattr(application, "updater") and application.updater:
             await application.updater.stop()

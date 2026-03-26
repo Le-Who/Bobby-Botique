@@ -224,6 +224,53 @@ class StreamingWriter:
         self._debounce_s = EDIT_DEBOUNCE_S
         self._min_chunk = MIN_CHUNK_SIZE
 
+    @staticmethod
+    def _is_rate_limited(error: Exception) -> bool:
+        """Check if an error is a Telegram rate-limit (429 / flood control)."""
+        msg = str(error).lower()
+        return "429" in msg or "flood" in msg or "too many requests" in msg or "retry_after" in msg
+
+    async def _retry_edit(
+        self,
+        text: str,
+        parse_mode: str | None,
+        *,
+        reply_markup: object | None = None,
+        max_retries: int = 3,
+    ) -> bool:
+        """Edit message with exponential backoff on rate-limit errors.
+
+        Returns True if the edit succeeded, False if all retries exhausted.
+        """
+        for attempt in range(max_retries):
+            try:
+                await self._adapter.edit_message(
+                    text, parse_mode=parse_mode, reply_markup=reply_markup,
+                )  # type: ignore[arg-type]
+                return True
+            except Exception as e:
+                err_str = str(e).lower()
+                if "not modified" in err_str:
+                    return True  # Not an error — text unchanged
+                if self._is_rate_limited(e) and attempt < max_retries - 1:
+                    backoff = (0.5 * (2 ** attempt)) + random.uniform(0, 0.3)
+                    logging.debug(
+                        "Rate-limited on edit (attempt %d/%d), backing off %.2fs",
+                        attempt + 1, max_retries, backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    # Adaptive debounce: escalate interval to reduce future pressure
+                    self._debounce_s = min(self._debounce_s * 1.5, 3.0)
+                    continue
+                # Non-retriable error
+                if attempt == max_retries - 1 or not self._is_rate_limited(e):
+                    logging.warning(
+                        "Streaming edit failed (attempt %d/%d): %s",
+                        attempt + 1, max_retries, e,
+                    )
+                    return False
+        return False
+
     def _format_for_telegram(self, text: str) -> tuple[str, str | None]:
         """Format text and sanitize HTML in one step.
 
@@ -393,14 +440,15 @@ class StreamingWriter:
                     await self._flush(final=True, reply_markup=reply_markup, _depth=_depth + 1)
                     return
 
-            await self._adapter.edit_message(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)  # type: ignore[arg-type]
-            self._last_edit_time = time.monotonic()
-            self._pending_chars = 0
-            self._edit_count += 1
+            success = await self._retry_edit(
+                formatted_text, parse_mode, reply_markup=reply_markup,
+            )
+            if success:
+                self._last_edit_time = time.monotonic()
+                self._pending_chars = 0
+                self._edit_count += 1
         except Exception as e:
-            # "Message is not modified" is expected if text hasn't changed enough
-            if "not modified" not in str(e).lower():
-                logging.warning("Streaming edit failed (attempt %d): %s", self._edit_count, e)
+            logging.warning("Streaming flush unexpected error: %s", e)
 
     async def _overflow_to_new_message(self) -> None:
         """Finalize current message and create new placeholder for continued streaming."""

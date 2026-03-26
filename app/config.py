@@ -176,6 +176,17 @@ class Settings(BaseModel):
     AGENTIC_MAX_TOKENS: int = 100_000  # Token budget cap for the entire agentic session
     AGENTIC_TIMEOUT_SECONDS: int = 90  # Wall-clock timeout for the agentic loop
     AGENTIC_MODEL: str = ""  # Defaults to RESEARCH_MODEL if empty
+    AGENTIC_PAGE_CONTENT_LIMIT: int = 8192  # Max chars per page (truncation threshold)
+    ADAPTIVE_THINKING_ENABLED: bool = True  # Auto-resolve thinking_level when user has no preference
+
+    # --- CONTEXT BUDGETS (per-model token limits) ---
+    MODEL_CONTEXT_BUDGETS: dict[str, int] = {
+        "flash-lite": 32_000,
+        "flash": 128_000,
+        "pro": 128_000,
+        "ultra": 200_000,
+    }
+    DEFAULT_CONTEXT_BUDGET: int = 128_000
 
     # --- SAFETY ---
     SAFETY_SETTINGS: list[dict[str, str]] = [
@@ -234,6 +245,8 @@ def load_settings() -> Settings:
             "AGENTIC_MAX_TOKENS": int(os.getenv("AGENTIC_MAX_TOKENS", "100000")),
             "AGENTIC_TIMEOUT_SECONDS": int(os.getenv("AGENTIC_TIMEOUT_SECONDS", "90")),
             "AGENTIC_MODEL": os.getenv("AGENTIC_MODEL", ""),
+            "AGENTIC_PAGE_CONTENT_LIMIT": int(os.getenv("AGENTIC_PAGE_CONTENT_LIMIT", "8192")),
+            "ADAPTIVE_THINKING_ENABLED": os.getenv("ADAPTIVE_THINKING_ENABLED", "true").lower() == "true",
         }
 
         # Validation: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей

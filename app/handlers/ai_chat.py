@@ -117,12 +117,21 @@ async def _handle_regular_chat(
     # Compose system instruction first (needed for budget calculation)
     system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
 
+    # Resolve model-specific token budget for context assembly
+    context_budget = settings.DEFAULT_CONTEXT_BUDGET
+    model_lower = (model_used or "").lower()
+    for pattern, budget in settings.MODEL_CONTEXT_BUDGETS.items():
+        if pattern in model_lower:
+            context_budget = budget
+            break
+
     # Assemble context within token budget
     assembled = assembler.assemble(
         history=chat_state.history,
         user_message=user_message,
         system_instruction=system_instruction,
         existing_summary=existing_summary,
+        token_budget=context_budget,
     )
 
     # Update chat state with assembled context
@@ -213,6 +222,17 @@ async def _handle_regular_chat(
 
     stop_heartbeat(placeholder_message.message_id)
 
+    # ── Resolve thinking level (adaptive or user-configured) ────────────
+    effective_thinking_level = chat_state.thinking_level
+    if settings.ADAPTIVE_THINKING_ENABLED:
+        from app.thinking_classifier import resolve_thinking_level
+
+        effective_thinking_level = resolve_thinking_level(
+            user_level=chat_state.thinking_level,
+            message=user_message or "",
+            history=chat_state.history,
+        )
+
     from app.streaming import stream_and_display
 
     response_text, success, stream_last_msg, actual_tokens = await stream_and_display(
@@ -220,7 +240,7 @@ async def _handle_regular_chat(
         model_name=model_used,
         history=chat_state.history,
         system_instruction=system_instruction,
-        thinking_level=chat_state.thinking_level,
+        thinking_level=effective_thinking_level,
         user_id=user_id,
         bot=placeholder_message.get_bot(),
         chat_id=placeholder_message.chat_id,

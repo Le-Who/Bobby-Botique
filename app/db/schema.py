@@ -39,6 +39,9 @@ EXPECTED_TABLES = frozenset(
         "group_chats",
         "group_members",
         "group_messages",
+        # Feature tables (022)
+        "conversation_branches",
+        "user_reminders",
         # Infrastructure
         "schema_migrations",
     }

@@ -8,7 +8,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from google.genai import types
 
@@ -21,6 +21,41 @@ from app.utils.stage_indicators import STAGES_AGENTIC_RESEARCH
 from app.web_reader import read_url
 
 logger = logging.getLogger(__name__)
+
+# ── URL normalization for deduplication ──────────────────────────────────────
+_TRACKING_PARAMS = frozenset({
+    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+    "fbclid", "gclid", "dclid", "msclkid",
+    "ref", "source", "share", "mc_cid", "mc_eid",
+    "_ga", "_gl", "yclid", "spm",
+})
+
+
+def _normalize_url(url: str) -> str:
+    """Normalize URL for deduplication.
+
+    Strips tracking-only query parameters (utm_*, fbclid, etc.) while
+    preserving semantically significant params (article IDs, page numbers).
+    """
+    try:
+        parsed = urlparse(url)
+        path = (parsed.path or "/").rstrip("/") or "/"
+        hostname = (parsed.hostname or "").lower()
+        if hostname.startswith("www."):
+            hostname = hostname[4:]
+        # Parse and filter query params
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        filtered = {
+            k: sorted(v) for k, v in params.items()
+            if k.lower() not in _TRACKING_PARAMS
+        }
+        canon_query = urlencode(filtered, doseq=True)
+        scheme = parsed.scheme or "https"
+        base = f"{scheme}://{hostname}{path}"
+        return f"{base}?{canon_query}" if canon_query else base
+    except Exception:
+        return url
+
 
 # ── Improvement 2: Page content cache (multi-layer) ──────────────────────────
 _page_cache: dict[str, str] = {}
@@ -219,6 +254,7 @@ class AgenticResult:
     answer: str
     total_tokens: int = 0
     llm_calls: int = 0
+    pages_deduplicated: int = 0
 
 
 class AgenticSearch:
@@ -333,13 +369,25 @@ class AgenticSearch:
                 results = await parallel_search(queries, user_id=user_id, chat_id=chat_id, max_results=10)
                 # Improvement 3: Enrich search results with quality metadata
                 results = _enrich_search_results(results)
-                # Track all seen URLs for citation validation
+                # Deduplicate results by normalized URL
                 if seen_urls is not None:
+                    unique_results = []
                     for r in results:
                         url = r.get("url")
-                        if url:
-                            seen_urls.add(url)
-                return {"results": results}
+                        if not url:
+                            unique_results.append(r)
+                            continue
+                        norm = _normalize_url(url)
+                        if norm not in seen_urls:
+                            seen_urls.add(norm)
+                            unique_results.append(r)
+                        else:
+                            logger.debug("Dedup: skipping %s (normalized: %s)", url[:80], norm[:80])
+                    dedup_count = len(results) - len(unique_results)
+                    if dedup_count:
+                        logger.info("Deduplicated %d/%d search results", dedup_count, len(results))
+                    results = unique_results
+                return {"results": results, "_dedup_count": dedup_count if seen_urls else 0}
 
             elif name == "read_page":
                 safe_args = args if isinstance(args, dict) else {}
@@ -361,6 +409,12 @@ class AgenticSearch:
                     return {"content": cached}
 
                 content = await read_url(url, timeout=12.0)
+
+                # Truncate content to limit token usage
+                limit = settings.AGENTIC_PAGE_CONTENT_LIMIT
+                if len(content) > limit:
+                    content = content[:limit] + f"\n\n[...truncated at {limit} chars. Full content at {url}]"
+                    logger.debug("Truncated page content from %s to %d chars", url[:60], limit)
 
                 # Cache the result at both levels
                 _set_cached_page(url, content)
@@ -432,12 +486,14 @@ class AgenticSearch:
 
         # Improvement 2: Per-session URL→content cache
         session_page_cache: dict[str, str] = {}
-        # Improvement 3: Track all URLs seen (for citation validation)
+        # Improvement 3: Track all URLs seen (for citation validation + dedup)
         seen_urls: set[str] = set()
         # Improvement 4: Track all previous search queries (for dedup)
         previous_queries: list[str] = []
         # Improvement 4: Wall-clock start time
         start_time = time.monotonic()
+        # Track deduplicated pages across the session
+        pages_deduplicated = 0
 
         try:
             # Inject conversation history so the agent has context from prior turns
@@ -518,6 +574,7 @@ class AgenticSearch:
                         answer="❌ Возникла ошибка при обращении к языковой модели.",
                         total_tokens=total_tokens,
                         llm_calls=llm_calls,
+                        pages_deduplicated=pages_deduplicated,
                     )
 
                 if not response.candidates:
@@ -580,6 +637,7 @@ class AgenticSearch:
                             answer=concluding_answer,
                             total_tokens=total_tokens,
                             llm_calls=llm_calls,
+                            pages_deduplicated=pages_deduplicated,
                         )
 
                     # ── Phase 2: Batch validate page limits & query dedup ──
@@ -690,6 +748,8 @@ class AgenticSearch:
                             result_dict: dict[str, str] = {"error": f"Execution failed: {result}"}
                         else:
                             result_dict = dict(result)  # type: ignore[arg-type]  # _execute_tool returns dict
+                        # Accumulate dedup metrics and strip metadata before sending to model
+                        pages_deduplicated += result_dict.pop("_dedup_count", 0)
                         function_responses.append(
                             types.Part.from_function_response(name=call_name, response=result_dict)
                         )
@@ -729,6 +789,7 @@ class AgenticSearch:
                         answer=direct_text,
                         total_tokens=total_tokens,
                         llm_calls=llm_calls,
+                        pages_deduplicated=pages_deduplicated,
                     )
 
             # 3. Force conclusion if loop maxed out or broke unexpectedly
@@ -769,6 +830,7 @@ class AgenticSearch:
                         answer=response.text,
                         total_tokens=total_tokens,
                         llm_calls=llm_calls,
+                        pages_deduplicated=pages_deduplicated,
                     )
             except Exception as e:
                 logger.error("Forced synthesis failed: %s", e)
@@ -777,6 +839,7 @@ class AgenticSearch:
                 answer="❌ К сожалению, агенту не удалось собрать достаточно информации для ответа в отведенное время.",
                 total_tokens=total_tokens,
                 llm_calls=llm_calls,
+                pages_deduplicated=pages_deduplicated,
             )
 
         finally:

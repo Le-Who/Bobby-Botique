@@ -529,3 +529,121 @@ async def api_memory():
     except Exception as e:
         logging.error("API memory error: %s", e, exc_info=True)
         return jsonify({"error": "internal_error"}), 500
+
+
+# =============================================================================
+# BATCH DASHBOARD ENDPOINT — 1 RTT instead of 8
+# =============================================================================
+
+
+async def _safe_fetch(name: str, coro):
+    """Run a coroutine and return (name, result) or (name, error_dict)."""
+    try:
+        return name, await coro
+    except Exception as e:
+        logging.warning("Dashboard batch: %s failed: %s", name, e)
+        return name, {"error": str(e)}
+
+
+@quart_app.route("/api/dashboard")
+@require_auth
+@rate_limit_api
+async def api_dashboard():
+    """Aggregated dashboard data — all operational metrics in a single response.
+
+    Replaces 8 separate fetch() calls on the frontend with 1 HTTP round-trip.
+    Each section is fetched in parallel; individual failures are isolated.
+    """
+    import psutil
+
+    from app.cache import get_multi_layer_cache_stats, ping_safe
+    from app.memory_manager import get_memory_stats
+    from app.metrics import metrics_collector
+
+    # Parallel fetch of all expensive async operations
+    results = await asyncio.gather(
+        _safe_fetch("metrics", metrics_collector.get_metrics_summary()),
+        _safe_fetch("cache", get_multi_layer_cache_stats()),
+        _safe_fetch("redis_ping", ping_safe()),
+        _safe_fetch("db_metrics", get_supabase_metrics()),
+        _safe_fetch("keys_gemini", get_gemini_key_usage_stats()),
+        _safe_fetch("keys_tavily", get_tavily_key_usage_stats()),
+        _safe_fetch("keys_active", get_active_key_info()),
+        return_exceptions=True,
+    )
+
+    # Collect results into a dict
+    data: dict = {}
+    for item in results:
+        if isinstance(item, Exception):
+            continue
+        name, value = item
+        data[name] = value
+
+    # Sync calls (cheap, no I/O)
+    try:
+        system = {
+            "cpu_percent": psutil.cpu_percent(interval=0.1),
+            "memory_percent": psutil.virtual_memory().percent,
+            "memory_used_mb": round(psutil.virtual_memory().used / (1024 * 1024), 1),
+            "memory_total_mb": round(psutil.virtual_memory().total / (1024 * 1024), 1),
+            "disk_percent": psutil.disk_usage("/").percent,
+        }
+    except Exception:
+        system = {}
+
+    memory_stats = get_memory_stats()
+
+    # Queue stats
+    queue_stats = {}
+    try:
+        from app.queue import task_queue
+        queue_stats = await task_queue.get_queue_stats()
+    except Exception as e:
+        logging.warning("Dashboard batch: queue failed: %s", e)
+
+    # Circuit breakers
+    breakers = {}
+    try:
+        from app.circuit_breaker import _circuit_breakers
+        breakers = {name: cb.get_stats() for name, cb in _circuit_breakers.items()}
+    except Exception:
+        pass
+
+    # Errors
+    errors_data = {}
+    try:
+        from app.metrics import metrics_collector as mc
+        summary = data.get("metrics", {})
+        errors_data = {
+            "error_count": summary.get("error_count", 0),
+            "error_rate": summary.get("error_rate_percent", 0),
+            "recent_errors": list(mc.error_log)[-10:],
+        }
+    except Exception:
+        pass
+
+    return jsonify({
+        "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+        "overview": {
+            "system": system,
+            "metrics": data.get("metrics", {}),
+            "services": {
+                "database": "connected" if database.is_database_connected() else "disconnected",
+                "redis": "connected" if data.get("redis_ping") else "disconnected",
+                "bot": "running",
+            },
+        },
+        "keys": {
+            "gemini": data.get("keys_gemini", {}),
+            "tavily": data.get("keys_tavily", {}),
+            "active": data.get("keys_active", {}),
+        },
+        "errors": errors_data,
+        "cache": data.get("cache", {}),
+        "queue": queue_stats,
+        "database": data.get("db_metrics", {}),
+        "circuit_breakers": breakers,
+        "memory": memory_stats,
+    })
+
