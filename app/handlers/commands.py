@@ -606,3 +606,8 @@ def register(application: Application) -> None:
 
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+
+    # Reminder command (from cmd_reminders)
+    from app.handlers.cmd_reminders import remind_command
+
+    application.add_handler(CommandHandler("remind", remind_command))

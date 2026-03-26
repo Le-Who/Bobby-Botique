@@ -269,9 +269,18 @@ async def _handle_regular_chat(
         if await handle_ai_response_error(response_text, placeholder_message, on_error_callback=cleanup_on_error):
             return
         else:
+            # Branch-aware action button
+            branch_btn = (
+                InlineKeyboardButton("↩️ К основной ветке", callback_data="branch_return")
+                if chat_state.branch_id
+                else InlineKeyboardButton("🔀 Что если…", callback_data="branch_create")
+            )
             buttons = [
                 [InlineKeyboardButton("🔄 Попробовать ещё раз", callback_data="retry_last")],
-                [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
+                [
+                    InlineKeyboardButton("🎭 Роль ИИ", callback_data="open_roles:from_response"),
+                    branch_btn,
+                ],
                 [
                     InlineKeyboardButton(
                         "✨ Начать новую тему",

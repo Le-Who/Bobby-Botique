@@ -3,6 +3,53 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.63] - 2026-03-27 - Phase 2: Integration & Live Dashboard (7 Changes)
+
+### 🐛 Fix
+
+| Fix | File | Detail |
+|-----|------|--------|
+| Context budgets: removed non-existent models | `config.py` | Removed `ultra` (200K) and `pro` (128K) entries from `MODEL_CONTEXT_BUDGETS`. Only flash-lite (32K) and flash (128K) are used. Added evidence-based comments citing context degradation research (quality degrades at ~20% of 1M context). |
+
+### ✨ New Features
+
+| Feature | Files | Detail |
+|---------|-------|--------|
+| Conversation Branching UI | `cb_branches.py` [NEW], `ai_chat.py`, `callbacks.py`, `database.py` | `🔀 Что если…` button in every AI response → snapshots history → new branch. `↩️ К основной ветке` button to restore. `branch_id` field on `ChatState`. |
+| `/remind` Command | `cmd_reminders.py` [NEW], `commands.py`, `bot.py` | Bilingual time parser (30m/2h/1d, мин/час/день). `check_and_deliver_reminders` job (60s poll via `job_queue`). Shows pending reminders on `/remind` with no args. |
+
+### ⚡ Improvements
+
+| Improvement | Files | Detail |
+|-------------|-------|--------|
+| SSE Live Dashboard | `web.py` | `/api/events` endpoint: Server-Sent Events stream emitting system/queue/metrics JSON every 5s. Includes CPU, memory, DB status, queue pending/processing, request count. |
+| Key Health API | `web.py` | `/api/key-health` endpoint exposing `KeyStatusManager.get_health_summary()` with per-key diagnostics. Rate-limited + auth-protected. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint (all modified files) | 0 errors |
+| Pre-existing lint | 2 SIM108 in `document_processor.py` (unrelated) |
+
+### Files Changed (11 files, 2 new)
+
+| File | Change |
+|------|--------|
+| `app/handlers/cb_branches.py` | [NEW] Branch create/return callbacks |
+| `app/handlers/cmd_reminders.py` | [NEW] /remind command + delivery job |
+| `app/config.py` | Fixed MODEL_CONTEXT_BUDGETS (removed ultra/pro) |
+| `app/database.py` | Added `branch_id` to `ChatState` |
+| `app/handlers/ai_chat.py` | Branch-aware button in response keyboard |
+| `app/handlers/callbacks.py` | Branch callback registration |
+| `app/handlers/commands.py` | `/remind` command registration |
+| `app/web.py` | `/api/key-health` + `/api/events` SSE endpoints |
+| `bot.py` | Reminder delivery job (60s interval) |
+| `README.md` | Updated feature descriptions |
+| `CHANGELOG.md` | This entry |
+
+---
+
 ## [2.8.62] - 2026-03-27 - Architectural Refactoring & New Features (12 Changes)
 
 ### ✨ New Features

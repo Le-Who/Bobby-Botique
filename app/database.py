@@ -28,6 +28,7 @@ class ChatState:
     context_summary: str | None = None  # LLM-generated conversation summary
     thinking_level: str | None = None  # User-configurable: off, low, medium, high
     ltm_enabled: bool = True  # Long-term memory recall toggle
+    branch_id: int | None = None  # Active branch snapshot ID (branching mode)
     _original_length: int = 0
 
 

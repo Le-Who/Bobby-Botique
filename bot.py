@@ -354,6 +354,21 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register briefs scheduler: %s", e)
 
+        # Schedule reminder delivery poll (every 60 seconds)
+        try:
+            from app.handlers.cmd_reminders import check_and_deliver_reminders
+
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    check_and_deliver_reminders,
+                    interval=60,  # Every 60 seconds
+                    first=30,  # First run 30s after boot
+                    name="reminder_delivery",
+                )
+                logging.info("Reminder delivery job registered (60s interval)")
+        except Exception as e:
+            logging.warning("Failed to register reminder delivery job: %s", e)
+
         # Wait for shutdown event
         try:
             await shutdown_event.wait()

@@ -23,10 +23,10 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
 - **Adaptive Thinking Budget**: Automatic `thinking_level` selection via 14 regex heuristics + context-aware escalation. Simple greetings get `low`, code/math/multi-step queries get `high`. User explicit preference always overrides.
 - **Conversation Branching**: Fork current chat into a "what-if" branch via snapshot. Explore alternative conversation paths without losing the main thread. One-click restore to the original context.
-- **Smart Context Window**: Model-specific token budgets (flash-lite: 32K, flash/pro: 128K, ultra: 200K) with automatic context trimming and LLM-backed summarization of dropped history.
-- **Proactive Follow-ups**: DB-persisted user reminders (`/remind` command) with 60s poll-based delivery. Context-aware: captures conversation snapshot at creation time for contextual follow-up generation.
+- **Smart Context Window**: Model-specific token budgets (flash-lite: 32K, flash: 128K — evidence-based on context degradation research) with automatic context trimming and LLM-backed summarization of dropped history.
+- **Proactive Follow-ups**: DB-persisted user reminders (`/remind` command with bilingual time parser) with 60s poll-based delivery via `job_queue`.
 - **Context Summarization**: Automatic token compression for large chats.
-- **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`), system health overviews, and batch API (`/api/dashboard` — 8 metrics in 1 RTT).
+- **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`), system health overviews, batch API (`/api/dashboard` — 8 metrics in 1 RTT), SSE live updates (`/api/events` — 5s real-time stream), and key health diagnostics (`/api/key-health`).
 - **Key Rotation Observability**: Structured `KEY_EVENT` logging for usage milestones, near-limit warnings (70%), threshold rotations, and a `get_health_summary()` dashboard API with per-key status snapshots.
 - **Structured Error Classification**: O(1) type-based error classification via `ErrorCode` enum (17 exception types + 8 HTTP status codes), replacing fragile emoji/text pattern matching. Full error-to-user-message mapping.
 - **Graceful Shutdown**: Two-phase drain (pending state persists + task queue) before resource cleanup, preventing data loss during deploys.

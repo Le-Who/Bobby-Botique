@@ -647,3 +647,87 @@ async def api_dashboard():
         "memory": memory_stats,
     })
 
+
+# ── Key health endpoint ──────────────────────────────────────────────────────
+
+@quart_app.route("/api/key-health")
+@require_auth
+@rate_limit_api
+async def api_key_health():
+    """Expose per-key health summary for dashboard diagnostics."""
+    try:
+        from app.repos.keys import KeyStatusManager
+        manager = KeyStatusManager()
+        summary = await manager.get_health_summary()
+        return jsonify({
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+            "keys": summary,
+        })
+    except Exception as e:
+        logging.warning("Key health endpoint error: %s", e)
+        return jsonify({"error": str(e)}), 500
+
+
+# ── SSE live updates ─────────────────────────────────────────────────────────
+
+@quart_app.route("/api/events")
+@require_auth
+async def api_events():
+    """Server-Sent Events stream for real-time dashboard updates.
+
+    Emits a JSON payload every 5 seconds with key operational metrics.
+    Client connects via `new EventSource('/api/events')`.
+    """
+    import json as json_mod
+
+    import psutil
+
+    async def generate():
+        while True:
+            try:
+                # Lightweight metrics snapshot
+                payload = {
+                    "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                    "system": {
+                        "cpu_percent": psutil.cpu_percent(interval=0),
+                        "memory_percent": psutil.virtual_memory().percent,
+                    },
+                    "services": {
+                        "database": "connected" if database.is_database_connected() else "disconnected",
+                    },
+                }
+
+                # Queue stats (cheap)
+                try:
+                    from app.queue import task_queue
+                    q_stats = await task_queue.get_queue_stats()
+                    payload["queue"] = {
+                        "pending": q_stats.get("total_pending", 0),
+                        "processing": q_stats.get("processing", 0),
+                    }
+                except Exception:
+                    pass
+
+                # Metrics summary (cheap)
+                try:
+                    from app.metrics import metrics_collector as mc
+                    payload["metrics"] = {
+                        "total_requests": mc.request_count,
+                        "error_count": len(mc.error_log),
+                    }
+                except Exception:
+                    pass
+
+                yield f"data: {json_mod.dumps(payload)}\n\n"
+            except Exception as e:
+                logging.warning("SSE event generation error: %s", e)
+                yield f"data: {{\"error\": \"{e}\"}}\n\n"
+
+            await asyncio.sleep(5)
+
+    return generate(), {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+

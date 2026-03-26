@@ -193,3 +193,9 @@ def register(application: Application) -> None:
 
     # Refresh metrics
     application.add_handler(CallbackQueryHandler(refresh_metrics_callback, pattern="^refresh_metrics$"))
+
+    # Conversation branching
+    from app.handlers.cb_branches import branch_create_callback, branch_return_callback
+
+    _add_fast_callback(application, branch_create_callback, "^branch_create$")
+    _add_fast_callback(application, branch_return_callback, "^branch_return$")

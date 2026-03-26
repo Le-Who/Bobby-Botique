@@ -179,12 +179,15 @@ class Settings(BaseModel):
     AGENTIC_PAGE_CONTENT_LIMIT: int = 8192  # Max chars per page (truncation threshold)
     ADAPTIVE_THINKING_ENABLED: bool = True  # Auto-resolve thinking_level when user has no preference
 
-    # --- CONTEXT BUDGETS (per-model token limits) ---
+    # --- CONTEXT BUDGETS (per-model effective token limits) ---
+    # All Gemini models have 1M token context windows, but reasoning quality
+    # degrades significantly beyond ~20% utilization (research: github.com/google-gemini,
+    # reddit.com/r/GoogleGeminiAI "context rot" reports, March 2026).
+    # flash-lite: lighter architecture, faster degradation → conservative 32K.
+    # flash:      good quality up to ~128K (validated sweet spot for reasoning).
     MODEL_CONTEXT_BUDGETS: dict[str, int] = {
-        "flash-lite": 32_000,
-        "flash": 128_000,
-        "pro": 128_000,
-        "ultra": 200_000,
+        "flash-lite": 32_000,   # gemini-2.5-flash-lite, gemini-3.1-flash-lite-preview
+        "flash": 128_000,       # gemini-2.5-flash, gemini-3-flash-preview
     }
     DEFAULT_CONTEXT_BUDGET: int = 128_000
 
