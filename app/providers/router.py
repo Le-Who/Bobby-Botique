@@ -262,6 +262,12 @@ class ProviderRouter:
             assert model_used is not None
             provider = get_provider_for_model(model_used, key_data["api_key"])
 
+            kh = key_data["key_hash"][:8] if key_data.get("key_hash") else "???"
+            logging.info(
+                "Streaming: model=%s key=%s… attempt=%d/%d",
+                model_used, kh, _attempt + 1, max_key_retries,
+            )
+
             stream_started = False
             try:
                 # We yield from the provider's stream

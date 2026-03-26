@@ -15,6 +15,7 @@ Format is optimized for agent-parseable context.
 
 | Change | File | Detail |
 |--------|------|--------|
+| API key identifiers | `router.py` | Added `Streaming: model=X key=HASH...` log line right after key selection to track exactly which API key is being used for each request. Uses first 8 characters of `key_hash` for secure identification. |
 | Model name in QnA logs | `ai_search.py` | All `_handle_qna_search` log lines now include the exact model name and attempt number (e.g., `QnA search: trying model gemini-3.1-flash-lite-preview (attempt 1/2)`). |
 
 ### ✅ Quality Gates
