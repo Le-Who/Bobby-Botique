@@ -3,14 +3,16 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [2.8.61] - 2026-03-26 - QnA Search Fallback Fix & Observability (3 Changes)
+## [2.8.61] - 2026-03-26 - QnA Search Fallback Fix & Observability (5 Changes)
 
 ### 🐛 Bug Fixes
 
 | Fix | File | Detail |
 |-----|------|--------|
-| 429 mid-stream error breaks fallback chain | `ai_search.py` | When Gemini streaming hit 429 RESOURCE_EXHAUSTED mid-stream, the error-tagged text was returned as `success=True`. The fallback loop exited without trying the next model. Fix: detect error tag (`_TAG_PREFIX`) anywhere in `final_answer` and continue to next model. |
-| Fallback model can't stream to consumed placeholder | `ai_search.py` | When model 1 writes partial/error content to the Telegram placeholder, model 2's streaming edits all fail with \"Message to edit not found\". Fix: send a fresh placeholder message (`🔎 Ищу быстрый ответ (другая модель)...`) before retrying with the next model. |
+| 429 mid-stream error breaks fallback chain | `ai_search.py` | Error-tagged text returned as `success=True`. Fix: detect `_TAG_PREFIX` anywhere in `final_answer` and continue to next model. |
+| Fallback can't stream to consumed placeholder | `ai_search.py` | Model 2's edits fail with "Message to edit not found". Fix: send fresh placeholder before retrying. |
+| gemini-3.1-flash-lite-preview always 429 on search | `ai_search.py` | Gemini 3.x has no Search Grounding quota on free tier. Fix: replaced with `gemini-2.5-flash-lite` primary + `gemini-2.5-flash` fallback. |
+| Model ignores web search, answers from training data | `ai_search.py` | Without date/instruction prompt, model didn't know "today" and refused queries it thought were about the future. Fix: QnA-specific system prompt with `Сегодня: YYYY-MM-DD` + `ВСЕГДА используй Google Search`. |
 
 ### 📡 Observability
 

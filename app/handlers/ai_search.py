@@ -59,9 +59,11 @@ async def _handle_qna_search(
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
     # ── Build fallback model chain for QnA ─────────────────────────────
-    # Primary: user's chosen model or the fast lite model
-    # Fallback: gemini-2.5-flash-lite (reliable, supports Google Search)
-    _QNA_MODELS = ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite"]
+    # gemini-3.1-flash-lite-preview does NOT support Search Grounding on
+    # the free tier (0 grounding quota → always 429).  Use 2.5-flash-lite
+    # as primary (fast, cheap, grounding supported) with 2.5-flash as a
+    # more capable fallback.
+    _QNA_MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
 
     if chat_state.model and chat_state.model not in _QNA_MODELS:
         # User has a custom model → put it first, then append fallbacks
@@ -74,8 +76,21 @@ async def _handle_qna_search(
 
     # ── Build the prompt ───────────────────────────────────────────────
     # With Google Search Grounding, the LLM searches the web internally.
-    # We only need to pass the user's question — no Tavily answer injection.
-    system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
+    # We inject today's date so the model knows what "now" means, and
+    # instruct it to ALWAYS use Google Search for factual/current queries.
+    from datetime import UTC, datetime
+
+    today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+    qna_system_parts = [
+        f"Сегодня: {today}.",
+        "Ты — поисковый ассистент. ВСЕГДА используй инструмент Google Search для ответа.",
+        "Отвечай кратко, по делу, на языке пользователя.",
+        "Указывай источники, если возможно.",
+    ]
+    role_prompt = chat_state.system_prompt
+    if role_prompt:
+        qna_system_parts.append(role_prompt)
+    system_instruction = "\n".join(qna_system_parts)
     history = [{"role": "user", "parts": [actual_search_query]}]
 
     from app.streaming import stream_and_display
