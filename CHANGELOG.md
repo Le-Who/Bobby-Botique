@@ -3,19 +3,20 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [2.8.61] - 2026-03-26 - QnA Search Fallback Fix & Model Logging (2 Changes)
+## [2.8.61] - 2026-03-26 - QnA Search Fallback Fix & Observability (3 Changes)
 
-### 🐛 Bug Fix
+### 🐛 Bug Fixes
 
 | Fix | File | Detail |
 |-----|------|--------|
-| 429 mid-stream error breaks fallback chain | `ai_search.py` | When Gemini streaming hit a 429 RESOURCE_EXHAUSTED error mid-stream (after AFC's first call succeeded), the error-tagged text was returned as `success=True` by `stream_and_display`. The fallback loop exited without trying the next model. Fix: detect error tag (`_TAG_PREFIX`) anywhere in `final_answer` and continue to next model in the fallback chain. |
+| 429 mid-stream error breaks fallback chain | `ai_search.py` | When Gemini streaming hit 429 RESOURCE_EXHAUSTED mid-stream, the error-tagged text was returned as `success=True`. The fallback loop exited without trying the next model. Fix: detect error tag (`_TAG_PREFIX`) anywhere in `final_answer` and continue to next model. |
+| Fallback model can't stream to consumed placeholder | `ai_search.py` | When model 1 writes partial/error content to the Telegram placeholder, model 2's streaming edits all fail with \"Message to edit not found\". Fix: send a fresh placeholder message (`🔎 Ищу быстрый ответ (другая модель)...`) before retrying with the next model. |
 
 ### 📡 Observability
 
 | Change | File | Detail |
 |--------|------|--------|
-| API key identifiers | `router.py` | Added `Streaming: model=X key=HASH...` log line right after key selection to track exactly which API key is being used for each request. Uses first 8 characters of `key_hash` for secure identification. |
+| API key identifiers | `router.py` | Log line now shows both the `key_hash` prefix (8 chars) AND last 4 chars of the actual API key: `key=0c94f6e0…(…XyZ9)`. The suffix lets you identify the key in GCP/AI Studio by matching the end of the key string. |
 | Model name in QnA logs | `ai_search.py` | All `_handle_qna_search` log lines now include the exact model name and attempt number (e.g., `QnA search: trying model gemini-3.1-flash-lite-preview (attempt 1/2)`). |
 
 ### ✅ Quality Gates

@@ -263,9 +263,11 @@ class ProviderRouter:
             provider = get_provider_for_model(model_used, key_data["api_key"])
 
             kh = key_data["key_hash"][:8] if key_data.get("key_hash") else "???"
+            raw_key = key_data.get("api_key", "")
+            key_suffix = raw_key[-4:] if len(raw_key) >= 4 else "????"
             logging.info(
-                "Streaming: model=%s key=%s… attempt=%d/%d",
-                model_used, kh, _attempt + 1, max_key_retries,
+                "Streaming: model=%s key=%s…(…%s) attempt=%d/%d",
+                model_used, kh, key_suffix, _attempt + 1, max_key_retries,
             )
 
             stream_started = False

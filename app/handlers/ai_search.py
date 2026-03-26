@@ -118,6 +118,16 @@ async def _handle_qna_search(
                     "QnA search: model %s returned error-tagged response, trying next model",
                     model,
                 )
+                # The previous model wrote partial/error content to the
+                # placeholder message. We need a FRESH message for the next
+                # model to stream into, otherwise all edit_text calls fail
+                # with "Message to edit not found".
+                try:
+                    placeholder_message = await placeholder_message.reply_text(
+                        "🔎 Ищу быстрый ответ (другая модель)..."
+                    )
+                except Exception:
+                    pass
                 continue
 
             if success and final_answer and final_answer.strip():
