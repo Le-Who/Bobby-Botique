@@ -10,8 +10,7 @@ import time
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.error import BadRequest, NetworkError
 
-from app import search_services
-from app.config import get_openrouter_keys, settings
+from app.config import settings
 from app.core.agentic import AgenticResult, AgenticSearch
 from app.database import ChatState
 from app.handlers.ai_core import (
@@ -21,7 +20,6 @@ from app.handlers.ai_core import (
 from app.metrics import metrics_collector, track_metrics
 from app.prompt_registry import get_registry
 from app.repos.chats import get_user_chat, update_user_chat
-from app.utils.formatting import escape_format_chars
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import (
@@ -39,9 +37,13 @@ async def _handle_qna_search(
     chat_state: ChatState,
     search_query: str | None = None,
 ):
-    # If beforeан search_query, use его for searchа, а user_message for локалfromации
+    """Quick search using Google Search Grounding (single LLM call, no Tavily).
+
+    Fallback chain: gemini-3.1-flash-lite-preview → gemini-2.5-flash-lite.
+    If the user has a custom model set in chat_state, it is respected as the
+    primary model (but still gets the web search grounding).
+    """
     actual_search_query = search_query if search_query else user_message
-    # chat_state используется for совместимости с другими функциями
 
     stop_heartbeat(placeholder_message.message_id)
     await metrics_collector.record_search_query()
@@ -52,82 +54,98 @@ async def _handle_qna_search(
         logging.error("Could not edit placeholder message: %s", edit_error)
         placeholder_message = await placeholder_message.reply_text("🔎 Ищу быстрый ответ...")
 
-    # Get user_id и chat_id for логирования
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
-    search_result = await search_services.tavily_search_agent(
-        actual_search_query, search_type="qna", user_id=user_id, chat_id=chat_id
-    )
-    if search_result.get("error"):
-        try:
-            await placeholder_message.edit_text(search_result["error"])
-        except (BadRequest, NetworkError) as edit_error:
-            logging.error("Could not edit placeholder message: %s", edit_error)
-        return
+    # ── Build fallback model chain for QnA ─────────────────────────────
+    # Primary: user's chosen model or the fast lite model
+    # Fallback: gemini-2.5-flash-lite (reliable, supports Google Search)
+    _QNA_MODELS = ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash-lite"]
 
-    tavily_answer = search_result.get("answer", "Не удалось найти прямой ответ.")
-    try:
-        await update_stage(placeholder_message, STAGES_SEARCH_QUICK, 1)
-    except (BadRequest, NetworkError) as edit_error:
-        logging.error("Could not edit placeholder message: %s", edit_error)
-        placeholder_message = await placeholder_message.reply_text("🌍 Адаптирую ответ...")
+    if chat_state.model and chat_state.model not in _QNA_MODELS:
+        # User has a custom model → put it first, then append fallbacks
+        fallback_chain = [chat_state.model] + _QNA_MODELS
+    elif chat_state.model and chat_state.model in _QNA_MODELS:
+        # User's model IS one of the QnA models → reorder so it's first
+        fallback_chain = [chat_state.model] + [m for m in _QNA_MODELS if m != chat_state.model]
+    else:
+        fallback_chain = list(_QNA_MODELS)
 
-    # Используем model from chat_state, if она указана, иначе use settings by default
-    preferred_model = (
-        chat_state.model
-        if chat_state.model
-        else (settings.OPENROUTER_QNA_MODEL if get_openrouter_keys() else settings.QNA_MODEL)
-    )
+    # ── Build the prompt ───────────────────────────────────────────────
+    # With Google Search Grounding, the LLM searches the web internally.
+    # We only need to pass the user's question — no Tavily answer injection.
+    system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
+    history = [{"role": "user", "parts": [actual_search_query]}]
 
-    # Экранируем фигурные скобки в данных for предотвращения ошибок форматирования
-    safe_user_message = escape_format_chars(user_message)
-    safe_tavily_answer = escape_format_chars(tavily_answer)
-
-    localization_prompt = get_registry().get_task_prompt(
-        "qna_localization",
-        user_message=safe_user_message,
-        tavily_answer=safe_tavily_answer,
-    )
-    # Get user_id и chat_id for логирования
-    user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
-    chat_id = placeholder_message.chat.id if placeholder_message.chat else None
-
-    from app.handlers.ai_core import _resolve_ai_request
     from app.streaming import stream_and_display
 
-    _, model_used, _ = await _resolve_ai_request(preferred_model)
-    history = [{"role": "user", "parts": [localization_prompt]}]
-    system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
+    # ── Try each model in the fallback chain ───────────────────────────
+    final_answer: str | None = None
+    success = False
+    stream_last_msg = None
+    _tokens = 0
 
-    final_answer, success, stream_last_msg, _tokens = await stream_and_display(
-        placeholder_message,
-        model_name=model_used,
-        history=history,
-        system_instruction=system_instruction,
-        thinking_level=chat_state.thinking_level,
-        user_id=user_id,
-        bot=placeholder_message.get_bot(),
-        chat_id=chat_id or 0,
-        chat_type=(placeholder_message.chat.type if placeholder_message.chat else "private"),
-    )
+    for attempt_idx, model in enumerate(fallback_chain):
+        try:
+            if attempt_idx > 0:
+                logging.info("QnA search: falling back to model %s (attempt %d)", model, attempt_idx + 1)
+                try:
+                    await update_stage(placeholder_message, STAGES_SEARCH_QUICK, 0)
+                except (BadRequest, NetworkError):
+                    pass
+
+            final_answer, success, stream_last_msg, _tokens = await stream_and_display(
+                placeholder_message,
+                model_name=model,
+                history=history,
+                system_instruction=system_instruction,
+                thinking_level=chat_state.thinking_level,
+                user_id=user_id,
+                bot=placeholder_message.get_bot(),
+                chat_id=chat_id or 0,
+                chat_type=(placeholder_message.chat.type if placeholder_message.chat else "private"),
+                enable_web_search=True,
+            )
+
+            if success and final_answer and final_answer.strip():
+                break  # Success — exit fallback loop
+            else:
+                logging.warning("QnA search: model %s returned empty/no-success, trying next", model)
+                continue
+
+        except Exception as e:
+            logging.error("QnA search: model %s failed: %s", model, e, exc_info=True)
+            if attempt_idx < len(fallback_chain) - 1:
+                continue
+            # Last model also failed
+            final_answer = None
+            success = False
 
     streamed = bool(success and final_answer)
 
+    # ── Fallback: non-streaming response if all streaming attempts failed ──
     if not streamed:
-        final_answer, _ = await _get_ai_response_with_routing(
-            model_used,
-            history,
-            system_instruction=system_instruction,
-            user_id=user_id,
-            chat_id=chat_id,
-        )
+        # Try one last time via non-streaming with the last model
+        for model in reversed(fallback_chain):
+            try:
+                final_answer, _ = await _get_ai_response_with_routing(
+                    model,
+                    history,
+                    system_instruction=system_instruction,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                )
+                if final_answer and final_answer.strip():
+                    break
+            except Exception as e:
+                logging.error("QnA non-streaming fallback failed for %s: %s", model, e)
+                continue
 
-    # Check, является ли response ошибкой (use универсальную функцию)
+    # ── Handle response ────────────────────────────────────────────────
     if await handle_ai_response_error(final_answer, placeholder_message):
-        return  # Error обработана, выходим
-    elif final_answer:
-        # Успешный response
+        return
+
+    if final_answer:
         buttons = [
             [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="new_topic")],
@@ -144,7 +162,6 @@ async def _handle_qna_search(
                 if "not modified" not in str(e).lower():
                     logging.warning("Final button edit failed: %s", e)
     else:
-        # Пустой response
         try:
             from app.errors import build_retry_and_roles_keyboard
 

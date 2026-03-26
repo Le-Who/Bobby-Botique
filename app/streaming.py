@@ -579,6 +579,7 @@ async def stream_and_display(
     chat_type: str = "private",
     reply_markup: Any | None = None,
     footer_text: str | None = None,
+    enable_web_search: bool = False,
 ) -> tuple[str, bool, Message | None, int]:
     """High-level: stream AI response and progressively update Telegram message.
 
@@ -637,6 +638,7 @@ async def stream_and_display(
             chat_id=chat_id,
             thinking_level=thinking_level,
             max_key_retries=3,
+            enable_web_search=enable_web_search,
         ):
             await writer.write(delta)
 

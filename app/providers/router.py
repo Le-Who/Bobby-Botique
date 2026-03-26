@@ -218,6 +218,7 @@ class ProviderRouter:
         use_openrouter: bool | None = None,
         max_key_retries: int = 3,
         thinking_level: str | None = None,
+        enable_web_search: bool = False,
     ):
         """
         Stream AI response with automatic key rotation.
@@ -269,6 +270,7 @@ class ProviderRouter:
                     model_name=model_used,
                     system_instruction=system_instruction,
                     thinking_level=thinking_level,
+                    enable_web_search=enable_web_search,
                 ):
                     if not stream_started:
                         stream_started = True

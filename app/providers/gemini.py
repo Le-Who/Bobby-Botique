@@ -55,6 +55,7 @@ class GeminiProvider(BaseAIProvider):
         chat_id: int | None,
         timeout: float,
         thinking_level: str | None = None,
+        enable_web_search: bool = False,
     ) -> AIResponse:
         start_time = None
 
@@ -98,6 +99,9 @@ class GeminiProvider(BaseAIProvider):
                 )
 
             config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
+            # Apply Google Search Grounding if requested
+            if enable_web_search:
+                config.tools = [types.Tool(google_search=types.GoogleSearch())]
             # Apply thinking config if user requested a specific level
             tc = _build_thinking_config(model_name, thinking_level)
             if tc:
@@ -246,6 +250,7 @@ class GeminiProvider(BaseAIProvider):
         system_instruction: str | None = None,
         thinking_level: str | None = None,
         timeout: float = 120.0,
+        enable_web_search: bool = False,
     ):
         """
         Stream response from Gemini API.
@@ -265,6 +270,9 @@ class GeminiProvider(BaseAIProvider):
             return
 
         config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
+        # Apply Google Search Grounding if requested
+        if enable_web_search:
+            config.tools = [types.Tool(google_search=types.GoogleSearch())]
         tc = _build_thinking_config(model_name, thinking_level)
         if tc:
             config.thinking_config = tc

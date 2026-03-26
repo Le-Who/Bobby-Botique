@@ -200,6 +200,7 @@ class OpenRouterProvider(BaseAIProvider):
         system_instruction: str | None = None,
         thinking_level: str | None = None,
         timeout: float = 120.0,
+        enable_web_search: bool = False,
     ):
         """
         Stream response from OpenRouter API using Server-Sent Events (SSE).

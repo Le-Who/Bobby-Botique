@@ -253,10 +253,15 @@ class BaseAIProvider(ABC):
         system_instruction: str | None = None,
         thinking_level: str | None = None,
         timeout: float = 120.0,
+        enable_web_search: bool = False,
     ):
         """
         Stream response from AI provider. Must be implemented by subclasses.
         Yields chunks of text as they arrive.
+
+        Args:
+            enable_web_search: If True, enable native web search grounding
+                (Google Search for Gemini, ignored by other providers).
         """
 
 

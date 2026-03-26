@@ -35,77 +35,94 @@ def make_placeholder(user_id=123):
     return msg
 
 
-# ── QnA search — happy path ──────────────────────────────────────────────────
+# ── QnA search — happy path (Google Search Grounding) ────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_qna_search_happy_path():
-    """QnA search returns localized answer from Tavily."""
+    """QnA search streams a grounded response via stream_and_display(enable_web_search=True)."""
     placeholder = make_placeholder()
+    # Add get_bot() and chat.type to placeholder
+    placeholder.get_bot.return_value = MagicMock()
+    placeholder.chat.type = "private"
     chat_state = make_chat_state()
 
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_search.search_services") as mock_search,
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("Localized answer", True, AsyncMock(), 0),
-        ),
-        patch(
-            "app.handlers.ai_core._resolve_ai_request",
-            new_callable=AsyncMock,
-            return_value=({"key": "val"}, "gemini-3.1-flash-lite-preview", None),
-        ),
+            return_value=("Grounded answer from Google Search", True, AsyncMock(), 42),
+        ) as mock_stream,
         patch(
             "app.handlers.ai_search.handle_ai_response_error",
             new_callable=AsyncMock,
             return_value=False,
         ),
-        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as _mock_send,
+        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock),
         patch("app.handlers.ai_search.get_registry") as mock_get_registry,
-        patch("app.handlers.ai_search.get_openrouter_keys", return_value=[]),
     ):
         mock_metrics.record_search_query = AsyncMock()
-        mock_search.tavily_search_agent = AsyncMock(return_value={"answer": "Raw Tavily answer"})
         mock_registry = MagicMock()
         mock_registry.compose_system_prompt.return_value = "sys"
-        mock_registry.get_task_prompt.return_value = "Q: {user_message} A: {tavily_answer}"
         mock_get_registry.return_value = mock_registry
 
         from app.handlers.ai_search import _handle_qna_search
 
         await _handle_qna_search(placeholder, "What is Python?", chat_state)
 
-    # When streaming succeeds, it edits the message instead of calling send_long_message
-    assert len(chat_state.history) == 0  # Assuming history wasn't modified because the mock chat_state is local
+    # Verify stream_and_display was called with enable_web_search=True
+    mock_stream.assert_awaited_once()
+    call_kwargs = mock_stream.call_args[1] if mock_stream.call_args[1] else {}
+    assert call_kwargs.get("enable_web_search") is True, "stream_and_display must be called with enable_web_search=True"
 
 
-# ── QnA search — Tavily error ────────────────────────────────────────────────
+# ── QnA search — streaming failure triggers fallback ─────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_qna_search_tavily_error():
-    """QnA search handles Tavily error gracefully."""
+async def test_qna_search_streaming_failure_fallback():
+    """QnA search falls back to non-streaming when all streaming attempts fail."""
     placeholder = make_placeholder()
+    placeholder.get_bot.return_value = MagicMock()
+    placeholder.chat.type = "private"
     chat_state = make_chat_state()
 
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
-        patch("app.handlers.ai_search.search_services") as mock_search,
+        patch(
+            "app.streaming.stream_and_display",
+            new_callable=AsyncMock,
+            return_value=("", False, None, 0),
+        ),
+        patch(
+            "app.handlers.ai_search._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value=("Fallback non-streaming answer", 10),
+        ) as mock_fallback,
+        patch(
+            "app.handlers.ai_search.handle_ai_response_error",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock) as mock_send,
+        patch("app.handlers.ai_search.get_registry") as mock_get_registry,
     ):
         mock_metrics.record_search_query = AsyncMock()
-        mock_search.tavily_search_agent = AsyncMock(return_value={"error": "API limit"})
+        mock_registry = MagicMock()
+        mock_registry.compose_system_prompt.return_value = "sys"
+        mock_get_registry.return_value = mock_registry
 
         from app.handlers.ai_search import _handle_qna_search
 
         await _handle_qna_search(placeholder, "Query", chat_state)
 
-    placeholder.edit_text.assert_awaited()
-    text = placeholder.edit_text.call_args[0][0]
-    assert "API limit" in text
+    # Non-streaming fallback was invoked
+    mock_fallback.assert_awaited()
+    # Final answer was sent via send_long_message (not streamed)
+    mock_send.assert_awaited_once()
 
 
 # ── Research agent — search fails ─────────────────────────────────────────────

@@ -3,6 +3,42 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.60] - 2026-03-26 - Google Search Grounding for Quick Search (1 Change)
+
+### ⚡ Performance & Architecture
+
+| Change | File | Detail |
+|--------|------|--------|
+| Native Google Search Grounding | `ai_search.py`, `base.py`, `gemini.py`, `openrouter.py`, `router.py`, `streaming.py` | Replaced the two-step Tavily+LLM pipeline for `?` prefix queries with a single Gemini API call using `types.Tool(google_search=types.GoogleSearch())`. Reduces latency from 2 network hops to 1 and eliminates Tavily dependency for quick search. Threaded `enable_web_search: bool` flag through the entire provider stack (base → gemini/openrouter → router → streaming → handler). |
+| Model Fallback Chain | `ai_search.py` | `_handle_qna_search` now uses a resilient fallback chain: `gemini-3.1-flash-lite-preview` → `gemini-2.5-flash-lite`. User's custom model (if set) is respected as first in the chain. Falls back to non-streaming if all streaming attempts fail. |
+
+### 🧪 Test Updates
+
+| Change | File | Detail |
+|--------|------|--------|
+| QnA test rewrite | `test_ai_search.py` | Replaced `test_qna_search_happy_path` (verified `enable_web_search=True` is passed) and `test_qna_search_tavily_error` → `test_qna_search_streaming_failure_fallback` (verifies non-streaming fallback). |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Tests | **1343 passed**, 0 failed |
+
+### Files Changed (7 files)
+
+| File | Change |
+|------|--------|
+| `app/providers/base.py` | Added `enable_web_search: bool = False` to abstract `stream_response` |
+| `app/providers/gemini.py` | Injects `types.Tool(google_search=types.GoogleSearch())` when `enable_web_search=True` |
+| `app/providers/openrouter.py` | Added param to signature (noop) |
+| `app/providers/router.py` | Threads `enable_web_search` to provider |
+| `app/streaming.py` | Threads `enable_web_search` to router |
+| `app/handlers/ai_search.py` | Rewritten `_handle_qna_search`: removed Tavily, added model fallback chain |
+| `tests/test_ai_search.py` | Rewrote QnA tests for Google Search Grounding flow |
+
+---
+
 ## [2.8.59] - 2026-03-26 - Architectural Refactoring & Resilience (4 Improvements)
 
 ### ⚡ Performance & Scalability
