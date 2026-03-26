@@ -32,12 +32,17 @@ class TaggedImage:
     pre_compressed: bool = False  # True → provider skips recompression
 
 
-# Global process pool for image processing outside the GIL
-_image_process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=2)
+# Global process pool for image processing outside the GIL.
+# max_tasks_per_child=1 ensures each worker process exits after handling one
+# image, so accumulated PIL/pymalloc memory is returned to the OS immediately.
+_image_process_pool = concurrent.futures.ProcessPoolExecutor(
+    max_workers=2,
+    max_tasks_per_child=1,
+)
 
 # TTL cache for compressed images — avoids reprocessing on retries/follow-ups.
-# Keyed by cache_key (e.g. Telegram file_unique_id). Max 200 entries, 10 min TTL.
-_compressed_cache: TTLCache[str, bytes] = TTLCache(maxsize=200, ttl=600)
+# Keyed by cache_key (e.g. Telegram file_unique_id). Max 50 entries, 3 min TTL.
+_compressed_cache: TTLCache[str, bytes] = TTLCache(maxsize=50, ttl=180)
 
 # ── Task-aware dimension caps ────────────────────────────────────────────────
 # Maps task_type → max dimension (longest side).
@@ -138,3 +143,21 @@ async def save_image_as_bytes(
     except Exception as e:
         logging.error("Image processing error: %s", e, exc_info=True)
         return None
+
+
+def shutdown_image_pool() -> None:
+    """Shut down the global image process pool (call during bot shutdown)."""
+    global _image_process_pool
+    try:
+        _image_process_pool.shutdown(wait=False, cancel_futures=True)
+        logging.info("Image process pool shut down")
+    except Exception as e:
+        logging.warning("Error shutting down image process pool: %s", e)
+
+
+def clear_image_cache() -> None:
+    """Clear the compressed-image TTL cache (MemoryManager callback)."""
+    count = len(_compressed_cache)
+    _compressed_cache.clear()
+    if count:
+        logging.info("Cleared %d entries from compressed image cache", count)

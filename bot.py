@@ -200,6 +200,13 @@ async def _cleanup_application(application, reason: str = "cleanup"):
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (Redis client): {cleanup_error}")
 
+    try:
+        from app.utils.image_utils import shutdown_image_pool
+
+        shutdown_image_pool()
+    except Exception as cleanup_error:
+        logging.warning(f"Cleanup error (image process pool): {cleanup_error}")
+
 
 async def run_bot_with_retry():
     """Запускает бота с устойчивостью к ошибкам"""
@@ -559,6 +566,11 @@ async def main():
 
             memory_manager = MemoryManager()
             logging.info("Memory manager initialized")
+
+            # Register image cache clearing as a memory-pressure callback
+            from app.utils.image_utils import clear_image_cache
+
+            memory_manager.add_cleanup_callback(clear_image_cache)
         except Exception as e:
             logging.warning(f"Memory manager initialization failed: {e}")
 
@@ -626,6 +638,13 @@ async def main():
             retries=3,
             base_delay=0.5,
         )
+        # Shut down image process pool (no async needed)
+        try:
+            from app.utils.image_utils import shutdown_image_pool
+
+            shutdown_image_pool()
+        except Exception as e:
+            logging.warning(f"Cleanup error (image process pool in main): {e}")
         logging.info("Shutdown complete")
 
 

@@ -12,7 +12,6 @@ parsing), the singleton instance, and backward-compatible facade functions.
 import asyncio
 import io
 import logging
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -263,10 +262,7 @@ class DocumentProcessor:
             if is_path:
                 sync_input = file_data
             else:
-                stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b")
-                stream.write(file_data)
-                stream.seek(0)
-                sync_input = stream
+                sync_input = io.BytesIO(file_data)
 
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, self._process_pdf_sync, sync_input, self.max_pages)
@@ -312,10 +308,7 @@ class DocumentProcessor:
             if is_path:
                 sync_input = file_data
             else:
-                stream = tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b")
-                stream.write(file_data)
-                stream.seek(0)
-                sync_input = stream
+                sync_input = io.BytesIO(file_data)
 
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, self._process_word_sync, sync_input)
