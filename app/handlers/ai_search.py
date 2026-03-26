@@ -59,20 +59,11 @@ async def _handle_qna_search(
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
     # ── Build fallback model chain for QnA ─────────────────────────────
-    # gemini-3.1-flash-lite-preview does NOT support Search Grounding on
-    # the free tier (0 grounding quota → always 429).  Use 2.5-flash-lite
-    # as primary (fast, cheap, grounding supported) with 2.5-flash as a
-    # more capable fallback.
-    _QNA_MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
-
-    if chat_state.model and chat_state.model not in _QNA_MODELS:
-        # User has a custom model → put it first, then append fallbacks
-        fallback_chain = [chat_state.model] + _QNA_MODELS
-    elif chat_state.model and chat_state.model in _QNA_MODELS:
-        # User's model IS one of the QnA models → reorder so it's first
-        fallback_chain = [chat_state.model] + [m for m in _QNA_MODELS if m != chat_state.model]
-    else:
-        fallback_chain = list(_QNA_MODELS)
+    # QnA search ALWAYS uses grounding-capable models — user's chat model
+    # preference is ignored because arbitrary models may not support
+    # Google Search Grounding (e.g. gemini-3.x has 0 grounding quota on
+    # free tier).
+    fallback_chain = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
 
     # ── Build the prompt ───────────────────────────────────────────────
     # With Google Search Grounding, the LLM searches the web internally.
@@ -131,10 +122,14 @@ async def _handle_qna_search(
                     "QnA search: model %s returned error-tagged response, trying next model",
                     model,
                 )
-                # The previous model wrote partial/error content to the
-                # placeholder message. We need a FRESH message for the next
-                # model to stream into, otherwise all edit_text calls fail
-                # with "Message to edit not found".
+                # Delete the message containing the error so user doesn't
+                # see two messages (error + answer).  Then send a fresh
+                # placeholder for the next model to stream into.
+                error_msg = stream_last_msg if stream_last_msg else placeholder_message
+                try:
+                    await error_msg.delete()
+                except Exception:
+                    pass
                 try:
                     placeholder_message = await placeholder_message.reply_text(
                         "🔎 Ищу быстрый ответ (другая модель)..."
