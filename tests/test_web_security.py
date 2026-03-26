@@ -1,7 +1,7 @@
 import importlib
 import re
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -237,6 +237,44 @@ async def test_generate_csp_nonce_uniqueness():
         nonce2 = g.csp_nonce
 
     assert nonce1 != nonce2, "Consecutive requests received the same CSP nonce"
+
+
+@pytest.mark.asyncio
+async def test_get_client_ip_extraction():
+    """Test that _get_client_ip securely extracts the rightmost IP address."""
+    from app.web import _get_client_ip, quart_app
+
+    # Test with X-Forwarded-For header containing multiple IPs (spoofed + real)
+    async with quart_app.test_request_context(
+        "/",
+        headers={"X-Forwarded-For": "8.8.8.8, 1.2.3.4, 192.168.1.100"},
+    ):
+        ip = _get_client_ip()
+        assert ip == "192.168.1.100"
+
+    # Test with only one IP in X-Forwarded-For
+    async with quart_app.test_request_context(
+        "/",
+        headers={"X-Forwarded-For": "203.0.113.1"},
+    ):
+        ip = _get_client_ip()
+        assert ip == "203.0.113.1"
+
+    # Test fallback to remote_addr when X-Forwarded-For is missing
+    from quart import request
+
+    # Test fallback to an IP address
+    async with quart_app.test_request_context("/"):
+        # We assign to the underlying object of the LocalProxy
+        request._get_current_object().remote_addr = "127.0.0.1"
+        ip = _get_client_ip()
+        assert ip == "127.0.0.1"
+
+    # Test unknown IP when both X-Forwarded-For and remote_addr are missing
+    async with quart_app.test_request_context("/"):
+        request._get_current_object().remote_addr = None
+        ip = _get_client_ip()
+        assert ip == "unknown"
 
 
 @pytest.mark.asyncio

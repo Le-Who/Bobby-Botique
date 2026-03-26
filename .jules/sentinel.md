@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-24 - [IP Spoofing] Rate Limit Bypass via X-Forwarded-For
+**Vulnerability:** Rate limiting endpoints blindly trusted `request.remote_addr` or the leftmost IP in the `X-Forwarded-For` header. Malicious clients could bypass brute-force protections by spoofing the `X-Forwarded-For` header with random IPs.
+**Learning:** When deployed behind a trusted reverse proxy (like Northflank), the proxy appends the real client IP to the *end* of the `X-Forwarded-For` list. The leftmost IP is user-provided and untrustworthy.
+**Prevention:** Always securely resolve client IPs by extracting the rightmost address from the `X-Forwarded-For` header in proxy environments, ignoring earlier user-injected spoofed IPs.

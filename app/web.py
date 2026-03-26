@@ -112,6 +112,16 @@ async def add_security_headers(response):
 # _get_admin_secret() is defined above (before session key derivation).
 
 
+def _get_client_ip():
+    """Securely resolve client IP from X-Forwarded-For rightmost address (Northflank proxy)."""
+    x_forwarded_for = request.headers.get("X-Forwarded-For")
+    if x_forwarded_for:
+        # The trusted proxy (Northflank) appends the real client IP to the end of the list.
+        # Malicious clients can spoof the beginning, but not the end.
+        return x_forwarded_for.split(",")[-1].strip()
+    return request.remote_addr or "unknown"
+
+
 def _is_authenticated():
     """Check if current request has a valid session or header token."""
     # Check session cookie first
@@ -153,7 +163,7 @@ def rate_limit_api(f):
 
     @wraps(f)
     async def decorated(*args, **kwargs):
-        client_ip = request.remote_addr or "unknown"
+        client_ip = _get_client_ip()
         if not _api_limiter.check(client_ip):
             return jsonify({"error": "Rate limit exceeded"}), 429
         return await f(*args, **kwargs)
@@ -165,7 +175,7 @@ def rate_limit_api(f):
 async def login_page():
     """Login page with password form, CSRF protection, and brute-force rate limiting."""
     error = None
-    client_ip = request.remote_addr or "unknown"
+    client_ip = _get_client_ip()
 
     if request.method == "POST":
         # Check brute-force rate limit
