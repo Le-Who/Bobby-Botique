@@ -4,7 +4,7 @@ from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import get_model_hash, get_openrouter_keys, settings
-from app.document_processor import get_user_documents
+from app.document_processor import get_user_document_stats, get_user_documents
 from app.metrics import get_system_status_data
 from app.prompt_registry import DEFAULT_ROLES
 from app.repos.conversations import (
@@ -39,8 +39,11 @@ async def get_start_menu_content(chat_state, user_id=None):
             today_requests = await get_user_today_request_count(user_id)
             req_count = today_requests
 
-            docs = await get_user_documents(user_id)
-            doc_count = len(docs) if docs else 0
+            # ⚡ Bolt Optimization: Fetch only document count instead of full document metadata list.
+            # Avoids O(N) memory allocation and large DB payload serialization for users with many documents.
+            # Impact: Reduces memory usage and DB roundtrip time for the /start menu.
+            doc_stats = await get_user_document_stats(user_id)
+            doc_count = doc_stats.get("document_count", 0) if doc_stats else 0
 
             conv_count = await get_conversation_count(user_id)
 

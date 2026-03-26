@@ -471,3 +471,7 @@ async def upload_to_x0_at(file_data: bytes, filename: str) -> str | None:
 async def get_document_by_id(document_id: int, user_id: int) -> dict[str, Any] | None:
     """Get document by ID."""
     return await document_processor.get_document_by_id(document_id, user_id)
+
+async def get_user_document_stats(user_id: int) -> dict[str, Any]:
+    """Get user's document stats."""
+    return await document_processor.get_user_document_stats(user_id)
