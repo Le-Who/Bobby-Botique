@@ -283,6 +283,28 @@
           </div>
         </div>
       </section>
+
+      <!-- ROW: Key Health -->
+      <section class="dash-section">
+        <h2 class="section-title">Key Health Diagnostics</h2>
+        <div class="card card-full">
+          <div class="key-table-wrap">
+            <table class="key-table" id="kh-table">
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Status</th>
+                  <th>Usage</th>
+                  <th>Last Rotated</th>
+                  <th>Events</th>
+                </tr>
+              </thead>
+              <tbody id="kh-tbody"></tbody>
+            </table>
+            <div class="empty-state" id="kh-empty">Loading key health…</div>
+          </div>
+        </div>
+      </section>
       </div><!-- end panel-infra -->
 
       <!-- TAB: Errors -->
@@ -711,6 +733,102 @@
       loadErrors();
       setInterval(refreshAll, 15000);
       setInterval(loadErrors, 30000);
+
+      // =====================================================================
+      // Key Health loader
+      // =====================================================================
+      async function loadKeyHealth() {
+        const d = await apiFetch('/api/key-health');
+        if (!d || !d.keys) return;
+
+        const tbody = $('kh-tbody');
+        const empty = $('kh-empty');
+        const keys = Array.isArray(d.keys) ? d.keys : Object.values(d.keys);
+
+        if (keys.length === 0) {
+          tbody.innerHTML = '';
+          empty.style.display = 'block';
+          return;
+        }
+        empty.style.display = 'none';
+        tbody.innerHTML = keys.map(k => {
+          const statusCls = k.status === 'healthy' ? 'tag-ok' : k.status === 'degraded' ? 'tag-warn' : 'tag-err';
+          const statusTxt = (k.status || 'unknown').toUpperCase();
+          const usage = k.usage_percent != null ? Number(k.usage_percent).toFixed(1) + '%' : '—';
+          const rotated = k.last_rotated ? new Date(k.last_rotated).toLocaleTimeString() : '—';
+          const events = k.event_count ?? k.events ?? 0;
+          return `<tr>
+            <td class="mono dim">${k.key_preview || k.key_hash?.substring(0, 10) || '—'}</td>
+            <td><span class="tag ${statusCls}">${statusTxt}</span></td>
+            <td class="mono">${usage}</td>
+            <td class="mono dim">${rotated}</td>
+            <td class="mono">${events}</td>
+          </tr>`;
+        }).join('');
+      }
+      loadKeyHealth();
+      setInterval(loadKeyHealth, 30000);
+
+      // =====================================================================
+      // SSE Live Updates (real-time between polls)
+      // =====================================================================
+      (function initSSE() {
+        const evtSrc = new EventSource('/api/events');
+
+        evtSrc.onmessage = function(e) {
+          try {
+            const d = JSON.parse(e.data);
+            if (d.error) return;
+
+            // Update system metrics in real-time
+            if (d.system) {
+              if (d.system.cpu_percent != null) {
+                $('cpu-val').textContent = d.system.cpu_percent + '%';
+                setBarLevel($('cpu-bar'), $('card-cpu'), d.system.cpu_percent);
+                cpuHistory.push(d.system.cpu_percent);
+                if (cpuHistory.length > MAX_SPARK) cpuHistory.shift();
+                renderSparkline($('spark-cpu'), cpuHistory, '#4ade80');
+              }
+              if (d.system.memory_percent != null) {
+                $('mem-val').textContent = d.system.memory_percent + '%';
+                setBarLevel($('mem-bar'), $('card-mem'), d.system.memory_percent);
+                memHistory.push(d.system.memory_percent);
+                if (memHistory.length > MAX_SPARK) memHistory.shift();
+                renderSparkline($('spark-mem'), memHistory, '#60a5fa');
+              }
+            }
+
+            // Update services
+            if (d.services) {
+              if (d.services.database) setDot('svc-db', d.services.database);
+            }
+
+            // Update queue (if visible)
+            if (d.queue) {
+              $('q-pending').textContent = d.queue.pending ?? '—';
+              $('q-running').textContent = d.queue.processing ?? '—';
+            }
+
+            // Update request metrics
+            if (d.metrics) {
+              if (d.metrics.total_requests != null) {
+                $('req-count').textContent = d.metrics.total_requests.toLocaleString();
+              }
+            }
+
+            // Pulse the live dot
+            const dot = $('live-dot');
+            dot.style.background = '#4ade80';
+            setTimeout(() => { dot.style.background = ''; }, 300);
+          } catch (err) {
+            console.warn('SSE parse error:', err);
+          }
+        };
+
+        evtSrc.onerror = function() {
+          console.warn('SSE connection lost, will auto-reconnect');
+        };
+      })();
     </script>
   </body>
 </html>

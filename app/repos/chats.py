@@ -53,7 +53,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
             query = """
                 SELECT
                     (SELECT row_to_json(u)::jsonb FROM (SELECT is_deep_dive, deep_dive_thread_id FROM users WHERE user_id = $1) u) as user_info,
-                    (SELECT row_to_json(c)::jsonb FROM (SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled FROM chats WHERE user_id = $1) c) as chat_info,
+                    (SELECT row_to_json(c)::jsonb FROM (SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id FROM chats WHERE user_id = $1) c) as chat_info,
                     (SELECT COALESCE(jsonb_agg(jsonb_build_object('role', role, 'content', content) ORDER BY id ASC), '[]'::jsonb) FROM active_chat_messages WHERE user_id = $1) as messages
             """
             result = await db_query(query, (user_id,), conn=conn)
@@ -88,6 +88,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                     context_summary=chat_info.get("context_summary"),
                     thinking_level=chat_info.get("thinking_level"),
                     ltm_enabled=chat_info.get("ltm_enabled", True),
+                    branch_id=chat_info.get("branch_id"),
                 )
 
             if user_info:
@@ -153,14 +154,14 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
 
             query = """
             WITH update_chats AS (
-                INSERT INTO chats (user_id, model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                INSERT INTO chats (user_id, model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $13)
                 ON CONFLICT (user_id)
                 DO UPDATE SET
                     model = EXCLUDED.model, token_count = EXCLUDED.token_count,
                     search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt,
                     context_summary = EXCLUDED.context_summary, thinking_level = EXCLUDED.thinking_level,
-                    ltm_enabled = EXCLUDED.ltm_enabled
+                    ltm_enabled = EXCLUDED.ltm_enabled, branch_id = EXCLUDED.branch_id
             ),
             update_users AS (
                 UPDATE users SET is_deep_dive = $9, deep_dive_thread_id = $10 WHERE user_id = $1
@@ -188,6 +189,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                     chat_state.deep_dive_thread_id,
                     should_delete,
                     messages_json,
+                    chat_state.branch_id,
                 ),
                 conn=conn,
             )

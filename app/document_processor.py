@@ -259,10 +259,7 @@ class DocumentProcessor:
 
             logging.info("Processing PDF %s with pypdf", filename)
 
-            if is_path:
-                sync_input = file_data
-            else:
-                sync_input = io.BytesIO(file_data)
+            sync_input = file_data if is_path else io.BytesIO(file_data)
 
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, self._process_pdf_sync, sync_input, self.max_pages)
@@ -305,10 +302,7 @@ class DocumentProcessor:
             return {"error": "Invalid Word document format. File must be a valid .docx file."}
 
         try:
-            if is_path:
-                sync_input = file_data
-            else:
-                sync_input = io.BytesIO(file_data)
+            sync_input = file_data if is_path else io.BytesIO(file_data)
 
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, self._process_word_sync, sync_input)

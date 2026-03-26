@@ -104,6 +104,14 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             return
 
+        # ── 3b. Request dedup (double-tap prevention) ────────────────────────
+        if update.message and update.message.text:
+            from app.middleware.dedup import is_duplicate_request
+
+            if await is_duplicate_request(user_id, update.message.text):
+                logging.info("Dedup: skipping duplicate from user %s", user_id)
+                return
+
         if not await is_authorized(user_id):
             logging.warning("Unauthorized user %s attempted to use bot", user_id)
             return

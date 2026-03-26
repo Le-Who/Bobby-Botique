@@ -3,6 +3,37 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.64] - 2026-03-27 - Phase 3: Persistence, Dashboard & Middleware (6 Changes)
+
+### 🐛 Fix
+
+| Fix | File | Detail |
+|-----|------|--------|
+| SIM108 lint (pre-existing) | `document_processor.py` | Replaced 2 if/else blocks with ternary operators at lines 262(→259) and 308(→305). 0 warnings remain. |
+
+### ✨ New Features
+
+| Feature | Files | Detail |
+|---------|-------|--------|
+| Request Dedup Middleware | `middleware/dedup.py` [NEW], `messages.py` | 3s window, MD5 hash, per-user cleanup + eviction (20 max). Wired after rate limit, before auth. |
+| Dashboard SSE Widget | `dashboard.html` | `EventSource('/api/events')` — real-time CPU, memory, DB status, queue, request count. Pulses live dot green on each event. |
+| Dashboard Key Health Widget | `dashboard.html` | Key Health Diagnostics table in Infrastructure tab: status, usage%, last rotated, event count. Polls `/api/key-health` every 30s. |
+
+### ⚡ Improvements
+
+| Improvement | Files | Detail |
+|-------------|-------|--------|
+| Persist `branch_id` | `chats.py`, migration `023` [NEW] | `branch_id` column on `chats` table (FK → `conversation_branches`). Survives bot restarts. SELECT/INSERT/UPSERT queries updated. |
+
+### 🗄️ Migrations Applied (Production)
+
+| Migration | Status |
+|-----------|--------|
+| `022_add_branches_and_reminders.sql` | ✅ Applied via Supabase MCP |
+| `023_add_branch_id_to_chats.sql` | ✅ Applied via Supabase MCP |
+
+---
+
 ## [2.8.63] - 2026-03-27 - Phase 2: Integration & Live Dashboard (7 Changes)
 
 ### 🐛 Fix
