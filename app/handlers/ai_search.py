@@ -81,16 +81,14 @@ async def _handle_qna_search(
     from datetime import UTC, datetime
 
     today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
-    qna_system_parts = [
-        f"Сегодня: {today}.",
-        "Ты — поисковый ассистент. ВСЕГДА используй инструмент Google Search для ответа.",
-        "Отвечай кратко, по делу, на языке пользователя.",
-        "Указывай источники, если возможно.",
-    ]
+    system_instruction = (
+        f"[system: current_utc_date={today}]\n"
+        "Ты поисковый ассистент. Используй инструмент Google Search для каждого запроса.\n"
+        "Отвечай кратко, по делу, на языке пользователя. Указывай источники, если возможно."
+    )
     role_prompt = chat_state.system_prompt
     if role_prompt:
-        qna_system_parts.append(role_prompt)
-    system_instruction = "\n".join(qna_system_parts)
+        system_instruction += f"\n{role_prompt}"
     history = [{"role": "user", "parts": [actual_search_query]}]
 
     from app.streaming import stream_and_display
