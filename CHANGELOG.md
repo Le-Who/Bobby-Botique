@@ -3,6 +3,42 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.59] - 2026-03-26 - Architectural Refactoring & Resilience (4 Improvements)
+
+### ⚡ Performance & Scalability
+
+| Change | File | Detail |
+|--------|------|--------|
+| Threaded Garbage Collection | `agentic.py` | Replaced blocking `gc.collect()` with `asyncio.to_thread(gc.collect, 1)`. Eliminates event loop stalls during generation-1 (young object) garbage sweeps, improving concurrent responsiveness during deep research sessions. |
+
+### 🛡️ Reliability & Resilience
+
+| Change | File | Detail |
+|--------|------|--------|
+| Agentic Model Fallback Cascade | `ai_search.py` | Built an intelligent fallback chain for deep research. If the primary model fails or returns a 503, the system now automatically retries the task using the next most capable model defined in `_MODEL_TIER` ranking. |
+
+### ✨ User Experience & UX Consistency
+
+| Change | File | Detail |
+|--------|------|--------|
+| Streaming Footer Injection | `streaming.py` | Memory injection warnings (`🧠 Использован контекст...`) are now passed as `footer_text` during the streaming phase and appended prior to finalization. Eliminates the visual "layout jump" that occurred when text was retroactively appended via separate `edit_text` calls. |
+
+### 🏗️ Maintainability
+
+| Change | File | Detail |
+|--------|------|--------|
+| "God-Handler" De-bloat | `ai_chat.py` | Extracted the monolithic memory storage logic into a dedicated asynchronous `_store_memory_in_background` helper. Action buttons are now attached natively during stream finalization. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Ruff format | 105 files clean |
+| Tests | **1343 passed**, 0 failed (749s on single thread due to Windows xdist constraints) |
+
+---
+
 ## [2.8.58] - 2026-03-23 - Dependency Hotfixes (2 Fixes)
 
 ### 🔴 Critical Fix

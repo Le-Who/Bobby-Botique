@@ -194,18 +194,6 @@ async def _handle_research_agent(
 
     key_hash = key_data["key_hash"]
 
-    # Callback fired after every generate_content call inside the agentic loop.
-    # Each invocation records +1 request against this key in the DB.
-    async def _on_key_used() -> None:
-        await increment_gemini_key_usage(key_hash, model_used)
-        await metrics_collector.record_api_call("gemini_agentic", model=model_used, user_id=trace_user_id)
-
-    agent = AgenticSearch(
-        model_name=model_used,
-        api_key=key_data["api_key"],
-        on_key_used=_on_key_used,
-    )
-
     # Define the status callback that will show stages + fun facts
     last_fact_time = 0.0
     current_fact = ""
@@ -230,31 +218,114 @@ async def _handle_research_agent(
             if "not modified" not in str(edit_error).lower():
                 logging.error("Could not edit placeholder message with status: %s", edit_error)
 
-    # Run the agentic loop
-    try:
-        result: AgenticResult = await agent.run(
-            query=actual_search_query,
-            on_status=on_status,
-            user_id=trace_user_id,
-            chat_id=trace_chat_id,
-            history=chat_state.history if chat_state.history else None,
-            thinking_level=chat_state.thinking_level,
+    # ── Build ranked fallback model chain ──────────────────────────────────
+    # Sort by capability tier (highest = most intelligent) using the existing
+    # _get_tier() ranking from model_selector.py. Primary model always first.
+    from app.model_selector import _get_tier
+
+    _primary = model_used
+    _other_models = [m for m in settings.AVAILABLE_MODELS if m != _primary]
+    # Sort remaining models by tier descending (most capable fallback first)
+    _other_models.sort(key=_get_tier, reverse=True)
+    _fallback_chain: list[str] = [_primary] + _other_models
+
+    # Run the agentic loop with automatic model fallback
+    result: AgenticResult | None = None
+    final_answer: str | None = None
+
+    for attempt_idx, attempt_model in enumerate(_fallback_chain):
+        # Resolve key for this model
+        if attempt_idx > 0:
+            # Need a fresh key for the fallback model
+            key_data = await get_available_gemini_key(attempt_model)
+            if not key_data:
+                logging.warning(
+                    "Agentic fallback: no keys available for model %s, skipping",
+                    attempt_model,
+                )
+                continue
+            key_hash = key_data["key_hash"]
+            model_used = attempt_model
+
+            # Notify user about the fallback
+            try:
+                await placeholder_message.edit_text(
+                    f"⚡ Переключаюсь на модель {attempt_model}...\n\n"
+                    f"_(предыдущая модель недоступна, попытка {attempt_idx + 1})_"
+                )
+            except (BadRequest, NetworkError):
+                pass
+
+        # Rebuild callback for this model+key pair
+        _current_model = model_used
+        _current_key_hash = key_hash
+
+        async def _on_key_used(
+            _kh: str = _current_key_hash,
+            _cm: str = _current_model,
+        ) -> None:
+            await increment_gemini_key_usage(_kh, _cm)
+            await metrics_collector.record_api_call("gemini_agentic", model=_cm, user_id=trace_user_id)
+
+        agent = AgenticSearch(
+            model_name=model_used,
+            api_key=key_data["api_key"],
+            on_key_used=_on_key_used,
         )
-        final_answer = result.answer
-        logging.info(
-            "AgenticSearch finished: %d LLM calls, %d total tokens",
-            result.llm_calls,
-            result.total_tokens,
-        )
-    except Exception as ai_error:
-        logging.error("Error in AgenticSearch run: %s", ai_error, exc_info=True)
+
         try:
-            await placeholder_message.edit_text(
-                "❌ Внутренняя ошибка при проведении глубокого исследования. Попробуйте отформатировать запрос иначе."
+            result = await agent.run(
+                query=actual_search_query,
+                on_status=on_status,
+                user_id=trace_user_id,
+                chat_id=trace_chat_id,
+                history=chat_state.history if chat_state.history else None,
+                thinking_level=chat_state.thinking_level,
             )
-        except (BadRequest, NetworkError):
-            pass
-        return
+            final_answer = result.answer
+            logging.info(
+                "AgenticSearch finished (model=%s, attempt=%d): %d LLM calls, %d total tokens",
+                model_used,
+                attempt_idx + 1,
+                result.llm_calls,
+                result.total_tokens,
+            )
+
+            # Check if this is an error answer → try next model
+            if final_answer and final_answer.startswith("❌") and attempt_idx < len(_fallback_chain) - 1:
+                logging.warning(
+                    "Agentic model %s returned error answer, falling back to next model (attempt %d/%d)",
+                    model_used,
+                    attempt_idx + 1,
+                    len(_fallback_chain),
+                )
+                continue
+
+            # Success or last attempt — break out
+            break
+
+        except Exception as ai_error:
+            logging.error(
+                "Error in AgenticSearch run (model=%s, attempt=%d/%d): %s",
+                model_used,
+                attempt_idx + 1,
+                len(_fallback_chain),
+                ai_error,
+                exc_info=True,
+            )
+            if attempt_idx < len(_fallback_chain) - 1:
+                logging.info("Will retry with next model in fallback chain")
+                continue
+
+            # Last model also failed — show error to user
+            try:
+                await placeholder_message.edit_text(
+                    "❌ Внутренняя ошибка при проведении глубокого исследования. "
+                    "Все доступные модели были опробованы. Попробуйте позже."
+                )
+            except (BadRequest, NetworkError):
+                pass
+            return
 
     # Process and display the final answer
     if final_answer and not final_answer.startswith("❌"):

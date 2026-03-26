@@ -578,6 +578,7 @@ async def stream_and_display(
     chat_id: int = 0,
     chat_type: str = "private",
     reply_markup: Any | None = None,
+    footer_text: str | None = None,
 ) -> tuple[str, bool, Message | None, int]:
     """High-level: stream AI response and progressively update Telegram message.
 
@@ -638,6 +639,11 @@ async def stream_and_display(
             max_key_retries=3,
         ):
             await writer.write(delta)
+
+        # Inject optional footer (e.g. memory indicator) as part of the stream
+        # so the user sees it arrive smoothly — no post-hoc edit_text jump.
+        if footer_text:
+            await writer.write(footer_text)
 
         final_text = await writer.finalize(reply_markup=reply_markup)
 

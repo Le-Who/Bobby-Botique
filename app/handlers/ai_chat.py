@@ -25,6 +25,47 @@ from app.utils.stage_indicators import STAGES_CHAT, update_stage
 # Removed _background_tasks set, using centralized TaskManager
 
 
+def _store_memory_in_background(user_id: int, user_message: str, key_data: dict | None) -> None:
+    """Store user intent as long-term memory (background, non-blocking).
+
+    Fires a retryable background task that embeds the user message
+    and checks whether memory consolidation is needed.
+    """
+    try:
+        if not key_data or len(user_message) <= 30:
+            return
+
+        from app.repos.memory import store_memory
+
+        memory_content = user_message[:500]
+        _api_key = key_data["api_key"]
+
+        async def _bg_store():
+            await store_memory(
+                user_id,
+                memory_content,
+                _api_key,
+                source_type="user_intent",
+            )
+            try:
+                from app.repos.memory_consolidation import (
+                    consolidate_memories,
+                    should_check_consolidation,
+                    should_consolidate,
+                )
+
+                if should_check_consolidation(user_id) and await should_consolidate(user_id):
+                    await consolidate_memories(user_id, _api_key)
+            except Exception as cons_err:
+                logging.debug("Consolidation check skipped: %s", cons_err)
+
+        from app.utils.background_tasks import submit_retryable
+
+        submit_retryable(_bg_store, retry=3)
+    except Exception:
+        pass
+
+
 async def _handle_regular_chat(
     placeholder_message: Message,
     user_id: int,
@@ -161,6 +202,11 @@ async def _handle_regular_chat(
     streamed = False
     stream_last_msg = None
 
+    # ── Build memory footer if applicable ─────────────────────────────────
+    _footer_text: str | None = None
+    if _memories_injected > 0:
+        _footer_text = f"\n\n_🧠 Использован контекст из прошлых бесед ({_memories_injected})_"
+
     # Stop the heartbeat before streaming — streaming edits the same
     # placeholder message, so the heartbeat would race with it.
     from app.utils.heartbeat import stop_heartbeat
@@ -179,6 +225,7 @@ async def _handle_regular_chat(
         bot=placeholder_message.get_bot(),
         chat_id=placeholder_message.chat_id,
         chat_type=placeholder_message.chat.type,
+        footer_text=_footer_text,
     )
 
     if success and response_text:
@@ -214,11 +261,6 @@ async def _handle_regular_chat(
             ]
             reply_markup = InlineKeyboardMarkup(buttons)
 
-            # ── Memory indicator footnote ─────────────────────────────────
-            # Append string so it applies to history and non-streaming modes natively
-            if _memories_injected > 0:
-                response_text += f"\n\n_🧠 Использован контекст из прошлых бесед ({_memories_injected})_"
-
             if not streamed:
                 # Non-streaming: send_long_message as before
                 try:
@@ -235,61 +277,19 @@ async def _handle_regular_chat(
                     except Exception:
                         await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
             else:
-                # P3: final buttons. If we injected memories, we must edit the text as well
-                # because the streaming text didn't contain the footnote.
+                # Streaming already includes footer_text — just attach buttons.
                 button_msg = stream_last_msg if stream_last_msg else placeholder_message
                 try:
-                    if _memories_injected > 0:
-                        formatted_text, parse_mode = TelegramFormatter.format_text(response_text)
-                        await button_msg.edit_text(
-                            formatted_text,
-                            parse_mode=parse_mode,
-                            reply_markup=reply_markup,
-                        )
-                    else:
-                        await button_msg.edit_reply_markup(reply_markup=reply_markup)
+                    await button_msg.edit_reply_markup(reply_markup=reply_markup)
                 except Exception as e:
                     if "not modified" not in str(e).lower():
-                        logging.warning("Final button/text edit failed: %s", e)
+                        logging.warning("Final button edit failed: %s", e)
 
             chat_state.history.append({"role": "model", "parts": [response_text]})
             chat_state.token_count = new_token_count
             await update_user_chat(user_id, chat_state)
 
-            # ── Store user intent as memory (background, non-blocking) ────
-            try:
-                if key_data and len(user_message) > 30:
-                    from app.repos.memory import store_memory
-
-                    # Change 2: store only user intent for maximum semantic density
-                    memory_content = user_message[:500]
-                    _api_key = key_data["api_key"]
-
-                    async def _bg_store():
-                        await store_memory(
-                            user_id,
-                            memory_content,
-                            _api_key,
-                            source_type="user_intent",
-                        )
-                        # Change 5: check consolidation after storing (debounced)
-                        try:
-                            from app.repos.memory_consolidation import (
-                                consolidate_memories,
-                                should_check_consolidation,
-                                should_consolidate,
-                            )
-
-                            if should_check_consolidation(user_id) and await should_consolidate(user_id):
-                                await consolidate_memories(user_id, _api_key)
-                        except Exception as cons_err:
-                            logging.debug("Consolidation check skipped: %s", cons_err)
-
-                    from app.utils.background_tasks import submit_retryable
-
-                    submit_retryable(_bg_store, retry=3)
-            except Exception:
-                pass
+            _store_memory_in_background(user_id, user_message, key_data)
 
             # ── Model suggestion (non-intrusive hint) ────────────────────
             try:

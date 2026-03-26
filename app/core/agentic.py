@@ -786,5 +786,8 @@ class AgenticSearch:
             # Python's refcount GC cannot collect these immediately when `contents` falls out of scope,
             # resulting in ~250MB RAM bloat after a deep dive until cyclic GC runs.
             # Explicitly clear the container and force cyclic GC collection.
+            # NOTE: gc.collect() is synchronous and blocks the event loop ("stop-the-world").
+            # Running it in a thread pool prevents freezing all concurrent I/O (streaming, polling).
+            # generation=1 targets young objects (where proto-plus cycles live) for minimal pause.
             contents.clear()
-            gc.collect()
+            await asyncio.to_thread(gc.collect, 1)
