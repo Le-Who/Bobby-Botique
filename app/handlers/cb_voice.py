@@ -8,9 +8,8 @@ Uses voice_pending data stored in context.user_data by msg_voice.py.
 __all__ = ["voice_callback"]
 
 import asyncio
-import logging
-
 import contextlib
+import logging
 
 import telegram
 from telegram import Update

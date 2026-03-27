@@ -1,3 +1,7 @@
 ## 2024-05-18 - Missing ARIA States on Custom Navigation Tabs
 **Learning:** Found a recurring pattern where custom-built tab navigations (like the one in `dashboard.html`) only toggle visual states (e.g., CSS `.active` classes) without signaling state changes to screen readers via `aria-selected` and `aria-controls` properties, preventing users from tracking active tabs correctly.
 **Action:** When building custom tab components or enhancing existing ones, ensure the parent element has `role="tablist"`, each child button has `role="tab"`, and Javascript click handlers toggle `aria-selected` attributes identically to the visual classes. Add `role="tabpanel"` to the corresponding panel elements.
+
+## 2024-05-18 - Missing Connective ARIA Attributes on Dynamic UI
+**Learning:** A recurring accessibility pattern observed is that dynamic UI components frequently omit connective ARIA attributes such as `aria-labelledby`, `aria-live`, and `role="alert"`. This means while visuals are styled appropriately (e.g. error banners or notification badges), assistive technologies may fail to properly associate labels, announce dynamic updates, or identify error states, leading to an incomplete experience for screen reader users.
+**Action:** When creating or editing dynamic UI elements, such as custom tabs, notification badges, or validation error messages, actively verify that connective ARIA attributes (like `aria-labelledby`, `aria-live="polite"`, and `role="alert"`) are explicitly implemented alongside visual state changes.
