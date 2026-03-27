@@ -34,10 +34,10 @@ THINKING_CONFIG_MEDIUM = types.ThinkingConfig(thinking_level="medium")  # type: 
 
 # Resilience policy for media processing (tuned for API quota/network hiccups)
 _MEDIA_RESILIENCE = ResiliencePolicy(
-    max_retries=3,
+    max_retries=2,
     base_delay_s=1.5,
     max_delay_s=15.0,
-    timeout_s=60.0,
+    timeout_s=30.0,
 )
 
 # ── System Prompts ───────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ async def _generate_with_resilience(
     Returns:
         Generated text, or None on total failure.
     """
-    from app.resilience_policy import is_transient_error
+    from app.resilience_policy import is_retryable_exception
 
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
@@ -164,7 +164,8 @@ async def _generate_with_resilience(
 
         try:
             # Pre-create circuit breaker with media-specific config (60s monitor)
-            from app.circuit_breaker import CircuitBreakerConfig, get_circuit_breaker as _get_cb
+            from app.circuit_breaker import CircuitBreakerConfig
+            from app.circuit_breaker import get_circuit_breaker as _get_cb
 
             _media_cb_name = f"media:{model}"
             _get_cb(_media_cb_name, CircuitBreakerConfig(monitor_interval=60.0, failure_threshold=5))
@@ -183,7 +184,7 @@ async def _generate_with_resilience(
             return result
         except Exception as e:
             last_error = e
-            if is_transient_error(str(e)):
+            if is_retryable_exception(e):
                 logging.warning(
                     "Media processing key %s…failed with transient error, rotating key (%d/%d): %s",
                     current_key[:8],

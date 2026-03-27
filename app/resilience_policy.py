@@ -36,12 +36,25 @@ def is_transient_error(error_text: str) -> bool:
     return any(token in lowered for token in patterns)
 
 
+# Exception types that are always retryable regardless of their str() representation.
+# asyncio.TimeoutError is critical: str(asyncio.TimeoutError()) == "" (empty string),
+# so is_transient_error(str(e)) silently returns False, bypassing all retries.
+_RETRYABLE_TYPES = (asyncio.TimeoutError, TimeoutError, ConnectionError)
+
+
+def is_retryable_exception(exc: Exception) -> bool:
+    """Type-aware retryability check: known transient types + text scan."""
+    if isinstance(exc, _RETRYABLE_TYPES):
+        return True
+    return is_transient_error(str(exc))
+
+
 async def run_with_resilience(
     operation: Callable[[], Awaitable[T]],
     policy: ResiliencePolicy | None = None,
     *,
     circuit_name: str | None = None,
-    is_retryable: Callable[[Exception], bool] = lambda e: is_transient_error(str(e)),
+    is_retryable: Callable[[Exception], bool] = is_retryable_exception,
 ) -> tuple[T, int]:
     effective = policy or ResiliencePolicy()
     last_error: Exception | None = None

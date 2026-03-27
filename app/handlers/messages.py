@@ -74,7 +74,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # ── 2. Telegram API logging ──────────────────────────────────────────
-        message_type = "photo" if update.message.photo else "text" if update.message.text else "other"
+        message_type = "photo" if update.message.photo else "voice" if update.message.voice else "text" if update.message.text else "other"
         start_time = api_logger.log_request(
             "telegram",
             method="handle_message",
@@ -128,7 +128,87 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # ── 4b. Voice messages ───────────────────────────────────────────────
         if update.message.voice:
             logging.info("Processing voice message from user %s", user_id)
-            await handle_voice_inline(update, context)
+
+            # Dedup guard (prevents double-processing from Telegram retries)
+            from app.middleware.dedup import is_duplicate_voice
+
+            if await is_duplicate_voice(user_id, update.message.voice.file_unique_id):
+                logging.debug("Voice dedup: skipping duplicate voice for user %s", user_id)
+                return
+
+            # Duration guard (skip very short accidental recordings)
+            # voice.duration may be int or timedelta depending on PTB version
+            if int(getattr(update.message.voice, "duration", 0)) < 1:
+                from app.i18n import detect_language as _dl
+                from app.i18n import t as _t
+
+                await update.message.reply_text(_t("voice.too_short", _dl(None)))
+                return
+
+            from app.i18n import t as _t
+
+            placeholder_message = await update.message.reply_text(_t("voice.processing", "ru"))
+
+            done_event = asyncio.Event()
+            register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
+
+            async def voice_task_wrapper() -> None:
+                try:
+                    async with state.get_user_lock(user_id):
+                        logging.info("Starting voice processing for user %s", user_id)
+
+                        await handle_voice_inline(placeholder_message, update, context)
+
+                        stop_heartbeat(placeholder_message.message_id)
+                        logging.info("Completed voice processing for user %s", user_id)
+
+                        import time as _time
+
+                        elapsed = _time.time() - start_time
+                        api_logger.log_response(
+                            "telegram",
+                            start_time,
+                            method="handle_message",
+                        )
+                        await metrics_collector.record_request(
+                            "handle_message", elapsed, success=True, user_id=user_id,
+                        )
+
+                except Exception as e:
+                    logging.error("Error in voice task wrapper for user %s: %s", user_id, e, exc_info=True)
+                    try:
+                        stop_heartbeat(placeholder_message.message_id)
+                        from app.errors import build_retry_and_roles_keyboard
+                        from app.i18n import t
+
+                        await placeholder_message.edit_text(
+                            t("error.generic"),
+                            reply_markup=build_retry_and_roles_keyboard(),
+                        )
+                    except (BadRequest, NetworkError) as edit_error:
+                        logging.error("Could not edit placeholder message: %s", edit_error)
+
+                    import time as _time
+
+                    elapsed = _time.time() - start_time
+                    api_logger.log_response(
+                        "telegram",
+                        start_time,
+                        method="handle_message",
+                        success=False,
+                        error_message=str(e),
+                    )
+                    await metrics_collector.record_request(
+                        "handle_message", elapsed, success=False, user_id=user_id,
+                    )
+                finally:
+                    unregister_heartbeat(placeholder_message.message_id)
+                    if not done_event.is_set():
+                        stop_heartbeat(placeholder_message.message_id)
+
+            from app.utils.background_tasks import submit_task
+
+            submit_task(voice_task_wrapper())
             return
 
         # ── 5. State-machine dispatchers (role/rename flows) ─────────────────
@@ -220,7 +300,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 try:
                     stop_heartbeat(placeholder_message.message_id)
                     from app.errors import build_retry_and_roles_keyboard
-
                     from app.i18n import t
 
                     await placeholder_message.edit_text(
