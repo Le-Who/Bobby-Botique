@@ -3,6 +3,66 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.68] - 2026-03-27 - Multimodal Pipeline & Embedding Migration
+
+### ✨ New Features
+
+| Feature | Files | Detail |
+|---------|-------|--------|
+| Voice Message Processing | `msg_voice.py` [NEW], `messages.py` | Inline voice handler (`handle_voice_inline`) routed through `handle_request` pipeline (Step 4b). Inherits all auth, rate-limit, tracing, and dedup guards. Transcription via `gemini-3.1-flash-lite` with `thinking_config=HIGH`. |
+| Multimodal Memory Storage | `ai_photo.py`, `msg_document.py`, `multimodal_processor.py` | Background `process_media_for_memory()` tasks added for images and documents via `submit_retryable()`. Extracts semantic content from media and stores as LTM entries. |
+| Multimodal Processor | `multimodal_processor.py` [NEW] | Unified media processing service: `transcribe_voice()`, `describe_image()`, `extract_document_content()`, `process_media_for_memory()`. Model-aware key resolution, configurable thinking levels, resilient generation with multi-key rotation. |
+
+### 🛡️ Resilience & 503 Handling
+
+| Change | Files | Detail |
+|--------|-------|--------|
+| 503/UNAVAILABLE key rotation (streaming) | `gemini.py` | 503 errors are now re-raised (not yielded as text) when no content has been streamed, enabling `ProviderRouter` to rotate to a fresh API key. Mid-stream failures still yield error text gracefully. |
+| Multi-key retry in generation | `multimodal_processor.py` | `_generate_with_resilience`: 3 attempts per key, rotating through up to 3 different API keys on transient failures. Model-specific key resolution via `_get_api_key_for_media(model)`. |
+
+### ⚡ Embedding Migration
+
+| Change | Files | Detail |
+|--------|-------|--------|
+| Gemini v2 768-dim embeddings | `memory.py`, `024_upgrade_gemini_v2_768.sql` | Migrated from `gemini-embedding-001` (3072-dim `halfvec`) to `gemini-embedding-2-preview` (768-dim `vector`). Idempotent migration drops old index, alters column type, recreates HNSW index. |
+
+### 🐛 Bug Fixes
+
+| Fix | Files | Detail |
+|-----|-------|--------|
+| Ruff B023 loop variable binding | `multimodal_processor.py` | Fixed closure capturing loop variable `client` by binding it as a default parameter in `_call(_c=client)`. |
+| Test fixtures missing `voice` attr | `test_messages.py`, `test_integration_flow.py` | Added `voice=None` to `MockMessage` and `make_update()` to prevent `AttributeError` after voice routing change. |
+| Test fixtures missing `branch_id` | `factories.py`, `test_integration_flow.py`, `conftest.py` | Added `branch_id=None` to `make_chat_state()`, inline `SimpleNamespace` mocks, and integration DB bootstrap. |
+| E2E test DB connection race | `test_chat_happy_path.py` | Mocked `submit_retryable` and `set_last_sent_message` to prevent background tasks competing for the single transactional test DB connection. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Tests | **1453 passed**, 0 failed |
+
+### Files Changed (14 files, 2 new)
+
+| File | Change |
+|------|--------|
+| `app/handlers/msg_voice.py` | [NEW] Inline voice handler |
+| `app/utils/multimodal_processor.py` | [NEW] Unified multimodal processor with key rotation |
+| `app/utils/audio_processor.py` | Backward-compat re-exports |
+| `app/providers/gemini.py` | 503 re-raise in streaming path |
+| `app/handlers/messages.py` | Voice routing at Step 4b |
+| `app/handlers/ai_photo.py` | Background LTM hook for images |
+| `app/handlers/msg_document.py` | Background LTM hook for documents |
+| `app/repos/memory.py` | 768-dim embeddings, new model |
+| `tests/test_messages.py` | `voice=None` in MockMessage |
+| `tests/test_integration_flow.py` | `voice=None`, `branch_id=None` |
+| `tests/factories.py` | `branch_id=None` in `make_chat_state` |
+| `tests/integration/conftest.py` | `branch_id` column in test DB |
+| `tests/e2e/test_chat_happy_path.py` | Mocked background tasks |
+| `README.md` | Updated for multimodal + 768-dim embeddings |
+
+---
+
 ## [2.8.67] - 2026-03-27 - RLS Policy Optimization & Key Health Fix
 
 ### ⚡ Performance (Supabase RLS)

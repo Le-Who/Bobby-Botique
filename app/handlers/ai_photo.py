@@ -233,6 +233,26 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
             chat_state.history.append({"role": "user", "parts": [formatted_prompt]})
             chat_state.history.append({"role": "model", "parts": [response_text]})
             await update_user_chat(user_id, chat_state)
+
+            # ── Store photo description in long-term memory (background) ──
+            _photo_bytes = compressed or img_raw
+            if _photo_bytes and chat_state.ltm_enabled:
+                from app.utils.background_tasks import submit_retryable
+
+                def _bg_photo_ltm():
+                    async def _store():
+                        from app.utils.multimodal_processor import process_media_for_memory
+
+                        await process_media_for_memory(
+                            _photo_bytes,
+                            user_id,
+                            media_type="image",
+                            telegram_file_id=file_unique_id,
+                        )
+
+                    return _store()
+
+                submit_retryable(_bg_photo_ltm, retry=2)
         else:
             logging.warning("Empty response from Gemini API for image processing by user %s", user_id)
 

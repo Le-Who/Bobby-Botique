@@ -33,7 +33,9 @@ async def create_branch(user_id: int, history: list[dict[str, Any]], *, label: s
         )
         if result:
             branch_id = result[0]["id"]
-            logger.info("Branch created: user=%s branch_id=%d label=%s msgs=%d", user_id, branch_id, label, len(history))
+            logger.info(
+                "Branch created: user=%s branch_id=%d label=%s msgs=%d", user_id, branch_id, label, len(history)
+            )
             return branch_id
         return None
     except Exception as e:

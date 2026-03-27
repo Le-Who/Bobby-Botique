@@ -32,6 +32,7 @@ from app.handlers.msg_roles import (
     handle_manual_role_input,
     handle_role_rename,
 )
+from app.handlers.msg_voice import handle_voice_inline
 from app.metrics import metrics_collector
 from app.repos.chats import get_user_chat
 from app.repos.users import is_authorized
@@ -124,6 +125,12 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 update.message.document.file_name,
             )
             await handle_document(update, context)
+            return
+
+        # ── 4b. Voice messages ───────────────────────────────────────────────
+        if update.message.voice:
+            logging.info("Processing voice message from user %s", user_id)
+            await handle_voice_inline(update, context)
             return
 
         # ── 5. State-machine dispatchers (role/rename flows) ─────────────────
@@ -232,3 +239,4 @@ def register(application: Application) -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_request))
     application.add_handler(MessageHandler(filters.PHOTO, handle_request))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_request))
+    application.add_handler(MessageHandler(filters.VOICE, handle_request))

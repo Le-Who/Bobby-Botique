@@ -33,6 +33,7 @@ class MockMessage:
         self.date = date
         self.photo = []
         self.document = None
+        self.voice = None
         self.caption = None
         self.media_group_id = None
         self.reply_text = AsyncMock()
@@ -231,6 +232,10 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
         patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
         patch("app.handlers.messages.metrics_collector", AsyncMock()),
+        # Prevent xdist cross-test contamination: dedup uses module-level dict
+        # shared across tests on the same worker. Without this mock, an earlier
+        # test with the same user_id+text poisons the 3s dedup window.
+        patch("app.middleware.dedup.is_duplicate_request", new_callable=AsyncMock, return_value=False),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -271,14 +276,6 @@ async def test_handle_request_photo_message():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
-    created_tasks = []
-    original_create_task = asyncio.create_task
-
-    def side_effect_create_task(coro, **kwargs):
-        task = original_create_task(coro, **kwargs)
-        created_tasks.append(task)
-        return task
-
     captured_coros = []
 
     def capture_submit(coro, *args, **kwargs):
@@ -286,6 +283,15 @@ async def test_handle_request_photo_message():
         noop_task = AsyncMock()
         noop_task.cancel = MagicMock()
         return noop_task
+
+    # Heartbeat coroutines captured via create_task mock (NOT real tasks)
+    heartbeat_coros = []
+
+    def mock_create_task(coro, **kwargs):
+        heartbeat_coros.append(coro)
+        mock_task = MagicMock()
+        mock_task.cancel = MagicMock()
+        return mock_task
 
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
@@ -296,7 +302,7 @@ async def test_handle_request_photo_message():
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
-        patch("asyncio.create_task", side_effect=side_effect_create_task),
+        patch("app.handlers.messages.asyncio.create_task", side_effect=mock_create_task),
         patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -313,8 +319,9 @@ async def test_handle_request_photo_message():
         for coro in captured_coros:
             await coro
 
-        if created_tasks:
-            await asyncio.gather(*created_tasks, return_exceptions=True)
+        # Close heartbeat coroutines to avoid warnings
+        for coro in heartbeat_coros:
+            coro.close()
 
         mock_agent_process.assert_awaited_once()
 
@@ -357,14 +364,6 @@ async def test_handle_request_exception_handling():
     update = DummyUpdate(message=message)
     context = DummyContext()
 
-    created_tasks = []
-    original_create_task = asyncio.create_task
-
-    def side_effect_create_task(coro, **kwargs):
-        task = original_create_task(coro, **kwargs)
-        created_tasks.append(task)
-        return task
-
     captured_coros = []
 
     def capture_submit(coro, *args, **kwargs):
@@ -372,6 +371,15 @@ async def test_handle_request_exception_handling():
         noop_task = AsyncMock()
         noop_task.cancel = MagicMock()
         return noop_task
+
+    # Heartbeat coroutines captured via create_task mock (NOT real tasks)
+    heartbeat_coros = []
+
+    def mock_create_task(coro, **kwargs):
+        heartbeat_coros.append(coro)
+        mock_task = MagicMock()
+        mock_task.cancel = MagicMock()
+        return mock_task
 
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
@@ -382,7 +390,7 @@ async def test_handle_request_exception_handling():
         patch("app.handlers.messages.api_logger") as _mock_logger,
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
-        patch("asyncio.create_task", side_effect=side_effect_create_task),
+        patch("app.handlers.messages.asyncio.create_task", side_effect=mock_create_task),
         patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
@@ -400,8 +408,9 @@ async def test_handle_request_exception_handling():
         for coro in captured_coros:
             await coro
 
-        if created_tasks:
-            await asyncio.gather(*created_tasks, return_exceptions=True)
+        # Close heartbeat coroutines to avoid warnings
+        for coro in heartbeat_coros:
+            coro.close()
 
         # Verify that placeholder message was edited to show error
         placeholder_mock = message.reply_text.return_value

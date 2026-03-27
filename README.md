@@ -1,10 +1,10 @@
 # GemAI Bot v2
 
-An advanced, asynchronous Telegram bot designed as a comprehensive AI assistant. It orchestrates multiple AI providers (Google Gemini, OpenRouter), performs web research via native Google Search Grounding and Tavily, maintains long-term contextual memory, and analyzes documents.
+An advanced, asynchronous Telegram bot designed as a comprehensive AI assistant. It orchestrates multiple AI providers (Google Gemini, OpenRouter), performs web research via native Google Search Grounding and Tavily, maintains long-term contextual memory, and processes multimodal inputs (voice, images, documents).
 
 ## What It Does
 
-The bot provides intelligent conversational abilities within Telegram, augmenting standard LLM replies with real-time internet search capabilities and document processing (PDF, DOCX). It actively manages AI API quotas using a key rotation system, stores chat histories and extracted semantic concepts in a PostgreSQL database, and exposes an administrative health dashboard.
+The bot provides intelligent conversational abilities within Telegram, augmenting standard LLM replies with real-time internet search capabilities and multimodal processing (voice transcription, image analysis, PDF/DOCX). It actively manages AI API quotas using a key rotation system with automatic 503/UNAVAILABLE key rotation, stores chat histories and extracted semantic concepts in a PostgreSQL database, and exposes an administrative health dashboard.
 
 ## Current Status
 
@@ -17,7 +17,8 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Agentic Web Browsing (`??` prefix)**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops. Hardened against memory leaks caused by gRPC protobuf cyclic references during long-running iterations (including threaded, non-blocking asynchronous Garbage Collection). Per-call API key usage tracking ensures accurate quota accounting across all LLM invocations within the agentic loop. Features an intelligent **Model Fallback Cascade** (automatically retries failed LLM requests or 503 errors using the next most capable model according to the capability tier rankings), parallel tool execution (`asyncio.gather` with semaphore), two-layer page content caching (session + global, 30-min TTL), source quality scoring (domain classification, freshness labels, citation validation), adaptive iteration budget (query deduplication, configurable token cap and wall-clock timeout), and rich streaming progress with search queries and iteration counters.
 - **Image Processing Pipeline**: Context-aware adaptive resize (`TASK_DIMS`: describe 1280px, search 768px, OCR 2048px) with 3-stage compression (thumbnail → JPEG q85 → fallback q75/65), TTL-cached results (`cache_key` by `file_unique_id`), and `TaggedImage` metadata carrier across handler→provider boundary to eliminate redundant recompression. Media group downloads use `Semaphore(5)` with debounced progress indicator.
 - **Document Understanding**: Extracts text from PDF/DOCX files and uses it for context-aware Q&A.
-- **Persistent Long-Term Memory**: Semantic recall via `pgvector` (`halfvec(3072)`) with hybrid RRF retrieval (cosine similarity + `pg_trgm` keyword matching). Memories injected into `system_instruction` as structured `<long_term_memory><fact>` XML tags (Context Engineering). Only user intent is embedded for maximum vector density (`source_type='user_intent'`). Dynamic consolidation triggers at ~8,000 tokens or 7 days, extracting atomic persona facts via LLM. User-manageable via `/memory` (paginated inline UI with per-item delete) and toggleable via `/settings`.
+- **Multimodal Processing Pipeline**: Voice messages transcribed via `gemini-3.1-flash-lite` (high thinking budget for ASR quality), images analyzed with adaptive vision prompts, documents chunked with query-aware relevance scoring. All media types stored as long-term memories via background `submit_retryable()` tasks. Resilient API key rotation on 503/UNAVAILABLE errors (up to 3 keys, 3 retries each) with model-aware key resolution.
+- **Persistent Long-Term Memory**: Semantic recall via `pgvector` (`halfvec(768)`) with hybrid RRF retrieval (cosine similarity + `pg_trgm` keyword matching). Memories injected into `system_instruction` as structured `<long_term_memory><fact>` XML tags (Context Engineering). Only user intent is embedded for maximum vector density (`source_type='user_intent'`). Dynamic consolidation triggers at ~8,000 tokens or 7 days, extracting atomic persona facts via LLM. User-manageable via `/memory` (paginated inline UI with per-item delete) and toggleable via `/settings`.
 - **Distributed Concurrency**: Multi-tier Redis-backed global semaphores (heavy and ultra-heavy limits) to prevent API quota starvation in multi-replica deployments while guaranteeing isolation between standard queries and intensive Agentic research loops.
 - **Resilient Operations**: Instance-based background task manager with exponential backoff, bare-coroutine safety guard, and admin alerting hooks. Atomic metrics persistence with delta-based increments prevents data loss on restart. Prompt registry validates required variables at render time to prevent silent placeholder leaks.
 - **Thinking Level Control**: Configurable reasoning depth for supported models.
@@ -38,7 +39,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 
 ## Non-Goals / Limitations
 
-- **No Voice/Audio Support**: Does not currently process or transcribe Telegram voice messages.
+- **Voice Processing Limitations**: Voice transcription uses `gemini-3.1-flash-lite` — quality depends on audio clarity and language support of the underlying model.
 - **OpenRouter Limitations**: Multimodal detection (images) strictly forces Gemini; OpenRouter is not utilized for vision tasks.
 - **Local Rate Limits**: Heavy request limits are rigidly enforced per user to prevent API quota drain (`MAX_CONCURRENT_HEAVY_REQUESTS`).
 - **No ORM**: Raw SQL via asyncpg; no SQLAlchemy or Alembic.
@@ -178,11 +179,11 @@ All database DDL is managed via **numbered SQL migration files** in `scripts/mig
 
 ## Long-Term Memory Architecture
 
-Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `halfvec(3072)`).
+Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `halfvec(768)`).
 
 | Parameter | Value | Config Location |
 |-----------|-------|-----------------|
-| Embedding model | `gemini-embedding-001` (3072 dims) | `app/repos/memory.py` |
+| Embedding model | `gemini-embedding-2-preview` (768 dims) | `app/repos/memory.py` |
 | Max memories per user | 500 | `MAX_MEMORIES_PER_USER` |
 | Default TTL | 90 days | `DEFAULT_MEMORY_TTL_DAYS` |
 | Min query length (store) | 30 chars | `ai_chat.py` threshold |
@@ -223,7 +224,7 @@ Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `h
 
 ## Testing
 
-The application features a heavily engineered test suite (**1343+ unit and integration tests, 60% line coverage**) with **parallel execution** via `pytest-xdist`.
+The application features a heavily engineered test suite (**1453+ unit and integration tests, 60% line coverage**) with **parallel execution** via `pytest-xdist`.
 
 - **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.

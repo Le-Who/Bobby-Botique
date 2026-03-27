@@ -28,6 +28,7 @@ def make_update(user_id=123, chat_id=456, text="Hello AI", photo=False):
     msg.from_user = update.effective_user
     msg.text = text
     msg.document = None
+    msg.voice = None
     msg.photo = [MagicMock()] if photo else []
     msg.caption = "What is this?" if photo else None
     msg.media_group_id = None
@@ -141,6 +142,7 @@ async def test_happy_path_text_message(run_background_sync):
         context_summary=None,
         thinking_level=0,
         ltm_enabled=True,
+        branch_id=None,
     )
 
     with (
@@ -233,6 +235,7 @@ async def test_agent_error_shows_retry_keyboard(run_background_sync):
         context_summary=None,
         thinking_level=0,
         ltm_enabled=True,
+        branch_id=None,
     )
 
     with (

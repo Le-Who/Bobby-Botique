@@ -25,8 +25,8 @@ from app.providers.gemini import get_cached_genai_client
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-EMBEDDING_MODEL = "gemini-embedding-001"
-EMBEDDING_DIMENSION = 3072
+EMBEDDING_MODEL = "gemini-embedding-2-preview"
+EMBEDDING_DIMENSION = 768
 MAX_MEMORIES_PER_USER = 500
 DEFAULT_MEMORY_TTL_DAYS = 90
 
@@ -35,14 +35,14 @@ _trgm_available: bool | None = None
 
 
 async def _get_embedding(
-    text: str,
+    content: str | list[Any],
     api_key: str,
     *,
     task_type: str = "RETRIEVAL_DOCUMENT",
 ) -> list[float] | None:
-    """Generate an embedding for the given text.
+    """Generate an embedding for the given text or multimodal payload.
 
-    Uses Gemini's gemini-embedding-001 model (3072-dim, pre-normalized).
+    Uses Gemini's gemini-embedding-2-preview model (768-dim, pre-normalized).
     The task_type should be:
       - RETRIEVAL_DOCUMENT when storing content for later retrieval
       - RETRIEVAL_QUERY when searching for similar content
@@ -51,10 +51,17 @@ async def _get_embedding(
     """
     try:
         client = get_cached_genai_client(api_key)  # Reuse cached client (HTTP/2 multiplexing)
+
+        # Apply truncation for long text context up to ~30,000 chars (model supports 8192 tokens)
+        payload = content[:30000] if isinstance(content, str) else content
+
         result = await client.aio.models.embed_content(
             model=EMBEDDING_MODEL,
-            contents=text[:8000],  # Truncate to model limit
-            config=types.EmbedContentConfig(task_type=task_type),
+            contents=payload,
+            config=types.EmbedContentConfig(
+                task_type=task_type,
+                output_dimensionality=EMBEDDING_DIMENSION,
+            ),
         )
         if result and result.embeddings:
             return result.embeddings[0].values
@@ -72,7 +79,7 @@ async def _get_embedding(
 
 async def store_memory(
     user_id: int,
-    content: str,
+    content: str | list[Any],
     api_key: str,
     *,
     source_type: str = "conversation",
@@ -83,7 +90,7 @@ async def store_memory(
 
     Args:
         user_id: Owner of the memory.
-        content: Text content to embed and store.
+        content: Text or multimodal payload to embed and store.
         api_key: Gemini API key for embedding generation.
         source_type: 'conversation', 'summary', 'document', etc.
         metadata: Additional JSON metadata.
@@ -92,8 +99,16 @@ async def store_memory(
     Returns:
         Memory ID on success, None on failure.
     """
-    if not content or len(content.strip()) < 10:
-        return None
+    if isinstance(content, str):
+        if not content or len(content.strip()) < 10:
+            return None
+        db_text_content = content[:32000]
+    else:
+        if not content:
+            return None
+        # Provide a text representation for DB storage by picking out strings
+        strings = [str(c) for c in content if isinstance(c, str)]
+        db_text_content = (" ".join(strings) or "<Multimodal Memory>")[:32000]
 
     embedding = await _get_embedding(content, api_key)
     if embedding is None:
@@ -128,7 +143,7 @@ async def store_memory(
                     "VALUES ($1, $2, $3::halfvec, $4, $5::jsonb, $6) RETURNING id",
                     (
                         user_id,
-                        content[:10000],  # Truncate
+                        db_text_content,  # Truncated or serialized to text for Postgres
                         f"[{','.join(str(v) for v in embedding)}]",
                         source_type,
                         __import__("json").dumps(metadata or {}),

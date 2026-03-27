@@ -186,8 +186,8 @@ class Settings(BaseModel):
     # flash-lite: lighter architecture, faster degradation → conservative 32K.
     # flash:      good quality up to ~128K (validated sweet spot for reasoning).
     MODEL_CONTEXT_BUDGETS: dict[str, int] = {
-        "flash-lite": 32_000,   # gemini-2.5-flash-lite, gemini-3.1-flash-lite-preview
-        "flash": 128_000,       # gemini-2.5-flash, gemini-3-flash-preview
+        "flash-lite": 32_000,  # gemini-2.5-flash-lite, gemini-3.1-flash-lite-preview
+        "flash": 128_000,  # gemini-2.5-flash, gemini-3-flash-preview
     }
     DEFAULT_CONTEXT_BUDGET: int = 128_000
 

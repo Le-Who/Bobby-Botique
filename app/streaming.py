@@ -245,7 +245,9 @@ class StreamingWriter:
         for attempt in range(max_retries):
             try:
                 await self._adapter.edit_message(
-                    text, parse_mode=parse_mode, reply_markup=reply_markup,
+                    text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
                 )  # type: ignore[arg-type]
                 return True
             except Exception as e:
@@ -253,10 +255,12 @@ class StreamingWriter:
                 if "not modified" in err_str:
                     return True  # Not an error — text unchanged
                 if self._is_rate_limited(e) and attempt < max_retries - 1:
-                    backoff = (0.5 * (2 ** attempt)) + random.uniform(0, 0.3)
+                    backoff = (0.5 * (2**attempt)) + random.uniform(0, 0.3)
                     logging.debug(
                         "Rate-limited on edit (attempt %d/%d), backing off %.2fs",
-                        attempt + 1, max_retries, backoff,
+                        attempt + 1,
+                        max_retries,
+                        backoff,
                     )
                     await asyncio.sleep(backoff)
                     # Adaptive debounce: escalate interval to reduce future pressure
@@ -266,7 +270,9 @@ class StreamingWriter:
                 if attempt == max_retries - 1 or not self._is_rate_limited(e):
                     logging.warning(
                         "Streaming edit failed (attempt %d/%d): %s",
-                        attempt + 1, max_retries, e,
+                        attempt + 1,
+                        max_retries,
+                        e,
                     )
                     return False
         return False
@@ -441,7 +447,9 @@ class StreamingWriter:
                     return
 
             success = await self._retry_edit(
-                formatted_text, parse_mode, reply_markup=reply_markup,
+                formatted_text,
+                parse_mode,
+                reply_markup=reply_markup,
             )
             if success:
                 self._last_edit_time = time.monotonic()

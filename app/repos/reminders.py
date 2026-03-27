@@ -42,7 +42,10 @@ async def create_reminder(
             rid = result[0]["id"]
             logger.info(
                 "Reminder created: user=%s id=%d trigger_at=%s prompt=%s",
-                user_id, rid, trigger_at.isoformat(), prompt[:60],
+                user_id,
+                rid,
+                trigger_at.isoformat(),
+                prompt[:60],
             )
             return rid
         return None

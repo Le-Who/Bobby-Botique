@@ -23,12 +23,28 @@ from app.web_reader import read_url
 logger = logging.getLogger(__name__)
 
 # ── URL normalization for deduplication ──────────────────────────────────────
-_TRACKING_PARAMS = frozenset({
-    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "fbclid", "gclid", "dclid", "msclkid",
-    "ref", "source", "share", "mc_cid", "mc_eid",
-    "_ga", "_gl", "yclid", "spm",
-})
+_TRACKING_PARAMS = frozenset(
+    {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "fbclid",
+        "gclid",
+        "dclid",
+        "msclkid",
+        "ref",
+        "source",
+        "share",
+        "mc_cid",
+        "mc_eid",
+        "_ga",
+        "_gl",
+        "yclid",
+        "spm",
+    }
+)
 
 
 def _normalize_url(url: str) -> str:
@@ -45,10 +61,7 @@ def _normalize_url(url: str) -> str:
             hostname = hostname[4:]
         # Parse and filter query params
         params = parse_qs(parsed.query, keep_blank_values=True)
-        filtered = {
-            k: sorted(v) for k, v in params.items()
-            if k.lower() not in _TRACKING_PARAMS
-        }
+        filtered = {k: sorted(v) for k, v in params.items() if k.lower() not in _TRACKING_PARAMS}
         canon_query = urlencode(filtered, doseq=True)
         scheme = parsed.scheme or "https"
         base = f"{scheme}://{hostname}{path}"

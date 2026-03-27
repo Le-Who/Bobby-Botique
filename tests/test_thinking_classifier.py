@@ -1,4 +1,5 @@
 """Quick smoke test for the thinking classifier."""
+
 from app.thinking_classifier import classify_thinking_level, resolve_thinking_level
 
 
@@ -62,6 +63,7 @@ def test_medium_summarize():
 
 
 # --- resolve tests ---
+
 
 def test_resolve_user_override_high():
     assert resolve_thinking_level("high", "привет") == "high"

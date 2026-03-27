@@ -220,6 +220,28 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         set_document_mode(user_id, True)
         await metrics_collector.record_api_call("document_processing")
 
+        # ── Store document summary in long-term memory (background) ──
+        doc_content = result.get("content", "")
+        if doc_content and len(doc_content) > 100:
+            from app.utils.background_tasks import submit_retryable
+
+            _doc_bytes = doc_content.encode("utf-8", errors="replace")
+            _doc_uid = user_id
+
+            def _bg_doc_ltm():
+                async def _store():
+                    from app.utils.multimodal_processor import process_media_for_memory
+
+                    await process_media_for_memory(
+                        _doc_bytes,
+                        _doc_uid,
+                        media_type="document_text",
+                    )
+
+                return _store()
+
+            submit_retryable(_bg_doc_ltm, retry=2)
+
     except Exception as e:
         logging.error("Error processing document for user %s: %s", user_id, e, exc_info=True)
         from app.utils.keyboards import error_with_back_keyboard

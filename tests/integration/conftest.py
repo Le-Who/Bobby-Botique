@@ -62,6 +62,7 @@ async def db_conn(test_db_url):
 
     # Ensure schema is up-to-date for integration tests (idempotent)
     await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
+    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS branch_id INTEGER")
     tx = conn.transaction()
     await tx.start()
     try:

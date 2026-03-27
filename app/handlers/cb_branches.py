@@ -44,9 +44,11 @@ async def branch_create_callback(update: Update, context: ContextTypes.DEFAULT_T
     await update_user_chat(user_id, chat_state)
 
     # Notify user with return button
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("↩️ К основной ветке", callback_data="branch_return")],
-    ])
+    keyboard = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("↩️ К основной ветке", callback_data="branch_return")],
+        ]
+    )
     await query.message.reply_text(
         "🔀 <b>Ветка создана!</b>\n\n"
         "Теперь вы можете задавать вопросы «что если» без влияния на основной разговор.\n"
@@ -86,7 +88,6 @@ async def branch_return_callback(update: Update, context: ContextTypes.DEFAULT_T
     await delete_branch(branch_id, user_id)
 
     await query.message.reply_text(
-        "↩️ <b>Вернулись в основную ветку!</b>\n\n"
-        "История разговора восстановлена.",
+        "↩️ <b>Вернулись в основную ветку!</b>\n\nИстория разговора восстановлена.",
         parse_mode="HTML",
     )

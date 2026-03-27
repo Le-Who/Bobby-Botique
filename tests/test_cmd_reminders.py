@@ -196,7 +196,9 @@ class TestClassifyReminderIntent:
 
     def test_long_ai_prompt_triggers_research(self):
         """Prompts >80 chars with AI signals should be classified as research."""
-        long_prompt = "Найди подробную информацию о последних изменениях в законодательстве и как они повлияют на бизнес"
+        long_prompt = (
+            "Найди подробную информацию о последних изменениях в законодательстве и как они повлияют на бизнес"
+        )
         result = _classify_reminder_intent(long_prompt)
         assert result["is_ai"] is True
         assert result["mode"] == "research"
@@ -284,12 +286,14 @@ class TestCheckAndDeliverReminders:
         context = MagicMock()
         context.bot.send_message = AsyncMock()
 
-        pending = [{
-            "id": 2,
-            "user_id": 42,
-            "prompt": "Find latest news",
-            "context_history": {"is_ai": True, "mode": "qna"},
-        }]
+        pending = [
+            {
+                "id": 2,
+                "user_id": 42,
+                "prompt": "Find latest news",
+                "context_history": {"is_ai": True, "mode": "qna"},
+            }
+        ]
 
         with (
             patch("app.handlers.cmd_reminders.get_pending_reminders", new_callable=AsyncMock, return_value=pending),
@@ -311,12 +315,14 @@ class TestCheckAndDeliverReminders:
         context = MagicMock()
         context.bot.send_message = AsyncMock()
 
-        pending = [{
-            "id": 3,
-            "user_id": 42,
-            "prompt": "Research AI trends",
-            "context_history": '{"is_ai": true, "mode": "research"}',
-        }]
+        pending = [
+            {
+                "id": 3,
+                "user_id": 42,
+                "prompt": "Research AI trends",
+                "context_history": '{"is_ai": true, "mode": "research"}',
+            }
+        ]
 
         with (
             patch("app.handlers.cmd_reminders.get_pending_reminders", new_callable=AsyncMock, return_value=pending),

@@ -149,11 +149,17 @@ def classify_thinking_level(
         logger.debug("Thinking classifier: LOW (single word)")
         return "low"
 
-    if is_short and is_single_question and not any([
-        _MEDIUM_EXPLAIN.search(message),
-        _MEDIUM_CREATIVE.search(message),
-        _MEDIUM_SUMMARIZE.search(message),
-    ]):
+    if (
+        is_short
+        and is_single_question
+        and not any(
+            [
+                _MEDIUM_EXPLAIN.search(message),
+                _MEDIUM_CREATIVE.search(message),
+                _MEDIUM_SUMMARIZE.search(message),
+            ]
+        )
+    ):
         logger.debug("Thinking classifier: LOW (short simple message)")
         return "low"
 
@@ -162,16 +168,11 @@ def classify_thinking_level(
 
     if history:
         # If recent model responses are long → conversation is complex → escalate
-        recent_model_msgs = [
-            h for h in history[-5:]
-            if h.get("role") == "model"
-        ]
+        recent_model_msgs = [h for h in history[-5:] if h.get("role") == "model"]
         long_responses = sum(
-            1 for h in recent_model_msgs
-            if any(
-                len(str(p.get("text", "") if isinstance(p, dict) else str(p))) > 2000
-                for p in h.get("parts", [])
-            )
+            1
+            for h in recent_model_msgs
+            if any(len(str(p.get("text", "") if isinstance(p, dict) else str(p))) > 2000 for p in h.get("parts", []))
         )
         if long_responses >= 3:
             logger.debug("Thinking classifier: escalated MEDIUM->HIGH (conversation complexity)")

@@ -33,6 +33,7 @@ def make_chat_state(
         context_summary=context_summary,
         thinking_level=thinking_level,
         ltm_enabled=ltm_enabled,
+        branch_id=None,
     )
 
 

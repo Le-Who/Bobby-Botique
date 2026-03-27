@@ -279,6 +279,7 @@ class GeminiProvider(BaseAIProvider):
         if system_instruction:
             config.system_instruction = str(system_instruction)
 
+        _content_yielded = False
         try:
             # wait_for to prevent hanging during connect
             coro = client.aio.models.generate_content_stream(
@@ -308,13 +309,29 @@ class GeminiProvider(BaseAIProvider):
                     logging.debug("Error extracting stream finish_reason: %s", e)
 
                 if chunk.text:
+                    _content_yielded = True
                     yield chunk.text
         except TimeoutError:
             logging.error("Gemini API stream timed out for model %s", model_name)
+            if not _content_yielded:
+                raise  # Let router rotate keys
             yield tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API.")
         except APIError as e:
-            logging.error("Gemini API stream error: %s", e)
             err_lower = str(e).lower()
+            is_retryable = (
+                "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower or "rate limit" in err_lower
+            )
+
+            if is_retryable and not _content_yielded:
+                # Re-raise so the router can rotate to a different API key.
+                # Google 503 "high demand" errors are often per-project or
+                # per-key — a different key may succeed immediately.
+                logging.warning(
+                    "Gemini API retryable stream error (503/UNAVAILABLE), re-raising for key rotation: %s", e
+                )
+                raise
+
+            logging.error("Gemini API stream error: %s", e)
             if "quota" in err_lower:
                 yield tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
             elif "api key" in err_lower or "api_key_invalid" in err_lower:
@@ -326,6 +343,8 @@ class GeminiProvider(BaseAIProvider):
             else:
                 yield tag_error(ErrorCode.GENERIC, f"❌ Произошла ошибка API: {e}")
         except Exception as e:
+            if not _content_yielded:
+                raise  # Let router rotate keys
             logging.error("Gemini streaming error: %s", e)
             yield tag_error(ErrorCode.GENERIC, f"❌ Ошибка: {e}")
 

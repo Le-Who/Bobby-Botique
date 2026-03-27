@@ -43,12 +43,28 @@ _TIME_PATTERN = re.compile(
 )
 
 _UNIT_TO_SECONDS = {
-    "m": 60, "min": 60, "mins": 60, "minutes": 60, "мин": 60,
-    "минута": 60, "минуты": 60, "минуту": 60, "минут": 60,
-    "h": 3600, "hr": 3600, "hrs": 3600, "hours": 3600,
-    "час": 3600, "часа": 3600, "часов": 3600,
-    "d": 86400, "day": 86400, "days": 86400,
-    "день": 86400, "дня": 86400, "дней": 86400,
+    "m": 60,
+    "min": 60,
+    "mins": 60,
+    "minutes": 60,
+    "мин": 60,
+    "минута": 60,
+    "минуты": 60,
+    "минуту": 60,
+    "минут": 60,
+    "h": 3600,
+    "hr": 3600,
+    "hrs": 3600,
+    "hours": 3600,
+    "час": 3600,
+    "часа": 3600,
+    "часов": 3600,
+    "d": 86400,
+    "day": 86400,
+    "days": 86400,
+    "день": 86400,
+    "дня": 86400,
+    "дней": 86400,
 }
 
 # ── Intent classification ────────────────────────────────────────────────────
@@ -57,60 +73,173 @@ _UNIT_TO_SECONDS = {
 # Designed to be accurate and comprehensive per user feedback.
 _AI_KEYWORDS_RU = {
     # Research / search
-    "найди", "найти", "поищи", "поиск", "искать", "ищи", "загугли",
-    "проверь", "проверить", "узнай", "узнать",
+    "найди",
+    "найти",
+    "поищи",
+    "поиск",
+    "искать",
+    "ищи",
+    "загугли",
+    "проверь",
+    "проверить",
+    "узнай",
+    "узнать",
     # Analysis
-    "проанализируй", "анализ", "сравни", "сравнить", "оценить", "оцени",
-    "исследуй", "исследовать", "изучи", "изучить", "разбери", "разобрать",
+    "проанализируй",
+    "анализ",
+    "сравни",
+    "сравнить",
+    "оценить",
+    "оцени",
+    "исследуй",
+    "исследовать",
+    "изучи",
+    "изучить",
+    "разбери",
+    "разобрать",
     # Generation
-    "напиши", "написать", "составь", "составить", "сгенерируй", "генерация",
-    "создай", "создать", "придумай", "придумать", "сформируй", "сформулируй",
-    "подготовь", "подготовить", "сделай", "сделать",
+    "напиши",
+    "написать",
+    "составь",
+    "составить",
+    "сгенерируй",
+    "генерация",
+    "создай",
+    "создать",
+    "придумай",
+    "придумать",
+    "сформируй",
+    "сформулируй",
+    "подготовь",
+    "подготовить",
+    "сделай",
+    "сделать",
     # Summarization
-    "суммаризируй", "резюмируй", "подведи итоги", "кратко",
-    "перескажи", "пересказать", "выдели главное",
+    "суммаризируй",
+    "резюмируй",
+    "подведи итоги",
+    "кратко",
+    "перескажи",
+    "пересказать",
+    "выдели главное",
     # Actuality / freshness
-    "актуальн", "свежи", "последни", "новост", "сегодня", "сейчас",
-    "курс", "цена", "котировк", "прогноз", "погод",
+    "актуальн",
+    "свежи",
+    "последни",
+    "новост",
+    "сегодня",
+    "сейчас",
+    "курс",
+    "цена",
+    "котировк",
+    "прогноз",
+    "погод",
 }
 
 _AI_KEYWORDS_EN = {
     # Research / search
-    "find", "search", "look up", "lookup", "google", "check",
-    "research", "investigate", "explore", "discover",
+    "find",
+    "search",
+    "look up",
+    "lookup",
+    "google",
+    "check",
+    "research",
+    "investigate",
+    "explore",
+    "discover",
     # Analysis
-    "analyze", "analyse", "compare", "evaluate", "assess", "review",
-    "study", "examine",
+    "analyze",
+    "analyse",
+    "compare",
+    "evaluate",
+    "assess",
+    "review",
+    "study",
+    "examine",
     # Generation
-    "write", "compose", "generate", "create", "draft", "prepare",
-    "summarize", "summarise", "outline",
+    "write",
+    "compose",
+    "generate",
+    "create",
+    "draft",
+    "prepare",
+    "summarize",
+    "summarise",
+    "outline",
     # Actuality
-    "latest", "current", "today", "news", "price", "stock",
-    "weather", "forecast", "update",
+    "latest",
+    "current",
+    "today",
+    "news",
+    "price",
+    "stock",
+    "weather",
+    "forecast",
+    "update",
 }
 
 # Simple notification patterns that should NOT trigger AI
 _NOTIFY_PATTERNS_RU = {
-    "выключи", "выключить", "включи", "включить",
-    "позвони", "позвонить", "перезвони",
-    "покорми", "покормить", "выгуляй", "выгулять",
-    "купи", "купить", "забери", "забрать",
-    "прими", "принять", "выпей", "выпить",
-    "поешь", "поесть", "поспи", "поспать",
+    "выключи",
+    "выключить",
+    "включи",
+    "включить",
+    "позвони",
+    "позвонить",
+    "перезвони",
+    "покорми",
+    "покормить",
+    "выгуляй",
+    "выгулять",
+    "купи",
+    "купить",
+    "забери",
+    "забрать",
+    "прими",
+    "принять",
+    "выпей",
+    "выпить",
+    "поешь",
+    "поесть",
+    "поспи",
+    "поспать",
 }
 
 _NOTIFY_PATTERNS_EN = {
-    "turn off", "turn on", "call", "feed", "walk",
-    "buy", "pick up", "take", "eat", "sleep",
-    "drink", "wake up",
+    "turn off",
+    "turn on",
+    "call",
+    "feed",
+    "walk",
+    "buy",
+    "pick up",
+    "take",
+    "eat",
+    "sleep",
+    "drink",
+    "wake up",
 }
 
 # Deep-research signals: if ANY of these appear, use "research" mode
 _RESEARCH_SIGNALS = {
-    "глубок", "подробн", "детальн", "исследуй", "исследовать",
-    "research", "deep", "detailed", "thorough", "in-depth",
-    "agentic", "agent",
-    "проанализируй", "analyze", "analyse", "сравни", "compare",
+    "глубок",
+    "подробн",
+    "детальн",
+    "исследуй",
+    "исследовать",
+    "research",
+    "deep",
+    "detailed",
+    "thorough",
+    "in-depth",
+    "agentic",
+    "agent",
+    "проанализируй",
+    "analyze",
+    "analyse",
+    "сравни",
+    "compare",
 }
 
 
@@ -231,12 +360,14 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     mode = ctx.get("mode", "qna")
                     ai_badge = " 🔬" if mode == "research" else " 🔎"
                 text_parts.append(f"  • `{time_str}` — {prompt_preview}{ai_badge}\n")
-                buttons.append([
-                    InlineKeyboardButton(
-                        f"❌ {prompt_preview[:25]}",
-                        callback_data=f"reminder_cancel:{r['id']}",
-                    )
-                ])
+                buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            f"❌ {prompt_preview[:25]}",
+                            callback_data=f"reminder_cancel:{r['id']}",
+                        )
+                    ]
+                )
 
         text = "".join(text_parts)
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
@@ -325,11 +456,7 @@ async def _execute_ai_reminder(
         async with _AI_REMINDER_SEMAPHORE:
             # ── Send shadow placeholder ──────────────────────────────
             mode_emoji = "🔬" if mode == "research" else "🔎"
-            placeholder_text = (
-                f"⏰ **Отложенный ИИ-запрос** {mode_emoji}\n\n"
-                f"_{prompt}_\n\n"
-                f"⏳ Выполняю..."
-            )
+            placeholder_text = f"⏰ **Отложенный ИИ-запрос** {mode_emoji}\n\n_{prompt}_\n\n⏳ Выполняю..."
             formatted_text, parse_mode = TelegramFormatter.format_text(placeholder_text)
             placeholder_message = await bot.send_message(
                 chat_id=user_id,
@@ -370,7 +497,10 @@ async def _execute_ai_reminder(
             except TimeoutError:
                 logger.warning(
                     "AI reminder %d timed out after %ds (mode=%s, user=%s)",
-                    reminder_id, _AI_REMINDER_TIMEOUT, mode, user_id,
+                    reminder_id,
+                    _AI_REMINDER_TIMEOUT,
+                    mode,
+                    user_id,
                 )
                 timeout_text = (
                     f"⏰ **Отложенный запрос — таймаут**\n\n"
@@ -387,13 +517,18 @@ async def _execute_ai_reminder(
 
             logger.info(
                 "AI reminder %d executed successfully (mode=%s, user=%s)",
-                reminder_id, mode, user_id,
+                reminder_id,
+                mode,
+                user_id,
             )
 
     except Exception as e:
         logger.error(
             "AI reminder %d execution failed (mode=%s, user=%s): %s",
-            reminder_id, mode, user_id, e,
+            reminder_id,
+            mode,
+            user_id,
+            e,
             exc_info=True,
         )
         # Notify user about the failure gracefully
@@ -412,7 +547,6 @@ async def _execute_ai_reminder(
             )
         except Exception:
             logger.error("Failed to send error notification for AI reminder %d", reminder_id)
-
 
 
 async def check_and_deliver_reminders(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -467,7 +601,9 @@ async def check_and_deliver_reminders(context: ContextTypes.DEFAULT_TYPE) -> Non
                     task.add_done_callback(_background_ai_tasks.discard)
                     logger.info(
                         "AI reminder %d dispatched (mode=%s, user=%s)",
-                        reminder["id"], ai_mode, user_id,
+                        reminder["id"],
+                        ai_mode,
+                        user_id,
                     )
                 else:
                     # ── Plain text reminder (original behavior) ───────
@@ -515,11 +651,9 @@ async def reminder_cancel_callback(update: Update, context: ContextTypes.DEFAULT
         if query.message and query.message.reply_markup:
             old_buttons = query.message.reply_markup.inline_keyboard
             new_buttons = [
-                row for row in old_buttons
-                if not any(
-                    btn.callback_data == f"reminder_cancel:{reminder_id}"
-                    for btn in row
-                )
+                row
+                for row in old_buttons
+                if not any(btn.callback_data == f"reminder_cancel:{reminder_id}" for btn in row)
             ]
             new_markup = InlineKeyboardMarkup(new_buttons) if new_buttons else None
             try:

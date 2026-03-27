@@ -54,6 +54,8 @@ async def test_e2e_happy_path_conversation(db_conn_with_key):
         patch("app.providers.get_provider_router", return_value=fake_router),
         patch("app.utils.background_tasks._task_manager._tasks", set()),
         patch("app.utils.background_tasks.submit_task") as mock_submit,
+        patch("app.utils.background_tasks.submit_retryable"),
+        patch("app.state.set_last_sent_message", new_callable=MagicMock),
         patch("app.adapters.concurrency.heavy_request_semaphore", local_sem),
         patch("app.adapters.concurrency.ultra_heavy_semaphore", local_sem),
     ):

@@ -267,7 +267,11 @@ class ProviderRouter:
             key_suffix = raw_key[-4:] if len(raw_key) >= 4 else "????"
             logging.info(
                 "Streaming: model=%s key=%s…(…%s) attempt=%d/%d",
-                model_used, kh, key_suffix, _attempt + 1, max_key_retries,
+                model_used,
+                kh,
+                key_suffix,
+                _attempt + 1,
+                max_key_retries,
             )
 
             stream_started = False
