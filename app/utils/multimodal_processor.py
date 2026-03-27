@@ -24,8 +24,8 @@ from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-TRANSCRIPTION_MODEL = "gemini-3.1-flash-lite"
-IMAGE_DESCRIPTION_MODEL = "gemini-3.1-flash-lite"
+TRANSCRIPTION_MODEL = "gemini-3.1-flash-lite-preview"
+IMAGE_DESCRIPTION_MODEL = "gemini-3.1-flash-lite-preview"
 
 # High thinking level for accurate ASR on noisy/accented audio.
 THINKING_CONFIG_HIGH = types.ThinkingConfig(thinking_level="high")  # type: ignore[arg-type]
@@ -76,7 +76,7 @@ async def _get_api_key_for_media(model: str | None = None) -> str | None:
 
     Uses the existing key-rotation system with health-aware fallback.
     The ``model`` parameter ensures keys are resolved for the actual
-    media model (e.g. gemini-3.1-flash-lite), not the default chat model.
+    media model (e.g. gemini-3.1-flash-lite-preview), not the default chat model.
 
     Returns None if no keys are available.
     """
@@ -222,7 +222,7 @@ async def transcribe_voice(
         audio_bytes: Raw audio file content (e.g. OGG Opus from Telegram).
         api_key: Explicit API key. If None, uses automatic key rotation.
         mime_type: MIME type of the audio. Telegram voices are 'audio/ogg'.
-        model: Model to use. Defaults to gemini-3.1-flash-lite.
+        model: Model to use. Defaults to gemini-3.1-flash-lite-preview.
 
     Returns:
         Transcript text (with summary appended), or None on failure.
@@ -259,7 +259,7 @@ async def describe_image(
         api_key: Explicit API key. If None, uses automatic key rotation.
         mime_type: MIME type of the image.
         prompt: Optional user prompt to guide the description.
-        model: Model to use. Defaults to gemini-3.1-flash-lite.
+        model: Model to use. Defaults to gemini-3.1-flash-lite-preview.
 
     Returns:
         Image description text, or None on failure.
@@ -297,7 +297,7 @@ async def summarize_document_text(
     Args:
         text: Pre-extracted document text content.
         api_key: Explicit API key. If None, uses automatic key rotation.
-        model: Model to use. Defaults to gemini-3.1-flash-lite.
+        model: Model to use. Defaults to gemini-3.1-flash-lite-preview.
 
     Returns:
         Summary text, or None on failure.
