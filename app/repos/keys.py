@@ -89,12 +89,17 @@ class DailyKeyManager:
             if count == 1:
                 logging.info(
                     "KEY_EVENT key_first_use key=%s… model=%s provider=%s",
-                    key_hash[:8], model_name, self.keys_table,
+                    key_hash[:8],
+                    model_name,
+                    self.keys_table,
                 )
             elif count % 100 == 0:
                 logging.info(
                     "KEY_EVENT key_usage_milestone key=%s… model=%s count=%d provider=%s",
-                    key_hash[:8], model_name, count, self.keys_table,
+                    key_hash[:8],
+                    model_name,
+                    count,
+                    self.keys_table,
                 )
         return result
 
@@ -304,13 +309,21 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
         if current_usage >= threshold:
             logging.warning(
                 "KEY_EVENT key_threshold_reached key=%s… model=%s usage=%d/%d (%.0f%%) — rotating",
-                key_hash[:8], model_name, current_usage, daily_limit, usage_pct,
+                key_hash[:8],
+                model_name,
+                current_usage,
+                daily_limit,
+                usage_pct,
             )
             await invalidate_key_cache(model_name)
         elif usage_pct >= 70:
             logging.info(
                 "KEY_EVENT key_nearing_limit key=%s… model=%s usage=%d/%d (%.0f%%)",
-                key_hash[:8], model_name, current_usage, daily_limit, usage_pct,
+                key_hash[:8],
+                model_name,
+                current_usage,
+                daily_limit,
+                usage_pct,
             )
 
 
@@ -428,17 +441,18 @@ class KeyStatusManager:
             (key_hash, model_name),
         )
 
-    async def get_all_statuses(self) -> list[dict[str, Any]]:
+    async def get_all_statuses(self, conn=None) -> list[dict[str, Any]]:
         """Return all key statuses for diagnostics / dashboard."""
         return await db_query(
             "SELECT key_hash, model_name, status, suspended_until, "
             "failure_count, last_error, updated_at "
-            "FROM key_model_status ORDER BY updated_at DESC"
+            "FROM key_model_status ORDER BY updated_at DESC",
+            conn=conn,
         )
 
-    async def get_health_summary(self) -> dict[str, Any]:
+    async def get_health_summary(self, conn=None) -> dict[str, Any]:
         """Return a summary of key health for observability dashboard."""
-        statuses = await self.get_all_statuses()
+        statuses = await self.get_all_statuses(conn=conn)
         active = sum(1 for s in statuses if s["status"] == "active")
         suspended = sum(1 for s in statuses if s["status"] == "suspended")
         total_failures = sum(s.get("failure_count", 0) for s in statuses)

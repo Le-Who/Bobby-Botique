@@ -598,6 +598,7 @@ async def api_dashboard():
     queue_stats = {}
     try:
         from app.queue import task_queue
+
         queue_stats = await task_queue.get_queue_stats()
     except Exception as e:
         logging.warning("Dashboard batch: queue failed: %s", e)
@@ -606,6 +607,7 @@ async def api_dashboard():
     breakers = {}
     try:
         from app.circuit_breaker import _circuit_breakers
+
         breakers = {name: cb.get_stats() for name, cb in _circuit_breakers.items()}
     except Exception:
         pass
@@ -614,6 +616,7 @@ async def api_dashboard():
     errors_data = {}
     try:
         from app.metrics import metrics_collector as mc
+
         summary = data.get("metrics", {})
         errors_data = {
             "error_count": summary.get("error_count", 0),
@@ -623,32 +626,35 @@ async def api_dashboard():
     except Exception:
         pass
 
-    return jsonify({
-        "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
-        "overview": {
-            "system": system,
-            "metrics": data.get("metrics", {}),
-            "services": {
-                "database": "connected" if database.is_database_connected() else "disconnected",
-                "redis": "connected" if data.get("redis_ping") else "disconnected",
-                "bot": "running",
+    return jsonify(
+        {
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+            "overview": {
+                "system": system,
+                "metrics": data.get("metrics", {}),
+                "services": {
+                    "database": "connected" if database.is_database_connected() else "disconnected",
+                    "redis": "connected" if data.get("redis_ping") else "disconnected",
+                    "bot": "running",
+                },
             },
-        },
-        "keys": {
-            "gemini": data.get("keys_gemini", {}),
-            "tavily": data.get("keys_tavily", {}),
-            "active": data.get("keys_active", {}),
-        },
-        "errors": errors_data,
-        "cache": data.get("cache", {}),
-        "queue": queue_stats,
-        "database": data.get("db_metrics", {}),
-        "circuit_breakers": breakers,
-        "memory": memory_stats,
-    })
+            "keys": {
+                "gemini": data.get("keys_gemini", {}),
+                "tavily": data.get("keys_tavily", {}),
+                "active": data.get("keys_active", {}),
+            },
+            "errors": errors_data,
+            "cache": data.get("cache", {}),
+            "queue": queue_stats,
+            "database": data.get("db_metrics", {}),
+            "circuit_breakers": breakers,
+            "memory": memory_stats,
+        }
+    )
 
 
 # ── Key health endpoint ──────────────────────────────────────────────────────
+
 
 @quart_app.route("/api/key-health")
 @require_auth
@@ -657,18 +663,30 @@ async def api_key_health():
     """Expose per-key health summary for dashboard diagnostics."""
     try:
         from app.repos.keys import KeyStatusManager
+
         manager = KeyStatusManager()
-        summary = await manager.get_health_summary()
-        return jsonify({
-            "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
-            "keys": summary,
-        })
+
+        # key_model_status is RLS-protected — must set admin context
+        async with database.db_manager.pool.acquire() as conn:
+            await database.set_user_context(settings.ADMIN_ID, True, conn=conn)
+            try:
+                summary = await manager.get_health_summary(conn=conn)
+            finally:
+                await database.clear_user_context(conn=conn)
+
+        return jsonify(
+            {
+                "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+                "keys": summary,
+            }
+        )
     except Exception as e:
         logging.warning("Key health endpoint error: %s", e)
         return jsonify({"error": str(e)}), 500
 
 
 # ── SSE live updates ─────────────────────────────────────────────────────────
+
 
 @quart_app.route("/api/events")
 @require_auth
@@ -700,6 +718,7 @@ async def api_events():
                 # Queue stats (cheap)
                 try:
                     from app.queue import task_queue
+
                     q_stats = await task_queue.get_queue_stats()
                     payload["queue"] = {
                         "pending": q_stats.get("total_pending", 0),
@@ -711,6 +730,7 @@ async def api_events():
                 # Metrics summary (cheap)
                 try:
                     from app.metrics import metrics_collector as mc
+
                     payload["metrics"] = {
                         "total_requests": mc.request_count,
                         "error_count": len(mc.error_log),
@@ -721,7 +741,7 @@ async def api_events():
                 yield f"data: {json_mod.dumps(payload)}\n\n"
             except Exception as e:
                 logging.warning("SSE event generation error: %s", e)
-                yield f"data: {{\"error\": \"{e}\"}}\n\n"
+                yield f'data: {{"error": "{e}"}}\n\n'
 
             await asyncio.sleep(5)
 
@@ -730,4 +750,3 @@ async def api_events():
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     }
-

@@ -3,7 +3,32 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [2.8.66] - 2026-03-27 - Phase 5: Smart Reminders Cancel & Refinement
+## [2.8.67] - 2026-03-27 - RLS Policy Optimization & Key Health Fix
+
+### ⚡ Performance (Supabase RLS)
+
+| Change | Tables | Detail |
+|--------|--------|--------|
+| Merge duplicate PERMISSIVE policies | `brief_subscriptions`, `conversation_branches`, `user_reminders` | Each table had 2 PERMISSIVE ALL policies (`admin` + `user`), causing Postgres to evaluate both per query. Merged into single policy using `OR`. Eliminates 48 `multiple_permissive_policies` advisor warnings per project. |
+| Wrap `current_setting()` in `(select ...)` | Same 3 tables | Bare `current_setting()` calls were re-evaluated per row. Wrapped in subquery for single evaluation. Eliminates 6 `auth_rls_initplan` advisor warnings per project. |
+| Applied to both projects | `sweeawmcuvisjvfkobdx`, `jxldwuwelontbyoexytn` | Migration `fix_rls_initplan_and_merge_permissive_policies` applied and verified via performance advisor — 0 WARN-level RLS issues remain. |
+
+### 🐛 Bug Fix
+
+| Fix | Files | Detail |
+|-----|-------|--------|
+| Key health endpoint `NoneType` error | `web.py`, `repos/keys.py` | `/api/key-health` queried `key_model_status` (RLS-protected) without setting `app.is_admin` context. Fix: acquire pool connection with admin RLS context, pass `conn=` through `get_health_summary()` → `get_all_statuses()`. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Ruff format | 0 violations |
+
+---
+
+
 
 ### ✨ New Features
 
