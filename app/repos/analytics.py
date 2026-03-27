@@ -34,29 +34,26 @@ async def record_daily_activity(user_id: int) -> dict[str, int]:
         today = date.today()
         yesterday = today - timedelta(days=1)
 
-        # Check if user was active yesterday
-        prev = await db.db_query(
-            "SELECT current_streak FROM user_metrics WHERE user_id = $1 AND metric_date = $2",
-            (user_id, yesterday),
-        )
-        prev_streak = prev[0]["current_streak"] if prev else 0
-
-        new_streak = prev_streak + 1 if prev_streak > 0 else 1
-
-        # Upsert today's row with streak
+        # Upsert today's row with streak, automatically fetching yesterday's streak
         result = await db.db_query(
             """
             INSERT INTO user_metrics (user_id, metric_date, request_count, current_streak, longest_streak)
-            VALUES ($1, $2, 0, $3, $3)
+            VALUES (
+                $1,
+                $2,
+                0,
+                COALESCE((SELECT current_streak FROM user_metrics WHERE user_id = $1 AND metric_date = $3), 0) + 1,
+                COALESCE((SELECT current_streak FROM user_metrics WHERE user_id = $1 AND metric_date = $3), 0) + 1
+            )
             ON CONFLICT (user_id, metric_date) DO UPDATE SET
                 current_streak = CASE
-                    WHEN user_metrics.current_streak = 0 THEN $3
+                    WHEN user_metrics.current_streak = 0 THEN EXCLUDED.current_streak
                     ELSE user_metrics.current_streak
                 END,
-                longest_streak = GREATEST(user_metrics.longest_streak, $3)
+                longest_streak = GREATEST(user_metrics.longest_streak, EXCLUDED.current_streak)
             RETURNING current_streak, longest_streak
             """,
-            (user_id, today, new_streak),
+            (user_id, today, yesterday),
         )
 
         if result:
