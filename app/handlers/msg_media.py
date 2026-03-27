@@ -14,6 +14,7 @@ from telegram.error import BadRequest, NetworkError
 from telegram.ext import ContextTypes
 
 from app import state
+from app.i18n import t
 
 # ── Shared state for media group accumulation ────────────────────────────────
 MEDIA_GROUPS: dict = {}
@@ -89,7 +90,9 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
                     MEDIA_GROUPS_MAX_SIZE,
                     media_group_id,
                 )
-                await update.message.reply_text("⚠️ Слишком много одновременных медиа-групп. Попробуйте позже.")
+                from app.i18n import t
+
+                await update.message.reply_text(t("image.media_group_overflow"))
                 return True
 
             if media_group_id not in MEDIA_GROUPS:
@@ -190,7 +193,7 @@ async def _process_single_image_from_group(media_group_id: str, context: Context
             from app.errors import build_retry_and_roles_keyboard
 
             await placeholder_message.edit_text(
-                "❌ Произошла ошибка при обработке изображения. Попробуйте ещё раз.",
+                t("image.error_retry"),
                 reply_markup=build_retry_and_roles_keyboard(include_roles=False),
             )
         except (BadRequest, NetworkError) as edit_error:
@@ -245,7 +248,7 @@ async def _process_media_group(media_group_id: str, context: ContextTypes.DEFAUL
             from app.errors import build_retry_and_roles_keyboard
 
             await placeholder_message.edit_text(
-                "❌ Произошла ошибка при обработке группы изображений. Попробуйте ещё раз.",
+                t("image.group_error_retry"),
                 reply_markup=build_retry_and_roles_keyboard(include_roles=False),
             )
         except (BadRequest, NetworkError) as edit_error:

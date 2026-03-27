@@ -181,40 +181,44 @@ class TestMediaGroupMaxSize:
     """Test the MEDIA_GROUPS_MAX_SIZE guard (C2 fix)."""
 
     def test_max_size_constant_exists(self):
-        from app.handlers.messages import MEDIA_GROUPS_MAX_SIZE
+        from app.handlers.msg_media import MEDIA_GROUPS_MAX_SIZE
 
         assert MEDIA_GROUPS_MAX_SIZE == 500
 
     @pytest.mark.asyncio
     async def test_cleanup_removes_expired_groups(self):
-        from app.handlers import messages
+        from app.handlers.msg_media import (
+            MEDIA_GROUPS,
+            MEDIA_GROUPS_TTL,
+            cleanup_old_media_groups,
+        )
 
         # Save originals
-        orig_groups = messages.MEDIA_GROUPS.copy()
-        orig_ttl = messages.MEDIA_GROUPS_TTL.copy()
+        orig_groups = MEDIA_GROUPS.copy()
+        orig_ttl = MEDIA_GROUPS_TTL.copy()
 
         try:
-            messages.MEDIA_GROUPS.clear()
-            messages.MEDIA_GROUPS_TTL.clear()
+            MEDIA_GROUPS.clear()
+            MEDIA_GROUPS_TTL.clear()
 
             # Add an expired group
-            messages.MEDIA_GROUPS["expired-1"] = ["photo1"]
-            messages.MEDIA_GROUPS_TTL["expired-1"] = time.monotonic() - 600  # 10 min ago
+            MEDIA_GROUPS["expired-1"] = ["photo1"]
+            MEDIA_GROUPS_TTL["expired-1"] = time.monotonic() - 600  # 10 min ago
 
             # Add a fresh group
-            messages.MEDIA_GROUPS["fresh-1"] = ["photo2"]
-            messages.MEDIA_GROUPS_TTL["fresh-1"] = time.monotonic()
+            MEDIA_GROUPS["fresh-1"] = ["photo2"]
+            MEDIA_GROUPS_TTL["fresh-1"] = time.monotonic()
 
-            await messages.cleanup_old_media_groups()
+            await cleanup_old_media_groups()
 
-            assert "expired-1" not in messages.MEDIA_GROUPS
-            assert "expired-1" not in messages.MEDIA_GROUPS_TTL
-            assert "fresh-1" in messages.MEDIA_GROUPS
+            assert "expired-1" not in MEDIA_GROUPS
+            assert "expired-1" not in MEDIA_GROUPS_TTL
+            assert "fresh-1" in MEDIA_GROUPS
         finally:
-            messages.MEDIA_GROUPS.clear()
-            messages.MEDIA_GROUPS.update(orig_groups)
-            messages.MEDIA_GROUPS_TTL.clear()
-            messages.MEDIA_GROUPS_TTL.update(orig_ttl)
+            MEDIA_GROUPS.clear()
+            MEDIA_GROUPS.update(orig_groups)
+            MEDIA_GROUPS_TTL.clear()
+            MEDIA_GROUPS_TTL.update(orig_ttl)
 
 
 # ===========================================================================

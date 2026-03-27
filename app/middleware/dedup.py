@@ -80,3 +80,35 @@ async def is_duplicate_request(user_id: int, message_text: str) -> bool:
 def clear_user_dedup(user_id: int) -> None:
     """Clear dedup state for a user (e.g., after /newchat)."""
     _recent_requests.pop(user_id, None)
+
+
+# ── Voice-specific dedup (extended window) ───────────────────────────────────
+
+VOICE_DEDUP_WINDOW: float = 120.0  # 2 minutes — voice processing takes 30-60s
+
+_recent_voice_ids: dict[int, dict[str, float]] = defaultdict(dict)
+
+
+async def is_duplicate_voice(user_id: int, file_unique_id: str) -> bool:
+    """Check if this voice message has already been processed recently.
+
+    Uses a 120-second window (much longer than text dedup) because voice
+    processing can take up to 60 seconds, during which Telegram may retry.
+    """
+    now = time.monotonic()
+
+    # Cleanup stale entries
+    user_ids = _recent_voice_ids.get(user_id)
+    if user_ids:
+        expired = [fid for fid, ts in user_ids.items() if now - ts > VOICE_DEDUP_WINDOW * 2]
+        for fid in expired:
+            del user_ids[fid]
+
+    user_ids = _recent_voice_ids[user_id]
+
+    if file_unique_id in user_ids and (now - user_ids[file_unique_id]) < VOICE_DEDUP_WINDOW:
+        logger.info("Voice dedup: blocked duplicate voice from user %s (file_id=%s)", user_id, file_unique_id)
+        return True
+
+    user_ids[file_unique_id] = now
+    return False

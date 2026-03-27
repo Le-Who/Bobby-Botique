@@ -15,6 +15,7 @@ from app.document_processor import (
     get_user_documents,
 )
 from app.handlers import menus
+from app.i18n import t
 from app.state import clear_document_state, get_selected_document_id, set_document_mode
 from app.utils.formatting import TelegramFormatter
 from app.utils.keyboards import (
@@ -45,7 +46,7 @@ async def _handle_document_cancel(query, context, user_id):
 
     text = "✅ **Режим работы с документами отключен**\n\nТеперь ваши сообщения будут обрабатываться в обычном режиме чата.\nЧтобы снова работать с документами, загрузите новый файл или используйте команду /documents."
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Главное меню", callback_data="start_menu")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton(t("doc.main_menu"), callback_data="start_menu")]])
     await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=kb)
 
 
@@ -53,7 +54,7 @@ async def _handle_document_clear_all(query, context, user_id):
     # Get все documents user
     documents = await get_user_documents(user_id)
     if not documents:
-        await query.answer("У вас нет документов для удаления.")
+        await query.answer(t("doc.no_documents_to_delete"))
         return
 
     text = (
@@ -76,7 +77,7 @@ async def _handle_document_clear_all_confirm(query, context, user_id):
     deleted_count = await delete_all_user_documents(user_id)
 
     if deleted_count == 0:
-        await query.answer("У вас нет документов для удаления.")
+        await query.answer(t("doc.no_documents_to_delete"))
         text, parse_mode, reply_markup = await menus.get_documents_menu_content(user_id)
         await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
         return
@@ -99,8 +100,8 @@ async def _handle_document_use_existing(query, context, user_id):
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.edit_message_text(
-            "❌ Документ не найден.",
-            reply_markup=error_with_back_keyboard("doc:list", "📄 К документам"),
+            t("doc.not_found"),
+            reply_markup=error_with_back_keyboard("doc:list", t("doc.to_documents")),
         )
         return
 
@@ -174,8 +175,8 @@ async def _handle_document_select(query, context, user_id):
         from app.utils.keyboards import error_with_back_keyboard
 
         await query.edit_message_text(
-            "❌ Документ не найден.",
-            reply_markup=error_with_back_keyboard("doc:list", "📄 К документам"),
+            t("doc.not_found"),
+            reply_markup=error_with_back_keyboard("doc:list", t("doc.to_documents")),
         )
         return
 
@@ -200,7 +201,7 @@ async def _handle_document_delete_document(query, context, user_id):
 
     document = await get_document_by_id(document_id, user_id)
     if not document:
-        await query.answer("❌ Документ не найден.")
+        await query.answer(t("doc.not_found"))
         return
 
     success = await delete_user_document(document_id, user_id)
@@ -241,7 +242,7 @@ async def _handle_document_delete_document(query, context, user_id):
 
         await query.answer(f"🗑️ Документ '{document['filename']}' удален.")
     else:
-        await query.answer("❌ Ошибка при удалении документа.")
+        await query.answer(t("doc.delete_error"))
 
 
 async def document_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

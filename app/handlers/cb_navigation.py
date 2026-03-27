@@ -27,8 +27,16 @@ from telegram.ext import ContextTypes
 
 from app.handlers import menus
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
+from app.i18n import t
 from app.repos.chats import get_user_chat, update_user_chat
 from app.utils.formatting import TelegramFormatter
+
+
+def _lang(update: Update) -> str:
+    """Detect UI language from Telegram language_code with ru fallback."""
+    # For callbacks we have no user text, so use Telegram hint; most users are ru
+    code = getattr(update.effective_user, "language_code", None) or ""
+    return "en" if code.startswith("en") else "ru"
 
 
 async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -51,20 +59,20 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         chat_state.context_summary = None
         chat_state.is_deep_dive = False
         await update_user_chat(user_id, chat_state)
-        await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
+        await query.message.reply_text(t("chat.new_topic", _lang(update)))
         await query.edit_message_reply_markup(reply_markup=None)
 
     elif action == "exit_search":
         chat_state = await get_user_chat(user_id)
         chat_state.is_deep_dive = False
         await update_user_chat(user_id, chat_state)
-        await query.answer("💬 Режим исследования завершён")
+        await query.answer(t("chat.research_ended", _lang(update)))
         await query.edit_message_reply_markup(reply_markup=None)
-        await query.message.reply_text("💬 Вы вернулись в обычный чат. История сохранена — можете продолжить общение!")
+        await query.message.reply_text(t("chat.returned_to_chat", _lang(update)))
 
     elif action == "deeper_dive":
         await query.edit_message_reply_markup(reply_markup=None)
-        text = "Супер! Мы готовы *копнуть глубже*! 😉 \nЧто еще вы хотели бы узнать по этой теме?"
+        text = t("chat.deeper_dive", _lang(update))
         formatted_text, parse_mode = TelegramFormatter.format_text(text)
         await query.message.reply_text(formatted_text, parse_mode=parse_mode)
 
@@ -72,7 +80,8 @@ async def deep_dive_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles the 'new_topic' button press, clearing the chat context."""
     query = update.callback_query
-    await query.answer("Начинаем новую тему...")
+    lang = _lang(update)
+    await query.answer("...")
 
     user_id = query.from_user.id
 
@@ -94,7 +103,7 @@ async def new_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_reply_markup(reply_markup=None)
 
     # Send confirmation message
-    await query.message.reply_text("✅ Новый чат создан. История и системная инструкция сброшены.")
+    await query.message.reply_text(t("chat.new_topic", lang))
 
 
 async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -115,12 +124,13 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     chat_state.deep_dive_thread_id = None
     await update_user_chat(user_id, chat_state)
 
-    text = "✨ **Новый чат начат!**\n\nКонтекст и роль сброшены. Напишите что-нибудь. 👇"
+    lang = _lang(update)
+    text = t("chat.new_started", lang)
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     keyboard = [
         [
-            InlineKeyboardButton("🎭 Начать с роли", callback_data="open_roles"),
-            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
+            InlineKeyboardButton(t("chat.start_with_role", lang), callback_data="open_roles"),
+            InlineKeyboardButton(t("chat.change_model", lang), callback_data="model_menu"),
         ]
     ]
     with contextlib.suppress(telegram.error.BadRequest):
@@ -129,7 +139,7 @@ async def new_chat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             parse_mode=parse_mode,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
-    await query.answer("✨ Чат очищен!")
+    await query.answer(t("chat.new_cleared_toast", lang))
 
 
 async def model_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -148,25 +158,19 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     query = update.callback_query
     await query.answer()
 
-    help_text = (
-        "📚 **Справка**\n\n"
-        "💬 **Чат** — просто напишите сообщение\n"
-        "🌐 **Поиск** — `?` или `??` перед вопросом\n"
-        "📄 **Документы** — отправьте PDF/DOCX\n"
-        "🎭 **Роли** — специализация бота\n\n"
-        "Нажмите кнопку для подробностей:"
-    )
+    lang = _lang(update)
+    help_text = t("help.title", lang)
     formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
     keyboard = [
         [
-            InlineKeyboardButton("💬 Чат", callback_data="help_topic:chat"),
-            InlineKeyboardButton("🌐 Поиск", callback_data="help_topic:search"),
+            InlineKeyboardButton(t("help.btn_chat", lang), callback_data="help_topic:chat"),
+            InlineKeyboardButton(t("help.btn_search", lang), callback_data="help_topic:search"),
         ],
         [
-            InlineKeyboardButton("📄 Документы", callback_data="help_topic:docs"),
-            InlineKeyboardButton("🎭 Роли", callback_data="help_topic:roles"),
+            InlineKeyboardButton(t("help.btn_docs", lang), callback_data="help_topic:docs"),
+            InlineKeyboardButton(t("help.btn_roles", lang), callback_data="help_topic:roles"),
         ],
-        [InlineKeyboardButton("⬅️ Меню", callback_data="start_menu")],
+        [InlineKeyboardButton(t("menu.back_to_menu", lang), callback_data="start_menu")],
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
@@ -178,41 +182,11 @@ async def help_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 # ── Help sub-topic handlers ──────────────────────────────────────────────────
 
-_HELP_TOPICS = {
-    "chat": (
-        "💬 **Как общаться**\n\n"
-        "Просто напишите сообщение в чат — бот ответит "
-        "с помощью AI.\n\n"
-        "• Отправьте 🖼️ фото — бот проанализирует изображение\n"
-        "• `/newchat` — начать новый диалог\n"
-        "• `/setprompt` — задать системную инструкцию\n"
-        "• `/save` — сохранить текущую беседу"
-    ),
-    "search": (
-        "🌐 **Поиск в интернете**\n\n"
-        "• `? вопрос` — быстрый фактический ответ\n"
-        "• `?? вопрос` — глубокое исследование с источниками\n"
-        "• `??` + фото — поиск по изображению\n\n"
-        "💡 `/res` — включить/выключить поиск для всех сообщений"
-    ),
-    "docs": (
-        "📄 **Работа с документами**\n\n"
-        "Отправьте PDF или DOCX файл в чат — "
-        "бот извлечёт текст и будет отвечать "
-        "на основе содержимого.\n\n"
-        "• Максимум: 5 документов\n"
-        "• Хранение: 3 дня\n"
-        "• `/documents` — управление документами"
-    ),
-    "roles": (
-        "🎭 **Роли**\n\n"
-        "Роль — это специализация бота: он будет "
-        "отвечать как эксперт в выбранной области.\n\n"
-        "• 6 готовых ролей: преподаватель, IT-инженер, доктор…\n"
-        "• ✨ Сгенерировать роль по описанию\n"
-        "• 📝 Написать свою вручную\n"
-        "• `/roles` — открыть меню ролей"
-    ),
+_HELP_TOPIC_KEYS = {
+    "chat": "help.topic.chat",
+    "search": "help.topic.search",
+    "docs": "help.topic.docs",
+    "roles": "help.topic.roles",
 }
 
 
@@ -220,11 +194,13 @@ async def help_topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Shows a specific help topic with back-to-help button."""
     query = update.callback_query
     await query.answer()
+    lang = _lang(update)
     topic = query.data.split(":", 1)[1]
-    text = _HELP_TOPICS.get(topic, "❓ Тема не найдена.")
+    key = _HELP_TOPIC_KEYS.get(topic)
+    text = t(key, lang) if key else t("help.topic_not_found", lang)
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     keyboard = [
-        [InlineKeyboardButton("⬅️ К справке", callback_data="help")],
+        [InlineKeyboardButton(t("help.back_to_help", lang), callback_data="help")],
     ]
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
@@ -270,8 +246,8 @@ async def toggle_search_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
 
-    status_text = "ВКЛЮЧЕН" if chat_state.search_enabled else "ВЫКЛЮЧЕН"
-    await query.answer(f"Поиск {status_text}")
+    status_key = "search.on" if chat_state.search_enabled else "search.off"
+    await query.answer(f"{t('menu.search_toggle', _lang(update))} {t(status_key, _lang(update))}")
 
 
 async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -298,49 +274,16 @@ async def settings_thinking_callback(update: Update, context: ContextTypes.DEFAU
     # Rebuild settings menu
     from app.handlers.commands import _THINKING_LABELS
 
-    model_name = chat_state.model or "(по умолчанию)"
-    thinking_str = _THINKING_LABELS.get(next_level, next_level or "🔄 Авто")
-    search_str = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
-
-    role = chat_state.system_prompt
-    if role and len(role) > 60:
-        role = role[:60] + "…"
-    elif not role:
-        role = "(стандартная)"
-
-    text = (
-        "⚙️ **Настройки**\n\n"
-        f"🧠 **Модель:** `{model_name}`\n"
-        f"💡 **Мышление:** {thinking_str}\n"
-        f"🌐 **Поиск:** {search_str}\n"
-        f"🎭 **Роль:** {role}\n"
-        f"📚 **Долгосрочная память:** {'✅ Включена' if chat_state.ltm_enabled else '❌ Выключена'}\n"
-    )
-
-    formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    keyboard = [
-        [
-            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
-            InlineKeyboardButton("💡 Мышление", callback_data="settings_thinking"),
-        ],
-        [
-            InlineKeyboardButton("🌐 Поиск", callback_data="toggle_search"),
-            InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
-        ],
-        [
-            InlineKeyboardButton(
-                f"📚 Память: {'Вкл' if chat_state.ltm_enabled else 'Выкл'}",
-                callback_data="toggle_ltm",
-            ),
-        ],
-    ]
+    lang = _lang(update)
+    formatted_text, parse_mode, keyboard = _build_settings_view(chat_state, lang)
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(
             formatted_text,
             parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            reply_markup=keyboard,
         )
-    await query.answer(f"Мышление: {thinking_str}")
+    thinking_str = _THINKING_LABELS.get(next_level, next_level or "🔄 Auto")
+    await query.answer(f"{t('settings.thinking', lang)} {thinking_str}")
 
 
 async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -357,49 +300,56 @@ async def toggle_ltm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update_user_chat(user_id, chat_state)
 
     # Rebuild settings menu
+    lang = _lang(update)
+    formatted_text, parse_mode, keyboard = _build_settings_view(chat_state, lang)
+    with contextlib.suppress(telegram.error.BadRequest):
+        await query.edit_message_text(
+            formatted_text,
+            parse_mode=parse_mode,
+            reply_markup=keyboard,
+        )
+    ltm_key = "settings.enabled" if chat_state.ltm_enabled else "settings.disabled"
+    await query.answer(f"{t('settings.ltm_label', lang)} {t(ltm_key, lang)}")
+
+
+def _build_settings_view(chat_state, lang: str):
+    """Build settings menu text and keyboard (shared by thinking + ltm toggles)."""
     from app.handlers.commands import _THINKING_LABELS
 
-    model_name = chat_state.model or "(по умолчанию)"
-    thinking_str = _THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level or "🔄 Авто")
-    search_str = "✅ Включён" if chat_state.search_enabled else "❌ Выключен"
+    model_name = chat_state.model or t("settings.default_model", lang)
+    thinking_str = _THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level or "🔄 Auto")
+    search_str = t("settings.search_enabled", lang) if chat_state.search_enabled else t("settings.search_disabled", lang)
 
     role = chat_state.system_prompt
     if role and len(role) > 60:
         role = role[:60] + "…"
     elif not role:
-        role = "(стандартная)"
+        role = t("settings.default_role", lang)
+
+    ltm_str = t("settings.enabled", lang) if chat_state.ltm_enabled else t("settings.disabled", lang)
 
     text = (
-        "⚙️ **Настройки**\n\n"
-        f"🧠 **Модель:** `{model_name}`\n"
-        f"💡 **Мышление:** {thinking_str}\n"
-        f"🌐 **Поиск:** {search_str}\n"
-        f"🎭 **Роль:** {role}\n"
-        f"📚 **Долгосрочная память:** {'✅ Включена' if chat_state.ltm_enabled else '❌ Выключена'}\n"
+        f"{t('settings.title', lang)}\n\n"
+        f"{t('settings.model', lang)} `{model_name}`\n"
+        f"{t('settings.thinking', lang)} {thinking_str}\n"
+        f"{t('settings.search', lang)} {search_str}\n"
+        f"{t('settings.role_label', lang)} {role}\n"
+        f"{t('settings.ltm_label', lang)} {ltm_str}\n"
     )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    keyboard = [
+    ltm_btn_label = f"📚 {'On' if chat_state.ltm_enabled else 'Off'}" if lang == "en" else f"📚 {'Вкл' if chat_state.ltm_enabled else 'Выкл'}"
+    keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
-            InlineKeyboardButton("💡 Мышление", callback_data="settings_thinking"),
+            InlineKeyboardButton(t("settings.btn_change_model", lang), callback_data="model_menu"),
+            InlineKeyboardButton(t("settings.btn_thinking", lang), callback_data="settings_thinking"),
         ],
         [
-            InlineKeyboardButton("🌐 Поиск", callback_data="toggle_search"),
-            InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
+            InlineKeyboardButton(t("settings.btn_search", lang), callback_data="toggle_search"),
+            InlineKeyboardButton(t("settings.btn_roles", lang), callback_data="open_roles"),
         ],
         [
-            InlineKeyboardButton(
-                f"📚 Память: {'Вкл' if chat_state.ltm_enabled else 'Выкл'}",
-                callback_data="toggle_ltm",
-            ),
+            InlineKeyboardButton(ltm_btn_label, callback_data="toggle_ltm"),
         ],
-    ]
-    with contextlib.suppress(telegram.error.BadRequest):
-        await query.edit_message_text(
-            formatted_text,
-            parse_mode=parse_mode,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-    ltm_status = "Включена" if chat_state.ltm_enabled else "Выключена"
-    await query.answer(f"Память: {ltm_status}")
+    ])
+    return formatted_text, parse_mode, keyboard

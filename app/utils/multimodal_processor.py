@@ -49,8 +49,11 @@ _VOICE_SYSTEM_PROMPT = (
     "2. Use proper punctuation and paragraph breaks.\n"
     "3. Preserve the original language of the speaker.\n"
     "4. After the transcript, add a blank line and a short summary (1–2 sentences) "
-    "   prefixed with 'Summary: '.\n"
+    "   IN THE SAME LANGUAGE as the audio.\n"
     "5. If the audio is unintelligible, say '[unintelligible]'.\n"
+    "6. On the VERY LAST LINE of your output, write exactly one of:\n"
+    "   INTENT:CONVERSATIONAL — if the speaker is asking a question, giving a command, or chatting\n"
+    "   INTENT:TRANSCRIPTION — if the speaker explicitly asks to transcribe, dictate, or write down text\n"
 )
 
 _IMAGE_SYSTEM_PROMPT = (
@@ -160,10 +163,16 @@ async def _generate_with_resilience(
             return None
 
         try:
+            # Pre-create circuit breaker with media-specific config (60s monitor)
+            from app.circuit_breaker import CircuitBreakerConfig, get_circuit_breaker as _get_cb
+
+            _media_cb_name = f"media:{model}"
+            _get_cb(_media_cb_name, CircuitBreakerConfig(monitor_interval=60.0, failure_threshold=5))
+
             result, attempts = await run_with_resilience(
                 _call,
                 _MEDIA_RESILIENCE,
-                circuit_name=f"media:{model}",
+                circuit_name=_media_cb_name,
             )
             if attempts > 1 or key_attempt > 0:
                 logging.info(
@@ -215,7 +224,7 @@ async def transcribe_voice(
     *,
     mime_type: str = "audio/ogg",
     model: str = TRANSCRIPTION_MODEL,
-) -> str | None:
+) -> tuple[str | None, str]:
     """Transcribe a voice message to text using Gemini.
 
     Args:
@@ -225,23 +234,54 @@ async def transcribe_voice(
         model: Model to use. Defaults to gemini-3.1-flash-lite-preview.
 
     Returns:
-        Transcript text (with summary appended), or None on failure.
+        Tuple of (transcript_text, intent).
+        transcript_text is the clean transcript (with summary), or None on failure.
+        intent is "conversational" or "transcription".
     """
     if not audio_bytes:
         logging.warning("transcribe_voice called with empty audio_bytes")
-        return None
+        return None, "conversational"
 
     audio_part = types.Part(
         inline_data=types.Blob(mime_type=mime_type, data=audio_bytes),
     )
 
-    return await _generate_with_resilience(
+    raw_text = await _generate_with_resilience(
         parts=[audio_part],
         model=model,
         system_prompt=_VOICE_SYSTEM_PROMPT,
         thinking_config=THINKING_CONFIG_HIGH,
         api_key=api_key,
     )
+
+    if raw_text is None:
+        return None, "conversational"
+
+    return _parse_voice_intent(raw_text)
+
+
+def _parse_voice_intent(raw_text: str) -> tuple[str, str]:
+    """Parse INTENT: tag from the last line and strip it from transcript.
+
+    Returns (clean_transcript, intent_type).
+    intent_type is "conversational" or "transcription" (lowercase).
+    """
+    lines = raw_text.rstrip().split("\n")
+
+    # Check last line for INTENT: tag
+    intent = "conversational"  # default
+    if lines and lines[-1].strip().upper().startswith("INTENT:"):
+        tag = lines[-1].strip().split(":", 1)[1].strip().lower()
+        if tag in ("conversational", "transcription"):
+            intent = tag
+        # Remove the intent line from transcript
+        lines = lines[:-1]
+
+    # Strip trailing empty lines left after removing intent
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    return "\n".join(lines), intent
 
 
 async def describe_image(
@@ -356,7 +396,7 @@ async def process_media_for_memory(
 
     # Route to appropriate processor
     if media_type == "voice":
-        extracted = await transcribe_voice(content_bytes, api_key, mime_type=effective_mime)
+        extracted, _intent = await transcribe_voice(content_bytes, api_key, mime_type=effective_mime)
     elif media_type == "image":
         extracted = await describe_image(content_bytes, api_key, mime_type=effective_mime, prompt=extra_prompt)
     elif media_type == "document_text":

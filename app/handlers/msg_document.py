@@ -11,6 +11,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.document_processor import process_uploaded_document
+from app.i18n import t
 from app.metrics import metrics_collector
 from app.repos.chats import get_user_chat
 from app.utils.formatting import TelegramFormatter
@@ -53,7 +54,7 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
             await update.message.reply_text(
                 "❌ Документ не найден.",
                 reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("📄 К документам", callback_data="open_documents")]]
+                    [[InlineKeyboardButton(t("doc.to_documents"), callback_data="open_documents")]]
                 ),
             )
             from app.state import clear_document_state
@@ -66,7 +67,7 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
             await update.message.reply_text(
                 "❌ Не удалось получить содержимое документа.",
                 reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("📄 К документам", callback_data="open_documents")]]
+                    [[InlineKeyboardButton(t("doc.to_documents"), callback_data="open_documents")]]
                 ),
             )
             return
@@ -79,9 +80,9 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
     except Exception as e:
         logging.error("Error handling document question: %s", e, exc_info=True)
         await update.message.reply_text(
-            "❌ Произошла ошибка при обработке вопроса. Попробуйте переформулировать.",
+            t("doc.error_question"),
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("📄 К документам", callback_data="open_documents")]]
+                [[InlineKeyboardButton(t("doc.to_documents"), callback_data="open_documents")]]
             ),
         )
 
@@ -247,7 +248,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         from app.utils.keyboards import error_with_back_keyboard
 
         await processing_msg.edit_text(
-            "❌ Произошла ошибка при обработке документа. Попробуйте другой файл.",
-            reply_markup=error_with_back_keyboard("open_documents", "📄 К документам"),
+            t("doc.error_processing"),
+            reply_markup=error_with_back_keyboard("open_documents", t("doc.to_documents")),
         )
         await metrics_collector.record_error("document_processing", str(e))

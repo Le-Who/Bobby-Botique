@@ -193,6 +193,8 @@ class CircuitBreaker:
 
     async def _monitor_loop(self) -> None:
         """Monitoring loop for circuit breaker metrics."""
+        _last_logged_state = self._state
+        _last_logged_failures = self._total_failures
         while True:
             try:
                 await asyncio.sleep(self.config.monitor_interval)
@@ -200,13 +202,23 @@ class CircuitBreaker:
                 # Log periodic status
                 if self._total_requests > 0:
                     success_rate = (self._total_successes / self._total_requests) * 100
-                    logging.info(
+                    status_msg = (
                         f"Circuit Breaker '{self.name}' status: "
                         f"State={self._state.value}, "
                         f"Success Rate={success_rate:.1f}%, "
                         f"Total Requests={self._total_requests}, "
                         f"Failures={self._total_failures}"
                     )
+                    # Log at INFO only on state change or new failures
+                    if (
+                        self._state != _last_logged_state
+                        or self._total_failures > _last_logged_failures
+                    ):
+                        logging.info(status_msg)
+                        _last_logged_state = self._state
+                        _last_logged_failures = self._total_failures
+                    else:
+                        logging.debug(status_msg)
 
                 # Clean up old failure data if too many
                 if self._failure_count > self.config.max_failures:

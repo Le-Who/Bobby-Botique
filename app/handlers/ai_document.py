@@ -12,6 +12,7 @@ from app.handlers.ai_core import (
     _get_ai_response_with_routing,
     handle_ai_response_error,
 )
+from app.i18n import t
 from app.metrics import metrics_collector
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
@@ -123,7 +124,6 @@ async def _handle_document_question(
         # Stream via unified ProviderRouter
         # We need the current model, so we resolve it first to pass to stream_and_display
         from app.handlers.ai_core import _resolve_ai_request
-        from app.providers import get_provider_router
         from app.streaming import stream_and_display
 
         _, model_used, _ = await _resolve_ai_request(settings.DEFAULT_MODEL)
@@ -226,11 +226,11 @@ async def _handle_document_question(
         logging.error("Error processing document question: %s", e, exc_info=True)
         try:
             await placeholder_message.edit_text(
-                "❌ Произошла ошибка при обработке вопроса по документу. Попробуйте ещё раз."
+                t("doc.error_question")
             )
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
             # Fallback на new message
             await placeholder_message.reply_text(
-                "❌ Произошла ошибка при обработке вопроса по документу. Попробуйте ещё раз."
+                t("doc.error_question")
             )

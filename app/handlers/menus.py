@@ -18,6 +18,7 @@ from app.repos.roles import (
     get_user_custom_roles_full,
 )
 from app.repos.user_stats import get_user_today_request_count
+from app.i18n import t
 from app.utils.formatting import TelegramFormatter, format_key_for_display
 
 
@@ -61,19 +62,19 @@ async def get_start_menu_content(chat_state, user_id=None):
 
     keyboard = [
         [
-            InlineKeyboardButton("💬 Новый чат", callback_data="new_chat"),
+            InlineKeyboardButton(t("menu.new_chat"), callback_data="new_chat"),
         ],
         [
-            InlineKeyboardButton("🧠 Модель AI", callback_data="model_menu"),
-            InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
+            InlineKeyboardButton(t("menu.model"), callback_data="model_menu"),
+            InlineKeyboardButton(t("menu.roles"), callback_data="open_roles"),
         ],
         [
-            InlineKeyboardButton("📄 Документы", callback_data="open_documents"),
-            InlineKeyboardButton("💬 Беседы", callback_data="open_conversations"),
+            InlineKeyboardButton(t("menu.documents"), callback_data="open_documents"),
+            InlineKeyboardButton(t("menu.conversations"), callback_data="open_conversations"),
         ],
         [
-            InlineKeyboardButton(f"🌐 Поиск: {search_icon}", callback_data="toggle_search"),
-            InlineKeyboardButton("❓ Помощь", callback_data="help"),
+            InlineKeyboardButton(f"{t('menu.search_toggle')}: {search_icon}", callback_data="toggle_search"),
+            InlineKeyboardButton(t("menu.help"), callback_data="help"),
         ],
     ]
 
@@ -207,7 +208,7 @@ def get_model_menu_content(chat_state, context):
         if rec:
             text += f"\n💡 Не знаете, что выбрать? `{rec}` — лучший баланс."
 
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
+    keyboard.append([InlineKeyboardButton(t("menu.back"), callback_data="start_menu")])
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
@@ -257,7 +258,7 @@ async def _get_roles_hub_content(user_id, active_role_title, current_prompt):
         keyboard.append([InlineKeyboardButton("🔄 Сбросить к стандартной", callback_data="role_clear")])
 
     # 5. Back
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")])
+    keyboard.append([InlineKeyboardButton(t("menu.back"), callback_data="start_menu")])
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
@@ -598,7 +599,7 @@ async def get_documents_menu_content(user_id):
         [InlineKeyboardButton("📄 Загрузить новый документ", callback_data="doc:upload_new")],
         [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
         [InlineKeyboardButton("🗑️ Удалить все документы", callback_data="doc:clear_all")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="start_menu")],
+        [InlineKeyboardButton(t("menu.back"), callback_data="start_menu")],
     ]
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)

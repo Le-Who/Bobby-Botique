@@ -53,11 +53,11 @@ class TestMultimodalProcessorConstants:
 
     @pytest.mark.asyncio
     async def test_transcribe_voice_rejects_empty_bytes(self):
-        """transcribe_voice should return None for empty audio without calling API."""
+        """transcribe_voice should return (None, 'conversational') for empty audio without calling API."""
         from app.utils.multimodal_processor import transcribe_voice
 
         result = await transcribe_voice(b"", "fake-key")
-        assert result is None
+        assert result == (None, "conversational")
 
     @pytest.mark.asyncio
     async def test_describe_image_rejects_empty_bytes(self):

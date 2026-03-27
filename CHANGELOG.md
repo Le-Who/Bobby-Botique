@@ -3,6 +3,79 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.69] - 2026-03-27 - i18n Rollout & Conversational Voice Flow
+
+### ✨ New Features
+
+| Feature | Files | Detail |
+|---------|-------|--------|
+| i18n String Registry | `app/i18n.py` [NEW] | Centralized bilingual (ru/en) string registry with `t(key, lang, **kwargs)` lookup. 200+ keys covering voice, errors, processing, menus, help, settings, documents, images, and buttons. Content-based Cyrillic density heuristic for language detection (`detect_language()`). |
+| Conversational Voice Flow | `msg_voice.py`, `cb_voice.py` [NEW] | Interactive Transcribe→Confirm→Respond cycle with intent-aware routing (`INTENT:CONVERSATIONAL` vs `INTENT:TRANSCRIPTION`). Inline buttons (✅ Confirm / 📝 Edit / ❌ Cancel / 📋 Transcribe Only). Voice edit interception in `messages.py`. Dedup via `is_duplicate_voice()` (120s window). |
+
+### ⚡ i18n Rollout (10 handler files)
+
+| File | Strings Replaced |
+|------|-----------------|
+| `cb_ai_actions.py` | Error strings, processing indicators, retry messages |
+| `messages.py` | Rate limit, message too long, processing errors |
+| `msg_media.py` | Image/group errors, overflow messages |
+| `msg_document.py` | Document errors, button labels |
+| `ai_document.py` | Document question error strings |
+| `commands.py` | `@safe_handler` strings, help/newchat/settings buttons |
+| `cb_documents.py` | Not found, delete errors, toast messages |
+| `menus.py` | Start menu buttons, model/roles/docs back buttons |
+| `callbacks.py` | Busy toast annotation |
+| `cb_navigation.py` | Help, settings, new chat, deep dive strings |
+
+### 🛡️ Resilience
+
+| Change | Files | Detail |
+|--------|-------|--------|
+| Circuit breaker noise reduction | `circuit_breaker.py` | `_monitor_loop` logs at DEBUG for routine checks, INFO only on state change or new failures. Media CB pre-created with `monitor_interval=60.0`. |
+
+### 🧹 Lint Cleanup
+
+| Fix | Files | Detail |
+|-----|-------|--------|
+| Remove 11 unused imports (F401) | `cb_ai_actions.py`, `cb_voice.py`, `cb_navigation.py`, `messages.py`, `ai_document.py` | Removed `_is_user_busy`, `_BUSY_TOAST`, `detect_language`, `contextlib`, `MEDIA_GROUPS*`, `cleanup_old_media_groups`, `get_user_chat`, `get_provider_router`. |
+| Fix test imports | `test_audit_fixes.py` | Updated `TestMediaGroupMaxSize` to import from `msg_media` (origin) instead of removed re-exports in `messages.py`. |
+
+### 🐛 Bug Fixes
+
+| Fix | Files | Detail |
+|-----|-------|--------|
+| `cb_voice.py` import path | `cb_voice.py` | Fixed `_handle_regular_chat` import from `ai_chat.py` (was incorrectly pointing to `messages`). |
+| Test tuple assertion | `test_audio_processor.py` | Updated `test_transcribe_voice_rejects_empty_bytes` for new `(None, "conversational")` return type. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Tests | **1453 passed**, 0 failed |
+
+### Files Changed (15 files, 2 new)
+
+| File | Change |
+|------|--------|
+| `app/i18n.py` | [NEW] i18n string registry with 200+ bilingual keys |
+| `app/handlers/cb_voice.py` | [NEW] Voice confirmation callback handler |
+| `app/handlers/msg_voice.py` | Conversational voice flow with inline buttons |
+| `app/handlers/cb_ai_actions.py` | i18n + removed unused `_is_user_busy` import |
+| `app/handlers/messages.py` | i18n + removed 6 unused imports |
+| `app/handlers/msg_media.py` | i18n (image/group errors) |
+| `app/handlers/msg_document.py` | i18n (document errors, button labels) |
+| `app/handlers/ai_document.py` | i18n + removed unused `get_provider_router` import |
+| `app/handlers/commands.py` | i18n (safe_handler, buttons) |
+| `app/handlers/cb_documents.py` | i18n (toasts, errors) |
+| `app/handlers/menus.py` | i18n (start menu buttons, back buttons) |
+| `app/handlers/cb_navigation.py` | i18n + removed unused `detect_language` import |
+| `app/handlers/callbacks.py` | i18n annotation on `_BUSY_TOAST` |
+| `app/circuit_breaker.py` | DEBUG-level monitoring, 60s interval |
+| `tests/test_audit_fixes.py` | Fixed imports for `msg_media` constants |
+
+---
+
 ## [2.8.68] - 2026-03-27 - Multimodal Pipeline & Embedding Migration
 
 ### ✨ New Features

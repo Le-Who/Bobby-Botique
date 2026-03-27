@@ -11,6 +11,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from app.handlers import menus
+from app.i18n import t
 from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.conversations import get_conversation_count
 from app.utils.decorators import authorized_only, safe_handler
@@ -18,7 +19,7 @@ from app.utils.formatting import TelegramFormatter
 
 
 @authorized_only
-@safe_handler("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
+@safe_handler(t("error.command"))
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     logging.info("Start command from user %s", user_id)
@@ -31,30 +32,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 @authorized_only
-@safe_handler("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
+@safe_handler(t("error.command"))
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает подробную справку по использованию бота"""
     user_id = update.effective_user.id
     logging.info("Help command from user %s", user_id)
 
-    help_text = (
-        "📚 **Справка**\n\n"
-        "💬 **Чат** — просто напишите сообщение\n"
-        "🌐 **Поиск** — `?` или `??` перед вопросом\n"
-        "📄 **Документы** — отправьте PDF/DOCX\n"
-        "🎭 **Роли** — специализация бота\n\n"
-        "Нажмите кнопку для подробностей:"
-    )
-
-    formatted_text, parse_mode = TelegramFormatter.format_text(help_text)
+    formatted_text, parse_mode = TelegramFormatter.format_text(t("help.title"))
     keyboard = [
         [
-            InlineKeyboardButton("💬 Чат", callback_data="help_topic:chat"),
-            InlineKeyboardButton("🌐 Поиск", callback_data="help_topic:search"),
+            InlineKeyboardButton(t("help.btn_chat"), callback_data="help_topic:chat"),
+            InlineKeyboardButton(t("help.btn_search"), callback_data="help_topic:search"),
         ],
         [
-            InlineKeyboardButton("📄 Документы", callback_data="help_topic:docs"),
-            InlineKeyboardButton("🎭 Роли", callback_data="help_topic:roles"),
+            InlineKeyboardButton(t("help.btn_docs"), callback_data="help_topic:docs"),
+            InlineKeyboardButton(t("help.btn_roles"), callback_data="help_topic:roles"),
         ],
     ]
     await update.message.reply_text(
@@ -128,14 +120,14 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_state.system_prompt = None
     await update_user_chat(user_id, chat_state)
 
-    text = "✨ **Новый чат начат!**\n\nКонтекст и роль сброшены. Напишите что-нибудь. 👇"
+    text = t("chat.new_started")
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
 
     keyboard = [
         [
-            InlineKeyboardButton("🎭 Начать с роли", callback_data="open_roles"),
-            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
+            InlineKeyboardButton(t("chat.start_with_role"), callback_data="open_roles"),
+            InlineKeyboardButton(t("chat.change_model"), callback_data="model_menu"),
         ]
     ]
 
@@ -175,7 +167,7 @@ async def research_mode_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 @authorized_only
-@safe_handler("❌ Ошибка получения документов. Попробуйте позже.")
+@safe_handler(t("error.command"))
 async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает список документов пользователя и управляет ими"""
     from app.state import clear_document_state
@@ -187,7 +179,7 @@ async def documents_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 @authorized_only
-@safe_handler("❌ Ошибка получения статистики. Попробуйте позже.")
+@safe_handler(t("error.command"))
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает личную статистику пользователя"""
     user_id = update.effective_user.id
@@ -255,7 +247,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 @authorized_only
-@safe_handler("❌ Ошибка экспорта. Попробуйте позже.")
+@safe_handler(t("error.command"))
 async def export_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Export the current active chat as a Markdown document."""
     import io
@@ -354,7 +346,7 @@ async def thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 @authorized_only
-@safe_handler("❌ Ошибка получения настроек.")
+@safe_handler(t("error.command"))
 async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show unified user preferences with inline controls."""
     user_id = update.effective_user.id
@@ -381,12 +373,12 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
     keyboard = [
         [
-            InlineKeyboardButton("🧠 Сменить модель", callback_data="model_menu"),
-            InlineKeyboardButton("💡 Мышление", callback_data="settings_thinking"),
+            InlineKeyboardButton(t("settings.btn_change_model"), callback_data="model_menu"),
+            InlineKeyboardButton(t("settings.btn_thinking"), callback_data="settings_thinking"),
         ],
         [
-            InlineKeyboardButton("🌐 Поиск", callback_data="toggle_search"),
-            InlineKeyboardButton("🎭 Роли", callback_data="open_roles"),
+            InlineKeyboardButton(t("settings.btn_search"), callback_data="toggle_search"),
+            InlineKeyboardButton(t("settings.btn_roles"), callback_data="open_roles"),
         ],
         [
             InlineKeyboardButton(
@@ -406,7 +398,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 @authorized_only
-@safe_handler("❌ Ошибка экспорта данных.")
+@safe_handler(t("error.command"))
 async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Export all user data as a JSON document (GDPR Article 20)."""
     import io
@@ -454,7 +446,7 @@ async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 @authorized_only
-@safe_handler("❌ Ошибка обработки запроса.")
+@safe_handler(t("error.command"))
 async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Request account deletion with confirmation (GDPR Article 17)."""
     user_id = update.effective_user.id
@@ -513,7 +505,7 @@ async def deleteme_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 @authorized_only
-@safe_handler("❌ Ошибка очистки памяти.")
+@safe_handler(t("error.command"))
 async def clearmemory_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Clear all long-term semantic memories for the user."""
     user_id = update.effective_user.id

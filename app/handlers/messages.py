@@ -8,7 +8,6 @@ Sub-modules:
 """
 
 import asyncio
-import contextlib
 import logging
 
 from telegram import Update
@@ -19,10 +18,6 @@ from app import state
 from app.config import settings
 from app.handlers.msg_document import handle_document, handle_document_mode_interaction
 from app.handlers.msg_media import (
-    MEDIA_GROUPS,
-    MEDIA_GROUPS_MAX_SIZE,
-    MEDIA_GROUPS_TTL,
-    cleanup_old_media_groups,
     process_media_group_update,
 )
 from app.handlers.msg_roles import (
@@ -34,7 +29,6 @@ from app.handlers.msg_roles import (
 )
 from app.handlers.msg_voice import handle_voice_inline
 from app.metrics import metrics_collector
-from app.repos.chats import get_user_chat
 from app.repos.users import is_authorized
 from app.request_context import set_request_id, set_user_context
 from app.security import check_user_rate_limit
@@ -91,8 +85,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         message_text = update.message.text if update.message and update.message.text else "No text"
         if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
             logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
+            from app.i18n import t
+
             await update.message.reply_text(
-                "❌ Сообщение слишком длинное. Максимум 4096 символов.\nСократите текст и отправьте снова."
+                t("error.message_too_long")
             )
             return
 
@@ -100,8 +96,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if not await check_user_rate_limit(user_id):
             logging.warning("Rate limit exceeded for user %s", user_id)
+            from app.i18n import t
+
             await update.message.reply_text(
-                "⏱️ Превышен лимит запросов. Пожалуйста, подождите немного перед следующим запросом."
+                t("error.rate_limit")
             )
             return
 
@@ -134,6 +132,20 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # ── 5. State-machine dispatchers (role/rename flows) ─────────────────
+
+        # ── 5a. Voice edit interception ──────────────────────────────────────
+        # If the user clicked "Edit" on a voice transcript, capture corrected text
+        if context.user_data and context.user_data.get("voice_edit_pending"):
+            pending = context.user_data.get("voice_pending")
+            if pending and message_text:
+                context.user_data.pop("voice_edit_pending", None)
+                context.user_data.pop("voice_pending", None)
+                # Route corrected text through AI chat as a normal message
+                corrected_text = message_text
+                logging.info("Voice edit: user %s sent corrected text", user_id)
+                # Fall through to normal text processing with the corrected text
+                message_text = corrected_text
+                # Continue to normal text handling below
         if await handle_role_rename(update, context, user_id):
             return
         if await handle_edit_prompt(update, context, user_id):
@@ -185,7 +197,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         await process_long_request(placeholder_message, update, context)
                     except ImportError:
                         stop_heartbeat(placeholder_message.message_id)
-                        await placeholder_message.edit_text("🤔 Обрабатываю ваш запрос... (упрощенный режим)")
+                        from app.i18n import t
+
+                        await placeholder_message.edit_text(t("processing.simplified"))
 
                     stop_heartbeat(placeholder_message.message_id)
 
@@ -207,8 +221,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     stop_heartbeat(placeholder_message.message_id)
                     from app.errors import build_retry_and_roles_keyboard
 
+                    from app.i18n import t
+
                     await placeholder_message.edit_text(
-                        "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз.",
+                        t("error.generic"),
                         reply_markup=build_retry_and_roles_keyboard(),
                     )
                 except (BadRequest, NetworkError) as edit_error:

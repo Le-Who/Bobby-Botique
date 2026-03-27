@@ -35,7 +35,7 @@ _HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore(_HEAVY_CALLBACK_LIMIT)
 
 _background_tasks: set = set()
 
-_BUSY_TOAST = "⏳ Дождитесь завершения текущего запроса"
+_BUSY_TOAST = "⏳ Дождитесь завершения текущего запроса"  # Default ru, handlers use t("busy.toast", lang) when they have Update
 
 
 def _is_user_busy(user_id: int) -> bool:
@@ -204,3 +204,8 @@ def register(application: Application) -> None:
     from app.handlers.cmd_reminders import reminder_cancel_callback
 
     _add_fast_callback(application, reminder_cancel_callback, "^reminder_cancel:")
+
+    # Voice confirmation flow (confirm / edit / cancel / transcribe_only)
+    from app.handlers.cb_voice import voice_callback
+
+    application.add_handler(CallbackQueryHandler(voice_callback, pattern="^voice:"))

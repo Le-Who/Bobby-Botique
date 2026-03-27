@@ -20,8 +20,8 @@ from app.handlers.callbacks import (
     _BUSY_TOAST,
     _HEAVY_CALLBACK_SEMAPHORE,
     _background_tasks,
-    _is_user_busy,
 )
+from app.i18n import t
 from app.repos.chats import get_user_chat
 from app.request_context import set_request_id, set_user_context
 
@@ -54,7 +54,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
 
         await query.answer()
         await placeholder_message.edit_text(
-            "❌ Не удалось найти оригинальное сообщение.",
+            t("error.original_not_found"),
             reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
         )
         return
@@ -72,7 +72,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
     task_to_run = None
     if action == "vision_only":
         # 2. СРАЗУ даем обратную связь пользователю.
-        await placeholder_message.edit_text("🖼️ Описываю изображение...")
+        await placeholder_message.edit_text(t("processing.describing_image"))
         chat_state = await get_user_chat(user_id)
         task_to_run = agent._handle_photo(placeholder_message, original_message, chat_state)  # type: ignore[arg-type]  # message comes from original update
     elif action == "confirm":
@@ -93,7 +93,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
                 logging.error("complex_search task failed: %s", e, exc_info=True)
                 with contextlib.suppress(Exception):
                     await placeholder_message.edit_text(
-                        "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз."
+                        t("error.generic")
                     )
 
         _task = asyncio.create_task(task_wrapper())
@@ -116,7 +116,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if action == "cancel":
         await query.answer()
-        await placeholder_message.edit_text("Операция отменена.")
+        await placeholder_message.edit_text(t("btn.operation_cancelled"))
         return
 
     # Get оригинальное message from contextа or from reply_to_message
@@ -131,7 +131,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         await query.answer()
         await placeholder_message.edit_text(
-            "❌ Не удалось найти оригинальное сообщение.",
+            t("error.original_not_found"),
             reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
         )
         return
@@ -160,7 +160,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except Exception as e:
             logging.error("fallback task failed: %s", e, exc_info=True)
             with contextlib.suppress(Exception):
-                await placeholder_message.edit_text("❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз.")
+                await placeholder_message.edit_text(t("error.generic"))
 
     _task = asyncio.create_task(task_wrapper())
     _background_tasks.add(_task)
@@ -193,7 +193,7 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await query.answer()
         await query.edit_message_text(
-            "❌ Нет запроса для повтора.",
+            t("error.no_retry_data"),
             reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
         )
         return
@@ -205,7 +205,7 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # Create плейсхолдер и запускаем обычную обработку как on новом сообщении
-    placeholder_message = await query.message.reply_text("🔁 Повторяю предыдущий запрос…")
+    placeholder_message = await query.message.reply_text(t("processing.retry"))
     from app.handlers.agent import _handle_regular_chat
 
     async def _retry_wrapper() -> None:
@@ -218,7 +218,7 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 from app.utils.keyboards import error_with_back_keyboard
 
                 await placeholder_message.edit_text(
-                    "❌ Произошла ошибка при повторе запроса.",
+                    t("error.retry_failed"),
                     reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
                 )
             except Exception:
