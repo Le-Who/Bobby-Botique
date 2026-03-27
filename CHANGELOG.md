@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.65] - 2026-03-27 - Phase 4: Tests, Dashboard Polish
+
+### ✅ Unit Tests (47 new tests)
+
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| `middleware/dedup.py` | 12 | Hash, dedup window, eviction, isolation, clear |
+| `handlers/cmd_reminders.py` | 25 | Bilingual time parser (EN/RU), command no-args, delivery job |
+| `handlers/cb_branches.py` | 10 | Create, return, edge cases, exports |
+
+### 🎨 Dashboard Visual Polish
+
+| Enhancement | Detail |
+|-------------|--------|
+| SSE pulse animation | `@keyframes ssePulse` — green glow burst on live-dot when SSE event arrives |
+| Metric flash effect | `@keyframes metricFlash` — teal flash on cards when values update via SSE |
+| Smooth transitions | `card-value` color transitions for real-time metric changes |
+
+---
+
 ## [2.8.64] - 2026-03-27 - Phase 3: Persistence, Dashboard & Middleware (6 Changes)
 
 ### 🐛 Fix
