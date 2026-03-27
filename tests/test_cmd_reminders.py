@@ -1,11 +1,11 @@
-"""Tests for app.handlers.cmd_reminders — time parser and command handler."""
+"""Tests for app.handlers.cmd_reminders — time parser, intent classifier, and delivery."""
 
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.handlers.cmd_reminders import _parse_reminder_args
+from app.handlers.cmd_reminders import _classify_reminder_intent, _parse_reminder_args
 
 
 class TestParseReminderArgs:
@@ -130,6 +130,95 @@ class TestParseReminderArgs:
         assert prompt == "multi word prompt with  spaces"
 
 
+# ── Intent classifier ────────────────────────────────────────────────────────
+
+
+class TestClassifyReminderIntent:
+    """Test the heuristic intent classifier."""
+
+    # -- Plain text (no AI) --
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "Покорми кота",
+            "Выключи духовку",
+            "Купи молоко",
+            "Позвони маме",
+            "Созвон с командой",
+            "Забери посылку",
+            "Прими таблетку",
+            "Call mom",
+            "Buy groceries",
+            "Turn off the oven",
+        ],
+    )
+    def test_plain_text_not_ai(self, prompt):
+        result = _classify_reminder_intent(prompt)
+        assert result["is_ai"] is False
+        assert result["mode"] == "notify"
+
+    # -- QnA search --
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "Проверь курс доллара",
+            "Найди новости о Tesla",
+            "Узнай погоду в Москве",
+            "Поищи актуальные новости",
+            "Check latest Bitcoin price",
+            "Find news about OpenAI",
+            "Search for weather forecast",
+        ],
+    )
+    def test_qna_search(self, prompt):
+        result = _classify_reminder_intent(prompt)
+        assert result["is_ai"] is True
+        assert result["mode"] == "qna"
+
+    # -- Research (deep analysis) --
+
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "Проанализируй тренды AI за последний месяц",
+            "Исследуй рынок электромобилей в Европе",
+            "Сравни характеристики iPhone и Samsung",
+            "Research the latest developments in quantum computing and compare approaches",
+            "Сделай глубокий анализ акций Apple и сравни с конкурентами, финансовые отчёты и дивиденды",
+        ],
+    )
+    def test_research_mode(self, prompt):
+        result = _classify_reminder_intent(prompt)
+        assert result["is_ai"] is True
+        assert result["mode"] == "research"
+
+    def test_long_ai_prompt_triggers_research(self):
+        """Prompts >80 chars with AI signals should be classified as research."""
+        long_prompt = "Найди подробную информацию о последних изменениях в законодательстве и как они повлияют на бизнес"
+        result = _classify_reminder_intent(long_prompt)
+        assert result["is_ai"] is True
+        assert result["mode"] == "research"
+
+    def test_short_ambiguous_defaults_to_notify(self):
+        """Short prompts without clear AI keywords should default to notify."""
+        result = _classify_reminder_intent("чай")
+        assert result["is_ai"] is False
+        assert result["mode"] == "notify"
+
+    def test_classifier_returns_valid_structure(self):
+        """All results must have is_ai and mode keys."""
+        for prompt in ["foo", "найди X", "проанализируй Y"]:
+            result = _classify_reminder_intent(prompt)
+            assert "is_ai" in result
+            assert "mode" in result
+            assert result["mode"] in ("notify", "qna", "research")
+
+
+# ── Remind command ───────────────────────────────────────────────────────────
+
+
 class TestRemindCommand:
     @pytest.mark.asyncio
     async def test_no_args_shows_usage(self):
@@ -153,6 +242,9 @@ class TestRemindCommand:
         assert "remind" in call_text.lower() or "Формат" in call_text
 
 
+# ── Delivery ─────────────────────────────────────────────────────────────────
+
+
 class TestCheckAndDeliverReminders:
     @pytest.mark.asyncio
     async def test_no_pending_does_nothing(self):
@@ -167,13 +259,13 @@ class TestCheckAndDeliverReminders:
         context.bot.send_message.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_delivers_pending_reminder(self):
+    async def test_delivers_plain_text_reminder(self):
         from app.handlers.cmd_reminders import check_and_deliver_reminders
 
         context = MagicMock()
         context.bot.send_message = AsyncMock()
 
-        pending = [{"id": 1, "user_id": 42, "prompt": "Test reminder"}]
+        pending = [{"id": 1, "user_id": 42, "prompt": "Test reminder", "context_history": None}]
 
         with (
             patch("app.handlers.cmd_reminders.get_pending_reminders", new_callable=AsyncMock, return_value=pending),
@@ -185,13 +277,65 @@ class TestCheckAndDeliverReminders:
         mock_mark.assert_awaited_once_with(1)
 
     @pytest.mark.asyncio
+    async def test_dispatches_ai_reminder(self):
+        """AI reminders should fire asyncio.create_task and mark delivered."""
+        from app.handlers.cmd_reminders import check_and_deliver_reminders
+
+        context = MagicMock()
+        context.bot.send_message = AsyncMock()
+
+        pending = [{
+            "id": 2,
+            "user_id": 42,
+            "prompt": "Find latest news",
+            "context_history": {"is_ai": True, "mode": "qna"},
+        }]
+
+        with (
+            patch("app.handlers.cmd_reminders.get_pending_reminders", new_callable=AsyncMock, return_value=pending),
+            patch("app.handlers.cmd_reminders.mark_delivered", new_callable=AsyncMock) as mock_mark,
+            patch("asyncio.create_task") as mock_create_task,
+        ):
+            await check_and_deliver_reminders(context)
+
+        # AI reminder should NOT call bot.send_message directly (that's handled by _execute_ai_reminder)
+        context.bot.send_message.assert_not_awaited()
+        mock_create_task.assert_called_once()
+        mock_mark.assert_awaited_once_with(2)
+
+    @pytest.mark.asyncio
+    async def test_dispatches_ai_reminder_from_json_string(self):
+        """AI metadata stored as a JSON string (legacy) should be parsed correctly."""
+        from app.handlers.cmd_reminders import check_and_deliver_reminders
+
+        context = MagicMock()
+        context.bot.send_message = AsyncMock()
+
+        pending = [{
+            "id": 3,
+            "user_id": 42,
+            "prompt": "Research AI trends",
+            "context_history": '{"is_ai": true, "mode": "research"}',
+        }]
+
+        with (
+            patch("app.handlers.cmd_reminders.get_pending_reminders", new_callable=AsyncMock, return_value=pending),
+            patch("app.handlers.cmd_reminders.mark_delivered", new_callable=AsyncMock) as mock_mark,
+            patch("asyncio.create_task") as mock_create_task,
+        ):
+            await check_and_deliver_reminders(context)
+
+        mock_create_task.assert_called_once()
+        mock_mark.assert_awaited_once_with(3)
+
+    @pytest.mark.asyncio
     async def test_delivery_failure_does_not_raise(self):
         from app.handlers.cmd_reminders import check_and_deliver_reminders
 
         context = MagicMock()
         context.bot.send_message = AsyncMock(side_effect=Exception("Network error"))
 
-        pending = [{"id": 1, "user_id": 42, "prompt": "Test"}]
+        pending = [{"id": 1, "user_id": 42, "prompt": "Test", "context_history": None}]
 
         with (
             patch("app.handlers.cmd_reminders.get_pending_reminders", new_callable=AsyncMock, return_value=pending),
@@ -200,3 +344,77 @@ class TestCheckAndDeliverReminders:
             await check_and_deliver_reminders(context)  # Should not raise
 
         mock_mark.assert_not_awaited()
+
+
+# ── Cancel callback ──────────────────────────────────────────────────────────
+
+
+class TestReminderCancelCallback:
+    @pytest.mark.asyncio
+    async def test_cancel_deletes_and_updates_buttons(self):
+        """Pressing ❌ should delete the reminder and remove the button."""
+        from app.handlers.cmd_reminders import reminder_cancel_callback
+
+        query = MagicMock()
+        query.data = "reminder_cancel:42"
+        query.from_user.id = 100
+        query.answer = AsyncMock()
+        query.message.reply_markup.inline_keyboard = [
+            [MagicMock(callback_data="reminder_cancel:42")],
+            [MagicMock(callback_data="reminder_cancel:99")],
+        ]
+        query.message.edit_reply_markup = AsyncMock()
+
+        update = MagicMock()
+        update.callback_query = query
+        context = MagicMock()
+
+        with patch("app.handlers.cmd_reminders.delete_reminder", new_callable=AsyncMock, return_value=True):
+            await reminder_cancel_callback(update, context)
+
+        # Button for id=42 should be removed, id=99 should remain
+        query.message.edit_reply_markup.assert_awaited_once()
+        new_markup = query.message.edit_reply_markup.call_args[1]["reply_markup"]
+        remaining = [btn.callback_data for row in new_markup.inline_keyboard for btn in row]
+        assert "reminder_cancel:42" not in remaining
+        assert "reminder_cancel:99" in remaining
+
+    @pytest.mark.asyncio
+    async def test_cancel_shows_error_on_failure(self):
+        """Failed deletion should show error alert."""
+        from app.handlers.cmd_reminders import reminder_cancel_callback
+
+        query = MagicMock()
+        query.data = "reminder_cancel:42"
+        query.from_user.id = 100
+        query.answer = AsyncMock()
+
+        update = MagicMock()
+        update.callback_query = query
+        context = MagicMock()
+
+        with patch("app.handlers.cmd_reminders.delete_reminder", new_callable=AsyncMock, return_value=False):
+            await reminder_cancel_callback(update, context)
+
+        # Should show error alert (the second query.answer call with show_alert=True)
+        calls = query.answer.call_args_list
+        assert any(c.kwargs.get("show_alert") is True for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_cancel_invalid_data_does_nothing(self):
+        """Invalid callback data should be handled gracefully."""
+        from app.handlers.cmd_reminders import reminder_cancel_callback
+
+        query = MagicMock()
+        query.data = "reminder_cancel:notanumber"
+        query.from_user.id = 100
+        query.answer = AsyncMock()
+
+        update = MagicMock()
+        update.callback_query = query
+        context = MagicMock()
+
+        with patch("app.handlers.cmd_reminders.delete_reminder", new_callable=AsyncMock) as mock_delete:
+            await reminder_cancel_callback(update, context)
+
+        mock_delete.assert_not_awaited()

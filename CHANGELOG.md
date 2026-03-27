@@ -3,6 +3,31 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.66] - 2026-03-27 - Phase 5: Smart Reminders Cancel & Refinement
+
+### ✨ New Features
+
+| Feature | Files | Detail |
+|---------|-------|--------|
+| Interactive Reminder Management | `cmd_reminders.py`, `callbacks.py` | Added inline ❌ cancel buttons to the `/remind` pending list. Users can now easily delete scheduled reminders directly from the UI. Handled via `reminder_cancel:{id}` fast callback. |
+
+### 🛡️ Reliability & Resilience
+
+| Change | File | Detail |
+|--------|------|--------|
+| Target AI Task Guards | `cmd_reminders.py` | Hardened the `_execute_ai_reminder` background pipeline with `asyncio.Semaphore(3)` to prevent API key exhaustion during burst deliveries, and added a 5-minute `asyncio.wait_for` timeout guard. If an AI task hangs, the user now receives a graceful timeout notification instead of silent failure. |
+| Background Task GC Fix | `cmd_reminders.py` | Fixed `RUF006` by storing `asyncio.create_task` references in a module-level `_background_ai_tasks` set with an auto-discard `done_callback`. Eliminates the `RuntimeWarning` and prevents premature garbage collection of long-running AI deliveries. |
+| Intent Classifier Precision | `cmd_reminders.py` | Fixed a substring collision bug where English multi-word notification patterns (e.g., "eat") would falsely trigger inside other words ("weather"). EN patterns now use word-boundary matching while RU patterns retain substring support for morphological prefixes. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Tests | **1399 passed**, 0 failed (including 56 dedicated reminder tests) |
+
+---
+
 ## [2.8.65] - 2026-03-27 - Phase 4: Tests, Dashboard Polish
 
 ### ✅ Unit Tests (47 new tests)

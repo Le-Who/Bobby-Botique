@@ -199,3 +199,8 @@ def register(application: Application) -> None:
 
     _add_fast_callback(application, branch_create_callback, "^branch_create$")
     _add_fast_callback(application, branch_return_callback, "^branch_return$")
+
+    # Reminder cancel inline buttons
+    from app.handlers.cmd_reminders import reminder_cancel_callback
+
+    _add_fast_callback(application, reminder_cancel_callback, "^reminder_cancel:")
