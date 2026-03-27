@@ -468,7 +468,7 @@ class KeyStatusManager:
                     "status": s["status"],
                     "failures": s.get("failure_count", 0),
                     "suspended_until": s["suspended_until"].isoformat() if s.get("suspended_until") else None,
-                    "last_error": s.get("last_error", "")[:100],
+                    "last_error": (s.get("last_error") or "")[:100],
                 }
                 for s in statuses[:20]  # Cap at 20 for dashboard
             ],
