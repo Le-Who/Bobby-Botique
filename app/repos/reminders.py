@@ -22,7 +22,7 @@ async def create_reminder(
     user_id: int,
     trigger_at: datetime,
     prompt: str,
-    context_history: list[dict[str, Any]] | None = None,
+    context_history: dict[str, Any] | list[dict[str, Any]] | None = None,
 ) -> int | None:
     """Create a new reminder.
 
@@ -77,7 +77,7 @@ async def get_user_reminders(user_id: int, *, limit: int = 10) -> list[dict[str,
     """Get upcoming reminders for a user."""
     now = datetime.now(UTC_TZ)
     rows = await db_query(
-        """SELECT id, prompt, trigger_at, is_delivered
+        """SELECT id, prompt, trigger_at, is_delivered, context_history
            FROM user_reminders
            WHERE user_id = $1 AND trigger_at > $2 AND is_delivered = FALSE
            ORDER BY trigger_at ASC
