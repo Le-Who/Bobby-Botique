@@ -25,7 +25,9 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Conversation Branching**: Fork current chat into a "what-if" branch via snapshot. Explore alternative conversation paths without losing the main thread. One-click restore to the original context.
 - **Smart Context Window**: Model-specific token budgets (flash-lite: 32K, flash: 128K — evidence-based on context degradation research) with automatic context trimming and LLM-backed summarization of dropped history.
 - **Agentic Smart Reminders**: DB-persisted user reminders (`/remind 30m Check logs`) with 60s poll-based delivery via `job_queue`. Supports **Zero-Latency Intent Classification** (automatically detects whether a prompt requires a simple text notification, quick QnA search, or deep agentic research). AI tasks run in non-blocking background tasks (`asyncio.create_task`) with concurrency semaphores (max 3), 5-minute timeout guards, and inline ❌ cancel buttons in the reminder list.
-- **Context Summarization**: Automatic token compression for large chats.
+- **Context Summarization**: Automatic token compression for large chats via `app/context/` subsystem — `ContextAssembler` orchestrates history assembly within model-specific token budgets, `Summarizer` produces LLM-backed compressed summaries, and `TokenBudget` maps model patterns to limits (flash-lite: 32K, flash: 128K).
+- **Document Chunking**: Retrieval-time chunking (`app/documents/chunking.py`) with three strategies — recursive (paragraph/sentence/word), hierarchical (parent/child), and query-aware relevance scoring (`chunk_for_context`) — replacing naïve hard-truncation.
+- **Intelligence Briefs**: DB-persisted topic subscriptions (`/subscribe`, `/unsubscribe`). Hourly job extracts topics from LTM → Tavily search → Gemini summary → Telegram delivery. Backed by `brief_subscriptions` table with RLS.
 - **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`), system health overviews, batch API (`/api/dashboard` — 8 metrics in 1 RTT), SSE live updates (`/api/events` — 5s real-time stream), and key health diagnostics (`/api/key-health`). Frontend integrates SSE EventSource for real-time CPU/memory/queue updates between polls.
 - **Request Deduplication**: In-memory double-tap prevention middleware with 3s window and MD5 hashing. Blocks duplicate messages from the same user within the dedup window, protecting against Telegram network retries.
 - **Key Rotation Observability**: Structured `KEY_EVENT` logging for usage milestones, near-limit warnings (70%), threshold rotations, and a `get_health_summary()` dashboard API with per-key status snapshots.
@@ -72,6 +74,14 @@ graph TD;
 | `app/`                | Core application logic (bot, web server, DB layer, handlers).                  |
 | `app/handlers/`       | Telegram command and message processors (`ai_chat`, `ai_search`, `commands`).  |
 | `app/repos/`          | Database repository pattern implementations (queries for chats, memory, keys). |
+| `app/providers/`      | AI provider abstraction layer (base, Gemini, OpenRouter, router).              |
+| `app/core/`           | Agentic research engine — multi-step query decomposition and tool use.         |
+| `app/context/`        | Context assembly subsystem (assembler, summarizer, token budget).              |
+| `app/documents/`      | Document processing: chunking strategies, parsers, document repository.        |
+| `app/middleware/`     | Request pipeline middleware (dedup).                                           |
+| `app/adapters/`       | Concurrency primitives and Telegram UI adapter.                                |
+| `app/db/`             | Database bootstrap: schema validation, migrations runner, RLS, seed.           |
+| `app/utils/`          | Shared utilities (formatting, keyboards, background tasks, image utils, etc.). |
 | `app/templates/`      | HTML Jinja2 templates for the admin web dashboard.                             |
 | `docs/`               | Extended architectural documentation.                                          |
 | `scripts/migrations/` | Numbered SQL migration files — single source of truth for all DDL.             |
@@ -231,8 +241,6 @@ The application features a heavily engineered test suite (**1343+ unit and integ
 
 **Telegram Commands:**
 
-**Telegram Commands:**
-
 - **User Commands:**
   - `/start`, `/help` — Initial onboarding & main menus.
   - `/newchat` — Reset context and start a fresh conversation.
@@ -246,7 +254,10 @@ The application features a heavily engineered test suite (**1343+ unit and integ
   - `/setprompt` — Set a custom system instruction for the current chat.
   - `/save`, `/conversations`, `/switch`, `/rename`, `/delete` — Advanced conversation management (persistence).
   - `/export` — Export the current chat history.
+  - `/memory` — Paginated viewer of long-term memories with per-item inline delete.
   - `/clearmemory` — Wipe all long-term vector-indexed memories.
+  - `/remind` — Set timed reminders with bilingual time parsing (EN/RU). Supports text, QnA, and agentic AI task delivery.
+  - `/subscribe`, `/unsubscribe` — Manage hourly intelligence brief subscriptions (LTM-topic-aware web research summaries).
   - `/mydata`, `/deleteme` — GDPR compliant data export and account deletion.
 
 - **Admin Commands (Requires `ADMIN_ID`):**
@@ -265,7 +276,10 @@ The application features a heavily engineered test suite (**1343+ unit and integ
 - `GET /`, `GET /login`, `POST /login`, `GET /logout` — UI interface (requires `ADMIN_SECRET` authentication and uses Cookie Sessions).
 - `GET /health` — Robust unauthenticated API health check.
 - `GET /metrics` — Exposes Prometheus telemetry text (uptime, errors, usage).
-- `GET /api/overview`, `/api/keys`, `/api/errors`, `/api/cache`, `/api/queue`, `/api/database`, `/api/circuit-breakers`, `/api/memory` — Internal JSON data endpoints for dashboard charts (requires auth cookie or `X-Auth-Token` header).
+- `GET /api/dashboard` — Aggregated batch endpoint (replaces 8 individual fetches with 1 RTT). Auth required.
+- `GET /api/overview`, `/api/keys`, `/api/errors`, `/api/cache`, `/api/queue`, `/api/database`, `/api/circuit-breakers`, `/api/memory` — Individual JSON data endpoints for dashboard charts (requires auth cookie or `X-Auth-Token` header).
+- `GET /api/key-health` — Per-key health diagnostics: status, failure count, suspension info. Auth required.
+- `GET /api/events` — Server-Sent Events stream (5s interval) for real-time CPU, memory, DB, queue, and request metrics.
 
 ## Main User Flows
 
