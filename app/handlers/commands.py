@@ -603,3 +603,8 @@ def register(application: Application) -> None:
     from app.handlers.cmd_reminders import remind_command
 
     application.add_handler(CommandHandler("remind", remind_command))
+
+    # Hidden developer commands
+    from app.handlers.cmd_asr_test import asr_test_command
+
+    application.add_handler(CommandHandler("asr", asr_test_command))

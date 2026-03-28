@@ -12,6 +12,7 @@ Format is optimized for agent-parseable context.
 | Smart Voice Auto-Routing | `msg_voice.py`, `thinking_classifier.py` | Voice messages with `LOW` complexity transcripts (greetings, confirmations) now skip the manual confirmation UI entirely and execute via `_handle_regular_chat`. |
 | Agentic Voice Search | `multimodal_processor.py`, `cb_voice.py` | Added `INTENT:SEARCH` to voice ASR prompt. Shows a `🔍 Deep Search (Agent)` primary button to natively trigger the web research engine (`_handle_research_agent`). |
 | Show & Tell (Voice+Image) | `msg_voice.py`, `cb_voice.py` | If a voice message is a Reply to a Photo, the image is dynamically fetched, locally cached, and injected as a `TaggedImage` into the `parts` array so the LLM can "see" what the user is talking about. |
+| Hidden Developer ASR Test | `cmd_asr_test.py`, `commands.py` | New `/asr <model>` command to benchmark ASR models on problematic voice messages via Reply context. Bypasses standard UI and inline-prints detected intent and raw transcript. |
 
 ### ⚡ Performance & Memory Optimization
 
