@@ -27,16 +27,7 @@ async def handle_document_mode_interaction(update: Update, context: ContextTypes
         if document_id:
             await handle_document_question(update, context, document_id)
         else:
-            await update.message.reply_text(
-                "📋 Вы находитесь в режиме работы с документами.\n\n"
-                "💡 *Доступные действия:*\n"
-                "• Загрузите новый документ\n"
-                "• Выберите документ из списка\n"
-                "• Используйте кнопки под сообщениями\n\n"
-                "🔄 *Для выхода из режима документов:*\n"
-                "• Нажмите кнопку '❌ Отменить работу с документами'\n"
-                "• Или отправьте команду /documents"
-            )
+            await update.message.reply_text(t("doc.mode_hint"))
         return True
     return False
 
@@ -52,7 +43,7 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
         document = await get_document_by_id(document_id, user_id)
         if not document:
             await update.message.reply_text(
-                "❌ Документ не найден.",
+                t("doc.not_found"),
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton(t("doc.to_documents"), callback_data="open_documents")]]
                 ),
@@ -65,7 +56,7 @@ async def handle_document_question(update: Update, context: ContextTypes.DEFAULT
         document_content = await get_document_content(document_id, user_id)
         if not document_content:
             await update.message.reply_text(
-                "❌ Не удалось получить содержимое документа.",
+                t("doc.content_unavailable"),
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton(t("doc.to_documents"), callback_data="open_documents")]]
                 ),
@@ -98,9 +89,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # Check file size (max 50MB)
     if document.file_size and document.file_size > 50 * 1024 * 1024:
-        await update.message.reply_text(
-            "❌ Файл слишком большой. Максимальный размер: 50MB.\nПопробуйте файл меньшего размера."
-        )
+        await update.message.reply_text(t("doc.file_too_large"))
         return
 
     # Check file type
@@ -108,10 +97,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     file_ext = document.file_name.lower().split(".")[-1] if document.file_name and "." in document.file_name else ""
 
     if f".{file_ext}" not in supported_formats:
-        await update.message.reply_text(f"❌ Неподдерживаемый формат файла `.{file_ext}`.\nОтправьте PDF или DOCX.")
+        await update.message.reply_text(t("doc.unsupported_format", ext=file_ext))
         return
 
-    processing_msg = await update.message.reply_text("📄 Обрабатываю документ...")
+    processing_msg = await update.message.reply_text(t("doc.processing"))
 
     try:
         import os
@@ -149,23 +138,22 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 else:
                     date_str = str(created_date)[:10] if created_date != "Unknown" else "Unknown"
 
-                duplicate_text = (
-                    f"⚠️ *Файл уже загружен*\n\n"
-                    f"Файл `{document.file_name}` уже был загружен ранее как:\n"
-                    f"📄 *{duplicate_info.get('filename', 'Unknown')}*\n"
-                    f"📅 Загружен: {date_str}\n\n"
-                    f"Хотите использовать существующий документ?"
+                duplicate_text = t(
+                    "doc.duplicate_found",
+                    filename=document.file_name or "",
+                    dup_name=duplicate_info.get('filename', 'Unknown'),
+                    date=date_str,
                 )
 
                 keyboard = [
                     [
                         InlineKeyboardButton(
-                            "✅ Использовать существующий",
+                            t("doc.btn_use_existing"),
                             callback_data=f"doc:use_existing:{duplicate_info.get('id')}",
                         )
                     ],
-                    [InlineKeyboardButton("📄 Загрузить как новый", callback_data="doc:force_upload")],
-                    [InlineKeyboardButton("❌ Отмена", callback_data="doc:cancel")],
+                    [InlineKeyboardButton(t("doc.btn_upload_new"), callback_data="doc:force_upload")],
+                    [InlineKeyboardButton(t("btn.cancel"), callback_data="doc:cancel")],
                 ]
 
                 formatted_text, parse_mode = TelegramFormatter.format_text(duplicate_text)
@@ -177,36 +165,35 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 return
             else:
                 logging.warning("Document processing error: %s", result["error"])
-                await processing_msg.edit_text("❌ Не удалось обработать документ. Попробуйте другой файл.")
+                await processing_msg.edit_text(t("doc.process_failed"))
                 return
 
         from app.document_processor import document_processor
 
         user_stats = await document_processor.get_user_document_stats(user_id)
 
-        success_text = (
-            f"✅ Документ обработан успешно!\n\n"
-            f"📄 *{document.file_name}*\n"
-            f"📊 Страниц: {result.get('pages', 'N/A')}\n"
-            f"📝 Символов: {result.get('text_length', 0):,}\n"
+        success_text = t(
+            "doc.success",
+            filename=document.file_name or "",
+            pages=str(result.get('pages', 'N/A')),
+            chars=f"{result.get('text_length', 0):,}",
         )
 
         if result.get("paragraphs"):
-            success_text += f"📄 Параграфов: {result['paragraphs']}\n"
+            success_text += t("doc.paragraphs", count=str(result['paragraphs']))
         if result.get("tables"):
-            success_text += f"📊 Таблиц: {result['tables']}\n"
+            success_text += t("doc.tables", count=str(result['tables']))
 
-        success_text += f"\n📋 *Ваши документы:* {user_stats['document_count']}/5\n"
+        success_text += t("doc.user_stats", count=str(user_stats['document_count']))
         if user_stats["limit_reached"]:
-            success_text += "⚠️ Достигнут лимит документов (5). Старые документы будут автоматически удалены.\n"
+            success_text += t("doc.limit_reached")
 
-        success_text += '\n💡 *Как задавать вопросы:*\n• Просто напишите ваш вопрос\n• Например: "Какие основные пункты?", "Что говорится о...?"\n• Система автоматически найдет ответ в документе\n\n'
-        success_text += "📅 *Срок хранения:* 3 дня (автоматическая очистка)"
+        success_text += t("doc.how_to_ask")
 
         keyboard = [
-            [InlineKeyboardButton("📄 Загрузить другой документ", callback_data="doc:upload_new")],
-            [InlineKeyboardButton("📋 Выбрать документ", callback_data="doc:select_document")],
-            [InlineKeyboardButton("❌ Отменить работу с документами", callback_data="doc:cancel")],
+            [InlineKeyboardButton(t("doc.btn_upload_another"), callback_data="doc:upload_new")],
+            [InlineKeyboardButton(t("doc.btn_select_document"), callback_data="doc:select_document")],
+            [InlineKeyboardButton(t("doc.btn_cancel_mode"), callback_data="doc:cancel")],
         ]
 
         formatted_text, parse_mode = TelegramFormatter.format_text(success_text)

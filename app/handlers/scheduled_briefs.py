@@ -23,6 +23,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from app import database as db
+from app.i18n import t
 from app.repos.users import is_admin
 
 logger = logging.getLogger(__name__)
@@ -255,7 +256,7 @@ async def generate_and_send_brief(user_id: int, bot) -> bool:
             logger.info("Empty brief generated for user %s, skipping", user_id)
             return False
 
-        message = f"🌅 **Утренний бриф**\n\n{summary}"
+        message = t("brief.morning_title", summary=summary)
         await bot.send_message(chat_id=user_id, text=message, parse_mode="Markdown")
 
         await mark_sent(user_id)
@@ -289,12 +290,11 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if success:
         await update.message.reply_text(
-            f"✅ Подписка на **{sub_type}** активирована!\n"
-            f"📅 Бриф будет приходить каждый день в {preferred_hour}:00 UTC.",
+            t("brief.subscribed", type=sub_type, hour=str(preferred_hour)),
             parse_mode="Markdown",
         )
     else:
-        await update.message.reply_text("❌ Ошибка при создании подписки. Попробуйте позже.")
+        await update.message.reply_text(t("brief.subscribe_error"))
 
 
 async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -310,11 +310,11 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if success:
         await update.message.reply_text(
-            f"🔕 Подписка на **{sub_type}** деактивирована.",
+            t("brief.unsubscribed", type=sub_type),
             parse_mode="Markdown",
         )
     else:
-        await update.message.reply_text("❌ Ошибка при отмене подписки.")
+        await update.message.reply_text(t("brief.unsubscribe_error"))
 
 
 # ── Scheduler job ────────────────────────────────────────────────────────

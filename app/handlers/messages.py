@@ -294,10 +294,14 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if is_photo:
             logging.info("Processing single photo from user %s", user_id)
-            placeholder_message = await update.message.reply_text("🖼️ Обрабатываю изображение...")
+            from app.i18n import t as _t
+
+            placeholder_message = await update.message.reply_text(_t("msg.processing_image"))
         else:
             logging.info("Processing text message from user %s", user_id)
-            placeholder_message = await update.message.reply_text("🤔 Думаю...")
+            from app.i18n import t as _t
+
+            placeholder_message = await update.message.reply_text(_t("msg.thinking"))
 
         done_event = asyncio.Event()
         register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)

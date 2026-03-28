@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 
 from app import state
 from app.handlers import agent, menus
+from app.i18n import t
 from app.metrics import role_conv_metrics
 from app.prompt_registry import get_registry
 from app.repos.chats import get_user_chat
@@ -56,7 +57,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
             context.user_data.pop("edit_prompt_role_key", None)
 
             if not success:
-                await update.message.reply_text("❌ Не удалось обновить промпт. Роль не найдена.")
+                await update.message.reply_text(t("role.prompt_update_failed"))
                 return True
 
             # If this role is currently active, update system_prompt
@@ -67,7 +68,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
                 await update_user_chat(user_id, chat_state)
 
-            await update.message.reply_text("✅ Промпт роли обновлён!")
+            await update.message.reply_text(t("role.prompt_updated"))
 
             # Show updated role details
             text, parse_mode, reply_markup = await menus.get_roles_menu_content(
@@ -78,7 +79,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
         except Exception as e:
             logging.error("Error updating role prompt: %s", e, exc_info=True)
-            await update.message.reply_text("❌ Не удалось обновить промпт. Попробуйте позже.")
+            await update.message.reply_text(t("role.prompt_update_error"))
             context.user_data.pop("edit_prompt_role_id", None)
             context.user_data.pop("edit_prompt_role_key", None)
             return True
@@ -95,7 +96,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
             context.user_data.pop("edit_prompt_ai_role_id", None)
             context.user_data.pop("edit_prompt_ai_role_key", None)
 
-            progress_msg = await update.message.reply_text("✨ Улучшаю промпт через AI…")
+            progress_msg = await update.message.reply_text(t("role.ai_enhancing"))
 
             # Build the enhancement prompt — minimal, no safety injection
             enhance_instruction = (
@@ -115,7 +116,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
             key_data, model_used, _ = await _resolve_ai_request(model_for_edit)
 
             if not key_data:
-                await progress_msg.edit_text("❌ Нет доступных ключей API.")
+                await progress_msg.edit_text(t("error.no_api_keys"))
                 return True
 
             history = [{"role": "user", "parts": [enhance_instruction]}]
@@ -130,7 +131,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
             await _increment_key_usage(key_data["key_hash"], model_used)
 
             if not response_text or not response_text.strip():
-                await progress_msg.edit_text("❌ AI не вернул результат. Попробуйте ещё раз.")
+                await progress_msg.edit_text(t("role.ai_no_result"))
                 return True
 
             enhanced_prompt = response_text.strip()
@@ -143,16 +144,12 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 # Keep current prompt for active-role check on save
                 context.user_data["edit_prompt_ai_current"] = current_prompt
 
-            preview_text = (
-                f"✨ **Улучшенный промпт** (удерживайте для копирования):\n\n"
-                f"`{enhanced_prompt}`\n\n"
-                f"Сохранить, отредактировать вручную или отменить?"
-            )
+            preview_text = t("role.ai_enhanced_preview", prompt=enhanced_prompt)
             kb = InlineKeyboardMarkup(
                 [
-                    [InlineKeyboardButton("💾 Сохранить", callback_data="role_edit_ai_save")],
-                    [InlineKeyboardButton("✏️ Редактировать", callback_data=f"role_edit_ai_tweak:{role_key}")],
-                    [InlineKeyboardButton("↩️ Отмена", callback_data=f"role_edit_cancel:{role_key}")],
+                    [InlineKeyboardButton(t("role.btn_save"), callback_data="role_edit_ai_save")],
+                    [InlineKeyboardButton(t("role.btn_edit"), callback_data=f"role_edit_ai_tweak:{role_key}")],
+                    [InlineKeyboardButton(t("role.btn_cancel"), callback_data=f"role_edit_cancel:{role_key}")],
                 ]
             )
             fmt_text, fmt_pm = TelegramFormatter.format_text(preview_text)
@@ -161,7 +158,7 @@ async def handle_edit_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
         except Exception as e:
             logging.error("Error in AI prompt enhancement: %s", e, exc_info=True)
-            await update.message.reply_text("❌ Ошибка при улучшении промпта. Попробуйте позже.")
+            await update.message.reply_text(t("role.ai_enhance_error"))
             # Clean up
             if context.user_data is not None:
                 context.user_data.pop("edit_prompt_ai_role_id", None)
@@ -184,15 +181,15 @@ async def handle_conversation_rename(update: Update, context: ContextTypes.DEFAU
                 await role_conv_metrics.record_conversation_renamed()
 
                 text, parse_mode, reply_markup = await menus.get_conversations_menu_content(user_id, 1)
-                await update.message.reply_text(f"✅ Беседа переименована в: {new_title}")
+                await update.message.reply_text(t("role.renamed", title=new_title))
                 await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
                 return True
             else:
-                await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")
+                await update.message.reply_text(t("role.name_length_error"))
                 return True
         except Exception as e:
             logging.error("Error renaming conversation: %s", e, exc_info=True)
-            await update.message.reply_text("❌ Не удалось переименовать беседу. Попробуйте позже.")
+            await update.message.reply_text(t("role.rename_error"))
             context.user_data.pop("rename_conv_id", None)
             return True
     return False
@@ -221,15 +218,11 @@ async def handle_manual_role_input(
     # Step 1: User sends title
     if is_awaiting_manual_role_title(user_id):
         if len(message_text) > 100:
-            await update.message.reply_text("⚠️ Название слишком длинное (макс. 100 символов). Попробуйте короче.")
+            await update.message.reply_text(t("role.title_too_long"))
             return True
         set_manual_role_title(user_id, message_text)
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")]])
-        title_text = (
-            f"✅ Название: **{message_text}**\n\n"
-            f"Теперь введите **системный промпт** (инструкцию для бота).\n"
-            f"Можно несколько строк — это будет поведение вашей роли:"
-        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(t("role.btn_cancel"), callback_data="role_manual_cancel")]])
+        title_text = t("role.title_set", title=message_text)
         fmt_text, fmt_pm = TelegramFormatter.format_text(title_text)
         await update.message.reply_text(
             fmt_text,
@@ -249,16 +242,11 @@ async def handle_manual_role_input(
         prompt_preview = message_text[:preview_len] + "..." if len(message_text) > preview_len else message_text
         kb = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("💾 Сохранить и применить", callback_data="role_manual_save")],
-                [InlineKeyboardButton("↩️ Отмена", callback_data="role_manual_cancel")],
+                [InlineKeyboardButton(t("role.btn_save_apply"), callback_data="role_manual_save")],
+                [InlineKeyboardButton(t("role.btn_cancel"), callback_data="role_manual_cancel")],
             ]
         )
-        preview_text = (
-            f"📋 **Предпросмотр новой роли**\n\n"
-            f"🏷 **Название:** {title}\n"
-            f"📝 **Промпт:**\n`{prompt_preview}`\n\n"
-            f"Нажмите кнопку ниже, чтобы сохранить:"
-        )
+        preview_text = t("role.preview_title", title=title, prompt=prompt_preview)
         fmt_text, fmt_pm = TelegramFormatter.format_text(preview_text)
         await update.message.reply_text(
             fmt_text,
@@ -290,18 +278,18 @@ async def handle_custom_role_generation(
         if not key_data:
             kb = InlineKeyboardMarkup(
                 [
-                    [InlineKeyboardButton("🎭 Меню ролей", callback_data="open_roles")],
-                    [InlineKeyboardButton("⬅️ Меню", callback_data="start_menu")],
+                    [InlineKeyboardButton(t("role.btn_roles_menu"), callback_data="open_roles")],
+                    [InlineKeyboardButton(t("menu.back_to_menu"), callback_data="start_menu")],
                 ]
             )
             await update.message.reply_text(
-                "❌ Нет доступных ключей API для генерации роли.\nПопробуйте позже или создайте роль вручную.",
+                t("role.no_api_keys"),
                 reply_markup=kb,
             )
             clear_custom_role_state(user_id)
             return True
 
-        progress_msg = await update.message.reply_text("🛠️ Генерирую роль…")
+        progress_msg = await update.message.reply_text(t("role.generating"))
         set_generating_custom_role(user_id, True)
 
         history = [{"role": "user", "parts": [message_text]}]
@@ -324,19 +312,19 @@ async def handle_custom_role_generation(
             if not role_obj:
                 error_kb = InlineKeyboardMarkup(
                     [
-                        [InlineKeyboardButton("🔄 Попробовать снова", callback_data="role_create")],
-                        [InlineKeyboardButton("❌ Отмена", callback_data="role_create_cancel")],
+                        [InlineKeyboardButton(t("role.btn_retry"), callback_data="role_create")],
+                        [InlineKeyboardButton(t("btn.cancel"), callback_data="role_create_cancel")],
                     ]
                 )
                 if "503" in (response_text or "") or "unavailable" in (response_text or "").lower():
                     await progress_msg.edit_text(
-                        "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.",
+                        t("role.server_overloaded"),
                         reply_markup=error_kb,
                     )
                 else:
                     logging.error("Failed to parse role JSON. Response: %s", response_text)
                     await progress_msg.edit_text(
-                        "❌ Не удалось сгенерировать роль. Попробуйте изменить описание.",
+                        t("role.generation_failed"),
                         reply_markup=error_kb,
                     )
                 set_generating_custom_role(user_id, False)
@@ -345,19 +333,17 @@ async def handle_custom_role_generation(
             set_last_custom_role_prompt(user_id, message_text)
             set_generated_role(user_id, role_obj)
 
-            title = role_obj.get("title", "Кастомная роль")
+            title = role_obj.get("title", t("role.custom_default_title"))
             purpose = role_obj.get("purpose", "")
             style = ", ".join(role_obj.get("style", [])[:3])
 
-            preview = (
-                f"🆕 *Новая роль:* {title}\n\n🎯 Цель: {purpose}\n🧭 Стиль: {style}\n\nПрименить сейчас или сохранить?"
-            )
+            preview = t("role.new_preview", title=title, purpose=purpose, style=style)
 
             kb_rows = [
-                [InlineKeyboardButton("✅ Применить", callback_data="role_custom_apply")],
-                [InlineKeyboardButton("💾 Сохранить", callback_data="role_custom_save")],
-                [InlineKeyboardButton("🔄 Попробовать ещё раз", callback_data="role_custom_retry")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="role_clear")],
+                [InlineKeyboardButton(t("role.btn_apply"), callback_data="role_custom_apply")],
+                [InlineKeyboardButton(t("role.btn_save"), callback_data="role_custom_save")],
+                [InlineKeyboardButton(t("role.btn_retry_custom"), callback_data="role_custom_retry")],
+                [InlineKeyboardButton(t("btn.cancel"), callback_data="role_clear")],
             ]
 
             formatted_text, parse_mode = TelegramFormatter.format_text(preview)
@@ -371,12 +357,12 @@ async def handle_custom_role_generation(
             logging.error("Error generating custom role: %s", e, exc_info=True)
             error_kb = InlineKeyboardMarkup(
                 [
-                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="role_create")],
-                    [InlineKeyboardButton("❌ Отмена", callback_data="role_create_cancel")],
+                    [InlineKeyboardButton(t("role.btn_retry"), callback_data="role_create")],
+                    [InlineKeyboardButton(t("btn.cancel"), callback_data="role_create_cancel")],
                 ]
             )
             await progress_msg.edit_text(
-                "❌ Произошла ошибка при генерации роли.",
+                t("role.generation_error"),
                 reply_markup=error_kb,
             )
         finally:
@@ -398,7 +384,7 @@ async def handle_role_rename(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
                 await rename_custom_role(role_id, user_id, new_title)
                 context.user_data.pop("rename_role_id", None)
-                await update.message.reply_text(f"✅ Роль переименована в: {new_title}")
+                await update.message.reply_text(t("role.role_renamed", title=new_title))
                 chat_state = await get_user_chat(user_id)
                 text, parse_mode, reply_markup = await menus.get_roles_menu_content(
                     user_id,
@@ -409,11 +395,11 @@ async def handle_role_rename(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 await update.message.reply_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
                 return True
             else:
-                await update.message.reply_text("❌ Название должно быть от 1 до 100 символов. Попробуйте снова.")
+                await update.message.reply_text(t("role.name_length_error"))
                 return True
         except Exception as e:
             logging.error("Error renaming role: %s", e, exc_info=True)
-            await update.message.reply_text("❌ Не удалось переименовать роль. Попробуйте позже.")
+            await update.message.reply_text(t("role.role_rename_error"))
             context.user_data.pop("rename_role_id", None)
             return True
     return False

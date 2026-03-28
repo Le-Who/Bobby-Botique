@@ -82,19 +82,30 @@ async def load_user_state(user_id: int) -> dict[str, Any] | None:
         )
         if result:
             row = result[0]
-            return {
-                "document_mode": row.get("document_mode", False) or False,
-                "selected_document_id": row.get("selected_document_id"),
-                "awaiting_custom_role_input": row.get("awaiting_custom_role_input", False) or False,
-                "generated_role": row.get("generated_role"),  # JSONB → dict
-                "last_custom_role_prompt": row.get("last_custom_role_prompt"),
-                "generating_custom_role": row.get("generating_custom_role", False) or False,
-                "last_sent_message_text": row.get("last_sent_message_text"),
-                "awaiting_manual_role_title": row.get("awaiting_manual_role_title", False) or False,
-                "awaiting_manual_role_prompt": row.get("awaiting_manual_role_prompt", False) or False,
-                "manual_role_title": row.get("manual_role_title", "") or "",
-                "manual_role_prompt": row.get("manual_role_prompt", "") or "",
-            }
+            try:
+                from app.core.entities import UserStateRow
+
+                validated = UserStateRow.model_validate(row)
+                return validated.model_dump()
+            except Exception as ve:
+                logging.warning(
+                    "UserStateRow validation failed for user %s, falling back to .get(): %s",
+                    user_id,
+                    ve,
+                )
+                return {
+                    "document_mode": row.get("document_mode", False) or False,
+                    "selected_document_id": row.get("selected_document_id"),
+                    "awaiting_custom_role_input": row.get("awaiting_custom_role_input", False) or False,
+                    "generated_role": row.get("generated_role"),  # JSONB → dict
+                    "last_custom_role_prompt": row.get("last_custom_role_prompt"),
+                    "generating_custom_role": row.get("generating_custom_role", False) or False,
+                    "last_sent_message_text": row.get("last_sent_message_text"),
+                    "awaiting_manual_role_title": row.get("awaiting_manual_role_title", False) or False,
+                    "awaiting_manual_role_prompt": row.get("awaiting_manual_role_prompt", False) or False,
+                    "manual_role_title": row.get("manual_role_title", "") or "",
+                    "manual_role_prompt": row.get("manual_role_prompt", "") or "",
+                }
         return None
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to load user state for %s: %s", user_id, e)

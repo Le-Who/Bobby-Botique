@@ -3,6 +3,35 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.73] - 2026-03-28 - Architectural Hardening & Global i18n
+    
+### 🌐 Internationalization (i18n) Phase 1
+    
+| Service | Files | Detail |
+|---------|-------|--------|
+| Fully Localized Core Handlers | `messages.py`, `ai_chat.py`, `msg_roles.py` | 60+ hardcoded Russian strings moved to the central `t(key)` registry. The AI Chat flow, role generation, prompt editing, and message routing are now fully language-aware (EN/RU). |
+| Document Pipeline i18n | `msg_document.py` | 33 hardcoded strings localized. Extracted duplicate detection, limit warnings, and document statistics UI into structured localized templates. |
+| Scheduled Briefs i18n | `scheduled_briefs.py` | Command confirmations and morning brief formatting are now fully localized. |
+| Consolidated Registry | `i18n.py` | Expanded to cover 60+ new keys under `role.*`, `doc.*`, `msg.*`, and `brief.*` namespaces, with complete duplicate-free enforcement. |
+    
+### 🛡️ Resilience & Memory Hardening
+
+| Component | Files | Detail |
+|-----------|-------|--------|
+| Parameterizable LRU State | `state.py`, `config.py` | Fixed a major OOM vector for constrained deployments. The previously hardcoded `50,000`-entry `_UserStateStore` LRU cache is now dynamically bounded by the `LRU_STATE_CACHE_SIZE` environment variable (defaults to `1000`). |
+| Pydantic DAO Boundary | `app/core/entities.py`, `repos/chats.py`, `repos/users.py` | Established a strict Pydantic validation boundary for data hydrated from Postgres. Prevents latent schema drift from causing cascading runtime `KeyError` crashes in the state machine. Invalid DB payload gracefully fallback to `_default_model()`. |
+| Benchmark Execution Purge | `/benchmarks/*` | Audited and deleted 14 legacy, unmaintained micro-benchmark files that clustered the repository and posed security/execution risks. |
+    
+### ✅ Quality Gates
+    
+| Check | Result |
+|-------|--------|
+| Mypy (`--strict`) | 0 errors (fully validated) |
+| Ruff | All files conform strictly |
+| Tests | **1453 passed**, 0 failed |
+
+---
+
 ## [2.8.72] - 2026-03-28 - Voice Engine 2.0 & GraphRAG Memory Hardening
 
 ### ✨ New Features

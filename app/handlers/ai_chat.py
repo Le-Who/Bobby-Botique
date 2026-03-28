@@ -15,6 +15,7 @@ from app.handlers.ai_core import (
     handle_ai_response_error,
 )
 from app.handlers.chat_logic import classify_resolution, format_memories_for_system_prompt
+from app.i18n import detect_language, t
 from app.prompt_registry import get_registry
 from app.providers import GeminiProvider, is_openrouter_model
 from app.repos.chats import update_user_chat
@@ -88,15 +89,16 @@ async def _handle_regular_chat(
         return
 
     if resolution == "confirm_fallback":
+        lang = detect_language(user_message)
         result = classify_resolution(resolution, model_for_this_request, model_used)
         keyboard = [
             [
                 InlineKeyboardButton(
-                    f"Да, использовать {model_used}",
+                    t("chat.confirm_fallback", lang, model=model_used),
                     callback_data=f"fallback:confirm:{model_used}",
                 )
             ],
-            [InlineKeyboardButton("Нет, отмена", callback_data="fallback:cancel")],
+            [InlineKeyboardButton(t("chat.cancel_fallback", lang), callback_data="fallback:cancel")],
         ]
         try:
             await placeholder_message.edit_text(
@@ -223,7 +225,8 @@ async def _handle_regular_chat(
         await update_stage(placeholder_message, STAGES_CHAT, 0)
     except Exception as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
-        placeholder_message = await placeholder_message.reply_text(f"🧠 Модель {model_used} думает...")
+        _lang = detect_language(user_message)
+        placeholder_message = await placeholder_message.reply_text(t("chat.model_thinking", _lang, model=model_used))
 
     # ── Unified Streaming ────────────────────────────────────────────
     response_text = None
@@ -234,7 +237,7 @@ async def _handle_regular_chat(
     # ── Build memory footer if applicable ─────────────────────────────────
     _footer_text: str | None = None
     if _memories_injected > 0:
-        _footer_text = f"\n\n_🧠 Использован контекст из прошлых бесед ({_memories_injected})_"
+        _footer_text = t("ltm.memories_injected", detect_language(user_message), count=str(_memories_injected))
 
     # Stop the heartbeat before streaming — streaming edits the same
     # placeholder message, so the heartbeat would race with it.
@@ -294,21 +297,22 @@ async def _handle_regular_chat(
             return
         else:
             # Branch-aware action button
+            _lang = detect_language(user_message)
             branch_btn = (
-                InlineKeyboardButton("↩️ К основной ветке", callback_data="branch_return")
+                InlineKeyboardButton(t("btn.back_to_main", _lang), callback_data="branch_return")
                 if chat_state.branch_id
-                else InlineKeyboardButton("🔀 Что если…", callback_data="branch_create")
+                else InlineKeyboardButton(t("btn.what_if", _lang), callback_data="branch_create")
             )
             buttons = [
-                [InlineKeyboardButton("🔄 Попробовать ещё раз", callback_data="retry_last")],
+                [InlineKeyboardButton(t("btn.retry", _lang), callback_data="retry_last")],
                 [
-                    InlineKeyboardButton("🎭 Роль ИИ", callback_data="open_roles:from_response"),
+                    InlineKeyboardButton(t("btn.roles", _lang), callback_data="open_roles:from_response"),
                     branch_btn,
                 ],
                 [
-                    InlineKeyboardButton("🔊 Озвучить", callback_data="tts_reply"),
+                    InlineKeyboardButton(t("btn.listen", _lang), callback_data="tts_reply"),
                     InlineKeyboardButton(
-                        "✨ Новая тема",
+                        t("btn.new_topic_short", _lang),
                         callback_data=("deepdive:new_topic" if chat_state.is_deep_dive else "new_topic"),
                     ),
                 ],
@@ -372,7 +376,7 @@ async def _handle_regular_chat(
                         [
                             [
                                 InlineKeyboardButton(
-                                    f"⚡ Попробовать {suggestion.model}",
+                                    t("btn.try_model", detect_language(user_message), model=suggestion.model),
                                     callback_data=f"switch_model:{suggestion.model}",
                                 )
                             ],
@@ -394,7 +398,7 @@ async def _handle_regular_chat(
             from app.errors import build_retry_and_roles_keyboard
 
             await placeholder_message.edit_text(
-                "Получен пустой ответ от API.",
+                t("error.empty_response", detect_language(user_message)),
                 reply_markup=build_retry_and_roles_keyboard(),
             )
         except Exception as edit_error:

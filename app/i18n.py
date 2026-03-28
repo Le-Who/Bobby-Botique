@@ -567,6 +567,281 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⏳ Запрос уже обрабатывается…",
         "en": "⏳ Request is already being processed…",
     },
+    # ── Fallback Confirmation ────────────────────────────────────────────
+    "chat.confirm_fallback": {
+        "ru": "Да, использовать {model}",
+        "en": "Yes, use {model}",
+    },
+    "chat.cancel_fallback": {
+        "ru": "Нет, отмена",
+        "en": "No, cancel",
+    },
+    "chat.model_thinking": {
+        "ru": "🧠 Модель {model} думает...",
+        "en": "🧠 Model {model} is thinking...",
+    },
+    # ── Extra Buttons ────────────────────────────────────────────────────
+    "btn.listen": {
+        "ru": "🔊 Озвучить",
+        "en": "🔊 Listen",
+    },
+    "btn.new_topic_short": {
+        "ru": "✨ Новая тема",
+        "en": "✨ New topic",
+    },
+    "btn.try_model": {
+        "ru": "⚡ Попробовать {model}",
+        "en": "⚡ Try {model}",
+    },
+    # ── Streaming Status ─────────────────────────────────────────────────
+    "stream.blocked_by_safety": {
+        "ru": "\n\n⚠️ _Ответ был прерван фильтром безопасности._",
+        "en": "\n\n⚠️ _Response was blocked by safety filter._",
+    },
+    "stream.truncated": {
+        "ru": "\n\n⚠️ _Ответ был обрезан из-за ограничения длины._",
+        "en": "\n\n⚠️ _Response was truncated due to length limit._",
+    },
+    "stream.timeout_partial": {
+        "ru": "\n\n⏰ _(ответ был прерван по таймауту)_",
+        "en": "\n\n⏰ _(response was interrupted by timeout)_",
+    },
+    "stream.timeout_full": {
+        "ru": "⏰ Превышено время ожидания ответа. Попробуйте позже.",
+        "en": "⏰ Response timed out. Please try later.",
+    },
+    "stream.api_error_partial": {
+        "ru": "\n\n⚠️ _(ответ был прерван из-за ошибки API)_",
+        "en": "\n\n⚠️ _(response was interrupted by API error)_",
+    },
+    "stream.api_error_full": {
+        "ru": "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.",
+        "en": "❌ API error during streaming. Please try again.",
+    },
+    "stream.generic_error": {
+        "ru": "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.",
+        "en": "❌ Streaming error. Please try again.",
+    },
+    # ── Role Management ──────────────────────────────────────────────────
+    "role.prompt_updated": {
+        "ru": "✅ Промпт роли обновлён!",
+        "en": "✅ Role prompt updated!",
+    },
+    "role.prompt_update_failed": {
+        "ru": "❌ Не удалось обновить промпт. Роль не найдена.",
+        "en": "❌ Failed to update prompt. Role not found.",
+    },
+    "role.prompt_update_error": {
+        "ru": "❌ Не удалось обновить промпт. Попробуйте позже.",
+        "en": "❌ Failed to update prompt. Please try later.",
+    },
+    "role.ai_enhancing": {
+        "ru": "✨ Улучшаю промпт через AI…",
+        "en": "✨ Enhancing prompt via AI…",
+    },
+    "role.ai_no_result": {
+        "ru": "❌ AI не вернул результат. Попробуйте ещё раз.",
+        "en": "❌ AI returned no result. Please try again.",
+    },
+    "role.ai_enhanced_preview": {
+        "ru": "✨ **Улучшенный промпт** (удерживайте для копирования):\n\n`{prompt}`\n\nСохранить, отредактировать вручную или отменить?",
+        "en": "✨ **Enhanced prompt** (hold to copy):\n\n`{prompt}`\n\nSave, edit manually, or cancel?",
+    },
+    "role.ai_enhance_error": {
+        "ru": "❌ Ошибка при улучшении промпта. Попробуйте позже.",
+        "en": "❌ Error enhancing prompt. Please try later.",
+    },
+    "role.btn_save": {
+        "ru": "💾 Сохранить",
+        "en": "💾 Save",
+    },
+    "role.btn_edit": {
+        "ru": "✏️ Редактировать",
+        "en": "✏️ Edit",
+    },
+    "role.btn_cancel": {
+        "ru": "↩️ Отмена",
+        "en": "↩️ Cancel",
+    },
+    "role.renamed": {
+        "ru": "✅ Беседа переименована в: {title}",
+        "en": "✅ Conversation renamed to: {title}",
+    },
+    "role.name_length_error": {
+        "ru": "❌ Название должно быть от 1 до 100 символов. Попробуйте снова.",
+        "en": "❌ Name must be 1-100 characters. Please try again.",
+    },
+    "role.rename_error": {
+        "ru": "❌ Не удалось переименовать беседу. Попробуйте позже.",
+        "en": "❌ Failed to rename conversation. Please try later.",
+    },
+    "role.title_too_long": {
+        "ru": "⚠️ Название слишком длинное (макс. 100 символов). Попробуйте короче.",
+        "en": "⚠️ Name too long (max 100 chars). Try shorter.",
+    },
+    "role.title_set": {
+        "ru": "✅ Название: **{title}**\n\nТеперь введите **системный промпт** (инструкцию для бота).\nМожно несколько строк — это будет поведение вашей роли:",
+        "en": "✅ Name: **{title}**\n\nNow enter the **system prompt** (bot instruction).\nMultiple lines OK — this defines the role behavior:",
+    },
+    "role.btn_save_apply": {
+        "ru": "💾 Сохранить и применить",
+        "en": "💾 Save & apply",
+    },
+    "role.preview_title": {
+        "ru": "📋 **Предпросмотр новой роли**\n\n🏷 **Название:** {title}\n📝 **Промпт:**\n`{prompt}`\n\nНажмите кнопку ниже, чтобы сохранить:",
+        "en": "📋 **New role preview**\n\n🏷 **Name:** {title}\n📝 **Prompt:**\n`{prompt}`\n\nPress button below to save:",
+    },
+    "role.no_api_keys": {
+        "ru": "❌ Нет доступных ключей API для генерации роли.\nПопробуйте позже или создайте роль вручную.",
+        "en": "❌ No API keys available for role generation.\nPlease try later or create manually.",
+    },
+    "role.btn_roles_menu": {
+        "ru": "🎭 Меню ролей",
+        "en": "🎭 Roles menu",
+    },
+    "role.generating": {
+        "ru": "🛠️ Генерирую роль…",
+        "en": "🛠️ Generating role…",
+    },
+    "role.btn_retry": {
+        "ru": "🔄 Попробовать снова",
+        "en": "🔄 Try again",
+    },
+    "role.server_overloaded": {
+        "ru": "🔄 Сервер перегружен. Попробуйте ещё раз через несколько секунд.",
+        "en": "🔄 Server overloaded. Please try again in a few seconds.",
+    },
+    "role.generation_failed": {
+        "ru": "❌ Не удалось сгенерировать роль. Попробуйте изменить описание.",
+        "en": "❌ Failed to generate role. Try a different description.",
+    },
+    "role.custom_default_title": {
+        "ru": "Кастомная роль",
+        "en": "Custom role",
+    },
+    "role.new_preview": {
+        "ru": "🆕 *Новая роль:* {title}\n\n🎯 Цель: {purpose}\n🧭 Стиль: {style}\n\nПрименить сейчас или сохранить?",
+        "en": "🆕 *New role:* {title}\n\n🎯 Purpose: {purpose}\n🧭 Style: {style}\n\nApply now or save?",
+    },
+    "role.btn_apply": {
+        "ru": "✅ Применить",
+        "en": "✅ Apply",
+    },
+    "role.btn_retry_custom": {
+        "ru": "🔄 Попробовать ещё раз",
+        "en": "🔄 Try again",
+    },
+    "role.generation_error": {
+        "ru": "❌ Произошла ошибка при генерации роли.",
+        "en": "❌ An error occurred during role generation.",
+    },
+    "role.role_renamed": {
+        "ru": "✅ Роль переименована в: {title}",
+        "en": "✅ Role renamed to: {title}",
+    },
+    "role.role_rename_error": {
+        "ru": "❌ Не удалось переименовать роль. Попробуйте позже.",
+        "en": "❌ Failed to rename role. Please try later.",
+    },
+    # ── Messages / Placeholders ──────────────────────────────────────────
+    "msg.processing_image": {
+        "ru": "🖼️ Обрабатываю изображение...",
+        "en": "🖼️ Processing image...",
+    },
+    "msg.thinking": {
+        "ru": "🤔 Думаю...",
+        "en": "🤔 Thinking...",
+    },
+    # ── Scheduled Briefs ─────────────────────────────────────────────────
+    "brief.morning_title": {
+        "ru": "📬 **Утренний бриф**\n\n{summary}",
+        "en": "📬 **Morning Brief**\n\n{summary}",
+    },
+    "brief.subscribed": {
+        "ru": "✅ Подписка на **{type}** активирована!\n📬 Вы будете получать рассылки в {hour}:00 UTC.",
+        "en": "✅ Subscribed to **{type}**!\n📬 You will receive briefs at {hour}:00 UTC.",
+    },
+    "brief.subscribe_error": {
+        "ru": "❌ Ошибка при создании подписки. Попробуйте позже.",
+        "en": "❌ Error creating subscription. Please try later.",
+    },
+    "brief.unsubscribed": {
+        "ru": "🔕 Подписка на **{type}** деактивирована.",
+        "en": "🔕 Unsubscribed from **{type}**.",
+    },
+    "brief.unsubscribe_error": {
+        "ru": "❌ Ошибка при отмене подписки.",
+        "en": "❌ Error cancelling subscription.",
+    },
+    # ── Document Upload ──────────────────────────────────────────────────
+    "doc.mode_hint": {
+        "ru": "📋 Вы находитесь в режиме работы с документами.\n\n💡 *Доступные действия:*\n• Загрузите новый документ\n• Выберите документ из списка\n• Используйте кнопки под сообщениями\n\n🔄 *Для выхода из режима документов:*\n• Нажмите кнопку '❌ Отменить работу с документами'\n• Или отправьте команду /documents",
+        "en": "📋 You are in document mode.\n\n💡 *Available actions:*\n• Upload a new document\n• Select a document from the list\n• Use the buttons below messages\n\n🔄 *To exit document mode:*\n• Press '❌ Cancel document mode'\n• Or send /documents",
+    },
+    "doc.content_unavailable": {
+        "ru": "❌ Не удалось получить содержимое документа.",
+        "en": "❌ Could not retrieve document content.",
+    },
+    "doc.file_too_large": {
+        "ru": "❌ Файл слишком большой. Максимальный размер: 50MB.\nПопробуйте файл меньшего размера.",
+        "en": "❌ File too large. Max size: 50MB.\nTry a smaller file.",
+    },
+    "doc.unsupported_format": {
+        "ru": "❌ Неподдерживаемый формат файла `.{ext}`.\nОтправьте PDF или DOCX.",
+        "en": "❌ Unsupported file format `.{ext}`.\nSend PDF or DOCX.",
+    },
+    "doc.duplicate_found": {
+        "ru": "⚠️ *Файл уже загружен*\n\nФайл `{filename}` уже был загружен ранее как:\n📄 *{dup_name}*\n📅 Загружен: {date}\n\nХотите использовать существующий документ?",
+        "en": "⚠️ *File already uploaded*\n\nFile `{filename}` was previously uploaded as:\n📄 *{dup_name}*\n📅 Uploaded: {date}\n\nUse the existing document?",
+    },
+    "doc.btn_use_existing": {
+        "ru": "✅ Использовать существующий",
+        "en": "✅ Use existing",
+    },
+    "doc.btn_upload_new": {
+        "ru": "📄 Загрузить как новый",
+        "en": "📄 Upload as new",
+    },
+    "doc.process_failed": {
+        "ru": "❌ Не удалось обработать документ. Попробуйте другой файл.",
+        "en": "❌ Failed to process document. Try a different file.",
+    },
+    "doc.success": {
+        "ru": "✅ Документ обработан успешно!\n\n📄 *{filename}*\n📊 Страниц: {pages}\n📝 Символов: {chars}\n",
+        "en": "✅ Document processed successfully!\n\n📄 *{filename}*\n📊 Pages: {pages}\n📝 Characters: {chars}\n",
+    },
+    "doc.paragraphs": {
+        "ru": "📄 Параграфов: {count}\n",
+        "en": "📄 Paragraphs: {count}\n",
+    },
+    "doc.tables": {
+        "ru": "📊 Таблиц: {count}\n",
+        "en": "📊 Tables: {count}\n",
+    },
+    "doc.user_stats": {
+        "ru": "\n📋 *Ваши документы:* {count}/5\n",
+        "en": "\n📋 *Your documents:* {count}/5\n",
+    },
+    "doc.limit_reached": {
+        "ru": "⚠️ Достигнут лимит документов (5). Старые документы будут автоматически удалены.\n",
+        "en": "⚠️ Document limit reached (5). Old documents will be auto-deleted.\n",
+    },
+    "doc.how_to_ask": {
+        "ru": "\n💡 *Как задавать вопросы:*\n• Просто напишите ваш вопрос\n• Например: \"Какие основные пункты?\", \"Что говорится о...?\"\n• Система автоматически найдет ответ в документе\n\n📅 *Срок хранения:* 3 дня (автоматическая очистка)",
+        "en": "\n💡 *How to ask questions:*\n• Just type your question\n• Example: \"What are the key points?\", \"What does it say about...?\"\n• The system will find the answer in the document\n\n📅 *Retention:* 3 days (auto-cleanup)",
+    },
+    "doc.btn_upload_another": {
+        "ru": "📄 Загрузить другой документ",
+        "en": "📄 Upload another document",
+    },
+    "doc.btn_select_document": {
+        "ru": "📋 Выбрать документ",
+        "en": "📋 Select document",
+    },
+    "doc.btn_cancel_mode": {
+        "ru": "❌ Отменить работу с документами",
+        "en": "❌ Cancel document mode",
+    },
 }
 
 

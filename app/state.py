@@ -96,7 +96,19 @@ class _UserStateStore:
         return user_id in self._states
 
 
-USER_STATES = _UserStateStore()
+def _create_user_state_store() -> _UserStateStore:
+    """Create store with configurable LRU size from settings (lazy to avoid circular imports)."""
+    try:
+        from app.config import get_settings_safe
+
+        s = get_settings_safe()
+        size = s.LRU_STATE_CACHE_SIZE if s else 1000
+    except Exception:
+        size = 1000
+    return _UserStateStore(maxsize=size)
+
+
+USER_STATES = _create_user_state_store()
 
 
 # =============================================================================

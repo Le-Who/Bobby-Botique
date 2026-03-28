@@ -8,6 +8,8 @@ and is re-exported here for convenience.
 
 import logging
 
+from pydantic import ValidationError
+
 from app.config import settings
 from app.database import (
     ChatState,
@@ -78,22 +80,51 @@ async def get_user_chat(user_id: int) -> ChatState | None:
             if not chat_info:
                 chat_state = _default_chat_state()
             else:
-                history = [{"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])]
-                chat_state = ChatState(
-                    history=history,
-                    model=chat_info.get("model"),
-                    token_count=chat_info.get("token_count", 0),
-                    search_enabled=chat_info.get("search_enabled", False),
-                    system_prompt=chat_info.get("system_prompt"),
-                    context_summary=chat_info.get("context_summary"),
-                    thinking_level=chat_info.get("thinking_level"),
-                    ltm_enabled=chat_info.get("ltm_enabled", True),
-                    branch_id=chat_info.get("branch_id"),
-                )
+                try:
+                    from app.core.entities import ChatStateRow
+
+                    validated = ChatStateRow.model_validate(chat_info)
+                    history = [{"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])]
+                    chat_state = ChatState(
+                        history=history,
+                        model=validated.model or _default_model(),
+                        token_count=validated.token_count,
+                        search_enabled=validated.search_enabled,
+                        system_prompt=validated.system_prompt,
+                        context_summary=validated.context_summary,
+                        thinking_level=validated.thinking_level,
+                        ltm_enabled=validated.ltm_enabled,
+                        branch_id=validated.branch_id,
+                    )
+                except ValidationError as ve:
+                    logging.warning(
+                        "ChatStateRow validation failed for user %s, falling back to .get(): %s",
+                        user_id,
+                        ve,
+                    )
+                    history = [{"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])]
+                    chat_state = ChatState(
+                        history=history,
+                        model=chat_info.get("model"),
+                        token_count=chat_info.get("token_count", 0),
+                        search_enabled=chat_info.get("search_enabled", False),
+                        system_prompt=chat_info.get("system_prompt"),
+                        context_summary=chat_info.get("context_summary"),
+                        thinking_level=chat_info.get("thinking_level"),
+                        ltm_enabled=chat_info.get("ltm_enabled", True),
+                        branch_id=chat_info.get("branch_id"),
+                    )
 
             if user_info:
-                chat_state.is_deep_dive = bool(user_info.get("is_deep_dive", False))
-                chat_state.deep_dive_thread_id = user_info.get("deep_dive_thread_id")
+                try:
+                    from app.core.entities import UserInfoRow
+
+                    u = UserInfoRow.model_validate(user_info)
+                    chat_state.is_deep_dive = u.is_deep_dive
+                    chat_state.deep_dive_thread_id = u.deep_dive_thread_id
+                except ValidationError:
+                    chat_state.is_deep_dive = bool(user_info.get("is_deep_dive", False))
+                    chat_state.deep_dive_thread_id = user_info.get("deep_dive_thread_id")
 
             chat_state._original_length = len(chat_state.history)
 
@@ -102,11 +133,14 @@ async def get_user_chat(user_id: int) -> ChatState | None:
             await clear_user_context(conn=conn)
 
 
+def _default_model() -> str:
+    return settings.DEFAULT_MODEL if settings else "gemini-3.1-flash-lite-preview"
+
+
 def _default_chat_state() -> ChatState:
-    default_model = settings.DEFAULT_MODEL if settings else "gemini-3.1-flash-lite-preview"
     return ChatState(
         history=[],
-        model=default_model,
+        model=_default_model(),
         token_count=0,
         search_enabled=False,
         system_prompt=None,
