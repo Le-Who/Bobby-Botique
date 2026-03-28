@@ -1,13 +1,11 @@
 # /app/providers/live_audio.py
-"""Gemini Live API provider — bidirectional audio dialog via WebSocket.
+"""Gemini Live API provider — one-shot text-to-speech via WebSocket.
 
-Uses one-shot ephemeral WebSocket sessions to generate affective speech.
-The session is opened, a single text turn is sent, audio+transcript
-are collected, and the session is closed. No persistent connections.
+Opens an ephemeral WebSocket session, sends text, signals turn
+completion with audioStreamEnd, collects audio + transcript, closes.
 
-Models:
-  - Primary: gemini-2.5-flash-native-audio-preview-12-2025
-  - Fallback: gemini-3.1-flash-live-preview
+Model: gemini-3.1-flash-live-preview (primary, with REST TTS fallback
+managed by voice_engine.py).
 """
 
 import asyncio
@@ -18,7 +16,6 @@ from google.genai import types
 from app.providers.gemini import get_cached_genai_client
 
 LIVE_MODEL = "gemini-3.1-flash-live-preview"
-FALLBACK_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_VOICE = "Kore"
 
 
@@ -32,11 +29,10 @@ async def generate_audio_dialog(
 ) -> tuple[bytes | None, str | None]:
     """Generate audio response via Gemini Live API (ephemeral session).
 
-    Opens a short-lived WebSocket connection, sends text as a single turn,
-    collects audio chunks + output transcription, and closes.
-
-    The Live API generates speech with natural intonation and emotional
-    awareness, which produces higher quality audio than the REST TTS endpoint.
+    Opens a short-lived WebSocket connection, sends text via
+    ``send_realtime_input``, then immediately sends ``audioStreamEnd``
+    to flush the VAD pipeline and trigger model response.  Collects
+    audio chunks + output transcription, then closes.
 
     Args:
         text: Text input to speak (bot's response text).
@@ -56,84 +52,88 @@ async def generate_audio_dialog(
     # Truncate to avoid long sessions
     dialog_text = text[:2000] if len(text) > 2000 else text
 
-    # Try primary model, then fallback
-    for model_name in [LIVE_MODEL, FALLBACK_LIVE_MODEL]:
-        # Configure Live session dynamically for each model
-        config = types.LiveConnectConfig(
-            response_modalities=["AUDIO"],  # type: ignore[list-item]
-            output_audio_transcription=types.AudioTranscriptionConfig(),
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=voice,
-                    )
+    # Configure Live session
+    config = types.LiveConnectConfig(
+        response_modalities=["AUDIO"],  # type: ignore[list-item]
+        output_audio_transcription=types.AudioTranscriptionConfig(),
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=voice,
                 )
-            ),
+            )
+        ),
+    )
+
+    # Inject system instruction if provided
+    if system_instruction:
+        config.system_instruction = types.Content(
+            parts=[types.Part.from_text(text=system_instruction)]
         )
 
-        # Inject system instruction if provided
-        if system_instruction:
-            config.system_instruction = types.Content(parts=[types.Part.from_text(text=system_instruction)])
+    audio_buffer = bytearray()
+    transcript_parts: list[str] = []
 
-        audio_buffer = bytearray()
-        transcript_parts: list[str] = []
+    try:
+        async with asyncio.timeout(timeout):
+            async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
+                # 1. Send text input via realtime input (correct for gemini-3.1-flash-live-preview)
+                await session.send_realtime_input(text=dialog_text)
 
-        try:
-            async with asyncio.timeout(timeout):
-                async with client.aio.live.connect(model=model_name, config=config) as session:
-                    # Send text input as a realtime input chunk (new API design)
-                    await session.send_realtime_input(text=dialog_text)
+                # 2. Signal "input complete" — flush VAD pipeline and trigger model response.
+                #    Without this, VAD waits for audio silence that never comes (text-only input),
+                #    causing the session to hang until timeout.
+                await session.send_realtime_input(audio_stream_end=True)
 
-                    # Collect response chunks
-                    async for response in session.receive():
-                        # Raw audio data (response.data shorthand)
-                        if response.data is not None:
-                            audio_buffer.extend(response.data)
+                # 3. Collect response chunks
+                async for response in session.receive():
+                    # Raw audio data (response.data shorthand)
+                    if response.data is not None:
+                        audio_buffer.extend(response.data)
 
-                        # Server content (audio parts + transcription)
-                        if response.server_content is not None:
-                            model_turn = response.server_content.model_turn
-                            if model_turn and model_turn.parts:
-                                for part in model_turn.parts:
-                                    if part.inline_data and part.inline_data.data:
-                                        audio_buffer.extend(part.inline_data.data)
-                                    if part.text:
-                                        transcript_parts.append(part.text)
+                    # Server content (audio parts + transcription)
+                    if response.server_content is not None:
+                        model_turn = response.server_content.model_turn
+                        if model_turn and model_turn.parts:
+                            for part in model_turn.parts:
+                                if part.inline_data and part.inline_data.data:
+                                    audio_buffer.extend(part.inline_data.data)
 
-                            # Turn complete — stop collecting
-                            if response.server_content.turn_complete:
-                                break
+                        # Output transcription arrives as a separate field,
+                        # not inside model_turn.parts (AUDIO modality sessions
+                        # don't produce text parts).
+                        if response.server_content.output_transcription:
+                            t_text = response.server_content.output_transcription.text
+                            if t_text:
+                                transcript_parts.append(t_text)
 
-            # Success — convert and free buffer immediately
-            pcm_bytes = bytes(audio_buffer) if audio_buffer else None
-            buffer_len = len(audio_buffer)
-            audio_buffer.clear()  # ⚠ free bytearray memory before return
+                        # Turn complete — stop collecting
+                        if response.server_content.turn_complete:
+                            break
 
-            transcript = " ".join(transcript_parts).strip() or None
+        # Success — convert and free buffer immediately
+        pcm_bytes = bytes(audio_buffer) if audio_buffer else None
+        buffer_len = len(audio_buffer)
+        audio_buffer.clear()  # ⚠ free bytearray memory before return
 
-            logging.info(
-                "Live Audio Dialog complete: model=%s, audio=%d bytes, transcript=%d chars",
-                model_name,
-                buffer_len,
-                len(transcript) if transcript else 0,
-            )
-            return pcm_bytes, transcript
+        transcript = " ".join(transcript_parts).strip() or None
 
-        except Exception as e:
-            # ⚠ Free buffer on error before trying fallback model
-            audio_buffer.clear()
-            transcript_parts.clear()
+        logging.info(
+            "Live Audio Dialog complete: model=%s, audio=%d bytes, transcript=%d chars",
+            LIVE_MODEL,
+            buffer_len,
+            len(transcript) if transcript else 0,
+        )
+        return pcm_bytes, transcript
 
-            logging.warning(
-                "Live API session failed with %s: %r",
-                model_name,
-                e,
-            )
-            # If primary model failed, try fallback
-            if model_name == FALLBACK_LIVE_MODEL:
-                # Both models failed
-                logging.error("All Live API models failed, returning None")
-                return None, None
-            continue
+    except Exception as e:
+        # ⚠ Free buffer on error
+        audio_buffer.clear()
+        transcript_parts.clear()
 
-    return None, None
+        logging.warning(
+            "Live API session failed with %s: %r",
+            LIVE_MODEL,
+            e,
+        )
+        return None, None

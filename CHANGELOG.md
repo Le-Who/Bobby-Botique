@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.77] - 2026-03-29 - Live API Root Cause Fix
+
+### 🎙️ Voice Engine — Live API Restored
+
+| Component | Files | Detail |
+|-----------|-------|--------|
+| **Root Cause Fix** | `live_audio.py` | Identified and fixed the root cause of all Live API timeouts: `send_realtime_input(text=...)` routes through the VAD (Voice Activity Detection) pipeline, but with text-only input there is no audio stream for VAD to detect silence — so the model waits indefinitely. Added `send_realtime_input(audio_stream_end=True)` immediately after the text to flush the VAD pipeline and trigger model response. **This single line resolves the persistent WebSocket timeouts that forced the Live API to be disabled.** |
+| Live API Re-enabled | `voice_engine.py` | Removed the hardcoded `and False` dead-code guard on the Live API branch. Live API is now the **primary** voice generation path, with REST TTS (`gemini-2.5-flash-preview-tts`) as the fallback — as originally designed. |
+| Model Resolution Alignment | `voice_engine.py` | Fixed model name mismatch in `_resolve_ai_request()`: was resolving keys for the deprecated `gemini-2.5-flash-native-audio-preview-12-2025`, while `live_audio.py` was actually calling `gemini-3.1-flash-live-preview`. Keys are now resolved for the correct model. |
+| Output Transcription | `live_audio.py` | Fixed transcription collection: was incorrectly reading from `model_turn.parts[].text` (empty in AUDIO-modality sessions). Now reads from `server_content.output_transcription.text` per the SDK specification. |
+| Deprecated Fallback Removed | `live_audio.py` | Removed deprecated `gemini-2.5-flash-native-audio-preview-12-2025` fallback model from the Live API provider. REST TTS in `voice_engine.py` is the real fallback — no need for a second model cascade within the Live API path. |
+| System Instruction | `voice_engine.py` | Simplified the TTS system instruction from a verbose 5-line prompt to a concise 1-liner, reducing risk of Live API session configuration conflicts. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Mypy | 0 errors (2 source files) |
+| Tests | **1453 passed**, 0 failed |
+
+---
+
 ## [2.8.76] - 2026-03-29 - Voice Pipeline Stability & UI Fixes
  
 ### 🎙️ Voice & TTS Engine Fixes

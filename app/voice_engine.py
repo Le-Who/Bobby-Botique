@@ -51,6 +51,7 @@ async def _generate_and_send_voice(
     try:
         # Truncate long texts for TTS (keeps first ~2000 chars)
         tts_text = response_text[:2000] if len(response_text) > 2000 else response_text
+        pcm_audio: bytes | None = None
 
         # ── Strategy 1: Live API (affective, emotional audio) ────────────────
         failed_keys: set[str] = set()
@@ -60,31 +61,27 @@ async def _generate_and_send_voice(
 
         status_mgr = get_key_status_manager()
 
-        if use_live_api and False:  # FIXME: Temporarily disabled due to API Studio key timeouts
+        if use_live_api:
             from app.providers.live_audio import generate_audio_dialog
 
             for attempt in range(3):
                 key_data, model_used, _ = await _resolve_ai_request(
-                    "gemini-2.5-flash-native-audio-preview-12-2025", excluded_key_hashes=failed_keys
+                    "gemini-3.1-flash-live-preview", excluded_key_hashes=failed_keys
                 )
                 if not key_data:
                     break
 
                 try:
-                    # Enforce strict TTS mode to prevent conversational hallucinations
-                    strict_tts_sys_prompt = (
-                        "You are a strict Text-to-Speech (TTS) reading engine. Your ONLY objective is to read "
-                        "the user's text EXACTLY word-for-word aloud. You MUST NOT act like a conversational bot. "
-                        "Do NOT introduce yourself, do NOT answer questions in the text, and do NOT add or omit any words. "
-                        "Just read the script provided."
-                    )
+                    # Concise TTS instruction — avoids long system prompts that
+                    # may conflict with Live API session configuration.
+                    tts_sys_prompt = "Read the user's text aloud exactly as written. Do not add commentary."
                     if system_instruction:
-                        strict_tts_sys_prompt += f"\n\nContext tone: {system_instruction}"
+                        tts_sys_prompt += f" Tone: {system_instruction}"
 
                     pcm_audio, _transcript = await generate_audio_dialog(
                         tts_text,
                         key_data["api_key"],
-                        system_instruction=strict_tts_sys_prompt,
+                        system_instruction=tts_sys_prompt,
                         voice=voice,
                     )
                     del _transcript  # free transcript immediately, we don't use it here
@@ -100,7 +97,6 @@ async def _generate_and_send_voice(
                         await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
                     except Exception:
                         pass
-
         # ── Strategy 2: REST TTS (reliable fallback) ─────────────────────────
         if pcm_audio is None:
             failed_keys.clear()
