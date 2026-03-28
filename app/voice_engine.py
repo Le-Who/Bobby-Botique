@@ -60,7 +60,7 @@ async def _generate_and_send_voice(
 
         status_mgr = get_key_status_manager()
 
-        if use_live_api:
+        if use_live_api and False:  # FIXME: Temporarily disabled due to API Studio key timeouts
             from app.providers.live_audio import generate_audio_dialog
 
             for attempt in range(3):
