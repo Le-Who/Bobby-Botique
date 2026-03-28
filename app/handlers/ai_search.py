@@ -174,7 +174,7 @@ async def _handle_qna_search(
                 continue
 
     # ── Handle response ────────────────────────────────────────────────
-    if await handle_ai_response_error(final_answer, placeholder_message):
+    if await handle_ai_response_error(final_answer or "", placeholder_message):
         return
 
     if final_answer:
@@ -316,6 +316,7 @@ async def _handle_research_agent(
             await increment_gemini_key_usage(_kh, _cm)
             await metrics_collector.record_api_call("gemini_agentic", model=_cm, user_id=trace_user_id)
 
+        assert key_data is not None
         agent = AgenticSearch(
             model_name=model_used,
             api_key=key_data["api_key"],

@@ -59,6 +59,7 @@ def register(application: Application) -> None:
         complex_search_callback,
         fallback_callback,
         retry_last_callback,
+        tts_reply_callback,
     )
     from app.handlers.cb_conversations import (
         conv_delete_ask_callback,
@@ -149,6 +150,7 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
     application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))
     application.add_handler(CallbackQueryHandler(retry_last_callback, pattern="^retry_last$"))
+    _add_fast_callback(application, tts_reply_callback, "^tts_reply$")
 
     # Feedback buttons (👍/👎)
     _add_fast_callback(application, feedback_callback, "^feedback:")

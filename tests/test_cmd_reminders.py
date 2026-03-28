@@ -365,6 +365,9 @@ class TestReminderCancelCallback:
         query.data = "reminder_cancel:42"
         query.from_user.id = 100
         query.answer = AsyncMock()
+        from telegram import Message
+        query.message = MagicMock(spec=Message)
+        query.message.reply_markup = MagicMock()
         query.message.reply_markup.inline_keyboard = [
             [MagicMock(callback_data="reminder_cancel:42")],
             [MagicMock(callback_data="reminder_cancel:99")],

@@ -222,9 +222,9 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
 
         sent_ok = await _send_vision_response(
             placeholder_message,
-            response_text,
+            response_text,  # type: ignore[arg-type]
             streamed,
-            stream_last_msg,  # type: ignore[arg-type]  # sentinel narrowed above
+            stream_last_msg,
             error_fallback="Не удалось обработать изображение.",
         )
 
@@ -417,9 +417,9 @@ async def _handle_media_group_photos(
 
         await _send_vision_response(
             placeholder_message,
-            response_text,
+            response_text,  # type: ignore[arg-type]
             streamed,
-            stream_last_msg,  # type: ignore[arg-type]  # sentinel narrowed above
+            stream_last_msg,
             error_fallback="Не удалось обработать группу изображений.",
         )
 

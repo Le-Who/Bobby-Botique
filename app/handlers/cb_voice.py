@@ -164,6 +164,7 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
                     user_id,
                     transcript,
                     chat_state,
+                    reply_with_voice=True,
                 )
         except Exception as e:
             logging.error("voice:confirm task failed: %s", e, exc_info=True)

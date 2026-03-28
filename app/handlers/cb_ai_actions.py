@@ -5,7 +5,7 @@ Handles complex_search, fallback, and retry_last callbacks.
 These are semaphore-guarded and run in background tasks.
 """
 
-__all__ = ["complex_search_callback", "fallback_callback", "retry_last_callback"]
+__all__ = ["complex_search_callback", "fallback_callback", "retry_last_callback", "tts_reply_callback"]
 
 import asyncio
 import contextlib
@@ -225,3 +225,49 @@ async def retry_last_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     _task = asyncio.create_task(_retry_wrapper())
     _background_tasks.add(_task)
     _task.add_done_callback(_background_tasks.discard)
+
+
+async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate voice reply for the current AI response (🔊 Озвучить button)."""
+    query = update.callback_query
+    set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
+    set_user_context(
+        query.from_user.id,
+        getattr(query.message.chat, "id", None) if query.message else None,
+    )
+    await query.answer("🔊 Генерирую голос...")
+
+    # Extract text from the message that has the button
+    response_text = query.message.text if query.message else None
+    if not response_text or len(response_text.strip()) < 5:
+        return
+
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+    message_id = query.message.message_id
+
+    # Get an API key for TTS
+    try:
+        from app.handlers.ai_core import _resolve_ai_request
+
+        key_data, _model, _resolution = await _resolve_ai_request("gemini-2.5-flash-preview-tts")
+        if not key_data:
+            # Fallback: try resolving with any available model
+            from app.config import settings
+            key_data, _model, _resolution = await _resolve_ai_request(settings.DEFAULT_MODEL)
+        if not key_data:
+            logging.warning("TTS callback: no API key available for user %d", user_id)
+            return
+
+        from app.voice_engine import fire_voice_reply
+
+        fire_voice_reply(
+            bot=query.get_bot(),
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            response_text=response_text,
+            api_key=key_data["api_key"],
+            use_live_api=True,
+        )
+    except Exception as e:
+        logging.error("TTS reply callback failed: %s", e)

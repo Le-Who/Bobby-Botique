@@ -184,59 +184,133 @@ async def _extract_persona_facts(memories_text: str, api_key: str) -> list[str]:
 
     Returns a list of concise fact strings (5-8 items).
     """
-    prompt = f"""Analyze the following raw memory entries about a user and extract {MIN_PERSONA_FACTS}-{MAX_PERSONA_FACTS} atomic persona facts.
+    graph = await _extract_graph(memories_text, api_key)
+    return graph.get("facts", [])[:MAX_PERSONA_FACTS]
+
+
+# ── GraphRAG extraction prompt ───────────────────────────────────────────────
+
+_GRAPH_EXTRACTION_PROMPT = """Analyze these memory entries and extract a knowledge graph.
+
+Output JSON with this exact schema:
+{{
+  "facts": ["atomic persona fact 1", "fact 2", ...],
+  "entities": [
+    {{"name": "Entity Name", "type": "person|project|skill|preference|place|concept", "description": "brief description"}}
+  ],
+  "relations": [
+    {{"from": "Entity A", "to": "Entity B", "predicate": "relation verb phrase", "weight": 0.8}}
+  ]
+}}
 
 Rules:
-- Each fact must be a single, self-contained statement about the user.
-- Facts should cover: identity, preferences, skills, goals, relationships, habits.
-- If two entries contradict each other, keep the NEWER information.
-- Write each fact on a separate line, starting with "- ".
-- Write in the same language as the majority of the memories.
-- Be concise: each fact should be 1 sentence maximum.
-- Do NOT include speculation or inferences — only stated facts.
+- Extract {min_facts}-{max_facts} atomic facts about the user (identity, preferences, skills, goals, habits).
+- Extract ALL named entities: people, projects, technologies, places, preferences.
+- Extract meaningful relations between entities.
+- Entity names must be consistent and deduplicated.
+- If two entries contradict, keep the NEWER information.
+- weight: 0.0-1.0 confidence/strength of the relation.
+- Write in the same language as the memories.
+- Be concise. No speculation — only stated facts.
 
-Raw memories:
+Memories:
+{memories_text}"""
+
+
+async def _extract_graph(memories_text: str, api_key: str) -> dict:
+    """Extract facts + knowledge graph via structured JSON output.
+
+    Returns dict with 'facts', 'entities', 'relations' keys.
+    Falls back to empty graph on failure.
+    """
+    import json
+
+    from google.genai import types
+
+    from app.providers.gemini import get_cached_genai_client
+
+    prompt = _GRAPH_EXTRACTION_PROMPT.format(
+        memories_text=memories_text,
+        min_facts=MIN_PERSONA_FACTS,
+        max_facts=MAX_PERSONA_FACTS,
+    )
+
+    try:
+        client = get_cached_genai_client(api_key)
+        response = await client.aio.models.generate_content(
+            model=_CONSOLIDATION_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.1,
+                max_output_tokens=2048,
+            ),
+        )
+        response_text = response.text or ""
+        if not response_text.strip():
+            logging.warning("Graph extraction returned empty response")
+            return {"facts": [], "entities": [], "relations": []}
+        result = json.loads(response_text)
+
+        # Validate structure
+        if not isinstance(result, dict):
+            logging.warning("Graph extraction returned non-dict: %s", type(result))
+            return {"facts": [], "entities": [], "relations": []}
+
+        result.setdefault("facts", [])
+        result.setdefault("entities", [])
+        result.setdefault("relations", [])
+
+        logging.info(
+            "Graph extraction: %d facts, %d entities, %d relations",
+            len(result["facts"]),
+            len(result["entities"]),
+            len(result["relations"]),
+        )
+        return result
+
+    except Exception as e:
+        logging.error("Graph extraction failed: %s", e, exc_info=True)
+        # Fallback: try legacy plain-text extraction
+        try:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(_CONSOLIDATION_MODEL)
+            fallback_prompt = f"""Extract {MIN_PERSONA_FACTS}-{MAX_PERSONA_FACTS} atomic persona facts from these memories.
+Write each fact on a separate line starting with "- ".
+
+Memories:
 {memories_text}
 
 Extracted persona facts:"""
-
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(_CONSOLIDATION_MODEL)
-        response = await model.generate_content_async(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.1,
-                max_output_tokens=1024,
-            ),
-        )
-        text = response.text.strip()
-
-        # Parse bullet points
-        facts = []
-        for line in text.split("\n"):
-            line = line.strip()
-            if line.startswith(("- ", "• ")):
-                facts.append(line[2:].strip())
-
-        if not facts:
-            # Fallback: treat each non-empty line as a fact
-            facts = [ln.strip() for ln in text.split("\n") if ln.strip()]
-
-        return facts[:MAX_PERSONA_FACTS]
-
-    except Exception as e:
-        logging.error("Persona fact extraction failed: %s", e, exc_info=True)
-        return []
+            response = await model.generate_content_async(
+                fallback_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=1024,
+                ),
+            )
+            text = (response.text or "").strip()
+            facts = []
+            for line in text.split("\n"):
+                line = line.strip()
+                if line.startswith(("- ", "• ")):
+                    facts.append(line[2:].strip())
+            if not facts:
+                facts = [ln.strip() for ln in text.split("\n") if ln.strip()]
+            return {"facts": facts[:MAX_PERSONA_FACTS], "entities": [], "relations": []}
+        except Exception as fallback_err:
+            logging.error("Fallback fact extraction also failed: %s", fallback_err)
+            return {"facts": [], "entities": [], "relations": []}
 
 
 async def consolidate_memories(user_id: int, api_key: str) -> int:
-    """Perform memory consolidation for a user.
+    """Perform memory consolidation with GraphRAG entity/relation extraction.
 
     1. Read all raw (non-consolidated) memories.
-    2. Extract persona facts via LLM.
+    2. Extract persona facts + knowledge graph (entities, relations) via LLM.
     3. Delete the raw batch.
-    4. Insert consolidated facts.
+    4. Insert consolidated facts into long_term_memory.
+    5. Upsert entities into memory_nodes + relations into memory_edges.
 
     Returns number of new persona facts created, or 0 on failure.
     """
@@ -251,22 +325,28 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
         lines.append(f"[{date_str}] {m['content']}")
     memories_text = "\n".join(lines)
 
-    # Extract facts
-    facts = await _extract_persona_facts(memories_text, api_key)
+    # Extract graph (facts + entities + relations)
+    graph = await _extract_graph(memories_text, api_key)
+    facts = graph.get("facts", [])[:MAX_PERSONA_FACTS]
+    entities = graph.get("entities", [])
+    relations = graph.get("relations", [])
+
     if not facts:
         logging.warning("Consolidation for user %d produced no facts — skipping deletion", user_id)
         return 0
 
     logging.info(
-        "Consolidation for user %d: %d raw memories -> %d persona facts",
+        "Consolidation for user %d: %d raw → %d facts, %d entities, %d relations",
         user_id,
         len(raw_memories),
         len(facts),
+        len(entities),
+        len(relations),
     )
 
-    # Store consolidated facts and delete raw memories in a transaction
+    # Store consolidated facts + graph data in a transaction
     try:
-        from app.repos.memory import _get_embedding, store_memory
+        from app.repos.memory import _get_embedding
 
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)
@@ -280,7 +360,7 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                         raw_ids,
                     )
 
-                    # Insert each consolidated fact
+                    # Insert each consolidated fact into long_term_memory
                     for fact in facts:
                         embedding = await _get_embedding(fact, api_key, task_type="RETRIEVAL_DOCUMENT")
                         if embedding is None:
@@ -296,11 +376,77 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                             embedding_str,
                         )
 
+                    # ── Upsert graph entities into memory_nodes ──────────
+                    node_ids = {}  # entity_name → UUID
+                    for ent in entities:
+                        name = ent.get("name", "").strip()
+                        if not name:
+                            continue
+                        ent_type = ent.get("type", "concept")
+                        description = ent.get("description", "")
+
+                        # Generate embedding for the entity
+                        ent_embedding = await _get_embedding(
+                            f"{name}: {description}" if description else name,
+                            api_key,
+                            task_type="RETRIEVAL_DOCUMENT",
+                        )
+                        ent_emb_str = (
+                            f"[{','.join(str(v) for v in ent_embedding)}]"
+                            if ent_embedding
+                            else None
+                        )
+
+                        row = await conn.fetchrow(
+                            """
+                            INSERT INTO memory_nodes (user_id, entity_name, entity_type, description, embedding)
+                            VALUES ($1, $2, $3, $4, $5::halfvec)
+                            ON CONFLICT (user_id, entity_name)
+                            DO UPDATE SET
+                                description = EXCLUDED.description,
+                                entity_type = EXCLUDED.entity_type,
+                                embedding = COALESCE(EXCLUDED.embedding, memory_nodes.embedding),
+                                updated_at = now()
+                            RETURNING id
+                            """,
+                            user_id,
+                            name,
+                            ent_type,
+                            description,
+                            ent_emb_str,
+                        )
+                        if row:
+                            node_ids[name] = row["id"]
+
+                    # ── Insert graph relations into memory_edges ─────────
+                    for rel in relations:
+                        from_name = rel.get("from", "").strip()
+                        to_name = rel.get("to", "").strip()
+                        predicate = rel.get("predicate", "related_to").strip()
+                        weight = float(rel.get("weight", 1.0))
+
+                        if from_name not in node_ids or to_name not in node_ids:
+                            continue  # Skip relations with missing entities
+
+                        await conn.execute(
+                            """
+                            INSERT INTO memory_edges (user_id, source_node, target_node, predicate, weight)
+                            VALUES ($1, $2, $3, $4, $5)
+                            """,
+                            user_id,
+                            node_ids[from_name],
+                            node_ids[to_name],
+                            predicate,
+                            weight,
+                        )
+
                     logging.info(
-                        "Consolidation complete for user %d: deleted %d raw, inserted %d facts",
+                        "Consolidation complete for user %d: deleted %d raw, inserted %d facts, %d nodes, %d edges",
                         user_id,
                         len(raw_ids),
                         len(facts),
+                        len(node_ids),
+                        len([r for r in relations if r.get("from", "").strip() in node_ids and r.get("to", "").strip() in node_ids]),
                     )
                     return len(facts)
             finally:

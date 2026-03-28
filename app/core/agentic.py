@@ -758,7 +758,7 @@ class AgenticSearch:
                     for i, (call_name, _call_args, _call_obj) in enumerate(executable_calls):
                         result = tool_results[i]
                         if isinstance(result, Exception):
-                            result_dict: dict[str, str] = {"error": f"Execution failed: {result}"}
+                            result_dict: dict[str, Any] = {"error": f"Execution failed: {result}"}
                         else:
                             result_dict = dict(result)  # type: ignore[arg-type]  # _execute_tool returns dict
                         # Accumulate dedup metrics and strip metadata before sending to model

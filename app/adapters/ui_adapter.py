@@ -5,15 +5,15 @@ class StreamingUIAdapter(abc.ABC):
     """Protocol for dynamic UI updates (e.g., Telegram messages) during streaming."""
 
     @abc.abstractmethod
-    async def edit_message(self, text: str, parse_mode: str, reply_markup: object | None = None) -> None:
+    async def edit_message(self, text: str, parse_mode: str | None, reply_markup: object | None = None) -> None:
         """Edit the current message with new text."""
 
     @abc.abstractmethod
-    async def send_draft(self, text: str, parse_mode: str) -> None:
+    async def send_draft(self, text: str, parse_mode: str | None) -> None:
         """Send a lightweight draft update (if supported by UI)."""
 
     @abc.abstractmethod
-    async def reply_new_message(self, text: str, parse_mode: str) -> "StreamingUIAdapter":
+    async def reply_new_message(self, text: str, parse_mode: str | None) -> "StreamingUIAdapter":
         """Start a new message when the current one overflows, returning a new adapter."""
 
     @abc.abstractmethod
@@ -24,7 +24,7 @@ class StreamingUIAdapter(abc.ABC):
     async def send_final_message(
         self,
         text: str,
-        parse_mode: str,
+        parse_mode: str | None,
         reply_markup: object | None = None,
     ) -> None:
         """Send a new permanent message and update internal reference.
@@ -49,7 +49,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
         self._chat_id = chat_id
         self._draft_id = draft_id
 
-    async def edit_message(self, text: str, parse_mode: str, reply_markup: object | None = None) -> None:
+    async def edit_message(self, text: str, parse_mode: str | None, reply_markup: object | None = None) -> None:
         from telegram.error import TelegramError
 
         try:
@@ -61,7 +61,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
             if "not modified" not in str(e).lower():
                 raise
 
-    async def send_draft(self, text: str, parse_mode: str) -> None:
+    async def send_draft(self, text: str, parse_mode: str | None) -> None:
         if not self._bot:
             raise ValueError("Draft mode requires a bot instance")
         from telegram.error import TelegramError
@@ -77,7 +77,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
             if "not modified" not in str(e).lower():
                 raise
 
-    async def reply_new_message(self, text: str, parse_mode: str) -> "StreamingUIAdapter":
+    async def reply_new_message(self, text: str, parse_mode: str | None) -> "StreamingUIAdapter":
         from telegram.error import TelegramError
 
         # BUG: if original message was deleted, reply_text raises "Message to be replied not found"
@@ -113,7 +113,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
     async def send_final_message(
         self,
         text: str,
-        parse_mode: str,
+        parse_mode: str | None,
         reply_markup: object | None = None,
     ) -> None:
         """Send a new permanent message and update internal reference."""

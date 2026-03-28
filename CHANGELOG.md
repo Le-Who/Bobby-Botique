@@ -3,6 +3,38 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.72] - 2026-03-28 - Voice Engine 2.0 & GraphRAG Memory Hardening
+
+### ✨ New Features
+
+| Feature | Files | Detail |
+|---------|-------|--------|
+| Voice Engine 2.0 | `voice_engine.py`, `tts.py`, `live_audio.py` | Full outbound TTS pipeline using Gemini Live API affective audio (primary) and REST TTS (fallback). Handles PCM→OGG Opus transcoding natively via ffmpeg. |
+| Automatic Voice Replies | `ai_chat.py`, `msg_voice.py`, `cb_voice.py` | Added internal `reply_with_voice` pipeline propagation so the bot replies to voice messages with a synthesized voice note. Included manual `🔊 Озвучить` inline keyboard button. |
+| GraphRAG Memory | `memory.py`, `memory_consolidation.py`, `ai_chat.py` | Evolved LTM consolidation to extract relational knowledge graphs (entities, facts, relationships). `search_memories_with_graph` performs vector search + 1-hop graph traversals for deeper contextual recall. XML graph triples injected into system prompt. |
+
+### 🛡️ Architecture & Hardening
+
+| Fix | Files | Detail |
+|-----|-------|--------|
+| Distributed Tracing | `background_tasks.py` | Fixed a gap where background tasks spawned via `submit_retryable()` lost telemetry contexts across `await` boundaries. Implemented explicit `contextvars.copy_context()` propagation. |
+| Mypy Strict Typing | Core Handlers | Resolved all pre-existing static analysis type errors across `ai_photo.py`, `ai_search.py`, `agentic.py`, `decorators.py` and `cmd_reminders.py`. Codebase strictly complies with `python -m mypy app --strict`. |
+
+### 🗄️ Database Migrations
+
+| Migration | Detail |
+|-----------|--------|
+| `025_add_graph_memory.sql` | Added `memory_nodes` (with 768-dim `halfvec` embedding) and `memory_edges` for the relational knowledge graph architecture. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Mypy (`--strict`) | 0 errors (fully validated) |
+| Tests | **1453 passed**, 0 failed |
+
+---
+
 ## [2.8.71] - 2026-03-28 - Voice Pipeline Concurrency & Deduplication Hardening
 
 ### 🛡️ Concurrency & Race Condition Fixes

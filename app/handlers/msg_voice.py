@@ -327,7 +327,7 @@ async def _auto_route_to_chat(
     # Run the chat pipeline inline (we already hold user_lock from caller)
     from app.handlers.ai_chat import _handle_regular_chat
 
-    await _handle_regular_chat(placeholder, user_id, transcript, chat_state)
+    await _handle_regular_chat(placeholder, user_id, transcript, chat_state, reply_with_voice=True)
 
     # Background LTM storage
     if chat_state.ltm_enabled:

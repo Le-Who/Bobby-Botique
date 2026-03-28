@@ -648,7 +648,9 @@ async def reminder_cancel_callback(update: Update, context: ContextTypes.DEFAULT
 
     if success:
         # Remove the button that was pressed from the keyboard
-        if query.message and query.message.reply_markup:
+        from telegram import Message
+
+        if isinstance(query.message, Message) and query.message.reply_markup:
             old_buttons = query.message.reply_markup.inline_keyboard
             new_buttons = [
                 row

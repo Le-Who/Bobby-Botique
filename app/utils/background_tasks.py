@@ -7,6 +7,7 @@ used across DatabaseManager, TaskQueue, and other components.
 
 import asyncio
 import contextlib
+import contextvars
 import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -105,6 +106,10 @@ class TaskManager:
 
             return asyncio.create_task(_noop())
 
+        # Capture caller's tracing context (request_id, user_id, chat_id)
+        # at submission time so background tasks inherit the correct trace.
+        ctx = contextvars.copy_context()
+
         async def _wrapper():
             attempts = 0
             while attempts <= retry:
@@ -139,7 +144,8 @@ class TaskManager:
                             except Exception as cb_err:
                                 logging.error("TaskManager error callback failed: %s", cb_err)
 
-        task = asyncio.create_task(_wrapper())
+        # Run wrapper within the captured context snapshot for trace propagation
+        task = ctx.run(asyncio.create_task, _wrapper())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task

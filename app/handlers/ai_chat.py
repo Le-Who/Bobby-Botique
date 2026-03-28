@@ -72,6 +72,8 @@ async def _handle_regular_chat(
     user_message: str,
     chat_state: ChatState,
     model_override: str | None = None,
+    *,
+    reply_with_voice: bool = False,
 ):
     # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
@@ -142,10 +144,10 @@ async def _handle_regular_chat(
     _memories_injected = 0
     if chat_state.ltm_enabled and key_data:
         try:
-            from app.repos.memory import search_memories
+            from app.repos.memory import search_memories_with_graph
 
             if user_message and len(user_message) > 15:
-                memories = await search_memories(
+                memories, graph_triples = await search_memories_with_graph(
                     user_id,
                     user_message,
                     key_data["api_key"],
@@ -157,8 +159,26 @@ async def _handle_regular_chat(
                     if memory_xml:
                         system_instruction = system_instruction + "\n\n" + memory_xml
                     _memories_injected = len(memories)
+
+                # Inject graph triples if available
+                if graph_triples:
+                    graph_xml = (
+                        "\n\n<knowledge_graph>\n"
+                        + "\n".join(f"  {t}" for t in graph_triples)
+                        + "\n</knowledge_graph>"
+                    )
+                    system_instruction = system_instruction + graph_xml
                     logging.info(
-                        "Injected %d memories into system_instruction for user %s", _memories_injected, user_id
+                        "Injected %d memories + %d graph triples for user %s",
+                        _memories_injected,
+                        len(graph_triples),
+                        user_id,
+                    )
+                elif _memories_injected:
+                    logging.info(
+                        "Injected %d memories into system_instruction for user %s",
+                        _memories_injected,
+                        user_id,
                     )
         except Exception as mem_err:
             logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
@@ -286,10 +306,11 @@ async def _handle_regular_chat(
                     branch_btn,
                 ],
                 [
+                    InlineKeyboardButton("🔊 Озвучить", callback_data="tts_reply"),
                     InlineKeyboardButton(
-                        "✨ Начать новую тему",
+                        "✨ Новая тема",
                         callback_data=("deepdive:new_topic" if chat_state.is_deep_dive else "new_topic"),
-                    )
+                    ),
                 ],
             ]
             reply_markup = InlineKeyboardMarkup(buttons)
@@ -323,6 +344,20 @@ async def _handle_regular_chat(
             await update_user_chat(user_id, chat_state)
 
             _store_memory_in_background(user_id, user_message, key_data)
+
+            # ── Voice reply (fire-and-forget background task) ────────────
+            if reply_with_voice and key_data:
+                from app.voice_engine import fire_voice_reply
+
+                fire_voice_reply(
+                    bot=placeholder_message.get_bot(),
+                    chat_id=placeholder_message.chat_id,
+                    reply_to_message_id=(stream_last_msg or placeholder_message).message_id,
+                    response_text=response_text,
+                    api_key=key_data["api_key"],
+                    use_live_api=True,
+                    system_instruction=system_instruction,
+                )
 
             # ── Model suggestion (non-intrusive hint) ────────────────────
             try:

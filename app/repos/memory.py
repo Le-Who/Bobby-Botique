@@ -281,20 +281,120 @@ async def search_memories(
         return []
 
 
+async def search_memories_with_graph(
+    user_id: int,
+    query: str,
+    api_key: str,
+    *,
+    limit: int = 5,
+    min_similarity: float = 0.5,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Graph-augmented memory search: vector search + 1-hop graph traversal.
+
+    Combines standard search_memories results with related entities/relations
+    from the knowledge graph. Returns (memories, graph_triples) where
+    graph_triples are human-readable strings like "Python — uses → FastAPI".
+    """
+    # 1. Standard vector search for memories
+    memories = await search_memories(
+        user_id, query, api_key, limit=limit, min_similarity=min_similarity
+    )
+
+    # 2. Graph traversal: find related entities
+    graph_triples: list[str] = []
+    try:
+        query_embedding = await _get_embedding(query, api_key, task_type="RETRIEVAL_QUERY")
+        if query_embedding is None:
+            return memories, graph_triples
+
+        embedding_str = f"[{','.join(str(v) for v in query_embedding)}]"
+
+        async with db_manager.pool.acquire() as conn:
+            await set_user_context(user_id, False, conn=conn)
+            try:
+                # Find top-K similar entity nodes
+                nodes = await db_query(
+                    """
+                    SELECT id, entity_name, entity_type, description,
+                           1 - (embedding <=> $2::halfvec) AS sim
+                    FROM memory_nodes
+                    WHERE user_id = $1
+                      AND embedding IS NOT NULL
+                    ORDER BY embedding <=> $2::halfvec
+                    LIMIT 5
+                    """,
+                    (user_id, embedding_str),
+                    conn=conn,
+                )
+
+                if not nodes:
+                    return memories, graph_triples
+
+                # Collect node IDs for 1-hop traversal
+                relevant_ids = [n["id"] for n in nodes if float(n.get("sim", 0)) >= 0.4]
+                if not relevant_ids:
+                    return memories, graph_triples
+
+                # 1-hop: get edges connected to these nodes
+                edges = await db_query(
+                    """
+                    SELECT
+                        src.entity_name AS from_name,
+                        e.predicate,
+                        tgt.entity_name AS to_name,
+                        e.weight
+                    FROM memory_edges e
+                    JOIN memory_nodes src ON e.source_node = src.id
+                    JOIN memory_nodes tgt ON e.target_node = tgt.id
+                    WHERE e.user_id = $1
+                      AND (e.source_node = ANY($2::uuid[]) OR e.target_node = ANY($2::uuid[]))
+                    ORDER BY e.weight DESC
+                    LIMIT 10
+                    """,
+                    (user_id, relevant_ids),
+                    conn=conn,
+                )
+
+                for edge in (edges or []):
+                    graph_triples.append(
+                        f"{edge['from_name']} — {edge['predicate']} → {edge['to_name']}"
+                    )
+
+                logging.debug(
+                    "Graph search for user %d: %d nodes, %d edges found",
+                    user_id,
+                    len(relevant_ids),
+                    len(graph_triples),
+                )
+            finally:
+                await clear_user_context(conn=conn)
+    except Exception as e:
+        logging.warning("Graph traversal failed (non-critical): %s", e)
+
+    return memories, graph_triples
+
 async def delete_user_memories(user_id: int) -> int:
-    """Delete all memories for a user. Returns count of deleted records."""
+    """Delete all memories + graph data for a user. Returns count of deleted memory records."""
     try:
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)
             try:
-                result = await db_query(
-                    "DELETE FROM long_term_memory WHERE user_id = $1 RETURNING id",
-                    (user_id,),
-                    conn=conn,
-                )
-                count = len(result) if result else 0
-                logging.info("Deleted %d memories for user %d", count, user_id)
-                return count
+                async with conn.transaction():
+                    # Delete graph data first (edges cascade from nodes via FK)
+                    await conn.execute(
+                        "DELETE FROM memory_nodes WHERE user_id = $1",
+                        user_id,
+                    )
+
+                    # Delete long-term memories
+                    result = await db_query(
+                        "DELETE FROM long_term_memory WHERE user_id = $1 RETURNING id",
+                        (user_id,),
+                        conn=conn,
+                    )
+                    count = len(result) if result else 0
+                    logging.info("Deleted %d memories + graph data for user %d", count, user_id)
+                    return count
             finally:
                 await clear_user_context(conn=conn)
     except Exception as e:

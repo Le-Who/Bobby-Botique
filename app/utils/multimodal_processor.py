@@ -49,7 +49,7 @@ _VOICE_SYSTEM_PROMPT = (
     "2. Use proper punctuation and paragraph breaks.\n"
     "3. Preserve the original language of the speaker.\n"
     "4. After the transcript, add a blank line and a short summary (1–2 sentences) "
-    "   IN THE SAME LANGUAGE as the audio.\n"
+    "   IN RUSSIAN (regardless of the audio language), unless the speaker explicitly requested otherwise.\n"
     "5. If the audio is unintelligible, say '[unintelligible]'.\n"
     "6. On the VERY LAST LINE of your output, write exactly one of:\n"
     "   INTENT:CONVERSATIONAL — if the speaker is asking a question, giving a command, or chatting\n"
@@ -82,7 +82,7 @@ _VOICE_LTM_PROMPT = (
     "   where <tone> is one of: Neutral, Curious, Frustrated, Excited, Formal, Casual\n"
     "   and <urgency> is one of: Low, Medium, High\n"
     "2. After the tags, transcribe the audio FAITHFULLY with proper punctuation.\n"
-    "3. Add a blank line and a 1-2 sentence summary IN THE SAME LANGUAGE as the audio.\n"
+    "3. Add a blank line and a 1-2 sentence summary IN RUSSIAN (regardless of the audio language), unless specified otherwise.\n"
     "4. If the audio is unintelligible, say '[unintelligible]'.\n"
 )
 
