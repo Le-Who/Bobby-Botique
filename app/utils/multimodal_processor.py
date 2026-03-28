@@ -90,25 +90,32 @@ _VOICE_LTM_PROMPT = (
 # ── Internal: resolve a working API key ──────────────────────────────────────
 
 
-async def _get_api_key_for_media(model: str | None = None) -> str | None:
+async def _get_api_key_for_media(
+    model: str | None = None,
+    excluded_hashes: set[str] | None = None,
+) -> tuple[str, str] | tuple[None, None]:
     """Resolve an available API key for the given media model.
 
     Uses the existing key-rotation system with health-aware fallback.
     The ``model`` parameter ensures keys are resolved for the actual
     media model (e.g. gemini-3.1-flash-lite-preview), not the default chat model.
 
-    Returns None if no keys are available.
+    Returns:
+        (api_key, key_hash) tuple on success, or (None, None) on failure.
     """
     target_model = model or TRANSCRIPTION_MODEL
     try:
         from app.handlers.ai_core import _resolve_ai_request
 
-        key_data, _, resolution = await _resolve_ai_request(target_model)
+        key_data, _, resolution = await _resolve_ai_request(
+            target_model,
+            excluded_key_hashes=excluded_hashes,
+        )
         if key_data and resolution != "all_exhausted":
-            return key_data["api_key"]
+            return key_data["api_key"], key_data["key_hash"]
     except Exception as e:
         logging.warning("Media key resolution failed (model=%s): %s", target_model, e)
-    return None
+    return None, None
 
 
 # Max number of different API keys to try before giving up
@@ -138,6 +145,10 @@ async def _generate_with_resilience(
     Returns:
         Generated text, or None on total failure.
     """
+    import hashlib
+
+    from app.errors import classify_key_error
+    from app.repos.keys import get_key_status_manager
     from app.resilience_policy import is_retryable_exception
 
     config = types.GenerateContentConfig(
@@ -145,28 +156,31 @@ async def _generate_with_resilience(
         thinking_config=thinking_config,
     )
 
-    tried_keys: set[str] = set()
+    tried_key_hashes: set[str] = set()
     last_error: Exception | None = None
+    status_mgr = get_key_status_manager()
 
     for key_attempt in range(_MAX_KEY_ROTATIONS):
         # Resolve a key, excluding already-tried ones
-        current_key = api_key if key_attempt == 0 else None
-        if not current_key:
-            current_key = await _get_api_key_for_media(model)
+        current_api_key = api_key if key_attempt == 0 else None
+        current_key_hash: str | None = None
 
-        if not current_key:
+        if not current_api_key:
+            current_api_key, current_key_hash = await _get_api_key_for_media(
+                model,
+                excluded_hashes=tried_key_hashes,
+            )
+
+        if not current_api_key:
             logging.error("No API key available for media processing (attempt %d)", key_attempt + 1)
             break
 
-        # Skip keys we already tried
-        if current_key in tried_keys:
-            # Try to get a different key
-            current_key = await _get_api_key_for_media(model)
-            if not current_key or current_key in tried_keys:
-                break
-        tried_keys.add(current_key)
+        if not current_key_hash:
+            current_key_hash = hashlib.sha256(current_api_key.encode()).hexdigest()[:8]
 
-        client = get_cached_genai_client(current_key)
+        tried_key_hashes.add(current_key_hash)
+
+        client = get_cached_genai_client(current_api_key)
 
         async def _call(_c=client) -> str | None:
             response = await _c.aio.models.generate_content(
@@ -191,6 +205,10 @@ async def _generate_with_resilience(
                 _MEDIA_RESILIENCE,
                 circuit_name=_media_cb_name,
             )
+
+            # Record success so the key avoids unnecessary cooldowns
+            await status_mgr.record_success(current_key_hash, model)
+
             if attempts > 1 or key_attempt > 0:
                 logging.info(
                     "Media processing succeeded after %d attempts (key rotation %d)",
@@ -200,10 +218,23 @@ async def _generate_with_resilience(
             return result
         except Exception as e:
             last_error = e
-            if is_retryable_exception(e):
+            error_str = str(e)
+            error_category = classify_key_error(error_str)
+            is_transient = is_retryable_exception(e)
+
+            # Suspend key on 503 / 429 using KeyStatusManager so other pipelines avoid it
+            if error_category != "permanent" or "api_key" in error_str.lower() or "400" in error_str:
+                await status_mgr.suspend_key(
+                    current_key_hash,
+                    model,
+                    error_category,
+                    error_text=error_str,
+                )
+
+            if is_transient:
                 logging.warning(
                     "Media processing key %s…failed with transient error, rotating key (%d/%d): %s",
-                    current_key[:8],
+                    current_key_hash,
                     key_attempt + 1,
                     _MAX_KEY_ROTATIONS,
                     e,
@@ -217,7 +248,7 @@ async def _generate_with_resilience(
     # All keys exhausted
     logging.error(
         "Media processing failed after %d key rotations (%s): %s",
-        len(tried_keys),
+        len(tried_key_hashes),
         model,
         last_error,
     )
@@ -439,10 +470,15 @@ async def process_media_for_memory(
         metadata["telegram_file_id"] = telegram_file_id
     metadata.update(ltm_metadata)
 
+    res_key = api_key
+    if not res_key:
+        k_tuple = await _get_api_key_for_media()
+        res_key = k_tuple[0] or ""
+
     return await store_memory(
         user_id,
         extracted,
-        api_key or (await _get_api_key_for_media() or ""),
+        res_key,
         source_type=media_type,
         metadata=metadata,
     )

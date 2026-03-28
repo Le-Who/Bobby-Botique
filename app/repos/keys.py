@@ -333,7 +333,8 @@ async def increment_gemini_key_usage(key_hash: str, model_name: str) -> None:
 # Cooldown durations per error category
 _PENALTY_DURATIONS: dict[str, timedelta] = {
     "permanent": timedelta(hours=24),
-    "rate_limit": timedelta(seconds=60),
+    "rate_limit": timedelta(seconds=15),
+    "transient": timedelta(seconds=15),
     # "quota" is handled specially (until midnight PT)
 }
 _MAX_SUSPENSION = timedelta(days=7)
@@ -358,7 +359,7 @@ def _compute_suspended_until(
         ) + timedelta(days=1)
         return next_midnight_pt.astimezone(UTC_TZ)
 
-    base = _PENALTY_DURATIONS.get(category, timedelta(seconds=60))
+    base = _PENALTY_DURATIONS.get(category, timedelta(seconds=15))
 
     # Exponential backoff on repeated failures (capped)
     multiplier = min(2 ** (failure_count - 1), 128) if failure_count > 1 else 1
