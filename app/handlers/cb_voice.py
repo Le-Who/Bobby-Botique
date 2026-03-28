@@ -118,6 +118,7 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
 
     # Update placeholder to show processing, leaving transcript intact
     from app.utils.formatting import TelegramFormatter
+
     final_text = f"{t('voice.transcript_label', lang)}\n\n{pending['transcript']}\n\n✅ _(Принято)_"
     fmt, pm = TelegramFormatter.format_text(final_text)
     with contextlib.suppress(telegram.error.BadRequest):
@@ -227,6 +228,7 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
 
     # Update placeholder to finalize transcript
     from app.utils.formatting import TelegramFormatter
+
     final_text = f"{t('voice.transcript_label', lang)}\n\n{pending['transcript']}\n\n🔍 _Deep Search_"
     fmt, pm = TelegramFormatter.format_text(final_text)
     with contextlib.suppress(telegram.error.BadRequest):

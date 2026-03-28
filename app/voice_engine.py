@@ -105,14 +105,14 @@ async def _generate_and_send_voice(
         if pcm_audio is None:
             failed_keys.clear()
             from app.providers.tts import generate_speech
-    
+
             for attempt in range(3):
                 key_data, model_used, _ = await _resolve_ai_request(
                     "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
                 )
                 if not key_data:
                     break
-    
+
                 try:
                     pcm_audio = await generate_speech(tts_text, key_data["api_key"], voice=voice)
                     if pcm_audio:
@@ -127,27 +127,27 @@ async def _generate_and_send_voice(
                         await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
                     except Exception:
                         pass
-    
+
         if pcm_audio is None:
             logging.warning("No audio generated for voice reply (chat_id=%s)", chat_id)
             return
-    
+
         # ── Transcode PCM → OGG Opus ─────────────────────────────────────────
         ogg_bytes = await pcm_to_ogg_opus(pcm_audio)
         # ⚠ Free PCM immediately — OGG is 10-20x smaller
         del pcm_audio
-    
+
         if ogg_bytes is None:
             logging.error("PCM→OGG transcoding failed for voice reply")
             return
-    
+
         ogg_size = len(ogg_bytes)
-    
+
         # ── Send voice message ───────────────────────────────────────────────
         try:
             voice_file = make_voice_file(ogg_bytes)
             del ogg_bytes  # BytesIO holds its own copy, free original
-    
+
             await bot.send_voice(
                 chat_id=chat_id,
                 voice=voice_file,
@@ -155,7 +155,7 @@ async def _generate_and_send_voice(
             )
             voice_file.close()  # release BytesIO internal buffer
             del voice_file
-    
+
             logging.info(
                 "Voice reply sent: chat_id=%s, %d bytes OGG Opus",
                 chat_id,
