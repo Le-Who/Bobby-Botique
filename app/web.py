@@ -45,6 +45,66 @@ from app.repos.metrics_repo import (
 quart_app = Quart(__name__)  # kept as `quart_app` for backward compat with bot.py
 
 
+class ASGIProxyFix:
+    """ASGI middleware replicating Werkzeug's ProxyFix to securely parse proxy headers.
+
+    This ensures that request.remote_addr and other request properties are populated
+    safely using the X-Forwarded-* headers from a trusted proxy layer (e.g., Northflank).
+    """
+
+    def __init__(self, app, x_for=1, x_proto=1, x_host=1, x_prefix=1):
+        self.app = app
+        self.x_for = x_for
+        self.x_proto = x_proto
+        self.x_host = x_host
+        self.x_prefix = x_prefix
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+
+        headers = dict(scope.get("headers", []))
+
+        def _get_trusted(header_name, trusted_hops):
+            value = headers.get(header_name.encode("latin1"))
+            if not value:
+                return None
+            values = [v.strip() for v in value.decode("latin1").split(",")]
+            if len(values) >= trusted_hops:
+                return values[-trusted_hops]
+            return None
+
+        if self.x_for:
+            client_ip = _get_trusted("x-forwarded-for", self.x_for)
+            if client_ip:
+                client = scope.get("client") or ("127.0.0.1", 0)
+                scope["client"] = (client_ip, client[1])
+
+        if self.x_proto:
+            scheme = _get_trusted("x-forwarded-proto", self.x_proto)
+            if scheme:
+                scope["scheme"] = scheme
+
+        if self.x_host:
+            host = _get_trusted("x-forwarded-host", self.x_host)
+            if host:
+                # Update host header
+                scope["headers"] = [
+                    (k, v) for k, v in scope["headers"] if k != b"host"
+                ] + [(b"host", host.encode("latin1"))]
+
+        if self.x_prefix:
+            prefix = _get_trusted("x-forwarded-prefix", self.x_prefix)
+            if prefix:
+                scope["root_path"] = prefix
+
+        return await self.app(scope, receive, send)
+
+
+# Wrap ASGI app with our ProxyFix to handle 1 trusted reverse proxy layer
+quart_app.asgi_app = ASGIProxyFix(quart_app.asgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+
 # Derive a secret key for sessions from ADMIN_SECRET
 def _get_admin_secret():
     """Returns the configured admin secret."""

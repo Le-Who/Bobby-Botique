@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-25 - [Rate Limiting] Spoofable X-Forwarded-For Bypass
+**Vulnerability:** A custom `_get_client_ip` function naively trusted `X-Forwarded-For` by extracting the rightmost IP without ensuring the request actually originated from a trusted reverse proxy, allowing trivial rate-limit and brute-force protection bypasses by spoofing the header.
+**Learning:** For ASGI applications behind a reverse proxy (like Quart behind Northflank), relying on a raw header parser is unsafe because attackers can supply `X-Forwarded-For` on direct connections. You must replicate the trusted-hops logic (like Werkzeug's `ProxyFix`) to safely populate proxy properties only when the exact number of proxy hops is verified.
+**Prevention:** Use established proxy middleware (e.g. Uvicorn's `ProxyHeadersMiddleware`, or a vetted `ASGIProxyFix` implementation replicating Werkzeug's `x_for` logic) to overwrite `scope['client']` (which feeds `request.remote_addr`) before it reaches application handlers.
