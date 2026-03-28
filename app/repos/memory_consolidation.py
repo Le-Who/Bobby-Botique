@@ -391,11 +391,7 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                             api_key,
                             task_type="RETRIEVAL_DOCUMENT",
                         )
-                        ent_emb_str = (
-                            f"[{','.join(str(v) for v in ent_embedding)}]"
-                            if ent_embedding
-                            else None
-                        )
+                        ent_emb_str = f"[{','.join(str(v) for v in ent_embedding)}]" if ent_embedding else None
 
                         row = await conn.fetchrow(
                             """
@@ -446,7 +442,13 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                         len(raw_ids),
                         len(facts),
                         len(node_ids),
-                        len([r for r in relations if r.get("from", "").strip() in node_ids and r.get("to", "").strip() in node_ids]),
+                        len(
+                            [
+                                r
+                                for r in relations
+                                if r.get("from", "").strip() in node_ids and r.get("to", "").strip() in node_ids
+                            ]
+                        ),
                     )
                     return len(facts)
             finally:

@@ -165,9 +165,7 @@ async def _handle_regular_chat(
                 # Inject graph triples if available
                 if graph_triples:
                     graph_xml = (
-                        "\n\n<knowledge_graph>\n"
-                        + "\n".join(f"  {t}" for t in graph_triples)
-                        + "\n</knowledge_graph>"
+                        "\n\n<knowledge_graph>\n" + "\n".join(f"  {t}" for t in graph_triples) + "\n</knowledge_graph>"
                     )
                     system_instruction = system_instruction + graph_xml
                     logging.info(
@@ -290,9 +288,7 @@ async def _handle_regular_chat(
             await update_user_chat(user_id, chat_state)
 
         if await handle_ai_response_error(
-            response_text,
-            stream_last_msg or placeholder_message,
-            on_error_callback=cleanup_on_error
+            response_text, stream_last_msg or placeholder_message, on_error_callback=cleanup_on_error
         ):
             return
         else:
@@ -350,7 +346,7 @@ async def _handle_regular_chat(
             _store_memory_in_background(user_id, user_message, key_data)
 
             # ── Voice reply (fire-and-forget background task) ────────────
-            if reply_with_voice and key_data:
+            if reply_with_voice:
                 from app.voice_engine import fire_voice_reply
 
                 fire_voice_reply(
@@ -358,7 +354,6 @@ async def _handle_regular_chat(
                     chat_id=placeholder_message.chat_id,
                     reply_to_message_id=(stream_last_msg or placeholder_message).message_id,
                     response_text=response_text,
-                    api_key=key_data["api_key"],
                     use_live_api=True,
                     system_instruction=system_instruction,
                 )

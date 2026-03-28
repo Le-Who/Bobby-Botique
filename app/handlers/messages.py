@@ -152,6 +152,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user_state = state.get_user_state(user_id)
             if user_state.is_processing or state.get_user_lock(user_id).locked():
                 from app.i18n import t as _t
+
                 await update.message.reply_text(_t("busy.user", "ru"))
                 return
             user_state.is_processing = True
@@ -288,6 +289,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user_state = state.get_user_state(user_id)
         if user_state.is_processing or state.get_user_lock(user_id).locked():
             from app.i18n import t as _t
+
             await update.message.reply_text(_t("busy.user", "ru"))
             return
         user_state.is_processing = True

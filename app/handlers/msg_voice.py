@@ -171,9 +171,17 @@ async def _process_voice_pipeline(
 def _should_auto_route(transcript: str) -> bool:
     """Determine if the transcript is simple enough to bypass confirmation UI.
 
-    Uses the thinking_classifier heuristic (0ms, no API calls).
-    Returns True only for LOW complexity messages (greetings, single-word, confirmations).
+    Uses lexical heuristics and the thinking_classifier (0ms, no API calls).
+    Returns True for explicit intent commands or LOW complexity messages.
     """
+    text_lower = transcript.strip().lower()
+
+    # Heuristic 1: Explicit voice commands (> 10 chars to avoid false positives)
+    action_prefixes = ("сочини ", "напиши ", "бот,", "бот ", "расскажи ", "сделай ")
+    if text_lower.startswith(action_prefixes) and len(text_lower) > 10:
+        return True
+
+    # Heuristic 2: Low-complexity classifier (greetings, confirmations)
     from app.thinking_classifier import classify_thinking_level
 
     level = classify_thinking_level(transcript)
@@ -287,6 +295,9 @@ async def _show_confirmation_ui(
             "file_unique_id": voice.file_unique_id,
             "placeholder_id": placeholder.message_id,
             "intent": intent,
+            "reply_with_voice": "озвучь ответ" in transcript.lower()
+            or "ответь голосом" in transcript.lower()
+            or "прочитай вслух" in transcript.lower(),
         }
         # Attach "Show & Tell" image if present
         if attached_image:
@@ -327,7 +338,13 @@ async def _auto_route_to_chat(
     # Run the chat pipeline inline (we already hold user_lock from caller)
     from app.handlers.ai_chat import _handle_regular_chat
 
-    await _handle_regular_chat(placeholder, user_id, transcript, chat_state, reply_with_voice=True)
+    # Dynamically resolve if the user requested voice readout
+    reply_with_voice = (
+        "озвучь ответ" in transcript.lower()
+        or "ответь голосом" in transcript.lower()
+        or "прочитай вслух" in transcript.lower()
+    )
+    await _handle_regular_chat(placeholder, user_id, transcript, chat_state, reply_with_voice=reply_with_voice)
 
     # Background LTM storage
     if chat_state.ltm_enabled:

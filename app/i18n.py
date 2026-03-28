@@ -827,8 +827,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "en": "⚠️ Document limit reached (5). Old documents will be auto-deleted.\n",
     },
     "doc.how_to_ask": {
-        "ru": "\n💡 *Как задавать вопросы:*\n• Просто напишите ваш вопрос\n• Например: \"Какие основные пункты?\", \"Что говорится о...?\"\n• Система автоматически найдет ответ в документе\n\n📅 *Срок хранения:* 3 дня (автоматическая очистка)",
-        "en": "\n💡 *How to ask questions:*\n• Just type your question\n• Example: \"What are the key points?\", \"What does it say about...?\"\n• The system will find the answer in the document\n\n📅 *Retention:* 3 days (auto-cleanup)",
+        "ru": '\n💡 *Как задавать вопросы:*\n• Просто напишите ваш вопрос\n• Например: "Какие основные пункты?", "Что говорится о...?"\n• Система автоматически найдет ответ в документе\n\n📅 *Срок хранения:* 3 дня (автоматическая очистка)',
+        "en": '\n💡 *How to ask questions:*\n• Just type your question\n• Example: "What are the key points?", "What does it say about...?"\n• The system will find the answer in the document\n\n📅 *Retention:* 3 days (auto-cleanup)',
     },
     "doc.btn_upload_another": {
         "ru": "📄 Загрузить другой документ",

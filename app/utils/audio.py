@@ -27,17 +27,26 @@ async def pcm_to_ogg_opus(
     """
     ffmpeg_cmd = [
         "ffmpeg",
-        "-f", "s16le",           # Input format: signed 16-bit little-endian PCM
-        "-ar", str(sample_rate), # Input sample rate
-        "-ac", str(channels),    # Input channels (mono)
-        "-i", "pipe:0",          # Read from stdin
-        "-c:a", "libopus",       # Encode with Opus codec
-        "-b:a", bitrate,         # Output bitrate (48k = good quality for speech)
-        "-f", "ogg",             # Output container format
-        "-application", "voip",  # Opus application mode: optimized for speech
-        "-y",                    # Overwrite (no interactive prompts)
-        "-loglevel", "error",    # Suppress verbose output
-        "pipe:1",                # Write to stdout
+        "-f",
+        "s16le",  # Input format: signed 16-bit little-endian PCM
+        "-ar",
+        str(sample_rate),  # Input sample rate
+        "-ac",
+        str(channels),  # Input channels (mono)
+        "-i",
+        "pipe:0",  # Read from stdin
+        "-c:a",
+        "libopus",  # Encode with Opus codec
+        "-b:a",
+        bitrate,  # Output bitrate (48k = good quality for speech)
+        "-f",
+        "ogg",  # Output container format
+        "-application",
+        "voip",  # Opus application mode: optimized for speech
+        "-y",  # Overwrite (no interactive prompts)
+        "-loglevel",
+        "error",  # Suppress verbose output
+        "pipe:1",  # Write to stdout
     ]
 
     try:
@@ -74,8 +83,7 @@ async def pcm_to_ogg_opus(
 
     except FileNotFoundError:
         logging.error(
-            "ffmpeg not found in PATH. Install ffmpeg to enable voice responses. "
-            "On Docker: apt-get install -y ffmpeg"
+            "ffmpeg not found in PATH. Install ffmpeg to enable voice responses. On Docker: apt-get install -y ffmpeg"
         )
         return None
     except TimeoutError:

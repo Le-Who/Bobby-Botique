@@ -76,11 +76,7 @@ async def generate_speech(
         )
 
         # Extract PCM audio from inline_data in response parts
-        if (
-            response.candidates
-            and response.candidates[0].content
-            and response.candidates[0].content.parts
-        ):
+        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
             for part in response.candidates[0].content.parts:
                 if part.inline_data and part.inline_data.data:
                     audio_bytes = part.inline_data.data

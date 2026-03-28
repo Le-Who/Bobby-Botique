@@ -20,7 +20,6 @@ async def _generate_and_send_voice(
     chat_id: int,
     reply_to_message_id: int,
     response_text: str,
-    api_key: str,
     *,
     use_live_api: bool = True,
     system_instruction: str | None = None,
@@ -48,33 +47,70 @@ async def _generate_and_send_voice(
     tts_text = response_text[:2000] if len(response_text) > 2000 else response_text
 
     # ── Strategy 1: Live API (affective, emotional audio) ────────────────
-    if use_live_api:
-        try:
-            from app.providers.live_audio import generate_audio_dialog
+    failed_keys: set[str] = set()
+    from app.errors import classify_key_error
+    from app.handlers.ai_core import _resolve_ai_request
+    from app.repos.keys import get_key_status_manager
 
-            pcm_audio, _transcript = await generate_audio_dialog(
-                tts_text,
-                api_key,
-                system_instruction=system_instruction,
-                voice=voice,
+    status_mgr = get_key_status_manager()
+
+    if use_live_api:
+        from app.providers.live_audio import generate_audio_dialog
+
+        for attempt in range(3):
+            key_data, model_used, _ = await _resolve_ai_request(
+                "gemini-2.5-flash-native-audio-preview-12-2025", excluded_key_hashes=failed_keys
             )
-            del _transcript  # free transcript immediately, we don't use it here
-            if pcm_audio:
-                logging.info("Voice reply: using Live API audio (%d bytes PCM)", len(pcm_audio))
-        except Exception as e:
-            logging.warning("Live Audio failed, falling back to REST TTS: %s", e)
+            if not key_data:
+                break
+
+            try:
+                pcm_audio, _transcript = await generate_audio_dialog(
+                    tts_text,
+                    key_data["api_key"],
+                    system_instruction=system_instruction,
+                    voice=voice,
+                )
+                del _transcript  # free transcript immediately, we don't use it here
+                if pcm_audio:
+                    logging.info("Voice reply: using Live API audio (%d bytes PCM)", len(pcm_audio))
+                    break
+            except Exception as e:
+                err_str = str(e)
+                logging.warning("Live Audio failed (attempt %d/3): %s", attempt + 1, err_str)
+                failed_keys.add(key_data["key_hash"])
+                try:
+                    err_cat = classify_key_error(err_str)
+                    await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
+                except Exception:
+                    pass
 
     # ── Strategy 2: REST TTS (reliable fallback) ─────────────────────────
     if pcm_audio is None:
-        try:
-            from app.providers.tts import generate_speech
+        failed_keys.clear()
+        from app.providers.tts import generate_speech
 
-            pcm_audio = await generate_speech(tts_text, api_key, voice=voice)
-            if pcm_audio:
-                logging.info("Voice reply: using REST TTS audio (%d bytes PCM)", len(pcm_audio))
-        except Exception as e:
-            logging.error("REST TTS generation failed: %s", e)
-            return
+        for attempt in range(3):
+            key_data, model_used, _ = await _resolve_ai_request(
+                "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
+            )
+            if not key_data:
+                break
+
+            try:
+                pcm_audio = await generate_speech(tts_text, key_data["api_key"], voice=voice)
+                if pcm_audio:
+                    logging.info("Voice reply: using REST TTS audio (%d bytes PCM)", len(pcm_audio))
+                    break
+            except Exception as e:
+                err_str = str(e)
+                logging.warning("REST TTS generation failed (attempt %d/3): %s", attempt + 1, err_str)
+                failed_keys.add(key_data["key_hash"])
+                try:
+                    err_cat = classify_key_error(err_str)
+                    await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
+                except Exception:
+                    pass
 
     if pcm_audio is None:
         logging.warning("No audio generated for voice reply (chat_id=%s)", chat_id)
@@ -118,7 +154,6 @@ def fire_voice_reply(
     chat_id: int,
     reply_to_message_id: int,
     response_text: str,
-    api_key: str,
     *,
     use_live_api: bool = True,
     system_instruction: str | None = None,
@@ -134,7 +169,6 @@ def fire_voice_reply(
     _chat_id = chat_id
     _reply_to = reply_to_message_id
     _text = response_text
-    _key = api_key
     _live = use_live_api
     _si = system_instruction
     _voice = voice
@@ -145,7 +179,6 @@ def fire_voice_reply(
             _chat_id,
             _reply_to,
             _text,
-            _key,
             use_live_api=_live,
             system_instruction=_si,
             voice=_voice,

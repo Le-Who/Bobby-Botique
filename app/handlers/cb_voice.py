@@ -288,34 +288,31 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
 
     placeholder_message = query.message
     voice_bytes = pending["voice_bytes"]
-    
+
     # We DO NOT pop the pending data here, because we want to update it!
 
     async def _retranscribe_wrapper() -> None:
         try:
             from app.handlers.msg_voice import _show_confirmation_ui
             from app.utils.multimodal_processor import transcribe_voice
-            
+
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
                 # Retranscribe with the specific premium model requested
-                new_transcript, new_intent = await transcribe_voice(
-                    voice_bytes,
-                    model="gemini-3-flash-preview"
-                )
-                
+                new_transcript, new_intent = await transcribe_voice(voice_bytes, model="gemini-3-flash-preview")
+
                 if new_transcript is None:
                     # Revert nicely
                     await query.edit_message_text("❌ _Не удалось перерасшифровать. Попробуйте снова или отмените._")
                     return
-                
+
                 # We need to update the transcript in the context so the user can Confirm the NEW transcript
                 pending["transcript"] = new_transcript
                 if context.user_data:
                     context.user_data[pending_key] = pending
-                
+
                 class MockVoice:
                     file_unique_id = pending.get("file_unique_id")
-                    
+
                 await _show_confirmation_ui(
                     placeholder=placeholder_message,
                     transcript=new_transcript,
@@ -325,9 +322,9 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
                     voice=MockVoice(),
                     context=context,
                     intent=new_intent,
-                    attached_image=pending.get("attached_image")
+                    attached_image=pending.get("attached_image"),
                 )
-                
+
         except Exception as e:
             logging.error("voice:retranscribe_flash task failed: %s", e, exc_info=True)
             with contextlib.suppress(Exception):

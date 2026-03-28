@@ -61,7 +61,6 @@ async def generate_audio_dialog(
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],  # type: ignore[list-item]  # SDK accepts str|Modality
         output_audio_transcription=types.AudioTranscriptionConfig(),
-        enable_affective_dialog=True,
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -73,9 +72,7 @@ async def generate_audio_dialog(
 
     # Inject system instruction if provided
     if system_instruction:
-        config.system_instruction = types.Content(
-            parts=[types.Part(text=system_instruction)]
-        )
+        config.system_instruction = types.Content(parts=[types.Part(text=system_instruction)])
 
     audio_buffer = bytearray()
     transcript_parts: list[str] = []
@@ -87,9 +84,7 @@ async def generate_audio_dialog(
 
         try:
             async with asyncio.timeout(timeout):
-                async with client.aio.live.connect(
-                    model=model_name, config=config
-                ) as session:
+                async with client.aio.live.connect(model=model_name, config=config) as session:
                     # Send text input as a single turn
                     await session.send(input=dialog_text, end_of_turn=True)
 

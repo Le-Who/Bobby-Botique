@@ -3,6 +3,33 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.74] - 2026-03-28 - Multimodal Voice Pipeline Hardening
+
+### 🛡️ Voice Pipeline Resilience
+
+| Component | Files | Detail |
+|-----------|-------|--------|
+| TTS / Live API Key Rotation | `voice_engine.py` | Extracted explicit `api_key` dependency from handlers. Engine now independently queries `AgentRequestUseCase` keys inside a 3-count retry loop. Catches 429 quota exhaustion strings (3 RPM / 10 RPD limits) and routes them through `classify_key_error()` to gracefully `transient` or `quota`-suspend the faulting key without failing the background generation task. |
+| Live Protocol Issue | `live_audio.py` | Removed conflicting `enable_affective_dialog` directive from `LiveConnectConfig`. Resolves the constant WebSocket 1007 abortion errors while restoring native emotional prosody to Gemini 2 outbound responses. |
+
+### ✨ Voice Routing Heuristics
+
+| Improvement | Files | Detail |
+|-------------|-------|--------|
+| Strict Action Prefixes | `msg_voice.py` | Hardened auto-routing against ghost triggers via lexical heuristic checks. Action prefixes (`сочини`, `напиши`, `бот,`, `сделай`, `расскажи`) trigger bypass routing *only* if the transcript string length is greater than 10 chars. |
+| Dynamic Voice Responses | `msg_voice.py`, `cb_ai_actions.py` | Added text-based override for voice engine triggering. Users can now embed explicit phrases (`озвучь ответ`, `ответь голосом`, `прочитай вслух`) into their dictation to force the bot to reply with a voice note, even if the payload went to the manual confirmation phase UI. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Ruff format | 18 files reformatted |
+| Mypy (`--strict`) | 0 errors |
+| Tests | **1453 passed**, 0 failed |
+
+---
+
 ## [2.8.73] - 2026-03-28 - Architectural Hardening & Global i18n
     
 ### 🌐 Internationalization (i18n) Phase 1

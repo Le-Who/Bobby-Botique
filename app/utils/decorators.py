@@ -25,12 +25,7 @@ def authorized_only(func):
             set_request_id(f"tgcmd-{chat_id}-{getattr(update, 'update_id', 'na')}")
             # Protect against state leakage: clear volatile UI mode flags on any new command
             user_data = context.user_data
-            if (
-                update.message
-                and update.message.text
-                and update.message.text.startswith("/")
-                and user_data is not None
-            ):
+            if update.message and update.message.text and update.message.text.startswith("/") and user_data is not None:
                 volatile_keys = [
                     "rename_role_id",
                     "rename_role_key",

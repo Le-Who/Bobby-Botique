@@ -141,7 +141,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 duplicate_text = t(
                     "doc.duplicate_found",
                     filename=document.file_name or "",
-                    dup_name=duplicate_info.get('filename', 'Unknown'),
+                    dup_name=duplicate_info.get("filename", "Unknown"),
                     date=date_str,
                 )
 
@@ -175,16 +175,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         success_text = t(
             "doc.success",
             filename=document.file_name or "",
-            pages=str(result.get('pages', 'N/A')),
+            pages=str(result.get("pages", "N/A")),
             chars=f"{result.get('text_length', 0):,}",
         )
 
         if result.get("paragraphs"):
-            success_text += t("doc.paragraphs", count=str(result['paragraphs']))
+            success_text += t("doc.paragraphs", count=str(result["paragraphs"]))
         if result.get("tables"):
-            success_text += t("doc.tables", count=str(result['tables']))
+            success_text += t("doc.tables", count=str(result["tables"]))
 
-        success_text += t("doc.user_stats", count=str(user_stats['document_count']))
+        success_text += t("doc.user_stats", count=str(user_stats["document_count"]))
         if user_stats["limit_reached"]:
             success_text += t("doc.limit_reached")
 

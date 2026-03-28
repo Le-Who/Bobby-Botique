@@ -296,9 +296,7 @@ async def search_memories_with_graph(
     graph_triples are human-readable strings like "Python — uses → FastAPI".
     """
     # 1. Standard vector search for memories
-    memories = await search_memories(
-        user_id, query, api_key, limit=limit, min_similarity=min_similarity
-    )
+    memories = await search_memories(user_id, query, api_key, limit=limit, min_similarity=min_similarity)
 
     # 2. Graph traversal: find related entities
     graph_triples: list[str] = []
@@ -355,10 +353,8 @@ async def search_memories_with_graph(
                     conn=conn,
                 )
 
-                for edge in (edges or []):
-                    graph_triples.append(
-                        f"{edge['from_name']} — {edge['predicate']} → {edge['to_name']}"
-                    )
+                for edge in edges or []:
+                    graph_triples.append(f"{edge['from_name']} — {edge['predicate']} → {edge['to_name']}")
 
                 logging.debug(
                     "Graph search for user %d: %d nodes, %d edges found",
@@ -372,6 +368,7 @@ async def search_memories_with_graph(
         logging.warning("Graph traversal failed (non-critical): %s", e)
 
     return memories, graph_triples
+
 
 async def delete_user_memories(user_id: int) -> int:
     """Delete all memories + graph data for a user. Returns count of deleted memory records."""

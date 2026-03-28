@@ -63,4 +63,5 @@ def _cancel_db_background_tasks():
 def _clear_user_state():
     """Clear global user state and locks between tests to prevent pollution."""
     from app.state import USER_STATES
+
     USER_STATES._states.clear()

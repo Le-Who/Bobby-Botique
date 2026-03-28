@@ -84,7 +84,9 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                     from app.core.entities import ChatStateRow
 
                     validated = ChatStateRow.model_validate(chat_info)
-                    history = [{"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])]
+                    history = [
+                        {"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])
+                    ]
                     chat_state = ChatState(
                         history=history,
                         model=validated.model or _default_model(),
@@ -102,7 +104,9 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                         user_id,
                         ve,
                     )
-                    history = [{"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])]
+                    history = [
+                        {"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])
+                    ]
                     chat_state = ChatState(
                         history=history,
                         model=chat_info.get("model"),

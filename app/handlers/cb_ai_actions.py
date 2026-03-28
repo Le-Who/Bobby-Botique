@@ -148,12 +148,20 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 if action == "confirm":
                     chat_state = await get_user_chat(user_id)
                     user_message = original_message.text
+
+                    # Dynamically check for explicit voice requests
+                    _lower = user_message.lower() if user_message else ""
+                    reply_with_voice = (
+                        "озвучь ответ" in _lower or "ответь голосом" in _lower or "прочитай вслух" in _lower
+                    )
+
                     await agent._handle_regular_chat(
                         placeholder_message,  # type: ignore[arg-type]  # MaybeInaccessibleMessage
                         user_id,
                         user_message,
                         chat_state,
                         model_override=model_override,
+                        reply_with_voice=reply_with_voice,
                     )
         except Exception as e:
             logging.error("fallback task failed: %s", e, exc_info=True)
@@ -242,23 +250,10 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not response_text or len(response_text.strip()) < 5:
         return
 
-    user_id = query.from_user.id
     chat_id = query.message.chat_id
     message_id = query.message.message_id
 
-    # Get an API key for TTS
     try:
-        from app.handlers.ai_core import _resolve_ai_request
-
-        key_data, _model, _resolution = await _resolve_ai_request("gemini-2.5-flash-preview-tts")
-        if not key_data:
-            # Fallback: try resolving with any available model
-            from app.config import settings
-            key_data, _model, _resolution = await _resolve_ai_request(settings.DEFAULT_MODEL)
-        if not key_data:
-            logging.warning("TTS callback: no API key available for user %d", user_id)
-            return
-
         from app.voice_engine import fire_voice_reply
 
         fire_voice_reply(
@@ -266,7 +261,6 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id=chat_id,
             reply_to_message_id=message_id,
             response_text=response_text,
-            api_key=key_data["api_key"],
             use_live_api=True,
         )
     except Exception as e:
