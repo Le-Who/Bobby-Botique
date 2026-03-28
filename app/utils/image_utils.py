@@ -65,10 +65,13 @@ def _image_worker(
 ) -> bytes | None:
     """Synchronous image compression worker (runs in process pool).
 
-    Three-stage pipeline:
-      1. Resolution cap — ``thumbnail()`` to ``TASK_DIMS[task_type]`` max side.
-      2. Format normalisation — RGBA/P → RGB, save as JPEG quality 85.
-      3. Fallback quality reduction — if file still > ``max_size_mb``, retry at
+    Four-stage pipeline:
+      1. Entropy analysis — Shannon entropy of the luminance channel adjusts
+         the resolution cap: text-dense images (screenshots, documents) get
+         higher resolution; simple photos get lower to save tokens.
+      2. Resolution cap — ``thumbnail()`` to adaptive ``max_dim``.
+      3. Format normalisation — RGBA/P → RGB, save as JPEG quality 85.
+      4. Fallback quality reduction — if file still > ``max_size_mb``, retry at
          lower JPEG quality levels.
     """
     from PIL import Image
@@ -78,8 +81,11 @@ def _image_worker(
 
         img_to_process = Image.open(io.BytesIO(image_data)) if isinstance(image_data, bytes) else image_data
 
-        # Stage 1: Resolution cap (token savings)
-        max_dim = TASK_DIMS.get(task_type, TASK_DIMS["default"])
+        # Stage 1: Entropy-based adaptive max_dim
+        base_max_dim = TASK_DIMS.get(task_type, TASK_DIMS["default"])
+        max_dim = _entropy_adaptive_dim(img_to_process, base_max_dim)
+
+        # Stage 2: Resolution cap (token savings)
         if max(img_to_process.size) > max_dim:
             img_to_process.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
 
@@ -90,7 +96,7 @@ def _image_worker(
             new_dims = [int(dim * ratio) for dim in img_to_process.size]
             img_to_process = img_to_process.resize((new_dims[0], new_dims[1]), Image.Resampling.LANCZOS)
 
-        # Stage 2: Format normalisation + JPEG compression
+        # Stage 3: Format normalisation + JPEG compression
         if img_to_process.mode in ("RGBA", "P"):
             img_to_process = img_to_process.convert("RGB")
 
@@ -98,7 +104,7 @@ def _image_worker(
         img_to_process.save(buf, format="JPEG", quality=85, optimize=True)
         result = buf.getvalue()
 
-        # Stage 3: Fallback quality reduction if still too large
+        # Stage 4: Fallback quality reduction if still too large
         max_bytes = max_size_mb * 1024 * 1024
         if len(result) > max_bytes:
             for q in _FALLBACK_QUALITIES:
@@ -112,6 +118,37 @@ def _image_worker(
     except Exception as e:
         logging.error("Error in image processing worker: %s", e, exc_info=True)
         return None
+
+
+def _entropy_adaptive_dim(img: Image.Image, base_dim: int) -> int:
+    """Adjust max image dimension based on Shannon entropy of the luminance channel.
+
+    High entropy (> 6.5) = text-dense image (screenshot, document, code) → +50% resolution.
+    Medium entropy (4.0–6.5) = mixed content → use base dimension.
+    Low entropy (< 4.0) = simple photo, solid colors → -25% resolution (token savings).
+
+    Computes entropy on a 256×256 thumbnail for speed (< 1ms).
+    """
+    try:
+        # Downsample for fast entropy calculation (doesn't modify original)
+        thumb = img.copy()
+        thumb.thumbnail((256, 256), Image.Resampling.NEAREST)
+        if thumb.mode != "L":
+            thumb = thumb.convert("L")
+
+        entropy = thumb.entropy()
+
+        if entropy > 6.5:
+            # High complexity: text, code, screenshots → boost resolution
+            return int(base_dim * 1.5)
+        elif entropy < 4.0:
+            # Low complexity: simple photos, solid backgrounds → reduce resolution
+            return int(base_dim * 0.75)
+        else:
+            return base_dim
+    except Exception:
+        # Fallback: if entropy calculation fails, use base dimension
+        return base_dim
 
 
 async def save_image_as_bytes(

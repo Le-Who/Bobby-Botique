@@ -1,16 +1,20 @@
 # /app/handlers/cb_voice.py
 """Callback handlers for voice message confirmation flow.
 
-Handles: voice:confirm, voice:edit, voice:cancel, voice:transcribe_only
+Handles: voice:confirm, voice:edit, voice:cancel, voice:transcribe_only, voice:deep_search
 Uses voice_pending data stored in context.user_data by msg_voice.py.
+
+Enhancements:
+  - **voice:deep_search**: Routes transcript through agentic research pipeline.
+  - **Show & Tell**: When attached_image is present in voice_pending, injects
+    TaggedImage into chat history parts for cross-modal LLM context.
 """
 
 __all__ = ["voice_callback"]
 
 import asyncio
-import logging
-
 import contextlib
+import logging
 
 import telegram
 from telegram import Update
@@ -49,6 +53,8 @@ async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _handle_confirm(query, context, pending, lang)
     elif action == "edit":
         await _handle_edit(query, context, pending, lang)
+    elif action == "deep_search":
+        await _handle_deep_search(query, context, pending, lang)
     else:
         await query.answer()
 
@@ -89,7 +95,11 @@ async def _handle_transcribe_only(query, context, pending: dict | None, lang: st
 
 
 async def _handle_confirm(query, context, pending: dict | None, lang: str) -> None:
-    """Route transcript through the AI chat pipeline as a user message."""
+    """Route transcript through the AI chat pipeline as a user message.
+
+    If ``attached_image`` is present in pending (Show & Tell), injects the image
+    as a TaggedImage into the chat history so the LLM sees both voice + photo.
+    """
     if not pending:
         await query.answer()
         with contextlib.suppress(telegram.error.BadRequest):
@@ -110,6 +120,7 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
 
     placeholder_message = query.message
     transcript = pending["transcript"]
+    attached_image = pending.get("attached_image")
 
     # Clean up pending BEFORE starting the task
     if context.user_data:
@@ -121,15 +132,29 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
 
             chat_state = await get_user_chat(user_id)
 
-            # Store voice transcript in history as user message
+            # Build history parts — text + optional attached image (Show & Tell)
             from app.i18n import t as _t
 
-            chat_state.history.append(
-                {
-                    "role": "user",
-                    "parts": [f"{_t('voice.history_marker', lang)}\n{transcript}"],
-                }
-            )
+            parts: list = [f"{_t('voice.history_marker', lang)}\n{transcript}"]
+
+            if attached_image:
+                from app.utils.image_utils import TaggedImage
+
+                parts.append(
+                    TaggedImage(
+                        data=attached_image["bytes"],
+                        cache_key=attached_image.get("file_unique_id"),
+                        task_type="default",
+                        pre_compressed=True,
+                    )
+                )
+                logging.info(
+                    "Show & Tell: injected image %s into voice confirm for user %s",
+                    attached_image.get("file_unique_id"),
+                    user_id,
+                )
+
+            chat_state.history.append({"role": "user", "parts": parts})
 
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
                 await _handle_regular_chat(
@@ -162,11 +187,7 @@ async def _handle_edit(query, context, pending: dict | None, lang: str) -> None:
     # Show original transcript as reference + prompt for corrected text
     from app.utils.formatting import TelegramFormatter
 
-    edit_text = (
-        f"{t('voice.edit_original', lang)}\n\n"
-        f"_{transcript}_\n\n"
-        f"{t('voice.edit_prompt', lang)}"
-    )
+    edit_text = f"{t('voice.edit_original', lang)}\n\n_{transcript}_\n\n{t('voice.edit_prompt', lang)}"
     formatted, parse_mode = TelegramFormatter.format_text(edit_text)
 
     with contextlib.suppress(telegram.error.BadRequest):
@@ -176,3 +197,67 @@ async def _handle_edit(query, context, pending: dict | None, lang: str) -> None:
     if context.user_data:
         context.user_data["voice_edit_pending"] = True
         # Keep voice_pending so we can reference language/user_id later
+
+
+async def _handle_deep_search(query, context, pending: dict | None, lang: str) -> None:
+    """Route voice transcript through the agentic research pipeline (Deep Search).
+
+    This is triggered by the "🔍 Deep Search" button, which appears when ASR
+    detects INTENT:SEARCH in the voice message.
+    """
+    if not pending:
+        await query.answer()
+        with contextlib.suppress(telegram.error.BadRequest):
+            await query.edit_message_text(t("voice.no_pending", lang))
+        return
+
+    user_id = pending["user_id"]
+    user_lock = state.get_user_lock(user_id)
+
+    # Busy check
+    await query.answer(t("busy.toast", lang) if user_lock.locked() else "")
+    if user_lock.locked():
+        return
+
+    # Update placeholder
+    with contextlib.suppress(telegram.error.BadRequest):
+        await query.edit_message_text(t("voice.deep_search_starting", lang))
+
+    placeholder_message = query.message
+    transcript = pending["transcript"]
+
+    # Clean up pending
+    if context.user_data:
+        context.user_data.pop("voice_pending", None)
+
+    async def _deep_search_wrapper() -> None:
+        try:
+            from app.handlers.ai_search import _handle_research_agent
+
+            chat_state = await get_user_chat(user_id)
+
+            # Store voice as user message in history
+            from app.i18n import t as _t
+
+            chat_state.history.append(
+                {
+                    "role": "user",
+                    "parts": [f"🔍 {_t('voice.history_marker', lang)}\n{transcript}"],
+                }
+            )
+
+            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                await _handle_research_agent(
+                    placeholder_message,
+                    user_id,
+                    transcript,
+                    chat_state,
+                )
+        except Exception as e:
+            logging.error("voice:deep_search task failed: %s", e, exc_info=True)
+            with contextlib.suppress(Exception):
+                await placeholder_message.edit_text(t("error.generic", lang))
+
+    _task = asyncio.create_task(_deep_search_wrapper())
+    _background_tasks.add(_task)
+    _task.add_done_callback(_background_tasks.discard)

@@ -54,6 +54,7 @@ _VOICE_SYSTEM_PROMPT = (
     "6. On the VERY LAST LINE of your output, write exactly one of:\n"
     "   INTENT:CONVERSATIONAL — if the speaker is asking a question, giving a command, or chatting\n"
     "   INTENT:TRANSCRIPTION — if the speaker explicitly asks to transcribe, dictate, or write down text\n"
+    "   INTENT:SEARCH — if the speaker asks to find, search, look up, or research something on the internet\n"
 )
 
 _IMAGE_SYSTEM_PROMPT = (
@@ -68,6 +69,21 @@ _DOCUMENT_SUMMARY_PROMPT = (
     "Summarize the following document text. Highlight key points, "
     "decisions, action items, and important data.\n"
     "Preserve the original language.\n"
+)
+
+# Separate prompt used ONLY by process_media_for_memory (LTM path).
+# Adds modality/tone metadata tags before the summary to enrich the embedding
+# vector for hybrid RRF retrieval (semantic + pg_trgm keyword matching).
+_VOICE_LTM_PROMPT = (
+    "You are a precise speech-to-text analysis assistant.\n"
+    "Rules:\n"
+    "1. On the FIRST LINE write metadata tags in brackets:\n"
+    "   [VOICE, Tone: <tone>, Urgency: <urgency>]\n"
+    "   where <tone> is one of: Neutral, Curious, Frustrated, Excited, Formal, Casual\n"
+    "   and <urgency> is one of: Low, Medium, High\n"
+    "2. After the tags, transcribe the audio FAITHFULLY with proper punctuation.\n"
+    "3. Add a blank line and a 1-2 sentence summary IN THE SAME LANGUAGE as the audio.\n"
+    "4. If the audio is unintelligible, say '[unintelligible]'.\n"
 )
 
 
@@ -265,7 +281,7 @@ def _parse_voice_intent(raw_text: str) -> tuple[str, str]:
     """Parse INTENT: tag from the last line and strip it from transcript.
 
     Returns (clean_transcript, intent_type).
-    intent_type is "conversational" or "transcription" (lowercase).
+    intent_type is "conversational", "transcription", or "search" (lowercase).
     """
     lines = raw_text.rstrip().split("\n")
 
@@ -273,7 +289,7 @@ def _parse_voice_intent(raw_text: str) -> tuple[str, str]:
     intent = "conversational"  # default
     if lines and lines[-1].strip().upper().startswith("INTENT:"):
         tag = lines[-1].strip().split(":", 1)[1].strip().lower()
-        if tag in ("conversational", "transcription"):
+        if tag in ("conversational", "transcription", "search"):
             intent = tag
         # Remove the intent line from transcript
         lines = lines[:-1]
@@ -397,7 +413,8 @@ async def process_media_for_memory(
 
     # Route to appropriate processor
     if media_type == "voice":
-        extracted, _intent = await transcribe_voice(content_bytes, api_key, mime_type=effective_mime)
+        # Use enriched LTM prompt for voice memory storage (adds [VOICE, Tone, Urgency] tags)
+        extracted = await _transcribe_voice_for_ltm(content_bytes, api_key, mime_type=effective_mime)
     elif media_type == "image":
         extracted = await describe_image(content_bytes, api_key, mime_type=effective_mime, prompt=extra_prompt)
     elif media_type == "document_text":
@@ -411,12 +428,16 @@ async def process_media_for_memory(
         logging.warning("Media processing returned no text for %s", media_type)
         return None
 
+    # Parse modality/tone tags from LTM-enriched output (voice)
+    ltm_metadata = _extract_ltm_tags(extracted) if media_type == "voice" else {}
+
     # Store in long-term memory
     from app.repos.memory import store_memory
 
     metadata: dict[str, Any] = {"media_type": media_type}
     if telegram_file_id:
         metadata["telegram_file_id"] = telegram_file_id
+    metadata.update(ltm_metadata)
 
     return await store_memory(
         user_id,
@@ -425,3 +446,56 @@ async def process_media_for_memory(
         source_type=media_type,
         metadata=metadata,
     )
+
+
+async def _transcribe_voice_for_ltm(
+    audio_bytes: bytes,
+    api_key: str | None = None,
+    *,
+    mime_type: str = "audio/ogg",
+    model: str = TRANSCRIPTION_MODEL,
+) -> str | None:
+    """Transcribe voice for LTM storage using enriched prompt with modality tags.
+
+    Unlike ``transcribe_voice``, this uses ``_VOICE_LTM_PROMPT`` which instructs
+    the model to prepend ``[VOICE, Tone: X, Urgency: Y]`` metadata tags. These
+    tags are preserved in the text stored in pgvector, boosting RRF hybrid
+    retrieval when the user later asks about past voice messages.
+    """
+    if not audio_bytes:
+        return None
+
+    audio_part = types.Part(
+        inline_data=types.Blob(mime_type=mime_type, data=audio_bytes),
+    )
+
+    return await _generate_with_resilience(
+        parts=[audio_part],
+        model=model,
+        system_prompt=_VOICE_LTM_PROMPT,
+        thinking_config=THINKING_CONFIG_MEDIUM,  # LTM path doesn't need HIGH
+        api_key=api_key,
+    )
+
+
+def _extract_ltm_tags(text: str) -> dict[str, str]:
+    """Extract [VOICE, Tone: X, Urgency: Y] metadata from LTM-enriched text.
+
+    Returns a dict like {"tone": "Curious", "urgency": "High"} for storage
+    in the metadata JSONB column. Returns empty dict if no tags found.
+    """
+    import re
+
+    match = re.match(r"^\[([^\]]+)\]", text.strip())
+    if not match:
+        return {}
+
+    tags: dict[str, str] = {}
+    raw = match.group(1)
+    for item in raw.split(","):
+        item = item.strip()
+        if ":" in item:
+            key, val = item.split(":", 1)
+            tags[key.strip().lower()] = val.strip()
+        # Skip bare labels like "VOICE" (already captured by media_type)
+    return tags

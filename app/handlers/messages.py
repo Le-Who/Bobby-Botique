@@ -74,7 +74,15 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # ── 2. Telegram API logging ──────────────────────────────────────────
-        message_type = "photo" if update.message.photo else "voice" if update.message.voice else "text" if update.message.text else "other"
+        message_type = (
+            "photo"
+            if update.message.photo
+            else "voice"
+            if update.message.voice
+            else "text"
+            if update.message.text
+            else "other"
+        )
         start_time = api_logger.log_request(
             "telegram",
             method="handle_message",
@@ -87,9 +95,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
             from app.i18n import t
 
-            await update.message.reply_text(
-                t("error.message_too_long")
-            )
+            await update.message.reply_text(t("error.message_too_long"))
             return
 
         logging.info("Received message from user %s: %s", user_id, message_text[:100])
@@ -98,9 +104,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logging.warning("Rate limit exceeded for user %s", user_id)
             from app.i18n import t
 
-            await update.message.reply_text(
-                t("error.rate_limit")
-            )
+            await update.message.reply_text(t("error.rate_limit"))
             return
 
         # ── 3b. Request dedup (double-tap prevention) ────────────────────────
@@ -171,7 +175,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             method="handle_message",
                         )
                         await metrics_collector.record_request(
-                            "handle_message", elapsed, success=True, user_id=user_id,
+                            "handle_message",
+                            elapsed,
+                            success=True,
+                            user_id=user_id,
                         )
 
                 except Exception as e:
@@ -199,7 +206,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         error_message=str(e),
                     )
                     await metrics_collector.record_request(
-                        "handle_message", elapsed, success=False, user_id=user_id,
+                        "handle_message",
+                        elapsed,
+                        success=False,
+                        user_id=user_id,
                     )
                 finally:
                     unregister_heartbeat(placeholder_message.message_id)
@@ -250,8 +260,22 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             logging.exception("Error saving last sent message text")
 
-        # ── 8. Create placeholder & heartbeat, then process AI request ───────
+        # ── 7b. Debounce rapid-fire text messages ────────────────────────────
+        # 400ms aggregation window: merges multi-message "split taps"
+        # into a single AI request, saving tokens and improving response quality.
+        # Only applies to plain text (not photos, voice, documents).
         is_photo = bool(update.message.photo)
+        if not is_photo and update.message.text:
+            from app.middleware.debounce import debounce_text_message
+
+            merged = await debounce_text_message(user_id, message_text)
+            if merged is None:
+                # This message was absorbed into a debounce window;
+                # the first caller will process the merged result.
+                return
+            message_text = merged
+
+        # ── 8. Create placeholder & heartbeat, then process AI request ───────
 
         if is_photo:
             logging.info("Processing single photo from user %s", user_id)

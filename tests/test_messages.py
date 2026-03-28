@@ -167,6 +167,9 @@ async def test_handle_request_text_message_happy_path():
         noop_task.cancel = MagicMock()
         return noop_task
 
+    async def _debounce_passthrough(uid, text):
+        return text
+
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
@@ -178,6 +181,7 @@ async def test_handle_request_text_message_happy_path():
         patch("app.handlers.messages.state.get_user_lock") as mock_lock,
         patch("app.handlers.messages.asyncio.create_task") as mock_create_task,
         patch("app.utils.background_tasks.submit_task", side_effect=capture_submit) as mock_submit,
+        patch("app.middleware.debounce.debounce_text_message", side_effect=_debounce_passthrough),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -219,6 +223,9 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         noop_task.cancel = MagicMock()
         return noop_task
 
+    async def _debounce_passthrough(uid, text):
+        return text
+
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
@@ -236,6 +243,7 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         # shared across tests on the same worker. Without this mock, an earlier
         # test with the same user_id+text poisons the 3s dedup window.
         patch("app.middleware.dedup.is_duplicate_request", new_callable=AsyncMock, return_value=False),
+        patch("app.middleware.debounce.debounce_text_message", side_effect=_debounce_passthrough),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None
@@ -381,6 +389,9 @@ async def test_handle_request_exception_handling():
         mock_task.cancel = MagicMock()
         return mock_task
 
+    async def _debounce_passthrough(uid, text):
+        return text
+
     with (
         patch("app.handlers.messages.bind_request_span") as mock_span,
         patch("app.handlers.messages.set_request_id"),
@@ -392,6 +403,7 @@ async def test_handle_request_exception_handling():
         patch("app.handlers.agent.process_long_request", new_callable=AsyncMock) as mock_agent_process,
         patch("app.handlers.messages.asyncio.create_task", side_effect=mock_create_task),
         patch("app.utils.background_tasks.submit_task", side_effect=capture_submit),
+        patch("app.middleware.debounce.debounce_text_message", side_effect=_debounce_passthrough),
     ):
         mock_settings.TELEGRAM_MESSAGE_LIMIT = 4096
         mock_span.return_value.__enter__.return_value = None

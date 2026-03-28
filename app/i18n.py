@@ -115,7 +115,22 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Нет ожидающего голосового запроса.",
         "en": "❌ No pending voice request.",
     },
-
+    "voice.btn_deep_search": {
+        "ru": "🔍 Глубокий поиск (Agent)",
+        "en": "🔍 Deep Search (Agent)",
+    },
+    "voice.auto_confirm": {
+        "ru": "Автоматически отправлено (простой запрос)",
+        "en": "Auto-sent (simple request)",
+    },
+    "voice.show_tell_detected": {
+        "ru": "📸 К запросу прикреплено изображение из ответа",
+        "en": "📸 Image from replied message attached",
+    },
+    "voice.deep_search_starting": {
+        "ru": "🔍 Запускаю глубокий поиск...",
+        "en": "🔍 Starting deep search...",
+    },
     # ── General Errors ───────────────────────────────────────────────────
     "error.generic": {
         "ru": "❌ Произошла ошибка при обработке запроса. Попробуйте ещё раз.",
@@ -157,13 +172,11 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🚫 Все лимиты для всех моделей на сегодня исчерпаны. Попробуйте позже.",
         "en": "🚫 All model limits have been exhausted for today. Please try later.",
     },
-
     # ── Busy/Wait ────────────────────────────────────────────────────────
     "busy.toast": {
         "ru": "⏳ Дождитесь завершения текущего запроса",
         "en": "⏳ Please wait for the current request to finish",
     },
-
     # ── Processing Indicators ────────────────────────────────────────────
     "processing.thinking": {
         "ru": "🤔 Думаю...",
@@ -185,7 +198,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🖼️ Описываю изображение...",
         "en": "🖼️ Describing image...",
     },
-
     # ── Navigation / Menus ───────────────────────────────────────────────
     "menu.new_chat": {
         "ru": "💬 Новый чат",
@@ -223,7 +235,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⬅️ Меню",
         "en": "⬅️ Menu",
     },
-
     # ── New Chat / Topic ─────────────────────────────────────────────────
     "chat.new_topic": {
         "ru": "✅ Новый чат создан. История и системная инструкция сброшены.",
@@ -257,7 +268,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Супер! Мы готовы *копнуть глубже*! 😉 \nЧто еще вы хотели бы узнать по этой теме?",
         "en": "Great! We're ready to *dig deeper*! 😉 \nWhat else would you like to know about this topic?",
     },
-
     # ── Buttons ──────────────────────────────────────────────────────────
     "btn.retry": {
         "ru": "🔄 Попробовать ещё раз",
@@ -287,7 +297,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "Операция отменена.",
         "en": "Operation cancelled.",
     },
-
     # ── Help ─────────────────────────────────────────────────────────────
     "help.title": {
         "ru": (
@@ -407,7 +416,6 @@ _STRINGS: dict[str, dict[str, str]] = {
             "• `/roles` — open roles menu"
         ),
     },
-
     # ── Search Toggle ────────────────────────────────────────────────────
     "search.on": {
         "ru": "ВКЛЮЧЕН",
@@ -417,7 +425,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "ВЫКЛЮЧЕН",
         "en": "OFF",
     },
-
     # ── Complex Search ───────────────────────────────────────────────────
     "complex.detected": {
         "ru": "Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
@@ -431,7 +438,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🔎 Выполнить сложный поиск",
         "en": "🔎 Perform complex search",
     },
-
     # ── Documents ────────────────────────────────────────────────────────
     "doc.error_processing": {
         "ru": "❌ Произошла ошибка при обработке документа. Попробуйте другой файл.",
@@ -465,7 +471,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "📄 Обрабатываю документ...",
         "en": "📄 Processing document...",
     },
-
     # ── Image Processing ─────────────────────────────────────────────────
     "image.error": {
         "ru": "❌ Произошла ошибка при обработке изображения.",
@@ -487,13 +492,11 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⚠️ Слишком много одновременных медиа-групп. Попробуйте позже.",
         "en": "⚠️ Too many simultaneous media groups. Please try later.",
     },
-
     # ── LTM / Memory ────────────────────────────────────────────────────
     "ltm.memories_injected": {
         "ru": "\n\n_🧠 Использован контекст из прошлых бесед ({count})_",
         "en": "\n\n_🧠 Context from past conversations used ({count})_",
     },
-
     # ── Settings ─────────────────────────────────────────────────────────
     "settings.title": {
         "ru": "⚙️ **Настройки**",
@@ -559,7 +562,6 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Выключен",
         "en": "❌ Disabled",
     },
-
     # ── Dedup ────────────────────────────────────────────────────────────
     "dedup.skipping": {
         "ru": "⏳ Запрос уже обрабатывается…",

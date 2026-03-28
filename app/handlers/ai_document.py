@@ -225,12 +225,8 @@ async def _handle_document_question(
     except Exception as e:
         logging.error("Error processing document question: %s", e, exc_info=True)
         try:
-            await placeholder_message.edit_text(
-                t("doc.error_question")
-            )
+            await placeholder_message.edit_text(t("doc.error_question"))
         except Exception as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
             # Fallback на new message
-            await placeholder_message.reply_text(
-                t("doc.error_question")
-            )
+            await placeholder_message.reply_text(t("doc.error_question"))

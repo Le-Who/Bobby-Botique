@@ -318,7 +318,9 @@ def _build_settings_view(chat_state, lang: str):
 
     model_name = chat_state.model or t("settings.default_model", lang)
     thinking_str = _THINKING_LABELS.get(chat_state.thinking_level, chat_state.thinking_level or "🔄 Auto")
-    search_str = t("settings.search_enabled", lang) if chat_state.search_enabled else t("settings.search_disabled", lang)
+    search_str = (
+        t("settings.search_enabled", lang) if chat_state.search_enabled else t("settings.search_disabled", lang)
+    )
 
     role = chat_state.system_prompt
     if role and len(role) > 60:
@@ -338,18 +340,24 @@ def _build_settings_view(chat_state, lang: str):
     )
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)
-    ltm_btn_label = f"📚 {'On' if chat_state.ltm_enabled else 'Off'}" if lang == "en" else f"📚 {'Вкл' if chat_state.ltm_enabled else 'Выкл'}"
-    keyboard = InlineKeyboardMarkup([
+    ltm_btn_label = (
+        f"📚 {'On' if chat_state.ltm_enabled else 'Off'}"
+        if lang == "en"
+        else f"📚 {'Вкл' if chat_state.ltm_enabled else 'Выкл'}"
+    )
+    keyboard = InlineKeyboardMarkup(
         [
-            InlineKeyboardButton(t("settings.btn_change_model", lang), callback_data="model_menu"),
-            InlineKeyboardButton(t("settings.btn_thinking", lang), callback_data="settings_thinking"),
-        ],
-        [
-            InlineKeyboardButton(t("settings.btn_search", lang), callback_data="toggle_search"),
-            InlineKeyboardButton(t("settings.btn_roles", lang), callback_data="open_roles"),
-        ],
-        [
-            InlineKeyboardButton(ltm_btn_label, callback_data="toggle_ltm"),
-        ],
-    ])
+            [
+                InlineKeyboardButton(t("settings.btn_change_model", lang), callback_data="model_menu"),
+                InlineKeyboardButton(t("settings.btn_thinking", lang), callback_data="settings_thinking"),
+            ],
+            [
+                InlineKeyboardButton(t("settings.btn_search", lang), callback_data="toggle_search"),
+                InlineKeyboardButton(t("settings.btn_roles", lang), callback_data="open_roles"),
+            ],
+            [
+                InlineKeyboardButton(ltm_btn_label, callback_data="toggle_ltm"),
+            ],
+        ]
+    )
     return formatted_text, parse_mode, keyboard

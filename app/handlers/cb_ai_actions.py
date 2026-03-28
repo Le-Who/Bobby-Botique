@@ -92,9 +92,7 @@ async def complex_search_callback(update: Update, context: ContextTypes.DEFAULT_
             except Exception as e:
                 logging.error("complex_search task failed: %s", e, exc_info=True)
                 with contextlib.suppress(Exception):
-                    await placeholder_message.edit_text(
-                        t("error.generic")
-                    )
+                    await placeholder_message.edit_text(t("error.generic"))
 
         _task = asyncio.create_task(task_wrapper())
         _background_tasks.add(_task)

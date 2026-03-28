@@ -35,7 +35,9 @@ _HEAVY_CALLBACK_SEMAPHORE = asyncio.Semaphore(_HEAVY_CALLBACK_LIMIT)
 
 _background_tasks: set = set()
 
-_BUSY_TOAST = "⏳ Дождитесь завершения текущего запроса"  # Default ru, handlers use t("busy.toast", lang) when they have Update
+_BUSY_TOAST = (
+    "⏳ Дождитесь завершения текущего запроса"  # Default ru, handlers use t("busy.toast", lang) when they have Update
+)
 
 
 def _is_user_busy(user_id: int) -> bool:

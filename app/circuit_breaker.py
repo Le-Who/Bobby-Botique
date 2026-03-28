@@ -210,10 +210,7 @@ class CircuitBreaker:
                         f"Failures={self._total_failures}"
                     )
                     # Log at INFO only on state change or new failures
-                    if (
-                        self._state != _last_logged_state
-                        or self._total_failures > _last_logged_failures
-                    ):
+                    if self._state != _last_logged_state or self._total_failures > _last_logged_failures:
                         logging.info(status_msg)
                         _last_logged_state = self._state
                         _last_logged_failures = self._total_failures

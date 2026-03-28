@@ -3,6 +3,41 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.70] - 2026-03-28 - Multimodal Architecture Upgrade & Voice Resilience
+
+### ✨ New Features (Multimodal UX)
+
+| Feature | Files | Detail |
+|---------|-------|--------|
+| Smart Voice Auto-Routing | `msg_voice.py`, `thinking_classifier.py` | Voice messages with `LOW` complexity transcripts (greetings, confirmations) now skip the manual confirmation UI entirely and execute via `_handle_regular_chat`. |
+| Agentic Voice Search | `multimodal_processor.py`, `cb_voice.py` | Added `INTENT:SEARCH` to voice ASR prompt. Shows a `🔍 Deep Search (Agent)` primary button to natively trigger the web research engine (`_handle_research_agent`). |
+| Show & Tell (Voice+Image) | `msg_voice.py`, `cb_voice.py` | If a voice message is a Reply to a Photo, the image is dynamically fetched, locally cached, and injected as a `TaggedImage` into the `parts` array so the LLM can "see" what the user is talking about. |
+
+### ⚡ Performance & Memory Optimization
+
+| Change | Files | Detail |
+|--------|-------|--------|
+| Entropy-Based Image Compression | `image_utils.py` | Shannon entropy analysis on 256x256 thumbnails dynamically dials resolution limits. Text-dense screenshots get a +50% dimension boost; simple photos get a -25% token-saving reduction. |
+| Message Debounce (Split-Tapping) | `debounce.py` [NEW], `messages.py` | 400ms `asyncio.Event` aggregation window merges rapid-fire text messages from the same user into a single AI request, preventing fragmented replies and token waste. |
+| Memory Enrichment Tags | `multimodal_processor.py`, `ai_photo.py` | Custom `_VOICE_LTM_PROMPT` enforces extraction of `[VOICE, Tone: X, Urgency: Y]` metadata stored in the new JSONB `metadata` column, boosting keyword hits in RRF hybrid retrieval. |
+
+### 🛡️ Voice Pipeline Resilience (Hotfix)
+
+| Fix | Files | Detail |
+|-----|-------|--------|
+| `TimeoutError` silent failure fix | `resilience_policy.py`, `multimodal_processor.py` | Fixed bug where `asyncio.TimeoutError` stringified as empty, bypassing retry logic. Created `is_retryable_exception()` type check. Dialed `_MEDIA_RESILIENCE` to 30s timeout, 2 retries. |
+| Voice handler unmanaged execution | `messages.py`, `msg_voice.py` | Moved voice processing into the standard `submit_task` + `task_wrapper` pattern (alongside text/photo), ensuring heartbeat logging, `user_lock` concurrency limits, and 90s overall timeouts apply. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Ruff format | 10 files reformatted |
+| Tests | **1453 passed**, 0 failed |
+
+---
+
 ## [2.8.69] - 2026-03-27 - i18n Rollout & Conversational Voice Flow
 
 ### ✨ New Features
