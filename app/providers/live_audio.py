@@ -17,7 +17,7 @@ from google.genai import types
 
 from app.providers.gemini import get_cached_genai_client
 
-LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+LIVE_MODEL = "gemini-3.1-flash-live-preview"
 FALLBACK_LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
 DEFAULT_VOICE = "Kore"
 
@@ -36,8 +36,7 @@ async def generate_audio_dialog(
     collects audio chunks + output transcription, and closes.
 
     The Live API generates speech with natural intonation and emotional
-    awareness (enable_affective_dialog), which produces higher quality
-    audio than the REST TTS endpoint.
+    awareness, which produces higher quality audio than the REST TTS endpoint.
 
     Args:
         text: Text input to speak (bot's response text).
@@ -57,36 +56,35 @@ async def generate_audio_dialog(
     # Truncate to avoid long sessions
     dialog_text = text[:2000] if len(text) > 2000 else text
 
-    # Configure Live session
-    config = types.LiveConnectConfig(
-        response_modalities=["AUDIO"],  # type: ignore[list-item]  # SDK accepts str|Modality
-        output_audio_transcription=types.AudioTranscriptionConfig(),
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=voice,
-                )
-            )
-        ),
-    )
-
-    # Inject system instruction if provided
-    if system_instruction:
-        config.system_instruction = types.Content(parts=[types.Part(text=system_instruction)])
-
-    audio_buffer = bytearray()
-    transcript_parts: list[str] = []
-
     # Try primary model, then fallback
     for model_name in [LIVE_MODEL, FALLBACK_LIVE_MODEL]:
-        audio_buffer.clear()
-        transcript_parts.clear()
+        # Configure Live session dynamically for each model
+        config_kwargs = {
+            "response_modalities": ["AUDIO"],  # type: ignore[list-item]
+            "output_audio_transcription": types.AudioTranscriptionConfig(),
+            "speech_config": types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=voice,
+                    )
+                )
+            ),
+        }
+
+        config = types.LiveConnectConfig(**config_kwargs)
+
+        # Inject system instruction if provided
+        if system_instruction:
+            config.system_instruction = types.Content(parts=[types.Part.from_text(text=system_instruction)])
+
+        audio_buffer = bytearray()
+        transcript_parts: list[str] = []
 
         try:
             async with asyncio.timeout(timeout):
                 async with client.aio.live.connect(model=model_name, config=config) as session:
-                    # Send text input as a single turn
-                    await session.send(input=dialog_text, end_of_turn=True)
+                    # Send text input as a realtime input chunk (new API design)
+                    await session.send_realtime_input(text=dialog_text)
 
                     # Collect response chunks
                     async for response in session.receive():

@@ -9,8 +9,9 @@ Format is optimized for agent-parseable context.
  
 | Component | Files | Detail |
 |-----------|-------|--------|
-| Live API Handshake | `live_audio.py`, `ai_chat.py` | Fixed a critical issue where passing thousands of tokens of GraphRAG XML and conversational instructions as the `system_instruction` caused the Gemini Live API WebSocket to instantly abort connection with a `1007 INVALID_ARGUMENT` or silent drop. The Voice Engine now operates strictly as a pure TTS reader and ignores upstream conversational personas, ensuring robust 100% connection success. |
-| Fallback Models | `live_audio.py` | Removed the non-existent `gemini-3.1-flash-live-preview` from fallback models since that endpoint officially dropped support for bidirectional `AUDIO` modality. Replaced with the stable `gemini-2.5-flash-native-audio-latest`. |
+| Live API SDK Bump | `live_audio.py` | Migrated internal WebSocket stream from deprecated `session.send(client_content)` to `session.send_realtime_input(text=...)`. This correctly processes pure-text triggers into Live API audio without timing out on Google GenAI SDK v1+. |
+| Live API Models | `live_audio.py` | Updated preferred Live model to `gemini-3.1-flash-live-preview`, replacing the deprecated legacy `gemini-2.5-flash-native-audio-preview-*` series. Validated `ThinkingLevel=Minimal` naturally engages and correctly streams inline audio and output transcription tokens concurrently. |
+| Fallback Models | `live_audio.py` | Removed the non-existent `gemini-3.1-flash-live-preview` from fallback models stack, correcting it as the primary. Set fallback to `gemini-2.5-flash-native-audio-latest`. |
 | TTS Generation Timeouts | `tts.py` | Increased the REST TTS fallback timeout limit from 30s to 90s, resolving intermittent `TimeoutError` exceptions that were occurring when generating long (>2000 char) PCM voice replies via `gemini-2.5-flash-preview-tts`. |
 | UI Transcript Persistence | `msg_voice.py`, `cb_voice.py` | Addressed aggressive placeholder overwriting. Rather than editing the original audio transcript message, voice auto-routing and confirmation dialogs now mark the transcript as "✅ Принято" and spawn a brand new placeholder for the AI's response, leaving the user's transcript intact for historical context. |
  
