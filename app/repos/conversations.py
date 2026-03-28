@@ -173,36 +173,29 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
 
             role_prompt = conv_data[0]["role_prompt"]
 
-            messages = await get_conversation_messages(conversation_id, user_id, conn=conn)
-            if messages is None:
-                return False
-
+            # ⚡ Bolt Optimization: Eliminate Python-side JSON/string serialization roundtrips by
+            # doing the DELETE, INSERT...SELECT, and UPDATE atomically on the Postgres server.
+            # We use COALESCE to preserve the system_prompt if role_prompt is None.
+            query = """
+            WITH delete_active AS (
+                DELETE FROM active_chat_messages WHERE user_id = $1
+            ),
+            insert_active AS (
+                INSERT INTO active_chat_messages (user_id, role, content, created_at)
+                SELECT $1, cm.role, COALESCE(cm.content, ''), cm.created_at
+                FROM conversation_messages cm
+                WHERE cm.conversation_id = $2
+                ORDER BY cm.created_at ASC
+            )
+            UPDATE chats
+            SET token_count = 0, system_prompt = COALESCE($3, system_prompt)
+            WHERE user_id = $1
+            """
             await db_query(
-                "DELETE FROM active_chat_messages WHERE user_id = $1",
-                (user_id,),
+                query,
+                (user_id, conversation_id, role_prompt),
                 conn=conn,
             )
-            if messages:
-                insert_data = [(user_id, msg["role"], str(msg.get("content", ""))) for msg in messages]
-                await db_execute_many(
-                    "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-                    insert_data,
-                    conn=conn,
-                )
-
-            # ⚡ Bolt Optimization: Combine token_count and system_prompt updates into 1 query
-            if role_prompt is not None:
-                await db_query(
-                    "UPDATE chats SET token_count = 0, system_prompt = $1 WHERE user_id = $2",
-                    (role_prompt, user_id),
-                    conn=conn,
-                )
-            else:
-                await db_query(
-                    "UPDATE chats SET token_count = 0 WHERE user_id = $1",
-                    (user_id,),
-                    conn=conn,
-                )
 
         return True
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
