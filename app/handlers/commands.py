@@ -120,6 +120,14 @@ async def new_chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_state.system_prompt = None
     await update_user_chat(user_id, chat_state)
 
+    from app.middleware.dedup import clear_user_dedup
+    clear_user_dedup(user_id)
+    
+    if context and context.user_data is not None:
+        keys_to_clear = [k for k in context.user_data if str(k).startswith("voice_pending")]
+        for k in keys_to_clear:
+            context.user_data.pop(k, None)
+
     text = t("chat.new_started")
 
     formatted_text, parse_mode = TelegramFormatter.format_text(text)

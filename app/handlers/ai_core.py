@@ -58,9 +58,10 @@ async def handle_ai_response_error(response_text: str, placeholder_message: Mess
     try:
         await placeholder_message.edit_text(response_text, reply_markup=reply_markup)
     except Exception as edit_error:
-        logging.error("Could not edit placeholder message: %s", edit_error)
-        with contextlib.suppress(Exception):
-            await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
+        if "not modified" not in str(edit_error).lower():
+            logging.error("Could not edit placeholder message: %s", edit_error)
+            with contextlib.suppress(Exception):
+                await placeholder_message.reply_text(response_text, reply_markup=reply_markup)
 
     return True
 

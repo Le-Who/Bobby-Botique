@@ -80,11 +80,12 @@ async def is_duplicate_request(user_id: int, message_text: str) -> bool:
 def clear_user_dedup(user_id: int) -> None:
     """Clear dedup state for a user (e.g., after /newchat)."""
     _recent_requests.pop(user_id, None)
+    _recent_voice_ids.pop(user_id, None)
 
 
-# ── Voice-specific dedup (extended window) ───────────────────────────────────
+# --- Voice-specific dedup (extended window) ---
 
-VOICE_DEDUP_WINDOW: float = 120.0  # 2 minutes — voice processing takes 30-60s
+VOICE_DEDUP_WINDOW: float = 30.0  # Reduced to 30s so manual retries work
 
 _recent_voice_ids: dict[int, dict[str, float]] = defaultdict(dict)
 

@@ -257,16 +257,17 @@ async def _show_confirmation_ui(
                 InlineKeyboardButton(t("voice.btn_confirm", lang), callback_data="voice:confirm"),
                 InlineKeyboardButton(t("voice.btn_transcribe_only", lang), callback_data="voice:transcribe_only"),
             ],
+            [InlineKeyboardButton("⚡ Re-transcribe (Flash)", callback_data="voice:retranscribe_flash")],
             [InlineKeyboardButton(t("voice.btn_cancel", lang), callback_data="voice:cancel")],
         ]
     else:
-        # Standard: confirm / transcribe / edit / cancel
         keyboard = [
             [InlineKeyboardButton(t("voice.btn_confirm", lang), callback_data="voice:confirm")],
             [
                 InlineKeyboardButton(t("voice.btn_transcribe_only", lang), callback_data="voice:transcribe_only"),
                 InlineKeyboardButton(t("voice.btn_edit", lang), callback_data="voice:edit"),
             ],
+            [InlineKeyboardButton("⚡ Re-transcribe (Flash)", callback_data="voice:retranscribe_flash")],
             [InlineKeyboardButton(t("voice.btn_cancel", lang), callback_data="voice:cancel")],
         ]
 
@@ -291,7 +292,7 @@ async def _show_confirmation_ui(
         if attached_image:
             pending["attached_image"] = attached_image
 
-        context.user_data["voice_pending"] = pending
+        context.user_data[f"voice_pending_{placeholder.message_id}"] = pending
 
 
 async def _auto_route_to_chat(

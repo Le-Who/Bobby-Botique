@@ -266,7 +266,11 @@ async def _handle_regular_chat(
             chat_state.history.pop()
             await update_user_chat(user_id, chat_state)
 
-        if await handle_ai_response_error(response_text, placeholder_message, on_error_callback=cleanup_on_error):
+        if await handle_ai_response_error(
+            response_text,
+            stream_last_msg or placeholder_message,
+            on_error_callback=cleanup_on_error
+        ):
             return
         else:
             # Branch-aware action button

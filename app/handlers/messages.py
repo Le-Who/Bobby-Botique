@@ -149,6 +149,13 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await update.message.reply_text(_t("voice.too_short", _dl(None)))
                 return
 
+            user_state = state.get_user_state(user_id)
+            if user_state.is_processing or state.get_user_lock(user_id).locked():
+                from app.i18n import t as _t
+                await update.message.reply_text(_t("busy.user", "ru"))
+                return
+            user_state.is_processing = True
+
             from app.i18n import t as _t
 
             placeholder_message = await update.message.reply_text(_t("voice.processing", "ru"))
@@ -212,6 +219,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         user_id=user_id,
                     )
                 finally:
+                    user_state = state.get_user_state(user_id)
+                    user_state.is_processing = False
                     unregister_heartbeat(placeholder_message.message_id)
                     if not done_event.is_set():
                         stop_heartbeat(placeholder_message.message_id)
@@ -276,6 +285,12 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             message_text = merged
 
         # ── 8. Create placeholder & heartbeat, then process AI request ───────
+        user_state = state.get_user_state(user_id)
+        if user_state.is_processing or state.get_user_lock(user_id).locked():
+            from app.i18n import t as _t
+            await update.message.reply_text(_t("busy.user", "ru"))
+            return
+        user_state.is_processing = True
 
         if is_photo:
             logging.info("Processing single photo from user %s", user_id)
@@ -345,6 +360,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
                 await metrics_collector.record_request("handle_message", elapsed, success=False, user_id=user_id)
             finally:
+                user_state = state.get_user_state(user_id)
+                user_state.is_processing = False
                 unregister_heartbeat(placeholder_message.message_id)
                 if not done_event.is_set():
                     stop_heartbeat(placeholder_message.message_id)

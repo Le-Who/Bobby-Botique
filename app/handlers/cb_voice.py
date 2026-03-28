@@ -38,11 +38,11 @@ async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         query.from_user.id,
         getattr(query.message.chat, "id", None) if query.message else None,
     )
+    action = query.data.split(":")[1] if query.data and ":" in query.data else ""
 
-    action = query.data.split(":")[1] if ":" in query.data else ""
-
-    # Retrieve pending voice data
-    pending = context.user_data.get("voice_pending") if context.user_data else None
+    # Retrieve pending voice data bound EXACTLY to this message UI
+    pending_key = f"voice_pending_{query.message.message_id}" if query.message else "voice_pending"
+    pending = context.user_data.get(pending_key) if context.user_data else None
     lang = pending.get("lang", "ru") if pending else "ru"
 
     if action == "cancel":
@@ -55,6 +55,8 @@ async def voice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _handle_edit(query, context, pending, lang)
     elif action == "deep_search":
         await _handle_deep_search(query, context, pending, lang)
+    elif action == "retranscribe_flash":
+        await _handle_retranscribe_flash(query, context, pending, pending_key, lang)
     else:
         await query.answer()
 
@@ -65,8 +67,8 @@ async def _handle_cancel(query, context, lang: str) -> None:
     with contextlib.suppress(telegram.error.BadRequest):
         await query.edit_message_text(t("voice.cancelled", lang))
     # Clean up pending data
-    if context.user_data:
-        context.user_data.pop("voice_pending", None)
+    if context.user_data and query.message:
+        context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
 
 
 async def _handle_transcribe_only(query, context, pending: dict | None, lang: str) -> None:
@@ -90,8 +92,8 @@ async def _handle_transcribe_only(query, context, pending: dict | None, lang: st
     )
 
     # Clean up
-    if context.user_data:
-        context.user_data.pop("voice_pending", None)
+    if context.user_data and query.message:
+        context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
 
 
 async def _handle_confirm(query, context, pending: dict | None, lang: str) -> None:
@@ -123,8 +125,8 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
     attached_image = pending.get("attached_image")
 
     # Clean up pending BEFORE starting the task
-    if context.user_data:
-        context.user_data.pop("voice_pending", None)
+    if context.user_data and query.message:
+        context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
 
     async def _confirm_wrapper() -> None:
         try:
@@ -227,8 +229,8 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
     transcript = pending["transcript"]
 
     # Clean up pending
-    if context.user_data:
-        context.user_data.pop("voice_pending", None)
+    if context.user_data and query.message:
+        context.user_data.pop(f"voice_pending_{query.message.message_id}", None)
 
     async def _deep_search_wrapper() -> None:
         try:
@@ -259,5 +261,77 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
                 await placeholder_message.edit_text(t("error.generic", lang))
 
     _task = asyncio.create_task(_deep_search_wrapper())
+    _background_tasks.add(_task)
+    _task.add_done_callback(_background_tasks.discard)
+
+
+async def _handle_retranscribe_flash(query, context, pending: dict | None, pending_key: str, lang: str) -> None:
+    """Re-transcribe using the smarter Gemini Flash model."""
+    if not pending:
+        await query.answer()
+        with contextlib.suppress(telegram.error.BadRequest):
+            await query.edit_message_text(t("voice.no_pending", lang))
+        return
+
+    user_id = pending["user_id"]
+    user_lock = state.get_user_lock(user_id)
+
+    # Busy check
+    await query.answer(t("busy.toast", lang) if user_lock.locked() else "")
+    if user_lock.locked():
+        return
+
+    # Update UI to show processing
+    with contextlib.suppress(telegram.error.BadRequest):
+        await query.edit_message_text("⚡ _Идёт повторная транскрибация..._")
+
+    placeholder_message = query.message
+    voice_bytes = pending["voice_bytes"]
+    
+    # We DO NOT pop the pending data here, because we want to update it!
+
+    async def _retranscribe_wrapper() -> None:
+        try:
+            from app.handlers.msg_voice import _show_confirmation_ui
+            from app.utils.multimodal_processor import transcribe_voice
+            
+            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                # Retranscribe with the specific premium model requested
+                new_transcript, new_intent = await transcribe_voice(
+                    voice_bytes,
+                    model="gemini-3-flash-preview"
+                )
+                
+                if new_transcript is None:
+                    # Revert nicely
+                    await query.edit_message_text("❌ _Не удалось перерасшифровать. Попробуйте снова или отмените._")
+                    return
+                
+                # We need to update the transcript in the context so the user can Confirm the NEW transcript
+                pending["transcript"] = new_transcript
+                if context.user_data:
+                    context.user_data[pending_key] = pending
+                
+                class MockVoice:
+                    file_unique_id = pending.get("file_unique_id")
+                    
+                await _show_confirmation_ui(
+                    placeholder=placeholder_message,
+                    transcript=new_transcript,
+                    lang=lang,
+                    user_id=user_id,
+                    voice_bytes=voice_bytes,
+                    voice=MockVoice(),
+                    context=context,
+                    intent=new_intent,
+                    attached_image=pending.get("attached_image")
+                )
+                
+        except Exception as e:
+            logging.error("voice:retranscribe_flash task failed: %s", e, exc_info=True)
+            with contextlib.suppress(Exception):
+                await placeholder_message.edit_text(t("error.generic", lang))
+
+    _task = asyncio.create_task(_retranscribe_wrapper())
     _background_tasks.add(_task)
     _task.add_done_callback(_background_tasks.discard)

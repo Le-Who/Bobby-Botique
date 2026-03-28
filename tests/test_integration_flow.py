@@ -189,6 +189,7 @@ async def test_happy_path_text_message(run_background_sync):
         mock_lock = MagicMock()
         mock_lock.__aenter__ = AsyncMock(return_value=None)
         mock_lock.__aexit__ = AsyncMock(return_value=None)
+        mock_lock.locked = MagicMock(return_value=False)
 
         with patch("app.state.get_user_lock", return_value=mock_lock):
             from app.handlers.messages import handle_request
@@ -272,6 +273,7 @@ async def test_agent_error_shows_retry_keyboard(run_background_sync):
         mock_lock = MagicMock()
         mock_lock.__aenter__ = AsyncMock(return_value=None)
         mock_lock.__aexit__ = AsyncMock(return_value=None)
+        mock_lock.locked = MagicMock(return_value=False)
 
         with (
             patch("app.state.get_user_lock", return_value=mock_lock),

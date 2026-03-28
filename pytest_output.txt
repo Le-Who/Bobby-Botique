@@ -1,0 +1,280 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0 -- d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\gemaibotv2\gemaibotv2
+configfile: pytest.ini
+plugins: anyio-4.12.1, asyncio-1.3.0, cov-7.0.0, timeout-2.4.0, xdist-3.8.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+timeout: 30.0s
+timeout method: thread
+timeout func_only: False
+created: 12/12 workers
+12 workers [9 items]
+
+scheduling tests via LoadScheduling
+
+tests/test_messages.py::test_handle_request_invalid_update 
+tests/test_messages.py::test_handle_request_rate_limit_exceeded 
+tests/test_messages.py::test_handle_request_exception_handling 
+tests/test_messages.py::test_handle_request_text_message_happy_path_with_task_execution 
+tests/test_messages.py::test_handle_request_document 
+tests/test_messages.py::test_handle_request_text_message_happy_path 
+tests/test_messages.py::test_handle_request_unauthorized 
+tests/test_messages.py::test_handle_request_invalid_user_id 
+tests/test_messages.py::test_handle_request_photo_message 
+[gw3] [ 11%] ERROR tests/test_messages.py::test_handle_request_unauthorized 
+[gw4] [ 22%] ERROR tests/test_messages.py::test_handle_request_text_message_happy_path 
+[gw5] [ 33%] ERROR tests/test_messages.py::test_handle_request_text_message_happy_path_with_task_execution 
+[gw2] [ 44%] ERROR tests/test_messages.py::test_handle_request_rate_limit_exceeded 
+[gw6] [ 55%] ERROR tests/test_messages.py::test_handle_request_photo_message 
+[gw0] [ 66%] ERROR tests/test_messages.py::test_handle_request_invalid_update 
+[gw1] [ 77%] ERROR tests/test_messages.py::test_handle_request_invalid_user_id 
+[gw8] [ 88%] ERROR tests/test_messages.py::test_handle_request_exception_handling 
+[gw7] [100%] ERROR tests/test_messages.py::test_handle_request_document 
+
+=================================== ERRORS ====================================
+_____________ ERROR at setup of test_handle_request_unauthorized ______________
+[gw3] win32 -- Python 3.14.3 d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+
+self = <Coroutine test_handle_request_unauthorized>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    @pytest.fixture(autouse=True)
+    def _clear_user_state():
+        """Clear global user state and locks between tests to prevent pollution."""
+>       from app.state import USER_STATES, _user_locks
+E       ImportError: cannot import name '_user_locks' from 'app.state' (D:\gemaibotv2\gemaibotv2\app\state.py)
+
+tests\conftest.py:65: ImportError
+________ ERROR at setup of test_handle_request_text_message_happy_path ________
+[gw4] win32 -- Python 3.14.3 d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+
+self = <Coroutine test_handle_request_text_message_happy_path>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    @pytest.fixture(autouse=True)
+    def _clear_user_state():
+        """Clear global user state and locks between tests to prevent pollution."""
+>       from app.state import USER_STATES, _user_locks
+E       ImportError: cannot import name '_user_locks' from 'app.state' (D:\gemaibotv2\gemaibotv2\app\state.py)
+
+tests\conftest.py:65: ImportError
+_ ERROR at setup of test_handle_request_text_message_happy_path_with_task_execution _
+[gw5] win32 -- Python 3.14.3 d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+
+self = <Coroutine test_handle_request_text_message_happy_path_with_task_execution>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    @pytest.fixture(autouse=True)
+    def _clear_user_state():
+        """Clear global user state and locks between tests to prevent pollution."""
+>       from app.state import USER_STATES, _user_locks
+E       ImportError: cannot import name '_user_locks' from 'app.state' (D:\gemaibotv2\gemaibotv2\app\state.py)
+
+tests\conftest.py:65: ImportError
+__________ ERROR at setup of test_handle_request_rate_limit_exceeded __________
+[gw2] win32 -- Python 3.14.3 d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+
+self = <Coroutine test_handle_request_rate_limit_exceeded>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    @pytest.fixture(autouse=True)
+    def _clear_user_state():
+        """Clear global user state and locks between tests to prevent pollution."""
+>       from app.state import USER_STATES, _user_locks
+E       ImportError: cannot import name '_user_locks' from 'app.state' (D:\gemaibotv2\gemaibotv2\app\state.py)
+
+tests\conftest.py:65: ImportError
+_____________ ERROR at setup of test_handle_request_photo_message _____________
+[gw6] win32 -- Python 3.14.3 d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+
+self = <Coroutine test_handle_request_photo_message>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    @pytest.fixture(autouse=True)
+    def _clear_user_state():
+        """Clear global user state and locks between tests to prevent pollution."""
+>       from app.state import USER_STATES, _user_locks
+E       ImportError: cannot import name '_user_locks' from 'app.state' (D:\gemaibotv2\gemaibotv2\app\state.py)
+
+tests\conftest.py:65: ImportError
+____________ ERROR at setup of test_handle_request_invalid_update _____________
+[gw0] win32 -- Python 3.14.3 d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+
+self = <Coroutine test_handle_request_invalid_update>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    @pytest.fixture(autouse=True)
+    def _clear_user_state():
+        """Clear global user state and locks between tests to prevent pollution."""
+>       from app.state import USER_STATES, _user_locks
+E       ImportError: cannot import name '_user_locks' from 'app.state' (D:\gemaibotv2\gemaibotv2\app\state.py)
+
+tests\conftest.py:65: ImportError
+____________ ERROR at setup of test_handle_request_invalid_user_id ____________
+[gw1] win32 -- Python 3.14.3 d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+
+self = <Coroutine test_handle_request_invalid_user_id>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    @pytest.fixture(autouse=True)
+    def _clear_user_state():
+        """Clear global user state and locks between tests to prevent pollution."""
+>       from app.state import USER_STATES, _user_locks
+E       ImportError: cannot import name '_user_locks' from 'app.state' (D:\gemaibotv2\gemaibotv2\app\state.py)
+
+tests\conftest.py:65: ImportError
+__________ ERROR at setup of test_handle_request_exception_handling ___________
+[gw8] win32 -- Python 3.14.3 d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+
+self = <Coroutine test_handle_request_exception_handling>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    @pytest.fixture(autouse=True)
+    def _clear_user_state():
+        """Clear global user state and locks between tests to prevent pollution."""
+>       from app.state import USER_STATES, _user_locks
+E       ImportError: cannot import name '_user_locks' from 'app.state' (D:\gemaibotv2\gemaibotv2\app\state.py)
+
+tests\conftest.py:65: ImportError
+_______________ ERROR at setup of test_handle_request_document ________________
+[gw7] win32 -- Python 3.14.3 d:\gemaibotv2\gemaibotv2\.venv\Scripts\python.exe
+
+self = <Coroutine test_handle_request_document>
+
+    def setup(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        if runner_fixture_id not in self.fixturenames:
+            self.fixturenames.append(runner_fixture_id)
+>       return super().setup()
+               ^^^^^^^^^^^^^^^
+
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:458: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\pytest_asyncio\plugin.py:730: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    @pytest.fixture(autouse=True)
+    def _clear_user_state():
+        """Clear global user state and locks between tests to prevent pollution."""
+>       from app.state import USER_STATES, _user_locks
+E       ImportError: cannot import name '_user_locks' from 'app.state' (D:\gemaibotv2\gemaibotv2\app\state.py)
+
+tests\conftest.py:65: ImportError
+=========================== short test summary info ===========================
+ERROR tests/test_messages.py::test_handle_request_unauthorized - ImportError:...
+ERROR tests/test_messages.py::test_handle_request_text_message_happy_path - I...
+ERROR tests/test_messages.py::test_handle_request_text_message_happy_path_with_task_execution
+ERROR tests/test_messages.py::test_handle_request_rate_limit_exceeded - Impor...
+ERROR tests/test_messages.py::test_handle_request_photo_message - ImportError...
+ERROR tests/test_messages.py::test_handle_request_invalid_update - ImportErro...
+ERROR tests/test_messages.py::test_handle_request_invalid_user_id - ImportErr...
+ERROR tests/test_messages.py::test_handle_request_exception_handling - Import...
+ERROR tests/test_messages.py::test_handle_request_document - ImportError: can...
+============================== 9 errors in 8.64s ==============================

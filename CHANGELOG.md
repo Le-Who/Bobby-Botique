@@ -3,6 +3,34 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.71] - 2026-03-28 - Voice Pipeline Concurrency & Deduplication Hardening
+
+### 🛡️ Concurrency & Race Condition Fixes
+
+| Fix | Files | Detail |
+|-----|-------|--------|
+| Synchronous Double-Tap Rejection | `state.py`, `messages.py` | Added atomic `is_processing` boolean flag to `UserState` to prevent overlapping requests. Guards both text and voice pipelines at entry (Step 1), synchronously rejecting double-taps before asyncio tasks even spin up. |
+| Message-Bound Voice Context | `msg_voice.py`, `cb_voice.py` | Voice contexts are now bound to specific `message_id`s (`voice_pending_{msg_id}`) instead of a global `voice_pending_` key. Prevents context contamination if multiple voice messages are sent concurrently or if the user taps buttons on old messages. |
+| Stream Error Double-Reply Fix | `ai_chat.py`, `ai_core.py` | Fixed a bug where a "2 RATE LIMIT" fallback messages fired. Propagated `stream_last_msg` during fallback handling to ensure the error uses the active placeholder ID and ignores transient "Message not modified" Telegram exceptions. |
+
+### ✨ Improvements & Cleanup
+
+| Improvement | Files | Detail |
+|-------------|-------|--------|
+| Faster Voice Retry Window | `dedup.py` | Reduced `VOICE_DEDUP_WINDOW` from 120s to 30s. Allows users to manually retry failed or ignored voice messages much quicker without artificial deduplication blocking. |
+| Deep State Cleanup on `/newchat` | `commands.py`, `dedup.py` | `/newchat` now explicitly purges the 30s voice deduplication cache (`clear_user_dedup`) and clears any floating `voice_pending_{id}` contexts, ensuring a truly clean slate. |
+| "Re-transcribe (Flash)" Button | `msg_voice.py`, `cb_voice.py` | Added a dedicated button to the voice confirmation UI to fast-track re-transcription using the `gemini-3-flash-preview` model for stubborn or misheard audio. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint / format | 0 errors |
+| Mypy | Unchanged |
+| Tests | **1453 passed**, 0 failed |
+
+---
+
 ## [2.8.70] - 2026-03-28 - Multimodal Architecture Upgrade & Voice Resilience
 
 ### ✨ New Features (Multimodal UX)

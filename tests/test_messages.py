@@ -189,6 +189,7 @@ async def test_handle_request_text_message_happy_path():
         mock_is_auth.return_value = True
         mock_lock.return_value.__aenter__.return_value = None
         mock_lock.return_value.__aexit__.return_value = None
+        mock_lock.return_value.locked.return_value = False
 
         await messages.handle_request(update, context)
 
@@ -251,6 +252,7 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
         mock_is_auth.return_value = True
         mock_lock.return_value.__aenter__.return_value = None
         mock_lock.return_value.__aexit__.return_value = None
+        mock_lock.return_value.locked.return_value = False
 
         await messages.handle_request(update, context)
 
@@ -319,6 +321,7 @@ async def test_handle_request_photo_message():
         mock_is_auth.return_value = True
         mock_lock.return_value.__aenter__.return_value = None
         mock_lock.return_value.__aexit__.return_value = None
+        mock_lock.return_value.locked.return_value = False
 
         await messages.handle_request(update, context)
 
@@ -411,6 +414,7 @@ async def test_handle_request_exception_handling():
         mock_is_auth.return_value = True
         mock_lock.return_value.__aenter__.return_value = None
         mock_lock.return_value.__aexit__.return_value = None
+        mock_lock.return_value.locked.return_value = False
 
         # Simulate exception
         mock_agent_process.side_effect = Exception("Agent Error")

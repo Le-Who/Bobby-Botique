@@ -40,6 +40,7 @@ class UserState:
         "_loaded_from_db",
         "_dirty",
         "_user_id",
+        "is_processing",
     )
 
     def __init__(self, user_id: int = 0):
@@ -62,6 +63,7 @@ class UserState:
         # Internal
         self._loaded_from_db: bool = False
         self._dirty: bool = False
+        self.is_processing: bool = False
 
 
 # =============================================================================
