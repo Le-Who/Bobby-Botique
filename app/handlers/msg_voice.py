@@ -177,8 +177,11 @@ def _should_auto_route(transcript: str) -> bool:
     text_lower = transcript.strip().lower()
 
     # Heuristic 1: Explicit voice commands (> 10 chars to avoid false positives)
-    action_prefixes = ("сочини ", "напиши ", "бот,", "бот ", "расскажи ", "сделай ")
-    if text_lower.startswith(action_prefixes) and len(text_lower) > 10:
+    # Give some leeway for ASR padding/filler words at the beginning
+    import re
+
+    action_pattern = re.compile(r"^(?:вот,?\s*)?(сочини|напиши|бот,?|расскажи|сделай)\s", re.IGNORECASE)
+    if action_pattern.match(text_lower) and len(text_lower) > 10:
         return True
 
     # Heuristic 2: Low-complexity classifier (greetings, confirmations)

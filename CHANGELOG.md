@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.75] - 2026-03-28 - ASR Prompt Bleeding & Verb Tolerance
+ 
+### 🎙️ ASR Accuracy & Intent Detection Fixes
+ 
+| Component | Files | Detail |
+|-----------|-------|--------|
+| ASR Prompt Bleeding | `multimodal_processor.py` | Addressed "instruction following bleed" where the LLM used for transcription would execute commands in the audio (e.g. "compose a story") instead of just transcribing them. Hardened `_VOICE_SYSTEM_PROMPT` to explicitly categorize generation verbs (compose, write, generate) into `INTENT:CONVERSATIONAL` rather than `INTENT:TRANSCRIPTION`, ensuring voice commands correctly route to the Chat AI instead of failing open with raw text. Also bypassed short-message summary generation to reduce token waste. |
+| Verbal Padding | `msg_voice.py` | Overhauled lexical heuristic logic (`_should_auto_route`). Replaced rigid `.startswith()` action prefix checks with flexible RegEx pattern matching (`(?:вот,?\s*)?`). Allows users to prepend commands with filler strings like "Вот, сочини" without failing the auto-route parser. |
+ 
+---
+
 ## [2.8.74] - 2026-03-28 - Multimodal Voice Pipeline Hardening
 
 ### 🛡️ Voice Pipeline Resilience
