@@ -321,13 +321,17 @@ async def _auto_route_to_chat(
     """Auto-route low-complexity voice to AI chat, skipping confirmation UI.
 
     Shows a brief indicator that auto-routing happened, then runs the
-    regular chat pipeline inline (caller already holds user_lock).
+    regular chat pipeline using a NEW placeholder message so the transcript
+    remains visible in chat history.
     """
     from app.utils.formatting import TelegramFormatter
 
     auto_text = f"{t('voice.transcript_label', lang)}\n\n{transcript}\n\n⚡ _{t('voice.auto_confirm', lang)}_"
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
-    await placeholder.edit_text(formatted, parse_mode=parse_mode)
+    await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
+
+    # Spawn a new placeholder for the LLM response so the transcript isn't overwritten
+    new_placeholder = await placeholder.reply_text("⏳ _Анализирую текст..._", parse_mode="Markdown")
 
     # Store in history
     chat_state = await get_user_chat(user_id)
@@ -347,7 +351,7 @@ async def _auto_route_to_chat(
         or "ответь голосом" in transcript.lower()
         or "прочитай вслух" in transcript.lower()
     )
-    await _handle_regular_chat(placeholder, user_id, transcript, chat_state, reply_with_voice=reply_with_voice)
+    await _handle_regular_chat(new_placeholder, user_id, transcript, chat_state, reply_with_voice=reply_with_voice)
 
     # Background LTM storage
     if chat_state.ltm_enabled:

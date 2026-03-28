@@ -26,7 +26,7 @@ async def generate_speech(
     api_key: str,
     *,
     voice: str = DEFAULT_VOICE,
-    timeout: float = 30.0,
+    timeout: float = 90.0,
 ) -> bytes | None:
     """Generate speech audio from text using Gemini TTS REST API.
 

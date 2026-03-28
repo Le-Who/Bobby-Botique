@@ -18,7 +18,7 @@ from google.genai import types
 from app.providers.gemini import get_cached_genai_client
 
 LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
-FALLBACK_LIVE_MODEL = "gemini-3.1-flash-live-preview"
+FALLBACK_LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
 DEFAULT_VOICE = "Kore"
 
 
@@ -129,7 +129,7 @@ async def generate_audio_dialog(
             transcript_parts.clear()
 
             logging.warning(
-                "Live API session failed with %s: %s",
+                "Live API session failed with %s: %r",
                 model_name,
                 e,
             )

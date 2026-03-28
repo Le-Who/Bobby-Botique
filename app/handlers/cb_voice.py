@@ -116,11 +116,14 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
     if user_lock.locked():
         return
 
-    # Update placeholder to show processing
+    # Update placeholder to show processing, leaving transcript intact
+    from app.utils.formatting import TelegramFormatter
+    final_text = f"{t('voice.transcript_label', lang)}\n\n{pending['transcript']}\n\n✅ _(Принято)_"
+    fmt, pm = TelegramFormatter.format_text(final_text)
     with contextlib.suppress(telegram.error.BadRequest):
-        await query.edit_message_text(t("voice.sending_request", lang))
+        await query.edit_message_text(fmt, parse_mode=pm, reply_markup=None)
 
-    placeholder_message = query.message
+    new_placeholder = await query.message.reply_text("⏳ _Анализирую текст..._", parse_mode="Markdown")
     transcript = pending["transcript"]
     attached_image = pending.get("attached_image")
 
@@ -160,7 +163,7 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
 
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
                 await _handle_regular_chat(
-                    placeholder_message,  # type: ignore[arg-type]
+                    new_placeholder,  # type: ignore[arg-type]
                     user_id,
                     transcript,
                     chat_state,
@@ -169,7 +172,7 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
         except Exception as e:
             logging.error("voice:confirm task failed: %s", e, exc_info=True)
             with contextlib.suppress(Exception):
-                await placeholder_message.edit_text(t("error.generic", lang))
+                await new_placeholder.edit_text(t("error.generic", lang))
 
     _task = asyncio.create_task(_confirm_wrapper())
     _background_tasks.add(_task)
@@ -222,11 +225,14 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
     if user_lock.locked():
         return
 
-    # Update placeholder
+    # Update placeholder to finalize transcript
+    from app.utils.formatting import TelegramFormatter
+    final_text = f"{t('voice.transcript_label', lang)}\n\n{pending['transcript']}\n\n🔍 _Deep Search_"
+    fmt, pm = TelegramFormatter.format_text(final_text)
     with contextlib.suppress(telegram.error.BadRequest):
-        await query.edit_message_text(t("voice.deep_search_starting", lang))
+        await query.edit_message_text(fmt, parse_mode=pm, reply_markup=None)
 
-    placeholder_message = query.message
+    new_placeholder = await query.message.reply_text("⏳ _Анализирую текст..._", parse_mode="Markdown")
     transcript = pending["transcript"]
 
     # Clean up pending
@@ -251,7 +257,7 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
 
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
                 await _handle_research_agent(
-                    placeholder_message,
+                    new_placeholder,
                     user_id,
                     transcript,
                     chat_state,
@@ -259,7 +265,7 @@ async def _handle_deep_search(query, context, pending: dict | None, lang: str) -
         except Exception as e:
             logging.error("voice:deep_search task failed: %s", e, exc_info=True)
             with contextlib.suppress(Exception):
-                await placeholder_message.edit_text(t("error.generic", lang))
+                await new_placeholder.edit_text(t("error.generic", lang))
 
     _task = asyncio.create_task(_deep_search_wrapper())
     _background_tasks.add(_task)
