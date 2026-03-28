@@ -18,7 +18,7 @@ from google.genai import types
 from app.providers.gemini import get_cached_genai_client
 
 LIVE_MODEL = "gemini-3.1-flash-live-preview"
-FALLBACK_LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
+FALLBACK_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_VOICE = "Kore"
 
 
@@ -59,19 +59,17 @@ async def generate_audio_dialog(
     # Try primary model, then fallback
     for model_name in [LIVE_MODEL, FALLBACK_LIVE_MODEL]:
         # Configure Live session dynamically for each model
-        config_kwargs = {
-            "response_modalities": ["AUDIO"],  # type: ignore[list-item]
-            "output_audio_transcription": types.AudioTranscriptionConfig(),
-            "speech_config": types.SpeechConfig(
+        config = types.LiveConnectConfig(
+            response_modalities=["AUDIO"],  # type: ignore[list-item]
+            output_audio_transcription=types.AudioTranscriptionConfig(),
+            speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
                         voice_name=voice,
                     )
                 )
             ),
-        }
-
-        config = types.LiveConnectConfig(**config_kwargs)
+        )
 
         # Inject system instruction if provided
         if system_instruction:
