@@ -7,6 +7,9 @@ Returns raw PCM 24kHz 16-bit mono bytes.
 This is the sole production path for voice replies.  The prompt uses the
 official "Director's Notes + Transcript" format with language-aware
 pronunciation heuristics (Russian ё/е, stress, abbreviations, etc.).
+
+Chunking is byte-based (UTF-8) to honour the Gemini Developer API input
+limits correctly: Cyrillic = 2 bytes/char, so character counts are inaccurate.
 """
 
 import asyncio
@@ -79,18 +82,23 @@ def _clean_text_for_speech(text: str) -> str:
     return t.strip()
 
 
-def _chunk_text_by_sentences(text: str, max_chars: int = 1500) -> list[str]:
-    """Split text into chunks at sentence boundaries, each ≤ max_chars.
+def _chunk_text_by_sentences(text: str, max_bytes: int = 3500) -> list[str]:
+    """Split text into chunks at sentence boundaries, each ≤ max_bytes when UTF-8 encoded.
+
+    Uses byte length rather than character length because the Gemini TTS API
+    enforces byte-level limits (Cyrillic = 2 bytes/char, CJK = 3 bytes/char).
+    A limit of 3500 bytes leaves ~500 bytes of headroom against the API's
+    4000-byte text-field cap and accounts for prompt overhead.
 
     Algorithm:
       1. Split on sentence-ending punctuation (.!? and their Unicode equivalents).
-      2. Greedily accumulate sentences into the current chunk.
-      3. When adding the next sentence would exceed max_chars, start a new chunk.
-      4. If a single sentence exceeds max_chars, include it as-is (never mid-word split).
+      2. Greedily accumulate sentences into the current chunk (measuring in bytes).
+      3. When adding the next sentence would exceed max_bytes, start a new chunk.
+      4. If a single sentence exceeds max_bytes, include it as-is (never mid-word split).
 
     Returns a list of non-empty text chunks.
     """
-    if len(text) <= max_chars:
+    if len(text.encode("utf-8")) <= max_bytes:
         return [text]
 
     # Split on sentence boundaries, keeping the delimiter attached to the sentence.
@@ -100,14 +108,27 @@ def _chunk_text_by_sentences(text: str, max_chars: int = 1500) -> list[str]:
 
     chunks: list[str] = []
     current = ""
+    current_bytes = 0
+
     for part in parts:
-        candidate = (current + " " + part).strip() if current else part
-        if len(candidate) <= max_chars:
+        part_bytes = len(part.encode("utf-8"))
+        if current:
+            # +1 for the space separator
+            candidate_bytes = current_bytes + 1 + part_bytes
+            candidate = current + " " + part
+        else:
+            candidate_bytes = part_bytes
+            candidate = part
+
+        if candidate_bytes <= max_bytes:
             current = candidate
+            current_bytes = candidate_bytes
         else:
             if current:
                 chunks.append(current)
             current = part
+            current_bytes = part_bytes
+
     if current:
         chunks.append(current)
 
@@ -173,7 +194,7 @@ async def generate_speech(
     api_key: str,
     *,
     voice: str = DEFAULT_VOICE,
-    timeout: float = 90.0,
+    timeout: float = 120.0,
 ) -> bytes | None:
     """Generate speech audio from text using Gemini TTS REST API.
 
@@ -187,7 +208,9 @@ async def generate_speech(
         text: Text to synthesize.
         api_key: Gemini API key.
         voice: Prebuilt voice name (default: Aoede).
-        timeout: Maximum time to wait for TTS response.
+        timeout: Maximum seconds to wait for TTS response. Callers should
+            compute an adaptive value based on text length; the default of
+            120 s is a safe upper bound for the maximum chunk size.
 
     Returns:
         Raw PCM 24kHz 16-bit mono bytes, or None on failure.

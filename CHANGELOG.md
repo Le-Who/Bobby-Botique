@@ -3,6 +3,33 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.5] - 2026-03-30 - Voice Pipeline Hardening: Byte-Based Chunking & Sequential TTS
+
+### 🛡️ Reliability — Eliminated Phantom 429 Quota Exhaustion
+
+Root cause: The parallel `asyncio.gather` TTS architecture would fire 2–3 simultaneous REST calls per voice reply. Free Tier keys carry a **~10 RPD** (requests-per-day) cap on `gemini-2.5-flash-preview-tts`. A single parallel burst consumed ≥30% of the daily quota, triggering rapid key suspension and generating phantom 429 errors that persisted for up to 24 hours.
+
+| Change | Files | Detail |
+|--------|-------|--------|
+| **Byte-based chunking** | `providers/tts.py` | `_chunk_text_by_sentences` rewritten from `max_chars: int = 1500` to `max_bytes: int = 3500`. Uses `len(part.encode("utf-8"))` accumulator. Cyrillic = 2 bytes/char; character counts were systematically under-counting payload size. 3500 bytes provides ~500-byte headroom under the 4000-byte API text-field limit. |
+| **Sequential generation** | `voice_engine.py` | Replaced `asyncio.gather` parallel chunk dispatch with a sequential `for i, chunk in enumerate(chunks)` loop. Each chunk uses a fresh key slot via the existing rotation pool — no burst, no suspension. |
+| **Adaptive timeout** | `voice_engine.py` | Fixed 120 s timeout replaced with `min(120.0, max(30.0, len(text) / 60.0 + 15.0))`. Short messages (~600 chars) now use 30 s; a full 2500-char chunk uses ~57 s. Prevents false hangs on short payloads. |
+| **User quota notification** | `voice_engine.py` | On complete TTS failure, `status_msg.edit_text("🔇 Голосовой ответ недоступен — превышена квота API.")` is shown for 5 s instead of silently deleting the indicator. Eliminates silent failure UX. |
+| **Partial audio delivery** | `voice_engine.py` | First-chunk failure aborts (no audio without context); later-chunk failures break and deliver successfully generated portion. Logged with chunk index for diagnostics. |
+| **Type annotation fix** | `voice_engine.py` | `_factory` coroutine closure now annotated as `Coroutine[Any, Any, None]` — resolves the single mypy `no-untyped-def` introduced in the file. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Ruff format | 0 violations |
+| Mypy (`--strict`, 2 source files) | 0 errors in `voice_engine.py` + `tts.py` |
+| py_compile | 0 errors |
+| Unit assertions (4) | All passed |
+
+---
+
 ## [2.9.4] - 2026-03-29 - GraphRAG Hardening & Streaming Cleanup
 
 ### 🚀 Features

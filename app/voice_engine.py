@@ -4,14 +4,20 @@
 Provides a single entry point for the chat handler to fire-and-forget
 voice reply generation after text streaming completes.
 
-Strategy: text → sentence-boundary chunking → parallel REST TTS calls →
-           PCM concatenation → ffmpeg → OGG Opus → bot.send_voice()
+Strategy: text → byte-based sentence chunking (≤3500 UTF-8 bytes/chunk) →
+           sequential REST TTS calls → PCM concatenation → ffmpeg →
+           OGG Opus → bot.send_voice()
 
-Chunking ensures full-text voicing for any response length без hard truncation.
+Sequential (not parallel) TTS calls are mandatory: Free Tier keys have a
+daily RPD cap of ~10 requests; burst parallel calls exhaust the cap and
+trigger day-long suspensions. Sequential processing guarantees each call
+uses a different (rotated) key slot.
 """
 
 import asyncio
 import logging
+from collections.abc import Coroutine
+from typing import Any
 
 from telegram import Bot
 
@@ -22,8 +28,16 @@ async def _generate_single_chunk(
     text_chunk: str,
     voice: str,
     failed_keys: set[str],
+    timeout: float = 120.0,
 ) -> bytes | None:
     """Generate PCM audio for a single text chunk with key rotation.
+
+    Args:
+        text_chunk: Pre-cleaned text fragment to synthesise.
+        voice: Prebuilt Gemini TTS voice name.
+        failed_keys: Shared set of key hashes to skip (mutated in place).
+        timeout: HTTP timeout forwarded to generate_speech; callers should
+            pass an adaptive value computed from the full text length.
 
     Returns raw PCM 24kHz 16-bit mono bytes, or None on failure.
     """
@@ -42,7 +56,7 @@ async def _generate_single_chunk(
             break
 
         try:
-            pcm = await generate_speech(text_chunk, key_data["api_key"], voice=voice)
+            pcm = await generate_speech(text_chunk, key_data["api_key"], voice=voice, timeout=timeout)
             if pcm:
                 return pcm
             else:
@@ -76,11 +90,17 @@ async def _generate_and_send_voice(
     """Generate TTS audio and send as Telegram voice message.
 
     Pipeline:
-      1. Clean & chunk text at sentence boundaries (≤1500 chars/chunk)
-      2. Generate PCM for each chunk (parallel with shared key rotation)
-      3. Concatenate raw PCM buffers (same sample rate → simple append)
-      4. Transcode PCM → OGG Opus
-      5. Send voice message
+      1. Clean text and split at sentence boundaries (≤3500 UTF-8 bytes/chunk)
+      2. Compute adaptive timeout (30–120 s) proportional to text length
+      3. Generate PCM for each chunk sequentially (shared key rotation)
+      4. Concatenate raw PCM buffers (same 24kHz 16-bit mono format)
+      5. Transcode PCM → OGG Opus
+      6. Send voice message
+
+    Failure policy:
+      - First chunk failure → abort (no audio without the opening context)
+      - Later chunk failures → send the portion already generated
+      - Complete failure → edit status message to inform the user
 
     Memory-critical: aggressively deletes intermediate buffers at each pipeline
     stage to avoid OOM on the 500MB RAM budget.
@@ -102,54 +122,73 @@ async def _generate_and_send_voice(
         pass
 
     try:
-        # 1. Clean & chunk (reduced from 1500 to 800 to prevent 90s REST API timeouts)
+        # 1. Clean & chunk using byte-based boundaries
+        # 3500 bytes ≤ Cloud TTS 4000-byte text-field limit; safe for Cyrillic (2 bytes/char).
         clean_text = _clean_text_for_speech(response_text)
         if not clean_text:
             logging.warning("Voice reply: cleaned text is empty (chat_id=%s)", chat_id)
             return
 
-        chunks = _chunk_text_by_sentences(clean_text, max_chars=800)
+        chunks = _chunk_text_by_sentences(clean_text, max_bytes=3500)
         logging.info(
-            "Voice reply: %d chars → %d chunk(s) for TTS",
+            "Voice reply: %d chars / %d bytes → %d chunk(s) for TTS",
             len(clean_text),
+            len(clean_text.encode("utf-8")),
             len(chunks),
         )
 
-        # 2. Generate PCM for each chunk (share the failed_keys set across chunks)
+        # 2. Adaptive timeout: ~1 s per 60 chars + 15 s base; capped at [30, 120].
+        # Prevents long hangs for short messages while covering large chunks.
+        adaptive_timeout = min(120.0, max(30.0, len(clean_text) / 60.0 + 15.0))
+
+        # 3. Generate PCM for each chunk sequentially.
+        # Sequential processing is MANDATORY: Free Tier keys have a ~10-RPD cap;
+        # burst parallel calls exhaust it and trigger day-long suspensions.
         failed_keys: set[str] = set()
+        pcm_parts: list[bytes] = []
 
-        if len(chunks) == 1:
-            # Fast path: single chunk, no concurrency overhead
-            pcm_audio = await _generate_single_chunk(chunks[0], voice, failed_keys)
-            if pcm_audio is None:
-                logging.warning("No audio generated for voice reply (chat_id=%s)", chat_id)
-                return
-        else:
-            # Parallel generation for multi-chunk texts
-            # Use a semaphore to limit concurrency to 3 parallel TTS calls
-            sem = asyncio.Semaphore(3)
+        for i, chunk in enumerate(chunks):
+            pcm = await _generate_single_chunk(chunk, voice, failed_keys, timeout=adaptive_timeout)
+            if pcm:
+                pcm_parts.append(pcm)
+            else:
+                if i == 0:
+                    # First chunk failed — no audio without the opening context.
+                    logging.warning("Voice reply: first chunk failed, aborting (chat_id=%s)", chat_id)
+                else:
+                    # Later chunk failed — still deliver what was generated.
+                    logging.warning(
+                        "Voice reply: chunk %d/%d failed, sending partial audio (chat_id=%s)",
+                        i + 1,
+                        len(chunks),
+                        chat_id,
+                    )
+                break
 
-            async def _bounded_generate(chunk: str) -> bytes | None:
-                async with sem:
-                    return await _generate_single_chunk(chunk, voice, failed_keys)
+        if not pcm_parts:
+            logging.warning("No audio generated for voice reply (chat_id=%s)", chat_id)
+            # Inform user instead of silently deleting the status indicator.
+            if status_msg:
+                try:
+                    await status_msg.edit_text(
+                        "🔇 _Голосовой ответ недоступен — превышена квота API._",
+                        parse_mode="Markdown",
+                    )
+                    await asyncio.sleep(5.0)
+                except Exception:
+                    pass
+            return
 
-            results = await asyncio.gather(*[_bounded_generate(c) for c in chunks])
+        if len(pcm_parts) < len(chunks):
+            logging.warning(
+                "Voice reply: %d/%d chunks succeeded, voicing partial text (chat_id=%s)",
+                len(pcm_parts),
+                len(chunks),
+                chat_id,
+            )
 
-            # Concatenate PCM buffers in order (all share 24kHz 16-bit mono format)
-            pcm_parts = [r for r in results if r is not None]
-            if not pcm_parts:
-                logging.warning("No audio generated for any chunk (chat_id=%s)", chat_id)
-                return
-
-            if len(pcm_parts) < len(chunks):
-                logging.warning(
-                    "Voice reply: %d/%d chunks failed, voicing partial text",
-                    len(chunks) - len(pcm_parts),
-                    len(chunks),
-                )
-
-            pcm_audio = b"".join(pcm_parts)
-            del pcm_parts  # Free list references
+        pcm_audio = b"".join(pcm_parts)
+        del pcm_parts  # Free list references
 
         logging.info("Voice reply: TTS audio generated (%d bytes PCM)", len(pcm_audio))
 
@@ -210,7 +249,7 @@ def fire_voice_reply(
     _text = response_text
     _voice = voice
 
-    def _factory():
+    def _factory() -> Coroutine[Any, Any, None]:
         return _generate_and_send_voice(
             _bot,
             _chat_id,
