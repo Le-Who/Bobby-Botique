@@ -21,6 +21,10 @@ Format is optimized for agent-parseable context.
 ### 📊 Observability
 - Added `stream_recoveries` and `voice_intents` counters to `ConversationMetrics` for telemetry.
 
+### 🐛 Bug Fixes
+- **Phantom Draft Mode Removal**: Eradicated hallucinated `sendMessageDraft` abstraction from `streaming.py` which caused the native UI to violently delete "Думаю..." placeholders during API timeout intervals.
+- **Heartbeat Resilience**: Moved `stop_heartbeat` invocation from `ai_chat.py` directly into the streaming cycle's first-chunk boundary (`yield_hook`), ensuring that the animated `🤔 Думаю...` loader persists visually during extended Google API 503 backoff retries (e.g. holding 45s gaps seamlessly instead of disappearing).
+
 ### ✅ Quality Gates
 
 | Check | Result |
