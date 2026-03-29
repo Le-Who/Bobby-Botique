@@ -66,17 +66,52 @@ def _clean_text_for_speech(text: str) -> str:
       9. Collapse excessive whitespace
     """
     t = text
-    t = _RE_CODE_BLOCK.sub("", t)                 # 1
-    t = _RE_INLINE_CODE.sub(r"\1", t)              # 1b: keep inline code text
-    t = _RE_MD_IMAGE.sub("", t)                    # 2
-    t = _RE_MD_LINK.sub(r"\1", t)                  # 3
-    t = _RE_BARE_URL.sub("", t)                    # 4
-    t = _RE_HTML_TAG.sub("", t)                    # 5
-    t = _RE_BOLD_ITALIC.sub("", t)                 # 6
-    t = _RE_HEADER.sub("", t)                      # 7
+    t = _RE_CODE_BLOCK.sub("", t)  # 1
+    t = _RE_INLINE_CODE.sub(r"\1", t)  # 1b: keep inline code text
+    t = _RE_MD_IMAGE.sub("", t)  # 2
+    t = _RE_MD_LINK.sub(r"\1", t)  # 3
+    t = _RE_BARE_URL.sub("", t)  # 4
+    t = _RE_HTML_TAG.sub("", t)  # 5
+    t = _RE_BOLD_ITALIC.sub("", t)  # 6
+    t = _RE_HEADER.sub("", t)  # 7
     t = _RE_EMOJI_CLUSTER.sub(lambda m: m.group()[0], t)  # 8
-    t = _RE_CONSECUTIVE_NEWLINES.sub("\n\n", t)    # 9
+    t = _RE_CONSECUTIVE_NEWLINES.sub("\n\n", t)  # 9
     return t.strip()
+
+
+def _chunk_text_by_sentences(text: str, max_chars: int = 1500) -> list[str]:
+    """Split text into chunks at sentence boundaries, each ≤ max_chars.
+
+    Algorithm:
+      1. Split on sentence-ending punctuation (.!? and their Unicode equivalents).
+      2. Greedily accumulate sentences into the current chunk.
+      3. When adding the next sentence would exceed max_chars, start a new chunk.
+      4. If a single sentence exceeds max_chars, include it as-is (never mid-word split).
+
+    Returns a list of non-empty text chunks.
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    # Split on sentence boundaries, keeping the delimiter attached to the sentence.
+    import re as _re
+
+    parts = _re.split(r"(?<=[.!?\u2026])\s+", text)
+
+    chunks: list[str] = []
+    current = ""
+    for part in parts:
+        candidate = (current + " " + part).strip() if current else part
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = part
+    if current:
+        chunks.append(current)
+
+    return chunks or [text]
 
 
 # ─── Director's Notes prompt ──────────────────────────────────────────────
@@ -167,10 +202,8 @@ async def generate_speech(
     if not clean:
         return None
 
-    # 2. Truncate to avoid timeout on very long texts
-    tts_text = clean[:1500] if len(clean) > 1500 else clean
-
-    # 3. Build structured prompt
+    # 2. Build structured prompt (no truncation — caller handles chunking)
+    tts_text = clean
     prompt = _DIRECTOR_NOTES + tts_text
 
     config = types.GenerateContentConfig(
@@ -222,4 +255,3 @@ async def generate_speech(
             raise
         logging.error("TTS generation failed: %s", e)
         return None
-

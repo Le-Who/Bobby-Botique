@@ -3,6 +3,40 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.2] - 2026-03-29 - Full-Text TTS & Atomic Voice Toggle
+
+### 🚀 Features
+
+#### Full-Text Voice Replies (PCM Concatenation)
+- **Removed 1500-character TTS limit**: Voice replies now cover 100% of the response text, regardless of length.
+- **Sentence-boundary chunking**: Long texts are split into ≤1500-char chunks at sentence boundaries (`.!?…`), avoiding mid-word cuts.
+- **Parallel TTS generation**: Multi-chunk texts are generated concurrently (up to 3 parallel calls with `asyncio.Semaphore`), sharing the key rotation pool across chunks.
+- **PCM concatenation**: Raw PCM buffers (24kHz 16-bit mono) are concatenated in memory and transcoded to OGG Opus once via `ffmpeg`. No quality loss at chunk boundaries since the sample format is identical.
+- **Graceful degradation**: If some chunks fail, the bot voices the successfully generated portion and logs a warning.
+
+#### Atomic Voice-for-Voice Toggle (Sticky Voice Fix)
+- **Fixed sticky voice bug**: Previously, confirming a voice message via the UI (`cb_voice.py`) would set `reply_with_voice=True` and all subsequent messages would also generate voice — even plain text messages.
+- **New behavior**: Voice reply is now decided **atomically per-request** based on two rules:
+  1. **Voice source** → voice reply (voice message confirmation and auto-route).
+  2. **Explicit text keyword** → voice reply (`"озвучь ответ"`, `"ответь голосом"`, `"прочитай вслух"`).
+- No voice state is cached or persisted across chat turns. Text messages never trigger voice unless explicitly requested.
+
+| File | Change |
+|------|--------|
+| `voice_engine.py` | Rewritten: chunked parallel TTS + PCM concatenation pipeline |
+| `providers/tts.py` | Added `_chunk_text_by_sentences()`, removed hard truncation |
+| `handlers/cb_voice.py` | Documented voice-for-voice intent (no code change needed, sticky bug was architectural) |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| py_compile | 0 errors |
+
+---
+
+
 ## [2.9.1] - 2026-03-29 - Voice Latency Optimization
 
 ### ⚡ Performance — Voice Reply Delay Fix (~65s → ~10-15s)

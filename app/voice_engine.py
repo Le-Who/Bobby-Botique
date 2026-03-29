@@ -1,18 +1,66 @@
 # /app/voice_engine.py
-"""Voice Engine 2.0 — orchestrates TTS generation and Telegram voice delivery.
+"""Voice Engine 3.0 — orchestrates TTS generation and Telegram voice delivery.
 
 Provides a single entry point for the chat handler to fire-and-forget
 voice reply generation after text streaming completes.
 
-Strategy: REST TTS (gemini-2.5-flash-preview-tts) with key rotation →
-           PCM audio → ffmpeg → OGG Opus → bot.send_voice()
+Strategy: text → sentence-boundary chunking → parallel REST TTS calls →
+           PCM concatenation → ffmpeg → OGG Opus → bot.send_voice()
+
+Chunking ensures full-text voicing for any response length без hard truncation.
 """
 
+import asyncio
 import logging
 
 from telegram import Bot
 
 from app.utils.background_tasks import submit_retryable
+
+
+async def _generate_single_chunk(
+    text_chunk: str,
+    voice: str,
+    failed_keys: set[str],
+) -> bytes | None:
+    """Generate PCM audio for a single text chunk with key rotation.
+
+    Returns raw PCM 24kHz 16-bit mono bytes, or None on failure.
+    """
+    from app.errors import classify_key_error
+    from app.handlers.ai_core import _resolve_ai_request
+    from app.providers.tts import generate_speech
+    from app.repos.keys import get_key_status_manager
+
+    status_mgr = get_key_status_manager()
+
+    for attempt in range(3):
+        key_data, model_used, _ = await _resolve_ai_request(
+            "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
+        )
+        if not key_data:
+            break
+
+        try:
+            pcm = await generate_speech(text_chunk, key_data["api_key"], voice=voice)
+            if pcm:
+                return pcm
+        except Exception as e:
+            err_str = str(e)
+            logging.warning(
+                "TTS chunk failed (attempt %d/3, %d chars): %s",
+                attempt + 1,
+                len(text_chunk),
+                err_str,
+            )
+            failed_keys.add(key_data["key_hash"])
+            try:
+                err_cat = classify_key_error(err_str)
+                await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
+            except Exception:
+                pass
+
+    return None
 
 
 async def _generate_and_send_voice(
@@ -25,12 +73,17 @@ async def _generate_and_send_voice(
 ) -> None:
     """Generate TTS audio and send as Telegram voice message.
 
-    Uses REST TTS (gemini-2.5-flash-preview-tts) with key rotation.
-    Shows a transient status message while generating.
+    Pipeline:
+      1. Clean & chunk text at sentence boundaries (≤1500 chars/chunk)
+      2. Generate PCM for each chunk (parallel with shared key rotation)
+      3. Concatenate raw PCM buffers (same sample rate → simple append)
+      4. Transcode PCM → OGG Opus
+      5. Send voice message
 
     Memory-critical: aggressively deletes intermediate buffers at each pipeline
     stage to avoid OOM on the 500MB RAM budget.
     """
+    from app.providers.tts import _chunk_text_by_sentences, _clean_text_for_speech
     from app.utils.audio import make_voice_file, pcm_to_ogg_opus
 
     # Show recording indicator message to user
@@ -47,49 +100,60 @@ async def _generate_and_send_voice(
         pass
 
     try:
-        # Truncate long texts for TTS (keeps first ~1500 chars)
-        tts_text = response_text[:1500] if len(response_text) > 1500 else response_text
-        pcm_audio: bytes | None = None
-
-        # ── REST TTS with key rotation ────────────────────────────────────
-        failed_keys: set[str] = set()
-        from app.errors import classify_key_error
-        from app.handlers.ai_core import _resolve_ai_request
-        from app.providers.tts import generate_speech
-        from app.repos.keys import get_key_status_manager
-
-        status_mgr = get_key_status_manager()
-
-        for attempt in range(3):
-            key_data, model_used, _ = await _resolve_ai_request(
-                "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
-            )
-            if not key_data:
-                break
-
-            try:
-                pcm_audio = await generate_speech(tts_text, key_data["api_key"], voice=voice)
-                if pcm_audio:
-                    logging.info("Voice reply: TTS audio generated (%d bytes PCM)", len(pcm_audio))
-                    break
-            except Exception as e:
-                err_str = str(e)
-                logging.warning("TTS generation failed (attempt %d/3): %s", attempt + 1, err_str)
-                failed_keys.add(key_data["key_hash"])
-                try:
-                    err_cat = classify_key_error(err_str)
-                    await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
-                except Exception:
-                    pass
-
-        if pcm_audio is None:
-            logging.warning("No audio generated for voice reply (chat_id=%s)", chat_id)
+        # 1. Clean & chunk
+        clean_text = _clean_text_for_speech(response_text)
+        if not clean_text:
+            logging.warning("Voice reply: cleaned text is empty (chat_id=%s)", chat_id)
             return
 
-        # ── Transcode PCM → OGG Opus ─────────────────────────────────────────
+        chunks = _chunk_text_by_sentences(clean_text, max_chars=1500)
+        logging.info(
+            "Voice reply: %d chars → %d chunk(s) for TTS",
+            len(clean_text),
+            len(chunks),
+        )
+
+        # 2. Generate PCM for each chunk (share the failed_keys set across chunks)
+        failed_keys: set[str] = set()
+
+        if len(chunks) == 1:
+            # Fast path: single chunk, no concurrency overhead
+            pcm_audio = await _generate_single_chunk(chunks[0], voice, failed_keys)
+            if pcm_audio is None:
+                logging.warning("No audio generated for voice reply (chat_id=%s)", chat_id)
+                return
+        else:
+            # Parallel generation for multi-chunk texts
+            # Use a semaphore to limit concurrency to 3 parallel TTS calls
+            sem = asyncio.Semaphore(3)
+
+            async def _bounded_generate(chunk: str) -> bytes | None:
+                async with sem:
+                    return await _generate_single_chunk(chunk, voice, failed_keys)
+
+            results = await asyncio.gather(*[_bounded_generate(c) for c in chunks])
+
+            # Concatenate PCM buffers in order (all share 24kHz 16-bit mono format)
+            pcm_parts = [r for r in results if r is not None]
+            if not pcm_parts:
+                logging.warning("No audio generated for any chunk (chat_id=%s)", chat_id)
+                return
+
+            if len(pcm_parts) < len(chunks):
+                logging.warning(
+                    "Voice reply: %d/%d chunks failed, voicing partial text",
+                    len(chunks) - len(pcm_parts),
+                    len(chunks),
+                )
+
+            pcm_audio = b"".join(pcm_parts)
+            del pcm_parts  # Free list references
+
+        logging.info("Voice reply: TTS audio generated (%d bytes PCM)", len(pcm_audio))
+
+        # 3. Transcode PCM → OGG Opus
         ogg_bytes = await pcm_to_ogg_opus(pcm_audio)
-        # ⚠ Free PCM immediately — OGG is 10-20x smaller
-        del pcm_audio
+        del pcm_audio  # ⚠ Free PCM immediately — OGG is 10-20x smaller
 
         if ogg_bytes is None:
             logging.error("PCM→OGG transcoding failed for voice reply")
@@ -97,7 +161,7 @@ async def _generate_and_send_voice(
 
         ogg_size = len(ogg_bytes)
 
-        # ── Send voice message ───────────────────────────────────────────────
+        # 4. Send voice message
         try:
             voice_file = make_voice_file(ogg_bytes)
             del ogg_bytes  # BytesIO holds its own copy, free original
@@ -138,7 +202,6 @@ def fire_voice_reply(
     Called by ai_chat.py after text streaming completes.
     Uses submit_retryable for automatic retry on transient failures.
     """
-    # Closure captures for the factory
     _bot = bot
     _chat_id = chat_id
     _reply_to = reply_to_message_id
