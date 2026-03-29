@@ -58,7 +58,7 @@ async def pcm_to_ogg_opus(
         )
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(input=pcm_data),
-            timeout=15.0,
+            timeout=90.0,
         )
         # ⚠ pcm_data has been consumed by communicate — help GC reclaim
         # (the caller's reference may still exist, but our local copy is freed)
@@ -87,7 +87,11 @@ async def pcm_to_ogg_opus(
         )
         return None
     except TimeoutError:
-        logging.error("ffmpeg encoding timed out (>15s)")
+        try:
+            proc.kill()
+        except OSError:
+            pass
+        logging.error("ffmpeg encoding timed out (>90s)")
         return None
     except Exception as e:
         logging.error("Audio encoding failed: %s", e)

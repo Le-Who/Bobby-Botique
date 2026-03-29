@@ -45,6 +45,8 @@ async def _generate_single_chunk(
             pcm = await generate_speech(text_chunk, key_data["api_key"], voice=voice)
             if pcm:
                 return pcm
+            else:
+                raise ValueError("TTS provider returned empty audio buffer")
         except Exception as e:
             err_str = str(e)
             logging.warning(
@@ -100,13 +102,13 @@ async def _generate_and_send_voice(
         pass
 
     try:
-        # 1. Clean & chunk
+        # 1. Clean & chunk (reduced from 1500 to 800 to prevent 90s REST API timeouts)
         clean_text = _clean_text_for_speech(response_text)
         if not clean_text:
             logging.warning("Voice reply: cleaned text is empty (chat_id=%s)", chat_id)
             return
 
-        chunks = _chunk_text_by_sentences(clean_text, max_chars=1500)
+        chunks = _chunk_text_by_sentences(clean_text, max_chars=800)
         logging.info(
             "Voice reply: %d chars → %d chunk(s) for TTS",
             len(clean_text),

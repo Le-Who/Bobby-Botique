@@ -24,6 +24,8 @@ Format is optimized for agent-parseable context.
 ### 🐛 Bug Fixes
 - **Phantom Draft Mode Removal**: Eradicated hallucinated `sendMessageDraft` abstraction from `streaming.py` which caused the native UI to violently delete "Думаю..." placeholders during API timeout intervals.
 - **Heartbeat Resilience**: Moved `stop_heartbeat` invocation from `ai_chat.py` directly into the streaming cycle's first-chunk boundary (`yield_hook`), ensuring that the animated `🤔 Думаю...` loader persists visually during extended Google API 503 backoff retries (e.g. holding 45s gaps seamlessly instead of disappearing).
+- **TTS Timeout Deadlocks**: Fixed identical-key retries when `TimeoutError` was masked as `None`, and reduced TTS chunk generation to 800 chars to reliably stay under Google API limits.
+- **FFMPEG Resource Throttling**: Increased Opus encoding timeouts from `15s` to `90s` and added sub-process SIGKILL handling for processing giant PCM buffers (>8MB) on constrained nodes without deadlocking the background voice engine.
 
 ### ✅ Quality Gates
 

@@ -244,8 +244,8 @@ async def generate_speech(
         return None
 
     except TimeoutError:
-        logging.error("TTS generation timed out after %.0fs", timeout)
-        return None
+        logging.error("TTS generation timed out after %.0fs — will rotate key", timeout)
+        raise  # Must re-raise so voice_engine can catch it and rotate the API key
     except Exception as e:
         err_str = str(e)
         # Re-raise retryable errors (429 quota, 503 overload) so the caller's
