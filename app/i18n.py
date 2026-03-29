@@ -593,6 +593,14 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "⚡ Попробовать {model}",
         "en": "⚡ Try {model}",
     },
+    "btn.continue_stream": {
+        "ru": "Продолжить",
+        "en": "Continue",
+    },
+    "processing.continuing": {
+        "ru": "▶️ Продолжаю прерванный ответ…",
+        "en": "▶️ Continuing interrupted response…",
+    },
     # ── Streaming Status ─────────────────────────────────────────────────
     "stream.blocked_by_safety": {
         "ru": "\n\n⚠️ _Ответ был прерван фильтром безопасности._",

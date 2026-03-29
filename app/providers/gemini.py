@@ -315,38 +315,48 @@ class GeminiProvider(BaseAIProvider):
             logging.error("Gemini API stream timed out for model %s", model_name)
             if not _content_yielded:
                 raise  # Let router rotate keys
-            yield tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API.")
+            # Mid-stream timeout: raise so streaming.py can finalize cleanly
+            # instead of dumping raw error text into the user's message.
+            raise
         except APIError as e:
             err_lower = str(e).lower()
             is_retryable = (
                 "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower or "rate limit" in err_lower
             )
 
-            if is_retryable and not _content_yielded:
-                # Re-raise so the router can rotate to a different API key.
-                # Google 503 "high demand" errors are often per-project or
-                # per-key — a different key may succeed immediately.
-                logging.warning(
-                    "Gemini API retryable stream error (503/UNAVAILABLE), re-raising for key rotation: %s", e
-                )
-                raise
+            if not _content_yielded:
+                if is_retryable:
+                    # Re-raise so the router can rotate to a different API key.
+                    # Google 503 "high demand" errors are often per-project or
+                    # per-key — a different key may succeed immediately.
+                    logging.warning(
+                        "Gemini API retryable stream error (503/UNAVAILABLE), re-raising for key rotation: %s", e
+                    )
+                    raise
 
-            logging.error("Gemini API stream error: %s", e)
-            if "quota" in err_lower:
-                yield tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
-            elif "api key" in err_lower or "api_key_invalid" in err_lower:
-                yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
-            elif "invalid" in err_lower or "malformed" in err_lower:
-                yield tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос к API.")
-            elif "rate limit" in err_lower:
-                yield tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов.")
+                # Pre-stream non-retryable errors: yield tagged error for the UI
+                logging.error("Gemini API stream error (pre-content): %s", e)
+                if "quota" in err_lower:
+                    yield tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
+                elif "api key" in err_lower or "api_key_invalid" in err_lower:
+                    yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
+                elif "invalid" in err_lower or "malformed" in err_lower:
+                    yield tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос к API.")
+                elif "rate limit" in err_lower:
+                    yield tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов.")
+                else:
+                    yield tag_error(ErrorCode.GENERIC, f"❌ Произошла ошибка API: {e}")
             else:
-                yield tag_error(ErrorCode.GENERIC, f"❌ Произошла ошибка API: {e}")
+                # Mid-stream error: raise so streaming.py can finalize the
+                # partial text cleanly instead of injecting raw JSON into chat.
+                logging.error("Gemini API mid-stream error, escalating: %s", e)
+                raise
         except Exception as e:
             if not _content_yielded:
                 raise  # Let router rotate keys
-            logging.error("Gemini streaming error: %s", e)
-            yield tag_error(ErrorCode.GENERIC, f"❌ Ошибка: {e}")
+            # Mid-stream error: raise for clean handling by streaming.py
+            logging.error("Gemini mid-stream error, escalating: %s", e)
+            raise
 
     # ── Gemini helpers ───────────────────────────────────────────────────
 

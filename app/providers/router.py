@@ -301,11 +301,10 @@ class ProviderRouter:
 
             except Exception as e:
                 # If the stream failed BEFORE yielding anything, we can retry with another key.
-                # If it failed mid-stream, we must abort because the user already saw partial text.
+                # If it failed mid-stream, propagate to streaming.py for clean finalization.
                 if stream_started:
-                    logging.error("Stream failed mid-flight: %s", e)
-                    yield f"\n\n[Ошибка трансляции: {str(e)}]"
-                    return
+                    logging.error("Stream failed mid-flight, escalating to streaming layer: %s", e)
+                    raise
 
                 # Stream didn't start, so this key is bad. Suspend and loop.
                 error_msg = str(e)

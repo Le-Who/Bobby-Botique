@@ -99,7 +99,7 @@ async def _handle_qna_search(
                 except (BadRequest, NetworkError):
                     pass
 
-            final_answer, success, stream_last_msg, _tokens = await stream_and_display(
+            final_answer, success, stream_last_msg, _tokens, _was_interrupted = await stream_and_display(
                 placeholder_message,
                 model_name=model,
                 history=history,

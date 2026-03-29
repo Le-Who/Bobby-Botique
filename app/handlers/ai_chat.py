@@ -256,7 +256,7 @@ async def _handle_regular_chat(
 
     from app.streaming import stream_and_display
 
-    response_text, success, stream_last_msg, actual_tokens = await stream_and_display(
+    response_text, success, stream_last_msg, actual_tokens, was_interrupted = await stream_and_display(
         placeholder_message,
         model_name=model_used,
         history=chat_state.history,
@@ -292,28 +292,42 @@ async def _handle_regular_chat(
         ):
             return
         else:
-            # Branch-aware action button
-            _lang = detect_language(user_message)
-            branch_btn = (
-                InlineKeyboardButton(t("btn.back_to_main", _lang), callback_data="branch_return")
-                if chat_state.branch_id
-                else InlineKeyboardButton(t("btn.what_if", _lang), callback_data="branch_create")
-            )
-            buttons = [
-                [InlineKeyboardButton(t("btn.retry", _lang), callback_data="retry_last")],
-                [
-                    InlineKeyboardButton(t("btn.roles", _lang), callback_data="open_roles:from_response"),
-                    branch_btn,
-                ],
-                [
-                    InlineKeyboardButton(t("btn.listen", _lang), callback_data="tts_reply"),
-                    InlineKeyboardButton(
-                        t("btn.new_topic_short", _lang),
-                        callback_data=("deepdive:new_topic" if chat_state.is_deep_dive else "new_topic"),
-                    ),
-                ],
-            ]
-            reply_markup = InlineKeyboardMarkup(buttons)
+            if was_interrupted:
+                # Interrupted stream: show recovery keyboard instead of normal buttons
+                _lang = detect_language(user_message)
+                buttons = [
+                    [
+                        InlineKeyboardButton(
+                            "▶️ " + t("btn.continue_stream", _lang),
+                            callback_data="continue_stream",
+                        ),
+                        InlineKeyboardButton(t("btn.retry", _lang), callback_data="retry_last"),
+                    ],
+                ]
+                reply_markup = InlineKeyboardMarkup(buttons)
+            else:
+                # Normal response: show standard action buttons
+                _lang = detect_language(user_message)
+                branch_btn = (
+                    InlineKeyboardButton(t("btn.back_to_main", _lang), callback_data="branch_return")
+                    if chat_state.branch_id
+                    else InlineKeyboardButton(t("btn.what_if", _lang), callback_data="branch_create")
+                )
+                buttons = [
+                    [InlineKeyboardButton(t("btn.retry", _lang), callback_data="retry_last")],
+                    [
+                        InlineKeyboardButton(t("btn.roles", _lang), callback_data="open_roles:from_response"),
+                        branch_btn,
+                    ],
+                    [
+                        InlineKeyboardButton(t("btn.listen", _lang), callback_data="tts_reply"),
+                        InlineKeyboardButton(
+                            t("btn.new_topic_short", _lang),
+                            callback_data=("deepdive:new_topic" if chat_state.is_deep_dive else "new_topic"),
+                        ),
+                    ],
+                ]
+                reply_markup = InlineKeyboardMarkup(buttons)
 
             if not streamed:
                 # Non-streaming: send_long_message as before

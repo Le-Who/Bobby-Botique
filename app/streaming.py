@@ -636,7 +636,7 @@ async def stream_and_display(
     reply_markup: Any | None = None,
     footer_text: str | None = None,
     enable_web_search: bool = False,
-) -> tuple[str, bool, Message | None, int]:
+) -> tuple[str, bool, Message | None, int, bool]:
     """High-level: stream AI response and progressively update Telegram message.
 
     Supports multi-message streaming: when a single message exceeds
@@ -661,11 +661,13 @@ async def stream_and_display(
             final message (avoids a separate edit_reply_markup call).
 
     Returns:
-        (response_text, success, last_message, token_count) tuple.
+        (response_text, success, last_message, token_count, was_interrupted) tuple.
         token_count is 0 when not available from the provider.
         last_message is the final message in the chain (may differ from
         placeholder_message if overflow occurred). Callers should use it
         for post-stream edits like adding buttons.
+        was_interrupted is True when the stream was interrupted mid-flight
+        by an API error and the response is only partial.
     """
     from app.adapters.ui_adapter import TelegramMessageAdapter
 
@@ -706,7 +708,7 @@ async def stream_and_display(
         final_text = await writer.finalize(reply_markup=reply_markup)
 
         if not final_text.strip():
-            return "", False, placeholder_message, 0
+            return "", False, placeholder_message, 0, False
 
         # Check finish_reason for blocked/truncated responses
         fr = _last_finish_reason.get()
@@ -750,7 +752,7 @@ async def stream_and_display(
         )
         await metrics_collector.record_api_call("gemini_streaming", model_name)
         actual_tokens = _last_token_count.get()
-        return final_text, True, writer.last_message, actual_tokens
+        return final_text, True, writer.last_message, actual_tokens, False
 
     except TimeoutError:
         partial = writer.text
@@ -761,12 +763,14 @@ async def stream_and_display(
                 True,
                 writer.last_message,
                 0,
+                True,  # was_interrupted
             )
         return (
             "⏰ Превышено время ожидания ответа. Попробуйте позже.",
             False,
             placeholder_message,
             0,
+            False,
         )
 
     except APIError as e:
@@ -775,23 +779,36 @@ async def stream_and_display(
         if partial:
             await writer.finalize()
             return (
-                partial + "\n\n⚠️ _(ответ был прерван из-за ошибки API)_",
+                partial + "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_",
                 True,
                 writer.last_message,
                 0,
+                True,  # was_interrupted
             )
         return (
             "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.",
             False,
             placeholder_message,
             0,
+            False,
         )
 
     except Exception as e:
         logging.error("Streaming failed: %s", e, exc_info=True)
+        partial = writer.text
+        if partial:
+            await writer.finalize()
+            return (
+                partial + "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_",
+                True,
+                writer.last_message,
+                0,
+                True,  # was_interrupted
+            )
         return (
             "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.",
             False,
             placeholder_message,
             0,
+            False,
         )

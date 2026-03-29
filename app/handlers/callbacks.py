@@ -57,6 +57,7 @@ def register(application: Application) -> None:
     # --- Lazy imports to avoid circular dependencies ---
     from app.handlers.cb_ai_actions import (
         complex_search_callback,
+        continue_stream_callback,
         fallback_callback,
         retry_last_callback,
         tts_reply_callback,
@@ -150,6 +151,7 @@ def register(application: Application) -> None:
     application.add_handler(CallbackQueryHandler(deep_dive_callback, pattern="^deepdive:"))
     application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic"))
     application.add_handler(CallbackQueryHandler(retry_last_callback, pattern="^retry_last$"))
+    application.add_handler(CallbackQueryHandler(continue_stream_callback, pattern="^continue_stream$"))
     _add_fast_callback(application, tts_reply_callback, "^tts_reply$")
 
     # Feedback buttons (👍/👎)

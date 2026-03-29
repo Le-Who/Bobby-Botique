@@ -5,7 +5,13 @@ Handles complex_search, fallback, and retry_last callbacks.
 These are semaphore-guarded and run in background tasks.
 """
 
-__all__ = ["complex_search_callback", "fallback_callback", "retry_last_callback", "tts_reply_callback"]
+__all__ = [
+    "complex_search_callback",
+    "continue_stream_callback",
+    "fallback_callback",
+    "retry_last_callback",
+    "tts_reply_callback",
+]
 
 import asyncio
 import contextlib
@@ -264,3 +270,89 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
     except Exception as e:
         logging.error("TTS reply callback failed: %s", e)
+
+
+# ── Interruption error footers to strip from partial text ──────────────────
+_INTERRUPTION_FOOTERS = (
+    "\n\n⏰ _(ответ был прерван по таймауту)_",
+    "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_",
+    "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_",
+    # Legacy footers (backward compat)
+    "\n\n⚠️ _(ответ был прерван из-за ошибки API)_",
+)
+
+
+def _strip_interruption_footer(text: str) -> str:
+    """Remove the machine-appended interruption footer from partial text."""
+    for footer in _INTERRUPTION_FOOTERS:
+        if text.endswith(footer):
+            return text[: -len(footer)]
+    return text
+
+
+async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Continue generating a response from where it was interrupted (▶️ Продолжить button)."""
+    query = update.callback_query
+    set_request_id(f"tgcb-{query.from_user.id}-{query.id}")
+    set_user_context(
+        query.from_user.id,
+        getattr(query.message.chat, "id", None) if query.message else None,
+    )
+    user_id = query.from_user.id
+
+    # Extract partial text from the interrupted message
+    partial_text = query.message.text if query.message else None
+    if not partial_text or len(partial_text.strip()) < 10:
+        await query.answer("❌")
+        return
+
+    # Strip the interruption footer to get clean partial text
+    clean_partial = _strip_interruption_footer(partial_text)
+
+    # P4+P5: single query.answer() with toast if busy
+    user_lock = state.get_user_lock(user_id)
+    await query.answer(_BUSY_TOAST if user_lock.locked() else "")
+    if user_lock.locked():
+        return
+
+    chat_state = await get_user_chat(user_id)
+
+    # Inject the partial text as model output so the LLM has context
+    chat_state.history.append({"role": "model", "parts": [clean_partial]})
+
+    # The continuation prompt — instructs the model to seamlessly pick up
+    continuation_prompt = (
+        "Пожалуйста, продолжи прерванную мысль с того места, "
+        "где ты остановился, с учётом контекста уже написанного."
+    )
+    chat_state.history.append({"role": "user", "parts": [continuation_prompt]})
+
+    # Create placeholder for the continuation response
+    placeholder_message = await query.message.reply_text(t("processing.continuing"))
+
+    from app.handlers.agent import _handle_regular_chat
+
+    async def _continue_wrapper() -> None:
+        try:
+            async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                await _handle_regular_chat(
+                    placeholder_message,
+                    user_id,
+                    continuation_prompt,
+                    chat_state,
+                )
+        except Exception as e:
+            logging.error("continue_stream_callback failed: %s", e, exc_info=True)
+            try:
+                from app.utils.keyboards import error_with_back_keyboard
+
+                await placeholder_message.edit_text(
+                    t("error.retry_failed"),
+                    reply_markup=error_with_back_keyboard("start_menu", "⬅️ Меню"),
+                )
+            except Exception:
+                pass
+
+    _task = asyncio.create_task(_continue_wrapper())
+    _background_tasks.add(_task)
+    _task.add_done_callback(_background_tasks.discard)
