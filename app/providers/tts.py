@@ -51,8 +51,21 @@ async def generate_speech(
     # Truncate to avoid timeout on very long texts
     tts_text = text[:2000] if len(text) > 2000 else text
 
-    # TTS models require explicit instruction to speak
-    prompt = f"Say the following naturally and expressively:\n\n{tts_text}"
+    # Structured prompt following the official Gemini TTS prompting guide.
+    # Director's Notes format gives the model style, pace, and pronunciation
+    # guidance without over-constraining its natural expressiveness.
+    prompt = (
+        "### DIRECTOR'S NOTES\n"
+        "Style: Warm, conversational, and clear.\n"
+        "Pace: Natural and measured, with slight pauses at punctuation.\n"
+        "Pronunciation: Read words with correct pronunciation and stress based on "
+        "meaning and context. If the text contains minor typos, missing diacritics "
+        "(e.g. 'е' instead of 'ё' in Russian), or spelling errors, pronounce the "
+        "words as they should sound, not as literally written.\n"
+        "Do not add any commentary, greetings, or sign-offs.\n\n"
+        "### TRANSCRIPT\n"
+        f"{tts_text}"
+    )
 
     config = types.GenerateContentConfig(
         response_modalities=["AUDIO"],

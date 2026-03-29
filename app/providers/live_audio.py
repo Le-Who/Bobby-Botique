@@ -1,8 +1,9 @@
 # /app/providers/live_audio.py
 """Gemini Live API provider — one-shot text-to-speech via WebSocket.
 
-Opens an ephemeral WebSocket session, sends text, signals turn
-completion with audioStreamEnd, collects audio + transcript, closes.
+Opens an ephemeral WebSocket session, sends text via
+``send_client_content`` with ``turn_complete=True``, collects audio
++ transcript, closes.
 
 Model: gemini-3.1-flash-live-preview (primary, with REST TTS fallback
 managed by voice_engine.py).
@@ -30,9 +31,13 @@ async def generate_audio_dialog(
     """Generate audio response via Gemini Live API (ephemeral session).
 
     Opens a short-lived WebSocket connection, sends text via
-    ``send_realtime_input``, then immediately sends ``audioStreamEnd``
-    to flush the VAD pipeline and trigger model response.  Collects
-    audio chunks + output transcription, then closes.
+    ``send_client_content`` (the official method for discrete text turns),
+    and collects audio chunks + output transcription, then closes.
+
+    ``send_client_content`` with ``turn_complete=True`` bypasses the
+    VAD pipeline entirely — unlike ``send_realtime_input``, which routes
+    through Voice Activity Detection and hangs indefinitely on text-only
+    input waiting for audio silence that never comes.
 
     Args:
         text: Text input to speak (bot's response text).
@@ -77,13 +82,14 @@ async def generate_audio_dialog(
     try:
         async with asyncio.timeout(timeout):
             async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
-                # 1. Send text input via realtime input (correct for gemini-3.1-flash-live-preview)
-                await session.send_realtime_input(text=dialog_text)
-
-                # 2. Signal "input complete" — flush VAD pipeline and trigger model response.
-                #    Without this, VAD waits for audio silence that never comes (text-only input),
-                #    causing the session to hang until timeout.
-                await session.send_realtime_input(audio_stream_end=True)
+                # Send text via send_client_content — the official method for
+                # discrete text turns per the Live API docs.  Unlike
+                # send_realtime_input(text=...), this does NOT route through
+                # the VAD pipeline and immediately signals turn completion.
+                await session.send_client_content(
+                    turns={"role": "user", "parts": [{"text": dialog_text}]},
+                    turn_complete=True,
+                )
 
                 # 3. Collect response chunks
                 async for response in session.receive():

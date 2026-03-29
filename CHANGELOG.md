@@ -3,6 +3,32 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.8.78] - 2026-03-29 - Live API Real Fix & TTS Quality
+
+### 🎙️ Voice Engine — Live API Text Input Fix
+
+| Component | Files | Detail |
+|-----------|-------|--------|
+| **Real Root Cause Fix** | `live_audio.py` | Previous `audioStreamEnd` fix (v2.8.77) did not resolve timeouts. The **actual root cause**: `send_realtime_input(text=...)` routes through the Voice Activity Detection (VAD) pipeline, which waits for audio silence — but in a text-only session there is no audio stream, so VAD hangs indefinitely. **Fix**: Switched to `send_client_content(turns=..., turn_complete=True)` — the official documented method for discrete text turns. This bypasses VAD entirely and immediately signals turn completion. |
+| Docstring Corrections | `live_audio.py` | Updated module and function docstrings to reflect the correct `send_client_content` method and explain why `send_realtime_input` is wrong for text-only sessions. |
+
+### 🔊 REST TTS — Prompt Engineering
+
+| Component | Files | Detail |
+|-----------|-------|--------|
+| **Director's Notes Prompt** | `tts.py` | Upgraded TTS prompt from a bare `"Say the following naturally..."` instruction to a structured **Director's Notes + Transcript** format per the official Gemini TTS prompting guide. Adds Style, Pace, and Pronunciation guidance. |
+| **Pronunciation Intelligence** | `tts.py` | Added explicit instruction for the model to pronounce words correctly based on **meaning and context**, not literal spelling. Handles Russian `ё→е` diacritics (e.g., "звезды" → "звёзды"), missing stress marks, and minor typos. The model now reads words as they *should sound*, dramatically improving Russian TTS quality. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Mypy (`--no-incremental`) | 0 errors (3 source files) |
+| Tests | **1453 passed**, 0 failed |
+
+---
+
 ## [2.8.77] - 2026-03-29 - Live API Root Cause Fix
 
 ### 🎙️ Voice Engine — Live API Restored
