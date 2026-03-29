@@ -9,8 +9,8 @@ Format is optimized for agent-parseable context.
 
 | Component | Files | Detail |
 |-----------|-------|--------|
-| **Real Root Cause Fix** | `live_audio.py` | Previous `audioStreamEnd` fix (v2.8.77) did not resolve timeouts. The **actual root cause**: `send_realtime_input(text=...)` routes through the Voice Activity Detection (VAD) pipeline, which waits for audio silence — but in a text-only session there is no audio stream, so VAD hangs indefinitely. **Fix**: Switched to `send_client_content(turns=..., turn_complete=True)` — the official documented method for discrete text turns. This bypasses VAD entirely and immediately signals turn completion. |
-| Docstring Corrections | `live_audio.py` | Updated module and function docstrings to reflect the correct `send_client_content` method and explain why `send_realtime_input` is wrong for text-only sessions. |
+| **Real Root Cause Fix** | `live_audio.py` | Previous attempts: `send_realtime_input(text=...)` with auto-VAD → `TimeoutError` (VAD never detects "end of turn" for text-only input). `send_client_content` → `APIError(1007 Invalid argument)` (method is only for seeding initial history on `gemini-3.1-flash-live-preview`). **Root Cause**: Automatic VAD detects text as "activity start" but has no mechanism to detect "end of turn" for a single text message — it keeps waiting for more input indefinitely. **Fix**: Disable automatic VAD (`automatic_activity_detection.disabled=True`) and send explicit **manual turn boundaries** (`activityStart` → text → `activityEnd`) to immediately trigger model response. |
+| Docstring Corrections | `live_audio.py` | Comprehensive docstring explaining why `send_client_content` is wrong (1007 error) and why auto-VAD hangs on text (no end-of-turn detection for text-only sessions). |
 
 ### 🔊 REST TTS — Prompt Engineering
 

@@ -2,8 +2,20 @@
 """Gemini Live API provider — one-shot text-to-speech via WebSocket.
 
 Opens an ephemeral WebSocket session, sends text via
-``send_client_content`` with ``turn_complete=True``, collects audio
-+ transcript, closes.
+``send_realtime_input`` with **manual VAD** (activityStart/activityEnd),
+collects audio + transcript, closes.
+
+Why manual VAD?
+  With automatic VAD (the default), the server detects text as "activity
+  start" but never detects "end of turn" for a single text message — it
+  keeps waiting for more input, causing the session to hang until timeout.
+  Disabling auto-VAD and sending explicit activityStart/activityEnd around
+  the text creates clear turn boundaries so the model responds immediately.
+
+Why send_realtime_input, not send_client_content?
+  ``send_client_content`` is ONLY supported for seeding initial context
+  history (requires ``historyConfig.initialHistoryInClientContent``).
+  Using it for new user messages triggers ``APIError(1007 Invalid argument)``.
 
 Model: gemini-3.1-flash-live-preview (primary, with REST TTS fallback
 managed by voice_engine.py).
@@ -31,13 +43,15 @@ async def generate_audio_dialog(
     """Generate audio response via Gemini Live API (ephemeral session).
 
     Opens a short-lived WebSocket connection, sends text via
-    ``send_client_content`` (the official method for discrete text turns),
-    and collects audio chunks + output transcription, then closes.
+    ``send_realtime_input`` with manual activity signaling, and
+    collects audio chunks + output transcription, then closes.
 
-    ``send_client_content`` with ``turn_complete=True`` bypasses the
-    VAD pipeline entirely — unlike ``send_realtime_input``, which routes
-    through Voice Activity Detection and hangs indefinitely on text-only
-    input waiting for audio silence that never comes.
+    Protocol:
+        1. Disable automatic VAD in session config.
+        2. Send ``activityStart`` to mark beginning of user turn.
+        3. Send ``text`` via ``send_realtime_input``.
+        4. Send ``activityEnd`` to mark end of user turn.
+        5. Collect audio + transcript until ``turn_complete``.
 
     Args:
         text: Text input to speak (bot's response text).
@@ -57,7 +71,9 @@ async def generate_audio_dialog(
     # Truncate to avoid long sessions
     dialog_text = text[:2000] if len(text) > 2000 else text
 
-    # Configure Live session
+    # Configure Live session with MANUAL VAD control.
+    # Automatic VAD detects text as activity but never detects "end of
+    # turn" for a single text message, causing indefinite hanging.
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],  # type: ignore[list-item]
         output_audio_transcription=types.AudioTranscriptionConfig(),
@@ -67,6 +83,11 @@ async def generate_audio_dialog(
                     voice_name=voice,
                 )
             )
+        ),
+        realtime_input_config=types.RealtimeInputConfig(
+            automatic_activity_detection=types.AutomaticActivityDetection(
+                disabled=True,
+            ),
         ),
     )
 
@@ -82,16 +103,22 @@ async def generate_audio_dialog(
     try:
         async with asyncio.timeout(timeout):
             async with client.aio.live.connect(model=LIVE_MODEL, config=config) as session:
-                # Send text via send_client_content — the official method for
-                # discrete text turns per the Live API docs.  Unlike
-                # send_realtime_input(text=...), this does NOT route through
-                # the VAD pipeline and immediately signals turn completion.
-                await session.send_client_content(
-                    turns={"role": "user", "parts": [{"text": dialog_text}]},
-                    turn_complete=True,
+                # Manual VAD protocol:
+                # 1. Signal "user started their turn"
+                await session.send_realtime_input(
+                    activity_start=types.ActivityStart(),
                 )
 
-                # 3. Collect response chunks
+                # 2. Send text input
+                await session.send_realtime_input(text=dialog_text)
+
+                # 3. Signal "user finished their turn" — triggers model
+                #    response generation immediately.
+                await session.send_realtime_input(
+                    activity_end=types.ActivityEnd(),
+                )
+
+                # 4. Collect response chunks
                 async for response in session.receive():
                     # Raw audio data (response.data shorthand)
                     if response.data is not None:
@@ -143,3 +170,4 @@ async def generate_audio_dialog(
             e,
         )
         return None, None
+
