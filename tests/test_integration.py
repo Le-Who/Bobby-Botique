@@ -27,7 +27,7 @@ class TestStreamingWriter:
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
         mock_adapter._bot = AsyncMock()  # force draft mode if possible
 
-        writer = StreamingWriter(mock_adapter, chat_type="private")
+        writer = StreamingWriter(mock_adapter)
         writer._debounce_s = 0.05
         writer._min_chunk = 0
 
@@ -39,7 +39,7 @@ class TestStreamingWriter:
 
         # Should have been called at least once (finalize forces a flush),
         # but not 3 times (debouncing should merge some calls)
-        assert mock_adapter.edit_message.call_count + mock_adapter.send_draft.call_count >= 1
+        assert mock_adapter.edit_message.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_streaming_writer_finalize_sends_full_text(self):
@@ -55,7 +55,7 @@ class TestStreamingWriter:
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
         mock_adapter._bot = None  # force edit_message mode
 
-        writer = StreamingWriter(mock_adapter, chat_type="group")
+        writer = StreamingWriter(mock_adapter)
         writer._debounce_s = 0.01
         writer._min_chunk = 0
         await writer.write("Part1 ")

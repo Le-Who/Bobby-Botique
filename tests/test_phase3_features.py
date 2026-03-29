@@ -116,7 +116,7 @@ class TestStreamingWriter:
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
         mock_adapter._bot = None
 
-        writer = StreamingWriter(mock_adapter, chat_type="private")
+        writer = StreamingWriter(mock_adapter)
         writer._debounce_s = 0.0
         writer._min_chunk = 0
 
@@ -138,7 +138,7 @@ class TestStreamingWriter:
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
         mock_adapter._bot = None
 
-        writer = StreamingWriter(mock_adapter, chat_type="private")
+        writer = StreamingWriter(mock_adapter)
         writer._debounce_s = 10.0  # Very high debounce
         writer._min_chunk = 0
 
@@ -164,7 +164,7 @@ class TestStreamingWriter:
         mock_adapter = AsyncMock(spec=StreamingUIAdapter)
         mock_adapter._bot = None
 
-        writer = StreamingWriter(mock_adapter, chat_type="private")
+        writer = StreamingWriter(mock_adapter)
         writer._debounce_s = 0.0
         writer._min_chunk = 0
 
@@ -195,13 +195,12 @@ class TestStreamingWriter:
         ):
             with patch("app.streaming.metrics_collector") as mock_mc:
                 mock_mc.record_api_call = AsyncMock()
-                text, success, last_msg, _tokens = await stream_and_display(
+                text, success, last_msg, _tokens, _interrupted, _voice = await stream_and_display(
                     mock_msg,
                     "model",
                     [],
                     MagicMock(),
                     chat_id=123,
-                    chat_type="private",
                     bot=None,
                 )
                 assert success

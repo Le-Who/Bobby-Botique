@@ -62,7 +62,7 @@ async def test_handle_photo_success():
         patch(
             "app.handlers.ai_photo.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("This is a mountain landscape.", True, AsyncMock(), 0),
+            return_value=("This is a mountain landscape.", True, AsyncMock(), 0, False, False),
         ),
         patch(
             "app.handlers.ai_photo._resolve_ai_request",
@@ -107,7 +107,7 @@ async def test_handle_photo_empty_response():
         patch(
             "app.handlers.ai_photo.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("", False, AsyncMock(), 0),
+            return_value=("", False, AsyncMock(), 0, False, False),
         ),
         patch(
             "app.handlers.ai_photo._get_ai_response_with_routing",
@@ -150,7 +150,7 @@ async def test_handle_photo_ai_error():
         patch(
             "app.handlers.ai_photo.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("? API Error", False, AsyncMock(), 0),
+            return_value=("? API Error", False, AsyncMock(), 0, False, False),
         ),
         patch(
             "app.handlers.ai_photo._get_ai_response_with_routing",

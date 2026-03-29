@@ -139,8 +139,7 @@ async def _handle_document_question(
             thinking_level=chat_state.thinking_level,
             user_id=user_id,
             bot=placeholder_message.get_bot(),
-            chat_id=placeholder_message.chat_id,
-            chat_type=placeholder_message.chat.type,
+            chat_id=placeholder_message.chat_id
         )
 
         streamed = bool(success and response_text)

@@ -3,6 +3,32 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.4] - 2026-03-29 - GraphRAG Hardening & Streaming Cleanup
+
+### 🚀 Features
+
+#### GraphRAG Semantic Memory Hardening
+- **Semantic Entity Resolution**: Integrated `pgvector` distance matching (`< 0.12`) into LTM consolidation (`memory_consolidation.py`) to semantically merge identical entities, drastically reducing graph fragmentation.
+- **Temporal Edge Upserts**: Added `updated_at` tracking to `memory_edges` with `ON CONFLICT` constraints to guarantee idempotent relationship updates across memories.
+- **Time-Decayed Traversal**: Upgraded `search_memories_with_graph` (`memory.py`) to automatically prioritize recently updated relationships using SQL time-decay `ORDER BY` sorting.
+
+#### Streaming Architecture Cleanup
+- **Legacy UI Abstraction Removal**: Completely eliminated deprecated `DRAFT_MODE` constants (`DRAFT_DEBOUNCE_S`, `DRAFT_MIN_CHUNK`) from the streaming subsystem (`streaming.py`).
+- **Signature Hardening**: Stripped the unused `chat_type` routing parameter from `stream_and_display()` across all handler call sites (Chat, Photo, Search, Document).
+
+### 🗄️ Database Migrations
+- `scripts/migrations/025_add_temporal_graph_edges.sql`: Added `updated_at` column to `memory_edges` and created a unique constraint on `(user_id, source_node, target_node, predicate)` to enable ON CONFLICT upserts.
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Mypy strict | 0 errors |
+| Pytest | 100% Pass |
+
+---
+
 ## [2.9.3] - 2026-03-29 - Mid-Stream Recovery & LLM Voice Intent
 
 ### 🚀 Features

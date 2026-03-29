@@ -52,6 +52,8 @@ def mock_external_network():
             True,
             MagicMock(),
             0,
+            False,
+            False,
         )
 
         yield {

@@ -393,6 +393,25 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                         )
                         ent_emb_str = f"[{','.join(str(v) for v in ent_embedding)}]" if ent_embedding else None
 
+                        # Semantic Deduplication: Check if a highly similar node already exists
+                        if ent_emb_str:
+                            similar_node = await conn.fetchrow(
+                                """
+                                SELECT id, entity_name 
+                                FROM memory_nodes 
+                                WHERE user_id = $1 
+                                  AND embedding <=> $2::halfvec < 0.12
+                                ORDER BY embedding <=> $2::halfvec ASC
+                                LIMIT 1
+                                """,
+                                user_id,
+                                ent_emb_str,
+                            )
+                            if similar_node:
+                                # A semantically identical node exists. Use its canonical name.
+                                # This merges variations like "Tony Stark" and "Тони Старк" without duplicating.
+                                name = similar_node["entity_name"]
+
                         row = await conn.fetchrow(
                             """
                             INSERT INTO memory_nodes (user_id, entity_name, entity_type, description, embedding)
@@ -414,7 +433,7 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                         if row:
                             node_ids[name] = row["id"]
 
-                    # ── Insert graph relations into memory_edges ─────────
+                    # ── Upsert graph relations into memory_edges ─────────
                     for rel in relations:
                         from_name = rel.get("from", "").strip()
                         to_name = rel.get("to", "").strip()
@@ -428,6 +447,10 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                             """
                             INSERT INTO memory_edges (user_id, source_node, target_node, predicate, weight)
                             VALUES ($1, $2, $3, $4, $5)
+                            ON CONFLICT (user_id, source_node, target_node, predicate)
+                            DO UPDATE SET 
+                                weight = EXCLUDED.weight,
+                                updated_at = now()
                             """,
                             user_id,
                             node_ids[from_name],

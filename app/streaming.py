@@ -42,11 +42,7 @@ if TYPE_CHECKING:
 EDIT_DEBOUNCE_S = 0.6
 MIN_CHUNK_SIZE = 60
 
-# Draft mode (sendMessageDraft) — used for private chats.
-DRAFT_DEBOUNCE_S = 0.3
-DRAFT_MIN_CHUNK = 20
-
-# Indicator appended while streaming is in progress (classic mode only).
+# Indicator appended while streaming is in progress.
 STREAMING_INDICATOR = " ▍"
 # Safe limit for Telegram messages (leaves margin for HTML tag overhead).
 STREAM_MSG_LIMIT = 4000
@@ -192,8 +188,6 @@ class StreamingWriter:
     def __init__(
         self,
         adapter: StreamingUIAdapter,
-        *,
-        chat_type: str = "private",
     ):
         self._adapter = adapter  # Generic UI adapter
         self._buffer = ""  # Buffer for CURRENT message only
@@ -270,8 +264,6 @@ class StreamingWriter:
         sanitized = sanitize_html_tags(formatted)
         assert sanitized is not None  # guaranteed: input is str, not None
         return sanitized, parse_mode
-
-
 
     async def write(self, delta: str) -> None:
         """Accumulate a text delta and flush to Telegram if debounce allows."""
@@ -502,7 +494,6 @@ async def stream_and_display(
     *,
     bot=None,
     chat_id: int = 0,
-    chat_type: str = "private",
     reply_markup: Any | None = None,
     footer_text: str | None = None,
     enable_web_search: bool = False,
@@ -550,10 +541,7 @@ async def stream_and_display(
         draft_id=0,
     )
 
-    writer = StreamingWriter(
-        adapter,
-        chat_type=chat_type,
-    )
+    writer = StreamingWriter(adapter)
 
     # Reset voice intent flag for this stream
     _voice_requested.set(False)
@@ -581,13 +569,13 @@ async def stream_and_display(
                 stripped = delta.lstrip()
                 if stripped.startswith(_VOICE_TAG):
                     _voice_requested.set(True)
-                    delta = stripped[len(_VOICE_TAG):].lstrip()
+                    delta = stripped[len(_VOICE_TAG) :].lstrip()
                     logging.info("Voice intent detected via [VOICE] tag")
                     # Fire-and-forget metrics recording to avoid blocking stream
                     try:
                         from app.metrics import role_conv_metrics
                         from app.utils.background_tasks import submit_task
-                        
+
                         submit_task(role_conv_metrics.record_voice_intent())
                     except Exception as metric_err:
                         logging.warning("Failed to record voice intent metric: %s", metric_err)

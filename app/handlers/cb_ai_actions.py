@@ -327,8 +327,7 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
 
     # The continuation prompt — instructs the model to seamlessly pick up
     continuation_prompt = (
-        "Пожалуйста, продолжи прерванную мысль с того места, "
-        "где ты остановился, с учётом контекста уже написанного."
+        "Пожалуйста, продолжи прерванную мысль с того места, где ты остановился, с учётом контекста уже написанного."
     )
     chat_state.history.append({"role": "user", "parts": [continuation_prompt]})
 

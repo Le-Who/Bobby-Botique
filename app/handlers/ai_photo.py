@@ -155,7 +155,6 @@ async def _process_ai_vision(
         user_id=user_id,
         bot=placeholder_message.get_bot(),
         chat_id=chat_id or 0,
-        chat_type=(placeholder_message.chat.type if placeholder_message.chat else "private"),
     )
 
     streamed = bool(success and response_text)

@@ -40,7 +40,7 @@ def mock_boundaries():
 
         # We need to return the expected tuple: (response_text, success, last_message_obj, token_count)
         placeholder_reply = make_telegram_message("Test reply", user_id=123)
-        m_stream.return_value = ("Hello world!", True, placeholder_reply, 42)
+        m_stream.return_value = ("Hello world!", True, placeholder_reply, 42, False, False)
 
         yield {
             "resolve": m_resolve,
@@ -154,7 +154,7 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
     )
 
     # We simulate stream_and_display failing to stream anything and returning success=False
-    mock_boundaries["stream"].return_value = (None, False, None, 0)
+    mock_boundaries["stream"].return_value = (None, False, None, 0, False, False)
 
     with patch("app.errors.build_retry_and_roles_keyboard", return_value=None):
         # ── Act ──

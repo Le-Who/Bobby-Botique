@@ -53,7 +53,7 @@ async def test_qna_search_happy_path():
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("Grounded answer from Google Search", True, AsyncMock(), 42),
+            return_value=("Grounded answer from Google Search", True, AsyncMock(), 42, False, False),
         ) as mock_stream,
         patch(
             "app.handlers.ai_search.handle_ai_response_error",
@@ -95,7 +95,7 @@ async def test_qna_search_streaming_failure_fallback():
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("", False, None, 0),
+            return_value=("", False, None, 0, False, False),
         ),
         patch(
             "app.handlers.ai_search._get_ai_response_with_routing",

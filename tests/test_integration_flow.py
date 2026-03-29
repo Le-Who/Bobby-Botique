@@ -178,7 +178,7 @@ async def test_happy_path_text_message(run_background_sync):
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
-            return_value=("Mocked joke!", True, None, 0),
+            return_value=("Mocked joke!", True, None, 0, False, False),
         ),
         patch("app.repos.memory.search_memories", new_callable=AsyncMock, return_value=[]),
         patch("app.repos.memory.store_memory", new_callable=AsyncMock),

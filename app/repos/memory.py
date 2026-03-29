@@ -346,7 +346,7 @@ async def search_memories_with_graph(
                     JOIN memory_nodes tgt ON e.target_node = tgt.id
                     WHERE e.user_id = $1
                       AND (e.source_node = ANY($2::uuid[]) OR e.target_node = ANY($2::uuid[]))
-                    ORDER BY e.weight DESC
+                    ORDER BY (e.weight / (1.0 + EXTRACT(EPOCH FROM now() - COALESCE(e.updated_at, now())) / (86400.0 * 30))) DESC
                     LIMIT 10
                     """,
                     (user_id, relevant_ids),

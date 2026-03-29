@@ -705,7 +705,7 @@ class RoleConversationMetricsCollector:
         """Записывает успешное восстановление прерванного потока"""
         self.conversation_metrics.stream_recoveries += 1
         logging.info("Stream recovery triggered")
-        
+
     async def record_voice_intent(self):
         """Записывает детектирование намерения голосового ответа (тег [VOICE])"""
         self.conversation_metrics.voice_intents += 1

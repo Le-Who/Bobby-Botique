@@ -108,7 +108,6 @@ async def _handle_qna_search(
                 user_id=user_id,
                 bot=placeholder_message.get_bot(),
                 chat_id=chat_id or 0,
-                chat_type=(placeholder_message.chat.type if placeholder_message.chat else "private"),
                 enable_web_search=True,
             )
 

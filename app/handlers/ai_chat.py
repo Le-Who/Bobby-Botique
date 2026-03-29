@@ -237,11 +237,12 @@ async def _handle_regular_chat(
     if _memories_injected > 0:
         _footer_text = t("ltm.memories_injected", detect_language(user_message), count=str(_memories_injected))
 
-    # We defer stopping the heartbeat until the VERY FIRST chunk of text 
-    # arrives from the AI provider. This ensures the animation keeps ticking 
+    # We defer stopping the heartbeat until the VERY FIRST chunk of text
+    # arrives from the AI provider. This ensures the animation keeps ticking
     # if the provider hits rate limits (503) and takes ~45s to rotate keys.
     def _stop_placeholder_animation() -> None:
         from app.utils.heartbeat import stop_heartbeat
+
         stop_heartbeat(placeholder_message.message_id)
 
     # ── Resolve thinking level (adaptive or user-configured) ────────────
@@ -258,7 +259,14 @@ async def _handle_regular_chat(
     from app.streaming import stream_and_display
 
     try:
-        response_text, success, stream_last_msg, actual_tokens, was_interrupted, voice_requested = await stream_and_display(
+        (
+            response_text,
+            success,
+            stream_last_msg,
+            actual_tokens,
+            was_interrupted,
+            voice_requested,
+        ) = await stream_and_display(
             placeholder_message,
             model_name=model_used,
             history=chat_state.history,
@@ -267,7 +275,6 @@ async def _handle_regular_chat(
             user_id=user_id,
             bot=placeholder_message.get_bot(),
             chat_id=placeholder_message.chat_id,
-            chat_type=placeholder_message.chat.type,
             footer_text=_footer_text,
             yield_hook=_stop_placeholder_animation,
         )
@@ -377,7 +384,7 @@ async def _handle_regular_chat(
             # stripped from display by the streaming layer)
             clean_response = response_text
             if voice_requested and clean_response.startswith("[VOICE]"):
-                clean_response = clean_response[len("[VOICE]"):].lstrip()
+                clean_response = clean_response[len("[VOICE]") :].lstrip()
             chat_state.history.append({"role": "model", "parts": [clean_response]})
             chat_state.token_count = new_token_count
             await update_user_chat(user_id, chat_state)

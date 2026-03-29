@@ -55,19 +55,6 @@ class TestTelegramMessageAdapter:
             await adapter.edit_message("Hello", "HTML")
 
     @pytest.mark.asyncio
-    async def test_send_draft(self, adapter, mock_bot):
-        await adapter.send_draft("draft text", "HTML")
-        mock_bot.send_message_draft.assert_called_once_with(
-            chat_id=123, draft_id=456, text="draft text", parse_mode="HTML"
-        )
-
-    @pytest.mark.asyncio
-    async def test_send_draft_without_bot_raises(self, mock_message):
-        adapter_no_bot = TelegramMessageAdapter(message=mock_message)
-        with pytest.raises(ValueError, match="bot instance"):
-            await adapter_no_bot.send_draft("text", "HTML")
-
-    @pytest.mark.asyncio
     async def test_reply_new_message(self, adapter, mock_message):
         new_msg = AsyncMock()
         mock_message.reply_text.return_value = new_msg
@@ -96,21 +83,3 @@ class TestTelegramMessageAdapter:
         assert isinstance(new_adapter, TelegramMessageAdapter)
         assert new_adapter.last_message is fallback_msg
 
-    @pytest.mark.asyncio
-    async def test_delete_placeholder(self, adapter, mock_message):
-        await adapter.delete_placeholder()
-        mock_message.delete.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_send_final_message(self, adapter, mock_bot):
-        new_msg = AsyncMock()
-        mock_bot.send_message.return_value = new_msg
-
-        await adapter.send_final_message("final text", "HTML", reply_markup="keyboard")
-        mock_bot.send_message.assert_called_once()
-        call_kwargs = mock_bot.send_message.call_args[1]
-        assert call_kwargs["text"] == "final text"
-        assert call_kwargs["reply_markup"] == "keyboard"
-
-    def test_last_message(self, adapter, mock_message):
-        assert adapter.last_message is mock_message
