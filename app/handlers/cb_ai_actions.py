@@ -261,7 +261,6 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id=chat_id,
             reply_to_message_id=message_id,
             response_text=response_text,
-            use_live_api=True,
         )
     except Exception as e:
         logging.error("TTS reply callback failed: %s", e)

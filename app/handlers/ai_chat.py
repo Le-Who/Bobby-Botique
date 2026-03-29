@@ -354,7 +354,6 @@ async def _handle_regular_chat(
                     chat_id=placeholder_message.chat_id,
                     reply_to_message_id=(stream_last_msg or placeholder_message).message_id,
                     response_text=response_text,
-                    use_live_api=True,
                 )
 
             # ── Model suggestion (non-intrusive hint) ────────────────────

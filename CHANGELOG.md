@@ -3,31 +3,33 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [2.8.78] - 2026-03-29 - Live API Real Fix & TTS Quality
+## [2.9.0] - 2026-03-29 - Voice Engine Architecture v3
 
-### 🎙️ Voice Engine — Live API Text Input Fix
-
-| Component | Files | Detail |
-|-----------|-------|--------|
-| **Real Root Cause Fix** | `live_audio.py` | Previous attempts: `send_realtime_input(text=...)` with auto-VAD → `TimeoutError` (VAD never detects "end of turn" for text-only input). `send_client_content` → `APIError(1007 Invalid argument)` (method is only for seeding initial history on `gemini-3.1-flash-live-preview`). **Root Cause**: Automatic VAD detects text as "activity start" but has no mechanism to detect "end of turn" for a single text message — it keeps waiting for more input indefinitely. **Fix**: Disable automatic VAD (`automatic_activity_detection.disabled=True`) and send explicit **manual turn boundaries** (`activityStart` → text → `activityEnd`) to immediately trigger model response. |
-| Docstring Corrections | `live_audio.py` | Comprehensive docstring explaining why `send_client_content` is wrong (1007 error) and why auto-VAD hangs on text (no end-of-turn detection for text-only sessions). |
-
-### 🔊 REST TTS — Prompt Engineering
+### 🏗️ Architecture — Live API Removed
 
 | Component | Files | Detail |
 |-----------|-------|--------|
-| **Director's Notes Prompt** | `tts.py` | Upgraded TTS prompt from a bare `"Say the following naturally..."` instruction to a structured **Director's Notes + Transcript** format per the official Gemini TTS prompting guide. Adds Style, Pace, and Pronunciation guidance. |
-| **Pronunciation Intelligence** | `tts.py` | Added explicit instruction for the model to pronounce words correctly based on **meaning and context**, not literal spelling. Handles Russian `ё→е` diacritics (e.g., "звезды" → "звёзды"), missing stress marks, and minor typos. The model now reads words as they *should sound*, dramatically improving Russian TTS quality. |
+| **Live API Removed** | `live_audio.py` (deleted), `voice_engine.py` | After 3 failed approaches across 4 sessions, concluded that `gemini-3.1-flash-live-preview` **does not support one-shot text-to-speech**. The API is architecturally designed for bidirectional audio streaming (mic→model→speaker). `send_realtime_input(text=...)` → TimeoutError (VAD never detects end-of-turn for text). `send_client_content` → `1007 Invalid argument` (only for history seeding). Manual VAD (`activityStart`/`activityEnd`) → `1007 Precondition check failed` (text-only activity unsupported). Additionally, affective dialogue is not supported on the 3.1 model. |
+| **REST TTS Promoted** | `voice_engine.py` | REST TTS (`gemini-2.5-flash-preview-tts`) promoted from fallback to sole provider. Eliminates ~1-2s of wasted retry time per voice reply. |
+| **Caller Cleanup** | `ai_chat.py`, `cb_ai_actions.py` | Removed `use_live_api` parameter from all `fire_voice_reply()` call sites. |
+
+### 🔊 TTS Quality — Production-Grade Prompt Engineering
+
+| Component | Files | Detail |
+|-----------|-------|--------|
+| **Voice Change** | `tts.py`, `voice_engine.py` | Switched from **Kore** ("Firm, confident" — harsh/raspy in Russian) to **Aoede** ("Breezy, natural" — smooth conversational narration). Eliminates reported breathiness/roboticness artifacts. |
+| **Text Pre-Processing** | `tts.py` | Added 9-stage regex pipeline to clean bot output before TTS: strips code blocks, inline code (keeps text), Markdown images, links (keeps visible text), bare URLs, HTML tags, bold/italic markers, header hashes, emoji clusters (reduces to single), and excessive whitespace. Prevents the model from reading `**bold**` markers or URLs aloud. |
+| **Director's Notes Prompt** | `tts.py` | Production-grade prompt following the official Gemini TTS prompting pattern with: **Character** (warm companion persona), **Delivery** (smooth/clear, no breathiness/rasp, natural intonation variance), **Pronunciation rules** (Russian ё/е with 5 concrete examples, abbreviation expansion for ИИ/ООН/т.д./т.е./г., number/date reading in surrounding language, foreign name preservation, typo recovery from context), **Constraints** (anti-commentary injection, anti-preamble, silent formatting symbol skip). |
 
 ### ✅ Quality Gates
 
 | Check | Result |
 |-------|--------|
 | Ruff lint | 0 errors |
-| Mypy (`--no-incremental`) | 0 errors (3 source files) |
+| Mypy (`--no-incremental`) | 0 errors (2 source files) |
 | Tests | **1453 passed**, 0 failed |
 
----
+
 
 ## [2.8.77] - 2026-03-29 - Live API Root Cause Fix
 

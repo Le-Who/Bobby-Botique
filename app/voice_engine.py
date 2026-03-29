@@ -4,7 +4,7 @@
 Provides a single entry point for the chat handler to fire-and-forget
 voice reply generation after text streaming completes.
 
-Strategy: Live API first (affective audio) → REST TTS fallback (reliable).
+Strategy: REST TTS (gemini-2.5-flash-preview-tts) with key rotation →
            PCM audio → ffmpeg → OGG Opus → bot.send_voice()
 """
 
@@ -21,14 +21,12 @@ async def _generate_and_send_voice(
     reply_to_message_id: int,
     response_text: str,
     *,
-    use_live_api: bool = True,
-    system_instruction: str | None = None,
-    voice: str = "Kore",
+    voice: str = "Aoede",
 ) -> None:
     """Generate TTS audio and send as Telegram voice message.
 
-    Tries Live API first (if enabled), falls back to REST TTS.
-    Shows 'record_voice' chat action while generating.
+    Uses REST TTS (gemini-2.5-flash-preview-tts) with key rotation.
+    Shows a transient status message while generating.
 
     Memory-critical: aggressively deletes intermediate buffers at each pipeline
     stage to avoid OOM on the 500MB RAM budget.
@@ -53,76 +51,36 @@ async def _generate_and_send_voice(
         tts_text = response_text[:2000] if len(response_text) > 2000 else response_text
         pcm_audio: bytes | None = None
 
-        # ── Strategy 1: Live API (affective, emotional audio) ────────────────
+        # ── REST TTS with key rotation ────────────────────────────────────
         failed_keys: set[str] = set()
         from app.errors import classify_key_error
         from app.handlers.ai_core import _resolve_ai_request
+        from app.providers.tts import generate_speech
         from app.repos.keys import get_key_status_manager
 
         status_mgr = get_key_status_manager()
 
-        if use_live_api:
-            from app.providers.live_audio import generate_audio_dialog
+        for attempt in range(3):
+            key_data, model_used, _ = await _resolve_ai_request(
+                "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
+            )
+            if not key_data:
+                break
 
-            for attempt in range(3):
-                key_data, model_used, _ = await _resolve_ai_request(
-                    "gemini-3.1-flash-live-preview", excluded_key_hashes=failed_keys
-                )
-                if not key_data:
+            try:
+                pcm_audio = await generate_speech(tts_text, key_data["api_key"], voice=voice)
+                if pcm_audio:
+                    logging.info("Voice reply: TTS audio generated (%d bytes PCM)", len(pcm_audio))
                     break
-
+            except Exception as e:
+                err_str = str(e)
+                logging.warning("TTS generation failed (attempt %d/3): %s", attempt + 1, err_str)
+                failed_keys.add(key_data["key_hash"])
                 try:
-                    # Concise TTS instruction — avoids long system prompts that
-                    # may conflict with Live API session configuration.
-                    tts_sys_prompt = "Read the user's text aloud exactly as written. Do not add commentary."
-                    if system_instruction:
-                        tts_sys_prompt += f" Tone: {system_instruction}"
-
-                    pcm_audio, _transcript = await generate_audio_dialog(
-                        tts_text,
-                        key_data["api_key"],
-                        system_instruction=tts_sys_prompt,
-                        voice=voice,
-                    )
-                    del _transcript  # free transcript immediately, we don't use it here
-                    if pcm_audio:
-                        logging.info("Voice reply: using Live API audio (%d bytes PCM)", len(pcm_audio))
-                        break
-                except Exception as e:
-                    err_str = str(e)
-                    logging.warning("Live Audio failed (attempt %d/3): %s", attempt + 1, err_str)
-                    failed_keys.add(key_data["key_hash"])
-                    try:
-                        err_cat = classify_key_error(err_str)
-                        await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
-                    except Exception:
-                        pass
-        # ── Strategy 2: REST TTS (reliable fallback) ─────────────────────────
-        if pcm_audio is None:
-            failed_keys.clear()
-            from app.providers.tts import generate_speech
-
-            for attempt in range(3):
-                key_data, model_used, _ = await _resolve_ai_request(
-                    "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
-                )
-                if not key_data:
-                    break
-
-                try:
-                    pcm_audio = await generate_speech(tts_text, key_data["api_key"], voice=voice)
-                    if pcm_audio:
-                        logging.info("Voice reply: using REST TTS audio (%d bytes PCM)", len(pcm_audio))
-                        break
-                except Exception as e:
-                    err_str = str(e)
-                    logging.warning("REST TTS generation failed (attempt %d/3): %s", attempt + 1, err_str)
-                    failed_keys.add(key_data["key_hash"])
-                    try:
-                        err_cat = classify_key_error(err_str)
-                        await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
-                    except Exception:
-                        pass
+                    err_cat = classify_key_error(err_str)
+                    await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
+                except Exception:
+                    pass
 
         if pcm_audio is None:
             logging.warning("No audio generated for voice reply (chat_id=%s)", chat_id)
@@ -173,9 +131,7 @@ def fire_voice_reply(
     reply_to_message_id: int,
     response_text: str,
     *,
-    use_live_api: bool = True,
-    system_instruction: str | None = None,
-    voice: str = "Kore",
+    voice: str = "Aoede",
 ) -> None:
     """Fire-and-forget: schedule voice reply as a retryable background task.
 
@@ -187,8 +143,6 @@ def fire_voice_reply(
     _chat_id = chat_id
     _reply_to = reply_to_message_id
     _text = response_text
-    _live = use_live_api
-    _si = system_instruction
     _voice = voice
 
     def _factory():
@@ -197,8 +151,6 @@ def fire_voice_reply(
             _chat_id,
             _reply_to,
             _text,
-            use_live_api=_live,
-            system_instruction=_si,
             voice=_voice,
         )
 
