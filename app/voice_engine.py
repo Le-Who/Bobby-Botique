@@ -47,8 +47,8 @@ async def _generate_and_send_voice(
         pass
 
     try:
-        # Truncate long texts for TTS (keeps first ~2000 chars)
-        tts_text = response_text[:2000] if len(response_text) > 2000 else response_text
+        # Truncate long texts for TTS (keeps first ~1500 chars)
+        tts_text = response_text[:1500] if len(response_text) > 1500 else response_text
         pcm_audio: bytes | None = None
 
         # ── REST TTS with key rotation ────────────────────────────────────

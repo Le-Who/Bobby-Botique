@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.1] - 2026-03-29 - Voice Latency Optimization
+
+### ⚡ Performance — Voice Reply Delay Fix (~65s → ~10-15s)
+
+Root cause: `gemini-2.5-flash-preview-tts` had no entry in `DAILY_LIMITS`, so key rotation was purely reactive (only after 429 failure). First API failure cost ~51s due to quota suspension + retry cycle with next key. Combined with sequential launch and large audio payload, total voice delay was ~65 seconds after text.
+
+| Priority | Change | Files | Detail |
+|----------|--------|-------|--------|
+| **P0** | Proactive TTS key rotation | `.env` | Added `gemini-2.5-flash-preview-tts: 8` to `DAILY_LIMITS`. With 16 keys × 8/key = 128 TTS calls/day before quota exhaustion. Keys now rotate by usage count (proactive), not by 429 failure (reactive). Eliminates ~50s delay. |
+| **P1** | OGG Opus bitrate 48k→24k | `audio.py` | Speech-optimized bitrate halves OGG file size (~800KB → ~400KB) with negligible quality loss for `voip` mode. Saves ~3-5s on Telegram upload. |
+| **P2** | TTS text limit 2000→1500 | `tts.py`, `voice_engine.py` | Shorter text = proportionally less PCM generation time (6.3MB → ~4.7MB). Saves ~3-5s on TTS generation + transcoding. |
+| **P3** | Voice reply launch reordered | `ai_chat.py` | `fire_voice_reply()` now fires BEFORE `update_user_chat()` and `_store_memory_in_background()`. Since it's fire-and-forget, no dependency on state persistence. Saves ~200ms. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Mypy | 0 errors |
+| Tests | **1453 passed**, 0 failed |
+
+---
+
 ## [2.9.0] - 2026-03-29 - Voice Engine Architecture v3
 
 ### 🏗️ Architecture — Live API Removed

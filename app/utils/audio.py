@@ -15,7 +15,7 @@ async def pcm_to_ogg_opus(
     *,
     sample_rate: int = 24000,
     channels: int = 1,
-    bitrate: str = "48k",
+    bitrate: str = "24k",
 ) -> bytes | None:
     """Convert raw PCM audio to OGG Opus format for Telegram send_voice.
 

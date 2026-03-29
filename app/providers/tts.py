@@ -168,7 +168,7 @@ async def generate_speech(
         return None
 
     # 2. Truncate to avoid timeout on very long texts
-    tts_text = clean[:2000] if len(clean) > 2000 else clean
+    tts_text = clean[:1500] if len(clean) > 1500 else clean
 
     # 3. Build structured prompt
     prompt = _DIRECTOR_NOTES + tts_text

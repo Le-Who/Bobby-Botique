@@ -339,13 +339,8 @@ async def _handle_regular_chat(
                     if "not modified" not in str(e).lower():
                         logging.warning("Final button edit failed: %s", e)
 
-            chat_state.history.append({"role": "model", "parts": [response_text]})
-            chat_state.token_count = new_token_count
-            await update_user_chat(user_id, chat_state)
-
-            _store_memory_in_background(user_id, user_message, key_data)
-
             # ── Voice reply (fire-and-forget background task) ────────────
+            # Fired BEFORE state save to start TTS generation ASAP
             if reply_with_voice:
                 from app.voice_engine import fire_voice_reply
 
@@ -355,6 +350,12 @@ async def _handle_regular_chat(
                     reply_to_message_id=(stream_last_msg or placeholder_message).message_id,
                     response_text=response_text,
                 )
+
+            chat_state.history.append({"role": "model", "parts": [response_text]})
+            chat_state.token_count = new_token_count
+            await update_user_chat(user_id, chat_state)
+
+            _store_memory_in_background(user_id, user_message, key_data)
 
             # ── Model suggestion (non-intrusive hint) ────────────────────
             try:
