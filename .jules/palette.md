@@ -1,3 +1,7 @@
 ## 2024-05-18 - Missing ARIA States on Custom Navigation Tabs
 **Learning:** Found a recurring pattern where custom-built tab navigations (like the one in `dashboard.html`) only toggle visual states (e.g., CSS `.active` classes) without signaling state changes to screen readers via `aria-selected` and `aria-controls` properties, preventing users from tracking active tabs correctly.
 **Action:** When building custom tab components or enhancing existing ones, ensure the parent element has `role="tablist"`, each child button has `role="tab"`, and Javascript click handlers toggle `aria-selected` attributes identically to the visual classes. Add `role="tabpanel"` to the corresponding panel elements.
+
+## 2025-05-15 - [Dashboard WAI-ARIA Complete Pattern]
+**Learning:** Dynamic UI elements like dashboard tabs and error badges in this application often omit crucial ARIA attributes. Tabs missing `id`, `role="tabpanel"`, and `aria-labelledby` prevent correct tab-to-panel linking. Error badges mapping dynamic changes missing `aria-live="polite"` cause silent updates for screen reader users. The login page also lacked `role="alert"` for its error messages, preventing immediate announcements.
+**Action:** When updating or creating interactive components like tabs or dynamic badges, always verify and complete the full WAI-ARIA pattern (`id` to `aria-labelledby` mapping, `aria-live` for dynamic changes, `role="alert"` for errors).
