@@ -214,5 +214,12 @@ async def generate_speech(
         logging.error("TTS generation timed out after %.0fs", timeout)
         return None
     except Exception as e:
+        err_str = str(e)
+        # Re-raise retryable errors (429 quota, 503 overload) so the caller's
+        # key rotation loop can try a different API key.
+        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "503" in err_str or "UNAVAILABLE" in err_str:
+            logging.warning("TTS retryable error (will rotate key): %s", e)
+            raise
         logging.error("TTS generation failed: %s", e)
         return None
+
