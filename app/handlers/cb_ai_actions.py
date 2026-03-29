@@ -320,6 +320,11 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
     # Inject the partial text as model output so the LLM has context
     chat_state.history.append({"role": "model", "parts": [clean_partial]})
 
+    from app.metrics import role_conv_metrics
+    from app.utils.background_tasks import submit_task
+
+    submit_task(role_conv_metrics.record_stream_recovery())
+
     # The continuation prompt — instructs the model to seamlessly pick up
     continuation_prompt = (
         "Пожалуйста, продолжи прерванную мысль с того места, "

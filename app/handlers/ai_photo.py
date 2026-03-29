@@ -146,7 +146,7 @@ async def _process_ai_vision(
     _, model_used, _ = await _resolve_ai_request(chat_state.model or settings.DEFAULT_MODEL)
     history = [{"role": "user", "parts": parts}]
 
-    response_text, success, stream_last_msg, _tokens, _was_interrupted = await stream_and_display(
+    response_text, success, stream_last_msg, _tokens, _was_interrupted, _voice_req = await stream_and_display(
         placeholder_message,
         model_name=model_used,
         history=history,

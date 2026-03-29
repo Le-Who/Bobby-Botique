@@ -106,6 +106,17 @@ FORMATTING_RULES_COMPACT = r"""# ФОРМАТИРОВАНИЕ
 Математика: Unicode-символы — x², √4 = 2, π ≈ 3.14, △ABC, a ± b, x ≤ 10, Σ
 ⛔️ **НЕ ЭКРАНИРУЙ** знаки препинания! Пиши `.` `!` `(` `)` как есть."""
 
+# Instruction appended to every system prompt so the LLM can signal voice intent.
+# Cost: ~80 tokens — negligible relative to the base prompt.
+VOICE_TAG_INSTRUCTION = (
+    "\n\n# ГОЛОСОВОЕ ОЗВУЧИВАНИЕ\n"
+    "Если пользователь ЯВНО просит озвучить, прочитать вслух или ответить голосом "
+    "(например: «озвучь», «прочитай вслух», «ответь голосом», «скажи голосом»), "
+    "начни свой ответ РОВНО с тега `[VOICE]` (без пробела перед ним). "
+    "После тега поставь пробел и продолжай ответ как обычно. "
+    "Если пользователь НЕ просит озвучить — НЕ добавляй этот тег."
+)
+
 
 # ============================================================================
 # PROMPT TEMPLATES — Versioned, with metadata
@@ -646,7 +657,7 @@ class PromptRegistry:
         if not role_prompt:
             # No role → full prompt with embedded formatting rules
             tmpl = self._templates["system_prompt_full"]
-            return tmpl.text.replace("{formatting_rules}", FORMATTING_RULES)
+            return tmpl.text.replace("{formatting_rules}", FORMATTING_RULES) + VOICE_TAG_INSTRUCTION
 
         # Role active → choose compact or full base
         if use_compact:
@@ -656,7 +667,7 @@ class PromptRegistry:
             tmpl = self._templates["system_prompt_full"]
             base = tmpl.text.replace("{formatting_rules}", FORMATTING_RULES)
 
-        return base + "\n\n# ДОПОЛНИТЕЛЬНАЯ РОЛЬ\n" + role_prompt.strip()
+        return base + "\n\n# ДОПОЛНИТЕЛЬНАЯ РОЛЬ\n" + role_prompt.strip() + VOICE_TAG_INSTRUCTION
 
     def get_task_prompt(self, name: str, **kwargs: str) -> str:
         """Get a task-specific prompt with variable substitution.

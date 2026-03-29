@@ -624,6 +624,8 @@ class ConversationMetrics:
     conversations_renamed: int = 0
     conversations_deleted: int = 0
     total_conversations: int = 0
+    stream_recoveries: int = 0
+    voice_intents: int = 0
 
 
 @dataclass
@@ -699,6 +701,16 @@ class RoleConversationMetricsCollector:
         self.conversation_metrics.conversations_deleted += 1
         logging.info("Conversation deleted")
 
+    async def record_stream_recovery(self):
+        """Записывает успешное восстановление прерванного потока"""
+        self.conversation_metrics.stream_recoveries += 1
+        logging.info("Stream recovery triggered")
+        
+    async def record_voice_intent(self):
+        """Записывает детектирование намерения голосового ответа (тег [VOICE])"""
+        self.conversation_metrics.voice_intents += 1
+        logging.info("Voice intent recorded")
+
     async def record_summarization(self, reason: str, tokens_saved: int, summary_length: int):
         """Записывает суммаризацию контекста"""
         self.summarization_metrics.summarizations_triggered += 1
@@ -738,6 +750,8 @@ class RoleConversationMetricsCollector:
                 "renamed": self.conversation_metrics.conversations_renamed,
                 "deleted": self.conversation_metrics.conversations_deleted,
                 "total": self.conversation_metrics.total_conversations,
+                "recoveries": self.conversation_metrics.stream_recoveries,
+                "voice_intents": self.conversation_metrics.voice_intents,
             },
             "summarization": {
                 "triggered": self.summarization_metrics.summarizations_triggered,

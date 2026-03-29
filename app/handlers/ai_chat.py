@@ -256,7 +256,7 @@ async def _handle_regular_chat(
 
     from app.streaming import stream_and_display
 
-    response_text, success, stream_last_msg, actual_tokens, was_interrupted = await stream_and_display(
+    response_text, success, stream_last_msg, actual_tokens, was_interrupted, voice_requested = await stream_and_display(
         placeholder_message,
         model_name=model_used,
         history=chat_state.history,
@@ -354,8 +354,10 @@ async def _handle_regular_chat(
                         logging.warning("Final button edit failed: %s", e)
 
             # ── Voice reply (fire-and-forget background task) ────────────
-            # Fired BEFORE state save to start TTS generation ASAP
-            if reply_with_voice:
+            # Fired BEFORE state save to start TTS generation ASAP.
+            # Triggers from: (a) explicit param (voice message source) OR
+            # (b) LLM-detected intent ([VOICE] tag in response).
+            if reply_with_voice or voice_requested:
                 from app.voice_engine import fire_voice_reply
 
                 fire_voice_reply(
@@ -365,7 +367,12 @@ async def _handle_regular_chat(
                     response_text=response_text,
                 )
 
-            chat_state.history.append({"role": "model", "parts": [response_text]})
+            # Strip [VOICE] tag from response saved to history (already
+            # stripped from display by the streaming layer)
+            clean_response = response_text
+            if voice_requested and clean_response.startswith("[VOICE]"):
+                clean_response = clean_response[len("[VOICE]"):].lstrip()
+            chat_state.history.append({"role": "model", "parts": [clean_response]})
             chat_state.token_count = new_token_count
             await update_user_chat(user_id, chat_state)
 

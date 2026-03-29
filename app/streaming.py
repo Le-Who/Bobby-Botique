@@ -55,6 +55,10 @@ import contextvars
 
 _last_finish_reason: contextvars.ContextVar[str | None] = contextvars.ContextVar("last_finish_reason", default=None)
 _last_token_count: contextvars.ContextVar[int] = contextvars.ContextVar("last_token_count", default=0)
+_voice_requested: contextvars.ContextVar[bool] = contextvars.ContextVar("voice_requested", default=False)
+
+# Tag emitted by the LLM when the user asks for voice output.
+_VOICE_TAG = "[VOICE]"
 
 
 def set_last_finish_reason(reason: str | None) -> None:
@@ -636,7 +640,7 @@ async def stream_and_display(
     reply_markup: Any | None = None,
     footer_text: str | None = None,
     enable_web_search: bool = False,
-) -> tuple[str, bool, Message | None, int, bool]:
+) -> tuple[str, bool, Message | None, int, bool, bool]:
     """High-level: stream AI response and progressively update Telegram message.
 
     Supports multi-message streaming: when a single message exceeds
@@ -661,13 +665,16 @@ async def stream_and_display(
             final message (avoids a separate edit_reply_markup call).
 
     Returns:
-        (response_text, success, last_message, token_count, was_interrupted) tuple.
+        (response_text, success, last_message, token_count, was_interrupted,
+         voice_requested) tuple.
         token_count is 0 when not available from the provider.
         last_message is the final message in the chain (may differ from
         placeholder_message if overflow occurred). Callers should use it
         for post-stream edits like adding buttons.
         was_interrupted is True when the stream was interrupted mid-flight
         by an API error and the response is only partial.
+        voice_requested is True when the LLM detected the user wants voice
+        output and emitted the [VOICE] tag.
     """
     from app.adapters.ui_adapter import TelegramMessageAdapter
 
@@ -683,10 +690,14 @@ async def stream_and_display(
         chat_type=chat_type,
     )
 
+    # Reset voice intent flag for this stream
+    _voice_requested.set(False)
+
     try:
         from app.providers import get_provider_router
 
         router = get_provider_router()
+        _voice_tag_checked = False
 
         async for delta in router.stream_response(
             preferred_model=model_name,
@@ -698,7 +709,29 @@ async def stream_and_display(
             max_key_retries=3,
             enable_web_search=enable_web_search,
         ):
-            await writer.write(delta)
+            # ── [VOICE] tag detection (first chunk only) ─────────────────
+            # The LLM emits "[VOICE] ..." when user asks for audio output.
+            # We strip the tag on the fly so the user never sees it.
+            if not _voice_tag_checked:
+                stripped = delta.lstrip()
+                if stripped.startswith(_VOICE_TAG):
+                    _voice_requested.set(True)
+                    delta = stripped[len(_VOICE_TAG):].lstrip()
+                    logging.info("Voice intent detected via [VOICE] tag")
+                    # Fire-and-forget metrics recording to avoid blocking stream
+                    try:
+                        from app.metrics import role_conv_metrics
+                        from app.utils.background_tasks import submit_task
+                        
+                        submit_task(role_conv_metrics.record_voice_intent())
+                    except Exception as metric_err:
+                        logging.warning("Failed to record voice intent metric: %s", metric_err)
+                # Only check the very first non-empty chunk
+                if stripped:
+                    _voice_tag_checked = True
+
+            if delta:
+                await writer.write(delta)
 
         # Inject optional footer (e.g. memory indicator) as part of the stream
         # so the user sees it arrive smoothly — no post-hoc edit_text jump.
@@ -708,7 +741,7 @@ async def stream_and_display(
         final_text = await writer.finalize(reply_markup=reply_markup)
 
         if not final_text.strip():
-            return "", False, placeholder_message, 0, False
+            return "", False, placeholder_message, 0, False, False
 
         # Check finish_reason for blocked/truncated responses
         fr = _last_finish_reason.get()
@@ -752,7 +785,8 @@ async def stream_and_display(
         )
         await metrics_collector.record_api_call("gemini_streaming", model_name)
         actual_tokens = _last_token_count.get()
-        return final_text, True, writer.last_message, actual_tokens, False
+        voice_requested = _voice_requested.get()
+        return final_text, True, writer.last_message, actual_tokens, False, voice_requested
 
     except TimeoutError:
         partial = writer.text
@@ -764,12 +798,14 @@ async def stream_and_display(
                 writer.last_message,
                 0,
                 True,  # was_interrupted
+                _voice_requested.get(),
             )
         return (
             "⏰ Превышено время ожидания ответа. Попробуйте позже.",
             False,
             placeholder_message,
             0,
+            False,
             False,
         )
 
@@ -784,12 +820,14 @@ async def stream_and_display(
                 writer.last_message,
                 0,
                 True,  # was_interrupted
+                _voice_requested.get(),
             )
         return (
             "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.",
             False,
             placeholder_message,
             0,
+            False,
             False,
         )
 
@@ -804,11 +842,13 @@ async def stream_and_display(
                 writer.last_message,
                 0,
                 True,  # was_interrupted
+                _voice_requested.get(),
             )
         return (
             "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.",
             False,
             placeholder_message,
             0,
+            False,
             False,
         )

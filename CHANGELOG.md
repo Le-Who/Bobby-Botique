@@ -3,6 +3,33 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.3] - 2026-03-29 - Mid-Stream Recovery & LLM Voice Intent
+
+### 🚀 Features
+
+#### Resilient Streaming Pipeline & Recovery
+- **Mid-Stream API Error Isolation**: `gemini.py` and `router.py` now `raise` exceptions instead of yielding raw string JSON errors into the chat when API failures (like 503 Service Unavailable) occur mid-stream.
+- **Graceful Stream Interruption**: `streaming.py` detects mid-flight drops, appends a clean, localized footer (`⚠️ _(ответ был прерван из-за ошибки сервера)_`), and returns a new `was_interrupted` flag.
+- **Interactive Recovery Options**: If a stream drops, `ai_chat.py` presents an inline keyboard with `[▶️ Продолжить]` and `[🔄 Заново]` buttons, allowing users to salvage partial context.
+- **Seamless State Reintegration**: `continue_stream_callback` seamlessly injects the salvaged partial output into the conversation history, allowing the LLM to pick up exactly where it halted with zero context loss.
+
+#### Zero-Latency LLM Voice Intent Detection
+- **`[VOICE]` Tag Architecture**: `prompt_registry.py` now instructs the model to prefix its response with a `[VOICE]` tag if the user explicitly requested voice output (e.g., "озвучь ответ", "прочитай вслух").
+- **Invisible Extraction**: Replaced static regex keyword matching with pure intelligence. The `streaming.py` component dynamically detects and strips the `[VOICE]` tag from the very first text chunk, emitting an invisible `voice_requested` flag without ever showing the syntax to the user.
+- **Strict Modality Compliance**: Eradicated the legendary "voice stickiness" issue forever. Text flows stay text strings, Voice flows stay voice recordings unless seamlessly overriden by the new `[VOICE]` tag framework.
+
+### 📊 Observability
+- Added `stream_recoveries` and `voice_intents` counters to `ConversationMetrics` for telemetry.
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors |
+| Mypy strict | 0 errors |
+
+---
+
 ## [2.9.2] - 2026-03-29 - Full-Text TTS & Atomic Voice Toggle
 
 ### 🚀 Features
