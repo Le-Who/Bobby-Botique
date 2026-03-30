@@ -546,6 +546,11 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("deleteme", deleteme_command))
     application.add_handler(CommandHandler("clearmemory", clearmemory_command))
 
+    # Image generation commands (/draw, /img, /image, /generate)
+    from app.handlers.cmd_image import draw_command
+
+    application.add_handler(CommandHandler(["draw", "img", "image", "generate"], draw_command))
+
     # Admin commands (from cmd_admin)
     from app.handlers.cmd_admin import (
         add_user_command,

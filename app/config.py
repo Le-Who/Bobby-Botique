@@ -21,6 +21,12 @@ DEFAULT_GEMINI_MODELS: list[str] = [
 ]
 DEFAULT_DAILY_LIMIT_PER_MODEL: int = 15
 
+# --- Imagen 4 model identifiers (AI Studio / Gemini API) ---
+IMAGEN_MODEL_FAST: str = "imagen-4.0-fast-generate-001"
+IMAGEN_MODEL_BASE: str = "imagen-4.0-generate-001"
+IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
+IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
+
 
 def _load_int_env(env_var_name: str, required: bool = True):
     raw = os.getenv(env_var_name)
@@ -130,6 +136,13 @@ class Settings(BaseModel):
     OPENROUTER_API_KEYS: list[str] = []  # Optional, by default empty list
     ELEVENLABS_API_KEYS: list[str] = []  # Optional, free-tier ElevenLabs keys
     ELEVENLABS_VOICE_ID: str = "XB0fDUnXU5powFXDhCwa"  # Charlotte — conversational
+    # Imagen image generation — uses same GEMINI_API_KEYS pool.
+    # A separate per-key RPD counter is maintained in ImagenProvider so that
+    # image quota exhaustion does NOT suspend keys for LLM / audio traffic.
+    IMAGE_GEN_DAILY_LIMIT: int = 10  # Max image generations per user per day
+    IMAGE_GEN_RPD_PER_KEY: int = 25  # Imagen free-tier limit per API key per day
+    IMAGE_GEN_TIMEOUT: float = 60.0  # Max seconds to wait for Imagen API response
+    IMAGE_GEN_MAX_RETRIES: int = 3   # Key rotation retries on quota/error
     DATABASE_URL: str
     ADMIN_ID: int
     PORT: int

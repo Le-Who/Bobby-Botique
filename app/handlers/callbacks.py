@@ -215,3 +215,8 @@ def register(application: Application) -> None:
     from app.handlers.cb_voice import voice_callback
 
     application.add_handler(CallbackQueryHandler(voice_callback, pattern="^voice:"))
+
+    # Image generation Interactive Canvas (draw:regen, draw:ar:*, draw:model:*)
+    from app.handlers.cb_image import draw_callback
+
+    application.add_handler(CallbackQueryHandler(draw_callback, pattern="^draw:"))

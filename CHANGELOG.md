@@ -3,6 +3,81 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.7] - 2026-03-30 - Imagen 4 Image Generation
+
+### 🎨 New Feature — Text-to-Image Generation (Imagen 4)
+
+Adds full image generation support to GemAI Bot v2 via the **Imagen 4 API** family (`Fast`, `Base`, `Ultra`).
+
+#### Command Interface
+
+| Command | Aliases | Behaviour |
+|---------|---------|-----------|
+| `/draw <prompt>` | `/img`, `/image`, `/generate` | Generates an image from the given text description |
+
+During generation (10–20 s), bot sends `ChatAction.UPLOAD_PHOTO` heartbeat every **4.5 s** to prevent the Telegram "unresponsive" indicator.
+After generation, the image is sent with an **Interactive Canvas** inline keyboard:
+
+| Button | Action |
+|--------|--------|
+| 🔄 Сгенерировать заново | Regenerate with the same prompt and settings |
+| ◻️ 1:1 / 📱 3:4 / 🖥️ 4:3 / 📲 9:16 / 🎬 16:9 | Switch aspect ratio and regenerate automatically |
+| ⚡ Fast / ✨ Base / 💎 Ultra | Switch Imagen 4 model and regenerate automatically |
+
+Prompt and last-used parameters are stored in PTB's `context.user_data["draw_state"]` — no database writes needed for inline regeneration.
+
+#### Supported Models
+
+| Label | Model ID | Free-tier RPD | Characteristics |
+|-------|----------|---------------|-----------------|
+| ⚡ Fast | `imagen-4.0-fast-generate-001` | 25/key/day | Lowest latency |
+| ✨ Base | `imagen-4.0-generate-001` | 25/key/day | Balanced (default) |
+| 💎 Ultra | `imagen-4.0-ultra-generate-001` | 25/key/day | Highest quality |
+
+#### Quota Isolation (Critical Architecture)
+
+`ImagenProvider` uses an **isolated RPD (Requests Per Day) budget** stored in Redis:
+
+- **Redis key format:** `imagen:rpd:<sha256(api_key)[:12]>` — `INCR` + `EXPIREAT(next UTC midnight)`.
+- **Fallback:** When Redis is unavailable (dev environment, no `REDIS_URL`), an in-memory dict is used transparently — behaviour is identical.
+- **Result:** When all Imagen keys reach their 25 RPD limit, **only image generation fails**. LLM chat, streaming, and audio continue using the same API keys via `KeyStatusManager` without interruption. There is **zero cross-service impact**.
+
+#### Error Handling
+
+| Error | User Message |
+|-------|-------------|
+| Safety block | "🚫 Запрос заблокирован фильтром безопасности" + rephrasing tips |
+| Quota exhausted | "⏳ Дневной лимит генерации изображений исчерпан" (shows RPD limit) |
+| Timeout | "⏰ Время ожидания истекло" |
+| Overloaded | "⚡ Серверы перегружены. Попробуйте снова" |
+
+### 🗂️ New Files
+
+| File | Role |
+|------|------|
+| `app/providers/imagen_provider.py` | Isolated Imagen 4 API client with Redis-backed RPD tracking |
+| `app/handlers/cmd_image.py` | `/draw` command, Heartbeat, Interactive Canvas keyboard |
+| `app/handlers/cb_image.py` | Callback dispatcher `draw:regen`, `draw:ar:*`, `draw:model:*` |
+
+### 📝 Modified Files
+
+| File | Change |
+|------|--------|
+| `app/config.py` | Added `IMAGEN_MODEL_*` constants; `IMAGE_GEN_*` settings with sane defaults |
+| `app/handlers/commands.py` | Registered `/draw`, `/img`, `/image`, `/generate` aliases |
+| `app/handlers/callbacks.py` | Registered `^draw:` callback pattern |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint (3 new files) | 0 errors (4 auto-fixed import sort + UP017) |
+| Mypy (`--ignore-missing-imports`) | Exit 0 |
+| Pytest (full suite) | **1421 passed**, 0 failed |
+| `py_compile` (all 3 new files) | 0 syntax errors |
+
+---
+
 ## [2.9.6] - 2026-03-30 - GraphRAG 5-Point Tuning & ElevenLabs TTS
 
 ### 🧠 GraphRAG Memory — 5 Architectural Improvements
