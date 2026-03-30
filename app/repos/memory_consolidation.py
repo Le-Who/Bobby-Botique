@@ -199,7 +199,7 @@ Output JSON with this exact schema:
     {{"name": "Entity Name", "type": "person|project|skill|preference|place|concept", "description": "brief description"}}
   ],
   "relations": [
-    {{"from": "Entity A", "to": "Entity B", "predicate": "relation verb phrase", "weight": 0.8}}
+    {{"from": "Entity A", "to": "Entity B", "predicate": "relation verb phrase", "weight": 0.8, "is_core": false}}
   ]
 }}
 
@@ -210,6 +210,10 @@ Rules:
 - Entity names must be consistent and deduplicated.
 - If two entries contradict, keep the NEWER information.
 - weight: 0.0-1.0 confidence/strength of the relation.
+- is_core: Set to TRUE only for PERMANENT identity facts that should NEVER be forgotten:
+  user's real name, profession/job, permanent home location, chronic medical conditions,
+  permanent disabilities, or other facts the user has explicitly stated are permanently true.
+  Set to FALSE for preferences, habits, projects, opinions, goals — anything that can change.
 - Write in the same language as the memories.
 - Be concise. No speculation — only stated facts.
 
@@ -261,11 +265,18 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
         result.setdefault("entities", [])
         result.setdefault("relations", [])
 
+        # Normalise is_core: must be a bool, default False
+        for rel in result["relations"]:
+            raw_core = rel.get("is_core", False)
+            rel["is_core"] = bool(raw_core) if isinstance(raw_core, (bool, int)) else False
+
+        n_core = sum(1 for r in result["relations"] if r.get("is_core"))
         logging.info(
-            "Graph extraction: %d facts, %d entities, %d relations",
+            "Graph extraction: %d facts, %d entities, %d relations (%d core)",
             len(result["facts"]),
             len(result["entities"]),
             len(result["relations"]),
+            n_core,
         )
         return result
 
@@ -434,29 +445,79 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                             node_ids[name] = row["id"]
 
                     # ── Upsert graph relations into memory_edges ─────────
+                    # Semantic Edge Deduplication (Change 4): before inserting each
+                    # edge, check if a semantically similar predicate already exists
+                    # between the same pair of nodes (cosine distance < 0.25).
+                    # If so, update the existing edge's weight rather than adding a dupe.
                     for rel in relations:
                         from_name = rel.get("from", "").strip()
                         to_name = rel.get("to", "").strip()
                         predicate = rel.get("predicate", "related_to").strip()
                         weight = float(rel.get("weight", 1.0))
+                        is_core = bool(rel.get("is_core", False))  # Core Persona (Change 5)
 
                         if from_name not in node_ids or to_name not in node_ids:
                             continue  # Skip relations with missing entities
 
+                        src_id = node_ids[from_name]
+                        tgt_id = node_ids[to_name]
+
+                        # Semantic dedup: look for an existing edge between the same
+                        # node pair whose predicate vector is close (< 0.25 distance).
+                        # We embed the new predicate and compare against all existing
+                        # predicates for this src→tgt pair.
+                        pred_embedding = await _get_embedding(predicate, api_key, task_type="RETRIEVAL_DOCUMENT")
+                        if pred_embedding:
+                            pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]"
+                            similar_edge = await conn.fetchrow(
+                                """
+                                SELECT id, predicate
+                                FROM memory_edges
+                                WHERE user_id = $1
+                                  AND source_node = $2
+                                  AND target_node = $3
+                                  AND predicate_embedding IS NOT NULL
+                                  AND predicate_embedding <=> $4::halfvec < 0.25
+                                ORDER BY predicate_embedding <=> $4::halfvec ASC
+                                LIMIT 1
+                                """,
+                                user_id, src_id, tgt_id, pred_emb_str,
+                            )
+                            if similar_edge:
+                                # Merge into existing edge — update weight & is_core
+                                await conn.execute(
+                                    """
+                                    UPDATE memory_edges
+                                    SET weight = $1,
+                                        is_core = is_core OR $2,
+                                        updated_at = now()
+                                    WHERE id = $3
+                                    """,
+                                    weight, is_core, similar_edge["id"],
+                                )
+                                logging.debug(
+                                    "Semantic edge dedup: merged predicate '%s' into '%s'",
+                                    predicate, similar_edge["predicate"],
+                                )
+                                continue
+                        else:
+                            pred_emb_str = None
+
                         await conn.execute(
                             """
-                            INSERT INTO memory_edges (user_id, source_node, target_node, predicate, weight)
-                            VALUES ($1, $2, $3, $4, $5)
+                            INSERT INTO memory_edges
+                                (user_id, source_node, target_node, predicate,
+                                 predicate_embedding, weight, is_core)
+                            VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7)
                             ON CONFLICT (user_id, source_node, target_node, predicate)
-                            DO UPDATE SET 
+                            DO UPDATE SET
                                 weight = EXCLUDED.weight,
+                                is_core = memory_edges.is_core OR EXCLUDED.is_core,
+                                predicate_embedding = COALESCE(EXCLUDED.predicate_embedding, memory_edges.predicate_embedding),
                                 updated_at = now()
                             """,
-                            user_id,
-                            node_ids[from_name],
-                            node_ids[to_name],
-                            predicate,
-                            weight,
+                            user_id, src_id, tgt_id, predicate,
+                            pred_emb_str, weight, is_core,
                         )
 
                     logging.info(

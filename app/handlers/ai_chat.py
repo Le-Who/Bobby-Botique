@@ -153,8 +153,8 @@ async def _handle_regular_chat(
                     user_id,
                     user_message,
                     key_data["api_key"],
-                    limit=3,
-                    min_similarity=0.72,
+                    limit=5,          # raised: adaptive thresholding filters noise
+                    min_similarity=0.68,  # relaxed: gap-filter handles quality control
                 )
                 if memories:
                     memory_xml = format_memories_for_system_prompt(memories)

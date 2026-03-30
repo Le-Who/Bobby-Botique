@@ -27,11 +27,53 @@ from app.providers.gemini import get_cached_genai_client
 
 EMBEDDING_MODEL = "gemini-embedding-2-preview"
 EMBEDDING_DIMENSION = 768
+QUERY_EXPANSION_MODEL = "gemini-3.1-flash-lite-preview"
 MAX_MEMORIES_PER_USER = 500
 DEFAULT_MEMORY_TTL_DAYS = 90
 
 # Cached flag: True if pg_trgm extension is available in this database
 _trgm_available: bool | None = None
+
+
+async def expand_query_with_llm(query: str, api_key: str) -> str:
+    """Expand a vague / ambiguous user query into a concise keyword-rich search phrase.
+
+    Uses a cheap Flash-Lite call (~200ms) to re-phrase questions like
+    "That framework I mentioned yesterday?" into a phrase like
+    "Python web framework project FastAPI" that embeds near actual memories.
+
+    Falls back to the original query on any error so the pipeline never blocks.
+
+    Args:
+        query: Original user message text.
+        api_key: Gemini API key.
+
+    Returns:
+        Expanded search phrase (usually shorter / more keyword-dense).
+    """
+    try:
+        from google.genai import types as _types
+
+        client = get_cached_genai_client(api_key)
+        prompt = (
+            "You are a memory search assistant. "
+            "Rewrite the following user query as a concise, keyword-rich search phrase "
+            "(maximum 20 words) that will best match stored personal facts about the user. "
+            "Output ONLY the search phrase, nothing else.\n\n"
+            f"User query: {query[:500]}"
+        )
+        resp = await client.aio.models.generate_content(
+            model=QUERY_EXPANSION_MODEL,
+            contents=prompt,
+            config=_types.GenerateContentConfig(temperature=0.0, max_output_tokens=60),
+        )
+        expanded = (resp.text or "").strip().strip('"')
+        if expanded and len(expanded) > 3:
+            logging.debug("Query expansion: %r -> %r", query[:80], expanded)
+            return expanded
+    except Exception as exc:
+        logging.debug("Query expansion failed (non-critical): %s", exc)
+    return query
 
 
 async def _get_embedding(
@@ -184,7 +226,14 @@ async def search_memories(
     limit: int = 5,
     min_similarity: float = 0.5,
 ) -> list[dict[str, Any]]:
-    """Search memories by semantic similarity with optional keyword boost (RRF).
+    """Search memories by semantic similarity with hybrid RRF + Adaptive Thresholding.
+
+    Adaptive Thresholding (Change 2): instead of applying a hard cut-off, we fetch
+    twice the requested limit with a relaxed floor (min_similarity - 0.12), then
+    dynamically discard results that fall more than 15 percentage points below the
+    best result's score. This prevents both "vector spam" (irrelevant facts that
+    barely cross a fixed threshold) and "false negatives" (the one relevant fact
+    that sits just below the threshold).
 
     Uses Reciprocal Rank Fusion to combine pgvector cosine similarity with
     pg_trgm keyword matching.  Falls back to pure semantic search if pg_trgm
@@ -192,10 +241,11 @@ async def search_memories(
 
     Args:
         user_id: Owner of the memories.
-        query: Search query text.
+        query: Search query text (already expanded if desired).
         api_key: Gemini API key for query embedding.
-        limit: Maximum results.
-        min_similarity: Minimum cosine similarity threshold (0-1).
+        limit: Maximum results after adaptive filtering.
+        min_similarity: Soft floor — results below this are discarded even with
+                        adaptive thresholding (protects against low-quality graphs).
 
     Returns:
         List of dicts with 'id', 'content', 'similarity', 'source_type', 'created_at'.
@@ -206,6 +256,10 @@ async def search_memories(
 
     embedding_str = f"[{','.join(str(v) for v in query_embedding)}]"
     use_trgm = await _check_trgm_available()
+
+    # Adaptive: relax the floor and fetch more candidates than needed
+    adaptive_floor = max(0.40, min_similarity - 0.12)
+    fetch_limit = limit * 2  # over-fetch; we'll trim with gap-filter below
 
     try:
         async with db_manager.pool.acquire() as conn:
@@ -223,7 +277,7 @@ async def search_memories(
                             WHERE user_id = $1
                               AND (expires_at IS NULL OR expires_at > now())
                             ORDER BY embedding <=> $2::halfvec
-                            LIMIT 20
+                            LIMIT 40
                         ),
                         keyword AS (
                             SELECT id,
@@ -244,7 +298,7 @@ async def search_memories(
                         ORDER BY rrf_score DESC
                         LIMIT $4
                         """,
-                        (user_id, embedding_str, min_similarity, limit, query[:500]),
+                        (user_id, embedding_str, adaptive_floor, fetch_limit, query[:500]),
                         conn=conn,
                     )
                 else:
@@ -260,11 +314,21 @@ async def search_memories(
                         ORDER BY similarity DESC
                         LIMIT $4
                         """,
-                        (user_id, embedding_str, min_similarity, limit),
+                        (user_id, embedding_str, adaptive_floor, fetch_limit),
                         conn=conn,
                     )
 
-                return [
+                if not results:
+                    return []
+
+                # ─ Adaptive Gap Filtering ─────────────────────────────────
+                # Keep only results within 15pp of the best score,
+                # and also enforce the original hard min_similarity floor.
+                rows = list(results)
+                top_sim = float(rows[0].get("sim", rows[0].get("similarity", 0)))
+                gap_threshold = max(min_similarity, top_sim - 0.15)
+
+                filtered = [
                     {
                         "id": r["id"],
                         "content": r["content"],
@@ -272,8 +336,12 @@ async def search_memories(
                         "source_type": r["source_type"],
                         "created_at": r["created_at"],
                     }
-                    for r in (results or [])
-                ]
+                    for r in rows
+                    if float(r.get("sim", r.get("similarity", 0))) >= gap_threshold
+                ][:limit]
+
+                return filtered
+
             finally:
                 await clear_user_context(conn=conn)
     except Exception as e:
@@ -289,19 +357,29 @@ async def search_memories_with_graph(
     limit: int = 5,
     min_similarity: float = 0.5,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Graph-augmented memory search: vector search + 1-hop graph traversal.
+    """Graph-augmented memory search with Multi-Query Expansion and 2-Hop traversal.
 
-    Combines standard search_memories results with related entities/relations
-    from the knowledge graph. Returns (memories, graph_triples) where
-    graph_triples are human-readable strings like "Python — uses → FastAPI".
+    Changes vs previous version:
+    - Change 1 (Multi-Query Expansion): expands vague queries via Flash-Lite LLM
+      before embedding, so "that framework I mentioned" -> "Python FastAPI project".
+    - Change 3 (2-Hop Graph Traversal): after finding 1-hop entity neighbours,
+      follows their outgoing/incoming edges one more hop to capture indirect links.
+      This surfaces e.g. FastAPI when the user asks about Python.
+    - Change 5 (Core No-Decay): edges with is_core=TRUE use raw weight without
+      time-decay, so permanent identity facts always rank first in graph context.
     """
-    # 1. Standard vector search for memories
-    memories = await search_memories(user_id, query, api_key, limit=limit, min_similarity=min_similarity)
+    # Change 1: Multi-Query Expansion — expand the query before embedding
+    expanded_query = await expand_query_with_llm(query, api_key)
+
+    # 1. Standard vector search for memories (using expanded query)
+    memories = await search_memories(
+        user_id, expanded_query, api_key, limit=limit, min_similarity=min_similarity
+    )
 
     # 2. Graph traversal: find related entities
     graph_triples: list[str] = []
     try:
-        query_embedding = await _get_embedding(query, api_key, task_type="RETRIEVAL_QUERY")
+        query_embedding = await _get_embedding(expanded_query, api_key, task_type="RETRIEVAL_QUERY")
         if query_embedding is None:
             return memories, graph_triples
 
@@ -333,34 +411,98 @@ async def search_memories_with_graph(
                 if not relevant_ids:
                     return memories, graph_triples
 
-                # 1-hop: get edges connected to these nodes
+                # 1-hop + Change 3 (2-hop): get edges connected to seed nodes,
+                # THEN follow the *target* nodes of those edges one more hop.
+                # Core edges (is_core=TRUE) bypass time-decay and always surface first.
                 edges = await db_query(
                     """
-                    SELECT
-                        src.entity_name AS from_name,
-                        e.predicate,
-                        tgt.entity_name AS to_name,
-                        e.weight
-                    FROM memory_edges e
-                    JOIN memory_nodes src ON e.source_node = src.id
-                    JOIN memory_nodes tgt ON e.target_node = tgt.id
-                    WHERE e.user_id = $1
-                      AND (e.source_node = ANY($2::uuid[]) OR e.target_node = ANY($2::uuid[]))
-                    ORDER BY (e.weight / (1.0 + EXTRACT(EPOCH FROM now() - COALESCE(e.updated_at, now())) / (86400.0 * 30))) DESC
-                    LIMIT 10
+                    WITH hop1 AS (
+                        -- Direct edges from/to seed nodes
+                        SELECT
+                            src.entity_name AS from_name,
+                            e.predicate,
+                            tgt.entity_name AS to_name,
+                            tgt.id           AS tgt_id,
+                            e.weight,
+                            e.is_core,
+                            1                AS hop
+                        FROM memory_edges e
+                        JOIN memory_nodes src ON e.source_node = src.id
+                        JOIN memory_nodes tgt ON e.target_node = tgt.id
+                        WHERE e.user_id = $1
+                          AND (
+                              e.source_node = ANY($2::uuid[])
+                           OR e.target_node = ANY($2::uuid[])
+                          )
+                    ),
+                    hop2 AS (
+                        -- One more hop from hop1 targets (exclude already-seen edges)
+                        SELECT
+                            src2.entity_name AS from_name,
+                            e2.predicate,
+                            tgt2.entity_name AS to_name,
+                            tgt2.id          AS tgt_id,
+                            e2.weight,
+                            e2.is_core,
+                            2                AS hop
+                        FROM hop1
+                        JOIN memory_edges e2 ON e2.source_node = hop1.tgt_id
+                        JOIN memory_nodes src2 ON e2.source_node = src2.id
+                        JOIN memory_nodes tgt2 ON e2.target_node = tgt2.id
+                        WHERE e2.user_id = $1
+                          AND NOT (e2.source_node = ANY($2::uuid[]))
+                          AND NOT (e2.target_node = ANY($2::uuid[]))
+                    ),
+                    combined AS (
+                        SELECT * FROM hop1
+                        UNION ALL
+                        SELECT * FROM hop2
+                    )
+                    SELECT DISTINCT ON (from_name, predicate, to_name)
+                        from_name, predicate, to_name, weight, is_core, hop,
+                        CASE
+                            WHEN is_core THEN weight  -- Change 5: no decay for core facts
+                            ELSE weight / (
+                                1.0 + EXTRACT(EPOCH FROM now() - COALESCE(
+                                    (SELECT updated_at FROM memory_edges e3
+                                     WHERE e3.source_node = (
+                                         SELECT id FROM memory_nodes
+                                         WHERE entity_name = from_name AND user_id = $1
+                                         LIMIT 1)
+                                     AND e3.predicate = predicate
+                                     AND e3.user_id = $1
+                                     LIMIT 1
+                                    ), now()
+                                )) / (86400.0 * 30))
+                        END AS effective_weight
+                    FROM combined
+                    ORDER BY from_name, predicate, to_name, hop ASC
+                    LIMIT 15
                     """,
                     (user_id, relevant_ids),
                     conn=conn,
                 )
 
-                for edge in edges or []:
-                    graph_triples.append(f"{edge['from_name']} — {edge['predicate']} → {edge['to_name']}")
+                # Sort by effective_weight descending (core edges bubble up)
+                edges_sorted = sorted(
+                    edges or [],
+                    key=lambda r: float(r.get("effective_weight", 0)),
+                    reverse=True,
+                )
+
+                for edge in edges_sorted:
+                    hop_label = " (indirect)" if edge.get("hop", 1) == 2 else ""
+                    core_label = " ★" if edge.get("is_core") else ""  # star for core facts
+                    graph_triples.append(
+                        f"{edge['from_name']} — {edge['predicate']} → {edge['to_name']}{core_label}{hop_label}"
+                    )
 
                 logging.debug(
-                    "Graph search for user %d: %d nodes, %d edges found",
+                    "Graph search for user %d: %d seed nodes, %d triples (incl. 2-hop), query: %r",
                     user_id,
                     len(relevant_ids),
                     len(graph_triples),
+                    expanded_query[:60],
                 )
             finally:
                 await clear_user_context(conn=conn)

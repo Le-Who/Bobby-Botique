@@ -3,9 +3,81 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.6] - 2026-03-30 - GraphRAG 5-Point Tuning & ElevenLabs TTS
+
+### 🧠 GraphRAG Memory — 5 Architectural Improvements
+
+#### Change 1 — Multi-Query Expansion
+- **New function `expand_query_with_llm()`** in `memory.py`: fast Flash-Lite LLM call (~200ms) rewrites vague queries ("тот фреймворк который я упоминал") into keyword-dense search phrases ("Python FastAPI web framework project") before the embedding lookup.
+- Fall-through: any exception silently returns the original query — zero pipeline disruption risk.
+- Model: `gemini-3.1-flash-lite-preview` (constant `QUERY_EXPANSION_MODEL`).
+
+#### Change 2 — Adaptive Similarity Thresholding
+- `search_memories()` rewritten with **over-fetch × 2** (relaxed floor `min_similarity − 0.12`, min 0.40) + **gap-filter** (keeps only results within 15pp of best score, hard floor still enforced).
+- Eliminates false negatives from a rigid fixed threshold while blocking low-relevance "vector spam".
+- Candidate pool for RRF semantic CTE raised from `LIMIT 20` → `LIMIT 40`.
+
+#### Change 3 — 2-Hop Graph Traversal
+- `search_memories_with_graph()` replaces the single-hop edge query with a **SQL CTE `hop1 UNION ALL hop2`**: follows 1-hop neighbours' outgoing edges for indirect associations.
+- Hop-2 edges are excluded from seed nodes to avoid cycles.
+- Result cap raised to 15 triples (was 10), sorted by `effective_weight DESC`.
+- Triples now include a `★` marker for core facts and `(indirect)` label for hop-2 results.
+
+#### Change 4 — Semantic Edge Deduplication
+- During consolidation (`consolidate_memories`), each new predicate is embedded and checked against existing `(src, tgt)` predicates via cosine distance (`< 0.25`).
+- If a semantically duplicate edge exists: weight and `is_core` are merged into the existing row (`UPDATE`), no new edge created.
+- New column `predicate_embedding halfvec(768)` added to `memory_edges` via migration `026b`.
+
+#### Change 5 — Core Persona Protection (Eternal Facts)
+- `_GRAPH_EXTRACTION_PROMPT` updated: LLM now sets `is_core: true` for permanent identity facts (name, profession, home, chronic conditions). All transient facts (`is_core: false` by default).
+- New column `is_core BOOLEAN NOT NULL DEFAULT FALSE` in `memory_edges` (migration `026`).
+- Graph traversal SQL: `CASE WHEN is_core THEN weight ELSE weight / (time_decay_formula) END AS effective_weight` — core facts bypass temporal decay entirely.
+- `consolidate_memories` upsert: `is_core = memory_edges.is_core OR EXCLUDED.is_core` — once core, always core.
+
+### 🎙️ ElevenLabs TTS Integration (Primary Provider)
+
+| Change | Files | Detail |
+|--------|-------|--------|
+| **ElevenLabs primary TTS** | `providers/elevenlabs_tts.py` [NEW], `voice_engine.py` | Atomic Router: ElevenLabs generates all chunks or falls back entirely to Gemini TTS — no mixed-provider audio. |
+| **Request Stitching** | `elevenlabs_tts.py` | `previous_text` / `next_text` context passed to each chunk call; eliminates prosodic artifacts at sentence boundaries. |
+| **Text normalization** | `elevenlabs_tts.py` | `apply_text_normalization="on"` — natural reading of dates, abbreviations, numbers. |
+| **Voice tuning** | `elevenlabs_tts.py` | `stability=0.50`, `similarity_boost=0.80`, voice: Charlotte (`XB0fDUnXU5powFXDhCwa`). |
+| **Key rotation** | `config.py`, `.env` | `ELEVENLABS_API_KEYS` comma-separated pool with load-balanced rotation. |
+
+### 🗄️ Database Migrations
+
+| Migration | Detail |
+|-----------|--------|
+| `026_add_core_persona_edges.sql` | `is_core BOOLEAN NOT NULL DEFAULT FALSE` + partial index `WHERE is_core = TRUE`. `DO $$ IF NOT EXISTS` idempotency guard. |
+| `026b_add_predicate_embedding.sql` | `predicate_embedding halfvec(768)` + HNSW partial index `WHERE IS NOT NULL`. `DO $$ IF NOT EXISTS` idempotency guard. |
+
+### 📐 LTM Parameter Changes
+
+| Parameter | Old | New |
+|-----------|-----|-----|
+| `min_similarity` (floor) | 0.72 (hard) | 0.68 floor + adaptive gap-filter (−15pp from top) |
+| `limit` | 3 | 5 (noise filtered by adaptive thresholding) |
+| Graph hops | 1 | 2 (SQL CTE hop1 + hop2) |
+| Graph edge limit | 10 | 15 |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint (full project) | 0 errors |
+| Ruff format | 0 violations |
+| Mypy (`--ignore-missing-imports`, 5 files) | Exit 0 |
+| AST parse (3 core files) | 0 syntax errors |
+| Migration idempotency | `DO $$ IF NOT EXISTS` + `CREATE INDEX IF NOT EXISTS` |
+
+---
+
+
+
 ## [2.9.5] - 2026-03-30 - Voice Pipeline Hardening: Byte-Based Chunking & Sequential TTS
 
 ### 🛡️ Reliability — Eliminated Phantom 429 Quota Exhaustion
+
 
 Root cause: The parallel `asyncio.gather` TTS architecture would fire 2–3 simultaneous REST calls per voice reply. Free Tier keys carry a **~10 RPD** (requests-per-day) cap on `gemini-2.5-flash-preview-tts`. A single parallel burst consumed ≥30% of the daily quota, triggering rapid key suspension and generating phantom 429 errors that persisted for up to 24 hours.
 

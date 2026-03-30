@@ -128,6 +128,8 @@ class Settings(BaseModel):
     GEMINI_API_KEYS: list[str]
     TAVILY_API_KEYS: list[str]
     OPENROUTER_API_KEYS: list[str] = []  # Optional, by default empty list
+    ELEVENLABS_API_KEYS: list[str] = []  # Optional, free-tier ElevenLabs keys
+    ELEVENLABS_VOICE_ID: str = "XB0fDUnXU5powFXDhCwa"  # Charlotte — conversational
     DATABASE_URL: str
     ADMIN_ID: int
     PORT: int
@@ -225,6 +227,8 @@ def load_settings() -> Settings:
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
+            "ELEVENLABS_API_KEYS": _load_and_clean_keys("ELEVENLABS_API_KEYS", required=False),
+            "ELEVENLABS_VOICE_ID": os.getenv("ELEVENLABS_VOICE_ID", "XB0fDUnXU5powFXDhCwa"),
             # Load models from env or use значения by default
             "AVAILABLE_MODELS": _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False)
             or default_gemini_models,

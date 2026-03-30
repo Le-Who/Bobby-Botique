@@ -1,17 +1,28 @@
 # /app/voice_engine.py
-"""Voice Engine 3.0 — orchestrates TTS generation and Telegram voice delivery.
+"""Voice Engine 4.0 — orchestrates TTS generation and Telegram voice delivery.
 
 Provides a single entry point for the chat handler to fire-and-forget
 voice reply generation after text streaming completes.
 
-Strategy: text → byte-based sentence chunking (≤3500 UTF-8 bytes/chunk) →
-           sequential REST TTS calls → PCM concatenation → ffmpeg →
-           OGG Opus → bot.send_voice()
+Strategy (Atomic Router):
+  1. ElevenLabs TTS pipeline (primary — best quality, natural voices)
+     text → byte-based sentence chunking (≤4500 UTF-8 bytes/chunk)
+     → sequential ElevenLabs REST calls (PCM 24kHz) → PCM concatenation
 
-Sequential (not parallel) TTS calls are mandatory: Free Tier keys have a
-daily RPD cap of ~10 requests; burst parallel calls exhaust the cap and
-trigger day-long suspensions. Sequential processing guarantees each call
-uses a different (rotated) key slot.
+  2. Gemini TTS fallback (if ElevenLabs keys are absent or all quota-exhausted)
+     text → byte-based sentence chunking (≤3500 UTF-8 bytes/chunk)
+     → sequential Gemini REST TTS calls → PCM concatenation
+
+  3. PCM buffer → ffmpeg → OGG Opus → bot.send_voice()
+
+Atomicity guarantee:
+  If ElevenLabs fails mid-stream (any chunk), the entire PCM accumulation is
+  discarded and the FULL message is re-synthesized via Gemini.  This prevents
+  the user from ever hearing two different voices in a single message.
+
+Sequential TTS calls are mandatory for both providers:
+  - Free Tier ElevenLabs keys: tight per-minute character limits
+  - Free Tier Gemini keys: ~10 RPD cap; burst parallel calls exhaust it
 """
 
 import asyncio
@@ -23,21 +34,22 @@ from telegram import Bot
 
 from app.utils.background_tasks import submit_retryable
 
+# ─── Gemini TTS pipeline (unchanged, retained as fallback) ───────────────────
 
-async def _generate_single_chunk(
+
+async def _generate_single_chunk_gemini(
     text_chunk: str,
     voice: str,
     failed_keys: set[str],
     timeout: float = 120.0,
 ) -> bytes | None:
-    """Generate PCM audio for a single text chunk with key rotation.
+    """Generate PCM audio for a single text chunk via Gemini TTS with key rotation.
 
     Args:
-        text_chunk: Pre-cleaned text fragment to synthesise.
-        voice: Prebuilt Gemini TTS voice name.
+        text_chunk:  Pre-cleaned text fragment to synthesise.
+        voice:       Prebuilt Gemini TTS voice name.
         failed_keys: Shared set of key hashes to skip (mutated in place).
-        timeout: HTTP timeout forwarded to generate_speech; callers should
-            pass an adaptive value computed from the full text length.
+        timeout:     HTTP timeout forwarded to generate_speech.
 
     Returns raw PCM 24kHz 16-bit mono bytes, or None on failure.
     """
@@ -64,7 +76,7 @@ async def _generate_single_chunk(
         except Exception as e:
             err_str = str(e)
             logging.warning(
-                "TTS chunk failed (attempt %d/3, %d chars): %s",
+                "Gemini TTS chunk failed (attempt %d/3, %d chars): %s",
                 attempt + 1,
                 len(text_chunk),
                 err_str,
@@ -79,6 +91,40 @@ async def _generate_single_chunk(
     return None
 
 
+async def _run_gemini_pipeline(
+    chunks: list[str],
+    voice: str,
+    adaptive_timeout: float,
+) -> list[bytes] | None:
+    """Run the full Gemini TTS pipeline over all chunks.
+
+    Returns a list of PCM byte blobs (possibly partial on mid-stream failure),
+    or None if the very first chunk fails (no audio without opening context).
+    """
+    failed_keys: set[str] = set()
+    pcm_parts: list[bytes] = []
+
+    for i, chunk in enumerate(chunks):
+        pcm = await _generate_single_chunk_gemini(chunk, voice, failed_keys, timeout=adaptive_timeout)
+        if pcm:
+            pcm_parts.append(pcm)
+        else:
+            if i == 0:
+                logging.warning("Gemini TTS: first chunk failed, aborting")
+            else:
+                logging.warning(
+                    "Gemini TTS: chunk %d/%d failed, sending partial audio",
+                    i + 1,
+                    len(chunks),
+                )
+            break
+
+    return pcm_parts if pcm_parts else None
+
+
+# ─── Main orchestrator ────────────────────────────────────────────────────────
+
+
 async def _generate_and_send_voice(
     bot: Bot,
     chat_id: int,
@@ -90,21 +136,27 @@ async def _generate_and_send_voice(
     """Generate TTS audio and send as Telegram voice message.
 
     Pipeline:
-      1. Clean text and split at sentence boundaries (≤3500 UTF-8 bytes/chunk)
-      2. Compute adaptive timeout (30–120 s) proportional to text length
-      3. Generate PCM for each chunk sequentially (shared key rotation)
+      1. Clean text and split at sentence boundaries
+      2. Attempt ElevenLabs pipeline (if keys are configured)
+         → On any quota failure: discard PCM, fall back to Gemini
+      3. Gemini TTS pipeline as fallback
       4. Concatenate raw PCM buffers (same 24kHz 16-bit mono format)
       5. Transcode PCM → OGG Opus
       6. Send voice message
 
     Failure policy:
-      - First chunk failure → abort (no audio without the opening context)
-      - Later chunk failures → send the portion already generated
-      - Complete failure → edit status message to inform the user
+      - ElevenLabs quota/all-keys-fail → silent fallback to Gemini (no UX disruption)
+      - Both pipelines fail → edit status message to inform the user
+      - First chunk only fails → abort (no audio without opening context)
 
     Memory-critical: aggressively deletes intermediate buffers at each pipeline
     stage to avoid OOM on the 500MB RAM budget.
     """
+    from app.config import settings
+    from app.providers.elevenlabs_tts import (
+        ELEVENLABS_CHUNK_MAX_BYTES,
+        generate_speech_with_key_rotation,
+    )
     from app.providers.tts import _chunk_text_by_sentences, _clean_text_for_speech
     from app.utils.audio import make_voice_file, pcm_to_ogg_opus
 
@@ -122,52 +174,76 @@ async def _generate_and_send_voice(
         pass
 
     try:
-        # 1. Clean & chunk using byte-based boundaries
-        # 3500 bytes ≤ Cloud TTS 4000-byte text-field limit; safe for Cyrillic (2 bytes/char).
+        # 1. Clean text (shared cleaner removes Markdown, URLs, code blocks, etc.)
         clean_text = _clean_text_for_speech(response_text)
         if not clean_text:
             logging.warning("Voice reply: cleaned text is empty (chat_id=%s)", chat_id)
             return
 
-        chunks = _chunk_text_by_sentences(clean_text, max_bytes=3500)
-        logging.info(
-            "Voice reply: %d chars / %d bytes → %d chunk(s) for TTS",
-            len(clean_text),
-            len(clean_text.encode("utf-8")),
-            len(chunks),
-        )
+        # 2. Resolve ElevenLabs configuration
+        el_keys = settings.ELEVENLABS_API_KEYS
+        el_voice_id = settings.ELEVENLABS_VOICE_ID
+        use_elevenlabs = bool(el_keys)
 
-        # 2. Adaptive timeout: ~1 s per 60 chars + 15 s base; capped at [30, 120].
-        # Prevents long hangs for short messages while covering large chunks.
-        adaptive_timeout = min(120.0, max(30.0, len(clean_text) / 60.0 + 15.0))
+        pcm_parts: list[bytes] | None = None
+        provider_used = "none"
 
-        # 3. Generate PCM for each chunk sequentially.
-        # Sequential processing is MANDATORY: Free Tier keys have a ~10-RPD cap;
-        # burst parallel calls exhaust it and trigger day-long suspensions.
-        failed_keys: set[str] = set()
-        pcm_parts: list[bytes] = []
+        # ── Branch A: ElevenLabs primary ──────────────────────────────────
+        if use_elevenlabs:
+            # ElevenLabs accepts up to 5000 bytes; we use 4500 for headroom.
+            el_chunks = _chunk_text_by_sentences(clean_text, max_bytes=ELEVENLABS_CHUNK_MAX_BYTES)
+            logging.info(
+                "Voice reply (ElevenLabs): %d chars / %d bytes → %d chunk(s)",
+                len(clean_text),
+                len(clean_text.encode("utf-8")),
+                len(el_chunks),
+            )
 
-        for i, chunk in enumerate(chunks):
-            pcm = await _generate_single_chunk(chunk, voice, failed_keys, timeout=adaptive_timeout)
-            if pcm:
-                pcm_parts.append(pcm)
+            # Adaptive timeout: ~1 s per 50 chars + 15 s base; capped at [30, 90].
+            el_timeout = min(90.0, max(30.0, len(clean_text) / 50.0 + 15.0))
+
+            el_pcm_parts = await generate_speech_with_key_rotation(
+                el_chunks,
+                el_keys,
+                voice_id=el_voice_id,
+                timeout=el_timeout,
+            )
+
+            if el_pcm_parts:
+                pcm_parts = el_pcm_parts
+                provider_used = "elevenlabs"
             else:
-                if i == 0:
-                    # First chunk failed — no audio without the opening context.
-                    logging.warning("Voice reply: first chunk failed, aborting (chat_id=%s)", chat_id)
-                else:
-                    # Later chunk failed — still deliver what was generated.
-                    logging.warning(
-                        "Voice reply: chunk %d/%d failed, sending partial audio (chat_id=%s)",
-                        i + 1,
-                        len(chunks),
-                        chat_id,
-                    )
-                break
+                # ElevenLabs failed (quota exhausted or all keys tried).
+                # Atomic fallback: discard everything and use Gemini for the full message.
+                logging.info(
+                    "Voice reply: ElevenLabs unavailable — falling back to Gemini TTS "
+                    "(chat_id=%s)",
+                    chat_id,
+                )
 
+        # ── Branch B: Gemini TTS (primary if no EL keys, fallback otherwise) ─
+        if pcm_parts is None:
+            # 3500 bytes ≤ Gemini TTS 4000-byte text-field limit; safe for Cyrillic.
+            gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=3500)
+            logging.info(
+                "Voice reply (Gemini TTS): %d chars / %d bytes → %d chunk(s)",
+                len(clean_text),
+                len(clean_text.encode("utf-8")),
+                len(gemini_chunks),
+            )
+
+            # Adaptive timeout: ~1 s per 60 chars + 15 s base; capped at [30, 120].
+            gemini_timeout = min(120.0, max(30.0, len(clean_text) / 60.0 + 15.0))
+
+            gemini_pcm_parts = await _run_gemini_pipeline(gemini_chunks, voice, gemini_timeout)
+
+            if gemini_pcm_parts:
+                pcm_parts = gemini_pcm_parts
+                provider_used = "gemini"
+
+        # ── No audio generated ─────────────────────────────────────────────
         if not pcm_parts:
             logging.warning("No audio generated for voice reply (chat_id=%s)", chat_id)
-            # Inform user instead of silently deleting the status indicator.
             if status_msg:
                 try:
                     await status_msg.edit_text(
@@ -179,20 +255,20 @@ async def _generate_and_send_voice(
                     pass
             return
 
-        if len(pcm_parts) < len(chunks):
-            logging.warning(
-                "Voice reply: %d/%d chunks succeeded, voicing partial text (chat_id=%s)",
-                len(pcm_parts),
-                len(chunks),
-                chat_id,
-            )
+        logging.info(
+            "Voice reply: %d PCM chunk(s) from %s (chat_id=%s)",
+            len(pcm_parts),
+            provider_used,
+            chat_id,
+        )
 
+        # 4. Concatenate raw PCM buffers (same 24kHz 16-bit mono from both providers)
         pcm_audio = b"".join(pcm_parts)
-        del pcm_parts  # Free list references
+        del pcm_parts  # free list references
 
         logging.info("Voice reply: TTS audio generated (%d bytes PCM)", len(pcm_audio))
 
-        # 3. Transcode PCM → OGG Opus
+        # 5. Transcode PCM → OGG Opus
         ogg_bytes = await pcm_to_ogg_opus(pcm_audio)
         del pcm_audio  # ⚠ Free PCM immediately — OGG is 10-20x smaller
 
@@ -202,7 +278,7 @@ async def _generate_and_send_voice(
 
         ogg_size = len(ogg_bytes)
 
-        # 4. Send voice message
+        # 6. Send voice message
         try:
             voice_file = make_voice_file(ogg_bytes)
             del ogg_bytes  # BytesIO holds its own copy, free original
@@ -216,9 +292,10 @@ async def _generate_and_send_voice(
             del voice_file
 
             logging.info(
-                "Voice reply sent: chat_id=%s, %d bytes OGG Opus",
+                "Voice reply sent: chat_id=%s, %d bytes OGG Opus, provider=%s",
                 chat_id,
                 ogg_size,
+                provider_used,
             )
         except Exception as e:
             logging.error("Failed to send voice reply to Telegram: %s", e)
