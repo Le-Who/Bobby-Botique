@@ -194,27 +194,34 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     logging.info("Stats command from user %s", user_id)
 
+    import asyncio
+
+    from app.document_processor import get_user_document_count
     from app.repos.analytics import get_engagement_summary, streak_badge
-
-    engagement = await get_engagement_summary(user_id)
-    streak = engagement["current_streak"]
-    badge = streak_badge(streak)
-
     from app.repos.user_stats import (
         get_user_model_usage_today,
         get_user_today_request_count,
         get_user_weekly_stats,
     )
 
-    today_count = await get_user_today_request_count(user_id)
-    week_res = await get_user_weekly_stats(user_id)
-    model_res = await get_user_model_usage_today(user_id)
+    (
+        engagement,
+        today_count,
+        week_res,
+        model_res,
+        doc_count,
+        conv_count,
+    ) = await asyncio.gather(
+        get_engagement_summary(user_id),
+        get_user_today_request_count(user_id),
+        get_user_weekly_stats(user_id),
+        get_user_model_usage_today(user_id),
+        get_user_document_count(user_id),
+        get_conversation_count(user_id),
+    )
 
-    from app.document_processor import get_user_documents
-
-    docs = await get_user_documents(user_id)
-    doc_count = len(docs) if docs else 0
-    conv_count = await get_conversation_count(user_id)
+    streak = engagement["current_streak"]
+    badge = streak_badge(streak)
 
     text_parts = ["📊 **Ваша статистика**\n\n"]
 

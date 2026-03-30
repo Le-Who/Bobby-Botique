@@ -126,6 +126,23 @@ async def get_document_by_id(document_id: int, user_id: int) -> dict[str, Any] |
         return None
 
 
+async def get_user_document_count(user_id: int) -> int:
+    """Fast COUNT(*) query for user documents."""
+    try:
+        await database.set_user_context(user_id, is_admin(user_id))
+        try:
+            result = await database.db_query(
+                "SELECT COUNT(*) as count FROM user_documents WHERE user_id = $1",
+                (user_id,),
+            )
+            return result[0]["count"] if result else 0
+        finally:
+            await database.clear_user_context()
+    except Exception as e:
+        logger.error("Failed to count user %s documents: %s", user_id, e)
+        return 0
+
+
 async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
     """List all documents for a user (RLS-aware)."""
     try:

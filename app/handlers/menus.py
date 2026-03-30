@@ -1,10 +1,11 @@
+import asyncio
 import logging
 from datetime import datetime
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import get_model_hash, get_openrouter_keys, settings
-from app.document_processor import get_user_documents
+from app.document_processor import get_user_document_count, get_user_documents
 from app.i18n import t
 from app.metrics import get_system_status_data
 from app.prompt_registry import DEFAULT_ROLES
@@ -37,13 +38,11 @@ async def get_start_menu_content(chat_state, user_id=None):
     activity_line = ""
     if user_id:
         try:
-            today_requests = await get_user_today_request_count(user_id)
-            req_count = today_requests
-
-            docs = await get_user_documents(user_id)
-            doc_count = len(docs) if docs else 0
-
-            conv_count = await get_conversation_count(user_id)
+            req_count, doc_count, conv_count = await asyncio.gather(
+                get_user_today_request_count(user_id),
+                get_user_document_count(user_id),
+                get_conversation_count(user_id),
+            )
 
             if req_count > 0 or doc_count > 0 or conv_count > 0:
                 activity_line = f"📈 Сегодня: {req_count} запр. · {doc_count} док. · {conv_count} бесед\n\n"

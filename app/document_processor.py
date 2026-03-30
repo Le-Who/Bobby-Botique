@@ -333,6 +333,11 @@ class DocumentProcessor:
 
         return await get_document_by_id(document_id, user_id)
 
+    async def get_user_document_count(self, user_id):
+        from app.documents.repository import get_user_document_count
+
+        return await get_user_document_count(user_id)
+
     async def get_user_documents(self, user_id):
         from app.documents.repository import get_user_documents
 
@@ -388,6 +393,11 @@ async def process_uploaded_document_force(
 ) -> dict[str, Any]:
     """Process an uploaded document, ignoring duplicates."""
     return await document_processor.process_document_force(file_data, filename, user_id, is_path)
+
+
+async def get_user_document_count(user_id: int) -> int:
+    """Get user's document count."""
+    return await document_processor.get_user_document_count(user_id)
 
 
 async def get_user_documents(user_id: int) -> list[dict[str, Any]]:
