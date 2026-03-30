@@ -45,3 +45,6 @@ test_sim.py
 test_perf.py
 load_test.py
 benchmark*.py
+implementation_plan.md
+skills-lock.json
+walkthrough.md
