@@ -94,7 +94,7 @@ _CYRILLIC_NATIVE_MODELS: frozenset[str] = frozenset({"zimage"})
 _CYRILLIC_RE = re.compile(r"[а-яёА-ЯЁ]")
 
 # Translation model — cheapest Gemini variant; fast and cost-effective.
-_TRANSLATE_MODEL = "gemini-3.1-flash-lite-preview-04-17"
+_TRANSLATE_MODEL = "gemini-3.1-flash-lite-preview"
 
 _DRAW_STATE_KEY = "draw_state"
 
