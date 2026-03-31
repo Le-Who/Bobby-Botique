@@ -204,10 +204,13 @@ class PollinationsProvider:
         payload: dict = {
             "prompt": prompt,
             "model": model,
+            "width": width,
+            "height": height,
             "size": f"{width}x{height}",
             "response_format": "b64_json",
             "seed": seed,
             "enhance": enhance,
+            "nologo": True,
         }
         if negative_prompt:
             payload["negative_prompt"] = negative_prompt
