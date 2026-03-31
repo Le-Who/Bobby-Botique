@@ -471,13 +471,14 @@ async def _run_generation(
                 error_message = result.error_message
         else:
             width, height = _AR_TO_PIXELS.get(aspect_ratio, (1024, 1024))
+            import random
             poll_provider = get_pollinations_provider()
             poll_result: PollinationsResult = await poll_provider.generate(
                 prompt=api_prompt,
                 model=model,
                 width=width,
                 height=height,
-                seed=0,
+                seed=random.randint(1, 2147483647),
                 enhance=enhance,
             )
             if poll_result.success and poll_result.images:
