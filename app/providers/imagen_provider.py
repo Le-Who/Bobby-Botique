@@ -327,7 +327,15 @@ class ImagenProvider:
                 err_lower = str(exc).lower()
                 logger.error("Imagen: APIError key=…%s: %s", key_suffix, exc)
 
-                if "quota" in err_lower or "resource_exhausted" in err_lower or "429" in str(exc):
+                if "paid plan" in err_lower or "limit: 0" in err_lower:
+                    # Google disabled Imagen on Free Tier or requires billing
+                    return ImageGenResult(
+                        success=False,
+                        error_message="paid_tier_required",
+                        model_used=model,
+                        key_suffix=key_suffix,
+                    )
+                elif "quota" in err_lower or "resource_exhausted" in err_lower or "429" in str(exc):
                     # Count this key as depleted for the day
                     await _increment_key_usage(selected_key)
                     last_error = "quota"

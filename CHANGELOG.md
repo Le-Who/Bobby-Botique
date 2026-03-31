@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.8] - 2026-03-31 - Pollinations.ai Image Generation
+
+### 🎨 Feature — Pollinations.ai Integration
+
+Full production-grade integration of **Pollinations.ai** as the default free-tier image generation provider, addressing the strict paywalling of Google's Imagen API on free keys.
+
+#### Architecture
+- **Dual Transport Provider**: The new `PollinationsProvider` utilizes a robust resilient design:
+  - **Primary**: `POST /v1/images/generations` (OpenAI-compatible) for clean structured error handling.
+  - **Fallback**: Automatically degrades to a keyless `GET /image/{prompt}?model=…` endpoint if the primary times out, 503s, or fails.
+  - **MIME type guarding**: Discards invalid `Content-Type` responses (e.g. Cloudflare HTML challenges) on the GET fallback to prevent sending error pages as images.
+- **Dynamic Configuration**: UI no longer hardcodes models. The `IMAGE_MODELS` (default: `flux,zimage`) environment variable instantly modifies the available models in the telegram keyboard. Adding a new model (e.g. `IMAGE_MODELS=flux,zimage,gptimage`) wraps rows perfectly via the new `_ideal_columns()` math chunker.
+- **Provider Factory Routing**: Handlers route `/draw` commands gracefully: if `model.startswith("imagen-")`, it dispatches to Google's Provider (maintaining legacy support for paid users). Everything else routes to Pollinations.
+
+#### Files Changed
+- **New File**: `app/providers/pollinations.py`
+- **Rewritten**: `app/handlers/cmd_image.py` (Dynamic Canvas logic, provider routing)
+- **Rewritten**: `app/handlers/cb_image.py` (Unified model validation against config)
+- **Updated**: `app/config.py` (Added `IMAGE_MODELS`, `DEFAULT_IMAGE_MODEL`, `POLLINATIONS_API_KEY`)
+
 ## [2.9.7] - 2026-03-30 - Imagen 4 Image Generation
 
 ### 🎨 New Feature — Text-to-Image Generation (Imagen 4)

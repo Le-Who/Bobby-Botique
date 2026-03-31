@@ -27,6 +27,14 @@ IMAGEN_MODEL_BASE: str = "imagen-4.0-generate-001"
 IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
 IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
 
+# --- Pollinations.ai image models ---
+# Overridable via env: IMAGE_MODELS="flux,zimage,gptimage"
+# The list determines which buttons appear in the /draw Canvas keyboard.
+DEFAULT_POLLINATIONS_IMAGE_MODELS: list[str] = ["flux", "zimage"]
+DEFAULT_POLLINATIONS_IMAGE_MODEL: str = "flux"
+# Pollinations API base URL
+POLLINATIONS_BASE_URL: str = "https://gen.pollinations.ai"
+
 
 def _load_int_env(env_var_name: str, required: bool = True):
     raw = os.getenv(env_var_name)
@@ -143,6 +151,13 @@ class Settings(BaseModel):
     IMAGE_GEN_RPD_PER_KEY: int = 25  # Imagen free-tier limit per API key per day
     IMAGE_GEN_TIMEOUT: float = 60.0  # Max seconds to wait for Imagen API response
     IMAGE_GEN_MAX_RETRIES: int = 3   # Key rotation retries on quota/error
+
+    # --- Pollinations.ai image generation ---
+    # Models shown as buttons in /draw Canvas. Loaded from IMAGE_MODELS env var.
+    POLLINATIONS_IMAGE_MODELS: list[str] = DEFAULT_POLLINATIONS_IMAGE_MODELS.copy()
+    POLLINATIONS_DEFAULT_IMAGE_MODEL: str = DEFAULT_POLLINATIONS_IMAGE_MODEL
+    # Optional API key. Pollinations also works without a key (rate-limited).
+    POLLINATIONS_API_KEY: str = ""
     DATABASE_URL: str
     ADMIN_ID: int
     PORT: int
@@ -242,6 +257,13 @@ def load_settings() -> Settings:
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
             "ELEVENLABS_API_KEYS": _load_and_clean_keys("ELEVENLABS_API_KEYS", required=False),
             "ELEVENLABS_VOICE_ID": os.getenv("ELEVENLABS_VOICE_ID", "XB0fDUnXU5powFXDhCwa"),
+            # Pollinations image generation
+            "POLLINATIONS_IMAGE_MODELS": _load_and_clean_keys("IMAGE_MODELS", required=False)
+            or DEFAULT_POLLINATIONS_IMAGE_MODELS.copy(),
+            "POLLINATIONS_DEFAULT_IMAGE_MODEL": os.getenv(
+                "DEFAULT_IMAGE_MODEL", DEFAULT_POLLINATIONS_IMAGE_MODEL
+            ),
+            "POLLINATIONS_API_KEY": os.getenv("POLLINATIONS_API_KEY", ""),
             # Load models from env or use значения by default
             "AVAILABLE_MODELS": _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False)
             or default_gemini_models,

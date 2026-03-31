@@ -5,6 +5,10 @@ Handles draw:* callback_data patterns:
     draw:regen          — Regenerate with current settings
     draw:ar:<ratio>     — Change aspect ratio and regenerate
     draw:model:<name>   — Change model and regenerate
+
+Model validation is performed against the *dynamic* list of all configured
+models (Pollinations IMAGE_MODELS + Imagen models if keys present), not a
+hardcoded constant, so that new models added via env vars work immediately.
 """
 
 from __future__ import annotations
@@ -14,7 +18,6 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from app.config import IMAGEN_MODEL_BASE, IMAGEN_MODELS_ORDERED
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
 from app.providers.imagen_provider import SUPPORTED_ASPECT_RATIOS
 
@@ -24,10 +27,24 @@ _DRAW_STATE_KEY = "draw_state"
 
 
 def _get_draw_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
+    from app.config import settings
+    default_model = settings.POLLINATIONS_DEFAULT_IMAGE_MODEL
     return context.user_data.get(  # type: ignore[union-attr]
         _DRAW_STATE_KEY,
-        {"prompt": "", "model": IMAGEN_MODEL_BASE, "aspect_ratio": "1:1"},
+        {"prompt": "", "model": default_model, "aspect_ratio": "1:1"},
     )
+
+
+def _all_valid_models() -> list[str]:
+    """Return the unified list of valid model IDs (Pollinations + Imagen)."""
+    from app.config import IMAGEN_MODELS_ORDERED, settings
+    models: list[str] = list(settings.POLLINATIONS_IMAGE_MODELS)
+    # Append Google Imagen models so that users who previously selected one
+    # can still regenerate without an error.
+    for m in IMAGEN_MODELS_ORDERED:
+        if m not in models:
+            models.append(m)
+    return models
 
 
 async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -35,9 +52,9 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     Central dispatcher for all draw:* callback queries.
 
     Parses the action from callback_data, updates draw state,
-    and delegates to the generation flow.
+    and delegates to the generation flow in cmd_image._run_generation.
     """
-    from app.handlers.cmd_image import _run_generation
+    from app.handlers.cmd_image import _model_label, _run_generation
 
     query = update.callback_query
     await query.answer()
@@ -49,16 +66,15 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     data: str = query.data or ""
-    parts = data.split(":")  # e.g. ["draw", "ar", "16:9"] or ["draw", "regen"]
+    parts = data.split(":")  # ["draw", "ar", "16", "9"] or ["draw", "regen"]
     action = parts[1] if len(parts) > 1 else ""
 
     state = _get_draw_state(context)
     current_prompt = state.get("prompt", "")
-    current_model = state.get("model", IMAGEN_MODEL_BASE)
+    current_model = state.get("model", "flux")
     current_ar = state.get("aspect_ratio", "1:1")
 
     if not current_prompt:
-        # No previous generation — nudge the user
         await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
         return
 
@@ -66,12 +82,12 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     new_ar = current_ar
 
     if action == "regen":
-        # Regenerate with exactly the same settings
+        # Regenerate with exactly the same settings — no changes needed
         pass
 
     elif action == "ar":
-        # draw:ar:16:9  → parts = ["draw", "ar", "16", "9"]
-        # Rejoin from index 2 to handle colons in the ratio itself
+        # draw:ar:16:9 → parts = ["draw", "ar", "16", "9"]
+        # Rejoin from index 2 to reconstruct the colon-separated ratio
         new_ar = ":".join(parts[2:]) if len(parts) > 2 else current_ar
         if new_ar not in SUPPORTED_ASPECT_RATIOS:
             await query.answer("⚠️ Неподдерживаемый формат.", show_alert=True)
@@ -81,26 +97,23 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
     elif action == "model":
-        new_model = parts[2] if len(parts) > 2 else current_model
-        if new_model not in IMAGEN_MODELS_ORDERED:
-            await query.answer("⚠️ Неизвестная модель.", show_alert=True)
+        # draw:model:flux  or  draw:model:zimage  or  draw:model:gptimage-large
+        # Parts: ["draw", "model", "flux"] or ["draw", "model", "gptimage-large"]
+        # We need everything from index 2 joined back (model ids don't contain ":")
+        new_model = ":".join(parts[2:]) if len(parts) > 2 else current_model
+        all_models = _all_valid_models()
+        if new_model not in all_models:
+            await query.answer("⚠️ Модель недоступна.", show_alert=True)
             return
         if new_model == current_model:
-            from app.providers.imagen_provider import MODEL_LABELS
-
-            await query.answer(f"✅ Уже используется {MODEL_LABELS.get(current_model, current_model)}")
+            label = _model_label(current_model)
+            await query.answer(f"✅ Уже используется {label}")
             return
 
     else:
         logger.warning("draw_callback: unknown action=%r data=%r", action, data)
         return
 
-    # --- Synthesize a fake Update pointing to the *original* message context ---
-    # We need to call _run_generation which expects update.effective_message.reply_text.
-    # For callback-triggered generation we reply directly to the message that
-    # contains the button (the photo message), which is query.message.
-    # _run_generation uses update.effective_message internally.
-    # We pass the real update here — effective_message will be query.message.
     await _run_generation(
         update=update,
         context=context,
