@@ -246,6 +246,13 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # Fall through to normal text processing with the corrected text
                 message_text = corrected_text
                 # Continue to normal text handling below
+        # ── 5b. Draw prompt input interception ──────────────────────────────
+        # If the user previously pressed "✏️ Изменить промпт", capture text here.
+        from app.handlers.cmd_image import handle_draw_prompt_input
+
+        if await handle_draw_prompt_input(update, context):
+            return
+
         if await handle_role_rename(update, context, user_id):
             return
         if await handle_edit_prompt(update, context, user_id):

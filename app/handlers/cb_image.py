@@ -1,21 +1,35 @@
 """
-Callback handlers for the Image Generation Interactive Canvas.
+Callback handlers for the Image Generation Interactive Canvas 2.0.
 
 Handles draw:* callback_data patterns:
-    draw:regen          — Regenerate with current settings
-    draw:ar:<ratio>     — Change aspect ratio and regenerate
-    draw:model:<name>   — Change model and regenerate
 
-Model validation is performed against the *dynamic* list of all configured
-models (Pollinations IMAGE_MODELS + Imagen models if keys present), not a
-hardcoded constant, so that new models added via env vars work immediately.
+Navigation (no generation):
+    draw:nav:main        — return to main canvas menu
+    draw:nav:models      — open model selection sub-menu
+    draw:nav:formats     — open format/aspect-ratio sub-menu
+
+State mutation (no generation):
+    draw:set:model:<id>  — select a model, return to main menu
+    draw:set:ar:<ratio>  — select an aspect ratio, return to main menu
+    draw:toggle:enhance  — toggle "Улучшить промпт" flag
+
+Prompt editing:
+    draw:edit:prompt     — enter "awaiting_prompt" mode → user types next message
+    draw:cancel:prompt   — cancel prompt editing
+
+Generation trigger:
+    draw:execute         — run generation with current state
+
+All nav / mutation actions only edit the keyboard markup - they do NOT call the
+provider API.  Generation happens *only* on draw:execute.
 """
 
 from __future__ import annotations
 
 import logging
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from app.handlers.callbacks import _BUSY_TOAST, _is_user_busy
@@ -25,37 +39,109 @@ logger = logging.getLogger(__name__)
 
 _DRAW_STATE_KEY = "draw_state"
 
+# ── Local state helpers (mirror cmd_image to avoid circular import) ────────────
+
 
 def _get_draw_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
     from app.config import settings
     default_model = settings.POLLINATIONS_DEFAULT_IMAGE_MODEL
     return context.user_data.get(  # type: ignore[union-attr]
         _DRAW_STATE_KEY,
-        {"prompt": "", "model": default_model, "aspect_ratio": "1:1"},
+        {
+            "prompt": "",
+            "model": default_model,
+            "aspect_ratio": "1:1",
+            "enhance_prompt": False,
+            "awaiting_prompt": False,
+            "last_photo_msg": None,
+        },
     )
 
 
+def _patch_draw_state(context: ContextTypes.DEFAULT_TYPE, **kwargs) -> dict:
+    """Apply kwargs as key-value patches to draw_state and return updated dict."""
+    state = _get_draw_state(context)
+    state.update(kwargs)
+    context.user_data[_DRAW_STATE_KEY] = state  # type: ignore[index]
+    return state
+
+
 def _all_valid_models() -> list[str]:
-    """Return the unified list of valid model IDs (Pollinations + Imagen)."""
     from app.config import IMAGEN_MODELS_ORDERED, settings
     models: list[str] = list(settings.POLLINATIONS_IMAGE_MODELS)
-    # Append Google Imagen models so that users who previously selected one
-    # can still regenerate without an error.
     for m in IMAGEN_MODELS_ORDERED:
         if m not in models:
             models.append(m)
     return models
 
 
+# ── Keyboard factory (re-imported from cmd_image lazily) ──────────────────────
+
+
+def _main_keyboard(state: dict) -> InlineKeyboardMarkup:
+    from app.handlers.cmd_image import _build_main_menu
+    return _build_main_menu(state)
+
+
+def _models_keyboard(state: dict) -> InlineKeyboardMarkup:
+    from app.handlers.cmd_image import _build_models_menu
+    return _build_models_menu(state)
+
+
+def _formats_keyboard(state: dict) -> InlineKeyboardMarkup:
+    from app.handlers.cmd_image import _build_formats_menu
+    return _build_formats_menu(state)
+
+
+def _awaiting_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❌ Отмена", callback_data="draw:cancel:prompt")]]
+    )
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+
+async def _edit_markup(query, markup: InlineKeyboardMarkup) -> None:
+    """Edit only the reply_markup of current message (no-op on BadRequest)."""
+    try:
+        await query.edit_message_reply_markup(reply_markup=markup)
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            logger.debug("edit_markup BadRequest: %s", e)
+    except Exception as exc:
+        logger.debug("edit_markup error: %s", exc)
+
+
+async def _edit_caption_and_markup(query, caption: str, markup: InlineKeyboardMarkup) -> None:
+    """Edit caption + markup (used for photo messages)."""
+    try:
+        await query.edit_message_caption(
+            caption=caption,
+            parse_mode="Markdown",
+            reply_markup=markup,
+        )
+    except BadRequest as e:
+        if "not modified" not in str(e).lower():
+            logger.debug("edit_caption_and_markup BadRequest: %s", e)
+        # Fallback: edit only markup
+        try:
+            await query.edit_message_reply_markup(reply_markup=markup)
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.debug("edit_caption_and_markup error: %s", exc)
+
+
+# ── Central dispatcher ─────────────────────────────────────────────────────────
+
+
 async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Central dispatcher for all draw:* callback queries.
 
-    Parses the action from callback_data, updates draw state,
-    and delegates to the generation flow in cmd_image._run_generation.
+    Parses action from callback_data and routes to the right sub-handler.
     """
-    from app.handlers.cmd_image import _model_label, _run_generation
-
     query = update.callback_query
     await query.answer()
 
@@ -66,58 +152,141 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     data: str = query.data or ""
-    parts = data.split(":")  # ["draw", "ar", "16", "9"] or ["draw", "regen"]
-    action = parts[1] if len(parts) > 1 else ""
+    # data format: draw:<action>[:<sub>...]
+    parts = data.split(":")  # e.g. ["draw", "set", "model", "flux"]
+    if len(parts) < 2:
+        return
+    action = parts[1]  # "nav", "set", "toggle", "execute", "edit", "cancel"
 
     state = _get_draw_state(context)
-    current_prompt = state.get("prompt", "")
-    current_model = state.get("model", "flux")
-    current_ar = state.get("aspect_ratio", "1:1")
 
-    if not current_prompt:
-        await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
+    # ── Navigation (just swap keyboard) ───────────────────────────────────
+    if action == "nav":
+        sub = parts[2] if len(parts) > 2 else "main"
+        if sub == "models":
+            await _edit_markup(query, _models_keyboard(state))
+        elif sub == "formats":
+            await _edit_markup(query, _formats_keyboard(state))
+        else:  # "main" or anything else
+            await _edit_markup(query, _main_keyboard(state))
         return
 
-    new_model = current_model
-    new_ar = current_ar
+    # ── Set model ─────────────────────────────────────────────────────────
+    if action == "set" and len(parts) > 3 and parts[2] == "model":
+        new_model = ":".join(parts[3:])  # handles model ids without colons
+        valid = _all_valid_models()
+        if new_model not in valid:
+            await query.answer("⚠️ Модель недоступна.", show_alert=True)
+            return
+        if new_model == state.get("model"):
+            from app.handlers.cmd_image import _model_label
+            await query.answer(f"✅ Уже используется {_model_label(new_model)}")
+            return
+        state = _patch_draw_state(context, model=new_model)
+        await _edit_markup(query, _main_keyboard(state))
+        return
 
-    if action == "regen":
-        # Regenerate with exactly the same settings — no changes needed
-        pass
-
-    elif action == "ar":
-        # draw:ar:16:9 → parts = ["draw", "ar", "16", "9"]
-        # Rejoin from index 2 to reconstruct the colon-separated ratio
-        new_ar = ":".join(parts[2:]) if len(parts) > 2 else current_ar
+    # ── Set aspect ratio ──────────────────────────────────────────────────
+    if action == "set" and len(parts) > 3 and parts[2] == "ar":
+        new_ar = ":".join(parts[3:])
         if new_ar not in SUPPORTED_ASPECT_RATIOS:
             await query.answer("⚠️ Неподдерживаемый формат.", show_alert=True)
             return
-        if new_ar == current_ar:
+        if new_ar == state.get("aspect_ratio"):
             await query.answer(f"✅ Уже используется {new_ar}")
             return
-
-    elif action == "model":
-        # draw:model:flux  or  draw:model:zimage  or  draw:model:gptimage-large
-        # Parts: ["draw", "model", "flux"] or ["draw", "model", "gptimage-large"]
-        # We need everything from index 2 joined back (model ids don't contain ":")
-        new_model = ":".join(parts[2:]) if len(parts) > 2 else current_model
-        all_models = _all_valid_models()
-        if new_model not in all_models:
-            await query.answer("⚠️ Модель недоступна.", show_alert=True)
-            return
-        if new_model == current_model:
-            label = _model_label(current_model)
-            await query.answer(f"✅ Уже используется {label}")
-            return
-
-    else:
-        logger.warning("draw_callback: unknown action=%r data=%r", action, data)
+        state = _patch_draw_state(context, aspect_ratio=new_ar)
+        await _edit_markup(query, _main_keyboard(state))
         return
 
-    await _run_generation(
-        update=update,
-        context=context,
-        prompt=current_prompt,
-        model=new_model,
-        aspect_ratio=new_ar,
-    )
+    # ── Toggle enhance ────────────────────────────────────────────────────
+    if action == "toggle" and len(parts) > 2 and parts[2] == "enhance":
+        current = state.get("enhance_prompt", False)
+        state = _patch_draw_state(context, enhance_prompt=not current)
+        label = "✅ Улучшение промпта включено" if not current else "✨ Улучшение промпта выключено"
+        await query.answer(label)
+        await _edit_markup(query, _main_keyboard(state))
+        return
+
+    # ── Edit prompt ───────────────────────────────────────────────────────
+    if action == "edit" and len(parts) > 2 and parts[2] == "prompt":
+        current_prompt = state.get("prompt", "")
+        if not current_prompt:
+            await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
+            return
+
+        _patch_draw_state(context, awaiting_prompt=True)
+        short = current_prompt[:50] + ("..." if len(current_prompt) > 50 else "")
+        try:
+            await query.edit_message_caption(
+                caption=f"✍️ *Отправьте новый текст для генерации.*\n\nТекущий промпт:\n`{short}`",
+                parse_mode="Markdown",
+                reply_markup=_awaiting_keyboard(),
+            )
+        except Exception:
+            # If it's not a photo message, edit text instead
+            try:
+                await query.edit_message_text(
+                    f"✍️ Отправьте новый текст для генерации.\n\nТекущий промпт: `{short}`",
+                    parse_mode="Markdown",
+                    reply_markup=_awaiting_keyboard(),
+                )
+            except Exception as exc:
+                logger.debug("Could not edit message for prompt editing: %s", exc)
+        return
+
+    # ── Cancel prompt editing ─────────────────────────────────────────────
+    if action == "cancel" and len(parts) > 2 and parts[2] == "prompt":
+        state = _patch_draw_state(context, awaiting_prompt=False)
+        current_prompt = state.get("prompt", "")
+        from app.handlers.cmd_image import _escape_md, _model_label
+        short = current_prompt[:80] + ("..." if len(current_prompt) > 80 else "")
+        model_str = _model_label(state.get("model", ""))
+        ar_str = state.get("aspect_ratio", "1:1")
+        caption = f"🎨 *{_escape_md(short)}*\n_{model_str} · {ar_str}_"
+        await _edit_caption_and_markup(query, caption, _main_keyboard(state))
+        return
+
+    # ── Execute (trigger generation) ──────────────────────────────────────
+    if action == "execute":
+        current_prompt = state.get("prompt", "")
+        if not current_prompt:
+            await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
+            return
+
+        from app.handlers.cmd_image import _run_generation
+        await _run_generation(
+            update=update,
+            context=context,
+            prompt=current_prompt,
+            model=state.get("model", settings.POLLINATIONS_DEFAULT_IMAGE_MODEL),
+            aspect_ratio=state.get("aspect_ratio", "1:1"),
+            enhance=state.get("enhance_prompt", False),
+        )
+        return
+
+    # ── Legacy: regen / ar / model (backward compat with older inline buttons) ─
+    if action == "regen":
+        current_prompt = state.get("prompt", "")
+        if not current_prompt:
+            await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
+            return
+        from app.handlers.cmd_image import _run_generation
+        await _run_generation(
+            update=update,
+            context=context,
+            prompt=current_prompt,
+            model=state.get("model", "flux"),
+            aspect_ratio=state.get("aspect_ratio", "1:1"),
+            enhance=state.get("enhance_prompt", False),
+        )
+        return
+
+    logger.warning("draw_callback: unknown action=%r data=%r", action, data)
+
+
+# ── Import settings (needed for default model in _patch_draw_state) ────────────
+try:
+    from app.config import settings  # noqa: E402 — late import OK
+except ImportError:
+    pass

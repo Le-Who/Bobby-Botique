@@ -5,7 +5,13 @@ Format is optimized for agent-parseable context.
 
 ## [2.9.8] - 2026-03-31 - Pollinations.ai Image Generation
 
-### 🎨 Feature — Pollinations.ai Integration
+### 🎨 Feature — Image Generation Canvas 2.0 & Pollinations.ai
+
+*   **Image Generation Canvas 2.0**:
+    *   **Deferred Generation**: Changing model or format no longer instantly regenerates the image. Instead, users configure parameters via a multi-level menu and press "▶️ СГЕНЕРИРОВАТЬ" to execute.
+    *   **Prompt Translation**: Added transparent prompt translation for `flux` and other non-Cyrillic models. If a user sets a Russian prompt, it is automatically translated to English via `gemini-3.1-flash-lite`, preserving the exact visual intent.
+    *   **Live Prompt Editing**: Added "✏️ Изменить промпт" button, allowing users to send text to seamlessly update the current generation state without starting a new `/draw` command.
+    *   **Instant Enhancement**: Added "✨ Улучшить промпт" toggle, integrating natively with Pollinations' LLM-based prompt enhancer.
 
 Full production-grade integration of **Pollinations.ai** as the default free-tier image generation provider, addressing the strict paywalling of Google's Imagen API on free keys.
 
@@ -3009,7 +3015,13 @@ Tier system: `lite=1 < flash=2 < 2.5-flash=3 < pro=4`. Removed "short message �
 - **pgvector long-term memory** (`repos/memory.py`): `text-embedding-004` (768-dim), HNSW index, cosine similarity search, 500/user limit, 90-day TTL. Semantically recalled during context assembly, stored after each exchange.
 - **Smart model selection** (`model_selector.py`): Regex heuristics classify messages (code/reasoning/simple/creative) → non-intrusive inline button suggestions when mismatch detected. `switch_model:` callback handler for one-tap switching.
 
-### 🔧 Phase 4: Production Hardening
+### 🔧 Phase*   **Image Generation Canvas 2.0**:
+    *   **Deferred Generation**: Changing model or format no longer instantly regenerates the image. Instead, users configure parameters via a multi-level menu and press "▶️ СГЕНЕРИРОВАТЬ" to execute.
+    *   **Prompt Translation**: Added transparent prompt translation for `flux` and other non-Cyrillic models. If a user sets a Russian prompt, it is automatically translated to English via `gemini-3.1-flash-lite`, preserving the exact visual intent.
+    *   **Live Prompt Editing**: Added "✏️ Изменить промпт" button, allowing users to send text to seamlessly update the current generation state without starting a new `/draw` command.
+    *   **Instant Enhancement**: Added "✨ Улучшить промпт" toggle, integrating natively with Pollinations' LLM-based prompt enhancer.
+
+*   **Production Hardenings**:
 
 - **Webhook mode** (`bot.py`): Set `WEBHOOK_URL` env var → auto-registers `/webhook/<token>` route, replaces long-polling. Graceful cleanup on shutdown.
 - **Prometheus `/metrics`** (`prometheus.py` + `web.py`): Zero-dependency text format exporter — uptime, API calls, errors, active users, memory. Unauthenticated for scraping.
