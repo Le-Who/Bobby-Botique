@@ -556,6 +556,7 @@ def register(application: Application) -> None:
         add_user_command,
         admin_command,
         cache_stats_command,
+        check_gemini_keys_command,
         check_tavily_keys_command,
         clear_cache_command,
         clear_old_documents_command,
@@ -586,6 +587,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("docstats", document_stats_command))
     application.add_handler(CommandHandler("updatetavilykeys", update_tavily_keys_command))
     application.add_handler(CommandHandler("checktavilykeys", check_tavily_keys_command))
+    application.add_handler(CommandHandler("checkgeminikeys", check_gemini_keys_command))
     application.add_handler(CommandHandler("registergroup", register_group_command))
     application.add_handler(CommandHandler("groupstats", group_stats_command))
     application.add_handler(CommandHandler("rolemetrics", role_conv_metrics_command))

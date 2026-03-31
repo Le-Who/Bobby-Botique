@@ -150,7 +150,7 @@ class Settings(BaseModel):
     IMAGE_GEN_DAILY_LIMIT: int = 10  # Max image generations per user per day
     IMAGE_GEN_RPD_PER_KEY: int = 25  # Imagen free-tier limit per API key per day
     IMAGE_GEN_TIMEOUT: float = 60.0  # Max seconds to wait for Imagen API response
-    IMAGE_GEN_MAX_RETRIES: int = 3   # Key rotation retries on quota/error
+    IMAGE_GEN_MAX_RETRIES: int = 3  # Key rotation retries on quota/error
 
     # --- Pollinations.ai image generation ---
     # Models shown as buttons in /draw Canvas. Loaded from IMAGE_MODELS env var.
@@ -260,9 +260,7 @@ def load_settings() -> Settings:
             # Pollinations image generation
             "POLLINATIONS_IMAGE_MODELS": _load_and_clean_keys("IMAGE_MODELS", required=False)
             or DEFAULT_POLLINATIONS_IMAGE_MODELS.copy(),
-            "POLLINATIONS_DEFAULT_IMAGE_MODEL": os.getenv(
-                "DEFAULT_IMAGE_MODEL", DEFAULT_POLLINATIONS_IMAGE_MODEL
-            ),
+            "POLLINATIONS_DEFAULT_IMAGE_MODEL": os.getenv("DEFAULT_IMAGE_MODEL", DEFAULT_POLLINATIONS_IMAGE_MODEL),
             "POLLINATIONS_API_KEY": os.getenv("POLLINATIONS_API_KEY", ""),
             # Load models from env or use значения by default
             "AVAILABLE_MODELS": _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False)

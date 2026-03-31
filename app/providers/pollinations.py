@@ -80,10 +80,10 @@ class PollinationsResult:
     """Result of a single Pollinations image generation call."""
 
     success: bool
-    images: list[bytes] = field(default_factory=list)   # raw JPEG/PNG bytes
+    images: list[bytes] = field(default_factory=list)  # raw JPEG/PNG bytes
     error_message: str = ""
     model_used: str = ""
-    warning: str = ""   # non-fatal info (e.g., "used GET fallback")
+    warning: str = ""  # non-fatal info (e.g., "used GET fallback")
 
 
 # ---------------------------------------------------------------------------
@@ -160,9 +160,7 @@ class PollinationsProvider:
             return result
 
         # Log the POST failure but attempt GET fallback transparently
-        logger.info(
-            "Pollinations: POST failed (%s), trying GET fallback", result.error_message
-        )
+        logger.info("Pollinations: POST failed (%s), trying GET fallback", result.error_message)
 
         get_result = await self._try_get(
             prompt=prompt,
@@ -220,13 +218,9 @@ class PollinationsProvider:
                 resp = await client.post(url, json=payload, headers=headers)
 
             if resp.status_code == 402:
-                return PollinationsResult(
-                    success=False, error_message="paid_tier_required", model_used=model
-                )
+                return PollinationsResult(success=False, error_message="paid_tier_required", model_used=model)
             if resp.status_code == 401:
-                return PollinationsResult(
-                    success=False, error_message="unauthorized", model_used=model
-                )
+                return PollinationsResult(success=False, error_message="unauthorized", model_used=model)
             if not (200 <= resp.status_code < 300):
                 return PollinationsResult(
                     success=False,
@@ -238,21 +232,13 @@ class PollinationsProvider:
             images_bytes = _extract_b64_or_url_bytes(data, timeout=timeout)
 
             if not images_bytes:
-                return PollinationsResult(
-                    success=False, error_message="empty_response", model_used=model
-                )
+                return PollinationsResult(success=False, error_message="empty_response", model_used=model)
 
-            logger.info(
-                "Pollinations POST: success — model=%s size=%dx%d", model, width, height
-            )
-            return PollinationsResult(
-                success=True, images=images_bytes, model_used=model
-            )
+            logger.info("Pollinations POST: success — model=%s size=%dx%d", model, width, height)
+            return PollinationsResult(success=True, images=images_bytes, model_used=model)
 
         except httpx.TimeoutException:
-            return PollinationsResult(
-                success=False, error_message="timeout", model_used=model
-            )
+            return PollinationsResult(success=False, error_message="timeout", model_used=model)
         except Exception as exc:
             logger.debug("Pollinations POST error: %s", exc)
             return PollinationsResult(
@@ -312,9 +298,7 @@ class PollinationsProvider:
             # Safety: must be an image (guards against CloudFlare HTML error pages)
             content_type = resp.headers.get("content-type", "")
             if not content_type.startswith("image/"):
-                logger.warning(
-                    "Pollinations GET: unexpected content-type %r (not image/*)", content_type
-                )
+                logger.warning("Pollinations GET: unexpected content-type %r (not image/*)", content_type)
                 return PollinationsResult(
                     success=False,
                     error_message="invalid_content_type",
@@ -323,26 +307,21 @@ class PollinationsProvider:
 
             image_bytes = resp.content
             if not image_bytes:
-                return PollinationsResult(
-                    success=False, error_message="empty_response", model_used=model
-                )
+                return PollinationsResult(success=False, error_message="empty_response", model_used=model)
 
             logger.info(
                 "Pollinations GET fallback: success — model=%s size=%dx%d bytes=%d",
-                model, width, height, len(image_bytes),
+                model,
+                width,
+                height,
+                len(image_bytes),
             )
-            return PollinationsResult(
-                success=True, images=[image_bytes], model_used=model
-            )
+            return PollinationsResult(success=True, images=[image_bytes], model_used=model)
 
         except httpx.TimeoutException:
-            return PollinationsResult(
-                success=False, error_message="timeout", model_used=model
-            )
+            return PollinationsResult(success=False, error_message="timeout", model_used=model)
         except Exception as exc:
-            logger.error(
-                "Pollinations GET error: %s", exc, exc_info=True
-            )
+            logger.error("Pollinations GET error: %s", exc, exc_info=True)
             return PollinationsResult(
                 success=False,
                 error_message=f"get_error:{type(exc).__name__}",
@@ -355,9 +334,7 @@ class PollinationsProvider:
 # ---------------------------------------------------------------------------
 
 
-def _extract_b64_or_url_bytes(
-    data: dict, timeout: float = 30.0
-) -> list[bytes]:
+def _extract_b64_or_url_bytes(data: dict, timeout: float = 30.0) -> list[bytes]:
     """
     Parse the OpenAI-compatible response body.
 

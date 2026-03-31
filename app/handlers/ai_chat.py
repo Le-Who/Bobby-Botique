@@ -26,22 +26,31 @@ from app.utils.stage_indicators import STAGES_CHAT, update_stage
 # Removed _background_tasks set, using centralized TaskManager
 
 
-def _store_memory_in_background(user_id: int, user_message: str, key_data: dict | None) -> None:
+def _store_memory_in_background(user_id: int, user_message: str) -> None:
     """Store user intent as long-term memory (background, non-blocking).
 
     Fires a retryable background task that embeds the user message
-    and checks whether memory consolidation is needed.
+    and checks whether memory consolidation is needed. Ensures a Gemini
+    API key is specifically fetched for embeddings to prevent OpenRouter keys
+    from being sent to Google endpoints.
     """
     try:
-        if not key_data or len(user_message) <= 30:
+        if len(user_message) <= 30:
             return
 
-        from app.repos.memory import store_memory
+        from app.repos.memory import EMBEDDING_MODEL, store_memory
 
         memory_content = user_message[:500]
-        _api_key = key_data["api_key"]
 
         async def _bg_store():
+            from app.repos.keys import get_available_gemini_key
+
+            gemini_key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
+            if not gemini_key_data:
+                return
+
+            _api_key = gemini_key_data["api_key"]
+
             await store_memory(
                 user_id,
                 memory_content,
@@ -153,7 +162,7 @@ async def _handle_regular_chat(
                     user_id,
                     user_message,
                     key_data["api_key"],
-                    limit=5,          # raised: adaptive thresholding filters noise
+                    limit=5,  # raised: adaptive thresholding filters noise
                     min_similarity=0.68,  # relaxed: gap-filter handles quality control
                 )
                 if memories:
@@ -389,7 +398,7 @@ async def _handle_regular_chat(
             chat_state.token_count = new_token_count
             await update_user_chat(user_id, chat_state)
 
-            _store_memory_in_background(user_id, user_message, key_data)
+            _store_memory_in_background(user_id, user_message)
 
             # ── Model suggestion (non-intrusive hint) ────────────────────
             try:

@@ -80,9 +80,9 @@ _SUPPORTED_AR = SUPPORTED_ASPECT_RATIOS
 _AR_LABELS = ASPECT_RATIO_LABELS
 
 _AR_TO_PIXELS: dict[str, tuple[int, int]] = {
-    "1:1":  (1024, 1024),
-    "3:4":  (768, 1024),
-    "4:3":  (1024, 768),
+    "1:1": (1024, 1024),
+    "3:4": (768, 1024),
+    "4:3": (1024, 768),
     "9:16": (576, 1024),
     "16:9": (1024, 576),
 }
@@ -292,7 +292,7 @@ async def _translate_to_english(
 
 
 def _chunk(lst: list, size: int) -> list[list]:
-    return [lst[i: i + size] for i in range(0, len(lst), size)]
+    return [lst[i : i + size] for i in range(0, len(lst), size)]
 
 
 def _ideal_columns(n: int, max_cols: int = 3) -> int:
@@ -386,9 +386,7 @@ def _build_formats_menu(state: dict) -> InlineKeyboardMarkup:
 
 def _build_awaiting_keyboard() -> InlineKeyboardMarkup:
     """Keyboard shown while the bot is waiting for a new prompt from the user."""
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("❌ Отмена", callback_data="draw:cancel:prompt")]]
-    )
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="draw:cancel:prompt")]])
 
 
 # ── Heartbeat ──────────────────────────────────────────────────────────────────
@@ -472,6 +470,7 @@ async def _run_generation(
         else:
             width, height = _AR_TO_PIXELS.get(aspect_ratio, (1024, 1024))
             import random
+
             poll_provider = get_pollinations_provider()
             poll_result: PollinationsResult = await poll_provider.generate(
                 prompt=api_prompt,
@@ -521,13 +520,14 @@ async def _run_generation(
             _set_draw_state(context, last_photo_msg=sent.message_id)
             logger.info(
                 "Image generated: user=%s model=%s ar=%s translate=%s",
-                user_id, model, aspect_ratio, translated,
+                user_id,
+                model,
+                aspect_ratio,
+                translated,
             )
         except Exception as send_err:
             logger.error("Failed to send generated image: %s", send_err)
-            await placeholder.edit_text(
-                "❌ Изображение создано, но не удалось отправить. Попробуйте снова."
-            )
+            await placeholder.edit_text("❌ Изображение создано, но не удалось отправить. Попробуйте снова.")
         return
 
     # ── Error ─────────────────────────────────────────────────────────────
@@ -570,18 +570,11 @@ def _error_text(err: str) -> str:
     if err == "empty_prompt":
         return "⚠️ *Пустой запрос.* Напишите описание изображения."
     if err == "invalid_content_type":
-        return (
-            "⚠️ *Сервер вернул неожиданный ответ.*\n\n"
-            "Возможно, модель временно недоступна. Попробуйте другую."
-        )
+        return "⚠️ *Сервер вернул неожиданный ответ.*\n\nВозможно, модель временно недоступна. Попробуйте другую."
     if err.startswith(("get_http_", "http_")):
         code = err.split("_")[-1]
         return f"❌ *Ошибка сервера HTTP {code}.* Попробуйте позже."
-    return (
-        "❌ *Не удалось создать изображение.*\n\n"
-        f"`{err}`\n\n"
-        "Попробуйте позже или измените запрос."
-    )
+    return f"❌ *Не удалось создать изображение.*\n\n`{err}`\n\nПопробуйте позже или измените запрос."
 
 
 def _escape_md(text: str) -> str:
@@ -593,9 +586,7 @@ def _escape_md(text: str) -> str:
 # ── "Awaiting prompt" flag: called from messages.py ──────────────────────────
 
 
-async def handle_draw_prompt_input(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> bool:
+async def handle_draw_prompt_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     Check if the user is in 'awaiting_prompt' mode for the draw command.
     If yes: capture the text as the new prompt, update the Canvas keyboard,
@@ -634,10 +625,7 @@ async def handle_draw_prompt_input(
 
     if last_photo_id:
         short = new_prompt[:80] + ("..." if len(new_prompt) > 80 else "")
-        caption = (
-            f"🎨 *{_escape_md(short)}*\n"
-            f"_{_model_label(state['model'])} · {state['aspect_ratio']}_"
-        )
+        caption = f"🎨 *{_escape_md(short)}*\n_{_model_label(state['model'])} · {state['aspect_ratio']}_"
         try:
             bot = message.get_bot()
             await bot.edit_message_caption(

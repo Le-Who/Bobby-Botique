@@ -372,9 +372,7 @@ async def search_memories_with_graph(
     expanded_query = await expand_query_with_llm(query, api_key)
 
     # 1. Standard vector search for memories (using expanded query)
-    memories = await search_memories(
-        user_id, expanded_query, api_key, limit=limit, min_similarity=min_similarity
-    )
+    memories = await search_memories(user_id, expanded_query, api_key, limit=limit, min_similarity=min_similarity)
 
     # 2. Graph traversal: find related entities
     graph_triples: list[str] = []

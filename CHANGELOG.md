@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.10] - 2026-03-31 - Memory Core & SDK Hardening
+
+### 🧠 GraphRAG Memory & Pipeline Standardization
+
+*   **API Key Routing Fix**: Resolved `400 INVALID_ARGUMENT` crashes in the background memory storage pipeline. Fixed an architecture bug where the bot improperly reused the active session's API key (often OpenRouter) when making Google-specific embedding calls (`gemini-embedding-2-preview`). The pipeline now proactively fetches an isolated Google key for all graph processes.
+*   **Model Accuracy**: Enforced the `gemini-embedding-2-preview` (768-dim) and `gemini-3.1-flash-lite-preview` endpoints for all internal RAG components.
+*   **Legacy SDK Eradication**: Conducted a full codebase audit and permanently removed all usages of the deprecated `google.generativeai` SDK. Operations like graph clustering (`memory_consolidation.py`) and scheduled summarization (`scheduled_briefs.py`) now natively utilize the modern `google-genai` SDK with strict `GenerateContentConfig` structures.
+
+#### Files Changed
+*   **Updated**: `app/handlers/ai_chat.py` (Isolated key logic in `_store_memory_in_background`)
+*   **Updated**: `app/repos/memory_consolidation.py` (Purged legacy SDK, migrated to `get_cached_genai_client`)
+*   **Updated**: `app/handlers/scheduled_briefs.py` (Migrated Gemini calls to identical client infrastructure)
+
 ## [2.9.9] - 2026-03-31 - Implicit Image Generation Intent
 
 ### ✨ Feature — Implicit Image Generation Intent (Text & Voice)

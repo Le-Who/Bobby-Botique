@@ -54,3 +54,8 @@ async def get_tavily_usage_for_month(month_str: str) -> list[dict[str, Any]]:
         """,
         (month_str,),
     )
+
+
+async def get_all_gemini_keys() -> list[dict[str, Any]]:
+    """Returns all Gemini API keys (admin display)."""
+    return await db.db_query("SELECT key_hash, api_key FROM api_keys")

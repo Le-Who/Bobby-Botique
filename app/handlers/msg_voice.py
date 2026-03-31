@@ -105,9 +105,7 @@ async def _process_voice_pipeline(
 
     _draw_prompt = _check_draw(transcript)
     if _draw_prompt:
-        logging.info(
-            "Voice draw intent detected for user %s: %r", user_id, _draw_prompt[:60]
-        )
+        logging.info("Voice draw intent detected for user %s: %r", user_id, _draw_prompt[:60])
         await _auto_route_to_image(
             placeholder,
             transcript,
@@ -346,8 +344,8 @@ async def _auto_route_to_image(
     Shows the transcript with a brief indicator, then invokes _run_generation
     using the user's saved draw settings (model / aspect ratio / enhance).
     """
-    from app.utils.formatting import TelegramFormatter
     from app.handlers.cmd_image import _get_draw_state, _run_generation
+    from app.utils.formatting import TelegramFormatter
 
     # 1. Display transcript so the user can see what was understood
     auto_text = (

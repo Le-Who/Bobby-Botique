@@ -61,9 +61,7 @@ async def _generate_single_chunk_gemini(
     status_mgr = get_key_status_manager()
 
     for attempt in range(3):
-        key_data, model_used, _ = await _resolve_ai_request(
-            "gemini-2.5-flash", excluded_key_hashes=failed_keys
-        )
+        key_data, model_used, _ = await _resolve_ai_request("gemini-2.5-flash", excluded_key_hashes=failed_keys)
         if not key_data:
             break
 
@@ -216,8 +214,7 @@ async def _generate_and_send_voice(
                 # ElevenLabs failed (quota exhausted or all keys tried).
                 # Atomic fallback: discard everything and use Gemini for the full message.
                 logging.info(
-                    "Voice reply: ElevenLabs unavailable — falling back to Gemini TTS "
-                    "(chat_id=%s)",
+                    "Voice reply: ElevenLabs unavailable — falling back to Gemini TTS (chat_id=%s)",
                     chat_id,
                 )
 

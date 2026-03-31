@@ -12,8 +12,6 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import google.generativeai as genai
-
 from app.database import db_manager
 from app.repos.db_helpers import clear_user_context, db_query, set_user_context
 
@@ -284,8 +282,7 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
         logging.error("Graph extraction failed: %s", e, exc_info=True)
         # Fallback: try legacy plain-text extraction
         try:
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(_CONSOLIDATION_MODEL)
+            client = get_cached_genai_client(api_key)
             fallback_prompt = f"""Extract {MIN_PERSONA_FACTS}-{MAX_PERSONA_FACTS} atomic persona facts from these memories.
 Write each fact on a separate line starting with "- ".
 
@@ -293,9 +290,10 @@ Memories:
 {memories_text}
 
 Extracted persona facts:"""
-            response = await model.generate_content_async(
-                fallback_prompt,
-                generation_config=genai.types.GenerationConfig(
+            response = await client.aio.models.generate_content(
+                model=_CONSOLIDATION_MODEL,
+                contents=fallback_prompt,
+                config=types.GenerateContentConfig(
                     temperature=0.1,
                     max_output_tokens=1024,
                 ),
@@ -481,7 +479,10 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                                 ORDER BY predicate_embedding <=> $4::halfvec ASC
                                 LIMIT 1
                                 """,
-                                user_id, src_id, tgt_id, pred_emb_str,
+                                user_id,
+                                src_id,
+                                tgt_id,
+                                pred_emb_str,
                             )
                             if similar_edge:
                                 # Merge into existing edge — update weight & is_core
@@ -493,11 +494,14 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                                         updated_at = now()
                                     WHERE id = $3
                                     """,
-                                    weight, is_core, similar_edge["id"],
+                                    weight,
+                                    is_core,
+                                    similar_edge["id"],
                                 )
                                 logging.debug(
                                     "Semantic edge dedup: merged predicate '%s' into '%s'",
-                                    predicate, similar_edge["predicate"],
+                                    predicate,
+                                    similar_edge["predicate"],
                                 )
                                 continue
                         else:
@@ -516,8 +520,13 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                                 predicate_embedding = COALESCE(EXCLUDED.predicate_embedding, memory_edges.predicate_embedding),
                                 updated_at = now()
                             """,
-                            user_id, src_id, tgt_id, predicate,
-                            pred_emb_str, weight, is_core,
+                            user_id,
+                            src_id,
+                            tgt_id,
+                            predicate,
+                            pred_emb_str,
+                            weight,
+                            is_core,
                         )
 
                     logging.info(

@@ -16,6 +16,7 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from app import state
 from app.config import settings
+from app.handlers.cmd_image import _get_draw_state, _run_generation, check_draw_intent
 from app.handlers.msg_document import handle_document, handle_document_mode_interaction
 from app.handlers.msg_media import (
     process_media_group_update,
@@ -27,7 +28,6 @@ from app.handlers.msg_roles import (
     handle_manual_role_input,
     handle_role_rename,
 )
-from app.handlers.cmd_image import check_draw_intent, _get_draw_state, _run_generation
 from app.handlers.msg_voice import handle_voice_inline
 from app.metrics import metrics_collector
 from app.repos.users import is_authorized
@@ -298,9 +298,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Bypasses conversational AI; routes straight to Canvas 2.0 pipeline.
         _draw_prompt = check_draw_intent(message_text)
         if _draw_prompt:
-            logging.info(
-                "Draw intent detected for user %s: %r", user_id, _draw_prompt[:60]
-            )
+            logging.info("Draw intent detected for user %s: %r", user_id, _draw_prompt[:60])
             user_state = state.get_user_state(user_id)
             if user_state.is_processing or state.get_user_lock(user_id).locked():
                 from app.i18n import t as _t
@@ -338,22 +336,16 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
                         elapsed = _time.time() - _st
                         api_logger.log_response("telegram", _st, method="handle_message")
-                        await metrics_collector.record_request(
-                            "handle_message", elapsed, success=True, user_id=_uid
-                        )
+                        await metrics_collector.record_request("handle_message", elapsed, success=True, user_id=_uid)
                 except Exception as _e:
-                    logging.error(
-                        "Error in draw task wrapper for user %s: %s", _uid, _e, exc_info=True
-                    )
+                    logging.error("Error in draw task wrapper for user %s: %s", _uid, _e, exc_info=True)
                     import time as _time
 
                     elapsed = _time.time() - _st
                     api_logger.log_response(
                         "telegram", _st, method="handle_message", success=False, error_message=str(_e)
                     )
-                    await metrics_collector.record_request(
-                        "handle_message", elapsed, success=False, user_id=_uid
-                    )
+                    await metrics_collector.record_request("handle_message", elapsed, success=False, user_id=_uid)
                 finally:
                     _us = state.get_user_state(_uid)
                     _us.is_processing = False

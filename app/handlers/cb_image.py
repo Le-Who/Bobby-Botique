@@ -44,6 +44,7 @@ _DRAW_STATE_KEY = "draw_state"
 
 def _get_draw_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
     from app.config import settings
+
     default_model = settings.POLLINATIONS_DEFAULT_IMAGE_MODEL
     return context.user_data.get(  # type: ignore[union-attr]
         _DRAW_STATE_KEY,
@@ -68,6 +69,7 @@ def _patch_draw_state(context: ContextTypes.DEFAULT_TYPE, **kwargs) -> dict:
 
 def _all_valid_models() -> list[str]:
     from app.config import IMAGEN_MODELS_ORDERED, settings
+
     models: list[str] = list(settings.POLLINATIONS_IMAGE_MODELS)
     for m in IMAGEN_MODELS_ORDERED:
         if m not in models:
@@ -80,23 +82,24 @@ def _all_valid_models() -> list[str]:
 
 def _main_keyboard(state: dict) -> InlineKeyboardMarkup:
     from app.handlers.cmd_image import _build_main_menu
+
     return _build_main_menu(state)
 
 
 def _models_keyboard(state: dict) -> InlineKeyboardMarkup:
     from app.handlers.cmd_image import _build_models_menu
+
     return _build_models_menu(state)
 
 
 def _formats_keyboard(state: dict) -> InlineKeyboardMarkup:
     from app.handlers.cmd_image import _build_formats_menu
+
     return _build_formats_menu(state)
 
 
 def _awaiting_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("❌ Отмена", callback_data="draw:cancel:prompt")]]
-    )
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="draw:cancel:prompt")]])
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -180,6 +183,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
         if new_model == state.get("model"):
             from app.handlers.cmd_image import _model_label
+
             await query.answer(f"✅ Уже используется {_model_label(new_model)}")
             return
         state = _patch_draw_state(context, model=new_model)
@@ -240,6 +244,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         state = _patch_draw_state(context, awaiting_prompt=False)
         current_prompt = state.get("prompt", "")
         from app.handlers.cmd_image import _escape_md, _model_label
+
         short = current_prompt[:80] + ("..." if len(current_prompt) > 80 else "")
         model_str = _model_label(state.get("model", ""))
         ar_str = state.get("aspect_ratio", "1:1")
@@ -255,6 +260,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         from app.state import get_user_lock, get_user_state
+
         user_state = get_user_state(user_id)
         if user_state.is_processing or get_user_lock(user_id).locked():
             await query.answer(_BUSY_TOAST, show_alert=True)
@@ -266,6 +272,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             try:
                 async with get_user_lock(user_id):
                     from app.handlers.cmd_image import _run_generation
+
                     await _run_generation(
                         update=update,
                         context=context,
@@ -278,6 +285,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 user_state.is_processing = False
 
         from app.utils.background_tasks import submit_task
+
         submit_task(_do_generate())
         return
 
@@ -289,6 +297,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         from app.state import get_user_lock, get_user_state
+
         user_state = get_user_state(user_id)
         if user_state.is_processing or get_user_lock(user_id).locked():
             await query.answer(_BUSY_TOAST, show_alert=True)
@@ -300,6 +309,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             try:
                 async with get_user_lock(user_id):
                     from app.handlers.cmd_image import _run_generation
+
                     await _run_generation(
                         update=update,
                         context=context,
@@ -312,6 +322,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 user_state.is_processing = False
 
         from app.utils.background_tasks import submit_task
+
         submit_task(_do_regen())
         return
 

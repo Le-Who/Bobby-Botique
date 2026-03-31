@@ -1,8 +1,10 @@
 # /app/handlers/cmd_admin.py
 """Admin-only commands: user management, metrics, cache, queue, config, tavily, cleanup."""
 
+import asyncio
 import logging
 
+import httpx
 from google import genai
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -17,6 +19,7 @@ from app.queue import task_queue
 from app.repos.admin import (
     authorize_user,
     clear_old_metrics,
+    get_all_gemini_keys,
     get_all_tavily_keys,
     get_tavily_usage_for_month,
     list_authorized_users,
@@ -554,6 +557,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/clearolddocs` — очистить старые документы 3\\+ дня\n"
             "• `/listmodels` — список доступных моделей\n\n"
             "*🌐 API ключи:*\n"
+            "• `/checkgeminikeys` — проверить статус ключей Gemini\n"
             "• `/updatetavilykeys` — обновить ключи Tavily API\n"
             "• `/checktavilykeys` — проверить статус ключей Tavily\n\n"
             "*👥 Групповые чаты:*\n"
@@ -576,3 +580,59 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         logging.error("Error in admin command: %s", e, exc_info=True)
         await update.message.reply_text("❌ Произошла ошибка при обработке команды. Попробуйте позже.")
+
+
+async def _check_single_gemini_key(client: httpx.AsyncClient, key_hash: str, api_key: str) -> str:
+    # A fast, lightweight check bypassing the SDK to avoid retry-loops.
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash?key={api_key}"
+    try:
+        resp = await client.get(url)
+        if resp.status_code == 200:
+            return f"✅ `{key_hash[:8]}...` — ОК"
+        elif resp.status_code == 400:
+            return f"❌ `{key_hash[:8]}...` — ОШИБКА 400 (Invalid Key/Method)"
+        elif resp.status_code == 403:
+            return f"🚫 `{key_hash[:8]}...` — ОШИБКА 403 (No Access/Suspended)"
+        else:
+            return f"⚠️ `{key_hash[:8]}...` — ОШИБКА {resp.status_code}"
+    except Exception as e:
+        return f"💥 `{key_hash[:8]}...` — СЕТЕВАЯ ОШИБКА ({type(e).__name__})"
+
+
+@admin_only
+async def check_gemini_keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # context используется for совместимости с другими командами
+    """Секретная команда для асинхронной проверки всех ключей Gemini в БД."""
+    try:
+        msg = await update.message.reply_text("🔄 Запускаю прямую проверку ключей Gemini к Google API...")
+
+        keys_result = await get_all_gemini_keys()
+        if not keys_result:
+            await msg.edit_text("❌ В базе данных нет ключей Gemini API")
+            return
+
+        report_parts = [f"📋 Результаты проверки {len(keys_result)} ключей:\n\n"]
+        from app.crypto import safe_decrypt
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            tasks = []
+            for row in keys_result:
+                key_hash = row["key_hash"]
+                api_key = safe_decrypt(row["api_key"])
+                tasks.append(_check_single_gemini_key(client, key_hash, api_key))
+
+            results = await asyncio.gather(*tasks)
+
+        for res in results:
+            report_parts.append(f"{res}\n")
+
+        report_parts.append("\n💡 *Совет*: Удалите нерабочие ключи из .env и сделайте /reloadconfig")
+
+        report = "".join(report_parts)
+        formatted_text, parse_mode = TelegramFormatter.format_text(report)
+        await msg.edit_text(text=formatted_text, parse_mode=parse_mode)
+
+    except Exception as e:
+        error_msg = f"Ошибка при проверке ключей Gemini: {e}"
+        logging.error(error_msg, exc_info=True)
+        await update.message.reply_text(f"💥 {error_msg}")

@@ -254,9 +254,7 @@ async def generate_speech_with_key_rotation(
 
     # Filter out blank chunks once so we don't have to skip them inside the loop.
     # We keep original indices to build correct Request Stitching neighbours.
-    non_empty: list[tuple[int, str]] = [
-        (i, c) for i, c in enumerate(text_chunks) if c.strip()
-    ]
+    non_empty: list[tuple[int, str]] = [(i, c) for i, c in enumerate(text_chunks) if c.strip()]
 
     pcm_parts: list[bytes] = []
     exhausted_keys: set[str] = set()
@@ -268,14 +266,10 @@ async def generate_speech_with_key_rotation(
         prev_raw_idx = original_idx - 1
         next_raw_idx = original_idx + 1
         previous_text: str | None = (
-            text_chunks[prev_raw_idx]
-            if prev_raw_idx >= 0 and text_chunks[prev_raw_idx].strip()
-            else None
+            text_chunks[prev_raw_idx] if prev_raw_idx >= 0 and text_chunks[prev_raw_idx].strip() else None
         )
         next_text: str | None = (
-            text_chunks[next_raw_idx]
-            if next_raw_idx < len(text_chunks) and text_chunks[next_raw_idx].strip()
-            else None
+            text_chunks[next_raw_idx] if next_raw_idx < len(text_chunks) and text_chunks[next_raw_idx].strip() else None
         )
 
         chunk_pcm: bytes | None = None

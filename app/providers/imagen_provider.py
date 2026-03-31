@@ -86,13 +86,12 @@ def _day_bucket_key(api_key: str) -> str:
 def _next_midnight_ts() -> int:
     """UNIX timestamp of the next UTC midnight (integer, for Redis EXPIREAT)."""
     now = _datetime.datetime.now(_datetime.UTC)
-    tomorrow = (now + _datetime.timedelta(days=1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    tomorrow = (now + _datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     return int(tomorrow.timestamp())
 
 
 # --- Redis helpers ---
+
 
 def _redis_imagen_key(api_key: str) -> str:
     return f"imagen:rpd:{_day_bucket_key(api_key)}"
@@ -102,6 +101,7 @@ async def _redis_get_usage(api_key: str) -> int | None:
     """Return usage count from Redis, or None if Redis is unavailable."""
     try:
         from app.cache import redis_client  # lazy import to avoid circular deps
+
         if redis_client is None:
             return None
         val = await redis_client.get(_redis_imagen_key(api_key))
@@ -115,6 +115,7 @@ async def _redis_increment_usage(api_key: str) -> int | None:
     """Atomically increment Redis counter and set expiry. Returns new count or None."""
     try:
         from app.cache import redis_client
+
         if redis_client is None:
             return None
         rk = _redis_imagen_key(api_key)
@@ -129,6 +130,7 @@ async def _redis_increment_usage(api_key: str) -> int | None:
 
 
 # --- Public interface (auto-selects Redis or in-memory) ---
+
 
 async def _get_key_usage(api_key: str) -> int:
     """Return today's Imagen request count for the given key."""
