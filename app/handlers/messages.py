@@ -296,7 +296,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # ── 7c. Implicit image generation intent ─────────────────────────────
         # Matches: "Бот, нарисуй..." / "изобрази..." / "сгенерируй картинку..."
         # Bypasses conversational AI; routes straight to Canvas 2.0 pipeline.
-        _draw_prompt = check_draw_intent(message_text)
+        from app.handlers.cmd_image import check_draw_intent_async
+        _draw_prompt = await check_draw_intent_async(message_text)
         if _draw_prompt:
             logging.info("Draw intent detected for user %s: %r", user_id, _draw_prompt[:60])
             user_state = state.get_user_state(user_id)

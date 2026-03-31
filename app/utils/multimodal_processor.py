@@ -54,6 +54,9 @@ _VOICE_SYSTEM_PROMPT = (
     "   INTENT:CONVERSATIONAL — if the speaker is addressing the bot: asking a question, giving a command, chatting, or asking to GENERATE/compose/write something (e.g., 'write a story', 'what is X').\n"
     "   INTENT:TRANSCRIPTION — ONLY if the speaker is using you as a dictaphone: dictating personal notes, a diary, or explicitly asking merely to 'transcribe' or 'record' text without a conversational reply.\n"
     "   INTENT:SEARCH — if the speaker asks to search the internet, look up current events, or find factual information online.\n"
+    "   INTENT:DRAW — if the speaker asks to DRAW, GENERATE, or CREATE AN IMAGE/PICTURE/ART. (e.g., 'draw a cat', 'сгенерируй картинку леса', 'сделай такое же фото').\n"
+    "7. If INTENT is DRAW, add an additional line RIGHT ABOVE the intent line: DRAW_PROMPT: <clean descriptive subject>\n"
+    "   (Extract ONLY the visual subject, resolving context. E.g. 'I saw a forest. Draw the same' -> 'a forest.').\n"
 )
 
 _IMAGE_SYSTEM_PROMPT = (
@@ -271,7 +274,7 @@ async def transcribe_voice(
     *,
     mime_type: str = "audio/ogg",
     model: str = TRANSCRIPTION_MODEL,
-) -> tuple[str | None, str]:
+) -> tuple[str | None, str, str | None]:
     """Transcribe a voice message to text using Gemini.
 
     Args:
@@ -281,13 +284,14 @@ async def transcribe_voice(
         model: Model to use. Defaults to gemini-3.1-flash-lite-preview.
 
     Returns:
-        Tuple of (transcript_text, intent).
+        Tuple of (transcript_text, intent, draw_prompt).
         transcript_text is the clean transcript (with summary), or None on failure.
-        intent is "conversational" or "transcription".
+        intent is "conversational", "transcription", "search", or "draw".
+        draw_prompt is the extracted visual subject if intent is "draw", else None.
     """
     if not audio_bytes:
         logging.warning("transcribe_voice called with empty audio_bytes")
-        return None, "conversational"
+        return None, "conversational", None
 
     audio_part = types.Part(
         inline_data=types.Blob(mime_type=mime_type, data=audio_bytes),
@@ -302,33 +306,42 @@ async def transcribe_voice(
     )
 
     if raw_text is None:
-        return None, "conversational"
+        return None, "conversational", None
 
     return _parse_voice_intent(raw_text)
 
 
-def _parse_voice_intent(raw_text: str) -> tuple[str, str]:
-    """Parse INTENT: tag from the last line and strip it from transcript.
+def _parse_voice_intent(raw_text: str) -> tuple[str, str, str | None]:
+    """Parse INTENT: and DRAW_PROMPT: tags from the transcript's end.
 
-    Returns (clean_transcript, intent_type).
-    intent_type is "conversational", "transcription", or "search" (lowercase).
+    Returns (clean_transcript, intent_type, draw_prompt).
     """
     lines = raw_text.rstrip().split("\n")
 
-    # Check last line for INTENT: tag
     intent = "conversational"  # default
+    draw_prompt = None
+
+    # Check last line for INTENT: tag
     if lines and lines[-1].strip().upper().startswith("INTENT:"):
         tag = lines[-1].strip().split(":", 1)[1].strip().lower()
-        if tag in ("conversational", "transcription", "search"):
+        if tag in ("conversational", "transcription", "search", "draw"):
             intent = tag
-        # Remove the intent line from transcript
-        lines = lines[:-1]
+        lines.pop()
 
-    # Strip trailing empty lines left after removing intent
+    # Strip empty lines between intent and draw_prompt just in case
     while lines and not lines[-1].strip():
         lines.pop()
 
-    return "\n".join(lines), intent
+    # If intent is draw, check for DRAW_PROMPT
+    if intent == "draw" and lines and lines[-1].strip().upper().startswith("DRAW_PROMPT:"):
+        draw_prompt = lines[-1].strip().split(":", 1)[1].strip()
+        lines.pop()
+
+    # Strip trailing empty lines left after removing tags
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    return "\n".join(lines), intent, draw_prompt
 
 
 async def describe_image(

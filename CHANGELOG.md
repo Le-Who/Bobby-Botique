@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.12] - 2026-03-31 - Hybrid Image Intent Recognition
+
+### ✨ Feature — Contextual Semantic Trigger
+
+*   **Hybrid AI-Regex Intent Detection**: Evolved the image generation pipeline to support highly complex, conversational requests containing coreferences (e.g., *"Я видел картинки гор. Сгенерируй мне такие же"*).
+    *   **Level 1 (Regex)**: Maintains zero-latency instant triggering for standard commands ("нарисуй кота").
+    *   **Level 2 (Semantic AI)**: Uses `gemini-3.1-flash-lite-preview` asynchronously (`_extract_draw_prompt_ai`) to read between the lines if a user types a generation verb but doesn't explicitly name a subject immediately.
+*   **Voice Intent Integration**: Overhauled `multimodal_processor.py`'s `_VOICE_SYSTEM_PROMPT`. The ASR layer now natively identifies the `INTENT:DRAW` state and automatically extracts a cleaned `DRAW_PROMPT: <subject>` inline, neutralizing complex audio requests without regex fallback.
+
+#### Files Changed
+*   **Updated**: `app/handlers/cmd_image.py` (Implemented `check_draw_intent_async` and AI coreference logic).
+*   **Updated**: `app/handlers/messages.py` (Adapted text router to await asynchronous intent detection).
+*   **Updated**: `app/utils/multimodal_processor.py` (Injected inline DRAW_PROMPT parsing into ASR logic).
+*   **Updated**: `app/handlers/msg_voice.py` (Prioritize AI-extracted draw prompts returned by the multimodal processor).
+
 ## [2.9.11] - 2026-03-31 - Prompt Truncation & Voice UX
 
 ### ✨ Feature — Image Generation UX & Voice Integration

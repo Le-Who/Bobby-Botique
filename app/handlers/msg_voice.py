@@ -91,7 +91,7 @@ async def _process_voice_pipeline(
     # 2. Transcribe via multimodal processor (with retries + key fallback)
     from app.utils.multimodal_processor import transcribe_voice
 
-    transcript, intent = await transcribe_voice(voice_bytes, mime_type="audio/ogg")
+    transcript, intent, ai_draw_prompt = await transcribe_voice(voice_bytes, mime_type="audio/ogg")
 
     if not transcript:
         await placeholder.edit_text(t("voice.transcription_failed", lang))
@@ -100,10 +100,14 @@ async def _process_voice_pipeline(
     # Refine language detection from actual transcript content
     lang = detect_language(transcript)
 
-    # 3b. Check for implicit image generation intent in the transcript
-    from app.handlers.cmd_image import check_draw_intent as _check_draw
+    # 3b. Check for image generation intent (AI extracted or Regex fallback)
+    _draw_prompt = None
+    if intent == "draw" and ai_draw_prompt:
+        _draw_prompt = ai_draw_prompt
+    else:
+        from app.handlers.cmd_image import check_draw_intent as _check_draw
+        _draw_prompt = _check_draw(transcript)
 
-    _draw_prompt = _check_draw(transcript)
     if _draw_prompt:
         logging.info("Voice draw intent detected for user %s: %r", user_id, _draw_prompt[:60])
         await _auto_route_to_image(

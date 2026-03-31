@@ -139,8 +139,8 @@ DRAW_TRIGGER_RE = re.compile(
 )
 
 
-def check_draw_intent(text: str) -> str | None:
-    """Return the extracted image prompt if ``text`` is an implicit draw request.
+def _check_draw_intent_fast(text: str) -> str | None:
+    """Return the extracted image prompt if ``text`` is an explicit draw request via regex.
 
     Examples that match:
         "Нарисуй красивого кота"
@@ -149,13 +149,72 @@ def check_draw_intent(text: str) -> str | None:
         "Бот нарисуй мне пейзаж с горами"
 
     Returns the core prompt string (without the trigger verb prefix) on match,
-    or ``None`` if the text is not an image generation request.
+    or ``None`` if the regex fails.
     """
-    m = DRAW_TRIGGER_RE.match(text.strip())
+    m = DRAW_TRIGGER_RE.search(text.strip())  # Changed from match to search
     if m:
         prompt = m.group(1).strip().lstrip(":—–-").strip()
         return prompt or None
     return None
+
+async def check_draw_intent_async(text: str) -> str | None:
+    """Check if the text is an image generation request, using hybrid Regex + AI."""
+    # 1. Very fast regex path
+    fast_match = _check_draw_intent_fast(text)
+    if fast_match:
+        return fast_match
+        
+    # 2. Check if we *might* be asking to draw (keyword heuristic)
+    # If there's no draw verb anywhere, bail instantly.
+    _VERB_HEURISTIC = re.compile(r"(?i)\b(?:нарисуй|сгенерируй|изобрази|сделай\s+фото|создай\s+картин|draw)\b")
+    if not _VERB_HEURISTIC.search(text):
+        return None
+        
+    # 3. Ask AI to resolve coreferences (e.g. "такую же картинку")
+    return await _extract_draw_prompt_ai(text)
+
+async def _extract_draw_prompt_ai(text: str) -> str | None:
+    """Use Gemini to extract the core visual subject from a tricky conversational request."""
+    try:
+        from google import genai as _genai  # noqa: F811
+        from google.genai import types as _types
+
+        from app.providers.gemini import get_cached_genai_client
+
+        api_keys = settings.GEMINI_API_KEYS
+        if not api_keys:
+            return None
+
+        client = get_cached_genai_client(api_keys[0])
+        system = (
+            "Determine if the user's message is asking to GENERATE/DRAW/CREATE a picture/image.\n"
+            "If YES, respond ONLY with the exact descriptive visual subject, removing all conversation.\n"
+            "Resolve any references: e.g. if the user says 'I saw a dog in a hat. Draw me the same', respond with 'a dog in a hat'.\n"
+            "If NO (they are just chatting), respond with 'NONE'."
+        )
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model=_TRANSLATE_MODEL,
+                contents=text,
+                config=_types.GenerateContentConfig(
+                    system_instruction=system,
+                    temperature=0.0,
+                    max_output_tokens=300,
+                )
+            ),
+            timeout=3.0
+        )
+        if response and response.text:
+            res = response.text.strip().lstrip(":—–-").strip()
+            if res and res.upper() != "NONE":
+                return res
+    except Exception as e:
+        logger.warning(f"AI draw intent extraction failed: {e}")
+    return None
+    
+def check_draw_intent(text: str) -> str | None:
+    """Synchronous fallback wrapper for places that can't await (like msg_voice)."""
+    return _check_draw_intent_fast(text)
 
 
 # ── State helpers ──────────────────────────────────────────────────────────────
