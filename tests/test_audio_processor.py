@@ -32,7 +32,7 @@ class TestMultimodalProcessorConstants:
         from app.utils.multimodal_processor import _VOICE_SYSTEM_PROMPT
 
         assert "transcri" in _VOICE_SYSTEM_PROMPT.lower()
-        assert "summary" in _VOICE_SYSTEM_PROMPT.lower()
+        assert "commentary" in _VOICE_SYSTEM_PROMPT.lower()
 
     def test_image_system_prompt_contains_visual_instructions(self):
         from app.utils.multimodal_processor import _IMAGE_SYSTEM_PROMPT
