@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.11] - 2026-03-31 - Prompt Truncation & Voice UX
+
+### ✨ Feature — Image Generation UX & Voice Integration
+
+*   **Zero-Leak Intent Recognition**: Improved the Regex heuristics engine behind implicit image generation triggers. The bot now natively identifies and discards object pronouns and conversational filler words (e.g. `мне нужно`, `пожалуйста`, `эээ`) surrounding the generation verb. Resolves semantic leakage where the word "мне" would accidentally become part of the artistic prompt.
+*   **Pre-Canvas Voice Confirmation**: Deprecated blind auto-generation for voice commands. When a user requests an image via audio ("нарисуй кота"), the bot now parses the transcript and immediately attaches the interactive Canvas 2.0 keyboard directly to the text message. Users can visually confirm the parsed prompt and freely tweak the Model and Aspect Ratio *before* any API tokens are consumed. 
+*   **Unrestricted Prompt UX**: Eradicated the aggressive 80-character truncation across the entire Canvas 2.0 UI. Generated images now display full-length prompts (safely capped at 800 characters to respect Telegram's 1024 limit).
+*   **Frictionless Prompt Editing**: The "✏️ Изменить промпт" menu no longer forces the original prompt into a truncated caption. It now displays the complete original text in a dedicated markdown block, enabling 1-tap copy-pasting for mobile users.
+
+#### Files Changed
+*   **Updated**: `app/handlers/cmd_image.py` (Extended `_DRAW_PREFIX` & `_DRAW_POST_VERB` regex structures; safely raised caption limits).
+*   **Updated**: `app/handlers/cb_image.py` (Redesigned prompt editing UX to support full-length string formatting).
+*   **Updated**: `app/handlers/msg_voice.py` (Rewrote `_auto_route_to_image` to inject `_build_main_menu` inline instead of firing `_run_generation` blindly).
+
 ## [2.9.10] - 2026-03-31 - Memory Core & SDK Hardening
 
 ### 🧠 GraphRAG Memory & Pipeline Standardization

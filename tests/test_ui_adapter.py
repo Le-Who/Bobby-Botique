@@ -82,4 +82,3 @@ class TestTelegramMessageAdapter:
 
         assert isinstance(new_adapter, TelegramMessageAdapter)
         assert new_adapter.last_message is fallback_msg
-

@@ -220,7 +220,8 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         _patch_draw_state(context, awaiting_prompt=True)
-        short = current_prompt[:50] + ("..." if len(current_prompt) > 50 else "")
+        safe_limit = 800
+        short = current_prompt[:safe_limit].strip() + ("..." if len(current_prompt) > safe_limit else "")
         try:
             await query.edit_message_caption(
                 caption=f"✍️ *Отправьте новый текст для генерации.*\n\nТекущий промпт:\n`{short}`",
@@ -239,13 +240,13 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 logger.debug("Could not edit message for prompt editing: %s", exc)
         return
 
-    # ── Cancel prompt editing ─────────────────────────────────────────────
     if action == "cancel" and len(parts) > 2 and parts[2] == "prompt":
         state = _patch_draw_state(context, awaiting_prompt=False)
         current_prompt = state.get("prompt", "")
         from app.handlers.cmd_image import _escape_md, _model_label
 
-        short = current_prompt[:80] + ("..." if len(current_prompt) > 80 else "")
+        safe_limit = 800
+        short = current_prompt[:safe_limit].strip() + ("..." if len(current_prompt) > safe_limit else "")
         model_str = _model_label(state.get("model", ""))
         ar_str = state.get("aspect_ratio", "1:1")
         caption = f"🎨 *{_escape_md(short)}*\n_{model_str} · {ar_str}_"

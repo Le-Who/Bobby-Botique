@@ -101,11 +101,12 @@ _DRAW_STATE_KEY = "draw_state"
 # ── Implicit draw intent detection ────────────────────────────────────────────
 
 # Optional prefixes the user might include before the trigger verb.
-# Matches: "бот,", "боты,", "пожалуйста,", "пожалуйста", "можешь", "ты"…
+# Matches: "бот,", "мне нужно", "я хочу", "э", "ну"…
 _DRAW_PREFIX = (
     r"(?:"
-    r"(?:бот[аы]?|пожалуйста|можешь(?:\s+ты)?|ты|скажи(?:\s+боту)?)\s*[,:]?\s*"
-    r")?"
+    r"(?:бот[аы]?|можешь(?:\s+ты)?|ты|скажи(?:\s+боту)?|мне\s*нужно|нам\s*нужно|я\s*хочу|мы\s*хотим)\s*[,:]?\s*"
+    r"|пожалуйста\s*|э+\s*|м+\s*|ну\s*|а\s*"
+    r")*"
 )
 
 # Core trigger verbs — all conjugations / imperatives / infinitives that
@@ -122,10 +123,18 @@ _DRAW_VERBS = (
     r")"
 )
 
-# Full pattern: optional prefix + trigger verb + mandatory space + prompt text.
+# Noise that might follow the verb before the actual prompt content
+# e.g., "мне", "пожалуйста", "картинку" (if the verb was just "сгенерируй")
+_DRAW_POST_VERB = (
+    r"(?:"
+    r"\s+(?:мне|нам|для\s*меня|пожалуйста|э+|м+|ну|давай|ка|картинку|картину|изображение|рисунок|фото)"
+    r")*"
+)
+
+# Full pattern: prefix + verb + post_verb + mandatory space + prompt text.
 # We anchor at the start of the string (after stripping).
 DRAW_TRIGGER_RE = re.compile(
-    rf"^{_DRAW_PREFIX}{_DRAW_VERBS}\s+(.+)$",
+    rf"^{_DRAW_PREFIX}{_DRAW_VERBS}{_DRAW_POST_VERB}[\s:]+(.+)$",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -502,12 +511,15 @@ async def _run_generation(
 
         model_label = _model_label(model)
         display_prompt = api_prompt if translated else prompt
-        caption = (
-            f"🎨 *{_escape_md(display_prompt[:80])}{'...' if len(display_prompt) > 80 else ''}*\n"
-            f"_{model_label} · {aspect_ratio}_"
-        )
+
+        # Safe truncation avoiding Telegram's 1024-char limit for media captions.
+        # Leave ~200 chars for layout and translated text string if needed.
+        safe_limit = 800
+        short = display_prompt[:safe_limit].strip() + ("..." if len(display_prompt) > safe_limit else "")
+
+        caption = f"🎨 *{_escape_md(short)}*\n_{model_label} · {aspect_ratio}_"
         if translated:
-            original_short = prompt[:60] + ("…" if len(prompt) > 60 else "")
+            original_short = prompt[:600].strip() + ("…" if len(prompt) > 600 else "")
             caption += f"\n_🌐 Переведено: {_escape_md(original_short)}_"
 
         try:
@@ -624,7 +636,8 @@ async def handle_draw_prompt_input(update: Update, context: ContextTypes.DEFAULT
         pass
 
     if last_photo_id:
-        short = new_prompt[:80] + ("..." if len(new_prompt) > 80 else "")
+        safe_limit = 800
+        short = new_prompt[:safe_limit].strip() + ("..." if len(new_prompt) > safe_limit else "")
         caption = f"🎨 *{_escape_md(short)}*\n_{_model_label(state['model'])} · {state['aspect_ratio']}_"
         try:
             bot = message.get_bot()

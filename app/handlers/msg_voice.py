@@ -339,34 +339,33 @@ async def _auto_route_to_image(
     context: ContextTypes.DEFAULT_TYPE,
     update,
 ) -> None:
-    """Route a voice-detected draw request straight to Canvas 2.0 image pipeline.
+    """Route a voice-detected draw request to the Canvas 2.0 image pipeline.
 
-    Shows the transcript with a brief indicator, then invokes _run_generation
-    using the user's saved draw settings (model / aspect ratio / enhance).
+    Shows the transcript and hands off control to the user via the interactive menu,
+    allowing them to modify Model or Aspect Ratio before generating.
     """
-    from app.handlers.cmd_image import _get_draw_state, _run_generation
+    from app.handlers.cmd_image import _build_main_menu, _escape_md, _get_draw_state, _set_draw_state
     from app.utils.formatting import TelegramFormatter
 
-    # 1. Display transcript so the user can see what was understood
-    auto_text = (
-        f"Р️_{t('voice.transcript_label', lang)}_\n\n{transcript}\n\n"
-        f"🎨 _{t('voice.auto_confirm', lang)} (генерирую изображение...)_"
-    )
-    formatted, parse_mode = TelegramFormatter.format_text(auto_text)
-    await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
-
-    # 2. Run generation using user's saved Canvas 2.0 settings
-    draw_state = _get_draw_state(context)
-    await _run_generation(
-        update,
+    # 1. Update the canvas state with the detected prompt
+    state = _set_draw_state(
         context,
         prompt=draw_prompt,
-        model=draw_state["model"],
-        aspect_ratio=draw_state["aspect_ratio"],
-        enhance=draw_state.get("enhance_prompt", False),
+        awaiting_prompt=False,
     )
 
-    # 3. Background LTM storage (same as auto-route to chat)
+    # 2. Render confirmation text
+    auto_text = (
+        f"🎙️ **{t('voice.transcript_label', lang)}**\n_{transcript}_\n\n"
+        f"🎨 **Подтвердите запрос к ИИ-художнику:**\n`{_escape_md(draw_prompt)}`"
+    )
+    formatted, parse_mode = TelegramFormatter.format_text(auto_text)
+
+    # 3. Apply canvas menu inline
+    keyboard = _build_main_menu(state)
+    await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=keyboard)
+
+    # 4. Background LTM storage (same as auto-route to chat)
     chat_state = await get_user_chat(user_id)
     if chat_state.ltm_enabled:
         _uid = user_id
