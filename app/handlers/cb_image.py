@@ -254,9 +254,9 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
             return
 
-        from app.state import state as app_state
-        user_state = app_state.get_user_state(user_id)
-        if user_state.is_processing or app_state.get_user_lock(user_id).locked():
+        from app.state import get_user_lock, get_user_state
+        user_state = get_user_state(user_id)
+        if user_state.is_processing or get_user_lock(user_id).locked():
             await query.answer(_BUSY_TOAST, show_alert=True)
             return
 
@@ -264,7 +264,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         async def _do_generate() -> None:
             try:
-                async with app_state.get_user_lock(user_id):
+                async with get_user_lock(user_id):
                     from app.handlers.cmd_image import _run_generation
                     await _run_generation(
                         update=update,
@@ -288,9 +288,9 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await query.answer("⚠️ Сначала создайте изображение командой /draw.", show_alert=True)
             return
 
-        from app.state import state as app_state
-        user_state = app_state.get_user_state(user_id)
-        if user_state.is_processing or app_state.get_user_lock(user_id).locked():
+        from app.state import get_user_lock, get_user_state
+        user_state = get_user_state(user_id)
+        if user_state.is_processing or get_user_lock(user_id).locked():
             await query.answer(_BUSY_TOAST, show_alert=True)
             return
 
@@ -298,7 +298,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         async def _do_regen() -> None:
             try:
-                async with app_state.get_user_lock(user_id):
+                async with get_user_lock(user_id):
                     from app.handlers.cmd_image import _run_generation
                     await _run_generation(
                         update=update,
