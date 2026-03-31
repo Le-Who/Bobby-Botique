@@ -356,7 +356,7 @@ async def _auto_route_to_image(
 
     # 2. Render confirmation text
     auto_text = (
-        f"🎙️ **{t('voice.transcript_label', lang)}**\n_{transcript}_\n\n"
+        f"{t('voice.transcript_label', lang)}\n_{transcript}_\n\n"
         f"🎨 **Подтвердите запрос к ИИ-художнику:**\n`{_escape_md(draw_prompt)}`"
     )
     formatted, parse_mode = TelegramFormatter.format_text(auto_text)
