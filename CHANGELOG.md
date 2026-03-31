@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.9] - 2026-03-31 - Implicit Image Generation Intent
+
+### ✨ Feature — Implicit Image Generation Intent (Text & Voice)
+
+*   **Seamless Triggers**: The bot now recognizes natural language requests to draw or generate an image (e.g., *"Бот, нарисуй кота"*, *"сгенерируй картинку леса"*) natively. No need to explicitly use the `/draw` command anymore.
+*   **Bypasses Chat Flow**: It proactively intercepts these requests in both the standard text handler and immediately after voice transcription, routing them straight to the Canvas 2.0 image generation pipeline.
+*   **UX Consistency**: Retains the complete interactive Image Canvas experience (aspect ratio, exact model switching, one-tap regeneration) under the implicit triggers.
+*   **Voice Integration**: Voice requests display a localized confirmation ("🎨 *генерирую изображение...*") directly below the transcription UI to communicate that generation has begun.
+
+#### Files Changed
+*   **Updated**: `app/handlers/cmd_image.py` (Added `check_draw_intent(text)` Regex matcher that strictly strips out the bot prefix and conjugation to isolate the core prompt).
+*   **Updated**: `app/handlers/messages.py` (Intercepts text messages matching the intent, preventing overlapping request locks).
+*   **Updated**: `app/handlers/msg_voice.py` (Extended `_should_auto_route` system with `_auto_route_to_image()` for implicit voice interception).
+
 ## [2.9.8] - 2026-03-31 - Pollinations.ai Image Generation
 
 ### 🎨 Feature — Image Generation Canvas 2.0 & Pollinations.ai

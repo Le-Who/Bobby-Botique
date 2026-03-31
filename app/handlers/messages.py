@@ -27,6 +27,7 @@ from app.handlers.msg_roles import (
     handle_manual_role_input,
     handle_role_rename,
 )
+from app.handlers.cmd_image import check_draw_intent, _get_draw_state, _run_generation
 from app.handlers.msg_voice import handle_voice_inline
 from app.metrics import metrics_collector
 from app.repos.users import is_authorized
@@ -291,6 +292,76 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # the first caller will process the merged result.
                 return
             message_text = merged
+
+        # ── 7c. Implicit image generation intent ─────────────────────────────
+        # Matches: "Бот, нарисуй..." / "изобрази..." / "сгенерируй картинку..."
+        # Bypasses conversational AI; routes straight to Canvas 2.0 pipeline.
+        _draw_prompt = check_draw_intent(message_text)
+        if _draw_prompt:
+            logging.info(
+                "Draw intent detected for user %s: %r", user_id, _draw_prompt[:60]
+            )
+            user_state = state.get_user_state(user_id)
+            if user_state.is_processing or state.get_user_lock(user_id).locked():
+                from app.i18n import t as _t
+
+                await update.message.reply_text(_t("busy.user", "ru"))
+                return
+            user_state.is_processing = True
+
+            draw_placeholder = await update.message.reply_text("🎨 Рисую... это займёт несколько секунд.")
+
+            async def _draw_task_wrapper(
+                _prompt=_draw_prompt,
+                _ph=draw_placeholder,
+                _uid=user_id,
+                _st=start_time,
+            ) -> None:
+                try:
+                    async with state.get_user_lock(_uid):
+                        _ds = _get_draw_state(context)
+                        # Temporarily suppress heartbeat — image pipeline sends
+                        # its own typing heartbeat via ChatAction.UPLOAD_PHOTO.
+                        try:
+                            await _ph.delete()
+                        except Exception:
+                            pass
+                        await _run_generation(
+                            update,
+                            context,
+                            prompt=_prompt,
+                            model=_ds["model"],
+                            aspect_ratio=_ds["aspect_ratio"],
+                            enhance=_ds.get("enhance_prompt", False),
+                        )
+                        import time as _time
+
+                        elapsed = _time.time() - _st
+                        api_logger.log_response("telegram", _st, method="handle_message")
+                        await metrics_collector.record_request(
+                            "handle_message", elapsed, success=True, user_id=_uid
+                        )
+                except Exception as _e:
+                    logging.error(
+                        "Error in draw task wrapper for user %s: %s", _uid, _e, exc_info=True
+                    )
+                    import time as _time
+
+                    elapsed = _time.time() - _st
+                    api_logger.log_response(
+                        "telegram", _st, method="handle_message", success=False, error_message=str(_e)
+                    )
+                    await metrics_collector.record_request(
+                        "handle_message", elapsed, success=False, user_id=_uid
+                    )
+                finally:
+                    _us = state.get_user_state(_uid)
+                    _us.is_processing = False
+
+            from app.utils.background_tasks import submit_task
+
+            submit_task(_draw_task_wrapper())
+            return
 
         # ── 8. Create placeholder & heartbeat, then process AI request ───────
         user_state = state.get_user_state(user_id)

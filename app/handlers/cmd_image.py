@@ -98,6 +98,57 @@ _TRANSLATE_MODEL = "gemini-3.1-flash-lite-preview"
 
 _DRAW_STATE_KEY = "draw_state"
 
+# ── Implicit draw intent detection ────────────────────────────────────────────
+
+# Optional prefixes the user might include before the trigger verb.
+# Matches: "бот,", "боты,", "пожалуйста,", "пожалуйста", "можешь", "ты"…
+_DRAW_PREFIX = (
+    r"(?:"
+    r"(?:бот[аы]?|пожалуйста|можешь(?:\s+ты)?|ты|скажи(?:\s+боту)?)\s*[,:]?\s*"
+    r")?"
+)
+
+# Core trigger verbs — all conjugations / imperatives / infinitives that
+# explicitly ask the bot to draw / generate an image.
+_DRAW_VERBS = (
+    r"(?:"
+    r"нарисуй|нарисуйте|рисуй|нарисовать|изобрази|изобразите|изобразить"
+    r"|сгенерируй|сгенерируйте|сгенерировать"
+    r"|сделай\s+(?:изображение|картинку|рисунок|фото|картину)"
+    r"|создай\s+(?:изображение|картинку|рисунок|фото|картину)"
+    r"|покажи\s+(?:изображение|картинку|рисунок|фото|картину)"
+    r"|напиши\s+(?:изображение|картинку)"  # rare but seen in speech
+    r"|draw|generate\s+(?:an?\s+)?image|create\s+(?:an?\s+)?image"
+    r")"
+)
+
+# Full pattern: optional prefix + trigger verb + mandatory space + prompt text.
+# We anchor at the start of the string (after stripping).
+DRAW_TRIGGER_RE = re.compile(
+    rf"^{_DRAW_PREFIX}{_DRAW_VERBS}\s+(.+)$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def check_draw_intent(text: str) -> str | None:
+    """Return the extracted image prompt if ``text`` is an implicit draw request.
+
+    Examples that match:
+        "Нарисуй красивого кота"
+        "Бот, изобрази зимний лес"
+        "Сгенерируй картинку: robot in cyberpunk city"
+        "Бот нарисуй мне пейзаж с горами"
+
+    Returns the core prompt string (without the trigger verb prefix) on match,
+    or ``None`` if the text is not an image generation request.
+    """
+    m = DRAW_TRIGGER_RE.match(text.strip())
+    if m:
+        prompt = m.group(1).strip().lstrip(":—–-").strip()
+        return prompt or None
+    return None
+
+
 # ── State helpers ──────────────────────────────────────────────────────────────
 
 

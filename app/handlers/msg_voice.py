@@ -100,6 +100,27 @@ async def _process_voice_pipeline(
     # Refine language detection from actual transcript content
     lang = detect_language(transcript)
 
+    # 3b. Check for implicit image generation intent in the transcript
+    from app.handlers.cmd_image import check_draw_intent as _check_draw
+
+    _draw_prompt = _check_draw(transcript)
+    if _draw_prompt:
+        logging.info(
+            "Voice draw intent detected for user %s: %r", user_id, _draw_prompt[:60]
+        )
+        await _auto_route_to_image(
+            placeholder,
+            transcript,
+            _draw_prompt,
+            lang,
+            user_id,
+            voice_bytes,
+            voice,
+            context,
+            update,
+        )
+        return
+
     # 3. Detect "Show & Tell" — voice is a Reply to a photo message
     attached_image = await _detect_show_and_tell(update)
 
@@ -307,6 +328,62 @@ async def _show_confirmation_ui(
             pending["attached_image"] = attached_image
 
         context.user_data[f"voice_pending_{placeholder.message_id}"] = pending
+
+
+async def _auto_route_to_image(
+    placeholder: Message,
+    transcript: str,
+    draw_prompt: str,
+    lang: str,
+    user_id: int,
+    voice_bytes: bytes,
+    voice,
+    context: ContextTypes.DEFAULT_TYPE,
+    update,
+) -> None:
+    """Route a voice-detected draw request straight to Canvas 2.0 image pipeline.
+
+    Shows the transcript with a brief indicator, then invokes _run_generation
+    using the user's saved draw settings (model / aspect ratio / enhance).
+    """
+    from app.utils.formatting import TelegramFormatter
+    from app.handlers.cmd_image import _get_draw_state, _run_generation
+
+    # 1. Display transcript so the user can see what was understood
+    auto_text = (
+        f"Р️_{t('voice.transcript_label', lang)}_\n\n{transcript}\n\n"
+        f"🎨 _{t('voice.auto_confirm', lang)} (генерирую изображение...)_"
+    )
+    formatted, parse_mode = TelegramFormatter.format_text(auto_text)
+    await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
+
+    # 2. Run generation using user's saved Canvas 2.0 settings
+    draw_state = _get_draw_state(context)
+    await _run_generation(
+        update,
+        context,
+        prompt=draw_prompt,
+        model=draw_state["model"],
+        aspect_ratio=draw_state["aspect_ratio"],
+        enhance=draw_state.get("enhance_prompt", False),
+    )
+
+    # 3. Background LTM storage (same as auto-route to chat)
+    chat_state = await get_user_chat(user_id)
+    if chat_state.ltm_enabled:
+        _uid = user_id
+        _fid = getattr(voice, "file_unique_id", None)
+        _vb = voice_bytes
+
+        def _bg():
+            async def _store():
+                from app.utils.multimodal_processor import process_media_for_memory
+
+                await process_media_for_memory(_vb, _uid, media_type="voice", telegram_file_id=_fid)
+
+            return _store()
+
+        submit_retryable(_bg, retry=2)
 
 
 async def _auto_route_to_chat(
