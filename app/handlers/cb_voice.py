@@ -163,15 +163,16 @@ async def _handle_confirm(query, context, pending: dict | None, lang: str) -> No
             chat_state.history.append({"role": "user", "parts": parts})
 
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
-                # Voice-for-Voice: source is a voice message, so reply with voice.
-                # This flag is per-request and NOT persisted — text messages
-                # routed through messages.py never pass reply_with_voice=True.
+                # Voice-for-Voice: source is a voice message, but we ONLY reply
+                # with voice if the user specifically asked for it (parsed intent).
+                # This flag is per-request and NOT persisted.
+                reply_with_voice = pending.get("reply_with_voice", False)
                 await _handle_regular_chat(
                     new_placeholder,  # type: ignore[arg-type]
                     user_id,
                     transcript,
                     chat_state,
-                    reply_with_voice=True,
+                    reply_with_voice=reply_with_voice,
                 )
         except Exception as e:
             logging.error("voice:confirm task failed: %s", e, exc_info=True)
