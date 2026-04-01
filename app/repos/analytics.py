@@ -23,7 +23,7 @@ from app import database as db
 async def record_daily_activity(user_id: int) -> dict[str, int]:
     """Increment the user's streak if they haven't been active today yet.
 
-    Uses a single upsert + conditional streak logic:
+    Uses a single atomic upsert + conditional streak logic:
     - If the user was active yesterday, increment current_streak.
     - If the user was active today already, do nothing.
     - Otherwise, reset current_streak to 1.
@@ -31,33 +31,32 @@ async def record_daily_activity(user_id: int) -> dict[str, int]:
     Returns dict with current_streak and longest_streak.
     """
     try:
+        # ⚡ Bolt Optimization: Eliminated sequential SELECT before UPSERT.
+        # Combined into a single atomic CTE query to reduce network latency.
         today = date.today()
         yesterday = today - timedelta(days=1)
 
-        # Check if user was active yesterday
-        prev = await db.db_query(
-            "SELECT current_streak FROM user_metrics WHERE user_id = $1 AND metric_date = $2",
-            (user_id, yesterday),
-        )
-        prev_streak = prev[0]["current_streak"] if prev else 0
-
-        new_streak = prev_streak + 1 if prev_streak > 0 else 1
-
-        # Upsert today's row with streak
-        result = await db.db_query(
-            """
+        query = """
+            WITH prev AS (
+                SELECT current_streak FROM user_metrics
+                WHERE user_id = $1 AND metric_date = $2
+            )
             INSERT INTO user_metrics (user_id, metric_date, request_count, current_streak, longest_streak)
-            VALUES ($1, $2, 0, $3, $3)
+            VALUES (
+                $1, $3, 0,
+                COALESCE((SELECT current_streak FROM prev), 0) + 1,
+                COALESCE((SELECT current_streak FROM prev), 0) + 1
+            )
             ON CONFLICT (user_id, metric_date) DO UPDATE SET
                 current_streak = CASE
-                    WHEN user_metrics.current_streak = 0 THEN $3
+                    WHEN user_metrics.current_streak = 0 THEN EXCLUDED.current_streak
                     ELSE user_metrics.current_streak
                 END,
-                longest_streak = GREATEST(user_metrics.longest_streak, $3)
+                longest_streak = GREATEST(user_metrics.longest_streak, EXCLUDED.current_streak)
             RETURNING current_streak, longest_streak
-            """,
-            (user_id, today, new_streak),
-        )
+        """
+
+        result = await db.db_query(query, (user_id, yesterday, today))
 
         if result:
             return {
