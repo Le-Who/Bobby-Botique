@@ -5,9 +5,10 @@ When a user sends multiple short messages in quick succession (split-tapping
 or sending sentence fragments), the bot would normally process each as a
 separate AI request, wasting tokens and producing fragmented responses.
 
-This module provides a 400ms aggregation window: if a second text message
-arrives from the same user within 400ms of the first, both texts are
-concatenated and processed as a single request.
+This module provides a 1.1s trailing aggregation window: if a second text message
+arrives from the same user within 1.1s of the latest, both texts are
+concatenated and the window is reset (trailing debounce). A single request is processed
+when no new messages arrive for 1.1s.
 
 Usage from messages.py::
 
@@ -28,8 +29,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Debounce window in seconds (400ms balances latency vs merge benefit)
-_DEBOUNCE_WINDOW_S = 0.4
+# Debounce window in seconds (1.1s balances latency vs merge benefit, covers Telegram forward bursts)
+_DEBOUNCE_WINDOW_S = 1.1
 
 # Per-user debounce state: {user_id: _DebounceSlot}
 _debounce_slots: dict[int, _DebounceSlot] = {}
@@ -61,6 +62,12 @@ async def debounce_text_message(user_id: int, text: str) -> str | None:
     """
     slot = _debounce_slots.get(user_id)
 
+    # Helper to restart the timer
+    async def _timer() -> None:
+        await asyncio.sleep(_DEBOUNCE_WINDOW_S)
+        if slot is not None:
+            slot.ready_event.set()
+
     if slot is not None and not slot.ready_event.is_set():
         # Window is still open → absorb this message
         slot.texts.append(text)
@@ -69,6 +76,12 @@ async def debounce_text_message(user_id: int, text: str) -> str | None:
             user_id,
             len(slot.texts),
         )
+
+        # Trailing window: restart the timer
+        if slot.timer_task is not None:
+            slot.timer_task.cancel()
+
+        slot.timer_task = asyncio.create_task(_timer())
         return None
 
     # First message in a new window → create slot
@@ -76,10 +89,6 @@ async def debounce_text_message(user_id: int, text: str) -> str | None:
     _debounce_slots[user_id] = slot
 
     # Start the window timer
-    async def _timer() -> None:
-        await asyncio.sleep(_DEBOUNCE_WINDOW_S)
-        slot.ready_event.set()
-
     slot.timer_task = asyncio.create_task(_timer())
 
     # Wait for window to close

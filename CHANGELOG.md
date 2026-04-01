@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.13] - 2026-04-01 - UX: Message Trailing Debounce & Ephemeral Toasts
+
+### ✨ Feature — Telegram Forward Burst Handling (Trailing Debounce)
+
+*   **1.1s Trailing Window**: Replaced the fixed 400ms debounce window with a 1.1s *trailing* debounce in `app/middleware/debounce.py`. When a user forwards a large batch of messages, the Telegram API artificially spaces them out by ~500ms. The new trailing window resets its timer on every incoming message, perfectly aggregating the entire burst into a single cohesive AI context before processing.
+*   **Perceived Zero-Latency**: Since the bot emits a `ChatAction.TYPING` indicator immediately upon receiving the first message in the burst, the 1.1s debounce window is completely masked from the user. It feels like the AI is "attentively reading" rather than lagging.
+
+### 🛡️ UX Hardening — Ephemeral Busy Toasts
+
+*   **Self-Destructing Warnings**: When users send additional messages while the AI is already generating a response, the bot gracefully informs them ("⏳ Дождитесь завершения текущего запроса"), but this warning is now *ephemeral*. A background task (`submit_task`) automatically deletes the warning from the chat after 4 seconds to prevent polluting the conversation history with system errors.
+*   **i18n Integration**: Fixed a bug where the handler would emit a raw string key (`"busy.user"`). The busy toast is now fully localized and auto-detects the user's language using `detect_language`.
+
+#### Files Changed
+*   **Updated**: `app/middleware/debounce.py` (Rewrote `_DebounceSlot` logic to support trailing timer reset via `cancel()`).
+*   **Updated**: `app/handlers/messages.py` (Replaced all generic `busy.user` rejections with the new `_send_busy_ephemeral` auto-deleting helper).
+
 ## [2.9.12] - 2026-03-31 - Hybrid Image Intent Recognition
 
 ### ✨ Feature — Contextual Semantic Trigger

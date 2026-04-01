@@ -106,6 +106,7 @@ async def _process_voice_pipeline(
         _draw_prompt = ai_draw_prompt
     else:
         from app.handlers.cmd_image import check_draw_intent as _check_draw
+
         _draw_prompt = _check_draw(transcript)
 
     if _draw_prompt:

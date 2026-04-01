@@ -38,6 +38,30 @@ from app.utils.api_logger import api_logger
 from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 
 
+async def _send_busy_ephemeral(update: Update) -> None:
+    """Send localized busy toast that self-destructs after 4s."""
+    from app.i18n import detect_language as _dl
+    from app.i18n import t as _t
+
+    text = update.message.text if update.message and update.message.text else None
+    lang = _dl(text)
+    try:
+        msg = await update.message.reply_text(_t("busy.toast", lang))
+
+        async def _del() -> None:
+            await asyncio.sleep(4)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+
+        from app.utils.background_tasks import submit_task
+
+        submit_task(_del())
+    except Exception as e:
+        logging.warning("Failed to send busy toast: %s", e)
+
+
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Main message router — dispatches to specialized sub-modules."""
     if not update or not update.effective_user:
@@ -152,9 +176,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             user_state = state.get_user_state(user_id)
             if user_state.is_processing or state.get_user_lock(user_id).locked():
-                from app.i18n import t as _t
-
-                await update.message.reply_text(_t("busy.user", "ru"))
+                await _send_busy_ephemeral(update)
                 return
             user_state.is_processing = True
 
@@ -297,14 +319,13 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Matches: "Бот, нарисуй..." / "изобрази..." / "сгенерируй картинку..."
         # Bypasses conversational AI; routes straight to Canvas 2.0 pipeline.
         from app.handlers.cmd_image import check_draw_intent_async
+
         _draw_prompt = await check_draw_intent_async(message_text)
         if _draw_prompt:
             logging.info("Draw intent detected for user %s: %r", user_id, _draw_prompt[:60])
             user_state = state.get_user_state(user_id)
             if user_state.is_processing or state.get_user_lock(user_id).locked():
-                from app.i18n import t as _t
-
-                await update.message.reply_text(_t("busy.user", "ru"))
+                await _send_busy_ephemeral(update)
                 return
             user_state.is_processing = True
 
@@ -359,9 +380,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # ── 8. Create placeholder & heartbeat, then process AI request ───────
         user_state = state.get_user_state(user_id)
         if user_state.is_processing or state.get_user_lock(user_id).locked():
-            from app.i18n import t as _t
-
-            await update.message.reply_text(_t("busy.user", "ru"))
+            await _send_busy_ephemeral(update)
             return
         user_state.is_processing = True
 

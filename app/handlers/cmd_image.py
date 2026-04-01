@@ -157,21 +157,23 @@ def _check_draw_intent_fast(text: str) -> str | None:
         return prompt or None
     return None
 
+
 async def check_draw_intent_async(text: str) -> str | None:
     """Check if the text is an image generation request, using hybrid Regex + AI."""
     # 1. Very fast regex path
     fast_match = _check_draw_intent_fast(text)
     if fast_match:
         return fast_match
-        
+
     # 2. Check if we *might* be asking to draw (keyword heuristic)
     # If there's no draw verb anywhere, bail instantly.
     _VERB_HEURISTIC = re.compile(r"(?i)\b(?:нарисуй|сгенерируй|изобрази|сделай\s+фото|создай\s+картин|draw)\b")
     if not _VERB_HEURISTIC.search(text):
         return None
-        
+
     # 3. Ask AI to resolve coreferences (e.g. "такую же картинку")
     return await _extract_draw_prompt_ai(text)
+
 
 async def _extract_draw_prompt_ai(text: str) -> str | None:
     """Use Gemini to extract the core visual subject from a tricky conversational request."""
@@ -200,9 +202,9 @@ async def _extract_draw_prompt_ai(text: str) -> str | None:
                     system_instruction=system,
                     temperature=0.0,
                     max_output_tokens=300,
-                )
+                ),
             ),
-            timeout=3.0
+            timeout=3.0,
         )
         if response and response.text:
             res = response.text.strip().lstrip(":—–-").strip()
@@ -211,7 +213,8 @@ async def _extract_draw_prompt_ai(text: str) -> str | None:
     except Exception as e:
         logger.warning(f"AI draw intent extraction failed: {e}")
     return None
-    
+
+
 def check_draw_intent(text: str) -> str | None:
     """Synchronous fallback wrapper for places that can't await (like msg_voice)."""
     return _check_draw_intent_fast(text)
