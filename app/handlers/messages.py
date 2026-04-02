@@ -5,6 +5,13 @@ Sub-modules:
     msg_media    — media group accumulation, deferred processing
     msg_roles    — role creation (AI / manual), role/conversation rename
     msg_document — document upload, document-mode Q&A
+
+Key architectural decisions:
+    - All handlers use ``update.effective_message`` instead of ``update.message``
+      so filters work safely across message/edited_message/channel_post update types.
+    - ``handle_request``        — new messages only (filters.UpdateType.MESSAGE)
+    - ``handle_edited_request`` — edited messages (filters.UpdateType.EDITED_MESSAGE)
+      Cancels any in-flight AI task and edits the original bot reply in-place (no new message).
 """
 
 import asyncio
@@ -43,15 +50,19 @@ async def _send_busy_ephemeral(update: Update) -> None:
     from app.i18n import detect_language as _dl
     from app.i18n import t as _t
 
-    text = update.message.text if update.message and update.message.text else None
+    # Use effective_message — works for both new and edited message contexts
+    msg_obj = update.effective_message
+    text = msg_obj.text if msg_obj else None
     lang = _dl(text)
+    if not msg_obj:
+        return
     try:
-        msg = await update.message.reply_text(_t("busy.toast", lang))
+        busy_msg = await msg_obj.reply_text(_t("busy.toast", lang))
 
         async def _del() -> None:
             await asyncio.sleep(4)
             try:
-                await msg.delete()
+                await busy_msg.delete()
             except Exception:
                 pass
 
@@ -63,12 +74,21 @@ async def _send_busy_ephemeral(update: Update) -> None:
 
 
 async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Main message router — dispatches to specialized sub-modules."""
+    """Main message router — handles NEW messages only.
+
+    Registered with ``filters.UpdateType.MESSAGE`` so ``update.message``
+    is guaranteed non-None. Uses ``effective_message`` for forward-compatibility.
+    """
     if not update or not update.effective_user:
         logging.debug(
             "Skipping update without effective_user (update_id=%s)",
             getattr(update, "update_id", "?"),
         )
+        return
+
+    # Safe: we are registered only for UpdateType.MESSAGE
+    effective_msg = update.effective_message
+    if not effective_msg:
         return
 
     user_id = update.effective_user.id
@@ -101,11 +121,11 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # ── 2. Telegram API logging ──────────────────────────────────────────
         message_type = (
             "photo"
-            if update.message.photo
+            if effective_msg.photo
             else "voice"
-            if update.message.voice
+            if effective_msg.voice
             else "text"
-            if update.message.text
+            if effective_msg.text
             else "other"
         )
         start_time = api_logger.log_request(
@@ -115,12 +135,12 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
         # ── 3. Validation ────────────────────────────────────────────────────
-        message_text = update.message.text if update.message and update.message.text else "No text"
+        message_text = effective_msg.text if effective_msg.text else "No text"
         if len(message_text) > settings.TELEGRAM_MESSAGE_LIMIT:
             logging.warning("Message too long from user %s: %d chars", user_id, len(message_text))
             from app.i18n import t
 
-            await update.message.reply_text(t("error.message_too_long"))
+            await effective_msg.reply_text(t("error.message_too_long"))
             return
 
         logging.info("Received message from user %s: %s", user_id, message_text[:100])
@@ -129,14 +149,14 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logging.warning("Rate limit exceeded for user %s", user_id)
             from app.i18n import t
 
-            await update.message.reply_text(t("error.rate_limit"))
+            await effective_msg.reply_text(t("error.rate_limit"))
             return
 
         # ── 3b. Request dedup (double-tap prevention) ────────────────────────
-        if update.message and update.message.text:
+        if effective_msg.text:
             from app.middleware.dedup import is_duplicate_request
 
-            if await is_duplicate_request(user_id, update.message.text):
+            if await is_duplicate_request(user_id, effective_msg.text):
                 logging.info("Dedup: skipping duplicate from user %s", user_id)
                 return
 
@@ -145,33 +165,32 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # ── 4. Document uploads ──────────────────────────────────────────────
-        if update.message.document:
+        if effective_msg.document:
             logging.info(
                 "Processing document from user %s: %s",
                 user_id,
-                update.message.document.file_name,
+                effective_msg.document.file_name,
             )
             await handle_document(update, context)
             return
 
         # ── 4b. Voice messages ───────────────────────────────────────────────
-        if update.message.voice:
+        if effective_msg.voice:
             logging.info("Processing voice message from user %s", user_id)
 
             # Dedup guard (prevents double-processing from Telegram retries)
             from app.middleware.dedup import is_duplicate_voice
 
-            if await is_duplicate_voice(user_id, update.message.voice.file_unique_id):
+            if await is_duplicate_voice(user_id, effective_msg.voice.file_unique_id):
                 logging.debug("Voice dedup: skipping duplicate voice for user %s", user_id)
                 return
 
             # Duration guard (skip very short accidental recordings)
-            # voice.duration may be int or timedelta depending on PTB version
-            if int(getattr(update.message.voice, "duration", 0)) < 1:
+            if int(getattr(effective_msg.voice, "duration", 0)) < 1:
                 from app.i18n import detect_language as _dl
                 from app.i18n import t as _t
 
-                await update.message.reply_text(_t("voice.too_short", _dl(None)))
+                await effective_msg.reply_text(_t("voice.too_short", _dl(None)))
                 return
 
             user_state = state.get_user_state(user_id)
@@ -182,7 +201,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             from app.i18n import t as _t
 
-            placeholder_message = await update.message.reply_text(_t("voice.processing", "ru"))
+            placeholder_message = await effective_msg.reply_text(_t("voice.processing", "ru"))
 
             done_event = asyncio.Event()
             register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
@@ -295,8 +314,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         try:
             from app.state import set_last_sent_message
 
-            if update.message and update.message.text:
-                set_last_sent_message(user_id, update.message.text)
+            if effective_msg.text:
+                set_last_sent_message(user_id, effective_msg.text)
         except Exception:
             logging.exception("Error saving last sent message text")
 
@@ -304,8 +323,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # 400ms aggregation window: merges multi-message "split taps"
         # into a single AI request, saving tokens and improving response quality.
         # Only applies to plain text (not photos, voice, documents).
-        is_photo = bool(update.message.photo)
-        if not is_photo and update.message.text:
+        is_photo = bool(effective_msg.photo)
+        if not is_photo and effective_msg.text:
             from app.middleware.debounce import debounce_text_message
 
             merged = await debounce_text_message(user_id, message_text)
@@ -329,7 +348,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 return
             user_state.is_processing = True
 
-            draw_placeholder = await update.message.reply_text("🎨 Рисую... это займёт несколько секунд.")
+            draw_placeholder = await effective_msg.reply_text("🎨 Рисую... это займёт несколько секунд.")
 
             async def _draw_task_wrapper(
                 _prompt=_draw_prompt,
@@ -388,12 +407,15 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logging.info("Processing single photo from user %s", user_id)
             from app.i18n import t as _t
 
-            placeholder_message = await update.message.reply_text(_t("msg.processing_image"))
+            placeholder_message = await effective_msg.reply_text(_t("msg.processing_image"))
         else:
             logging.info("Processing text message from user %s", user_id)
             from app.i18n import t as _t
 
-            placeholder_message = await update.message.reply_text(_t("msg.thinking"))
+            placeholder_message = await effective_msg.reply_text(_t("msg.thinking"))
+
+        # Track this placeholder so edited_message handler can reuse it
+        state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
 
         done_event = asyncio.Event()
         register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
@@ -418,6 +440,9 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
                     stop_heartbeat(placeholder_message.message_id)
 
+                    # Keep last-bot-message current after agent finishes editing in-place
+                    state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+
                     logging.info("Completed task processing for user %s", user_id)
 
                     import time as _time
@@ -430,6 +455,10 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     )
                     await metrics_collector.record_request("handle_message", elapsed, success=True, user_id=user_id)
 
+            except asyncio.CancelledError:
+                # Task was cancelled because user edited the message — clean up silently
+                logging.info("task_wrapper: cancelled for user %s (edit supersede)", user_id)
+                stop_heartbeat(placeholder_message.message_id)
             except Exception as e:
                 logging.error("Error in task wrapper for user %s: %s", user_id, e, exc_info=True)
                 try:
@@ -458,17 +487,166 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             finally:
                 user_state = state.get_user_state(user_id)
                 user_state.is_processing = False
+                state.clear_active_task(user_id)
                 unregister_heartbeat(placeholder_message.message_id)
                 if not done_event.is_set():
                     stop_heartbeat(placeholder_message.message_id)
 
         from app.utils.background_tasks import submit_task
 
-        submit_task(task_wrapper())
+        ai_task = asyncio.ensure_future(task_wrapper())
+        state.register_active_task(user_id, ai_task)
+        submit_task(ai_task)
+
+
+async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle edited messages (UpdateType.EDITED_MESSAGE).
+
+    UX-first in-place edit flow:
+    1. Cancel the inflight AI task if one is running (user corrected before response arrived).
+    2. Find the bot's previous placeholder / response message.
+    3. Edit that message in-place to "думаю заново..." — no new message, chat stays clean.
+    4. Kick off a fresh AI request with the corrected text.
+
+    Falls back to a fresh reply if the previous bot message is unavailable.
+    """
+    if not update.effective_user or not update.edited_message:
+        return
+
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    edited_msg = update.edited_message
+
+    # Only handle plain text edits (photo/voice edits are uncommon and use new messages)
+    if not edited_msg.text:
+        return
+
+    # Re-apply rate-limit & auth guards
+    if not await check_user_rate_limit(user_id):
+        return
+    if not await is_authorized(user_id):
+        return
+
+    from app.state import ensure_state_loaded
+    await ensure_state_loaded(user_id)
+
+    new_text = edited_msg.text.strip()
+    logging.info("edited_message from user %s: %r", user_id, new_text[:80])
+
+    # ── Cancel any inflight task ──────────────────────────────────────────────
+    was_cancelled = state.cancel_active_task(user_id)
+    if was_cancelled:
+        logging.info("edit: cancelled inflight task for user %s", user_id)
+        # Brief yield so the cancelled task's finally-block can release user_lock
+        await asyncio.sleep(0.15)
+
+    # ── Find or create the placeholder ───────────────────────────────────────
+    from app.i18n import t as _t
+
+    last = state.get_last_bot_message(user_id)
+    placeholder_message = None
+
+    if last:
+        last_msg_id, last_chat_id = last
+        if last_chat_id == chat_id:
+            try:
+                # Edit existing bot message in-place — this is the core UX win
+                placeholder_message = await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=last_msg_id,
+                    text=_t("msg.rethinking"),
+                )
+            except (BadRequest, NetworkError) as e:
+                logging.warning("edit: could not reuse message %s: %s", last_msg_id, e)
+
+    if placeholder_message is None:
+        # Fallback: send a fresh reply (e.g. old message was deleted by user)
+        placeholder_message = await edited_msg.reply_text(_t("msg.rethinking"))
+
+    state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+
+    user_st = state.get_user_state(user_id)
+    user_st.is_processing = True
+    state.set_last_sent_message(user_id, new_text)
+
+    done_event = asyncio.Event()
+    register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
+
+    start_time = api_logger.log_request("telegram", method="handle_edited_message", message_type="text")
+
+    async def edit_task_wrapper() -> None:
+        try:
+            async with state.get_user_lock(user_id):
+                from app.handlers.agent import process_long_request
+
+                # Inject corrected text override so agent reads the new text
+                # (update.edited_message.text is the corrected version; agent reads
+                #  update.message.text normally, so we patch via user_data)
+                if context.user_data is not None:
+                    context.user_data["_edited_text_override"] = new_text
+
+                await process_long_request(placeholder_message, update, context)
+
+                if context.user_data is not None:
+                    context.user_data.pop("_edited_text_override", None)
+
+                stop_heartbeat(placeholder_message.message_id)
+                state.set_last_bot_message(user_id, placeholder_message.message_id, chat_id)
+                logging.info("edit: completed for user %s", user_id)
+
+                import time as _time
+                elapsed = _time.time() - start_time
+                api_logger.log_response("telegram", start_time, method="handle_edited_message")
+                await metrics_collector.record_request("handle_edited_message", elapsed, success=True, user_id=user_id)
+
+        except asyncio.CancelledError:
+            # This edit was superseded by yet another edit — clean up silently
+            logging.info("edit: task cancelled for user %s (superseded by newer edit)", user_id)
+            stop_heartbeat(placeholder_message.message_id)
+        except Exception as e:
+            logging.error("edit: error for user %s: %s", user_id, e, exc_info=True)
+            try:
+                stop_heartbeat(placeholder_message.message_id)
+                from app.errors import build_retry_and_roles_keyboard
+                from app.i18n import t
+                await placeholder_message.edit_text(t("error.generic"), reply_markup=build_retry_and_roles_keyboard())
+            except Exception:
+                pass
+
+            import time as _time
+            elapsed = _time.time() - start_time
+            api_logger.log_response(
+                "telegram", start_time, method="handle_edited_message",
+                success=False, error_message=str(e),
+            )
+            await metrics_collector.record_request("handle_edited_message", elapsed, success=False, user_id=user_id)
+        finally:
+            usr = state.get_user_state(user_id)
+            usr.is_processing = False
+            state.clear_active_task(user_id)
+            unregister_heartbeat(placeholder_message.message_id)
+            if not done_event.is_set():
+                stop_heartbeat(placeholder_message.message_id)
+
+    from app.utils.background_tasks import submit_task
+    edit_ai_task = asyncio.ensure_future(edit_task_wrapper())
+    state.register_active_task(user_id, edit_ai_task)
+    submit_task(edit_ai_task)
 
 
 def register(application: Application) -> None:
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_request))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_request))
-    application.add_handler(MessageHandler(filters.Document.ALL, handle_request))
-    application.add_handler(MessageHandler(filters.VOICE, handle_request))
+    # NEW messages only — explicit UpdateType.MESSAGE guard prevents
+    # edited_message / channel_post from leaking into these handlers.
+    _msg = filters.UpdateType.MESSAGE
+    application.add_handler(MessageHandler(_msg & filters.TEXT & ~filters.COMMAND, handle_request))
+    application.add_handler(MessageHandler(_msg & filters.PHOTO, handle_request))
+    application.add_handler(MessageHandler(_msg & filters.Document.ALL, handle_request))
+    application.add_handler(MessageHandler(_msg & filters.VOICE, handle_request))
+
+    # EDITED messages — text only (photo/voice edits use new messages)
+    application.add_handler(
+        MessageHandler(
+            filters.UpdateType.EDITED_MESSAGE & filters.TEXT & ~filters.COMMAND,
+            handle_edited_request,
+        )
+    )

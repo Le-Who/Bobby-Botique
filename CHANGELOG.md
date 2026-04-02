@@ -3,6 +3,79 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.14] - 2026-04-02 - Telegram API Architectural Hardening
+
+### 🛡️ Hardening — Safe Message Access (`effective_message`)
+
+*   **Root cause fixed**: All handlers accessed `update.message` directly, causing `AttributeError` crashes when Telegram delivered non-`message` update subtypes (e.g. `edited_message`, `channel_post`). Migrated every handler to `update.effective_message`, which resolves correctly across all update types.
+*   **`agent.py`**: `process_long_request` now reads `update.effective_message` and also checks `context.user_data["_edited_text_override"]` — the injection point used by the new edited-message UX handler.
+
+### ✨ Feature — In-Place Edit UX (`handle_edited_request`)
+
+When a user **edits** a message while the bot is already generating a response:
+1.  The inflight `asyncio.Task` is **cancelled** (via `state.cancel_active_task(user_id)`).
+2.  The bot **edits its own previous message in-place** to `✏️ Обновляю ответ...` — no extra message is posted, chat stays clean.
+3.  A fresh AI task is launched with the corrected text.
+4.  Falls back to a new reply if the previous bot message was deleted.
+
+**Handler registered** with `filters.UpdateType.EDITED_MESSAGE & filters.TEXT` — isolated from all new-message handlers.
+
+### 🎯 Hardening — Strict `UpdateType` Filters
+
+Replaced implicit (all-update) `MessageHandler` registrations with explicit `filters.UpdateType.MESSAGE` guards on every handler group in `messages.py`. Prevents cross-contamination of update types and eliminates "phantom" processing of unsupported events.
+
+### ⚡ Feature — Ambient Native Reactions Feedback (`msg_reactions.py`)
+
+New module registers `MessageReactionHandler` to silently collect native 👍/👎 reactions:
+
+| Reaction set | Rating |
+|---|---|
+| `👍 ❤️ 🔥 🥰 👏 🎉 🤩 💯 ⚡ 🏆 🫡 ✅` | `up` |
+| `👎 💩 🤮 🤬 😤 😡 🖕` | `down` |
+
+*   **Zero UI noise**: no confirmation toasts, no inline buttons needed. Feedback is ambient.
+*   Writes to the same `save_feedback` table as the old inline button system — reporting unchanged.
+*   Added `msg.rethinking` i18n key (`✏️ Обновляю ответ...` / `✏️ Updating answer...`).
+
+### 🔒 Hardening — Explicit `allowed_updates` Whitelist (`bot.py`)
+
+Replaced `Update.ALL_TYPES` (which subscribes to 20+ rarely-used update types) with a minimal whitelist in both webhook and polling modes:
+
+```python
+["message", "edited_message", "callback_query", "inline_query", "message_reaction"]
+```
+
+This narrows the surface area, reduces unnecessary webhook deliveries, and eliminates edge-case fallthrough crashes from unsupported update types.
+
+### 🗂️ State Management — Ephemeral Task & Message Registries (`state.py`)
+
+Added two in-memory runtime maps (zero DB overhead):
+
+| Registry | Purpose |
+|---|---|
+| `_ACTIVE_TASKS: dict[int, asyncio.Task]` | Track inflight task per user for cancellation on edit |
+| `_LAST_BOT_MESSAGE: dict[int, tuple[int, int]]` | Track `(message_id, chat_id)` of last bot reply for in-place reuse |
+
+Public API: `register_active_task`, `cancel_active_task`, `clear_active_task`, `set_last_bot_message`, `get_last_bot_message`.
+
+#### Files Changed
+
+*   **Updated**: `app/handlers/messages.py` — Full refactor: `effective_message` everywhere, `UpdateType` filters, `handle_edited_request`, task/message tracking.
+*   **Updated**: `app/handlers/agent.py` — `effective_message` migration, `_edited_text_override` support.
+*   **New**: `app/handlers/msg_reactions.py` — Native reaction feedback handler.
+*   **Updated**: `app/state.py` — Two ephemeral runtime registries + public accessor functions.
+*   **Updated**: `app/i18n.py` — `msg.rethinking` key added.
+*   **Updated**: `bot.py` — Reaction handler registration, explicit `allowed_updates` whitelist.
+
+#### Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check` (6 changed files) | 0 errors ✅ |
+| `python -m py_compile` (6 files) | 0 syntax errors ✅ |
+
+---
+
 ## [2.9.13] - 2026-04-01 - UX: Message Trailing Debounce & Ephemeral Toasts
 
 ### ✨ Feature — Telegram Forward Burst Handling (Trailing Debounce)

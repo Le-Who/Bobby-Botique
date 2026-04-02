@@ -4,6 +4,10 @@ User state management with database persistence.
 
 State is kept in-memory for fast access, but persisted to PostgreSQL
 on every mutation so it survives restarts/redeployments.
+
+Runtime-only maps (never persisted, ephemeral per-process):
+    _ACTIVE_TASKS       — user_id → asyncio.Task (running AI request)
+    _LAST_BOT_MESSAGE   — user_id → (message_id, chat_id) of last bot response
 """
 
 import asyncio
@@ -109,6 +113,18 @@ def _create_user_state_store() -> _UserStateStore:
 
 
 USER_STATES = _create_user_state_store()
+
+# =============================================================================
+# RUNTIME-ONLY MAPS — Ephemeral, never persisted to DB
+# =============================================================================
+
+# user_id → running asyncio.Task for the AI request.
+# Used to cancel in-flight streaming when user edits their message.
+_ACTIVE_TASKS: dict[int, asyncio.Task] = {}
+
+# user_id → (message_id, chat_id) of the last bot response message.
+# Used to edit-in-place instead of sending a duplicate reply.
+_LAST_BOT_MESSAGE: dict[int, tuple[int, int]] = {}
 
 
 # =============================================================================
@@ -412,3 +428,60 @@ def get_manual_role_title(user_id: int) -> str:
 
 def get_manual_role_prompt(user_id: int) -> str:
     return get_user_state(user_id).manual_role_prompt
+
+
+# =============================================================================
+# ACTIVE TASK REGISTRY — in-place edit & task cancellation
+# =============================================================================
+
+
+def register_active_task(user_id: int, task: asyncio.Task) -> None:
+    """Register the currently running AI asyncio.Task for a user.
+
+    Previous task (if any) is NOT cancelled here — caller is responsible
+    for ensuring sequential execution via user_lock.
+    """
+    _ACTIVE_TASKS[user_id] = task
+
+
+def cancel_active_task(user_id: int) -> bool:
+    """Cancel the inflight AI task for a user, if any.
+
+    Returns True if a task was found and cancel() was called.
+    Note: cancel() is a request, not a guarantee — await the task
+    with return_exceptions=True to confirm cancellation.
+    """
+    task = _ACTIVE_TASKS.pop(user_id, None)
+    if task and not task.done():
+        task.cancel()
+        return True
+    return False
+
+
+def clear_active_task(user_id: int) -> None:
+    """Remove the task registry entry for a user (call from task finally-block)."""
+    _ACTIVE_TASKS.pop(user_id, None)
+
+
+# =============================================================================
+# LAST BOT MESSAGE REGISTRY — for edit-in-place UX
+# =============================================================================
+
+
+def set_last_bot_message(user_id: int, message_id: int, chat_id: int) -> None:
+    """Record the (message_id, chat_id) of the bot's most recent reply to a user.
+
+    This allows the edited_message handler to reuse (edit) that message
+    instead of spamming a new response below the original exchange.
+    """
+    _LAST_BOT_MESSAGE[user_id] = (message_id, chat_id)
+
+
+def get_last_bot_message(user_id: int) -> tuple[int, int] | None:
+    """Return (message_id, chat_id) of the bot's last reply, or None."""
+    return _LAST_BOT_MESSAGE.get(user_id)
+
+
+def clear_last_bot_message(user_id: int) -> None:
+    """Clear the stored last bot message for a user."""
+    _LAST_BOT_MESSAGE.pop(user_id, None)

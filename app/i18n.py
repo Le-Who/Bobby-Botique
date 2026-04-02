@@ -760,6 +760,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "🤔 Думаю...",
         "en": "🤔 Thinking...",
     },
+    "msg.rethinking": {
+        "ru": "✏️ Обновляю ответ...",
+        "en": "✏️ Updating answer...",
+    },
     # ── Scheduled Briefs ─────────────────────────────────────────────────
     "brief.morning_title": {
         "ru": "📬 **Утренний бриф**\n\n{summary}",

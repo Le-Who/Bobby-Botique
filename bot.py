@@ -275,6 +275,11 @@ async def run_bot_with_retry():
 
         memory_commands.register(application)
 
+        # Native reaction feedback (replaces inline 👍/👎 buttons as ambient signal)
+        from app.handlers.msg_reactions import register as register_reactions
+
+        register_reactions(application)
+
         application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
 
         # Register global error handler
@@ -301,6 +306,17 @@ async def run_bot_with_retry():
         # Choose polling or webhook based on WEBHOOK_URL
         webhook_url = os.environ.get("WEBHOOK_URL", "").strip()
 
+        # Explicit allowed_updates whitelist — only subscribe to what we handle.
+        # Using Update.ALL_TYPES is wasteful (delivers business_connection, polls, etc.
+        # that we have no handlers for) and can cause rare fallthrough crashes.
+        _ALLOWED_UPDATES = [
+            "message",           # New text/photo/voice/document
+            "edited_message",    # User corrected a message → in-place edit UX
+            "callback_query",    # Inline keyboard button presses
+            "inline_query",      # Inline mode
+            "message_reaction",  # Native 👍/👎 reactions → ambient feedback
+        ]
+
         if webhook_url:
             # ── Webhook mode ─────────────────────────────────────────────
             webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
@@ -318,14 +334,14 @@ async def run_bot_with_retry():
 
             await application.bot.set_webhook(
                 url=full_url,
-                allowed_updates=Update.ALL_TYPES,
+                allowed_updates=_ALLOWED_UPDATES,
                 drop_pending_updates=True,
             )
             logging.info("Bot started in WEBHOOK mode: %s", full_url)
         else:
             # ── Long-polling mode ────────────────────────────────────────
             await application.updater.start_polling(
-                allowed_updates=Update.ALL_TYPES,
+                allowed_updates=_ALLOWED_UPDATES,
                 drop_pending_updates=True,
                 timeout=30,
             )
