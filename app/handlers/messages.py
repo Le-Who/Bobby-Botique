@@ -328,7 +328,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not is_photo and effective_msg.text:
             from app.middleware.debounce import debounce_text_message
 
-            is_forward = bool(effective_msg.forward_date or getattr(effective_msg, "forward_origin", None))
+            is_forward = bool(getattr(effective_msg, "forward_origin", None))
             merged = await debounce_text_message(user_id, message_text, is_forward=is_forward)
             if merged is None:
                 # This message was absorbed into a debounce window;
