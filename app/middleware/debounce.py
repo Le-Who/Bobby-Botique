@@ -135,8 +135,7 @@ class DebounceResult:
             key=lambda e: e.forwarded_date or datetime.min.replace(tzinfo=UTC),
         )
         if fwd:
-            if user_texts:
-                parts.append("\n--- Пересланные сообщения ---")
+            parts.append("\n<forwarded_dialogue>")
             fwd_lines: list[str] = []
             for e in fwd:
                 prefix = _format_fwd_prefix(e.author_label, e.forwarded_date)
@@ -144,13 +143,23 @@ class DebounceResult:
                 text_body = e.text.strip()
                 if "\n" in text_body:
                     # Indent continuation lines with quote marker
-                    indented = "\n".join(
-                        f"> {line}" for line in text_body.splitlines()
-                    )
+                    indented = "\n".join(f"> {line}" for line in text_body.splitlines())
                     fwd_lines.append(f"{prefix}\n{indented}")
                 else:
                     fwd_lines.append(f"{prefix} {text_body}")
             parts.append("\n".join(fwd_lines))
+            parts.append("</forwarded_dialogue>")
+
+            # Improvement 2: If the user sent NO instructions, add a fallback intent
+            if not user_texts:
+                parts.append(
+                    "\n<task>\n"
+                    "Пользователь переслал стенограмму выше без явного комментария.\n"
+                    "Ваша задача: выступить в роли беспристрастного аналитика. "
+                    "Проанализируйте содержание <forwarded_dialogue> и предоставьте структурированную выжимку: "
+                    "укажите ключевые тезисы, участников и общий смысл обсуждения.\n"
+                    "</task>"
+                )
 
         return "\n\n".join(parts)
 
