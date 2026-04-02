@@ -177,32 +177,37 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             if messages is None:
                 return False
 
-            await db_query(
-                "DELETE FROM active_chat_messages WHERE user_id = $1",
-                (user_id,),
-                conn=conn,
-            )
-            if messages:
-                insert_data = [(user_id, msg["role"], str(msg.get("content", ""))) for msg in messages]
-                await db_execute_many(
-                    "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
-                    insert_data,
-                    conn=conn,
-                )
+            # ⚡ Bolt Optimization: Atomically clear old context, insert new history, and reset token count via CTE
+            # Avoid db_execute_many roundtrips by using unnest in postgres
+            roles = [msg["role"] for msg in messages] if messages else None
+            contents = [str(msg.get("content", "")) for msg in messages] if messages else None
 
-            # ⚡ Bolt Optimization: Combine token_count and system_prompt updates into 1 query
             if role_prompt is not None:
-                await db_query(
-                    "UPDATE chats SET token_count = 0, system_prompt = $1 WHERE user_id = $2",
-                    (role_prompt, user_id),
-                    conn=conn,
-                )
+                query = """
+                    WITH delete_old AS (
+                        DELETE FROM active_chat_messages WHERE user_id = $1
+                    ),
+                    update_chat AS (
+                        UPDATE chats SET token_count = 0, system_prompt = $2 WHERE user_id = $1
+                    )
+                    INSERT INTO active_chat_messages (user_id, role, content)
+                    SELECT $1, * FROM unnest($3::text[], $4::text[]) AS t(role, content)
+                    WHERE $3::text[] IS NOT NULL
+                """
+                await db_query(query, (user_id, role_prompt, roles, contents), conn=conn)
             else:
-                await db_query(
-                    "UPDATE chats SET token_count = 0 WHERE user_id = $1",
-                    (user_id,),
-                    conn=conn,
-                )
+                query = """
+                    WITH delete_old AS (
+                        DELETE FROM active_chat_messages WHERE user_id = $1
+                    ),
+                    update_chat AS (
+                        UPDATE chats SET token_count = 0 WHERE user_id = $1
+                    )
+                    INSERT INTO active_chat_messages (user_id, role, content)
+                    SELECT $1, * FROM unnest($2::text[], $3::text[]) AS t(role, content)
+                    WHERE $2::text[] IS NOT NULL
+                """
+                await db_query(query, (user_id, roles, contents), conn=conn)
 
         return True
     except (asyncpg.PostgresError, asyncpg.InterfaceError):

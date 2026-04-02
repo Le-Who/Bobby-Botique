@@ -5,3 +5,7 @@
 ## 2024-05-15 - Unsafe RLS with CTEs
 **Learning:** You cannot use `set_config` inside a Common Table Expression (CTE) to safely set Row Level Security (RLS) context for the main query. PostgreSQL does not guarantee that the CTE will be evaluated before the RLS policies on the main query's table scan, leading to unpredictable failures or bypassed security.
 **Action:** When optimizing database roundtrips involving RLS context (e.g., `set_user_context`), avoid CTEs. Look for opportunities to reduce sequential queries inside the transaction instead (e.g., using `LEFT JOIN`s or combining `UPDATE` statements).
+
+## 2024-05-20 - Safe CTE Batch Inserts with unnest
+**Learning:** When optimizing batch database operations (like deleting old messages and inserting new ones) into a single PostgreSQL CTE to reduce network latency, replacing a repository method call (like `get_conversation_messages()`) with an inline raw `SELECT` query breaks encapsulation and bypasses any underlying business logic. Instead, keep the application-level data retrieval intact and pass the fetched data arrays into the CTE using PostgreSQL's `unnest($X::text[])` for the batch insert.
+**Action:** Use `unnest` inside CTEs for bulk inserts while preserving repository-level data retrieval methods.
