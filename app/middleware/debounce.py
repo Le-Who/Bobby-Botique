@@ -30,8 +30,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Debounce windows in seconds (covers Telegram forward bursts vs typing)
-_DEFAULT_WINDOW_S = 2.0
-_FORWARD_WINDOW_S = 4.0
+_DEFAULT_WINDOW_S = 1.0
+_FORWARD_WINDOW_S = 3.5
 
 # Per-user debounce state: {user_id: _DebounceSlot}
 _debounce_slots: dict[int, _DebounceSlot] = {}
