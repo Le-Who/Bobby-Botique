@@ -319,22 +319,27 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except Exception:
             logging.exception("Error saving last sent message text")
 
-        # ── 7b. Debounce rapid-fire text messages ────────────────────────────
-        # Aggregation window: merges multi-message "split taps"
-        # into a single AI request, saving tokens and improving response quality.
-        # Extends dynamically for forwarded message bursts.
-        # Only applies to plain text (not photos, voice, documents).
+        # ── 7b. Debounce rapid-fire text/forward messages ────────────────────
+        # Aggregation window: merges multi-message "split taps" and forwarded
+        # bursts into a single AI request, preserving author attribution,
+        # original timestamps, and a clean user-instruction / forwarded-content
+        # split.  Applies to ALL non-photo, non-voice, non-document text.
         is_photo = bool(effective_msg.photo)
-        if not is_photo and effective_msg.text:
-            from app.middleware.debounce import debounce_text_message
+        if not is_photo and not effective_msg.voice and not effective_msg.document:
+            from app.middleware.debounce import DebounceResult, debounce_message
 
-            is_forward = bool(getattr(effective_msg, "forward_origin", None))
-            merged = await debounce_text_message(user_id, message_text, is_forward=is_forward)
-            if merged is None:
-                # This message was absorbed into a debounce window;
-                # the first caller will process the merged result.
+            debounce_result = await debounce_message(
+                user_id,
+                effective_msg,
+                bot=context.bot,
+            )
+            if debounce_result is None:
+                # Absorbed — the first caller in this window will process the
+                # merged result when the window fires.
                 return
-            message_text = merged
+            # Build a structured, author-attributed context block for the LLM.
+            message_text = debounce_result.build_llm_context()
+
 
         # ── 7c. Implicit image generation intent ─────────────────────────────
         # Matches: "Бот, нарисуй..." / "изобрази..." / "сгенерируй картинку..."
@@ -557,10 +562,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                     message_id=last_msg_id,
                     text=_t("msg.rethinking"),
                 )
-                if isinstance(_edited, bool):
-                    placeholder_message = None
-                else:
-                    placeholder_message = _edited
+                placeholder_message = None if isinstance(_edited, bool) else _edited
             except (BadRequest, NetworkError) as e:
                 logging.warning("edit: could not reuse message %s: %s", last_msg_id, e)
 
