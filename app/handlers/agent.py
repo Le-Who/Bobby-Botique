@@ -58,19 +58,22 @@ from app.utils.heartbeat import stop_heartbeat
 
 
 async def process_long_request(
-    placeholder_message: Message, update: Update, context: ContextTypes.DEFAULT_TYPE
+    placeholder_message: Message,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text_override: str | None = None,
 ) -> None:
     try:
         effective_msg = update.effective_message
         is_photo = bool(effective_msg.photo) if effective_msg else False
         # Support edit-in-place: handle_edited_request injects the corrected text here
-        _text_override = (
-            context.user_data.get("_edited_text_override")
-            if context.user_data
-            else None
+        _inplace_override = (
+            context.user_data.get("_edited_text_override") if context.user_data else None
         )
-        if _text_override is not None:
-            text = _text_override
+        if text_override is not None:
+            text = text_override
+        elif _inplace_override is not None:
+            text = _inplace_override
         elif effective_msg:
             text = effective_msg.text or effective_msg.caption or ""
         else:

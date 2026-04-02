@@ -451,7 +451,12 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     try:
                         from app.handlers.agent import process_long_request
 
-                        await process_long_request(placeholder_message, update, context)
+                        await process_long_request(
+                            placeholder_message,
+                            update,
+                            context,
+                            text_override=message_text,
+                        )
                     except ImportError:
                         stop_heartbeat(placeholder_message.message_id)
                         from app.i18n import t
