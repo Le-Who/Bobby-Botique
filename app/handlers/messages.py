@@ -340,6 +340,19 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Build a structured, author-attributed context block for the LLM.
             message_text = debounce_result.build_llm_context()
 
+            # ── Persist forwarded-batch metadata for downstream handlers ──────
+            # ai_chat uses this to show the "💾 Сохранить тезисы" memory button.
+            # agent.py uses photo_messages to route to multimodal handler.
+            if context.user_data is not None:
+                context.user_data["_fwd_batch"] = debounce_result.has_forwarded_content
+                fwd_photos = debounce_result.forwarded_photo_messages
+                if fwd_photos:
+                    context.user_data["_fwd_photos"] = fwd_photos
+                else:
+                    context.user_data.pop("_fwd_photos", None)
+            else:
+                fwd_photos = []
+
 
         # ── 7c. Implicit image generation intent ─────────────────────────────
         # Matches: "Бот, нарисуй..." / "изобрази..." / "сгенерируй картинку..."

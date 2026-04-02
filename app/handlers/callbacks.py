@@ -220,3 +220,9 @@ def register(application: Application) -> None:
     from app.handlers.cb_image import draw_callback
 
     application.add_handler(CallbackQueryHandler(draw_callback, pattern="^draw:"))
+
+    # Forward-batch memory save (Improvement 7)
+    from app.handlers.cb_fwd_save import fwd_save_callback
+
+    _add_fast_callback(application, fwd_save_callback, "^fwd_save$")
+

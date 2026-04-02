@@ -76,6 +76,28 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
     is_photo = bool(update.message.photo)
     media_group_id = update.message.media_group_id if update.message else None
 
+    # ── Улучшение 3: Forwarded photo merging into text debounce slot ──────────
+    # When the user forwards a mixed batch (texts + photos), the text messages
+    # enter the debounce window while photos arrive here.  If a debounce slot
+    # is already open for this user AND the arriving photo is forwarded, we
+    # inject the photo into the text slot so the AI receives a unified context
+    # (text attribution + image) in a single request.
+    if is_photo and getattr(update.message, "forward_origin", None) is not None:
+        from app.middleware.debounce import has_open_slot, inject_forwarded_photo
+
+        if has_open_slot(user_id):
+            injected = await inject_forwarded_photo(
+                user_id,
+                update.message,
+                bot=context.bot,
+            )
+            if injected:
+                logging.info(
+                    "📸 Forwarded photo injected into debounce slot for user %s",
+                    user_id,
+                )
+                return True  # consumed — text debounce waiter will handle it
+
     if is_photo and media_group_id:
         logging.info(
             "📸 Получено изображение с media_group_id %s от пользователя %s",

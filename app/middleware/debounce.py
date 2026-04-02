@@ -87,6 +87,16 @@ class DebounceResult:
     # ── Convenience accessors ────────────────────────────────────────────────
 
     @property
+    def has_forwarded_content(self) -> bool:
+        """True when the batch contains at least one forwarded message."""
+        return any(e.is_forwarded for e in self.entries)
+
+    @property
+    def forwarded_photo_messages(self) -> list[Message]:
+        """Original telegram.Message objects for all forwarded photos."""
+        return [e.message for e in self.forwarded_entries if e.message.photo]
+
+    @property
     def forwarded_entries(self) -> list[_MessageEntry]:
         return [e for e in self.entries if e.is_forwarded]
 
@@ -168,6 +178,45 @@ _debounce_slots: dict[int, _DebounceSlot] = {}
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+
+def has_open_slot(user_id: int) -> bool:
+    """Return True when user_id has an active debounce window that hasn't fired yet.
+
+    Used by msg_media.py to check if a forwarded photo should be merged into the
+    current text debounce slot instead of processed independently.
+    """
+    slot = _debounce_slots.get(user_id)
+    return slot is not None and not slot.ready_event.is_set()
+
+
+async def inject_forwarded_photo(user_id: int, message: Message, *, bot=None) -> bool:
+    """Inject a forwarded photo Message into an existing open debounce slot.
+
+    Called by msg_media.py when a forwarded photo arrives while the user already
+    has an active text-debounce window.  Merges the photo into the slot so the
+    first waiter (text handler) will receive a DebounceResult containing both
+    text and photo entries.  The slot window is NOT restarted — we let the
+    existing timer fire to avoid unbounded delays.
+
+    Returns:
+        True  → photo was injected (caller in msg_media.py should return early).
+        False → no open slot; caller should process photo normally.
+    """
+    slot = _debounce_slots.get(user_id)
+    if slot is None or slot.ready_event.is_set():
+        return False
+
+    entry = await _build_entry(message, bot=bot)
+    slot.entries.append(entry)
+    slot.is_forward_burst = True
+
+    logger.info(
+        "Debounce: injected forwarded photo for user %d (slot now %d entries)",
+        user_id,
+        len(slot.entries),
+    )
+    return True
 
 
 async def debounce_message(

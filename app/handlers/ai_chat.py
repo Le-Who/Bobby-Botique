@@ -84,6 +84,7 @@ async def _handle_regular_chat(
     model_override: str | None = None,
     *,
     reply_with_voice: bool = False,
+    is_forward_batch: bool = False,
 ):
     # Используем переопределение models, if указано, иначе model from chat_state
     model_for_this_request = model_override or chat_state.model
@@ -335,6 +336,7 @@ async def _handle_regular_chat(
                     if chat_state.branch_id
                     else InlineKeyboardButton(t("btn.what_if", _lang), callback_data="branch_create")
                 )
+                # ── Improvement 7: one-tap memory save for forwarded-batch analysis
                 buttons = [
                     [InlineKeyboardButton(t("btn.retry", _lang), callback_data="retry_last")],
                     [
@@ -349,7 +351,12 @@ async def _handle_regular_chat(
                         ),
                     ],
                 ]
+                if is_forward_batch:
+                    buttons.append(
+                        [InlineKeyboardButton("💾 Сохранить тезисы в память", callback_data="fwd_save")]
+                    )
                 reply_markup = InlineKeyboardMarkup(buttons)
+
 
             if not streamed:
                 # Non-streaming: send_long_message as before

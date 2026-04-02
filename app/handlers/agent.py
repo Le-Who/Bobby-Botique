@@ -75,6 +75,17 @@ async def process_long_request(
             text = effective_msg.text or effective_msg.caption or ""
         else:
             text = ""
+
+        # ── Forwarded photo+text batch (Improvement 3) ───────────────────────
+        # When the debounce window collected both forwarded text messages and
+        # forwarded photos (injected via inject_forwarded_photo), messages.py
+        # stores the photo Message objects in context.user_data["_fwd_photos"].
+        # We consume them here and route to the multimodal handler so the LLM
+        # receives a unified request: author-attributed text block + images.
+        _fwd_photos: list | None = (
+            context.user_data.pop("_fwd_photos", None) if context.user_data else None
+        )
+
         chat_state = await get_user_chat(update.effective_user.id)
 
         # ── Classify request tier ────────────────────────────────────────
@@ -89,6 +100,19 @@ async def process_long_request(
         semaphore = ultra_heavy_semaphore if is_ultra_heavy else heavy_request_semaphore
 
         async with semaphore:
+            # ── Forwarded photo+text → multimodal handler ────────────────────
+            # Route as a media group so the LLM sees both images and the
+            # author-attributed text in a single multimodal request.
+            if _fwd_photos:
+                await process_media_group_request(
+                    placeholder_message,
+                    update,
+                    context,
+                    _fwd_photos,
+                    caption=text,
+                )
+                return
+
             if is_photo and (text.startswith(("?", "??"))):
                 keyboard = [
                     [InlineKeyboardButton("🖼️ Только описать фото", callback_data="complex:vision_only")],
@@ -96,13 +120,11 @@ async def process_long_request(
                     [InlineKeyboardButton("❌ Отмена", callback_data="complex:cancel")],
                 ]
 
-                # Save оригинальное message в contextе
                 if not hasattr(context, "user_data"):
                     context.user_data = {}
                 if context.user_data is not None:
                     context.user_data["original_message"] = update.message
 
-                # Не удаляем placeholder message, а редактируем его
                 try:
                     stop_heartbeat(placeholder_message.message_id)
                     await placeholder_message.edit_text(
@@ -111,7 +133,6 @@ async def process_long_request(
                     )
                 except Exception as edit_error:
                     logging.error("Could not edit placeholder message: %s", edit_error)
-                    # If не можем отредактировать, отправляем new message
                     await context.bot.send_message(
                         chat_id=update.effective_chat.id,
                         text="Обнаружен сложный запрос (изображение + поиск). Это потребует нескольких шагов и потратит больше времени. Что вы хотите сделать?",
@@ -138,7 +159,16 @@ async def process_long_request(
                 # Continue deep dive session — route follow-ups through agentic search
                 await _handle_research_agent(placeholder_message, update.effective_user.id, text, chat_state)
             else:
-                await _handle_regular_chat(placeholder_message, update.effective_user.id, text, chat_state)
+                await _handle_regular_chat(
+                    placeholder_message,
+                    update.effective_user.id,
+                    text,
+                    chat_state,
+                    is_forward_batch=bool(
+                        context.user_data.pop("_fwd_batch", False) if context.user_data else False
+                    ),
+                )
+
 
     except Exception as e:
         logging.error("Error in background task dispatcher: %s", e, exc_info=True)
