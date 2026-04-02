@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Debounce windows in seconds (covers Telegram forward bursts vs typing)
 _DEFAULT_WINDOW_S = 1.0
-_FORWARD_WINDOW_S = 4.0
+_FORWARD_WINDOW_S = 6.0
 
 # Per-user debounce state: {user_id: _DebounceSlot}
 _debounce_slots: dict[int, _DebounceSlot] = {}
