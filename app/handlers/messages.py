@@ -496,9 +496,8 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         from app.utils.background_tasks import submit_task
 
-        ai_task = asyncio.ensure_future(task_wrapper())
+        ai_task = submit_task(task_wrapper())
         state.register_active_task(user_id, ai_task)
-        submit_task(ai_task)
 
 
 async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -553,11 +552,15 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         if last_chat_id == chat_id:
             try:
                 # Edit existing bot message in-place — this is the core UX win
-                placeholder_message = await context.bot.edit_message_text(
+                _edited = await context.bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=last_msg_id,
                     text=_t("msg.rethinking"),
                 )
+                if isinstance(_edited, bool):
+                    placeholder_message = None
+                else:
+                    placeholder_message = _edited
             except (BadRequest, NetworkError) as e:
                 logging.warning("edit: could not reuse message %s: %s", last_msg_id, e)
 
@@ -631,24 +634,24 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                 stop_heartbeat(placeholder_message.message_id)
 
     from app.utils.background_tasks import submit_task
-    edit_ai_task = asyncio.ensure_future(edit_task_wrapper())
+    edit_ai_task = submit_task(edit_task_wrapper())
     state.register_active_task(user_id, edit_ai_task)
-    submit_task(edit_ai_task)
 
 
 def register(application: Application) -> None:
     # NEW messages only — explicit UpdateType.MESSAGE guard prevents
     # edited_message / channel_post from leaking into these handlers.
     _msg = filters.UpdateType.MESSAGE
-    application.add_handler(MessageHandler(_msg & filters.TEXT & ~filters.COMMAND, handle_request))
-    application.add_handler(MessageHandler(_msg & filters.PHOTO, handle_request))
-    application.add_handler(MessageHandler(_msg & filters.Document.ALL, handle_request))
-    application.add_handler(MessageHandler(_msg & filters.VOICE, handle_request))
+    application.add_handler(MessageHandler(_msg & filters.TEXT & ~filters.COMMAND, handle_request, block=False))
+    application.add_handler(MessageHandler(_msg & filters.PHOTO, handle_request, block=False))
+    application.add_handler(MessageHandler(_msg & filters.Document.ALL, handle_request, block=False))
+    application.add_handler(MessageHandler(_msg & filters.VOICE, handle_request, block=False))
 
     # EDITED messages — text only (photo/voice edits use new messages)
     application.add_handler(
         MessageHandler(
             filters.UpdateType.EDITED_MESSAGE & filters.TEXT & ~filters.COMMAND,
             handle_edited_request,
+            block=False,
         )
     )
