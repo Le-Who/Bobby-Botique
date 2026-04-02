@@ -320,14 +320,16 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logging.exception("Error saving last sent message text")
 
         # ── 7b. Debounce rapid-fire text messages ────────────────────────────
-        # 400ms aggregation window: merges multi-message "split taps"
+        # Aggregation window: merges multi-message "split taps"
         # into a single AI request, saving tokens and improving response quality.
+        # Extends dynamically for forwarded message bursts.
         # Only applies to plain text (not photos, voice, documents).
         is_photo = bool(effective_msg.photo)
         if not is_photo and effective_msg.text:
             from app.middleware.debounce import debounce_text_message
 
-            merged = await debounce_text_message(user_id, message_text)
+            is_forward = bool(effective_msg.forward_date or getattr(effective_msg, "forward_origin", None))
+            merged = await debounce_text_message(user_id, message_text, is_forward=is_forward)
             if merged is None:
                 # This message was absorbed into a debounce window;
                 # the first caller will process the merged result.

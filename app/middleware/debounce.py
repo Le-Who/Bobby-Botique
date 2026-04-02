@@ -29,8 +29,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Debounce window in seconds (1.1s balances latency vs merge benefit, covers Telegram forward bursts)
-_DEBOUNCE_WINDOW_S = 1.1
+# Debounce windows in seconds (covers Telegram forward bursts vs typing)
+_DEFAULT_WINDOW_S = 1.1
+_FORWARD_WINDOW_S = 2.5
 
 # Per-user debounce state: {user_id: _DebounceSlot}
 _debounce_slots: dict[int, _DebounceSlot] = {}
@@ -39,16 +40,17 @@ _debounce_slots: dict[int, _DebounceSlot] = {}
 class _DebounceSlot:
     """Per-user debounce accumulator."""
 
-    __slots__ = ("texts", "first_ts", "timer_task", "ready_event")
+    __slots__ = ("texts", "first_ts", "timer_task", "ready_event", "is_forward_burst")
 
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, is_forward_burst: bool = False) -> None:
         self.texts: list[str] = [text]
         self.first_ts: float = time.monotonic()
         self.timer_task: asyncio.Task[None] | None = None
         self.ready_event: asyncio.Event = asyncio.Event()
+        self.is_forward_burst: bool = is_forward_burst
 
 
-async def debounce_text_message(user_id: int, text: str) -> str | None:
+async def debounce_text_message(user_id: int, text: str, is_forward: bool = False) -> str | None:
     """Buffer a text message and wait for the debounce window to close.
 
     Returns:
@@ -63,8 +65,8 @@ async def debounce_text_message(user_id: int, text: str) -> str | None:
     slot = _debounce_slots.get(user_id)
 
     # Helper to restart the timer
-    async def _timer() -> None:
-        await asyncio.sleep(_DEBOUNCE_WINDOW_S)
+    async def _timer(wait_time: float) -> None:
+        await asyncio.sleep(wait_time)
         if slot is not None:
             slot.ready_event.set()
 
@@ -77,19 +79,25 @@ async def debounce_text_message(user_id: int, text: str) -> str | None:
             len(slot.texts),
         )
 
+        if is_forward:
+            slot.is_forward_burst = True
+            
+        current_timeout = _FORWARD_WINDOW_S if slot.is_forward_burst else _DEFAULT_WINDOW_S
+
         # Trailing window: restart the timer
         if slot.timer_task is not None:
             slot.timer_task.cancel()
 
-        slot.timer_task = asyncio.create_task(_timer())
+        slot.timer_task = asyncio.create_task(_timer(current_timeout))
         return None
 
     # First message in a new window → create slot
-    slot = _DebounceSlot(text)
+    slot = _DebounceSlot(text, is_forward)
     _debounce_slots[user_id] = slot
 
     # Start the window timer
-    slot.timer_task = asyncio.create_task(_timer())
+    current_timeout = _FORWARD_WINDOW_S if is_forward else _DEFAULT_WINDOW_S
+    slot.timer_task = asyncio.create_task(_timer(current_timeout))
 
     # Wait for window to close
     await slot.ready_event.wait()
