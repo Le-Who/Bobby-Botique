@@ -118,8 +118,8 @@ async def get_gemini_key_usage_stats(
                     WHEN mc.daily_limit IS NULL THEN true
                     ELSE COALESCE(ku.request_count, 0) < (mc.daily_limit * $2)
                 END as is_available
-            FROM api_keys ak
-            LEFT JOIN model_configuration mc ON mc.model_name = $1
+            FROM public.api_keys ak
+            LEFT JOIN public.model_configuration mc ON mc.model_name = $1
             LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash
                 AND ku.model_name = $1 AND ku.usage_date = $3
             ORDER BY COALESCE(ku.request_count, 0) ASC
@@ -148,9 +148,9 @@ async def get_gemini_key_usage_stats(
                     WHEN mc.daily_limit IS NULL THEN true
                     ELSE COALESCE(ku.request_count, 0) < (mc.daily_limit * $1)
                 END as is_available
-            FROM api_keys ak
+            FROM public.api_keys ak
             LEFT JOIN key_usage ku ON ak.key_hash = ku.key_hash AND ku.usage_date = $2
-            LEFT JOIN model_configuration mc ON mc.model_name = ku.model_name
+            LEFT JOIN public.model_configuration mc ON mc.model_name = ku.model_name
             WHERE ku.model_name IS NOT NULL
             ORDER BY ku.model_name, COALESCE(ku.request_count, 0) ASC
         """

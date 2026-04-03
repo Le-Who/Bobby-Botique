@@ -3,7 +3,70 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [2.9.14] - 2026-04-02 - Telegram API Architectural Hardening
+## [2.9.15] - 2026-04-03 - Telegram Mini App & UX Phase 1-3
+
+### 📱 Feature — Telegram Mini App (Phase 3)
+
+Native in-app settings panel served via Quart Blueprint at `/webapp/`. Authenticated using Telegram `initData` HMAC-SHA256 validation — each user can only access their own data.
+
+**Two-tab interface:**
+
+| Tab | Features |
+|-----|----------|
+| 🧠 Память (LTM Explorer) | Paginated memory browser, client-side search, swipe-to-delete with haptic feedback, usage progress bar (count/limit) |
+| ⚙️ Настройки (Settings Editor) | System prompt textarea (4000 char limit), model selector, thinking level dropdown, LTM/search toggle switches, Telegram `MainButton` save |
+
+*   Styled with `var(--tg-theme-*)` CSS variables for automatic dark/light mode matching.
+*   Accessible via `WebAppInfo` button ("📱 Открыть панель настроек") in `/settings` keyboard.
+*   Uses `WEBHOOK_URL` env var for multi-deployment portability — same build works across different bots/projects.
+*   CSP split: `/webapp/` routes allow `telegram.org` scripts + inline styles + iframe embedding; all other routes keep strict CSP.
+
+### ✨ Feature — Smart UX Interactions (Phase 1)
+
+*   **Proactive Feedback Reactions**: `set_message_reaction(👍/👎)` seeded on AI responses. 👎 → LTM negative signal, 👍 → ❤️ response. Bot's own reactions filtered out.
+*   **Smart Suggestions**: `[SUGGESTIONS:...]` response tags → ✨-prefixed inline buttons with `sendMessageDraft` pre-fill.
+*   **Intent Routing**: `[INTENT:...]` response tags → contextual action buttons (draw, search, etc.).
+*   **CopyTextButton**: 📋 Скопировать код button for fenced code blocks in responses.
+*   **Message Effects**: 🔥 `EFFECT_FIRE` on successful image generation.
+
+### ✨ Feature — Research UX & Empathy (Phase 2)
+
+*   **Telegraph Longreads**: Responses >5000 chars → Telegraph Instant View with collapsed blockquote summary + 📖 read button. Graceful fallback to `send_long_message`.
+*   **Auto TTS for Research**: Fire-and-forget `fire_voice_reply` after successful agentic search (>200 chars).
+
+### 🐛 Bug Fixes
+
+*   **Stale test mock**: Removed dead `is_openrouter_model` mock targeting `app.handlers.ai_chat` (function moved to `app.providers.base`). Fixed `test_e2e_app_smoke.py`.
+*   **Schema-qualified assertions**: Fixed 5 test assertions that checked for `INSERT INTO conversations` / `UPDATE conversations` but queries now use `public.conversations`. Affected: `test_repos_conversations.py`, `test_save_conversation.py`, `test_integration_flows.py`.
+*   **Brief generation contract**: Fixed `test_scheduled_briefs.py` mock returning a string instead of `dict[str, str]`, matching the production `_generate_brief_summary` return type.
+*   **Deprecation fix**: Replaced `asyncio.iscoroutinefunction()` (deprecated in Python 3.16) with `inspect.iscoroutinefunction()` in `streaming.py`.
+
+#### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/web_miniapp.py` | [NEW] Quart Blueprint: initData auth, 5 API endpoints (memories CRUD, settings R/W) |
+| `app/templates/miniapp.html` | [NEW] Two-tab Mini App frontend (vanilla HTML/JS, ~50KB) |
+| `app/web.py` | Registered blueprint, CSP split for `/webapp/` routes |
+| `app/handlers/commands.py` | Added `WebAppInfo` button to `/settings` keyboard |
+| `app/streaming.py` | `asyncio.iscoroutinefunction` → `inspect.iscoroutinefunction` |
+| `tests/integration/test_e2e_app_smoke.py` | Removed stale `is_openrouter_model` mock |
+| `tests/test_repos_conversations.py` | Fixed schema-qualified table name assertions |
+| `tests/test_save_conversation.py` | Fixed schema-qualified table name assertions |
+| `tests/test_integration_flows.py` | Fixed schema-qualified table name assertions |
+| `tests/test_scheduled_briefs.py` | Fixed mock return type to `dict[str, str]` |
+
+#### Quality Gates
+
+| Check | Result |
+|-------|--------|
+| Ruff lint | 0 errors ✅ |
+| Ruff format | 0 violations ✅ |
+| Pytest | **1420 passed**, 0 failed ✅ |
+
+---
+
+
 
 ### 🛡️ Hardening — Safe Message Access (`effective_message`)
 

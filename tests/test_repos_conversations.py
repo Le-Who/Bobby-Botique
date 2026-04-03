@@ -57,7 +57,7 @@ class TestSaveConversation:
             result = await save_conversation(1, "My Chat", "system", None)
         assert result == 42
         query = mock_deps["query"].call_args[0][0]
-        assert "INSERT INTO conversations" in query
+        assert "INSERT INTO" in query and "conversations" in query
 
     @pytest.mark.asyncio
     async def test_returns_none_on_empty_result(self, mock_deps):
@@ -177,4 +177,4 @@ class TestRenameConversation:
         result = await rename_conversation(42, 10, "New Title")
         assert result is True
         query = mock_deps["query"].call_args[0][0]
-        assert "UPDATE conversations" in query
+        assert "UPDATE" in query and "conversations" in query

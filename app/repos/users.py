@@ -41,7 +41,7 @@ async def is_authorized(user_id: int) -> bool:
         await set_user_context(user_id, False, conn=conn)
         try:
             result = await db_query(
-                "SELECT is_authorized FROM users WHERE user_id = $1",
+                "SELECT is_authorized FROM public.users WHERE user_id = $1",
                 (user_id,),
                 conn=conn,
             )

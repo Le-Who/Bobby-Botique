@@ -39,7 +39,6 @@ def mock_external_network():
         patch("app.handlers.ai_chat._resolve_ai_request", new_callable=AsyncMock) as mock_resolve,
         patch("app.streaming.stream_and_display", new_callable=AsyncMock) as mock_get_answer,
         patch("app.handlers.ai_chat.send_long_message", new_callable=AsyncMock) as mock_send_long,
-        patch("app.handlers.ai_chat.is_openrouter_model", return_value=True),
     ):
         # Default mock successful resolutions
         mock_resolve.return_value = (

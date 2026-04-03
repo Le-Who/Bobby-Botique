@@ -74,13 +74,13 @@ async def fwd_save_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     for btn in row:
                         if btn.callback_data == "fwd_save":
                             from telegram import InlineKeyboardButton
-                            new_row.append(
-                                InlineKeyboardButton("✅ Тезисы сохранены в память", callback_data="noop")
-                            )
+
+                            new_row.append(InlineKeyboardButton("✅ Тезисы сохранены в память", callback_data="noop"))
                         else:
                             new_row.append(btn)
                     new_rows.append(new_row)
                 from telegram import InlineKeyboardMarkup
+
                 await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_rows))
         except Exception as markup_err:
             logging.debug("fwd_save: could not update button label: %s", markup_err)

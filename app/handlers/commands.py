@@ -6,8 +6,9 @@ Conversation commands: see cmd_conversations.py
 """
 
 import logging
+import os
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from app.handlers import menus
@@ -396,6 +397,18 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             ),
         ],
     ]
+
+    # Add Mini App button if WEBHOOK_URL is configured (HTTPS required for WebApp)
+    webapp_base = os.environ.get("WEBHOOK_URL", "").strip().rstrip("/")
+    if webapp_base and webapp_base.startswith("https://"):
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "📱 Открыть панель настроек",
+                    web_app=WebAppInfo(url=f"{webapp_base}/webapp/"),
+                ),
+            ]
+        )
     await update.message.reply_text(
         formatted_text,
         parse_mode=parse_mode,

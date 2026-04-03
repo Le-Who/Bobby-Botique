@@ -34,23 +34,24 @@ logger = logging.getLogger(__name__)
 # ── Message Effect IDs ────────────────────────────────────────────────────────
 # Telegram-defined static effect IDs (as of Bot API 7.2).
 # Source: https://core.telegram.org/bots/api#sendmessage  (message_effect_id)
-EFFECT_FIRE = "5104841245755180586"       # 🔥
+EFFECT_FIRE = "5104841245755180586"  # 🔥
 EFFECT_CONFETTI = "5046509860389126442"  # 🎉
-EFFECT_HEART = "5159385139981059251"     # ❤️
+EFFECT_HEART = "5159385139981059251"  # ❤️
 EFFECT_THUMBSUP = "5107584321108051014"  # 👍
 
 # ── Reaction Emoji Constants ──────────────────────────────────────────────────
-REACTION_SEARCH = "🔍"   # searching / thinking
-REACTION_BRAIN = "🧠"   # synthesizing
+REACTION_SEARCH = "🔍"  # searching / thinking
+REACTION_BRAIN = "🧠"  # synthesizing
 REACTION_LIGHTNING = "⚡"  # done fast
 REACTION_WARNING = "⚠️"  # error / interruption
-REACTION_EYES = "👀"    # reading / processing
+REACTION_EYES = "👀"  # reading / processing
 
 
 # ── Reaction Helpers ──────────────────────────────────────────────────────────
 
+
 async def set_message_reaction(
-    bot: "Bot",
+    bot: Bot,
     chat_id: int,
     message_id: int,
     emoji: str,
@@ -76,7 +77,7 @@ async def set_message_reaction(
 
 
 async def clear_message_reaction(
-    bot: "Bot",
+    bot: Bot,
     chat_id: int,
     message_id: int,
 ) -> None:
@@ -91,22 +92,22 @@ async def clear_message_reaction(
         logger.debug("clear_message_reaction failed (non-critical): %s", exc)
 
 
-async def set_thinking_reaction(bot: "Bot", chat_id: int, message_id: int) -> None:
+async def set_thinking_reaction(bot: Bot, chat_id: int, message_id: int) -> None:
     """Put 🔍 on the user's message while the bot is working."""
     await set_message_reaction(bot, chat_id, message_id, REACTION_SEARCH)
 
 
-async def set_synthesizing_reaction(bot: "Bot", chat_id: int, message_id: int) -> None:
+async def set_synthesizing_reaction(bot: Bot, chat_id: int, message_id: int) -> None:
     """Put 🧠 on the user's message while the LLM is synthesizing."""
     await set_message_reaction(bot, chat_id, message_id, REACTION_BRAIN)
 
 
-async def set_done_reaction(bot: "Bot", chat_id: int, message_id: int) -> None:
+async def set_done_reaction(bot: Bot, chat_id: int, message_id: int) -> None:
     """Put ⚡ on the user's message after a successful response."""
     await set_message_reaction(bot, chat_id, message_id, REACTION_LIGHTNING)
 
 
-async def set_error_reaction(bot: "Bot", chat_id: int, message_id: int) -> None:
+async def set_error_reaction(bot: Bot, chat_id: int, message_id: int) -> None:
     """Put ⚠️ on the user's message when the response was interrupted/failed."""
     await set_message_reaction(bot, chat_id, message_id, REACTION_WARNING)
 
@@ -187,6 +188,7 @@ def wrap_partial_response(html_text: str) -> str:
 
 # ── tg-time HTML tag ──────────────────────────────────────────────────────────
 
+
 def tg_time_tag(unix_timestamp: int, *, fmt: str = "wDT") -> str:
     """Render a <tg-time> HTML tag for Telegram's localized time display.
 
@@ -217,9 +219,46 @@ def tg_time_tag(unix_timestamp: int, *, fmt: str = "wDT") -> str:
     return f'<tg-time unix="{unix_timestamp}" format="{fmt}">{html.escape(fallback)}</tg-time>'
 
 
+# ── Pre-placed Feedback Reactions ─────────────────────────────────────────────
+
+# Emoji used by the bot to pre-seed feedback options on its OWN messages.
+# Users tap one of these to give feedback without needing to find the reaction menu.
+FEEDBACK_THUMBSUP = "👍"
+FEEDBACK_THUMBSDOWN = "👎"
+
+
+async def set_feedback_reactions(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+) -> None:
+    """Pre-place 👍 and 👎 reactions on the bot's own message.
+
+    The bot sets BOTH reactions simultaneously so the user only needs to
+    tap the one they agree with.  These bot-placed reactions are filtered
+    out by msg_reactions.py to avoid counting the bot's own reactions
+    as user feedback.
+    """
+    try:
+        from telegram import ReactionTypeEmoji
+
+        await bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=[
+                ReactionTypeEmoji(emoji=FEEDBACK_THUMBSUP),
+                ReactionTypeEmoji(emoji=FEEDBACK_THUMBSDOWN),
+            ],
+            is_big=False,
+        )
+    except Exception as exc:
+        logger.debug("set_feedback_reactions failed (non-critical): %s", exc)
+
+
 # ── CopyTextButton helper ─────────────────────────────────────────────────────
 
-def make_copy_text_button(text: str, button_label: str = "📋 Скопировать") -> "object":
+
+def make_copy_text_button(text: str, button_label: str = "📋 Скопировать") -> object:
     """Create a Telegram InlineKeyboardButton that copies *text* to clipboard.
 
     Uses Bot API CopyTextButton  (Bot API 7.4+, PTB 21.3+).

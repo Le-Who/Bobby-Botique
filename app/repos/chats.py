@@ -54,9 +54,9 @@ async def get_user_chat(user_id: int) -> ChatState | None:
         try:
             query = """
                 SELECT
-                    (SELECT row_to_json(u)::jsonb FROM (SELECT is_deep_dive, deep_dive_thread_id FROM users WHERE user_id = $1) u) as user_info,
-                    (SELECT row_to_json(c)::jsonb FROM (SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id FROM chats WHERE user_id = $1) c) as chat_info,
-                    (SELECT COALESCE(jsonb_agg(jsonb_build_object('role', role, 'content', content) ORDER BY id ASC), '[]'::jsonb) FROM active_chat_messages WHERE user_id = $1) as messages
+                    (SELECT row_to_json(u)::jsonb FROM (SELECT is_deep_dive, deep_dive_thread_id FROM public.users WHERE user_id = $1) u) as user_info,
+                    (SELECT row_to_json(c)::jsonb FROM (SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id FROM public.chats WHERE user_id = $1) c) as chat_info,
+                    (SELECT COALESCE(jsonb_agg(jsonb_build_object('role', role, 'content', content) ORDER BY id ASC), '[]'::jsonb) FROM public.active_chat_messages WHERE user_id = $1) as messages
             """
             result = await db_query(query, (user_id,), conn=conn)
 
@@ -192,7 +192,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
 
             query = """
             WITH update_chats AS (
-                INSERT INTO chats (user_id, model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id)
+                INSERT INTO public.chats (user_id, model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $13)
                 ON CONFLICT (user_id)
                 DO UPDATE SET
@@ -202,12 +202,12 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                     ltm_enabled = EXCLUDED.ltm_enabled, branch_id = EXCLUDED.branch_id
             ),
             update_users AS (
-                UPDATE users SET is_deep_dive = $9, deep_dive_thread_id = $10 WHERE user_id = $1
+                UPDATE public.users SET is_deep_dive = $9, deep_dive_thread_id = $10 WHERE user_id = $1
             ),
             delete_messages AS (
-                DELETE FROM active_chat_messages WHERE user_id = $1 AND $11
+                DELETE FROM public.active_chat_messages WHERE user_id = $1 AND $11
             )
-            INSERT INTO active_chat_messages (user_id, role, content)
+            INSERT INTO public.active_chat_messages (user_id, role, content)
             SELECT $1, role, content FROM json_to_recordset($12::json) AS x(role text, content text)
             WHERE $12::json IS NOT NULL AND json_array_length($12::json) > 0;
             """
@@ -251,7 +251,7 @@ async def migrate_invalid_models(
     invalid_chats = await db_query(
         f"""
         SELECT user_id, model
-        FROM chats
+        FROM public.chats
         WHERE model IS NOT NULL
         AND model NOT IN ({placeholders})
         """,
@@ -272,14 +272,14 @@ async def migrate_invalid_models(
 
     if gemini_users:
         await db_query(
-            "UPDATE chats SET model = $1 WHERE user_id = ANY($2)",
+            "UPDATE public.chats SET model = $1 WHERE user_id = ANY($2)",
             (default_gemini_model, gemini_users),
         )
         migrated += len(gemini_users)
 
     if openrouter_users:
         await db_query(
-            "UPDATE chats SET model = $1 WHERE user_id = ANY($2)",
+            "UPDATE public.chats SET model = $1 WHERE user_id = ANY($2)",
             (default_openrouter_model, openrouter_users),
         )
         migrated += len(openrouter_users)
@@ -314,6 +314,6 @@ async def model_migration_watcher(old_settings, new_settings) -> None:
 async def update_thinking_level(user_id: int, level: str | None) -> None:
     """Update thinking level for a user's chat. None resets to default."""
     await db_query(
-        "UPDATE chats SET thinking_level = $1 WHERE user_id = $2",
+        "UPDATE public.chats SET thinking_level = $1 WHERE user_id = $2",
         (level, user_id),
     )

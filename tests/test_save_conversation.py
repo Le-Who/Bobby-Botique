@@ -50,7 +50,7 @@ async def test_save_conversation_success(mock_chat_state):
 
         # First call args (INSERT)
         insert_call = mock_db_query.call_args_list[0]
-        assert "INSERT INTO conversations" in insert_call[0][0]
+        assert "INSERT INTO" in insert_call[0][0] and "conversations" in insert_call[0][0]
         assert insert_call[0][1] == (
             user_id,
             title,
@@ -127,7 +127,7 @@ async def test_save_conversation_no_history():
 
         # Verify db_query called only once (INSERT)
         assert mock_db_query.call_count == 1
-        assert "INSERT INTO conversations" in mock_db_query.call_args[0][0]
+        assert "INSERT INTO" in mock_db_query.call_args[0][0] and "conversations" in mock_db_query.call_args[0][0]
 
 
 @pytest.mark.asyncio

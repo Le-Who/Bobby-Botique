@@ -219,7 +219,7 @@ class PollinationsProvider:
 
             if resp.status_code == 402:
                 return PollinationsResult(success=False, error_message="paid_tier_required", model_used=model)
-            if resp.status_code == 401:
+            if resp.status_code in (401, 403):
                 return PollinationsResult(success=False, error_message="unauthorized", model_used=model)
             if not (200 <= resp.status_code < 300):
                 return PollinationsResult(
@@ -229,7 +229,7 @@ class PollinationsProvider:
                 )
 
             data = resp.json()
-            images_bytes = _extract_b64_or_url_bytes(data, timeout=timeout)
+            images_bytes = await _extract_b64_or_url_bytes(data, timeout=timeout)
 
             if not images_bytes:
                 return PollinationsResult(success=False, error_message="empty_response", model_used=model)
@@ -334,7 +334,7 @@ class PollinationsProvider:
 # ---------------------------------------------------------------------------
 
 
-def _extract_b64_or_url_bytes(data: dict, timeout: float = 30.0) -> list[bytes]:
+async def _extract_b64_or_url_bytes(data: dict, timeout: float = 30.0) -> list[bytes]:
     """
     Parse the OpenAI-compatible response body.
 
@@ -359,7 +359,8 @@ def _extract_b64_or_url_bytes(data: dict, timeout: float = 30.0) -> list[bytes]:
         url_str = item.get("url")
         if url_str:
             try:
-                fetched = httpx.get(url_str, timeout=timeout, follow_redirects=True)
+                async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                    fetched = await client.get(url_str)
                 content_type = fetched.headers.get("content-type", "")
                 if fetched.status_code == 200 and content_type.startswith("image/"):
                     result.append(fetched.content)

@@ -117,6 +117,49 @@ VOICE_TAG_INSTRUCTION = (
     "Если пользователь НЕ просит озвучить — НЕ добавляй этот тег."
 )
 
+# Intent routing: the LLM emits hidden [INTENT:xxx] tag when the user's query
+# *ambiguously* hints at an action (draw, research, tts) but doesn't explicitly
+# request it.  The bot parses these tags, strips them from the displayed text,
+# and renders contextual inline buttons: [🎨 Нарисовать?] / [🔬 Анализ?] etc.
+# Cost: ~180 tokens.
+INTENT_ROUTING_INSTRUCTION = (
+    "\n\n# ПРОАКТИВНЫЙ РОУТИНГ ИНТЕНТОВ\n"
+    "Если запрос пользователя КОСВЕННО (но не явно) указывает на желание:\n"
+    "- Сгенерировать картинку (описал визуальную сцену, попросил 'вообразить') → "
+    "добавь в САМЫЙ КОНЕЦ ответа тег `[INTENT:draw]`\n"
+    "- Провести глубокое исследование (сложный аналитический вопрос) → "
+    "добавь `[INTENT:research]`\n"
+    "- Озвучить ответ (длинный текст, история, статья) → "
+    "добавь `[INTENT:tts]`\n\n"
+    "ПРАВИЛА:\n"
+    "- Добавляй тег ТОЛЬКО при неоднозначности — если пользователь ЯВНО просит "
+    "нарисовать/исследовать/озвучить, выполняй напрямую (используй [VOICE] "
+    "для озвучки, или обработай соответствующую команду).\n"
+    "- Тег ставится в САМЫЙ КОНЕЦ ответа, ПОСЛЕ всего текста.\n"
+    "- Не более ОДНОГО тега за ответ.\n"
+    "- НЕ упоминай эти теги в тексте ответа."
+)
+
+# Smart suggestions: the LLM generates 2-3 contextual follow-up suggestions
+# that appear as inline buttons under the response.
+# Cost: ~120 tokens.
+SMART_SUGGESTIONS_INSTRUCTION = (
+    "\n\n# УМНЫЕ ПОДСКАЗКИ\n"
+    "В САМЫЙ КОНЕЦ ответа (после всех тегов, если они есть) добавь строку:\n"
+    "`[SUGGESTIONS: подсказка1 | подсказка2 | подсказка3]`\n\n"
+    "ПРАВИЛА:\n"
+    "- 2-3 подсказки, разделённые ` | `\n"
+    "- Каждая подсказка — короткая фраза (2-5 слов), "
+    "которая является логичным ПРОДОЛЖЕНИЕМ диалога\n"
+    "- Подсказки должны быть РАЗНООБРАЗНЫМИ: углубление, "
+    "смена ракурса, практическое применение\n"
+    "- Пиши подсказки на языке пользователя\n"
+    "- ВСЕГДА добавляй подсказки, кроме случаев когда ответ — "
+    "подтверждение действия или короткая реплика (< 100 символов)"
+)
+
+# Combined instruction block appended to every system prompt.
+SYSTEM_PROMPT_SUFFIX = VOICE_TAG_INSTRUCTION + INTENT_ROUTING_INSTRUCTION + SMART_SUGGESTIONS_INSTRUCTION
 
 # ============================================================================
 # PROMPT TEMPLATES — Versioned, with metadata
@@ -657,7 +700,7 @@ class PromptRegistry:
         if not role_prompt:
             # No role → full prompt with embedded formatting rules
             tmpl = self._templates["system_prompt_full"]
-            return tmpl.text.replace("{formatting_rules}", FORMATTING_RULES) + VOICE_TAG_INSTRUCTION
+            return tmpl.text.replace("{formatting_rules}", FORMATTING_RULES) + SYSTEM_PROMPT_SUFFIX
 
         # Role active → choose compact or full base
         if use_compact:
@@ -667,7 +710,7 @@ class PromptRegistry:
             tmpl = self._templates["system_prompt_full"]
             base = tmpl.text.replace("{formatting_rules}", FORMATTING_RULES)
 
-        return base + "\n\n# ДОПОЛНИТЕЛЬНАЯ РОЛЬ\n" + role_prompt.strip() + VOICE_TAG_INSTRUCTION
+        return base + "\n\n# ДОПОЛНИТЕЛЬНАЯ РОЛЬ\n" + role_prompt.strip() + SYSTEM_PROMPT_SUFFIX
 
     def get_task_prompt(self, name: str, **kwargs: str) -> str:
         """Get a task-specific prompt with variable substitution.

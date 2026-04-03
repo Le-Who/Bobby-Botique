@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>GemAI — Настройки</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root {
+  --bg: var(--tg-theme-bg-color, #ffffff);
+  --text: var(--tg-theme-text-color, #000000);
+  --hint: var(--tg-theme-hint-color, #999999);
+  --link: var(--tg-theme-link-color, #2678b6);
+  --btn: var(--tg-theme-button-color, #2678b6);
+  --btn-text: var(--tg-theme-button-text-color, #ffffff);
+  --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f0);
+  --header-bg: var(--tg-theme-header-bg-color, var(--btn));
+  --destructive: var(--tg-theme-destructive-text-color, #e53935);
+  --section-bg: var(--tg-theme-section-bg-color, var(--bg));
+  --section-header: var(--tg-theme-section-header-text-color, var(--hint));
+  --subtitle: var(--tg-theme-subtitle-text-color, var(--hint));
+  --radius: 12px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  background: var(--secondary-bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  padding-bottom: 80px;
+  min-height: 100vh;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  background: var(--bg);
+  border-bottom: 1px solid var(--secondary-bg);
+  position: sticky; top: 0; z-index: 10;
+}
+.tab {
+  flex: 1; padding: 14px 0; text-align: center;
+  font-size: 14px; font-weight: 600;
+  color: var(--hint); cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all .2s;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.tab.active { color: var(--link); border-bottom-color: var(--link); }
+
+/* ── Sections ─────────────────────────────────────────────── */
+.page { display: none; animation: fadeIn .25s; }
+.page.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.section { background: var(--section-bg); margin: 8px 0; border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.section-header { padding: 8px 16px 4px; font-size: 13px; font-weight: 600; color: var(--section-header); text-transform: uppercase; letter-spacing: .3px; }
+
+/* ── Stats bar ────────────────────────────────────────────── */
+.stats-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px; background: var(--bg);
+  border-bottom: 1px solid var(--secondary-bg);
+}
+.stats-bar .count { font-size: 15px; font-weight: 600; }
+.stats-bar .label { font-size: 13px; color: var(--hint); }
+.progress-bar { flex: 1; height: 4px; background: var(--secondary-bg); border-radius: 2px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--link); border-radius: 2px; transition: width .4s ease; }
+
+/* ── Memory cards ─────────────────────────────────────────── */
+.memory-list { padding: 0 0 12px; }
+.memory-card {
+  position: relative; overflow: hidden;
+  background: var(--bg); margin: 0;
+  border-bottom: .5px solid var(--secondary-bg);
+  transition: transform .2s;
+}
+.memory-card-inner {
+  padding: 12px 16px;
+  transition: transform .2s;
+  position: relative; z-index: 1;
+  background: var(--bg);
+}
+.memory-content { font-size: 14px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.memory-meta { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--secondary-bg); color: var(--hint); font-weight: 500; }
+.memory-date { font-size: 11px; color: var(--subtitle); }
+.delete-bg {
+  position: absolute; right: 0; top: 0; bottom: 0; width: 80px;
+  background: var(--destructive); display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 13px; font-weight: 600;
+}
+
+/* ── Search ───────────────────────────────────────────────── */
+.search-wrap { padding: 8px 16px; background: var(--bg); }
+.search-input {
+  width: 100%; padding: 10px 14px; border: none;
+  background: var(--secondary-bg); border-radius: 10px;
+  font-size: 15px; color: var(--text); outline: none;
+}
+.search-input::placeholder { color: var(--hint); }
+
+/* ── Settings form ────────────────────────────────────────── */
+.setting-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; min-height: 44px;
+  border-bottom: .5px solid var(--secondary-bg);
+}
+.setting-row:last-child { border-bottom: none; }
+.setting-label { font-size: 15px; }
+.setting-hint { font-size: 12px; color: var(--hint); margin-top: 2px; }
+
+/* Toggle switch */
+.toggle { position: relative; width: 51px; height: 31px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-track {
+  position: absolute; inset: 0; border-radius: 16px;
+  background: var(--secondary-bg); transition: background .2s; cursor: pointer;
+}
+.toggle-track::after {
+  content: ''; position: absolute; width: 27px; height: 27px;
+  left: 2px; top: 2px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  transition: transform .2s;
+}
+.toggle input:checked + .toggle-track { background: var(--link); }
+.toggle input:checked + .toggle-track::after { transform: translateX(20px); }
+
+/* Select */
+.setting-select {
+  padding: 6px 12px; border: 1px solid var(--secondary-bg);
+  border-radius: 8px; background: var(--bg); color: var(--text);
+  font-size: 14px; min-width: 140px; text-align: right;
+  -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%23999' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center;
+  padding-right: 28px;
+}
+
+/* Textarea */
+.prompt-area {
+  width: 100%; padding: 12px 16px; border: none;
+  background: var(--bg); color: var(--text);
+  font-family: inherit; font-size: 14px; line-height: 1.5;
+  resize: vertical; min-height: 100px; max-height: 300px;
+  outline: none;
+}
+.char-count { padding: 4px 16px 8px; font-size: 11px; color: var(--hint); text-align: right; }
+
+/* ── Empty / loading states ───────────────────────────────── */
+.empty-state { text-align: center; padding: 48px 24px; color: var(--hint); }
+.empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+.empty-state .title { font-size: 16px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
+.empty-state .desc { font-size: 13px; line-height: 1.5; }
+
+.loading { text-align: center; padding: 32px; color: var(--hint); font-size: 14px; }
+
+/* ── Toast ────────────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--bg); padding: 10px 20px;
+  border-radius: 10px; font-size: 14px; font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0,0,0,.2); z-index: 100;
+  opacity: 0; pointer-events: none; transition: opacity .3s;
+}
+.toast.show { opacity: 1; }
+
+/* ── Load more button ─────────────────────────────────────── */
+.load-more {
+  display: block; margin: 12px auto; padding: 10px 24px;
+  background: var(--secondary-bg); border: none; border-radius: 10px;
+  color: var(--link); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+</style>
+</head>
+<body>
+
+<!-- Tabs -->
+<div class="tabs">
+  <div class="tab active" data-tab="memories" onclick="switchTab('memories')">🧠 Память</div>
+  <div class="tab" data-tab="settings" onclick="switchTab('settings')">⚙️ Настройки</div>
+</div>
+
+<!-- Page: Memories -->
+<div id="page-memories" class="page active">
+  <div class="search-wrap">
+    <input class="search-input" type="text" placeholder="Поиск по памяти…" oninput="filterMemories(this.value)">
+  </div>
+  <div id="memory-stats" class="stats-bar" style="display:none">
+    <span class="count" id="mem-count">0</span>
+    <span class="label">/ <span id="mem-limit">500</span></span>
+    <div class="progress-bar"><div class="progress-fill" id="mem-progress"></div></div>
+  </div>
+  <div id="memory-list" class="memory-list">
+    <div class="loading">Загрузка…</div>
+  </div>
+  <button id="load-more-btn" class="load-more" style="display:none" onclick="loadMoreMemories()">Загрузить ещё</button>
+</div>
+
+<!-- Page: Settings -->
+<div id="page-settings" class="page">
+  <div id="settings-loading" class="loading">Загрузка…</div>
+  <div id="settings-form" style="display:none">
+
+    <div class="section-header" style="margin-top:8px">Системный промпт</div>
+    <div class="section">
+      <textarea class="prompt-area" id="s-prompt" placeholder="Введите свой системный промпт…" oninput="onPromptInput()"></textarea>
+      <div class="char-count"><span id="s-prompt-count">0</span> / 4000</div>
+    </div>
+
+    <div class="section-header">Модель</div>
+    <div class="section">
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">AI модель</div>
+          <div class="setting-hint">Как в /model</div>
+        </div>
+        <select class="setting-select" id="s-model"></select>
+      </div>
+    </div>
+
+    <div class="section-header">Режимы</div>
+    <div class="section">
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Уровень размышлений</div>
+          <div class="setting-hint">off / low / medium / high</div>
+        </div>
+        <select class="setting-select" id="s-thinking">
+          <option value="off">Выкл</option>
+          <option value="low">Низкий</option>
+          <option value="medium">Средний</option>
+          <option value="high">Высокий</option>
+        </select>
+      </div>
+
+      <div class="setting-row">
+        <div><div class="setting-label">Долгосрочная память</div></div>
+        <label class="toggle"><input type="checkbox" id="s-ltm"><span class="toggle-track"></span></label>
+      </div>
+
+      <div class="setting-row">
+        <div><div class="setting-label">Веб-поиск</div></div>
+        <label class="toggle"><input type="checkbox" id="s-search"><span class="toggle-track"></span></label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const tg = window.Telegram.WebApp;
+tg.ready();
+tg.expand();
+
+const AUTH = 'tma ' + tg.initData;
+const API = '/webapp/api';
+
+// ── State ──
+let allMemories = [];
+let memoryOffset = 0;
+const MEMORY_PAGE = 20;
+let settingsLoaded = false;
+let originalSettings = {};
+
+// ── Tabs ──
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
+  if (name === 'memories' && allMemories.length === 0) loadMemories();
+  if (name === 'settings' && !settingsLoaded) loadSettings();
+  tg.MainButton.hide();
+}
+
+// ── API helper ──
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, { ...opts, headers: { 'Authorization': AUTH, 'Content-Type': 'application/json', ...opts.headers } });
+  if (!r.ok) throw new Error(`${r.status}`);
+  return r.json();
+}
+
+// ── Toast ──
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// ── MEMORIES ──
+
+async function loadMemories() {
+  try {
+    const [data, stats] = await Promise.all([
+      api(`/memories?offset=${memoryOffset}&limit=${MEMORY_PAGE}`),
+      api('/memories/stats')
+    ]);
+    allMemories = allMemories.concat(data.memories || []);
+    renderMemories(allMemories);
+    renderStats(stats);
+    memoryOffset += MEMORY_PAGE;
+    document.getElementById('load-more-btn').style.display = (data.memories || []).length >= MEMORY_PAGE ? 'block' : 'none';
+  } catch (e) {
+    document.getElementById('memory-list').innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div class="title">Ошибка загрузки</div></div>';
+  }
+}
+
+function loadMoreMemories() { loadMemories(); }
+
+function renderStats(stats) {
+  const bar = document.getElementById('memory-stats');
+  bar.style.display = 'flex';
+  document.getElementById('mem-count').textContent = stats.total_memories || 0;
+  document.getElementById('mem-limit').textContent = stats.limit || 500;
+  const pct = Math.min(100, ((stats.total_memories || 0) / (stats.limit || 500)) * 100);
+  document.getElementById('mem-progress').style.width = pct + '%';
+}
+
+function renderMemories(memories) {
+  const list = document.getElementById('memory-list');
+  if (!memories.length) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">🧠</div><div class="title">Память пуста</div><div class="desc">Бот запоминает важную информацию из ваших разговоров</div></div>';
+    return;
+  }
+  list.innerHTML = memories.map(m => `
+    <div class="memory-card" id="mem-${m.id}" data-id="${m.id}">
+      <div class="delete-bg">Удалить</div>
+      <div class="memory-card-inner">
+        <div class="memory-content">${esc(m.content)}</div>
+        <div class="memory-meta">
+          <span class="badge">${esc(m.source_type || 'memory')}</span>
+          <span class="memory-date">${fmtDate(m.created_at)}</span>
+        </div>
+      </div>
+    </div>`).join('');
+  // Attach swipe handlers
+  list.querySelectorAll('.memory-card').forEach(initSwipe);
+}
+
+function filterMemories(q) {
+  const lower = q.toLowerCase();
+  const filtered = q ? allMemories.filter(m => m.content.toLowerCase().includes(lower)) : allMemories;
+  renderMemories(filtered);
+}
+
+async function deleteMemory(id) {
+  try {
+    await api(`/memories/${id}`, { method: 'DELETE' });
+    allMemories = allMemories.filter(m => m.id !== id);
+    const el = document.getElementById('mem-' + id);
+    if (el) { el.style.height = el.offsetHeight + 'px'; requestAnimationFrame(() => { el.style.transition = 'height .3s, opacity .3s'; el.style.height = '0'; el.style.opacity = '0'; }); setTimeout(() => el.remove(), 300); }
+    toast('Удалено');
+    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+    // Update count
+    const cnt = document.getElementById('mem-count');
+    cnt.textContent = Math.max(0, parseInt(cnt.textContent) - 1);
+  } catch (e) { toast('Ошибка удаления'); }
+}
+
+// ── Swipe to delete ──
+function initSwipe(card) {
+  const inner = card.querySelector('.memory-card-inner');
+  let startX = 0, currentX = 0, swiping = false;
+  inner.addEventListener('touchstart', e => { startX = e.touches[0].clientX; swiping = true; }, { passive: true });
+  inner.addEventListener('touchmove', e => {
+    if (!swiping) return;
+    currentX = e.touches[0].clientX - startX;
+    if (currentX > 0) currentX = 0; // only left swipe
+    inner.style.transform = `translateX(${Math.max(-80, currentX)}px)`;
+    inner.style.transition = 'none';
+  }, { passive: true });
+  inner.addEventListener('touchend', () => {
+    swiping = false;
+    inner.style.transition = 'transform .2s';
+    if (currentX < -50) {
+      inner.style.transform = 'translateX(-80px)';
+      // Tap the red zone to confirm
+      card.querySelector('.delete-bg').onclick = () => deleteMemory(parseInt(card.dataset.id));
+    } else {
+      inner.style.transform = 'translateX(0)';
+    }
+    currentX = 0;
+  });
+}
+
+// ── SETTINGS ──
+
+async function loadSettings() {
+  try {
+    const data = await api('/settings');
+    const s = data.settings;
+    originalSettings = { ...s };
+
+    document.getElementById('s-prompt').value = s.system_prompt || '';
+    onPromptInput();
+
+    // Populate model select
+    const sel = document.getElementById('s-model');
+    sel.innerHTML = (data.available_models || []).map(m => `<option value="${esc(m)}" ${m === s.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
+
+    document.getElementById('s-thinking').value = s.thinking_level || 'off';
+    document.getElementById('s-ltm').checked = s.ltm_enabled;
+    document.getElementById('s-search').checked = s.search_enabled;
+
+    document.getElementById('settings-loading').style.display = 'none';
+    document.getElementById('settings-form').style.display = 'block';
+    settingsLoaded = true;
+
+    // Show MainButton for save
+    tg.MainButton.setText('Сохранить');
+    tg.MainButton.show();
+    tg.MainButton.onClick(saveSettings);
+  } catch (e) {
+    document.getElementById('settings-loading').innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div class="title">Ошибка загрузки</div></div>';
+  }
+}
+
+function onPromptInput() {
+  const ta = document.getElementById('s-prompt');
+  document.getElementById('s-prompt-count').textContent = ta.value.length;
+}
+
+async function saveSettings() {
+  tg.MainButton.showProgress();
+  try {
+    const body = {
+      system_prompt: document.getElementById('s-prompt').value,
+      model: document.getElementById('s-model').value,
+      thinking_level: document.getElementById('s-thinking').value,
+      ltm_enabled: document.getElementById('s-ltm').checked,
+      search_enabled: document.getElementById('s-search').checked,
+    };
+    await api('/settings', { method: 'PATCH', body: JSON.stringify(body) });
+    toast('Сохранено ✓');
+    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+    originalSettings = { ...body };
+  } catch (e) {
+    toast('Ошибка сохранения');
+    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+  } finally {
+    tg.MainButton.hideProgress();
+  }
+}
+
+// ── Utils ──
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+
+// ── Init ──
+loadMemories();
+</script>
+</body>
+</html>

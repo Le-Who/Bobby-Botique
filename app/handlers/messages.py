@@ -353,7 +353,6 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             else:
                 fwd_photos = []
 
-
         # ── 7c. Implicit image generation intent ─────────────────────────────
         # Matches: "Бот, нарисуй..." / "изобрази..." / "сгенерируй картинку..."
         # Bypasses conversational AI; routes straight to Canvas 2.0 pipeline.
@@ -552,6 +551,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     from app.state import ensure_state_loaded
+
     await ensure_state_loaded(user_id)
 
     new_text = edited_msg.text.strip()
@@ -620,6 +620,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                 logging.info("edit: completed for user %s", user_id)
 
                 import time as _time
+
                 elapsed = _time.time() - start_time
                 api_logger.log_response("telegram", start_time, method="handle_edited_message")
                 await metrics_collector.record_request("handle_edited_message", elapsed, success=True, user_id=user_id)
@@ -634,15 +635,20 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                 stop_heartbeat(placeholder_message.message_id)
                 from app.errors import build_retry_and_roles_keyboard
                 from app.i18n import t
+
                 await placeholder_message.edit_text(t("error.generic"), reply_markup=build_retry_and_roles_keyboard())
             except Exception:
                 pass
 
             import time as _time
+
             elapsed = _time.time() - start_time
             api_logger.log_response(
-                "telegram", start_time, method="handle_edited_message",
-                success=False, error_message=str(e),
+                "telegram",
+                start_time,
+                method="handle_edited_message",
+                success=False,
+                error_message=str(e),
             )
             await metrics_collector.record_request("handle_edited_message", elapsed, success=False, user_id=user_id)
         finally:
@@ -654,6 +660,7 @@ async def handle_edited_request(update: Update, context: ContextTypes.DEFAULT_TY
                 stop_heartbeat(placeholder_message.message_id)
 
     from app.utils.background_tasks import submit_task
+
     edit_ai_task = submit_task(edit_task_wrapper())
     state.register_active_task(user_id, edit_ai_task)
 

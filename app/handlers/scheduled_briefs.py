@@ -207,9 +207,7 @@ async def _search_for_topics(topics: list[str]) -> list[dict[str, str]]:
     return articles[:5]  # Limit total articles
 
 
-async def _generate_brief_summary(
-    topics: list[str], articles: list[dict[str, str]]
-) -> dict[str, str]:
+async def _generate_brief_summary(topics: list[str], articles: list[dict[str, str]]) -> dict[str, str]:
     """Use Gemini to produce per-topic summaries for digestible expandable blockquotes.
 
     Returns a dict mapping topic headline → 2-3 sentence summary string.
@@ -246,8 +244,7 @@ async def _generate_brief_summary(
             "and the value is a 2-3 sentence summary for that topic. "
             "Include a source URL inline if available. "
             "Output ONLY valid JSON, no markdown fences.\n\n"
-            "Topics:\n" + "\n".join(f"- {tp}" for tp in topics)
-            + articles_block
+            "Topics:\n" + "\n".join(f"- {tp}" for tp in topics) + articles_block
         )
 
         response = await client.aio.models.generate_content(

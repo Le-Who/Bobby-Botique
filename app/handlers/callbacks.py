@@ -226,3 +226,9 @@ def register(application: Application) -> None:
 
     _add_fast_callback(application, fwd_save_callback, "^fwd_save$")
 
+    # Smart Suggestions + Proactive Intent Routing (Phase 1 UX)
+    from app.handlers.cb_smart_actions import edit_query_callback, intent_route_callback, suggestion_callback
+
+    _add_fast_callback(application, suggestion_callback, "^suggest:")
+    _add_fast_callback(application, edit_query_callback, "^edit_query$")
+    application.add_handler(CallbackQueryHandler(intent_route_callback, pattern="^intent_route:"))

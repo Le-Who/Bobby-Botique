@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import inspect
 import logging
 import random
 import re
@@ -581,7 +582,7 @@ async def stream_and_display(
 
             if delta:
                 if yield_hook is not None:
-                    if asyncio.iscoroutinefunction(yield_hook):
+                    if inspect.iscoroutinefunction(yield_hook):
                         await yield_hook()
                     else:
                         yield_hook()
@@ -651,8 +652,7 @@ async def stream_and_display(
             _partial_fmt, _ = TelegramFormatter.format_text(partial)
             _partial_fmt = wrap_partial_response(_partial_fmt)
             return (
-                partial + "\n\n⏰ _(ответ был прерван"
-                " по таймауту)_",
+                partial + "\n\n⏰ _(ответ был прерван по таймауту)_",
                 True,
                 writer.last_message,
                 0,

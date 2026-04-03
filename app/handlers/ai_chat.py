@@ -22,6 +22,7 @@ from app.utils.stage_indicators import STAGES_CHAT, update_stage
 from app.utils.ux_improvements import (
     set_done_reaction,
     set_error_reaction,
+    set_feedback_reactions,
     set_thinking_reaction,
 )
 
@@ -357,34 +358,66 @@ async def _handle_regular_chat(
                 ]
                 reply_markup = InlineKeyboardMarkup(buttons)
             else:
-                # Normal response: show standard action buttons
+                # Normal response: parse LLM tags + show standard action buttons
+                from app.utils.response_tags import INTENT_BUTTONS, parse_response_tags
+
+                _cleaned_text, _intent, _suggestions = parse_response_tags(response_text)
+
                 _lang = detect_language(user_message)
                 branch_btn = (
                     InlineKeyboardButton(t("btn.back_to_main", _lang), callback_data="branch_return")
                     if chat_state.branch_id
                     else InlineKeyboardButton(t("btn.what_if", _lang), callback_data="branch_create")
                 )
-                # ── Improvement 7: one-tap memory save for forwarded-batch analysis
-                buttons = [
-                    [InlineKeyboardButton(t("btn.retry", _lang), callback_data="retry_last")],
+                # ── Smart Suggestions row (LLM-generated follow-ups) ─────────
+                buttons = []
+                if _suggestions:
+                    suggestion_row = [
+                        InlineKeyboardButton(
+                            f"✨ {s}",
+                            callback_data=f"suggest:{s[:40]}",
+                        )
+                        for s in _suggestions
+                    ]
+                    buttons.append(suggestion_row)
+
+                # ── Proactive Intent routing button ─────────────────────────
+                if _intent and _intent in INTENT_BUTTONS:
+                    label, cb_data = INTENT_BUTTONS[_intent]
+                    buttons.append([InlineKeyboardButton(label, callback_data=cb_data)])
+
+                # Standard action rows
+                buttons.append([InlineKeyboardButton(t("btn.retry", _lang), callback_data="retry_last")])
+                buttons.append(
                     [
                         InlineKeyboardButton(t("btn.roles", _lang), callback_data="open_roles:from_response"),
                         branch_btn,
-                    ],
+                    ]
+                )
+                buttons.append(
                     [
                         InlineKeyboardButton(t("btn.listen", _lang), callback_data="tts_reply"),
                         InlineKeyboardButton(
                             t("btn.new_topic_short", _lang),
                             callback_data=("deepdive:new_topic" if chat_state.is_deep_dive else "new_topic"),
                         ),
-                    ],
-                ]
+                    ]
+                )
                 if is_forward_batch:
-                    buttons.append(
-                        [InlineKeyboardButton("💾 Сохранить тезисы в память", callback_data="fwd_save")]
-                    )
-                reply_markup = InlineKeyboardMarkup(buttons)
+                    buttons.append([InlineKeyboardButton("💾 Сохранить тезисы в память", callback_data="fwd_save")])
 
+                # ── CopyTextButton for code blocks ───────────────────────
+                from app.utils.response_tags import extract_first_code_block
+
+                _code_block = extract_first_code_block(response_text)
+                if _code_block:
+                    from app.utils.ux_improvements import make_copy_text_button
+
+                    _copy_btn = make_copy_text_button(_code_block, "📋 Скопировать код")
+                    if _copy_btn:
+                        buttons.append([_copy_btn])
+
+                reply_markup = InlineKeyboardMarkup(buttons)
 
             if not streamed:
                 # Non-streaming: send_long_message as before
@@ -414,6 +447,11 @@ async def _handle_regular_chat(
             if _user_msg_id and not was_interrupted:
                 await set_done_reaction(_bot, _chat_id, _user_msg_id)
 
+            # ── UX: pre-place 👍/👎 on bot's response for tap-to-rate ────
+            if not was_interrupted:
+                _response_msg = stream_last_msg or placeholder_message
+                await set_feedback_reactions(_bot, _chat_id, _response_msg.message_id)
+
             # ── Voice reply (fire-and-forget background task) ────────────
             # Fired BEFORE state save to start TTS generation ASAP.
             # Triggers from: (a) explicit param (voice message source) OR
@@ -428,11 +466,16 @@ async def _handle_regular_chat(
                     response_text=response_text,
                 )
 
-            # Strip [VOICE] tag from response saved to history (already
-            # stripped from display by the streaming layer)
+            # Strip all LLM hidden tags from response before saving to history.
+            # Tags: [VOICE], [INTENT:xxx], [SUGGESTIONS: ...]
+            from app.utils.response_tags import parse_response_tags
+
             clean_response = response_text
             if voice_requested and clean_response.startswith("[VOICE]"):
                 clean_response = clean_response[len("[VOICE]") :].lstrip()
+            # Strip intent + suggestion tags
+            clean_response, _, _ = parse_response_tags(clean_response)
+
             chat_state.history.append({"role": "model", "parts": [clean_response]})
             chat_state.token_count = new_token_count
             await update_user_chat(user_id, chat_state)

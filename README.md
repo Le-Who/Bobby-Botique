@@ -35,6 +35,10 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Context Summarization**: Automatic token compression for large chats via `app/context/` subsystem — `ContextAssembler` orchestrates history assembly within model-specific token budgets, `Summarizer` produces LLM-backed compressed summaries, and `TokenBudget` maps model patterns to limits (flash-lite: 32K, flash: 128K).
 - **Document Chunking**: Retrieval-time chunking (`app/documents/chunking.py`) with three strategies — recursive (paragraph/sentence/word), hierarchical (parent/child), and query-aware relevance scoring (`chunk_for_context`) — replacing naïve hard-truncation.
 - **Intelligence Briefs**: DB-persisted topic subscriptions (`/subscribe`, `/unsubscribe`). Hourly job extracts topics from LTM → Tavily search → Gemini summary → Telegram delivery. Backed by `brief_subscriptions` table with RLS.
+- **Telegram Mini App**: Native in-app settings panel served as a Quart Blueprint (`/webapp/`). Two-tab interface: **🧠 LTM Explorer** (paginated memory browser with swipe-to-delete, search, usage stats) and **⚙️ Settings Editor** (system prompt, model, thinking level, LTM/search toggles). Authenticated via Telegram `initData` HMAC-SHA256. Styled with Telegram theme variables for automatic dark/light mode. Accessible via `WebAppInfo` button in `/settings` command. Uses `WEBHOOK_URL` env var for multi-deployment portability.
+- **Smart UX Interactions**: Proactive feedback (`👍`/`👎` reaction seeding via `set_message_reaction`), smart LLM-generated suggestions (`[SUGGESTIONS:...]` tags → inline buttons), intent routing (`[INTENT:...]` → contextual actions), `CopyTextButton` for code blocks, `sendMessageDraft` for input pre-filling, and `🔥` message effects for image generation.
+- **Telegraph Longreads**: Automatic publishing of responses >5000 chars to Telegraph Instant View with collapsed blockquote summaries and inline read buttons. Graceful fallback to chunked messages.
+- **Auto TTS for Research**: Fire-and-forget voice synthesis of research results via ElevenLabs, triggered automatically after successful agentic search responses.
 - **Administrative Dashboard**: Quart-based web server serving Prometheus metrics (`/metrics`), system health overviews, batch API (`/api/dashboard` — 8 metrics in 1 RTT), SSE live updates (`/api/events` — 5s real-time stream), and key health diagnostics (`/api/key-health`). Frontend integrates SSE EventSource for real-time CPU/memory/queue updates between polls.
 - **Request Deduplication & Debouncing**: In-memory double-tap prevention middleware with 3s window and MD5 hashing blocks duplicate identical requests. Rapid-fire text messages and grouped forwards are handled by a **1.1s Trailing Message Debounce** aggregation window. The timer resets on every incoming fragment, flawlessly merging long bursts of messages into a single cohesive AI context before processing.
 - **Key Rotation Observability**: Structured `KEY_EVENT` logging for usage milestones, near-limit warnings (70%), threshold rotations, and a `get_health_summary()` dashboard API with per-key status snapshots.
@@ -89,7 +93,8 @@ graph TD;
 | `app/adapters/`       | Concurrency primitives and Telegram UI adapter.                                |
 | `app/db/`             | Database bootstrap: schema validation, migrations runner, RLS, seed.           |
 | `app/utils/`          | Shared utilities (formatting, keyboards, background tasks, image utils, etc.). |
-| `app/templates/`      | HTML Jinja2 templates for the admin web dashboard.                             |
+| `app/templates/`      | HTML Jinja2 templates for admin dashboard and Telegram Mini App.               |
+| `app/web_miniapp.py`  | Quart Blueprint for Telegram Mini App (initData auth, memory/settings API).    |
 | `docs/`               | Extended architectural documentation.                                          |
 | `scripts/migrations/` | Numbered SQL migration files — single source of truth for all DDL.             |
 | `tests/`              | Comprehensive test suite (Unit and Integration).                               |

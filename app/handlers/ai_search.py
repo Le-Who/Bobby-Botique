@@ -383,14 +383,78 @@ async def _handle_research_agent(
             [InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")],
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
         ]
-        reply_markup = InlineKeyboardMarkup(buttons)
 
-        await send_long_message(
-            placeholder_message,
-            final_answer,
-            reply_markup=reply_markup,
-            is_deep_dive=True,
-        )
+        # ── Telegraph for longreads (>5000 chars) ────────────────────
+        from app.utils.telegraph import should_use_telegraph
+
+        telegraph_url: str | None = None
+        if should_use_telegraph(final_answer):
+            try:
+                from app.utils.telegraph import create_telegraph_page
+
+                # Use first 60 chars of the query as page title
+                page_title = actual_search_query[:60].strip() or "Исследование"
+                telegraph_url = await create_telegraph_page(page_title, final_answer)
+            except Exception as tg_err:
+                logging.debug("Telegraph page creation failed: %s", tg_err)
+
+        if telegraph_url:
+            # Send a collapsed summary with Instant View link
+            # Take first ~800 chars as the summary
+            summary_lines = final_answer[:800].strip()
+            if len(final_answer) > 800:
+                summary_lines += "…"
+
+            from app.utils.ux_improvements import wrap_in_expandable_blockquote
+
+            summary_html = wrap_in_expandable_blockquote(summary_lines)
+            full_text = f'{summary_html}\n\n📖 <a href="{telegraph_url}">Читать полностью (Instant View)</a>'
+            buttons.insert(0, [InlineKeyboardButton("📖 Открыть статью", url=telegraph_url)])
+            reply_markup = InlineKeyboardMarkup(buttons)
+
+            try:
+                await placeholder_message.edit_text(
+                    full_text,
+                    parse_mode="HTML",
+                    reply_markup=reply_markup,
+                    disable_web_page_preview=False,  # Enable for Instant View
+                )
+            except Exception as e:
+                logging.warning("Telegraph summary edit failed: %s, falling back", e)
+                # Fallback to standard long message
+                reply_markup = InlineKeyboardMarkup(buttons[1:])  # Remove Telegraph button
+                await send_long_message(
+                    placeholder_message,
+                    final_answer,
+                    reply_markup=reply_markup,
+                    is_deep_dive=True,
+                )
+        else:
+            # Standard flow: split into messages
+            reply_markup = InlineKeyboardMarkup(buttons)
+            await send_long_message(
+                placeholder_message,
+                final_answer,
+                reply_markup=reply_markup,
+                is_deep_dive=True,
+            )
+
+        # ── Auto TTS for research results (fire-and-forget) ──────────
+        if len(final_answer) > 200:
+            try:
+                from app.voice_engine import fire_voice_reply
+
+                _bot = placeholder_message.get_bot()
+                _chat_id = placeholder_message.chat.id if placeholder_message.chat else None
+                if _bot and _chat_id:
+                    fire_voice_reply(
+                        bot=_bot,
+                        chat_id=_chat_id,
+                        reply_to_message_id=placeholder_message.message_id,
+                        response_text=final_answer,
+                    )
+            except Exception as tts_err:
+                logging.debug("Auto TTS for research skipped: %s", tts_err)
 
         # Save to history
         chat_state.history.append({"role": "user", "parts": [actual_search_query]})

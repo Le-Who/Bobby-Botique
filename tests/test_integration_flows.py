@@ -288,7 +288,7 @@ class TestConversationLifecycle:
         mock_db.return_value = None
         _result = await rename_conversation(1, 42, "New Title")
         sql = mock_db.call_args[0][0]
-        assert "UPDATE conversations" in sql
+        assert "UPDATE" in sql and "conversations" in sql
         assert "title" in sql.lower()
 
     @pytest.mark.asyncio
@@ -305,7 +305,7 @@ class TestConversationLifecycle:
         assert result is True
         # Last call should be DELETE ... RETURNING
         sql = mock_db.call_args_list[-1][0][0]
-        assert "DELETE FROM conversations" in sql
+        assert "DELETE FROM" in sql and "conversations" in sql
         assert "RETURNING" in sql
 
     @pytest.mark.asyncio

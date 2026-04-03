@@ -614,8 +614,13 @@ def classify_key_error(text: str) -> str:
 
 
 def build_retry_and_roles_keyboard(include_roles: bool = True) -> InlineKeyboardMarkup:
-    """Builds keyboard with retry button and optional roles button."""
-    buttons = [[InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="retry_last")]]
+    """Builds keyboard with retry button, edit query, and optional roles button."""
+    buttons = [
+        [
+            InlineKeyboardButton("🔁 Повторить", callback_data="retry_last"),
+            InlineKeyboardButton("✏️ Изменить запрос", callback_data="edit_query"),
+        ],
+    ]
     if include_roles:
         buttons.append([InlineKeyboardButton("🎭 Выбрать роль ИИ", callback_data="open_roles:from_response")])
     return InlineKeyboardMarkup(buttons)

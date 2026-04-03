@@ -67,9 +67,7 @@ async def process_long_request(
         effective_msg = update.effective_message
         is_photo = bool(effective_msg.photo) if effective_msg else False
         # Support edit-in-place: handle_edited_request injects the corrected text here
-        _inplace_override = (
-            context.user_data.get("_edited_text_override") if context.user_data else None
-        )
+        _inplace_override = context.user_data.get("_edited_text_override") if context.user_data else None
         if text_override is not None:
             text = text_override
         elif _inplace_override is not None:
@@ -85,9 +83,7 @@ async def process_long_request(
         # stores the photo Message objects in context.user_data["_fwd_photos"].
         # We consume them here and route to the multimodal handler so the LLM
         # receives a unified request: author-attributed text block + images.
-        _fwd_photos: list | None = (
-            context.user_data.pop("_fwd_photos", None) if context.user_data else None
-        )
+        _fwd_photos: list | None = context.user_data.pop("_fwd_photos", None) if context.user_data else None
 
         chat_state = await get_user_chat(update.effective_user.id)
 
@@ -167,11 +163,8 @@ async def process_long_request(
                     update.effective_user.id,
                     text,
                     chat_state,
-                    is_forward_batch=bool(
-                        context.user_data.pop("_fwd_batch", False) if context.user_data else False
-                    ),
+                    is_forward_batch=bool(context.user_data.pop("_fwd_batch", False) if context.user_data else False),
                 )
-
 
     except Exception as e:
         logging.error("Error in background task dispatcher: %s", e, exc_info=True)

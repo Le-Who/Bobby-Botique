@@ -159,7 +159,7 @@ class TestBriefGeneration:
         ):
             mock_db.db_query = AsyncMock(side_effect=mock_db_query)
             mock_search.return_value = [{"title": "Test", "content": "Test content", "url": "https://test.com"}]
-            mock_summary.return_value = "• Point 1\n• Point 2\n• Point 3"
+            mock_summary.return_value = {"🤖 ML архитектуры": "Point 1: Transformers.", "🐍 Python": "Point 2: Performance."}
 
             from app.handlers.scheduled_briefs import generate_and_send_brief
 
@@ -170,4 +170,4 @@ class TestBriefGeneration:
 
             # Verify the message contains the brief
             sent_text = mock_bot.send_message.call_args[1]["text"]
-            assert "бриф" in sent_text.lower() or "Point" in sent_text
+            assert "бриф" in sent_text.lower() or "ML" in sent_text

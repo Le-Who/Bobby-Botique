@@ -206,7 +206,7 @@ async def get_model_daily_limit(model_name: str) -> int | None:
 
     try:
         res = await db_query(
-            "SELECT daily_limit FROM model_configuration WHERE model_name = $1",
+            "SELECT daily_limit FROM public.model_configuration WHERE model_name = $1",
             (model_name,),
         )
         limit = res[0]["daily_limit"] if res else None

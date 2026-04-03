@@ -71,7 +71,7 @@ async def save_conversation(
         if not chat_state:
             return None
         result = await db_query(
-            """INSERT INTO conversations (user_id, title, role_type, role_id, summary, token_budget, created_at)
+            """INSERT INTO public.conversations (user_id, title, role_type, role_id, summary, token_budget, created_at)
                VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP) RETURNING id""",
             (user_id, title, role_type, role_id, None, chat_state.token_count),
         )
@@ -96,7 +96,7 @@ async def get_user_conversations(user_id: int, limit: int = 10, offset: int = 0)
         result = await db_query(
             """SELECT c.id, c.title, c.role_type, c.role_id, c.summary, c.token_budget, c.created_at,
                       r.title as role_title, ur.title as user_role_title
-               FROM conversations c
+               FROM public.conversations c
                LEFT JOIN roles r ON c.role_type = 'role' AND c.role_id = r.id
                LEFT JOIN user_roles ur ON c.role_type = 'user_role' AND c.role_id = ur.id
                WHERE c.user_id = $1
@@ -125,7 +125,7 @@ async def get_conversation_messages(conversation_id: int, user_id: int, *, conn=
     try:
         query = """
             SELECT cm.role, cm.content, cm.created_at
-            FROM conversations c
+            FROM public.conversations c
             LEFT JOIN conversation_messages cm ON c.id = cm.conversation_id
             WHERE c.id = $1 AND c.user_id = $2
             ORDER BY cm.created_at ASC
@@ -161,7 +161,7 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             query = """
                 SELECT c.role_type, c.role_id, c.summary,
                        COALESCE(r.prompt, ur.prompt) as role_prompt
-                FROM conversations c
+                FROM public.conversations c
                 LEFT JOIN roles r ON c.role_type = 'role' AND c.role_id = r.id
                 LEFT JOIN user_roles ur ON c.role_type = 'user_role' AND c.role_id = ur.id
                 WHERE c.id = $1 AND c.user_id = $2
@@ -178,14 +178,14 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
                 return False
 
             await db_query(
-                "DELETE FROM active_chat_messages WHERE user_id = $1",
+                "DELETE FROM public.active_chat_messages WHERE user_id = $1",
                 (user_id,),
                 conn=conn,
             )
             if messages:
                 insert_data = [(user_id, msg["role"], str(msg.get("content", ""))) for msg in messages]
                 await db_execute_many(
-                    "INSERT INTO active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
+                    "INSERT INTO public.active_chat_messages (user_id, role, content) VALUES ($1, $2, $3)",
                     insert_data,
                     conn=conn,
                 )
@@ -193,13 +193,13 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
             # ⚡ Bolt Optimization: Combine token_count and system_prompt updates into 1 query
             if role_prompt is not None:
                 await db_query(
-                    "UPDATE chats SET token_count = 0, system_prompt = $1 WHERE user_id = $2",
+                    "UPDATE public.chats SET token_count = 0, system_prompt = $1 WHERE user_id = $2",
                     (role_prompt, user_id),
                     conn=conn,
                 )
             else:
                 await db_query(
-                    "UPDATE chats SET token_count = 0 WHERE user_id = $1",
+                    "UPDATE public.chats SET token_count = 0 WHERE user_id = $1",
                     (user_id,),
                     conn=conn,
                 )
@@ -212,7 +212,7 @@ async def switch_to_conversation(user_id: int, conversation_id: int) -> bool:
 async def rename_conversation(user_id: int, conversation_id: int, new_title: str) -> bool:
     try:
         result = await db_query(
-            "UPDATE conversations SET title = $1 WHERE id = $2 AND user_id = $3",
+            "UPDATE public.conversations SET title = $1 WHERE id = $2 AND user_id = $3",
             (new_title, conversation_id, user_id),
         )
         return result is not None
@@ -230,12 +230,12 @@ async def delete_conversation(user_id: int, conversation_id: int) -> bool:
             # No TOCTOU — if the conversation doesn't exist, no harm done
             await db_query(
                 "DELETE FROM conversation_messages WHERE conversation_id IN "
-                "(SELECT id FROM conversations WHERE id = $1 AND user_id = $2)",
+                "(SELECT id FROM public.conversations WHERE id = $1 AND user_id = $2)",
                 (conversation_id, user_id),
                 conn=conn,
             )
             result = await db_query(
-                "DELETE FROM conversations WHERE id = $1 AND user_id = $2 RETURNING id",
+                "DELETE FROM public.conversations WHERE id = $1 AND user_id = $2 RETURNING id",
                 (conversation_id, user_id),
                 conn=conn,
             )
@@ -246,7 +246,7 @@ async def delete_conversation(user_id: int, conversation_id: int) -> bool:
 
 async def get_conversation_count(user_id: int) -> int:
     try:
-        result = await db_query("SELECT COUNT(*) FROM conversations WHERE user_id = $1", (user_id,))
+        result = await db_query("SELECT COUNT(*) FROM public.conversations WHERE user_id = $1", (user_id,))
         return result[0]["count"] if result else 0
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return 0

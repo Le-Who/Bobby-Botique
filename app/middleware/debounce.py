@@ -403,11 +403,7 @@ async def _build_entry(message: Message, *, bot=None) -> _MessageEntry:
                 forwarded_date = datetime.fromtimestamp(int(raw_date), tz=UTC)
 
     # ── Text resolution ──────────────────────────────────────────────────────
-    text = (
-        message.text
-        or message.caption
-        or ""
-    )
+    text = message.text or message.caption or ""
 
     # ── Voice STT (fire-and-forget future, resolved after window closes) ─────
     stt_future: asyncio.Future[str] | None = None
@@ -479,8 +475,19 @@ def _extract_author_label(forward_origin) -> str:
 def _format_fwd_prefix(author_label: str, forwarded_date: datetime | None) -> str:
     """Format the blockquote prefix for a forwarded message line."""
     MONTHS_RU = [
-        "", "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
-        "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек",
+        "",
+        "Янв",
+        "Фев",
+        "Мар",
+        "Апр",
+        "Май",
+        "Июн",
+        "Июл",
+        "Авг",
+        "Сен",
+        "Окт",
+        "Ноя",
+        "Дек",
     ]
     if forwarded_date is not None:
         date_str = f"{forwarded_date.day} {MONTHS_RU[forwarded_date.month]}, {forwarded_date.hour:02d}:{forwarded_date.minute:02d}"
@@ -560,8 +567,6 @@ async def _resolve_stt_futures(entries: list[_MessageEntry]) -> None:
             else:
                 entry.text = "[Голосовое сообщение — расшифровка недоступна]"
         except TimeoutError:
-            logger.warning(
-                "STT grace period exhausted for forwarded voice, inserting stub"
-            )
+            logger.warning("STT grace period exhausted for forwarded voice, inserting stub")
             entry.text = "[Голосовое сообщение — расшифровка обрабатывается]"
             # Don't cancel the future — the background task will finish eventually

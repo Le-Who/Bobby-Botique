@@ -606,11 +606,14 @@ async def _run_generation(
             caption += f"\n_🌐 Переведено: {_escape_md(original_short)}_"
 
         try:
+            from app.utils.ux_improvements import EFFECT_FIRE
+
             sent = await message.reply_photo(
                 photo=image_bytes,
                 caption=caption,
                 parse_mode="Markdown",
                 reply_markup=keyboard,
+                message_effect_id=EFFECT_FIRE,
             )
             _set_draw_state(context, last_photo_msg=sent.message_id)
             logger.info(

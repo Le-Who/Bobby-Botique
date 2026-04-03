@@ -1,18 +1,22 @@
 # /app/handlers/msg_reactions.py
-"""Native Telegram reaction handler — replaces inline 👍/👎 buttons with ambient feedback.
+"""Native Telegram reaction handler — ambient feedback via pre-placed reactions.
 
-When a user reacts to a bot message:
-  👍 / ❤️ / 🔥 / 👏  → record positive feedback (no UI noise)
-  👎 / 💩 / 🤮        → record negative feedback + silently update metrics
+Architecture:
+    The bot pre-places 👍/👎 reactions on its OWN messages (via
+    ``set_feedback_reactions`` in ux_improvements.py). Users simply tap
+    one of the pre-placed reactions to give feedback — zero friction.
 
-Design decision:
+    When a user reacts:
+      👍 / ❤️ / 🔥 / 👏  → record positive + bot responds with ❤️ reaction
+      👎 / 💩 / 🤮        → record negative + store LTM correction signal
+
+    **Critical filter**: The bot's own pre-placed reactions are ignored
+    by checking ``actor.id != bot.id``. Without this, the bot would count
+    its own seeds as user feedback.
+
     Reactions arrive via ``message_reaction`` updates (UpdateType.MESSAGE_REACTION).
     We handle ONLY ``update.message_reaction`` (individual reactions), not
     ``message_reaction_count`` (anonymous aggregate counts in channels).
-
-    We do NOT pop up any confirmations or toasts — reactions are ambient.
-    The feedback is silently written to the same ``save_feedback`` table as
-    the old inline button system, so reporting is unchanged.
 
     This handler is registered with ``MessageReactionHandler`` (PTB 20.8+)
     which provides ``message_reaction_types=MESSAGE_REACTION_UPDATED`` to
@@ -47,19 +51,33 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
 
     PTB delivers this via update.message_reaction (MessageReactionUpdated).
     We check new_reaction to see what was added, and old_reaction to detect removals.
-    Only bot messages are processed (we check actor vs bot identity).
+
+    **Bot-self-reaction filter**: The bot pre-places 👍/👎 on its own
+    messages.  When IT does so, Telegram delivers a ``message_reaction``
+    update with ``actor == bot``.  We MUST skip those to avoid counting
+    the bot's own reactions as user feedback.
     """
     reaction_update = update.message_reaction
     if not reaction_update:
         return
 
-    # Only care about reactions to messages in private/group chats where user is known
+    # Only care about reactions where the actor is known
     actor = reaction_update.actor_chat or reaction_update.user
     if not actor:
         return
 
     user_id: int = actor.id
+
+    # ── CRITICAL: filter out bot's own pre-placed reactions ────────────────
+    # The bot places 👍/👎 on its messages via set_feedback_reactions().
+    # Telegram delivers that as a message_reaction update with actor=bot.
+    # We must not count those as user feedback.
+    bot_id = context.bot.id
+    if user_id == bot_id:
+        return
+
     message_id: int = reaction_update.message_id
+    chat_id: int = reaction_update.chat.id
 
     new_reactions: list = reaction_update.new_reaction or []
     old_reactions: list = reaction_update.old_reaction or []
@@ -70,7 +88,6 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
     added_emojis = new_emojis - old_emojis
 
     if not added_emojis:
-        # User removed a reaction or changed to a neutral one we don't track
         return
 
     # Pick the first classifiable emoji
@@ -81,7 +98,6 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
             break
 
     if rating is None:
-        # Neutral/unknown emoji — we don't record it
         return
 
     logging.info(
@@ -92,10 +108,47 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
         added_emojis,
     )
 
+    # ── Save feedback to DB ───────────────────────────────────────────────
     try:
         await save_feedback(user_id, message_id, rating)
     except Exception as e:
         logging.warning("Reaction feedback save failed for user %s: %s", user_id, e)
+
+    # ── Post-feedback actions (fire-and-forget) ───────────────────────────
+    try:
+        if rating == "up":
+            # Respond with ❤️ on the user's reaction as acknowledgement
+            from app.utils.ux_improvements import set_message_reaction
+
+            await set_message_reaction(context.bot, chat_id, message_id, "❤️")
+
+        elif rating == "down":
+            # Store negative signal in LTM so the bot learns from dislikes.
+            # We record "user disliked response to message_id" as a memory
+            # that affects future interactions.
+            from app.utils.background_tasks import submit_task
+
+            async def _store_negative_signal():
+                try:
+                    from app.repos.keys import get_available_gemini_key
+                    from app.repos.memory import EMBEDDING_MODEL, store_memory
+
+                    key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
+                    if not key_data:
+                        return
+                    await store_memory(
+                        user_id,
+                        f"[FEEDBACK] Пользователю не понравился ответ (msg_id={message_id}). "
+                        "Учитывай это при формировании будущих ответов.",
+                        key_data["api_key"],
+                        source_type="negative_feedback",
+                    )
+                except Exception as mem_err:
+                    logging.debug("LTM negative signal failed: %s", mem_err)
+
+            submit_task(_store_negative_signal())
+    except Exception as action_err:
+        logging.debug("Post-feedback action failed (non-critical): %s", action_err)
 
 
 def register(application: Application) -> None:

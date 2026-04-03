@@ -1,0 +1,109 @@
+# /app/utils/response_tags.py
+"""Parse and strip LLM-emitted hidden tags from response text.
+
+Tags handled:
+    [VOICE]                  — voice output intent (handled by streaming.py)
+    [INTENT:draw|research|tts] — proactive intent routing
+    [SUGGESTIONS: s1 | s2 | s3] — smart follow-up suggestions
+
+All parsing is **post-stream**: the full response text is scanned after
+streaming completes.  Tags are stripped from the text before it's saved
+to history or displayed.
+"""
+
+from __future__ import annotations
+
+import re
+
+# ── Intent Tag ────────────────────────────────────────────────────────────────
+# Matches [INTENT:draw], [INTENT:research], [INTENT:tts] at end of text.
+_INTENT_RE = re.compile(r"\[INTENT:(draw|research|tts)\]\s*$", re.IGNORECASE)
+
+# Known intent types → button config
+INTENT_BUTTONS: dict[str, tuple[str, str]] = {
+    "draw": ("🎨 Нарисовать эту сцену?", "intent_route:draw"),
+    "research": ("🔬 Глубокий анализ?", "intent_route:research"),
+    "tts": ("🎧 Озвучить?", "intent_route:tts"),
+}
+
+
+def extract_intent(text: str) -> tuple[str, str | None]:
+    """Extract and strip [INTENT:xxx] tag from response text.
+
+    Returns:
+        (cleaned_text, intent_type) where intent_type is 'draw', 'research',
+        'tts', or None if no intent tag was found.
+    """
+    m = _INTENT_RE.search(text)
+    if m:
+        return text[: m.start()].rstrip(), m.group(1).lower()
+    return text, None
+
+
+# ── Smart Suggestions ─────────────────────────────────────────────────────────
+# Matches [SUGGESTIONS: подсказка1 | подсказка2 | подсказка3] at end of text.
+_SUGGESTIONS_RE = re.compile(
+    r"\[SUGGESTIONS:\s*(.+?)\]\s*$",
+    re.IGNORECASE,
+)
+
+# Max suggestions to render as buttons
+MAX_SUGGESTIONS = 3
+# Max chars per suggestion (button label limit)
+MAX_SUGGESTION_LEN = 40
+
+
+def extract_suggestions(text: str) -> tuple[str, list[str]]:
+    """Extract and strip [SUGGESTIONS: ...] tag from response text.
+
+    Returns:
+        (cleaned_text, suggestions_list) where suggestions_list contains
+        0-3 short strings for inline button labels.
+    """
+    m = _SUGGESTIONS_RE.search(text)
+    if not m:
+        return text, []
+
+    raw = m.group(1)
+    suggestions = [s.strip() for s in raw.split("|") if s.strip()]
+    # Truncate and limit
+    suggestions = [s[:MAX_SUGGESTION_LEN] for s in suggestions[:MAX_SUGGESTIONS]]
+
+    return text[: m.start()].rstrip(), suggestions
+
+
+def parse_response_tags(text: str) -> tuple[str, str | None, list[str]]:
+    """Parse all LLM hidden tags from response text in one pass.
+
+    Order matters: suggestions are at the very end, intent before them.
+
+    Returns:
+        (cleaned_text, intent_type, suggestions)
+    """
+    # Suggestions first (they're at the very end)
+    text, suggestions = extract_suggestions(text)
+    # Then intent tag
+    text, intent = extract_intent(text)
+    return text, intent, suggestions
+
+
+# ── Code Block Extraction ─────────────────────────────────────────────────────
+# Matches fenced code blocks: ```lang\ncode\n```
+_CODE_BLOCK_RE = re.compile(r"```(?:\w*)\n(.*?)```", re.DOTALL)
+
+# Minimum code block length to offer CopyTextButton (skip trivial snippets)
+_MIN_CODE_BLOCK_LEN = 20
+
+
+def extract_first_code_block(text: str) -> str | None:
+    """Extract the first significant fenced code block from response text.
+
+    Returns the code content (without fences) if found and >= 20 chars,
+    or None if no code block is present.  Used to offer a CopyTextButton.
+    """
+    m = _CODE_BLOCK_RE.search(text)
+    if m:
+        code = m.group(1).strip()
+        if len(code) >= _MIN_CODE_BLOCK_LEN:
+            return code
+    return None

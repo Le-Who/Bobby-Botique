@@ -44,6 +44,11 @@ from app.repos.metrics_repo import (
 # --- QUART APP SETUP ---
 quart_app = Quart(__name__)  # kept as `quart_app` for backward compat with bot.py
 
+# Register Telegram Mini App blueprint
+from app.web_miniapp import miniapp_blueprint  # noqa: E402
+
+quart_app.register_blueprint(miniapp_blueprint, url_prefix="/webapp")
+
 
 # Derive a secret key for sessions from ADMIN_SECRET
 def _get_admin_secret():
@@ -87,20 +92,38 @@ async def generate_csp_nonce():
 async def add_security_headers(response):
     """Add security headers to all responses."""
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "1; mode=block"
 
     nonce = getattr(g, "csp_nonce", "")
-    csp = (
-        "default-src 'self'; "
-        f"script-src 'self' 'nonce-{nonce}'; "
-        f"style-src 'self' 'nonce-{nonce}' https://fonts.googleapis.com; "
-        "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'none';"
-    )
+    is_webapp = request.path.startswith("/webapp")
+
+    if is_webapp:
+        # Telegram Mini App: allow telegram.org SDK script, inline styles,
+        # and framing by Telegram's WebView
+        csp = (
+            "default-src 'self'; "
+            "script-src 'self' https://telegram.org 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors https://web.telegram.org https://*.telegram.org;"
+        )
+        # Allow Telegram to embed this page
+        response.headers["X-Frame-Options"] = "ALLOWALL"
+    else:
+        csp = (
+            "default-src 'self'; "
+            f"script-src 'self' 'nonce-{nonce}'; "
+            f"style-src 'self' 'nonce-{nonce}' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none';"
+        )
+        response.headers["X-Frame-Options"] = "DENY"
+
     response.headers["Content-Security-Policy"] = csp
     return response
 
