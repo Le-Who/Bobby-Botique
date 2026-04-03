@@ -60,10 +60,12 @@ async def _ensure_account() -> str:
     return _access_token
 
 
-from html.parser import HTMLParser
 import html
 import re
+from html.parser import HTMLParser
+
 from app.utils.text_format import markdown_to_html
+
 
 class TelegraphHTMLParser(HTMLParser):
     def __init__(self):
