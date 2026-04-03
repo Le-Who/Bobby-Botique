@@ -16,6 +16,7 @@ Scheduling:
 """
 
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,7 +25,7 @@ from telegram.ext import ContextTypes
 
 from app import database as db
 from app.i18n import t
-from app.repos.users import is_admin
+from app.utils.ux_improvements import tg_time_tag, wrap_in_expandable_blockquote
 
 logger = logging.getLogger(__name__)
 
@@ -206,12 +207,20 @@ async def _search_for_topics(topics: list[str]) -> list[dict[str, str]]:
     return articles[:5]  # Limit total articles
 
 
-async def _generate_brief_summary(topics: list[str], articles: list[dict[str, str]]) -> str:
-    """Use Gemini to create a concise brief from topics and articles."""
+async def _generate_brief_summary(
+    topics: list[str], articles: list[dict[str, str]]
+) -> dict[str, str]:
+    """Use Gemini to produce per-topic summaries for digestible expandable blockquotes.
+
+    Returns a dict mapping topic headline → 2-3 sentence summary string.
+    Falls back to an empty dict on error.
+    """
     if not topics and not articles:
-        return ""
+        return {}
 
     try:
+        import json
+
         from google.genai import types
 
         from app.providers.gemini import get_cached_genai_client
@@ -220,39 +229,50 @@ async def _generate_brief_summary(topics: list[str], articles: list[dict[str, st
         key_data = await get_available_gemini_key(model_name="gemini-3.1-flash-lite-preview")
         if not key_data:
             logger.warning("No Gemini API key available for brief generation.")
-            return ""
+            return {}
 
         client = get_cached_genai_client(key_data["api_key"])
 
-        articles_text = ""
+        articles_block = ""
         if articles:
-            articles_text = "\n\nFresh articles found:\n" + "\n".join(
-                f"- {a['title']}: {a['content'][:200]}..." for a in articles
+            articles_block = "\n\nFresh articles:\n" + "\n".join(
+                f"- [{a['title']}]({a['url']}): {a['content'][:300]}" for a in articles
             )
 
-        prompt = f"""Create a concise morning intelligence brief (3-5 bullet points) based on:
-
-User's recent topics of interest:
-{chr(10).join(f"- {t}" for t in topics)}
-
-{articles_text}
-
-Format: Use bullet points (•). Keep each point to 1-2 sentences.
-Add relevant article links where available.
-Write in the same language as the user's topics."""
+        prompt = (
+            "You are an intelligence briefing assistant. "
+            "Given the topics and articles below, produce a JSON object where each "
+            "key is a concise topic headline (max 6 words, same language as topics) "
+            "and the value is a 2-3 sentence summary for that topic. "
+            "Include a source URL inline if available. "
+            "Output ONLY valid JSON, no markdown fences.\n\n"
+            "Topics:\n" + "\n".join(f"- {tp}" for tp in topics)
+            + articles_block
+        )
 
         response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-lite-preview", contents=prompt, config=types.GenerateContentConfig()
+            model="gemini-3.1-flash-lite-preview",
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=1200),
         )
-        return response.text if response.text else ""
+        raw = (response.text or "").strip()
+        # Strip any accidental markdown fences
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        return json.loads(raw)  # type: ignore[return-value]
 
     except Exception as e:
         logger.error("Brief generation failed: %s", e, exc_info=True)
-        return ""
+        return {}
 
 
 async def generate_and_send_brief(user_id: int, bot) -> bool:
-    """Full pipeline: topics → search → summarize → send."""
+    """Full pipeline: topics → search → per-topic LLM summaries → HTML digest.
+
+    The digest uses Telegram's native <blockquote expandable> tags so each
+    topic section is collapsed by default. A <tg-time> header shows the
+    delivery time localized to the user's Telegram client timezone.
+    """
     try:
         topics = await _get_user_topics(user_id)
         if not topics:
@@ -260,17 +280,39 @@ async def generate_and_send_brief(user_id: int, bot) -> bool:
             return False
 
         articles = await _search_for_topics(topics)
-        summary = await _generate_brief_summary(topics, articles)
+        sections: dict[str, str] = await _generate_brief_summary(topics, articles)
 
-        if not summary:
+        if not sections:
             logger.info("Empty brief generated for user %s, skipping", user_id)
             return False
 
-        message = t("brief.morning_title", summary=summary)
-        await bot.send_message(chat_id=user_id, text=message, parse_mode="Markdown")
+        # ── Build HTML digest with expandable blockquotes ─────────────────
+        import html as _html
+
+        now_ts = int(time.time())
+        time_tag = tg_time_tag(now_ts, fmt="f")  # "March 20, 2026 07:00"
+        lines: list[str] = [
+            f"<b>📬 Утренний брифинг</b> · {time_tag}\n",
+        ]
+
+        for headline, body in sections.items():
+            safe_headline = _html.escape(headline)
+            safe_body = _html.escape(body) if body else ""
+            # Each topic as a collapsible blockquote: headline visible, body collapsed
+            block = wrap_in_expandable_blockquote(safe_body, label=safe_headline)
+            lines.append(block)
+            lines.append("")  # visual spacing
+
+        html_message = "\n".join(lines).strip()
+
+        await bot.send_message(
+            chat_id=user_id,
+            text=html_message,
+            parse_mode="HTML",
+        )
 
         await mark_sent(user_id)
-        logger.info("Brief sent to user %s", user_id)
+        logger.info("Brief sent to user %s (%d sections)", user_id, len(sections))
         return True
 
     except Exception as e:

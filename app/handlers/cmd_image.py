@@ -46,7 +46,7 @@ import logging
 import math
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
@@ -71,6 +71,7 @@ from app.providers.pollinations import (
     get_pollinations_provider,
 )
 from app.utils.decorators import authorized_only, safe_handler
+from app.utils.ux_improvements import make_copy_text_button
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,7 @@ async def check_draw_intent_async(text: str) -> str | None:
 async def _extract_draw_prompt_ai(text: str) -> str | None:
     """Use Gemini to extract the core visual subject from a tricky conversational request."""
     try:
-        from google import genai as _genai  # noqa: F811
+        from google import genai as _genai  # noqa: F401, F811
         from google.genai import types as _types
 
         from app.providers.gemini import get_cached_genai_client
@@ -191,7 +192,8 @@ async def _extract_draw_prompt_ai(text: str) -> str | None:
         system = (
             "Determine if the user's message is asking to GENERATE/DRAW/CREATE a picture/image.\n"
             "If YES, respond ONLY with the exact descriptive visual subject, removing all conversation.\n"
-            "Resolve any references: e.g. if the user says 'I saw a dog in a hat. Draw me the same', respond with 'a dog in a hat'.\n"
+            "Resolve any references: e.g. if the user says 'I saw a dog in a hat."
+            " Draw me the same', respond with 'a dog in a hat'.\n"
             "If NO (they are just chatting), respond with 'NONE'."
         )
         response = await asyncio.wait_for(
@@ -307,7 +309,7 @@ async def _translate_to_english(
     The API call is tracked in metrics_collector.
     """
     try:
-        from google import genai as _genai  # noqa: F811
+        from google import genai as _genai  # noqa: F401, F811
         from google.genai import types as _types
 
         from app.providers.gemini import get_cached_genai_client
@@ -384,11 +386,17 @@ def _build_main_menu(state: dict) -> InlineKeyboardMarkup:
         [🖼 Модель: Flux]   [📐 Формат: 1:1]
         [✨ Улучшить: Выкл]  [✏️ Изменить промпт]
         [▶️ СГЕНЕРИРОВАТЬ]
+        [📋 Скопировать промпт]   [🔄 Повторить]
         [✖️ Новая тема]
+
+    CopyTextButton (Bot API 7.4+) copies the prompt to clipboard in one tap.
+    switch_inline_query_current_chat pre-fills the input field for quick editing.
+    Both gracefully degrade on older clients.
     """
     model = state.get("model", settings.POLLINATIONS_DEFAULT_IMAGE_MODEL)
     ar = state.get("aspect_ratio", "1:1")
     enhance = state.get("enhance_prompt", False)
+    prompt = state.get("prompt", "")
 
     model_btn = InlineKeyboardButton(
         f"🖼 Модель: {_model_label(model)}",
@@ -404,12 +412,25 @@ def _build_main_menu(state: dict) -> InlineKeyboardMarkup:
     generate_btn = InlineKeyboardButton("▶️ СГЕНЕРИРОВАТЬ", callback_data="draw:execute")
     close_btn = InlineKeyboardButton("✖️ Новая тема", callback_data="new_topic")
 
-    rows = [
+    rows: list[list[InlineKeyboardButton]] = [
         [model_btn, format_btn],
         [enhance_btn, edit_btn],
         [generate_btn],
-        [close_btn],
     ]
+
+    # ── UX: CopyTextButton + quick-edit via switch_inline_query ──────────────
+    # CopyTextButton copies the prompt to clipboard in one tap (Bot API 7.4+).
+    # Falls back gracefully to None on older PTB — we omit the row if so.
+    utility_row: list[InlineKeyboardButton] = []
+    if prompt:
+        copy_btn = make_copy_text_button(prompt, "📋 Скопировать промпт")
+        if copy_btn is not None:
+            utility_row.append(copy_btn)  # type: ignore[arg-type]
+
+    if utility_row:
+        rows.append(utility_row)
+
+    rows.append([close_btn])
     return InlineKeyboardMarkup(rows)
 
 

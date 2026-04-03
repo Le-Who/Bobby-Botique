@@ -854,6 +854,34 @@ _STRINGS: dict[str, dict[str, str]] = {
         "ru": "❌ Отменить работу с документами",
         "en": "❌ Cancel document mode",
     },
+    # ── Draw / Image Generation UX ───────────────────────────────────────
+    "draw.copy_prompt_btn": {
+        "ru": "📋 Скопировать промпт",
+        "en": "📋 Copy prompt",
+    },
+    # ── Brief / Digest ───────────────────────────────────────────────────
+    "brief.expandable_title": {
+        "ru": "<b>📬 Утренний брифинг</b>",
+        "en": "<b>📬 Morning Brief</b>",
+    },
+    # ── Reaction status hints (shown via answer_callback / log) ──────────
+    "reaction.thinking": {
+        "ru": "🔍 Обрабатываю...",
+        "en": "🔍 Processing...",
+    },
+    "reaction.done": {
+        "ru": "⚡ Готово",
+        "en": "⚡ Done",
+    },
+    "reaction.interrupted": {
+        "ru": "⚠️ Ответ прерван",
+        "en": "⚠️ Response interrupted",
+    },
+    # ── Expandable blockquote labels ─────────────────────────────────────
+    "blockquote.partial_label": {
+        "ru": "Частичный ответ / Сбой сети",
+        "en": "Partial response / Network failure",
+    },
 }
 
 

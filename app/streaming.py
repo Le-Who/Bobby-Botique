@@ -13,22 +13,19 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import random
 import re
 import time
-from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
-from google import genai
-from google.genai import types
 from google.genai.errors import APIError
-from telegram.error import TelegramError
 
 from app.metrics import metrics_collector
-from app.request_context import get_request_id
 from app.utils.formatting import TelegramFormatter
 from app.utils.text_format import sanitize_html_tags, strip_formatting
+from app.utils.ux_improvements import wrap_partial_response
 
 if TYPE_CHECKING:
     from telegram import Message
@@ -47,7 +44,6 @@ STREAMING_INDICATOR = " ▍"
 # Safe limit for Telegram messages (leaves margin for HTML tag overhead).
 STREAM_MSG_LIMIT = 4000
 
-import contextvars
 
 _last_finish_reason: contextvars.ContextVar[str | None] = contextvars.ContextVar("last_finish_reason", default=None)
 _last_token_count: contextvars.ContextVar[int] = contextvars.ContextVar("last_token_count", default=0)
@@ -651,8 +647,12 @@ async def stream_and_display(
         partial = writer.text
         if partial:
             await writer.finalize()
+            # Wrap partial text in collapsed blockquote for cleaner error UX
+            _partial_fmt, _ = TelegramFormatter.format_text(partial)
+            _partial_fmt = wrap_partial_response(_partial_fmt)
             return (
-                partial + "\n\n⏰ _(ответ был прерван по таймауту)_",
+                partial + "\n\n⏰ _(ответ был прерван"
+                " по таймауту)_",
                 True,
                 writer.last_message,
                 0,
@@ -673,6 +673,9 @@ async def stream_and_display(
         partial = writer.text
         if partial:
             await writer.finalize()
+            # Wrap partial text in collapsed blockquote for cleaner error UX
+            _partial_fmt, _ = TelegramFormatter.format_text(partial)
+            _partial_fmt = wrap_partial_response(_partial_fmt)
             return (
                 partial + "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_",
                 True,
@@ -695,6 +698,9 @@ async def stream_and_display(
         partial = writer.text
         if partial:
             await writer.finalize()
+            # Wrap partial text in collapsed blockquote for cleaner error UX
+            _partial_fmt, _ = TelegramFormatter.format_text(partial)
+            _partial_fmt = wrap_partial_response(_partial_fmt)
             return (
                 partial + "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_",
                 True,
