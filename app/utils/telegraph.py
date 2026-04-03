@@ -60,72 +60,84 @@ async def _ensure_account() -> str:
     return _access_token
 
 
-def _markdown_to_telegraph_nodes(text: str) -> list[dict]:
-    """Convert markdown text to Telegraph Node format.
+from html.parser import HTMLParser
+import html
+import re
+from app.utils.text_format import markdown_to_html
 
-    This is a simplified converter that handles:
-    - Paragraphs (double newline separated)
-    - Bold (**text**)
-    - Italic (*text* or _text_)
-    - Code blocks (```code```)
-    - Inline code (`code`)
-    - Headers (## text)
+class TelegraphHTMLParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.nodes: list[dict] = []
+        self.stack: list[dict] = [{"children": self.nodes}]
 
-    For complex markdown, we fall back to plain text paragraphs.
-    """
-    import re
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        node: dict = {"tag": tag.lower()}
+        
+        # Valid Telegraph tags: a, aside, b, blockquote, br, code, em, figcaption, figure, h3, h4, hr, i, iframe, img, li, ol, p, pre, s, strong, u, ul, video
+        if attrs:
+            valid_attrs = {}
+            for k, v in attrs:
+                if v is not None and k in ("href", "src", "class"):
+                    valid_attrs[k] = v
+            if valid_attrs:
+                node["attrs"] = valid_attrs
+        
+        if tag.lower() not in ('br', 'hr', 'img'):
+            node["children"] = []
+            self.stack[-1].setdefault("children", []).append(node)
+            self.stack.append(node)
+        else:
+            self.stack[-1].setdefault("children", []).append(node)
 
-    nodes: list[dict] = []
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        # Find matching tag up the stack
+        for i in range(len(self.stack) - 1, 0, -1):
+            if self.stack[i].get("tag") == tag:
+                # Pop all up to this tag
+                while len(self.stack) > i:
+                    self.stack.pop()
+                break
 
-    # Split into paragraphs
-    paragraphs = text.split("\n\n")
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-
-        # Headers
-        header_match = re.match(r"^(#{1,3})\s+(.+)$", para, re.MULTILINE)
-        if header_match:
-            level = len(header_match.group(1))
-            tag = f"h{min(level + 2, 4)}"  # h3 or h4 for Telegraph
-            nodes.append({"tag": tag, "children": [header_match.group(2)]})
-            continue
-
-        # Code blocks
-        code_match = re.match(r"^```\w*\n(.*?)```$", para, re.DOTALL)
-        if code_match:
-            nodes.append(
-                {
-                    "tag": "pre",
-                    "children": [code_match.group(1).strip()],
-                }
-            )
-            continue
-
-        # Regular paragraph — apply inline formatting
-        formatted = para
-        # Bold
-        formatted = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", formatted)
-        # Italic (but not inside bold)
-        formatted = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"<i>\1</i>", formatted)
-        formatted = re.sub(r"_(.+?)_", r"<i>\1</i>", formatted)
-        # Inline code
-        formatted = re.sub(r"`([^`]+)`", r"<code>\1</code>", formatted)
-
-        # Split on newlines within paragraph for line breaks
-        lines = formatted.split("\n")
-        children: list[str | dict] = []
+    def handle_data(self, data: str) -> None:
+        data = html.unescape(data)
+        lines = data.split('\n')
         for i, line in enumerate(lines):
-            children.append(line)
+            if line:
+                self.stack[-1].setdefault("children", []).append(line)
             if i < len(lines) - 1:
-                children.append({"tag": "br"})
+                self.stack[-1].setdefault("children", []).append({"tag": "br"})
 
-        nodes.append({"tag": "p", "children": children})
+def _markdown_to_telegraph_nodes(text: str) -> list[dict]:
+    """Convert markdown text to Telegraph Node format utilizing standard formatting."""
+    # Convert to standard Telegram HTML which accurately parses code blocks and escapes
+    html_out = markdown_to_html(text)
+    
+    # Split by block-level elements before paragraph wrapping
+    segments = re.split(r"(<pre(?:>| [^>]*>).*?</pre>|<blockquote>.*?</blockquote>)", html_out, flags=re.DOTALL)
+    final_nodes: list[dict] = []
+    
+    for segment in segments:
+        if (segment.startswith("<pre") and segment.endswith("</pre>")) or \
+           (segment.startswith("<blockquote") and segment.endswith("</blockquote>")):
+            parser = TelegraphHTMLParser()
+            parser.feed(segment)
+            final_nodes.extend(parser.nodes)
+        else:
+            # Wrap standard text splits in paragraphs
+            paras = segment.split("\n\n")
+            for para in paras:
+                para = para.strip()
+                if not para:
+                    continue
+                # If the markdown text produced top-level <b>...</b> we can just wrap in <p>
+                parser = TelegraphHTMLParser()
+                parser.feed(para)
+                if parser.nodes:
+                    final_nodes.append({"tag": "p", "children": parser.nodes})
 
-    return nodes
-
+    return final_nodes
 
 async def create_telegraph_page(title: str, markdown_content: str) -> str | None:
     """Create a Telegraph page from markdown content.

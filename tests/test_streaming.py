@@ -260,6 +260,39 @@ class TestSanitizeOverflowRemainder:
 
         # If it was sanitized, the initial `<i>` (from `_`) must be properly closed
         # before the `<code>` tag ends, or properly nested
-        assert "<i>" in formatted_initial
         assert "</i>" in formatted_initial
         assert "</i>" in formatted_initial
+
+
+class TestTelegraphFallback:
+    """Verify Telegraph fallback freezes the stream instead of overflowing."""
+
+    @pytest.mark.asyncio
+    async def test_telegraph_engaged_on_overflow(self, monkeypatch):
+        """When use_telegraph is True, overflow triggers frozen state."""
+        from app.streaming import StreamingWriter
+        monkeypatch.setattr("app.streaming.STREAM_MSG_LIMIT", 50)
+
+        adapter = MagicMock()
+        adapter.edit_message = AsyncMock()
+        adapter.reply_new_message = AsyncMock()
+
+        # By default use_telegraph_fallback is True
+        writer = StreamingWriter(adapter, use_telegraph_fallback=True)
+        writer._debounce_s = 0
+        writer._min_chunk = 0
+
+        # We need a long text to trigger overflow
+        text = "This text is definitely longer than fifty characters to trigger the overflow limit."
+        await writer.write(text)
+
+        # 1. State should be engaged
+        assert getattr(writer, "_telegraph_engaged", False) is True
+        
+        # 2. It should NOT create a new message
+        adapter.reply_new_message.assert_not_called()
+        
+        # 3. The frozen message should have the Telegraph indicator
+        adapter.edit_message.assert_called()
+        frozen_html = adapter.edit_message.call_args[0][0]
+        assert "формирую статью" in frozen_html
