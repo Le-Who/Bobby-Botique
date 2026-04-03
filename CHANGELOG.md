@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.16] - 2026-04-03 - Native Mini App Reader for Long Messages
+
+### ✨ Feature — Mini App Reader (Telegraph Replacement)
+
+*   **Redis-Backed Fast Reader**: Replaced the brittle, synchronous Telegraph long-message integration with a high-performance **Telegram Mini App**. Responses >4000 chars are instantly stored in Redis (24h TTL) and accessed via a beautiful, theme-aware WebApp interface (`/webapp/reader`).
+*   **Syntax Highlighting & UX**: The new HTML shell features `marked.js` and `highlight.js` for perfect Markdown rendering, along with a Telegram-aware UI (matches the user's Dark/Light mode completely) and "Copy Code" blocks.
+*   **Graceful Degradation (Fallback)**: A background task silently generates a permanent Telegraph Instant View link while the user is reading. If the Redis entry expires (or if the bot is deployed without `WEBAPP_BASE_URL`), it seamlessly degrades back to pure Telegraph links.
+
+#### Files Changed
+*   `app/config.py` — Added `WEBAPP_BASE_URL`
+*   `app/cache.py` — Redis ops `store_long_message`, `get_long_message`, `store_telegraph_url`, `get_telegraph_url`.
+*   `app/streaming.py` — Non-blocking overflow handling and inline keyboard integration.
+*   `app/web_miniapp.py` — `/reader` and `/api/reader/<uid>` endpoints.
+*   `app/templates/reader.html` [NEW] — Lightweight frontend with skeleton loaders and auto-theme.
+
+---
+
 ## [2.9.15] - 2026-04-03 - Telegram Mini App & UX Phase 1-3
 
 ### 📱 Feature — Telegram Mini App (Phase 3)
@@ -31,7 +48,7 @@ Native in-app settings panel served via Quart Blueprint at `/webapp/`. Authentic
 
 ### ✨ Feature — Research UX & Empathy (Phase 2)
 
-*   **Telegraph Longreads**: Responses >5000 chars → Telegraph Instant View with collapsed blockquote summary + 📖 read button. Graceful fallback to `send_long_message`.
+*   **Telegraph Longreads (Legacy)**: Legacy synchronous responses >5000 chars published to Telegraph Instant View with collapsed blockquote summary. Replaced by Mini App Reader in 2.9.16.
 *   **Auto TTS for Research**: Fire-and-forget `fire_voice_reply` after successful agentic search (>200 chars).
 
 ### 🐛 Bug Fixes

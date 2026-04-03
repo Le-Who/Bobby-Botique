@@ -268,3 +268,53 @@ async def api_update_settings(user_id: int):
     except Exception as e:
         logger.error("Mini App update settings error: %s", e, exc_info=True)
         return jsonify({"error": "internal_error"}), 500
+
+
+# ── Long Read Reader ──────────────────────────────────────────────────────────
+
+
+@miniapp_blueprint.route("/reader")
+async def reader_page():
+    """Serve the Long Read Mini App HTML shell.
+
+    This endpoint is intentionally public (no auth) — content is accessed by
+    opaque UUID, so there is nothing to enumerate without the original link.
+    """
+    from quart import render_template
+
+    return await render_template("reader.html")
+
+
+@miniapp_blueprint.route("/api/reader/<uid>")
+async def api_reader_content(uid: str):
+    """Return the stored long message content for a given UID.
+
+    Response schema (one of):
+      {"markdown": "<full text>"}                       — Redis hit, fresh content
+      {"telegraph_url": "https://telegra.ph/..."}       — Redis expired, use fallback
+      {"error": "not_found"}  HTTP 404                  — nothing available
+    """
+    import re
+
+    # Basic UUID validation to prevent Redis key injection
+    if not re.match(r"^[0-9a-f-]{36}$", uid, re.IGNORECASE):
+        return jsonify({"error": "invalid_id"}), 400
+
+    try:
+        from app.cache import get_long_message, get_telegraph_url
+
+        markdown = await get_long_message(uid)
+        if markdown:
+            return jsonify({"markdown": markdown})
+
+        # Primary key expired — check for Telegraph fallback
+        tg_url = await get_telegraph_url(uid)
+        if tg_url:
+            return jsonify({"telegraph_url": tg_url})
+
+        return jsonify({"error": "not_found"}), 404
+
+    except Exception as e:
+        logger.error("Long read API error uid=%s: %s", uid, e, exc_info=True)
+        return jsonify({"error": "internal_error"}), 500
+

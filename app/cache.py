@@ -313,3 +313,75 @@ async def get_multi_layer_cache_stats() -> dict[str, Any]:
         "memory": memory_stats,
         "total_utilization": memory_stats["memory_utilization"],
     }
+
+
+# ── Long Read Storage ─────────────────────────────────────────────────────────
+# Stores long AI responses in Redis for the Mini App reader.
+# Primary key:  long_msg:<uid>          — markdown text, TTL 24h
+# Fallback key: long_msg:<uid>:tg_url   — telegraph URL, no TTL (persist)
+
+_LONG_MSG_PREFIX = "long_msg:"
+_LONG_MSG_TTL = 86_400  # 24 hours
+
+
+async def store_long_message(uid: str, markdown: str, ttl: int = _LONG_MSG_TTL) -> bool:
+    """Store long message markdown in Redis. Returns False if Redis unavailable."""
+    if not redis_client:
+        return False
+    try:
+        key = f"{_LONG_MSG_PREFIX}{uid}"
+        await redis_client.setex(key, ttl, markdown.encode("utf-8"))
+        logging.debug("Stored long message uid=%s (%d chars)", uid, len(markdown))
+        return True
+    except Exception as e:
+        logging.warning("Failed to store long message uid=%s: %s", uid, e)
+        return False
+
+
+async def get_long_message(uid: str) -> str | None:
+    """Retrieve long message markdown from Redis. Returns None if missing/expired."""
+    if not redis_client:
+        return None
+    try:
+        key = f"{_LONG_MSG_PREFIX}{uid}"
+        data = await redis_client.get(key)
+        if data is None:
+            return None
+        return data.decode("utf-8") if isinstance(data, bytes) else data
+    except Exception as e:
+        logging.warning("Failed to get long message uid=%s: %s", uid, e)
+        return None
+
+
+async def store_telegraph_url(uid: str, url: str) -> bool:
+    """Persist a Telegraph fallback URL for a long message (no expiry).
+    
+    This key survives after the primary long_msg key expires, providing
+    a permanent fallback once the 24h Redis window closes.
+    """
+    if not redis_client:
+        return False
+    try:
+        key = f"{_LONG_MSG_PREFIX}{uid}:tg_url"
+        await redis_client.set(key, url.encode("utf-8"))  # No TTL — persist forever
+        logging.debug("Stored telegraph fallback url uid=%s → %s", uid, url)
+        return True
+    except Exception as e:
+        logging.warning("Failed to store telegraph URL uid=%s: %s", uid, e)
+        return False
+
+
+async def get_telegraph_url(uid: str) -> str | None:
+    """Retrieve the Telegraph fallback URL for a long message."""
+    if not redis_client:
+        return None
+    try:
+        key = f"{_LONG_MSG_PREFIX}{uid}:tg_url"
+        data = await redis_client.get(key)
+        if data is None:
+            return None
+        return data.decode("utf-8") if isinstance(data, bytes) else data
+    except Exception as e:
+        logging.warning("Failed to get telegraph URL uid=%s: %s", uid, e)
+        return None
+

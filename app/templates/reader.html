@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>GemAI — Полный ответ</title>
+
+  <!-- marked.js — Markdown parser -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <!-- highlight.js — Syntax highlighting -->
+  <link id="hljs-theme-light" rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" />
+  <link id="hljs-theme-dark" rel="stylesheet" disabled
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+  <style>
+    /* ── CSS custom properties driven by Telegram theme ─────────────── */
+    :root {
+      --bg:         #ffffff;
+      --bg-secondary: #f6f8fa;
+      --text:       #1c1e21;
+      --text-muted: #6b7280;
+      --accent:     #0088cc;
+      --border:     #e5e7eb;
+      --code-bg:    #f6f8fa;
+      --code-border:#e5e7eb;
+      --tag-bg:     #e8f4fd;
+      --tag-text:   #0366d6;
+      --radius:     10px;
+      --shadow:     0 1px 4px rgba(0,0,0,.08);
+    }
+    .dark {
+      --bg:         #1a1b1e;
+      --bg-secondary:#24262b;
+      --text:       #e4e6ea;
+      --text-muted: #9ca3af;
+      --accent:     #5ba4cf;
+      --border:     #374151;
+      --code-bg:    #0d1117;
+      --code-border:#30363d;
+      --tag-bg:     #1f3a52;
+      --tag-text:   #5ba4cf;
+      --shadow:     0 1px 6px rgba(0,0,0,.3);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+      transition: background .2s, color .2s;
+    }
+
+    /* ── Top bar ─────────────────────────────────────────────────────── */
+    #topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: var(--shadow);
+    }
+    #topbar .logo {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: -.3px;
+    }
+    #topbar .subtitle {
+      font-size: .8rem;
+      color: var(--text-muted);
+    }
+    #topbar .spacer { flex: 1; }
+    #copy-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: .8rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    #copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── Content area ────────────────────────────────────────────────── */
+    #content {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
+
+    /* ── Markdown typography ─────────────────────────────────────────── */
+    #md-body h1, #md-body h2, #md-body h3,
+    #md-body h4, #md-body h5, #md-body h6 {
+      color: var(--text);
+      font-weight: 700;
+      line-height: 1.3;
+      margin: 1.5em 0 .5em;
+    }
+    #md-body h1 { font-size: 1.65rem; }
+    #md-body h2 { font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
+    #md-body h3 { font-size: 1.15rem; }
+
+    #md-body p { margin: .8em 0; }
+
+    #md-body a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px dashed var(--accent);
+    }
+    #md-body a:hover { border-bottom-style: solid; }
+
+    #md-body ul, #md-body ol {
+      padding-left: 1.5em;
+      margin: .6em 0;
+    }
+    #md-body li { margin: .25em 0; }
+
+    #md-body strong { font-weight: 700; }
+    #md-body em { font-style: italic; }
+
+    #md-body blockquote {
+      border-left: 3px solid var(--accent);
+      margin: 1em 0;
+      padding: .5em 1em;
+      background: var(--bg-secondary);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      color: var(--text-muted);
+    }
+
+    /* ── Inline code ─────────────────────────────────────────────────── */
+    #md-body code:not(pre code) {
+      background: var(--code-bg);
+      border: 1px solid var(--code-border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: .87em;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      color: var(--text);
+    }
+
+    /* ── Code blocks ─────────────────────────────────────────────────── */
+    #md-body pre {
+      background: var(--code-bg) !important;
+      border: 1px solid var(--code-border);
+      border-radius: var(--radius);
+      padding: 0;
+      margin: 1.2em 0;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--code-border);
+      font-size: .75rem;
+    }
+    .code-lang {
+      color: var(--accent);
+      font-weight: 600;
+      font-family: monospace;
+      text-transform: lowercase;
+    }
+    .code-copy {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: .8rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      transition: background .15s;
+    }
+    .code-copy:hover { background: var(--border); color: var(--text); }
+    #md-body pre code.hljs {
+      display: block;
+      padding: 14px 16px;
+      overflow-x: auto;
+      font-size: .88rem;
+      line-height: 1.6;
+      background: transparent !important;
+    }
+
+    /* ── Tables ──────────────────────────────────────────────────────── */
+    #md-body table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1em 0;
+      font-size: .9rem;
+      overflow-x: auto;
+      display: block;
+    }
+    #md-body th, #md-body td {
+      border: 1px solid var(--border);
+      padding: 7px 12px;
+      text-align: left;
+    }
+    #md-body th { background: var(--bg-secondary); font-weight: 600; }
+    #md-body tr:nth-child(even) td { background: var(--bg-secondary); }
+
+    /* ── Horizontal rule ─────────────────────────────────────────────── */
+    #md-body hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 1.5em 0;
+    }
+
+    /* ── States ──────────────────────────────────────────────────────── */
+    #skeleton {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 24px 0;
+    }
+    .skel-line {
+      height: 14px;
+      background: linear-gradient(90deg, var(--border) 25%, var(--bg-secondary) 50%, var(--border) 75%);
+      background-size: 400% 100%;
+      border-radius: 6px;
+      animation: shimmer 1.5s infinite;
+    }
+    @keyframes shimmer { 0%{background-position:100% 0} 100%{background-position:-100% 0} }
+
+    #error-state {
+      display: none;
+      text-align: center;
+      padding: 48px 16px;
+      color: var(--text-muted);
+    }
+    #error-state .emoji { font-size: 3rem; margin-bottom: 12px; }
+    #error-state h2 { color: var(--text); margin-bottom: 8px; }
+    #tg-link {
+      display: inline-block;
+      margin-top: 16px;
+      padding: 10px 20px;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    #tg-link:hover { opacity: .85; }
+
+    /* ── Copy toast ──────────────────────────────────────────────────── */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: #1c1e21;
+      color: #fff;
+      padding: 8px 18px;
+      border-radius: 20px;
+      font-size: .85rem;
+      opacity: 0;
+      transition: transform .3s, opacity .3s;
+      pointer-events: none;
+      z-index: 999;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+  </style>
+</head>
+
+<body>
+  <!-- Top bar -->
+  <div id="topbar">
+    <div>
+      <div class="logo">GemAI</div>
+      <div class="subtitle">Полный ответ</div>
+    </div>
+    <div class="spacer"></div>
+    <button id="copy-btn" onclick="copyAll()">Скопировать</button>
+  </div>
+
+  <!-- Main content -->
+  <div id="content">
+    <!-- Loading skeleton -->
+    <div id="skeleton">
+      <div class="skel-line" style="width:70%"></div>
+      <div class="skel-line" style="width:100%"></div>
+      <div class="skel-line" style="width:90%"></div>
+      <div class="skel-line" style="width:60%"></div>
+      <div class="skel-line" style="width:100%"></div>
+      <div class="skel-line" style="width:80%"></div>
+    </div>
+
+    <!-- Rendered markdown -->
+    <div id="md-body" style="display:none"></div>
+
+    <!-- Error / expired state -->
+    <div id="error-state">
+      <div class="emoji" id="error-emoji">📭</div>
+      <h2 id="error-title">Материал недоступен</h2>
+      <p id="error-desc">Срок хранения истёк или ссылка недействительна.</p>
+      <a id="tg-link" href="#" style="display:none">Открыть в Telegraph</a>
+    </div>
+  </div>
+
+  <!-- Copy toast -->
+  <div id="toast">Скопировано!</div>
+
+  <script>
+    // ── Telegram WebApp theme integration ─────────────────────────────
+    const twa = window.Telegram?.WebApp;
+    if (twa) {
+      twa.expand();
+      twa.ready();
+    }
+
+    function applyTheme() {
+      const isDark = twa
+        ? twa.colorScheme === 'dark'
+        : window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+      document.documentElement.classList.toggle('dark', isDark);
+      document.getElementById('hljs-theme-light').disabled = isDark;
+      document.getElementById('hljs-theme-dark').disabled  = !isDark;
+    }
+    applyTheme();
+    if (twa) twa.onEvent('themeChanged', applyTheme);
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+
+    // ── marked.js configuration ───────────────────────────────────────
+    marked.setOptions({
+      breaks: true,
+      gfm: true,
+      highlight: null,  // We handle highlighting manually after render
+    });
+
+    // Custom renderer: wrap code blocks in header + copy button
+    const renderer = new marked.Renderer();
+    renderer.code = function(code, lang) {
+      const language = (lang || 'plaintext').split(/\s/)[0];
+      const validLang = hljs.getLanguage(language) ? language : 'plaintext';
+      const highlighted = hljs.highlight(code, { language: validLang }).value;
+      const escapedCode = code.replace(/`/g, '&#96;');
+      return `
+        <pre>
+          <div class="code-header">
+            <span class="code-lang">${validLang}</span>
+            <button class="code-copy" onclick="copyCode(this)" data-code="${encodeURIComponent(code)}">Копировать</button>
+          </div>
+          <code class="hljs language-${validLang}">${highlighted}</code>
+        </pre>`;
+    };
+    marked.use({ renderer });
+
+    // ── Copy helpers ──────────────────────────────────────────────────
+    let _rawMarkdown = '';
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg || 'Скопировано!';
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2200);
+    }
+
+    function copyAll() {
+      navigator.clipboard.writeText(_rawMarkdown)
+        .then(() => showToast('Скопировано!'))
+        .catch(() => showToast('Не удалось скопировать'));
+    }
+
+    function copyCode(btn) {
+      const code = decodeURIComponent(btn.dataset.code);
+      navigator.clipboard.writeText(code)
+        .then(() => { btn.textContent = '✓ Скопировано'; setTimeout(() => btn.textContent = 'Копировать', 1800); })
+        .catch(() => {});
+    }
+
+    // ── Load content ──────────────────────────────────────────────────
+    function getUID() {
+      return new URLSearchParams(location.search).get('id');
+    }
+
+    function showError(telegraphUrl) {
+      document.getElementById('skeleton').style.display = 'none';
+      document.getElementById('md-body').style.display   = 'none';
+      const el = document.getElementById('error-state');
+      el.style.display = 'block';
+
+      if (telegraphUrl) {
+        document.getElementById('error-emoji').textContent = '🔗';
+        document.getElementById('error-title').textContent = 'Открыть в Telegraph';
+        document.getElementById('error-desc').textContent  = 'Срок хранения в быстром кэше истёк. Текст сохранён в Telegraph.';
+        const link = document.getElementById('tg-link');
+        link.href = telegraphUrl;
+        link.style.display = 'inline-block';
+        // Auto-redirect after a moment if inside Telegram
+        if (twa) setTimeout(() => { window.location.href = telegraphUrl; }, 800);
+      }
+    }
+
+    function renderMarkdown(md) {
+      _rawMarkdown = md;
+      const body = document.getElementById('md-body');
+      body.innerHTML = marked.parse(md);
+      document.getElementById('skeleton').style.display = 'none';
+      body.style.display = 'block';
+    }
+
+    async function loadContent() {
+      const uid = getUID();
+      if (!uid) { showError(null); return; }
+
+      try {
+        const res = await fetch(`/webapp/api/reader/${encodeURIComponent(uid)}`);
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          // If Telegraph fallback exists, show redirect
+          if (res.status === 404) showError(null);
+          else showError(null);
+          return;
+        }
+        const data = await res.json();
+
+        if (data.markdown) {
+          renderMarkdown(data.markdown);
+        } else if (data.telegraph_url) {
+          showError(data.telegraph_url);
+        } else {
+          showError(null);
+        }
+      } catch (err) {
+        console.error('Failed to load content', err);
+        showError(null);
+      }
+    }
+
+    loadContent();
+  </script>
+</body>
+</html>

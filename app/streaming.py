@@ -632,13 +632,15 @@ async def stream_and_display(
         if not final_text.strip():
             return "", False, placeholder_message, 0, False, False
 
-        # Telegraph transition: if stream was engaged, push to Telegraph natively
+        # Long Read transition: stream exceeded threshold → publish via Mini App / Telegraph
         if getattr(writer, "_telegraph_engaged", False):
+            import uuid
+
+            from app.config import settings as _settings
             from app.utils.telegraph import create_telegraph_page
-            
+
             title = "Ответ ИИ"
             if history:
-                # Seek history for last user query
                 for item in reversed(history):
                     if item.get("role") == "user" and item.get("parts"):
                         raw = strip_formatting(item["parts"][0])
@@ -648,38 +650,111 @@ async def stream_and_display(
                                 title += "…"
                         break
 
-            t_url = await create_telegraph_page(title, final_text)
-            if t_url:
-                logging.info("Stream gracefully transitioned to Telegraph: %s", t_url)
-                summary_lines = final_text[:800].strip()
-                if len(final_text) > 800:
-                    summary_lines += "…"
+            webapp_base = getattr(_settings, "WEBAPP_BASE_URL", "").rstrip("/")
+
+            if webapp_base:
+                # ── Hybrid path: Redis primary + Telegraph background fallback ──
+                from app.cache import store_long_message, store_telegraph_url
+
+                uid = str(uuid.uuid4())
+                stored = await store_long_message(uid, final_text)
+
+                if stored:
+                    reader_url = f"{webapp_base}/webapp/reader?id={uid}"
+                    logging.info("Long read stored in Redis uid=%s (%d chars)", uid, len(final_text))
+                else:
+                    # Redis write failed — fall through to plain Telegraph
+                    reader_url = None
+                    logging.warning("Redis unavailable for long read uid=%s; falling back to Telegraph", uid)
+
+                if reader_url:
+                    # Build the frozen message update immediately
+                    summary_lines = final_text[:800].strip()
+                    if len(final_text) > 800:
+                        summary_lines += "…"
+
+                    from app.utils.ux_improvements import wrap_in_expandable_blockquote
+                    sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
+                    summary_html = wrap_in_expandable_blockquote(sanitized_summary)
+
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    full_text_html = f'{summary_html}\n\n📖 <a href="{reader_url}">Читать полностью</a>'
+
+                    buttons = []
+                    if markup and getattr(markup, "inline_keyboard", None):
+                        buttons = list(getattr(markup, "inline_keyboard", []))
                     
-                from app.utils.ux_improvements import wrap_in_expandable_blockquote
-                sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
-                summary_html = wrap_in_expandable_blockquote(sanitized_summary)
-                
-                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-                full_text_html = f'{summary_html}\n\n📖 <a href="{t_url}">Читать статью (Instant View)</a>'
-                
-                buttons = []
-                if markup and getattr(markup, "inline_keyboard", None):
-                    buttons = list(markup.inline_keyboard)
-                buttons.insert(0, [InlineKeyboardButton("📖 Открыть статью", url=t_url)])
-                new_markup = InlineKeyboardMarkup(buttons)
-                
-                try:
-                    await writer._adapter.edit_message(
-                        full_text_html,
-                        parse_mode="HTML",
-                        reply_markup=new_markup
-                    )
-                except Exception as e:
-                    logging.warning("Failed to update frozen telegraph message: %s", e)
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+                    buttons.insert(0, [InlineKeyboardButton("📖 Читать полностью", web_app=WebAppInfo(url=reader_url))])
+                    new_markup = InlineKeyboardMarkup(buttons)
+
+                    try:
+                        await writer._adapter.edit_message(
+                            full_text_html,
+                            parse_mode="HTML",
+                            reply_markup=new_markup,
+                        )
+                    except Exception as e:
+                        logging.warning("Failed to update frozen long-read message: %s", e)
+
+                    # Background: create Telegraph as permanent fallback (non-blocking)
+                    async def _bg_telegraph(uid: str, title: str, text: str) -> None:
+                        try:
+                            t_url = await create_telegraph_page(title, text)
+                            if t_url:
+                                await store_telegraph_url(uid, t_url)
+                                logging.info("Telegraph fallback created for uid=%s → %s", uid, t_url)
+                        except Exception as exc:
+                            logging.warning("Background Telegraph creation failed uid=%s: %s", uid, exc)
+
+                    _bg_tasks = getattr(writer, "_bg_tasks", set())
+                    task = asyncio.create_task(_bg_telegraph(uid, title, final_text))
+                    _bg_tasks.add(task)
+                    task.add_done_callback(_bg_tasks.discard)
+                    writer._bg_tasks = _bg_tasks  # type: ignore[attr-defined]
+
+                    # We're done — skip the Telegraph-only path below
+                    webapp_handled = True
+                else:
+                    webapp_handled = False
             else:
-                logging.warning("Telegraph creation failed for frozen stream; sending long message fallback.")
-                from app.utils.messaging import send_long_message
-                await send_long_message(writer.last_message, final_text, reply_markup=markup)
+                webapp_handled = False
+
+            if not webapp_handled:
+                # ── Telegraph-only fallback (no WEBAPP_BASE_URL configured) ──
+                t_url = await create_telegraph_page(title, final_text)
+                if t_url:
+                    logging.info("Stream transitioned to Telegraph (no webapp): %s", t_url)
+                    summary_lines = final_text[:800].strip()
+                    if len(final_text) > 800:
+                        summary_lines += "…"
+
+                    from app.utils.ux_improvements import wrap_in_expandable_blockquote
+                    sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
+                    summary_html = wrap_in_expandable_blockquote(sanitized_summary)
+
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    full_text_html = f'{summary_html}\n\n📖 <a href="{t_url}">Читать статью (Instant View)</a>'
+
+                    buttons = []
+                    if markup and getattr(markup, "inline_keyboard", None):
+                        buttons = list(getattr(markup, "inline_keyboard", []))
+                    buttons.insert(0, [InlineKeyboardButton("📖 Открыть статью", url=t_url)])
+                    new_markup = InlineKeyboardMarkup(buttons)
+
+                    try:
+                        await writer._adapter.edit_message(
+                            full_text_html,
+                            parse_mode="HTML",
+                            reply_markup=new_markup,
+                        )
+                    except Exception as e:
+                        logging.warning("Failed to update frozen telegraph message: %s", e)
+                else:
+                    logging.warning("Telegraph creation failed for frozen stream; sending long message fallback.")
+                    from app.utils.messaging import send_long_message
+                    await send_long_message(writer.last_message, final_text, reply_markup=markup)  # type: ignore[arg-type]
+
 
         # Check finish_reason for blocked/truncated responses
         fr = _last_finish_reason.get()
@@ -724,7 +799,7 @@ async def stream_and_display(
         await metrics_collector.record_api_call("gemini_streaming", model_name)
         actual_tokens = _last_token_count.get()
         voice_requested = _voice_requested.get()
-        return final_text, True, writer.last_message, actual_tokens, False, voice_requested
+        return final_text, True, writer.last_message, actual_tokens, False, voice_requested  # type: ignore[return-value]
 
     except TimeoutError:
         partial = writer.text
@@ -736,7 +811,7 @@ async def stream_and_display(
             return (
                 partial + "\n\n⏰ _(ответ был прерван по таймауту)_",
                 True,
-                writer.last_message,
+                writer.last_message,  # type: ignore[return-value]
                 0,
                 True,  # was_interrupted
                 _voice_requested.get(),
@@ -744,7 +819,7 @@ async def stream_and_display(
         return (
             "⏰ Превышено время ожидания ответа. Попробуйте позже.",
             False,
-            placeholder_message,
+            placeholder_message,  # type: ignore[return-value]
             0,
             False,
             False,
@@ -761,7 +836,7 @@ async def stream_and_display(
             return (
                 partial + "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_",
                 True,
-                writer.last_message,
+                writer.last_message,  # type: ignore[return-value]
                 0,
                 True,  # was_interrupted
                 _voice_requested.get(),
@@ -769,7 +844,7 @@ async def stream_and_display(
         return (
             "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.",
             False,
-            placeholder_message,
+            placeholder_message,  # type: ignore[return-value]
             0,
             False,
             False,
@@ -786,7 +861,7 @@ async def stream_and_display(
             return (
                 partial + "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_",
                 True,
-                writer.last_message,
+                writer.last_message,  # type: ignore[return-value]
                 0,
                 True,  # was_interrupted
                 _voice_requested.get(),
@@ -794,7 +869,7 @@ async def stream_and_display(
         return (
             "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.",
             False,
-            placeholder_message,
+            placeholder_message,  # type: ignore[return-value]
             0,
             False,
             False,

@@ -162,6 +162,9 @@ class Settings(BaseModel):
     ADMIN_ID: int
     PORT: int
     ENABLE_WEB_SERVER: bool = True  # Default to True for cloud deployments
+    # Base URL of the web server (e.g. https://gemaibotv2-xxxx.northflank.app).
+    # Required for Mini App reader links. If empty, system falls back to Telegraph.
+    WEBAPP_BASE_URL: str = ""
 
     # --- CHAT ---
     CHAT_TOKEN_LIMIT: int = 384000
@@ -252,6 +255,7 @@ def load_settings() -> Settings:
             "ADMIN_ID": _load_int_env("ADMIN_ID"),
             "PORT": os.getenv("PORT", "10000"),  # Provide a default for PORT
             "ENABLE_WEB_SERVER": os.getenv("ENABLE_WEB_SERVER", "true").lower() == "true",
+            "WEBAPP_BASE_URL": os.getenv("WEBAPP_BASE_URL", "").rstrip("/"),
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),
