@@ -5,3 +5,7 @@
 ## 2024-05-15 - Unsafe RLS with CTEs
 **Learning:** You cannot use `set_config` inside a Common Table Expression (CTE) to safely set Row Level Security (RLS) context for the main query. PostgreSQL does not guarantee that the CTE will be evaluated before the RLS policies on the main query's table scan, leading to unpredictable failures or bypassed security.
 **Action:** When optimizing database roundtrips involving RLS context (e.g., `set_user_context`), avoid CTEs. Look for opportunities to reduce sequential queries inside the transaction instead (e.g., using `LEFT JOIN`s or combining `UPDATE` statements).
+
+## 2024-05-18 - Prevent O(N) memory allocation with binary payload stringification
+**Learning:** In highly-frequented methods iterating over conversation histories (such as extracting chat messages for saving context to DB or for generating summary chunks), naively calling `str()` on payload dictionary wrappers containing raw binary data (e.g., `inline_data`, `image_url`, `file_data`) causes a massive O(N) memory allocation footprint. This unnecessarily decodes/stringifies large base64 buffers or raw binary representations, leading to high latency or OOM.
+**Action:** When extracting conversational text payloads, explicitly inspect dictionary parts and skip binary wrappers (e.g. `isinstance(p, (bytes, bytearray))` or checking for specific keys) before fallback stringification.
