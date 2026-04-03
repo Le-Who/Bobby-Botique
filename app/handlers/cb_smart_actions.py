@@ -2,7 +2,7 @@
 """Callback handlers for Smart Suggestions, Proactive Intent Routing, and Edit Query.
 
 Handles:
-    suggest:*       — user tapped a smart suggestion button → inject as draft
+    suggest:*       — user tapped a smart suggestion button → route to AI agent
     intent_route:*  — user tapped an intent button → route to the correct pipeline
     edit_query      — user tapped "Edit query" on error → pre-fill last message as draft
 """
@@ -18,9 +18,8 @@ from telegram.ext import ContextTypes
 async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle smart suggestion button press.
 
-    Uses sendMessageDraft (Bot API 9.5+) to place the suggestion text
-    into the user's input field.  If the API is unavailable, falls back
-    to sending a hint message.
+    Sends the suggestion text as a visible echo message, then routes it
+    through the full AI pipeline (identical to a regular user message).
     """
     query = update.callback_query
     if not query:
@@ -38,31 +37,74 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     try:
-        # sendMessageDraft(chat_id, draft_id, text)
-        # draft_id = 0 means "new message draft" (not a reply draft).
-        await context.bot.send_message_draft(
+        await context.bot.send_message(
             chat_id=chat.id,
-            draft_id=0,
-            text=suggestion_text,
+            text=f"🗣️ **Вы:** {suggestion_text}",
+            parse_mode="Markdown",
         )
-        logging.info(
-            "Smart suggestion draft sent: user=%s text=%r",
-            user.id,
-            suggestion_text[:50],
-        )
-    except Exception as exc:
-        # PTB version doesn't support send_message_draft or API failed —
-        # fall back to posting a hint message that the user can copy.
-        logging.debug("send_message_draft failed: %s, falling back to hint", exc)
+    except Exception as e:
+        logging.warning("Failed to send fake user message: %s", e)
+
+    from app.state import get_user_state, get_user_lock
+    user_state = get_user_state(user.id)
+    if user_state.is_processing or get_user_lock(user.id).locked():
+        # Inform user but don't crash
         try:
-            msg = query.message
-            if isinstance(msg, Message):
-                await msg.reply_text(
-                    f"💡 _{suggestion_text}_",
-                    parse_mode="Markdown",
-                )
+            from app.handlers.messages import _send_busy_ephemeral
+            await _send_busy_ephemeral(update)
         except Exception:
             pass
+        return
+
+    user_state.is_processing = True
+
+    from app.state import set_last_sent_message, set_last_bot_message
+    from app.i18n import t as _t
+    set_last_sent_message(user.id, suggestion_text)
+    
+    try:
+        placeholder_message = await context.bot.send_message(
+            chat_id=chat.id,
+            text=_t("msg.thinking", "ru")
+        )
+        set_last_bot_message(user.id, placeholder_message.message_id, chat.id)
+    except Exception as e:
+        logging.error("Failed to send placeholder: %s", e)
+        user_state.is_processing = False
+        return
+
+    import asyncio
+    from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
+
+    done_event = asyncio.Event()
+    register_heartbeat(placeholder_message.message_id, done_event, update.effective_chat)
+
+    async def _run_suggestion() -> None:
+        try:
+            async with get_user_lock(user.id):
+                from app.handlers.agent import process_long_request
+                await process_long_request(
+                    placeholder_message,
+                    update,
+                    context,
+                    text_override=suggestion_text
+                )
+        except Exception as _e:
+            logging.error("Smart suggestion error: %s", _e, exc_info=True)
+            try:
+                stop_heartbeat(placeholder_message.message_id)
+                await placeholder_message.edit_text("❌ При обработке произошла ошибка.")
+            except Exception:
+                pass
+        finally:
+            _us = get_user_state(user.id)
+            _us.is_processing = False
+            unregister_heartbeat(placeholder_message.message_id)
+            if not done_event.is_set():
+                stop_heartbeat(placeholder_message.message_id)
+
+    from app.utils.background_tasks import submit_task
+    submit_task(_run_suggestion())
 
 
 async def intent_route_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
