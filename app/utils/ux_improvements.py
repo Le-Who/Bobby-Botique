@@ -27,7 +27,7 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from telegram import Bot
+    from telegram import Bot, InlineKeyboardButton
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,7 @@ async def set_feedback_reactions(
 # ── CopyTextButton helper ─────────────────────────────────────────────────────
 
 
-def make_copy_text_button(text: str, button_label: str = "📋 Скопировать") -> object:
+def make_copy_text_button(text: str, button_label: str = "📋 Скопировать") -> InlineKeyboardButton | None:
     """Create a Telegram InlineKeyboardButton that copies *text* to clipboard.
 
     Uses Bot API CopyTextButton  (Bot API 7.4+, PTB 21.3+).

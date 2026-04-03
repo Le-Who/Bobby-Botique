@@ -13,7 +13,14 @@ to history or displayed.
 
 from __future__ import annotations
 
+import hashlib
 import re
+
+from cachetools import LRUCache
+
+# 10,000 strings * ~100 bytes = ~1 MB memory footprint
+# Survives until process restart. If restarted, old suggestion buttons fail gracefully.
+SUGGESTION_CACHE: LRUCache[str, str] = LRUCache(maxsize=10000)
 
 # ── Intent Tag ────────────────────────────────────────────────────────────────
 # Matches [INTENT:draw], [INTENT:research], [INTENT:tts] at end of text.
@@ -49,17 +56,16 @@ _SUGGESTIONS_RE = re.compile(
 
 # Max suggestions to render as buttons
 MAX_SUGGESTIONS = 3
-# Max bytes per suggestion (Telegram limits callback_data to 64 bytes total)
-# "suggest:" prefix is 8 bytes. Leaving 50 bytes for the suggestion payload.
-MAX_SUGGESTION_BYTES = 50
+# Label length limit (Telegram UI max display logic)
+MAX_SUGGESTION_LABEL_LEN = 100
 
 
-def extract_suggestions(text: str) -> tuple[str, list[str]]:
+def extract_suggestions(text: str) -> tuple[str, list[dict[str, str]]]:
     """Extract and strip [SUGGESTIONS: ...] tag from response text.
 
     Returns:
         (cleaned_text, suggestions_list) where suggestions_list contains
-        0-3 short strings for inline button labels.
+        dicts of {"id": short_hash, "label": visual_text}.
     """
     m = _SUGGESTIONS_RE.search(text)
     if not m:
@@ -71,17 +77,23 @@ def extract_suggestions(text: str) -> tuple[str, list[str]]:
         s = s.strip()
         if not s:
             continue
-        # Truncate by byte length to prevent Button_data_invalid errors
-        b = s.encode("utf-8")
-        if len(b) > MAX_SUGGESTION_BYTES:
-            s = b[:MAX_SUGGESTION_BYTES].decode("utf-8", "ignore")
-        suggestions.append(s)
+            
+        full_text = s
+        # Truncate visual label just for UI aesthetics, not callback_data limit
+        if len(s) > MAX_SUGGESTION_LABEL_LEN:
+            s = s[:MAX_SUGGESTION_LABEL_LEN - 3] + "..."
+            
+        # Create a short 10-char hash for callback_data
+        s_id = hashlib.md5(full_text.encode("utf-8")).hexdigest()[:10]
+        SUGGESTION_CACHE[s_id] = full_text
+        
+        suggestions.append({"id": s_id, "label": s})
 
     suggestions = suggestions[:MAX_SUGGESTIONS]
     return text[: m.start()].rstrip(), suggestions
 
 
-def parse_response_tags(text: str) -> tuple[str, str | None, list[str]]:
+def parse_response_tags(text: str) -> tuple[str, str | None, list[dict[str, str]]]:
     """Parse all LLM hidden tags from response text in one pass.
 
     Order matters: suggestions are at the very end, intent before them.

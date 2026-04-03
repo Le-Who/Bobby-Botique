@@ -26,11 +26,16 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     await query.answer()
 
-    # Extract suggestion text from callback_data: "suggest:Расскажи подробнее"
-    suggestion_text = (query.data or "").removeprefix("suggest:").strip()
-    if not suggestion_text:
+    # Extract suggestion ID or raw text from callback_data: "suggest:..."
+    suggestion_id_or_text = (query.data or "").removeprefix("suggest:").strip()
+    if not suggestion_id_or_text:
         return
 
+    from app.utils.response_tags import SUGGESTION_CACHE
+    
+    # Try to look up the full text from the cache using the hash ID
+    suggestion_text = SUGGESTION_CACHE.get(suggestion_id_or_text, suggestion_id_or_text)
+    
     user = update.effective_user
     chat = update.effective_chat
     if not user or not chat:
@@ -45,7 +50,7 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logging.warning("Failed to send fake user message: %s", e)
 
-    from app.state import get_user_state, get_user_lock
+    from app.state import get_user_lock, get_user_state
     user_state = get_user_state(user.id)
     if user_state.is_processing or get_user_lock(user.id).locked():
         # Inform user but don't crash
@@ -58,8 +63,8 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     user_state.is_processing = True
 
-    from app.state import set_last_sent_message, set_last_bot_message
     from app.i18n import t as _t
+    from app.state import set_last_bot_message, set_last_sent_message
     set_last_sent_message(user.id, suggestion_text)
     
     try:
@@ -74,6 +79,7 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     import asyncio
+
     from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 
     done_event = asyncio.Event()

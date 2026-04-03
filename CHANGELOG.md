@@ -36,8 +36,9 @@ Native in-app settings panel served via Quart Blueprint at `/webapp/`. Authentic
 
 ### 🐛 Bug Fixes
 
-*   **Smart Suggestions UI fix**: `[SUGGESTIONS: ...]` tags no longer leak into the chat during AI responses. Integrated a `post_processor` hook into `streaming.py` that reliably strips hidden tags from the final text buffer prior to the Telegram API update.
-*   **Button_data_invalid fix**: Fixed an issue where long suggestion payloads with Cyrillic characters exceeded Telegram's 64-byte limit for `callback_data`. Suggestion payloads are now strictly truncated by encoded byte-length.
+*   **Smart Suggestions Truncation & UI Leak fix**:
+    *   Tags like `[SUGGESTIONS: ...]` no longer leak into the chat during AI responses. Integrated a `post_processor` hook into `streaming.py` that reliably strips hidden tags from the final text buffer.
+    *   Resolved severe suggestion text truncation that occurred due to Telegram's 64-byte limit on `callback_data`. Suggestions now generate a 10-hex-character MD5 hash representing the full text, storing it in an in-memory `LRUCache`. Buttons display the full un-truncated string, while only passing the tiny hash in `callback_data`. `cb_smart_actions.py` then restores the full text from cache seamlessly.
 *   **Stale test mock**: Removed dead `is_openrouter_model` mock targeting `app.handlers.ai_chat` (function moved to `app.providers.base`). Fixed `test_e2e_app_smoke.py`.
 *   **Schema-qualified assertions**: Fixed 5 test assertions that checked for `INSERT INTO conversations` / `UPDATE conversations` but queries now use `public.conversations`. Affected: `test_repos_conversations.py`, `test_save_conversation.py`, `test_integration_flows.py`.
 *   **Brief generation contract**: Fixed `test_scheduled_briefs.py` mock returning a string instead of `dict[str, str]`, matching the production `_generate_brief_summary` return type.

@@ -296,7 +296,7 @@ async def _handle_regular_chat(
         _user_msg_id = placeholder_message.reply_to_message.message_id
         await set_thinking_reaction(_bot, _chat_id, _user_msg_id)
 
-    _extracted_tags: dict[str, str | list[str] | None] = {}
+    _extracted_tags: dict[str, Any] = {}
 
     def _stream_post_processor(full_text: str) -> tuple[str, object | None]:
         from app.utils.response_tags import parse_response_tags
@@ -374,8 +374,8 @@ async def _handle_regular_chat(
                 from app.utils.response_tags import INTENT_BUTTONS, parse_response_tags
 
                 if streamed and _extracted_tags:
-                    _intent = _extracted_tags.get("intent")
-                    _suggestions = _extracted_tags.get("suggestions", [])
+                    _intent: str | None = _extracted_tags.get("intent")
+                    _suggestions: list[dict[str, str]] = _extracted_tags.get("suggestions", [])
                 else:
                     response_text, _intent, _suggestions = parse_response_tags(response_text)
 
@@ -390,8 +390,8 @@ async def _handle_regular_chat(
                 if _suggestions:
                     suggestion_row = [
                         InlineKeyboardButton(
-                            f"✨ {s}",
-                            callback_data=f"suggest:{s}",
+                            f"✨ {s['label']}",
+                            callback_data=f"suggest:{s['id']}",
                         )
                         for s in _suggestions
                     ]
