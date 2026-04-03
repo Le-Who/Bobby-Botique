@@ -19,6 +19,7 @@ import logging
 import random
 import re
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from google.genai.errors import APIError
@@ -482,20 +483,21 @@ class StreamingWriter:
 
 
 async def stream_and_display(
-    placeholder_message,
+    placeholder_message: Message,
     model_name: str,
-    history: list,
+    history: list[dict[str, Any]],
     system_instruction: str | None = None,
     thinking_level: str | None = None,
     user_id: int | None = None,
     *,
-    bot=None,
+    bot: Any | None = None,
     chat_id: int = 0,
     reply_markup: Any | None = None,
     footer_text: str | None = None,
     enable_web_search: bool = False,
     yield_hook: Any | None = None,
-) -> tuple[str, bool, Message | None, int, bool, bool]:
+    post_processor: Callable[[str], tuple[str, object | None]] | None = None,
+) -> tuple[str, bool, Message, int, bool, bool]:
     """High-level: stream AI response and progressively update Telegram message.
 
     Supports multi-message streaming: when a single message exceeds
@@ -594,7 +596,20 @@ async def stream_and_display(
         if footer_text:
             await writer.write(footer_text)
 
-        final_text = await writer.finalize(reply_markup=reply_markup)
+        markup = reply_markup
+        if post_processor:
+            # Strip tags natively before flushing final text to Telegram
+            clean_text, markup = post_processor(writer._full_text)
+            removed = len(writer._full_text) - len(clean_text)
+            if removed > 0:
+                if removed <= len(writer._buffer):
+                    writer._buffer = writer._buffer[:-removed]
+                else:
+                    # Fallback if tags spanned multiple chunks (rare)
+                    writer._buffer = ""
+                writer._full_text = clean_text
+
+        final_text = await writer.finalize(reply_markup=markup)
 
         if not final_text.strip():
             return "", False, placeholder_message, 0, False, False

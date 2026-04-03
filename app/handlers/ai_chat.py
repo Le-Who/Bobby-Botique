@@ -3,6 +3,7 @@ AI Chat handler — regular conversational chat with context management.
 """
 
 import logging
+from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -295,6 +296,16 @@ async def _handle_regular_chat(
         _user_msg_id = placeholder_message.reply_to_message.message_id
         await set_thinking_reaction(_bot, _chat_id, _user_msg_id)
 
+    _extracted_tags: dict[str, str | list[str] | None] = {}
+
+    def _stream_post_processor(full_text: str) -> tuple[str, object | None]:
+        from app.utils.response_tags import parse_response_tags
+
+        _clean, _intent, _sugg = parse_response_tags(full_text)
+        _extracted_tags["intent"] = _intent
+        _extracted_tags["suggestions"] = _sugg
+        return _clean, None
+
     try:
         (
             response_text,
@@ -314,6 +325,7 @@ async def _handle_regular_chat(
             chat_id=_chat_id,
             footer_text=_footer_text,
             yield_hook=_stop_placeholder_animation,
+            post_processor=_stream_post_processor,
         )
     finally:
         # Safety net: stop heartbeat if stream failed completely before yielding
@@ -361,7 +373,11 @@ async def _handle_regular_chat(
                 # Normal response: parse LLM tags + show standard action buttons
                 from app.utils.response_tags import INTENT_BUTTONS, parse_response_tags
 
-                _cleaned_text, _intent, _suggestions = parse_response_tags(response_text)
+                if streamed and _extracted_tags:
+                    _intent = _extracted_tags.get("intent")
+                    _suggestions = _extracted_tags.get("suggestions", [])
+                else:
+                    response_text, _intent, _suggestions = parse_response_tags(response_text)
 
                 _lang = detect_language(user_message)
                 branch_btn = (
@@ -375,7 +391,7 @@ async def _handle_regular_chat(
                     suggestion_row = [
                         InlineKeyboardButton(
                             f"✨ {s}",
-                            callback_data=f"suggest:{s[:40]}",
+                            callback_data=f"suggest:{s}",
                         )
                         for s in _suggestions
                     ]

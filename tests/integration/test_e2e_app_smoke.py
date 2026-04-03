@@ -115,6 +115,7 @@ async def test_integration_full_message_flow(db_conn, mock_db_manager, mock_exte
 
     # ── Act ──
     from app.state import ensure_state_loaded
+
     await ensure_state_loaded(user_id)
 
     with (

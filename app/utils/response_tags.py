@@ -49,8 +49,9 @@ _SUGGESTIONS_RE = re.compile(
 
 # Max suggestions to render as buttons
 MAX_SUGGESTIONS = 3
-# Max chars per suggestion (button label limit)
-MAX_SUGGESTION_LEN = 40
+# Max bytes per suggestion (Telegram limits callback_data to 64 bytes total)
+# "suggest:" prefix is 8 bytes. Leaving 50 bytes for the suggestion payload.
+MAX_SUGGESTION_BYTES = 50
 
 
 def extract_suggestions(text: str) -> tuple[str, list[str]]:
@@ -65,10 +66,18 @@ def extract_suggestions(text: str) -> tuple[str, list[str]]:
         return text, []
 
     raw = m.group(1)
-    suggestions = [s.strip() for s in raw.split("|") if s.strip()]
-    # Truncate and limit
-    suggestions = [s[:MAX_SUGGESTION_LEN] for s in suggestions[:MAX_SUGGESTIONS]]
+    suggestions = []
+    for s in raw.split("|"):
+        s = s.strip()
+        if not s:
+            continue
+        # Truncate by byte length to prevent Button_data_invalid errors
+        b = s.encode("utf-8")
+        if len(b) > MAX_SUGGESTION_BYTES:
+            s = b[:MAX_SUGGESTION_BYTES].decode("utf-8", "ignore")
+        suggestions.append(s)
 
+    suggestions = suggestions[:MAX_SUGGESTIONS]
     return text[: m.start()].rstrip(), suggestions
 
 

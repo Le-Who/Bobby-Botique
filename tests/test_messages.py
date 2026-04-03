@@ -170,6 +170,7 @@ async def test_handle_request_text_message_happy_path():
 
     async def _debounce_passthrough(uid, msg, bot=None):
         from app.middleware.debounce import DebounceResult, _MessageEntry
+
         entry = _MessageEntry(
             message=msg,
             text=msg.text or "",
@@ -236,6 +237,7 @@ async def test_handle_request_text_message_happy_path_with_task_execution():
 
     async def _debounce_passthrough(uid, msg, bot=None):
         from app.middleware.debounce import DebounceResult, _MessageEntry
+
         entry = _MessageEntry(
             message=msg,
             text=msg.text or "",
@@ -413,6 +415,7 @@ async def test_handle_request_exception_handling():
 
     async def _debounce_passthrough(uid, msg, bot=None):
         from app.middleware.debounce import DebounceResult, _MessageEntry
+
         entry = _MessageEntry(
             message=msg,
             text=msg.text or "",

@@ -310,10 +310,10 @@ async def run_bot_with_retry():
         # Using Update.ALL_TYPES is wasteful (delivers business_connection, polls, etc.
         # that we have no handlers for) and can cause rare fallthrough crashes.
         _ALLOWED_UPDATES = [
-            "message",           # New text/photo/voice/document
-            "edited_message",    # User corrected a message → in-place edit UX
-            "callback_query",    # Inline keyboard button presses
-            "inline_query",      # Inline mode
+            "message",  # New text/photo/voice/document
+            "edited_message",  # User corrected a message → in-place edit UX
+            "callback_query",  # Inline keyboard button presses
+            "inline_query",  # Inline mode
             "message_reaction",  # Native 👍/👎 reactions → ambient feedback
         ]
 

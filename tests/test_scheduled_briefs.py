@@ -159,7 +159,10 @@ class TestBriefGeneration:
         ):
             mock_db.db_query = AsyncMock(side_effect=mock_db_query)
             mock_search.return_value = [{"title": "Test", "content": "Test content", "url": "https://test.com"}]
-            mock_summary.return_value = {"🤖 ML архитектуры": "Point 1: Transformers.", "🐍 Python": "Point 2: Performance."}
+            mock_summary.return_value = {
+                "🤖 ML архитектуры": "Point 1: Transformers.",
+                "🐍 Python": "Point 2: Performance.",
+            }
 
             from app.handlers.scheduled_briefs import generate_and_send_brief
 
