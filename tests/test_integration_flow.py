@@ -42,6 +42,7 @@ def make_update(user_id=123, chat_id=456, text="Hello AI", photo=False):
     msg.reply_text = AsyncMock(return_value=placeholder_msg)
 
     update.message = msg
+    update.effective_message = msg
     return update
 
 

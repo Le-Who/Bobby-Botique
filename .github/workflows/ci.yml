@@ -71,7 +71,7 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
       - name: Run unit tests
-        run: pytest tests/ -v  # runs with -m "not integration" due to pytest.ini
+        run: pytest tests/ -v
         
   test-integration:
     name: Test Integration (Slow)
@@ -81,7 +81,7 @@ jobs:
     needs: [test-unit]
     env:
       TELEGRAM_BOT_TOKEN: "test:token"
-      DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+      DATABASE_URL: "postgresql://test:test@localhost/test"
       ADMIN_ID: "123456"
       GEMINI_API_KEYS: "test-key"
       TAVILY_API_KEYS: "test-key"

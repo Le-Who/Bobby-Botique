@@ -14,16 +14,22 @@ from typing import Any
 
 from app.database import db_manager
 from app.repos.db_helpers import clear_user_context, db_query, set_user_context
-
-# Approximate tokens per character for mixed Cyrillic/Latin text
-_CHARS_PER_TOKEN = 3.5
-TOKEN_THRESHOLD = 8000
-TEMPORAL_THRESHOLD_DAYS = 7
-MAX_PERSONA_FACTS = 8
-MIN_PERSONA_FACTS = 5
-
-# Consolidation model — use cheapest available free-tier model
-_CONSOLIDATION_MODEL = "gemini-3.1-flash-lite-preview"
+from app.repos.memory_config import (
+    CHARS_PER_TOKEN as _CHARS_PER_TOKEN,
+)
+from app.repos.memory_config import (
+    CONSOLIDATION_MODEL as _CONSOLIDATION_MODEL,
+)
+from app.repos.memory_config import (
+    CONSOLIDATION_TEMPORAL_DAYS as TEMPORAL_THRESHOLD_DAYS,
+)
+from app.repos.memory_config import (
+    CONSOLIDATION_TOKEN_THRESHOLD as TOKEN_THRESHOLD,
+)
+from app.repos.memory_config import (
+    MAX_PERSONA_FACTS,
+    MIN_PERSONA_FACTS,
+)
 
 # ── Debounce gate constants ─────────────────────────────────────────────
 _MSG_GATE = 20  # check should_consolidate every Nth message

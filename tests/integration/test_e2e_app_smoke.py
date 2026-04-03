@@ -107,13 +107,22 @@ async def test_integration_full_message_flow(db_conn, mock_db_manager, mock_exte
 
     mock_update.message = mock_message
     mock_update.effective_user = mock_user
+    mock_update.effective_message = mock_message
 
     mock_context = MagicMock()
+    mock_context.user_data = {}
     mock_context.bot = MagicMock()
     mock_context.bot.send_message = AsyncMock(return_value=mock_thinking_msg)
 
     # ── Act ──
-    await process_long_request(mock_thinking_msg, mock_update, mock_context)
+    from app.state import ensure_state_loaded
+    await ensure_state_loaded(user_id)
+
+    with (
+        patch("app.utils.background_tasks.submit_task"),
+        patch("app.utils.background_tasks.submit_retryable"),
+    ):
+        await process_long_request(mock_thinking_msg, mock_update, mock_context)
 
     # ── Assert ──
     # DB Integrity Check: Verify active_chat_messages syncs

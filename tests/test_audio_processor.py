@@ -57,7 +57,7 @@ class TestMultimodalProcessorConstants:
         from app.utils.multimodal_processor import transcribe_voice
 
         result = await transcribe_voice(b"", "fake-key")
-        assert result == (None, "conversational")
+        assert result == (None, "conversational", None)
 
     @pytest.mark.asyncio
     async def test_describe_image_rejects_empty_bytes(self):

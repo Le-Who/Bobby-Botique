@@ -37,14 +37,12 @@ class TestMutationsAreCaught:
 
     def test_mutation_memory_empty_list_handling(self):
         """Mutant: always inject preamble even when memories is empty."""
-        from app.handlers.chat_logic import build_memory_context
+        from app.handlers.chat_logic import format_memories_for_system_prompt
 
-        history = [{"role": "user", "parts": ["Hi"]}]
-        result = build_memory_context([], history)
+        result = format_memories_for_system_prompt([])
 
-        # Must return original history, not an extended one
-        assert result is history, "Empty memories must return original history object"
-        assert len(result) == 1, "Empty memories must not add preamble messages"
+        # Must return empty string
+        assert result == "", "Empty memories must return empty string"
 
     def test_mutation_response_empty_detection(self):
         """Mutant: treat empty response as 'send' instead of 'empty'."""

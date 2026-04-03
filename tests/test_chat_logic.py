@@ -5,7 +5,6 @@ import pytest
 from app.handlers.chat_logic import (
     ResolutionResult,
     ResponseAction,
-    build_memory_context,
     classify_resolution,
     classify_response,
 )
@@ -56,56 +55,51 @@ class TestClassifyResolution:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# build_memory_context
+# format_memories_for_system_prompt
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestBuildMemoryContext:
-    """Test memory injection into conversation history."""
+class TestFormatMemoriesForSystemPrompt:
+    """Test memory formatting into XML strings."""
 
-    def test_empty_memories_returns_original_history(self):
-        history = [{"role": "user", "parts": ["Hello"]}]
-        result = build_memory_context([], history)
-        assert result is history  # Same object, not a copy
+    def test_empty_memories_returns_empty_string(self):
+        from app.handlers.chat_logic import format_memories_for_system_prompt
 
-    def test_memories_prepended_to_history(self):
-        history = [{"role": "user", "parts": ["What is AI?"]}]
-        memories = [{"content": "User likes Python"}]
-        result = build_memory_context(memories, history)
+        result = format_memories_for_system_prompt([])
+        assert result == ""
 
-        assert len(result) == 3  # memory_msg + ack_msg + original
-        assert result[0]["role"] == "user"
-        assert "воспоминания" in result[0]["parts"][0].lower()
-        assert result[1]["role"] == "model"
-        assert result[2] == history[0]
+    def test_memories_formatted_to_xml(self):
+        from app.handlers.chat_logic import format_memories_for_system_prompt
+
+        memories = [{"content": "Fact 1", "created_at": "2024-04-03 10:00:00"}]
+        result = format_memories_for_system_prompt(memories)
+
+        assert "<long_term_memory>" in result
+        assert 'source="2024-04-03"' in result
+        assert "</long_term_memory>" in result
 
     def test_memories_truncated_to_max_length(self):
+        from app.handlers.chat_logic import format_memories_for_system_prompt
+
         long_content = "A" * 1000
         memories = [{"content": long_content}]
-        result = build_memory_context(memories, [], max_content_length=50)
+        result = format_memories_for_system_prompt(memories, max_content_length=50)
 
-        mem_text = result[0]["parts"][0]
-        # The injected text should contain at most 50 chars of the memory
-        assert "A" * 50 in mem_text
-        assert "A" * 51 not in mem_text
+        assert "A" * 50 in result
+        assert "A" * 51 not in result
 
     def test_multiple_memories_all_included(self):
+        from app.handlers.chat_logic import format_memories_for_system_prompt
+
         memories = [
             {"content": "Fact 1"},
             {"content": "Fact 2"},
             {"content": "Fact 3"},
         ]
-        result = build_memory_context(memories, [])
-        mem_text = result[0]["parts"][0]
-        assert "Fact 1" in mem_text
-        assert "Fact 2" in mem_text
-        assert "Fact 3" in mem_text
-
-    def test_does_not_mutate_original_history(self):
-        history = [{"role": "user", "parts": ["Hi"]}]
-        original_len = len(history)
-        build_memory_context([{"content": "memo"}], history)
-        assert len(history) == original_len
+        result = format_memories_for_system_prompt(memories)
+        assert "Fact 1" in result
+        assert "Fact 2" in result
+        assert "Fact 3" in result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

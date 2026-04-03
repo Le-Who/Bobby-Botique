@@ -82,6 +82,7 @@ def make_telegram_update(message_text="Hello", user_id=123, chat_id=456):
     update.message = make_telegram_message(text=message_text, user_id=user_id, chat_id=chat_id)
     update.effective_user = update.message.from_user
     update.effective_chat = update.message.chat
+    update.effective_message = update.message
     return update
 
 

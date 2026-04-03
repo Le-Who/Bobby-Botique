@@ -100,44 +100,6 @@ def format_memories_for_system_prompt(
     return "\n".join(lines)
 
 
-def build_memory_context(
-    memories: list[dict[str, Any]],
-    history: list[dict[str, Any]],
-    max_content_length: int = 300,
-) -> list[dict[str, Any]]:
-    """
-    **DEPRECATED** — Use ``format_memories_for_system_prompt`` instead.
-
-    Kept for backward compatibility with tests and callers that have not
-    migrated yet.  Logs a one-time deprecation warning.
-    """
-    import logging
-    import warnings
-
-    warnings.warn(
-        "build_memory_context is deprecated; use format_memories_for_system_prompt",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    logging.warning("build_memory_context is deprecated — migrate to format_memories_for_system_prompt")
-
-    if not memories:
-        return history
-
-    mem_texts = [m["content"][:max_content_length] for m in memories]
-    mem_block = "\n".join(f"- {t}" for t in mem_texts)
-
-    memory_msg = {
-        "role": "user",
-        "parts": [f"[Релевантные воспоминания из прошлых бесед]\n{mem_block}"],
-    }
-    ack_msg = {
-        "role": "model",
-        "parts": ["Учитываю контекст из прошлых бесед."],
-    }
-    return [memory_msg, ack_msg] + list(history)
-
-
 # ─── Response classification ────────────────────────────────────────────────
 
 

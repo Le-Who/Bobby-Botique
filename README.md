@@ -325,8 +325,32 @@ The application features a heavily engineered test suite (**1421+ unit and integ
 
 ## Known Documentation Gaps
 
-- **Bot Config vs Environment Discrepancy**: Northflank compose config explicitly enables `LOG_JSON=true`, however, runtime application checks environment variable `STRUCTURED_LOGGING` and `LOG_FORMAT` in `bot.py`.
-- **OpenRouter Multimodal Capabilities**: OpenRouter is explicitly disabled for multimodality interactions in current abstractions; however, this architecture distinction is under-represented in internal application documentation.
+- **Logging Variable Chain**: Northflank compose config sets `LOG_JSON=true`, but runtime uses `LOG_FORMAT` environment variable detected in `app/utils/logging_config.py`. The variable `STRUCTURED_LOGGING` referenced in earlier docs is not present in the `Settings` model — `LOG_FORMAT` is the actual control variable.
+- **OpenRouter Multimodal Capabilities**: OpenRouter is explicitly disabled for multimodal interactions (images); this architectural decision is under-documented in internal application documentation.
+- **Healthcheck Start Period**: `Dockerfile.northflank` sets `--start-period=40s` while `docker-compose.northflank.yml` overrides with `start_period: 120s`. The compose value takes precedence in production.
+- **CI pytest.ini Comment**: CI workflow (line 74) comments "runs with -m 'not integration' due to pytest.ini" but `pytest.ini` does not set `-m "not integration"` in `addopts`. All tests (unit + integration) run by default; integration tests simply pass without a database.
+
+## Architecture Decisions
+
+Key implementation decisions that frequently need re-discovery:
+
+### State Persistence
+`UserState` lives in an in-memory `LRUCache` (configurable via `LRU_STATE_CACHE_SIZE`, default 1000). Changes are debounced to PostgreSQL with a 300ms window via `_pending_persists` dict, preventing DB write storms during rapid interactions.
+
+### Error Tagging
+Telegram messages carry invisible `ErrorCode` tags via zero-width space characters (`\u200b` + enum value). This enables O(1) error classification from user-visible messages without fragile text/emoji parsing. See `tag_error()` and `classify_from_message()` in `app/errors.py`.
+
+### Streaming Message Overflow
+When a streaming AI response exceeds Telegram's ~4000 char limit, `StreamingWriter` finalizes the current message and creates a new one via `reply_new_message()`. The split preserves markdown continuity: `_detect_open_markdown()` closes unclosed code blocks/bold/italic in the frozen message and reopens them in the continuation.
+
+### Memory Consolidation Triggers
+Consolidation fires when raw memories exceed ~8,000 tokens OR 7 days since last consolidation. A debounce gate (`should_check_consolidation()`) prevents DB queries on every message — it checks only every 20th message or every 15 minutes.
+
+### Singleton Lifecycle
+`DatabaseManager`, `ProviderRouter`, and `PromptRegistry` use lazy-init singletons. Tests handle cleanup via `conftest.py` fixtures. Import-time side effects are avoided by deferring initialization to first access.
+
+### Key Rotation Health Scoring
+API keys are selected by a two-tier SQL query: first from active keys that haven't exceeded failure thresholds, then from keys whose cooldown period has expired. Per-key health data (failure count, last failure time, suspension reason) is tracked in `repos/keys.py`.
 
 ## Future / Roadmap
 

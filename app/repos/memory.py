@@ -23,13 +23,22 @@ from app.database import (
 )
 from app.providers.gemini import get_cached_genai_client
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# ── Constants (re-exported from memory_config for backward compatibility) ─────
+from app.repos.memory_config import (
+    DEFAULT_MEMORY_TTL_DAYS,
+    EMBEDDING_DIMENSION,
+    EMBEDDING_MODEL,
+    MAX_MEMORIES_PER_USER,
+    QUERY_EXPANSION_MODEL,
+)
 
-EMBEDDING_MODEL = "gemini-embedding-2-preview"
-EMBEDDING_DIMENSION = 768
-QUERY_EXPANSION_MODEL = "gemini-3.1-flash-lite-preview"
-MAX_MEMORIES_PER_USER = 500
-DEFAULT_MEMORY_TTL_DAYS = 90
+__all__ = [
+    "EMBEDDING_MODEL",
+    "EMBEDDING_DIMENSION",
+    "QUERY_EXPANSION_MODEL",
+    "MAX_MEMORIES_PER_USER",
+    "DEFAULT_MEMORY_TTL_DAYS",
+]
 
 # Cached flag: True if pg_trgm extension is available in this database
 _trgm_available: bool | None = None
