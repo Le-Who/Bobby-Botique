@@ -20,7 +20,7 @@ from google.genai import types
 
 from app.providers.gemini import get_cached_genai_client
 
-TTS_MODEL = "gemini-2.5-flash"
+TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
 # Available voices and their personalities:
 #   Aoede  — Breezy, natural (smooth conversational narration)
