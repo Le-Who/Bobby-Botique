@@ -186,6 +186,7 @@ class StreamingWriter:
     def __init__(
         self,
         adapter: StreamingUIAdapter,
+        use_telegraph_fallback: bool = True,
     ):
         self._adapter = adapter  # Generic UI adapter
         self._buffer = ""  # Buffer for CURRENT message only
@@ -197,6 +198,8 @@ class StreamingWriter:
 
         self._debounce_s = EDIT_DEBOUNCE_S
         self._min_chunk = MIN_CHUNK_SIZE
+        self._use_telegraph = use_telegraph_fallback
+        self._telegraph_engaged = False
 
     @staticmethod
     def _is_rate_limited(error: Exception) -> bool:
@@ -298,10 +301,13 @@ class StreamingWriter:
         try:
             formatted_text, parse_mode = self._format_for_telegram(display_text)
 
+            if getattr(self, "_telegraph_engaged", False):
+                return  # Stream is frozen in UI, doing silent generation
+
             if len(formatted_text) > STREAM_MSG_LIMIT and not final:
                 if getattr(self, "_overflow_failed", False):
                     return  # Circuit breaker
-                # Mid-stream overflow: finalize current, start new message
+                # Mid-stream overflow: finalize current, start new message (or freeze for Telegraph)
                 await self._overflow_to_new_message()
                 return
 
@@ -309,7 +315,7 @@ class StreamingWriter:
                 if getattr(self, "_overflow_failed", False) or _depth > 5 or self._msg_count > 8:
                     formatted_text = sanitize_html_tags(formatted_text[:STREAM_MSG_LIMIT])
                 else:
-                    # Final flush overflows — split into finalize + new message
+                    # Final flush overflows — split into finalize + new message (or freeze for Telegraph)
                     await self._overflow_to_new_message()
                     # Now flush the remainder (recursion with reduced buffer)
                     await self._flush(final=True, reply_markup=reply_markup, _depth=_depth + 1)
@@ -351,6 +357,10 @@ class StreamingWriter:
             remainder = md_prefix + remainder
 
         # Freeze current message (or send new if placeholder was deleted)
+        if self._use_telegraph:
+            frozen_text += "\n\n... 📝 _[Текст получается очень длинным, формирую статью]_"
+            pre_formatted = None
+
         try:
             if pre_formatted is not None:
                 # Reuse the formatted text from _find_split_point (avoids re-formatting)
@@ -359,12 +369,20 @@ class StreamingWriter:
             else:
                 formatted_frozen, parse_mode = self._format_for_telegram(frozen_text)  # type: ignore[assignment]  # parse_mode is always str from TelegramFormatter
 
+            # Failsafe limit if indicator pushed it over
+            if len(formatted_frozen) > STREAM_MSG_LIMIT:
+                formatted_frozen = formatted_frozen[:STREAM_MSG_LIMIT]
+
             await self._adapter.edit_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
 
             self._edit_count += 1
         except Exception as e:
             if "not modified" not in str(e).lower():
                 logging.warning("Failed to freeze message on overflow: %s", e)
+
+        if self._use_telegraph:
+            self._telegraph_engaged = True
+            return
 
         # 2. Create new message with cursor indicator
         try:
@@ -613,6 +631,55 @@ async def stream_and_display(
 
         if not final_text.strip():
             return "", False, placeholder_message, 0, False, False
+
+        # Telegraph transition: if stream was engaged, push to Telegraph natively
+        if getattr(writer, "_telegraph_engaged", False):
+            from app.utils.telegraph import create_telegraph_page
+            
+            title = "Ответ ИИ"
+            if history:
+                # Seek history for last user query
+                for item in reversed(history):
+                    if item.get("role") == "user" and item.get("parts"):
+                        raw = strip_formatting(item["parts"][0])
+                        if raw:
+                            title = raw[:60].strip()
+                            if len(raw) > 60:
+                                title += "…"
+                        break
+
+            t_url = await create_telegraph_page(title, final_text)
+            if t_url:
+                logging.info("Stream gracefully transitioned to Telegraph: %s", t_url)
+                summary_lines = final_text[:800].strip()
+                if len(final_text) > 800:
+                    summary_lines += "…"
+                    
+                from app.utils.ux_improvements import wrap_in_expandable_blockquote
+                sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
+                summary_html = wrap_in_expandable_blockquote(sanitized_summary)
+                
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                full_text_html = f'{summary_html}\n\n📖 <a href="{t_url}">Читать статью (Instant View)</a>'
+                
+                buttons = []
+                if markup and getattr(markup, "inline_keyboard", None):
+                    buttons = list(markup.inline_keyboard)
+                buttons.insert(0, [InlineKeyboardButton("📖 Открыть статью", url=t_url)])
+                new_markup = InlineKeyboardMarkup(buttons)
+                
+                try:
+                    await writer._adapter.edit_message(
+                        full_text_html,
+                        parse_mode="HTML",
+                        reply_markup=new_markup
+                    )
+                except Exception as e:
+                    logging.warning("Failed to update frozen telegraph message: %s", e)
+            else:
+                logging.warning("Telegraph creation failed for frozen stream; sending long message fallback.")
+                from app.utils.messaging import send_long_message
+                await send_long_message(writer.last_message, final_text, reply_markup=markup)
 
         # Check finish_reason for blocked/truncated responses
         fr = _last_finish_reason.get()
