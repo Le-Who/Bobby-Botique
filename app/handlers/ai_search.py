@@ -13,6 +13,9 @@ from telegram.error import BadRequest, NetworkError
 from app.config import settings
 from app.core.agentic import AgenticResult, AgenticSearch
 from app.database import ChatState
+
+_bg_tasks = set() # Store background tasks to prevent garbage collection (RUF006)
+
 from app.errors import _TAG_PREFIX, is_error_message
 from app.handlers.ai_core import (
     _get_ai_response_with_routing,
@@ -384,32 +387,51 @@ async def _handle_research_agent(
             [InlineKeyboardButton("✨ Начать новую тему", callback_data="deepdive:new_topic")],
         ]
 
-        # ── Telegraph for longreads (>5000 chars) ────────────────────
-        from app.utils.telegraph import should_use_telegraph
-
-        telegraph_url: str | None = None
-        if should_use_telegraph(final_answer):
+        # ── Long Read transition for large responses (>4000 chars) ────────────────────
+        reader_url: str | None = None
+        if len(final_answer) > 4000 and settings.WEBAPP_BASE_URL:
             try:
+                import uuid
+
+                from app.cache import store_long_message, store_telegraph_url
+                
+                uid = str(uuid.uuid4())
+                await store_long_message(uid, final_answer)
+                reader_url = f"{settings.WEBAPP_BASE_URL}/webapp/reader?id={uid}"
+                logging.info(f"AgenticSearch: Created MiniApp Reader URL for {len(final_answer)} chars: {reader_url}")
+                
+                # Launch background telegraph fallback
                 from app.utils.telegraph import create_telegraph_page
-
-                # Use first 60 chars of the query as page title
                 page_title = actual_search_query[:60].strip() or "Исследование"
-                telegraph_url = await create_telegraph_page(page_title, final_answer)
-            except Exception as tg_err:
-                logging.debug("Telegraph page creation failed: %s", tg_err)
+                
+                async def _bg_telegraph_fallback(u: str, t: str, a: str) -> None:
+                    try:
+                        tg_url = await create_telegraph_page(t, a)
+                        if tg_url:
+                            await store_telegraph_url(u, tg_url)
+                    except Exception as fallback_err:
+                        logging.debug("Background telegraph fallback failed: %s", fallback_err)
+                        
+                task = asyncio.create_task(_bg_telegraph_fallback(uid, page_title, final_answer))
+                _bg_tasks.add(task)
+                task.add_done_callback(_bg_tasks.discard)
+            except Exception as e:
+                logging.debug("Mini App Reader creation failed: %s", e)
 
-        if telegraph_url:
-            # Send a collapsed summary with Instant View link
-            # Take first ~800 chars as the summary
+        if reader_url:
+            # Send a collapsed summary with reader link
             summary_lines = final_answer[:800].strip()
             if len(final_answer) > 800:
                 summary_lines += "…"
 
-            from app.utils.ux_improvements import wrap_in_expandable_blockquote
+            from telegram import WebAppInfo
 
+            from app.utils.ux_improvements import wrap_in_expandable_blockquote
+            
             summary_html = wrap_in_expandable_blockquote(summary_lines)
-            full_text = f'{summary_html}\n\n📖 <a href="{telegraph_url}">Читать полностью (Instant View)</a>'
-            buttons.insert(0, [InlineKeyboardButton("📖 Открыть статью", url=telegraph_url)])
+            full_text = f'{summary_html}\n\n📖 <a href="{reader_url}">Читать полностью</a>'
+            
+            buttons.insert(0, [InlineKeyboardButton("📖 Читать полностью", web_app=WebAppInfo(url=reader_url))])
             reply_markup = InlineKeyboardMarkup(buttons)
 
             try:
@@ -417,12 +439,12 @@ async def _handle_research_agent(
                     full_text,
                     parse_mode="HTML",
                     reply_markup=reply_markup,
-                    disable_web_page_preview=False,  # Enable for Instant View
+                    disable_web_page_preview=True,
                 )
             except Exception as e:
-                logging.warning("Telegraph summary edit failed: %s, falling back", e)
+                logging.warning("Mini App Reader summary edit failed: %s, falling back", e)
                 # Fallback to standard long message
-                reply_markup = InlineKeyboardMarkup(buttons[1:])  # Remove Telegraph button
+                reply_markup = InlineKeyboardMarkup(buttons[1:])  # Remove Reader button
                 await send_long_message(
                     placeholder_message,
                     final_answer,

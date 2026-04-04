@@ -21,8 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Responses longer than this threshold get published to Telegraph
-TELEGRAPH_THRESHOLD = 5000
+
 
 # Telegraph API endpoint
 _TELEGRAPH_API = "https://api.telegra.ph"
@@ -186,6 +185,4 @@ async def create_telegraph_page(title: str, markdown_content: str) -> str | None
         return None
 
 
-def should_use_telegraph(text: str) -> bool:
-    """Check if a response is long enough to warrant a Telegraph page."""
-    return len(text) > TELEGRAPH_THRESHOLD
+
