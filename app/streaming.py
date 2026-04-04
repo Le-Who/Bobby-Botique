@@ -562,6 +562,7 @@ async def stream_and_display(
 
     # Reset voice intent flag for this stream
     _voice_requested.set(False)
+    _was_interrupted = False
 
     try:
         from app.providers import get_provider_router
@@ -614,23 +615,68 @@ async def stream_and_display(
         if footer_text:
             await writer.write(footer_text)
 
-        markup = reply_markup
-        if post_processor:
-            # Strip tags natively before flushing final text to Telegram
-            clean_text, markup = post_processor(writer._full_text)
-            removed = len(writer._full_text) - len(clean_text)
-            if removed > 0:
-                if removed <= len(writer._buffer):
-                    writer._buffer = writer._buffer[:-removed]
-                else:
-                    # Fallback if tags spanned multiple chunks (rare)
-                    writer._buffer = ""
-                writer._full_text = clean_text
+    except TimeoutError:
+        _was_interrupted = True
+        logging.warning("Stream timeout")
+        if not writer.text:
+            return (
+                "⏰ Превышено время ожидания ответа. Попробуйте позже.",
+                False,
+                placeholder_message,  # type: ignore[return-value]
+                0,
+                False,
+                False,
+            )
+        writer._full_text += "\n\n⏰ _(ответ был прерван по таймауту)_"
+        writer._buffer += "\n\n⏰ _(ответ был прерван по таймауту)_"
 
-        final_text = await writer.finalize(reply_markup=markup)
+    except APIError as e:
+        _was_interrupted = True
+        logging.error("Streaming API error: %s", e)
+        if not writer.text:
+            return (
+                "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.",
+                False,
+                placeholder_message,  # type: ignore[return-value]
+                0,
+                False,
+                False,
+            )
+        writer._full_text += "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_"
+        writer._buffer += "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_"
 
-        if not final_text.strip():
-            return "", False, placeholder_message, 0, False, False
+    except Exception as e:
+        _was_interrupted = True
+        logging.error("Streaming failed: %s", e, exc_info=True)
+        if not writer.text:
+            return (
+                "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.",
+                False,
+                placeholder_message,  # type: ignore[return-value]
+                0,
+                False,
+                False,
+            )
+        writer._full_text += "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_"
+        writer._buffer += "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_"
+
+    markup = reply_markup
+    if post_processor:
+        # Strip tags natively before flushing final text to Telegram
+        clean_text, markup = post_processor(writer._full_text)
+        removed = len(writer._full_text) - len(clean_text)
+        if removed > 0:
+            if removed <= len(writer._buffer):
+                writer._buffer = writer._buffer[:-removed]
+            else:
+                # Fallback if tags spanned multiple chunks (rare)
+                writer._buffer = ""
+            writer._full_text = clean_text
+
+    final_text = await writer.finalize(reply_markup=markup)
+
+    if not final_text.strip():
+        return "", False, placeholder_message, 0, False, False
 
         # Long Read transition: stream exceeded threshold → publish via Mini App / Telegraph
         if getattr(writer, "_telegraph_engaged", False):
@@ -684,7 +730,7 @@ async def stream_and_display(
                     if markup and getattr(markup, "inline_keyboard", None):
                         buttons = list(getattr(markup, "inline_keyboard", []))
                     
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+                    from telegram import WebAppInfo
                     buttons.insert(0, [InlineKeyboardButton("📖 Читать полностью", web_app=WebAppInfo(url=reader_url))])
                     new_markup = InlineKeyboardMarkup(buttons)
 
@@ -799,78 +845,4 @@ async def stream_and_display(
         await metrics_collector.record_api_call("gemini_streaming", model_name)
         actual_tokens = _last_token_count.get()
         voice_requested = _voice_requested.get()
-        return final_text, True, writer.last_message, actual_tokens, False, voice_requested  # type: ignore[return-value]
-
-    except TimeoutError:
-        partial = writer.text
-        if partial:
-            await writer.finalize()
-            # Wrap partial text in collapsed blockquote for cleaner error UX
-            _partial_fmt, _ = TelegramFormatter.format_text(partial)
-            _partial_fmt = wrap_partial_response(_partial_fmt)
-            return (
-                partial + "\n\n⏰ _(ответ был прерван по таймауту)_",
-                True,
-                writer.last_message,  # type: ignore[return-value]
-                0,
-                True,  # was_interrupted
-                _voice_requested.get(),
-            )
-        return (
-            "⏰ Превышено время ожидания ответа. Попробуйте позже.",
-            False,
-            placeholder_message,  # type: ignore[return-value]
-            0,
-            False,
-            False,
-        )
-
-    except APIError as e:
-        logging.error("Streaming API error: %s", e)
-        partial = writer.text
-        if partial:
-            await writer.finalize()
-            # Wrap partial text in collapsed blockquote for cleaner error UX
-            _partial_fmt, _ = TelegramFormatter.format_text(partial)
-            _partial_fmt = wrap_partial_response(_partial_fmt)
-            return (
-                partial + "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_",
-                True,
-                writer.last_message,  # type: ignore[return-value]
-                0,
-                True,  # was_interrupted
-                _voice_requested.get(),
-            )
-        return (
-            "❌ Ошибка API при потоковой генерации. Попробуйте ещё раз.",
-            False,
-            placeholder_message,  # type: ignore[return-value]
-            0,
-            False,
-            False,
-        )
-
-    except Exception as e:
-        logging.error("Streaming failed: %s", e, exc_info=True)
-        partial = writer.text
-        if partial:
-            await writer.finalize()
-            # Wrap partial text in collapsed blockquote for cleaner error UX
-            _partial_fmt, _ = TelegramFormatter.format_text(partial)
-            _partial_fmt = wrap_partial_response(_partial_fmt)
-            return (
-                partial + "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_",
-                True,
-                writer.last_message,  # type: ignore[return-value]
-                0,
-                True,  # was_interrupted
-                _voice_requested.get(),
-            )
-        return (
-            "❌ Ошибка при потоковой генерации. Попробуйте ещё раз.",
-            False,
-            placeholder_message,  # type: ignore[return-value]
-            0,
-            False,
-            False,
-        )
+        return final_text, True, writer.last_message, actual_tokens, _was_interrupted, voice_requested  # type: ignore[return-value]
