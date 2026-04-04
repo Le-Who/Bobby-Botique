@@ -168,6 +168,26 @@ body {
 .toast.show { opacity: 1; }
 
 /* ── Load more button ─────────────────────────────────────── */
+/* ── Segmented Control ── */
+.segmented { display: flex; background: var(--secondary-bg); border-radius: 8px; padding: 2px; }
+.segment { flex: 1; text-align: center; padding: 8px 0; font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 6px; color: var(--hint); transition: .2s; }
+.segment.active { background: var(--bg); color: var(--text); box-shadow: var(--shadow); }
+
+/* ── Scrollable Chips ── */
+.chips-wrap { display: flex; overflow-x: auto; gap: 8px; padding: 12px 16px; scrollbar-width: none; }
+.chips-wrap::-webkit-scrollbar { display: none; }
+.chip { flex-shrink: 0; background: var(--secondary-bg); padding: 8px 14px; border-radius: 16px; font-size: 14px; color: var(--text); cursor: pointer; border: 1px solid transparent; transition: .2s; }
+.chip.active { background: var(--link); color: #fff; }
+
+/* ── List View (Radio/Check) ── */
+.list-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: .5px solid var(--secondary-bg); cursor: pointer; color: var(--text); font-size: 15px;}
+.list-row:last-child { border-bottom: none; }
+.list-check { display: none; color: var(--link); font-weight: bold;}
+.list-row.active .list-check { display: block; }
+
+/* ── Destructive Button ── */
+.btn-destructive { width: 100%; text-align: center; color: var(--destructive); padding: 14px; font-size: 16px; font-weight: 500; background: var(--bg); cursor: pointer; border-radius: inherit; }
+
 .load-more {
   display: block; margin: 12px auto; padding: 10px 24px;
   background: var(--secondary-bg); border: none; border-radius: 10px;
@@ -221,6 +241,27 @@ body {
       </div>
     </div>
 
+    <div class="section-header">Температура (Креативность)</div>
+    <div class="section" style="padding: 12px 16px;">
+      <div class="segmented" id="s-temp">
+        <div class="segment" data-val="0.2" onclick="setTemp(this)">Точный</div>
+        <div class="segment" data-val="null" onclick="setTemp(this)">Баланс</div>
+        <div class="segment" data-val="0.9" onclick="setTemp(this)">Творческий</div>
+      </div>
+    </div>
+
+    <div class="section-header">Голос (TTS)</div>
+    <div class="section" id="s-voices-wrap">
+      <div class="loading" style="padding:16px"><small>Загрузка голосов...</small></div>
+    </div>
+
+    <div class="section-header">Мои Роли</div>
+    <div class="section">
+      <div class="chips-wrap" id="s-roles-wrap">
+        <div class="chip active" onclick="setRole(null)">Стандартная</div>
+      </div>
+    </div>
+
     <div class="section-header">Режимы</div>
     <div class="section">
       <div class="setting-row">
@@ -246,6 +287,10 @@ body {
         <label class="toggle"><input type="checkbox" id="s-search"><span class="toggle-track"></span></label>
       </div>
     </div>
+
+    <div class="section" style="margin-top: 24px;">
+      <div class="btn-destructive" onclick="confirmResetContext()">⚠️ Сбросить контекст чата</div>
+    </div>
   </div>
 </div>
 
@@ -265,6 +310,12 @@ let memoryOffset = 0;
 const MEMORY_PAGE = 20;
 let settingsLoaded = false;
 let originalSettings = {};
+
+let currentVoiceId = null;
+let currentTemp = null;
+let currentRolePrompt = null;
+let availableRoles = [];
+let availableVoices = [];
 
 // ── Tabs ──
 function switchTab(name) {
@@ -390,9 +441,15 @@ function initSwipe(card) {
 
 async function loadSettings() {
   try {
-    const data = await api('/settings');
+    const [data, rolesData, voicesData] = await Promise.all([
+      api('/settings'),
+      api('/roles'),
+      api('/voices')
+    ]);
     const s = data.settings;
     originalSettings = { ...s };
+    availableRoles = rolesData.roles || [];
+    availableVoices = voicesData.voices || [];
 
     document.getElementById('s-prompt').value = s.system_prompt || '';
     onPromptInput();
@@ -404,6 +461,13 @@ async function loadSettings() {
     document.getElementById('s-thinking').value = s.thinking_level || 'off';
     document.getElementById('s-ltm').checked = s.ltm_enabled;
     document.getElementById('s-search').checked = s.search_enabled;
+    
+    // Set Temp
+    setTempVal(s.temperature);
+    // Render Roles
+    renderRoles(s.system_prompt);
+    // Render Voices
+    renderVoices(s.voice_id);
 
     document.getElementById('settings-loading').style.display = 'none';
     document.getElementById('settings-form').style.display = 'block';
@@ -411,11 +475,89 @@ async function loadSettings() {
 
     // Show MainButton for save
     tg.MainButton.setText('Сохранить');
-    tg.MainButton.show();
     tg.MainButton.onClick(saveSettings);
+    tg.MainButton.show();
   } catch (e) {
     document.getElementById('settings-loading').innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div class="title">Ошибка загрузки</div></div>';
   }
+}
+
+function setTempVal(val) {
+  currentTemp = val;
+  const segments = document.querySelectorAll('#s-temp .segment');
+  segments.forEach(el => el.classList.remove('active'));
+  let matched = false;
+  segments.forEach(el => {
+    let elVal = el.dataset.val === 'null' ? null : parseFloat(el.dataset.val);
+    if (elVal === currentTemp) { el.classList.add('active'); matched = true; }
+  });
+  if(!matched) segments[1].classList.add('active'); // fallback balance
+}
+
+function setTemp(element) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  let val = element.dataset.val === 'null' ? null : parseFloat(element.dataset.val);
+  setTempVal(val);
+}
+
+function renderRoles(activePrompt) {
+  const wrap = document.getElementById('s-roles-wrap');
+  let html = `<div class="chip ${!activePrompt ? 'active' : ''}" onclick="setRole(null)">Стандартная</div>`;
+  if (dataRoles = dataRoles || availableRoles) {
+    dataRoles.forEach(r => {
+      let isAct = (activePrompt && activePrompt === r.prompt);
+      html += `<div class="chip ${isAct ? 'active' : ''}" onclick="setRole('${esc(r.prompt)}', this)">${esc(r.title)}</div>`;
+    });
+  }
+  wrap.innerHTML = html;
+}
+
+let dataRoles = null;
+function setRole(prompt, element) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  document.getElementById('s-prompt').value = prompt || '';
+  onPromptInput();
+  document.querySelectorAll('#s-roles-wrap .chip').forEach(c => c.classList.remove('active'));
+  if (element) {
+    element.classList.add('active');
+  } else {
+    document.querySelector('#s-roles-wrap .chip').classList.add('active');
+  }
+}
+
+function renderVoices(activeVid) {
+  currentVoiceId = activeVid;
+  const wrap = document.getElementById('s-voices-wrap');
+  let html = '';
+  availableVoices.forEach(v => {
+    let act = (activeVid === v.id || (!activeVid && v.name.includes("Charlotte")));
+    html += `
+      <div class="list-row ${act ? 'active' : ''}" onclick="setVoice('${v.id}', this)">
+        <div class="list-title">${esc(v.name)}</div>
+        <div class="list-check">✓</div>
+      </div>
+    `;
+  });
+  wrap.innerHTML = html;
+}
+
+function setVoice(vid, element) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  currentVoiceId = vid;
+  document.querySelectorAll('#s-voices-wrap .list-row').forEach(c => c.classList.remove('active'));
+  element.classList.add('active');
+}
+
+function confirmResetContext() {
+  if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+  tg.showConfirm('Вы уверены, что хотите сбросить контекст текущего диалога? Это действие нельзя отменить.', async (conf) => {
+    if (conf) {
+      try {
+        await api('/context/reset', { method: 'POST' });
+        toast('Контекст сброшен');
+      } catch (e) { toast('Ошибка сброса'); }
+    }
+  });
 }
 
 function onPromptInput() {
@@ -432,6 +574,8 @@ async function saveSettings() {
       thinking_level: document.getElementById('s-thinking').value,
       ltm_enabled: document.getElementById('s-ltm').checked,
       search_enabled: document.getElementById('s-search').checked,
+      temperature: currentTemp,
+      voice_id: currentVoiceId
     };
     await api('/settings', { method: 'PATCH', body: JSON.stringify(body) });
     toast('Сохранено ✓');
@@ -454,7 +598,9 @@ function fmtDate(iso) {
 }
 
 // ── Init ──
-loadMemories();
+const urlParams = new URLSearchParams(window.location.search);
+const startTab = urlParams.get('tab') || 'memories';
+switchTab(startTab);
 </script>
 </body>
 </html>

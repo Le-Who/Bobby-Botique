@@ -184,6 +184,7 @@ async def api_get_settings(user_id: int):
     """Get current chat settings for the user."""
     try:
         from app.repos.chats import get_user_chat
+        from app.repos.roles import get_user_custom_roles
 
         chat_state = await get_user_chat(user_id)
         if not chat_state:
@@ -194,6 +195,8 @@ async def api_get_settings(user_id: int):
         if settings.OPENROUTER_AVAILABLE_MODELS:
             all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
 
+        user_roles = await get_user_custom_roles(user_id)
+
         return jsonify(
             {
                 "settings": {
@@ -202,9 +205,12 @@ async def api_get_settings(user_id: int):
                     "thinking_level": chat_state.thinking_level or "off",
                     "ltm_enabled": chat_state.ltm_enabled,
                     "search_enabled": chat_state.search_enabled,
+                    "temperature": chat_state.temperature,
+                    "voice_id": chat_state.voice_id,
                 },
                 "available_models": all_models,
                 "thinking_levels": ["off", "low", "medium", "high"],
+                "custom_roles": user_roles,
             }
         )
     except Exception as e:
@@ -260,6 +266,25 @@ async def api_update_settings(user_id: int):
             chat_state.search_enabled = bool(body["search_enabled"])
             changed = True
 
+        # Temperature
+        if "temperature" in body:
+            temp = body["temperature"]
+            if temp is None:
+                chat_state.temperature = None
+                changed = True
+            elif isinstance(temp, (int, float)):
+                temp = float(temp)
+                if 0.0 <= temp <= 1.0:
+                    chat_state.temperature = temp
+                    changed = True
+
+        # Voice ID
+        if "voice_id" in body:
+            vid = body["voice_id"]
+            if vid is None or isinstance(vid, str):
+                chat_state.voice_id = vid
+                changed = True
+
         if changed:
             await update_user_chat(user_id, chat_state)
             return jsonify({"ok": True})
@@ -268,6 +293,72 @@ async def api_update_settings(user_id: int):
     except Exception as e:
         logger.error("Mini App update settings error: %s", e, exc_info=True)
         return jsonify({"error": "internal_error"}), 500
+
+
+# ── Additional Setting Controls: Roles, Context, Voices ────────────────────
+
+
+@miniapp_blueprint.route("/api/context/reset", methods=["POST"])
+@require_webapp_auth
+async def api_reset_context(user_id: int):
+    """Clear chat history and summary."""
+    try:
+        from app.repos.chats import get_user_chat, update_user_chat
+
+        chat_state = await get_user_chat(user_id)
+        if chat_state:
+            chat_state.history = []
+            chat_state.token_count = 0
+            chat_state.context_summary = None
+            await update_user_chat(user_id, chat_state)
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("Mini App context reset error: %s", e, exc_info=True)
+        return jsonify({"error": "internal_error"}), 500
+
+
+@miniapp_blueprint.route("/api/roles", methods=["GET"])
+@require_webapp_auth
+async def api_get_roles(user_id: int):
+    """Get custom roles."""
+    try:
+        from app.repos.roles import get_user_custom_roles
+
+        roles = await get_user_custom_roles(user_id)
+        return jsonify({"roles": roles})
+    except Exception as e:
+        logger.error("Mini App get roles error: %s", e, exc_info=True)
+        return jsonify({"error": "internal_error"}), 500
+
+
+@miniapp_blueprint.route("/api/roles/<int:role_id>", methods=["DELETE"])
+@require_webapp_auth
+async def api_delete_role(user_id: int, role_id: int):
+    """Delete a custom role."""
+    try:
+        from app.repos.roles import delete_custom_role
+
+        await delete_custom_role(role_id, user_id)
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error("Mini App delete role error: %s", e, exc_info=True)
+        return jsonify({"error": "internal_error"}), 500
+
+
+@miniapp_blueprint.route("/api/voices", methods=["GET"])
+@require_webapp_auth
+async def api_get_voices(user_id: int):
+    """Provide a list of curated ElevenLabs voices."""
+    # A predefined list of high-quality standard voices
+    voices = [
+        {"id": "XB0fDUnXU5powFXDhCwa", "name": "Charlotte (Conversational)"},
+        {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel (Calm)"},
+        {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam (Deep)"},
+        {"id": "ErXwobaYiN019PkySvjV", "name": "Antoni (Friendly)"},
+        {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella (Soft)"},
+        {"id": "t0jbNlBVZ17f02VDIeMI", "name": "Jessie (Energetic)"},
+    ]
+    return jsonify({"voices": voices})
 
 
 # ── Long Read Reader ──────────────────────────────────────────────────────────
@@ -317,4 +408,3 @@ async def api_reader_content(uid: str):
     except Exception as e:
         logger.error("Long read API error uid=%s: %s", uid, e, exc_info=True)
         return jsonify({"error": "internal_error"}), 500
-

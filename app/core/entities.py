@@ -39,6 +39,8 @@ class ChatStateRow(BaseModel):
     thinking_level: str | None = None
     ltm_enabled: bool = True
     branch_id: int | None = None
+    temperature: float | None = None
+    voice_id: str | None = None
 
 
 class UserInfoRow(BaseModel):

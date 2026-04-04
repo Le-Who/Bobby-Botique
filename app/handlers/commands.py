@@ -405,7 +405,7 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             [
                 InlineKeyboardButton(
                     "📱 Открыть панель настроек",
-                    web_app=WebAppInfo(url=f"{webapp_base}/webapp/"),
+                    web_app=WebAppInfo(url=f"{webapp_base}/webapp/?tab=settings"),
                 ),
             ]
         )

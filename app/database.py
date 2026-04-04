@@ -29,6 +29,8 @@ class ChatState:
     thinking_level: str | None = None  # User-configurable: off, low, medium, high
     ltm_enabled: bool = True  # Long-term memory recall toggle
     branch_id: int | None = None  # Active branch snapshot ID (branching mode)
+    temperature: float | None = None  # LLM creativity 0.0–1.0, None = model default
+    voice_id: str | None = None  # ElevenLabs voice override, None = global default
     _original_length: int = 0
 
 
