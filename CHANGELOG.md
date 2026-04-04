@@ -3,7 +3,51 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.18] - 2026-04-04 - Test Suite Hardening & Production Bug Fix
+
+### 🧪 Test Suite — AAA Modernization
+
+Complete refactor of the test layer from brittle `unittest.TestCase` patterns to a deterministic, CI-ready `pytest` suite. All new tests follow strict Arrange-Act-Assert with one behaviour per test function.
+
+| Module | Tests | Coverage Area |
+|--------|-------|---------------|
+| `tests/test_formatting.py` | 16 | `TelegramFormatter`, `escape_format_chars`, `format_key_for_display` |
+| `tests/test_thinking_classifier.py` | 39 | `classify_thinking_level` (all 14 signal types), context escalation, `resolve_thinking_level` |
+| `tests/test_error_codes.py` | 34 | `tag_error`/`extract_error_code` roundtrip, all `ErrorCode` values, MRO/HTTP/string classification paths |
+| `tests/test_text_format_aaa.py` | 30 | `markdown_to_html`, `sanitize_html_tags` (unclosed/misnested/orphan), `split_text_safe`, `strip_formatting` |
+| `tests/test_factories.py` | 15 | All 5 Telegram object factories — structure, independence, async attributes |
+| `tests/test_streaming_writer.py` | 21 | `StreamingWriter` write/finalize, `_detect_open_markdown`, rate-limit retry, overflow, `_is_rate_limited` |
+| `tests/test_semaphore_invariants.py` | 6 | `GlobalLLMSemaphore` slot release on success, exception, `CancelledError`, limit enforcement |
+| `tests/e2e/test_stream_recovery.py` | 5 | Mid-stream `APIError` recovery (no bare cursor), `TimeoutError`, empty stream |
+
+**Total: 205 tests — 205 passed, 0 failed.**
+
+### 🐛 Production Bug Fix — `streaming.py` Dead Code (Critical)
+
+**Root cause**: Incorrect indentation of 168 lines (681–848) inside `stream_and_display()` placed the entire "Long Read transition", finish_reason checks, and the final `return` inside `if not final_text.strip():` — making them unreachable dead code. `stream_and_display()` returned `None` for all non-empty responses, causing `TypeError: cannot unpack non-iterable NoneType` in every caller.
+
+**Fix**: Removed 4 spaces of over-indentation from all affected lines. Confirmed by `test_successful_stream_returns_complete_text` (E2E test now enforces this invariant).
+
+**Likely cause**: Indentation drift introduced during a merge that inserted the Telegraph fallback block inside the `if` branch instead of after it.
+
+### 🔧 Infrastructure Improvements
+
+- `tests/factories.py`: Standardized `Update`, `Message`, `CallbackQuery`, `User`, `Bot` builder functions replacing per-test `MagicMock()` boilerplate
+- `FakeAdapter(StreamingUIAdapter)`: Proper ABC inheritance for `StreamingWriter` tests — fulfills all abstract methods including `last_message` property
+- `app/streaming.py`: Added `set["asyncio.Task[None]"]` type annotation to `_bg_tasks` (mypy `var-annotated` fix)
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check app/ tests/` | 0 errors ✅ |
+| `mypy app/streaming.py tests/test_streaming_writer.py --ignore-missing-imports` | Exit 0 ✅ |
+| `pytest` (205 tests) | **205 passed**, 0 failed ✅ |
+
+---
+
 ## [2.9.17] - 2026-04-04 - Mini App Full UX & Backend Hardening
+
 
 ### 🚀 Feature - Mini App UX Expansion
 

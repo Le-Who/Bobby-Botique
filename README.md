@@ -364,11 +364,54 @@ API keys are selected by a two-tier SQL query: first from active keys that haven
 | **Debate Mode** | Multi-model argument synthesis — the bot queries 2–3 models with opposing viewpoints, then synthesizes a balanced answer highlighting agreements, disagreements, and confidence levels. Ideal for complex or controversial topics. | Planned |
 | **Shared Group Brain** | Group-level long-term memory — when the bot is added to a Telegram group, it builds a shared LTM across all group members. Group memories are tagged by contributor and searchable by any member. Includes configurable privacy controls (opt-in/opt-out per user). | Planned |
 
+## Testing
+
+The test suite is organized into three levels:
+
+```
+tests/
+├── conftest.py                   # Global fixtures: DB cleanup, async exception surfacing
+├── factories.py                  # Telegram object builders (Update, Message, Context, User)
+├── integration/
+│   ├── conftest.py               # Transactional DB fixtures (asyncpg rollback per test)
+│   └── test_e2e_app_smoke.py    # Integration: real DB, mocked LLM network
+├── e2e/
+│   ├── test_chat_happy_path.py  # Full pipeline: handle_request → stream → DB persist
+│   └── test_stream_recovery.py  # Mid-stream APIError / timeout recovery
+├── test_error_codes.py          # ErrorCode tagging, typed/HTTP/string classification
+├── test_factories.py            # Factory correctness (structure, independence)
+├── test_formatting.py           # TelegramFormatter, escape_format_chars (AAA)
+├── test_semaphore_invariants.py # GlobalLLMSemaphore: release on success/exception/cancel
+├── test_streaming_writer.py     # StreamingWriter: write/finalize, rate-limit retry, overflow
+├── test_text_format_aaa.py      # markdown_to_html, sanitize_html_tags, split_text_safe
+└── test_thinking_classifier.py  # classify_thinking_level, resolve_thinking_level
+```
+
+**Running tests:**
+
+```bash
+# Unit tests only (no DB required)
+python -m pytest tests/ --ignore=tests/integration -m "not integration" --override-ini="addopts="
+
+# Full suite including integration (requires TEST_DATABASE_URL)
+python -m pytest tests/ --override-ini="addopts="
+
+# Parallel (default from pytest.ini)
+python -m pytest tests/
+```
+
+**Design principles:**
+- All tests follow **Arrange-Act-Assert** strictly — one behaviour per test function.
+- Integration tests use **transactional rollbacks** (`asyncpg`) for full isolation.
+- External AI/Telegram API calls are replaced by **fake adapters** and **async generator stubs**.
+- `GlobalLLMSemaphore` uses the local asyncio fallback path (Redis patched to `None`).
+
 ## Contributing
 
 1. Create a descriptive PR.
-2. Verify all `pytest` checks pass (`pytest` for unit tests, `pytest -m ""` for full suite).
-3. Verify `ruff check app/` yields zero stylistic flags and `mypy app/` validates static types before submission.
+2. Verify all `pytest` checks pass: `python -m pytest tests/ --override-ini="addopts="`
+3. Run `ruff check app/ tests/ --output-format=concise` — zero violations required.
+4. Run `mypy app/ --ignore-missing-imports` — exit 0 required.
 
 ## License
 

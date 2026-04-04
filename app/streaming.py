@@ -678,171 +678,171 @@ async def stream_and_display(
     if not final_text.strip():
         return "", False, placeholder_message, 0, False, False
 
-        # Long Read transition: stream exceeded threshold → publish via Mini App / Telegraph
-        if getattr(writer, "_telegraph_engaged", False):
-            import uuid
+    # Long Read transition: stream exceeded threshold → publish via Mini App / Telegraph
+    if getattr(writer, "_telegraph_engaged", False):
+        import uuid
 
-            from app.config import settings as _settings
-            from app.utils.telegraph import create_telegraph_page
+        from app.config import settings as _settings
+        from app.utils.telegraph import create_telegraph_page
 
-            title = "Ответ ИИ"
-            if history:
-                for item in reversed(history):
-                    if item.get("role") == "user" and item.get("parts"):
-                        raw = strip_formatting(item["parts"][0])
-                        if raw:
-                            title = raw[:60].strip()
-                            if len(raw) > 60:
-                                title += "…"
-                        break
+        title = "Ответ ИИ"
+        if history:
+            for item in reversed(history):
+                if item.get("role") == "user" and item.get("parts"):
+                    raw = strip_formatting(item["parts"][0])
+                    if raw:
+                        title = raw[:60].strip()
+                        if len(raw) > 60:
+                            title += "…"
+                    break
 
-            webapp_base = getattr(_settings, "WEBAPP_BASE_URL", "").rstrip("/")
+        webapp_base = getattr(_settings, "WEBAPP_BASE_URL", "").rstrip("/")
 
-            if webapp_base:
-                # ── Hybrid path: Redis primary + Telegraph background fallback ──
-                from app.cache import store_long_message, store_telegraph_url
+        if webapp_base:
+            # ── Hybrid path: Redis primary + Telegraph background fallback ──
+            from app.cache import store_long_message, store_telegraph_url
 
-                uid = str(uuid.uuid4())
-                stored = await store_long_message(uid, final_text)
+            uid = str(uuid.uuid4())
+            stored = await store_long_message(uid, final_text)
 
-                if stored:
-                    reader_url = f"{webapp_base}/webapp/reader?id={uid}"
-                    logging.info("Long read stored in Redis uid=%s (%d chars)", uid, len(final_text))
-                else:
-                    # Redis write failed — fall through to plain Telegraph
-                    reader_url = None
-                    logging.warning("Redis unavailable for long read uid=%s; falling back to Telegraph", uid)
+            if stored:
+                reader_url = f"{webapp_base}/webapp/reader?id={uid}"
+                logging.info("Long read stored in Redis uid=%s (%d chars)", uid, len(final_text))
+            else:
+                # Redis write failed — fall through to plain Telegraph
+                reader_url = None
+                logging.warning("Redis unavailable for long read uid=%s; falling back to Telegraph", uid)
 
-                if reader_url:
-                    # Build the frozen message update immediately
-                    summary_lines = final_text[:800].strip()
-                    if len(final_text) > 800:
-                        summary_lines += "…"
+            if reader_url:
+                # Build the frozen message update immediately
+                summary_lines = final_text[:800].strip()
+                if len(final_text) > 800:
+                    summary_lines += "…"
 
-                    from app.utils.ux_improvements import wrap_in_expandable_blockquote
-                    sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
-                    summary_html = wrap_in_expandable_blockquote(sanitized_summary)
+                from app.utils.ux_improvements import wrap_in_expandable_blockquote
+                sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
+                summary_html = wrap_in_expandable_blockquote(sanitized_summary)
 
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-                    full_text_html = f'{summary_html}\n\n📖 <a href="{reader_url}">Читать полностью</a>'
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                full_text_html = f'{summary_html}\n\n📖 <a href="{reader_url}">Читать полностью</a>'
 
-                    buttons = []
-                    if markup and getattr(markup, "inline_keyboard", None):
-                        buttons = list(getattr(markup, "inline_keyboard", []))
-                    
-                    from telegram import WebAppInfo
-                    buttons.insert(0, [InlineKeyboardButton("📖 Читать полностью", web_app=WebAppInfo(url=reader_url))])
-                    new_markup = InlineKeyboardMarkup(buttons)
+                buttons = []
+                if markup and getattr(markup, "inline_keyboard", None):
+                    buttons = list(getattr(markup, "inline_keyboard", []))
+                
+                from telegram import WebAppInfo
+                buttons.insert(0, [InlineKeyboardButton("📖 Читать полностью", web_app=WebAppInfo(url=reader_url))])
+                new_markup = InlineKeyboardMarkup(buttons)
 
+                try:
+                    await writer._adapter.edit_message(
+                        full_text_html,
+                        parse_mode="HTML",
+                        reply_markup=new_markup,
+                    )
+                except Exception as e:
+                    logging.warning("Failed to update frozen long-read message: %s", e)
+
+                # Background: create Telegraph as permanent fallback (non-blocking)
+                async def _bg_telegraph(uid: str, title: str, text: str) -> None:
                     try:
-                        await writer._adapter.edit_message(
-                            full_text_html,
-                            parse_mode="HTML",
-                            reply_markup=new_markup,
-                        )
-                    except Exception as e:
-                        logging.warning("Failed to update frozen long-read message: %s", e)
+                        t_url = await create_telegraph_page(title, text)
+                        if t_url:
+                            await store_telegraph_url(uid, t_url)
+                            logging.info("Telegraph fallback created for uid=%s → %s", uid, t_url)
+                    except Exception as exc:
+                        logging.warning("Background Telegraph creation failed uid=%s: %s", uid, exc)
 
-                    # Background: create Telegraph as permanent fallback (non-blocking)
-                    async def _bg_telegraph(uid: str, title: str, text: str) -> None:
-                        try:
-                            t_url = await create_telegraph_page(title, text)
-                            if t_url:
-                                await store_telegraph_url(uid, t_url)
-                                logging.info("Telegraph fallback created for uid=%s → %s", uid, t_url)
-                        except Exception as exc:
-                            logging.warning("Background Telegraph creation failed uid=%s: %s", uid, exc)
+                _bg_tasks: set["asyncio.Task[None]"] = getattr(writer, "_bg_tasks", set())
+                task = asyncio.create_task(_bg_telegraph(uid, title, final_text))
+                _bg_tasks.add(task)
+                task.add_done_callback(_bg_tasks.discard)
+                writer._bg_tasks = _bg_tasks  # type: ignore[attr-defined]
 
-                    _bg_tasks = getattr(writer, "_bg_tasks", set())
-                    task = asyncio.create_task(_bg_telegraph(uid, title, final_text))
-                    _bg_tasks.add(task)
-                    task.add_done_callback(_bg_tasks.discard)
-                    writer._bg_tasks = _bg_tasks  # type: ignore[attr-defined]
-
-                    # We're done — skip the Telegraph-only path below
-                    webapp_handled = True
-                else:
-                    webapp_handled = False
+                # We're done — skip the Telegraph-only path below
+                webapp_handled = True
             else:
                 webapp_handled = False
+        else:
+            webapp_handled = False
 
-            if not webapp_handled:
-                # ── Telegraph-only fallback (no WEBAPP_BASE_URL configured) ──
-                t_url = await create_telegraph_page(title, final_text)
-                if t_url:
-                    logging.info("Stream transitioned to Telegraph (no webapp): %s", t_url)
-                    summary_lines = final_text[:800].strip()
-                    if len(final_text) > 800:
-                        summary_lines += "…"
+        if not webapp_handled:
+            # ── Telegraph-only fallback (no WEBAPP_BASE_URL configured) ──
+            t_url = await create_telegraph_page(title, final_text)
+            if t_url:
+                logging.info("Stream transitioned to Telegraph (no webapp): %s", t_url)
+                summary_lines = final_text[:800].strip()
+                if len(final_text) > 800:
+                    summary_lines += "…"
 
-                    from app.utils.ux_improvements import wrap_in_expandable_blockquote
-                    sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
-                    summary_html = wrap_in_expandable_blockquote(sanitized_summary)
+                from app.utils.ux_improvements import wrap_in_expandable_blockquote
+                sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
+                summary_html = wrap_in_expandable_blockquote(sanitized_summary)
 
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-                    full_text_html = f'{summary_html}\n\n📖 <a href="{t_url}">Читать статью (Instant View)</a>'
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                full_text_html = f'{summary_html}\n\n📖 <a href="{t_url}">Читать статью (Instant View)</a>'
 
-                    buttons = []
-                    if markup and getattr(markup, "inline_keyboard", None):
-                        buttons = list(getattr(markup, "inline_keyboard", []))
-                    buttons.insert(0, [InlineKeyboardButton("📖 Открыть статью", url=t_url)])
-                    new_markup = InlineKeyboardMarkup(buttons)
+                buttons = []
+                if markup and getattr(markup, "inline_keyboard", None):
+                    buttons = list(getattr(markup, "inline_keyboard", []))
+                buttons.insert(0, [InlineKeyboardButton("📖 Открыть статью", url=t_url)])
+                new_markup = InlineKeyboardMarkup(buttons)
 
-                    try:
-                        await writer._adapter.edit_message(
-                            full_text_html,
-                            parse_mode="HTML",
-                            reply_markup=new_markup,
-                        )
-                    except Exception as e:
-                        logging.warning("Failed to update frozen telegraph message: %s", e)
-                else:
-                    logging.warning("Telegraph creation failed for frozen stream; sending long message fallback.")
-                    from app.utils.messaging import send_long_message
-                    await send_long_message(writer.last_message, final_text, reply_markup=markup)  # type: ignore[arg-type]
+                try:
+                    await writer._adapter.edit_message(
+                        full_text_html,
+                        parse_mode="HTML",
+                        reply_markup=new_markup,
+                    )
+                except Exception as e:
+                    logging.warning("Failed to update frozen telegraph message: %s", e)
+            else:
+                logging.warning("Telegraph creation failed for frozen stream; sending long message fallback.")
+                from app.utils.messaging import send_long_message
+                await send_long_message(writer.last_message, final_text, reply_markup=markup)  # type: ignore[arg-type]
 
 
-        # Check finish_reason for blocked/truncated responses
-        fr = _last_finish_reason.get()
-        fr_upper = (fr or "").upper()
+    # Check finish_reason for blocked/truncated responses
+    fr = _last_finish_reason.get()
+    fr_upper = (fr or "").upper()
 
-        if fr_upper in _BLOCKED_FINISH_REASONS:
-            logging.warning(
-                "Streaming response blocked by model (finish_reason=%s, %d chars generated)",
-                fr,
-                len(final_text),
-            )
-            # User still gets what was generated, plus a note
-            final_text += "\n\n⚠️ _Ответ был прерван фильтром безопасности._"
-
-        elif fr_upper in _TRUNCATED_FINISH_REASONS:
-            logging.warning(
-                "Streaming response truncated (finish_reason=%s, %d chars generated)",
-                fr,
-                len(final_text),
-            )
-            final_text += "\n\n⚠️ _Ответ был обрезан из-за ограничения длины._"
-
-        elif len(final_text) < 150 and fr_upper not in (
-            "STOP",
-            "1",
-            "FINISH_REASON_STOP",
-            "",
-        ):
-            logging.warning(
-                "Suspiciously short streaming response: %d chars, finish_reason=%s",
-                len(final_text),
-                fr,
-            )
-
-        logging.info(
-            "Streaming complete: %d chars, %d edits, %d message(s), finish_reason=%s",
+    if fr_upper in _BLOCKED_FINISH_REASONS:
+        logging.warning(
+            "Streaming response blocked by model (finish_reason=%s, %d chars generated)",
+            fr,
             len(final_text),
-            writer.edit_count,
-            writer.message_count,
+        )
+        # User still gets what was generated, plus a note
+        final_text += "\n\n⚠️ _Ответ был прерван фильтром безопасности._"
+
+    elif fr_upper in _TRUNCATED_FINISH_REASONS:
+        logging.warning(
+            "Streaming response truncated (finish_reason=%s, %d chars generated)",
+            fr,
+            len(final_text),
+        )
+        final_text += "\n\n⚠️ _Ответ был обрезан из-за ограничения длины._"
+
+    elif len(final_text) < 150 and fr_upper not in (
+        "STOP",
+        "1",
+        "FINISH_REASON_STOP",
+        "",
+    ):
+        logging.warning(
+            "Suspiciously short streaming response: %d chars, finish_reason=%s",
+            len(final_text),
             fr,
         )
-        await metrics_collector.record_api_call("gemini_streaming", model_name)
-        actual_tokens = _last_token_count.get()
-        voice_requested = _voice_requested.get()
-        return final_text, True, writer.last_message, actual_tokens, _was_interrupted, voice_requested  # type: ignore[return-value]
+
+    logging.info(
+        "Streaming complete: %d chars, %d edits, %d message(s), finish_reason=%s",
+        len(final_text),
+        writer.edit_count,
+        writer.message_count,
+        fr,
+    )
+    await metrics_collector.record_api_call("gemini_streaming", model_name)
+    actual_tokens = _last_token_count.get()
+    voice_requested = _voice_requested.get()
+    return final_text, True, writer.last_message, actual_tokens, _was_interrupted, voice_requested  # type: ignore[return-value]
