@@ -334,30 +334,22 @@
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
     // ── marked.js configuration ───────────────────────────────────────
-    marked.setOptions({
-      breaks: true,
-      gfm: true,
-      highlight: null,  // We handle highlighting manually after render
-    });
+    const renderer = {
+      code(token_or_code, token_lang) {
+        let codeText = '';
+        let langText = '';
+        if (typeof token_or_code === 'object' && token_or_code !== null) {
+          codeText = token_or_code.text || '';
+          langText = token_or_code.lang || '';
+        } else {
+          codeText = token_or_code || '';
+          langText = token_lang || '';
+        }
 
-    // Custom renderer: wrap code blocks in header + copy button
-    const renderer = new marked.Renderer();
-    renderer.code = function(token_or_code, token_lang) {
-      let codeText = '';
-      let langText = '';
-      if (typeof token_or_code === 'object' && token_or_code !== null) {
-        codeText = token_or_code.text || '';
-        langText = token_or_code.lang || '';
-      } else {
-        codeText = token_or_code || '';
-        langText = token_lang || '';
-      }
-
-      const language = (langText || 'plaintext').split(/\s/)[0];
-      const validLang = hljs.getLanguage(language) ? language : 'plaintext';
-      const highlighted = hljs.highlight(codeText, { language: validLang }).value;
-      const escapedCode = codeText.replace(/`/g, '&#96;');
-      return `
+        const language = (langText || 'plaintext').split(/\s/)[0];
+        const validLang = hljs.getLanguage(language) ? language : 'plaintext';
+        const highlighted = hljs.highlight(codeText, { language: validLang }).value;
+        return `
         <pre>
           <div class="code-header">
             <span class="code-lang">${validLang}</span>
@@ -365,8 +357,14 @@
           </div>
           <code class="hljs language-${validLang}">${highlighted}</code>
         </pre>`;
+      }
     };
-    marked.use({ renderer });
+
+    marked.use({
+      breaks: true,
+      gfm: true,
+      renderer: renderer
+    });
 
     // ── Copy helpers ──────────────────────────────────────────────────
     let _rawMarkdown = '';
