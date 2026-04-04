@@ -1,7 +1,8 @@
 """Tests for app.resilience_policy — retry delays, transient error detection, run_with_resilience."""
 
 import asyncio
-from unittest.mock import AsyncMock
+import random
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -36,6 +37,9 @@ class TestComputeDelay:
         assert delay <= 5.0
 
     def test_jitter_adds_randomness(self):
+        # Seed for determinism: random.seed(42) + 20 uniform(0, 1.0) samples
+        # produces multiple distinct values, so the assertion is reliable.
+        random.seed(42)
         policy = ResiliencePolicy(base_delay_s=1.0, jitter_s=1.0)
         delays = {policy.compute_delay(0) for _ in range(20)}
         # With jitter, not all delays should be identical
@@ -96,9 +100,10 @@ class TestRunWithResilience:
         assert attempts == 1
 
     @pytest.mark.asyncio
-    async def test_retries_on_transient_error(self):
+    @patch("app.resilience_policy.asyncio.sleep", new_callable=AsyncMock)
+    async def test_retries_on_transient_error(self, mock_sleep):
         op = AsyncMock(side_effect=[ConnectionError("timeout"), "OK"])
-        policy = ResiliencePolicy(max_retries=3, base_delay_s=0.01, jitter_s=0.0)
+        policy = ResiliencePolicy(max_retries=3, base_delay_s=2.0, jitter_s=0.0)
         result, attempts = await run_with_resilience(
             op,
             policy=policy,
@@ -106,11 +111,13 @@ class TestRunWithResilience:
         )
         assert result == "OK"
         assert attempts == 2
+        mock_sleep.assert_awaited_once_with(2.0)
 
     @pytest.mark.asyncio
-    async def test_raises_after_max_retries(self):
+    @patch("app.resilience_policy.asyncio.sleep", new_callable=AsyncMock)
+    async def test_raises_after_max_retries(self, mock_sleep):
         op = AsyncMock(side_effect=ConnectionError("always fails"))
-        policy = ResiliencePolicy(max_retries=2, base_delay_s=0.01, jitter_s=0.0)
+        policy = ResiliencePolicy(max_retries=2, base_delay_s=2.0, jitter_s=0.0)
         with pytest.raises(ConnectionError, match="always fails"):
             await run_with_resilience(
                 op,
@@ -130,3 +137,18 @@ class TestRunWithResilience:
                 is_retryable=lambda e: False,
             )
         assert op.await_count == 1  # No retry
+
+    @pytest.mark.asyncio
+    @patch("app.resilience_policy.asyncio.sleep", new_callable=AsyncMock)
+    async def test_max_retries_1_means_no_retry(self, mock_sleep):
+        """max_retries=1 → range(1) = [0] → exactly one attempt, no sleep."""
+        op = AsyncMock(side_effect=ConnectionError("fail"))
+        policy = ResiliencePolicy(max_retries=1, base_delay_s=2.0, jitter_s=0.0)
+        with pytest.raises(ConnectionError, match="fail"):
+            await run_with_resilience(
+                op,
+                policy=policy,
+                is_retryable=lambda e: True,
+            )
+        assert op.await_count == 1, "max_retries=1 must make exactly one attempt with no retry"
+        mock_sleep.assert_not_awaited()

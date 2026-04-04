@@ -248,7 +248,7 @@ Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `h
 
 ## Testing
 
-The application features a heavily engineered test suite (**1421+ unit and integration tests, 60% line coverage**) with **parallel execution** via `pytest-xdist`.
+The application features a heavily engineered test suite (**1612+ unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
 
 - **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.

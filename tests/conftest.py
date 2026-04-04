@@ -65,3 +65,15 @@ def _clear_user_state():
     from app.state import USER_STATES
 
     USER_STATES._states.clear()
+
+
+# Conditionally register the testcontainers fixture so that its absence
+# (no Docker, testcontainers not installed) does not break unit test runs.
+# Tests that *explicitly* request `postgres_container` will be skipped by
+# the fixture itself when it cannot import testcontainers.
+try:
+    from tests.fixtures.db_container import postgres_container  # noqa: F401
+
+    __all__ = ["postgres_container"]
+except ImportError:
+    pass  # testcontainers not installed — postgres_container fixture unavailable

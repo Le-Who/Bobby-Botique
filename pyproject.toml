@@ -32,6 +32,10 @@ ignore = [
 "app/handlers/messages.py" = ["F823"]
 # config.py uses print() for fatal startup errors before logging is configured
 "app/config.py" = ["T201"]
+# Root-level one-off debug scripts (not part of the production or test suite).
+# They use print() by design for interactive REPL-style output.
+"test_*.py" = ["T201", "E402"]
+"scripts/check_db.py" = ["T201"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
