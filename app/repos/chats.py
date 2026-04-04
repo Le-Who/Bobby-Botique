@@ -25,18 +25,25 @@ from app.utils.logging_config import timed_operation
 
 def _extract_message_content(msg: dict) -> str:
     """Extract content string from a message dict that may use 'content' or 'parts' key."""
+    # Performance optimization: Skip large binary objects (e.g. image_url, inline_data, file_data)
+    # when stringifying to avoid massive string allocation overhead for multimedia messages.
+    def _is_safe(p) -> bool:
+        if isinstance(p, (bytes, bytearray)):
+            return False
+        return not (isinstance(p, dict) and any(k in p for k in ("inline_data", "image_url", "file_data")))
+
     if "content" in msg:
         content = msg["content"]
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            return " ".join(str(p) for p in content if _is_safe(p))
+        return str(content) if _is_safe(content) else ""
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
-        return str(parts)
+            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts if _is_safe(p))
+        return str(parts) if _is_safe(parts) else ""
     return ""
 
 

@@ -753,7 +753,7 @@ async def stream_and_display(
                     except Exception as exc:
                         logging.warning("Background Telegraph creation failed uid=%s: %s", uid, exc)
 
-                _bg_tasks: set["asyncio.Task[None]"] = getattr(writer, "_bg_tasks", set())
+                _bg_tasks: set[asyncio.Task[None]] = getattr(writer, "_bg_tasks", set())
                 task = asyncio.create_task(_bg_telegraph(uid, title, final_text))
                 _bg_tasks.add(task)
                 task.add_done_callback(_bg_tasks.discard)
