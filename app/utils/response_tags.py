@@ -23,8 +23,8 @@ from cachetools import LRUCache
 SUGGESTION_CACHE: LRUCache[str, str] = LRUCache(maxsize=10000)
 
 # ── Intent Tag ────────────────────────────────────────────────────────────────
-# Matches [INTENT:draw], [INTENT:research], [INTENT:tts] at end of text.
-_INTENT_RE = re.compile(r"\[INTENT:(draw|research|tts)\]\s*$", re.IGNORECASE)
+# Matches [INTENT:draw], [INTENT:research], [INTENT:tts] anywhere in the text.
+_INTENT_RE = re.compile(r"\[INTENT:(draw|research|tts)\]", re.IGNORECASE)
 
 # Known intent types → button config
 INTENT_BUTTONS: dict[str, tuple[str, str]] = {
@@ -43,14 +43,15 @@ def extract_intent(text: str) -> tuple[str, str | None]:
     """
     m = _INTENT_RE.search(text)
     if m:
-        return text[: m.start()].rstrip(), m.group(1).lower()
+        cleaned = text[:m.start()] + text[m.end():]
+        return cleaned, m.group(1).lower()
     return text, None
 
 
 # ── Smart Suggestions ─────────────────────────────────────────────────────────
-# Matches [SUGGESTIONS: подсказка1 | подсказка2 | подсказка3] at end of text.
+# Matches [SUGGESTIONS: подсказка1 | подсказка2 | подсказка3] anywhere in text.
 _SUGGESTIONS_RE = re.compile(
-    r"\[SUGGESTIONS:\s*(.+?)\]\s*$",
+    r"\[SUGGESTIONS:\s*(.+?)\]",
     re.IGNORECASE,
 )
 
@@ -90,21 +91,23 @@ def extract_suggestions(text: str) -> tuple[str, list[dict[str, str]]]:
         suggestions.append({"id": s_id, "label": s})
 
     suggestions = suggestions[:MAX_SUGGESTIONS]
-    return text[: m.start()].rstrip(), suggestions
+    cleaned = text[:m.start()] + text[m.end():]
+    return cleaned, suggestions
 
 
 def parse_response_tags(text: str) -> tuple[str, str | None, list[dict[str, str]]]:
     """Parse all LLM hidden tags from response text in one pass.
 
-    Order matters: suggestions are at the very end, intent before them.
-
     Returns:
         (cleaned_text, intent_type, suggestions)
     """
-    # Suggestions first (they're at the very end)
+    # Suggestions first (they're usually at the very end before footers)
     text, suggestions = extract_suggestions(text)
     # Then intent tag
     text, intent = extract_intent(text)
+    
+    # Cleanup any excessive blank lines left behind by tag extraction
+    text = re.sub(r'\n{3,}', '\n\n', text).strip()
     return text, intent, suggestions
 
 
