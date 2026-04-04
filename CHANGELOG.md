@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.19] - 2026-04-04 - Streaming Pipeline Failsafe & Deterministic AAA Tests
+
+### 🐛 Production Bug Fix — Unbalanced HTML Tags in Streaming
+
+**Root cause**: When `_find_split_point` truncated text inside a markdown code block (`<pre><code>`), the cached `pre_formatted` HTML string would contain unclosed `<pre>` tags. This unbalanced HTML was previously appended directly to the truncated message without sanitization, causing `Bad Request: can't parse entities` during extreme Telegraph overflow conditions.
+**Fix**: Explicitly wrapped the failsafe message chunk (`formatted_frozen = sanitize_html_tags(pre_formatted[:STREAM_MSG_LIMIT])`) in `streaming.py`, preventing dangling HTML tags from crashing the runtime.
+
+### 🧪 Test Suite — 100% AAA Coverage (1608 Tests)
+
+*   **Deterministic Circuit-Breakers**: Refactored `test_streaming.py` to correctly map the state machine of `_overflow_to_new_message`, proving the circuit breaker prevents endless looping after the 3rd API failure.
+*   **Redis Event Loop Decoupling**: Fixed `Event loop is closed` flakiness in `test_long_messages.py` by severing network dependencies. Long message tests are now entirely mocked with deterministic `AsyncMock()` environments.
+*   **Parametrized Failsafes**: Aligned the test suite's `STREAM_MSG_LIMIT` mock (4000) with production reality, resolving artificial failsafe truncations that were stripping the Telegraph indicator `"формирую статью"` during tests.
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check` / `format` | 0 errors ✅ |
+| `mypy` (strict) | 0 errors ✅ |
+| `pytest` | **1608 passed**, 0 failed ✅ |
+
+---
+
 ## [2.9.18] - 2026-04-04 - Test Suite Hardening & Production Bug Fix
 
 ### 🧪 Test Suite — AAA Modernization

@@ -60,9 +60,12 @@ async def db_conn(test_db_url):
     # Register JSONB codec to match production db_manager behavior
     await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
 
-    # Ensure schema is up-to-date for integration tests (idempotent)
+    # Ensure schema is up-to-date for integration tests (idempotent).
+    # These mirror production migrations that may not yet be applied to the test DB.
     await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS ltm_enabled BOOLEAN DEFAULT TRUE")
     await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS branch_id INTEGER")
+    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS temperature FLOAT")
+    await conn.execute("ALTER TABLE chats ADD COLUMN IF NOT EXISTS voice_id TEXT")
     tx = conn.transaction()
     await tx.start()
     try:

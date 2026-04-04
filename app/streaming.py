@@ -363,15 +363,17 @@ class StreamingWriter:
 
         try:
             if pre_formatted is not None:
-                # Reuse the formatted text from _find_split_point (avoids re-formatting)
-                formatted_frozen = pre_formatted
+                # Reuse the formatted text from _find_split_point (avoids re-formatting).
+                # MUST sanitize: the split point may fall inside a code block, leaving
+                # open <pre> or <code> tags in the cached HTML fragment.
+                formatted_frozen = sanitize_html_tags(pre_formatted)
                 parse_mode = "HTML"
             else:
                 formatted_frozen, parse_mode = self._format_for_telegram(frozen_text)  # type: ignore[assignment]  # parse_mode is always str from TelegramFormatter
 
             # Failsafe limit if indicator pushed it over
             if len(formatted_frozen) > STREAM_MSG_LIMIT:
-                formatted_frozen = formatted_frozen[:STREAM_MSG_LIMIT]
+                formatted_frozen = sanitize_html_tags(formatted_frozen[:STREAM_MSG_LIMIT])
 
             await self._adapter.edit_message(formatted_frozen, parse_mode=parse_mode)  # type: ignore[arg-type]
 
@@ -753,7 +755,7 @@ async def stream_and_display(
                     except Exception as exc:
                         logging.warning("Background Telegraph creation failed uid=%s: %s", uid, exc)
 
-                _bg_tasks: set["asyncio.Task[None]"] = getattr(writer, "_bg_tasks", set())
+                _bg_tasks: set[asyncio.Task[None]] = getattr(writer, "_bg_tasks", set())
                 task = asyncio.create_task(_bg_telegraph(uid, title, final_text))
                 _bg_tasks.add(task)
                 task.add_done_callback(_bg_tasks.discard)
