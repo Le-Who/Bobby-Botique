@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.17] - 2026-04-04 - Mini App Full UX & Backend Hardening
+
+### 🚀 Feature - Mini App UX Expansion
+
+* **Settings Panel Upgrade**: Transformed the Mini App settings into a full native-feeling UI with `tg.HapticFeedback` interactions.
+* **Role Management**: Users can switch custom prompt roles directly from interactive chip strips (`Scrollable Chips`).
+* **Temperature & TTS Control**: Native Telegram Segmented Control for LLM creativity (Точный / Баланс / Творческий) and an expanding List View for selecting ElevenLabs Voices.
+* **Context Reset**: Added a red, destructive Action Button with native `tg.showConfirm` dialog to allow users to flush agent conversational history at will.
+
+### 🛠 Fixes & Under The Hood
+* Extended `public.chats` in Supabase with `temperature` and `voice_id` column states.
+* Implemented deep link mapping `?tab=settings` mapping through Python handler routes avoiding UI jank.
+
 ## [2.9.16] - 2026-04-03 - Native Mini App Reader for Long Messages
 
 ### ✨ Feature — Mini App Reader (Telegraph Replacement)
