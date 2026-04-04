@@ -252,3 +252,43 @@ async def test_error_leakage_prevented(client):
 
         response_text = (await response.get_data()).decode()
         assert secret_message not in response_text
+
+
+@pytest.mark.asyncio
+async def test_asgi_proxy_fix_middleware():
+    """Verify ASGIProxyFix correctly handles X-Forwarded-For headers with trust logic."""
+    from app.web import ASGIProxyFix
+
+    async def mock_app(scope, receive, send):
+        return scope.get("client")
+
+    # Test single proxy
+    proxy_fix = ASGIProxyFix(mock_app, num_proxies=1)
+
+    # Legitimate proxy forwarding
+    scope = {
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"1.2.3.4")],
+        "client": ("127.0.0.1", 1234),
+    }
+    client = await proxy_fix(scope, None, None)
+    assert client == ("1.2.3.4", 1234)
+
+    # Spoofed IP via proxy (attacker sends 8.8.8.8, proxy appends 1.2.3.4)
+    scope = {
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"8.8.8.8, 1.2.3.4")],
+        "client": ("127.0.0.1", 1234),
+    }
+    client = await proxy_fix(scope, None, None)
+    assert client == ("1.2.3.4", 1234)  # Trust the right-most IP (proxy)
+
+    # Test multi-proxy setup
+    multi_proxy_fix = ASGIProxyFix(mock_app, num_proxies=2)
+    scope = {
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"8.8.8.8, 1.2.3.4, 10.0.0.1")],
+        "client": ("127.0.0.1", 1234),
+    }
+    client = await multi_proxy_fix(scope, None, None)
+    assert client == ("1.2.3.4", 1234)  # Trusts the 2nd IP from the right

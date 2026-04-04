@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-24 - [IP Spoofing] Rate-Limit Bypass via X-Forwarded-For
+**Vulnerability:** The application was deployed behind a reverse proxy, but IP addresses were directly extracted from client headers without secure resolution. Attackers could trivially spoof the `X-Forwarded-For` header to bypass brute-force login and API rate limiting by presenting an arbitrary IP.
+**Learning:** Never trust the `X-Forwarded-For` header directly when deployed behind a proxy. Always use trusted-hops (counting backwards from the proxy chain) to resolve the true client IP.
+**Prevention:** Implement and use an `ASGIProxyFix` middleware that resolves client IPs based on a strict number of trusted proxies (`num_proxies`) and injects them back into the ASGI scope so upstream functions receive a reliable source.

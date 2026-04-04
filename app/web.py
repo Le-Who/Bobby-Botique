@@ -44,6 +44,31 @@ from app.repos.metrics_repo import (
 # --- QUART APP SETUP ---
 quart_app = Quart(__name__)  # kept as `quart_app` for backward compat with bot.py
 
+class ASGIProxyFix:
+    """Securely resolve client IPs from trusted proxies to prevent spoofing."""
+
+    def __init__(self, app, num_proxies=1):
+        self.app = app
+        self.num_proxies = num_proxies
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            headers = dict(scope.get("headers", []))
+            if b"x-forwarded-for" in headers:
+                x_forwarded_for = headers[b"x-forwarded-for"].decode("latin1")
+                ips = [ip.strip() for ip in x_forwarded_for.split(",") if ip.strip()]
+                if ips:
+                    index = -min(self.num_proxies, len(ips))
+                    client_ip = ips[index]
+                    if scope.get("client"):
+                        scope["client"] = (client_ip, scope["client"][1])
+                    else:
+                        scope["client"] = (client_ip, 0)
+        return await self.app(scope, receive, send)
+
+# Apply ASGIProxyFix to the quart app's ASGI interface
+quart_app.asgi_app = ASGIProxyFix(quart_app.asgi_app, num_proxies=1)
+
 # Register Telegram Mini App blueprint
 from app.web_miniapp import miniapp_blueprint  # noqa: E402
 
