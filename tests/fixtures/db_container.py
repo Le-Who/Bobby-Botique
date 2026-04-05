@@ -41,9 +41,7 @@ def postgres_container():
     """
     PostgresContainer = _require_testcontainers()
 
-    postgres = PostgresContainer("pgvector/pgvector:pg16").with_command(
-        "-c max_connections=200"
-    )
+    postgres = PostgresContainer("pgvector/pgvector:pg16").with_command("-c max_connections=200")
 
     with postgres as container:
         # asyncpg expects plain postgresql:// not postgresql+psycopg2://

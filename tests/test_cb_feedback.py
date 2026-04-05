@@ -8,12 +8,18 @@ import pytest
 @pytest.fixture()
 def _update_with_feedback():
     """Build a mock Update whose callback_query has feedback data."""
+    from telegram import InlineKeyboardMarkup, Message
+
     update = MagicMock()
     query = MagicMock()
     update.callback_query = query
     query.from_user.id = 42
     query.answer = AsyncMock()
-    query.message.message_id = 999
+
+    # spec=Message so that isinstance(msg, Message) is True inside _handle_vote
+    msg = MagicMock(spec=Message)
+    msg.message_id = 999
+    query.message = msg
 
     # Default: existing keyboard with a feedback row
     feedback_btn = MagicMock()
@@ -21,12 +27,13 @@ def _update_with_feedback():
     other_btn = MagicMock()
     other_btn.callback_data = "open_roles"
 
-    query.message.reply_markup = MagicMock()
-    query.message.reply_markup.inline_keyboard = [
+    # spec=InlineKeyboardMarkup so isinstance guard in _handle_reveal passes
+    msg.reply_markup = MagicMock(spec=InlineKeyboardMarkup)
+    msg.reply_markup.inline_keyboard = [
         [feedback_btn],
         [other_btn],
     ]
-    query.message.edit_reply_markup = AsyncMock()
+    msg.edit_reply_markup = AsyncMock()
     return update, query
 
 

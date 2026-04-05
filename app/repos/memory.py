@@ -305,6 +305,7 @@ async def search_memories(
     # Adaptive: relax the floor and fetch more candidates than needed
     adaptive_floor = max(0.40, min_similarity - 0.12)
     fetch_limit = limit * 2  # over-fetch; we'll trim with gap-filter below
+    _adaptive_floor = adaptive_floor  # kept for gap-filter reference below
 
     try:
         async with db_manager.pool.acquire() as conn:
@@ -367,11 +368,17 @@ async def search_memories(
                     return []
 
                 # ─ Adaptive Gap Filtering ─────────────────────────────────
-                # Keep only results within 15pp of the best score,
-                # and also enforce the original hard min_similarity floor.
+                # Keep only results within 15pp of the best score.
+                # We intentionally do NOT re-apply min_similarity as a hard
+                # floor here — that was already enforced by adaptive_floor in
+                # the SQL WHERE clause.  Using max(min_similarity, ...) was a
+                # logic bug: it discarded valid results that passed the SQL gate
+                # but fell just below the caller's soft threshold.  The gap
+                # filter's only job is to prune outliers *within* this candidate
+                # set, not to act as a second hard threshold.
                 rows = list(results)
                 top_sim = float(rows[0].get("sim", rows[0].get("similarity", 0)))
-                gap_threshold = max(min_similarity, top_sim - 0.15)
+                gap_threshold = max(_adaptive_floor, top_sim - 0.15)
 
                 filtered = [
                     {
@@ -384,6 +391,17 @@ async def search_memories(
                     for r in rows
                     if float(r.get("sim", r.get("similarity", 0))) >= gap_threshold
                 ][:limit]
+
+                if not filtered and rows:
+                    logging.debug(
+                        "Memory search gap-filter dropped all %d candidates for user %d "
+                        "(top_sim=%.3f, gap_threshold=%.3f, min_similarity=%.3f)",
+                        len(rows),
+                        user_id,
+                        top_sim,
+                        gap_threshold,
+                        min_similarity,
+                    )
 
                 return filtered
 
@@ -583,6 +601,89 @@ async def search_memories_with_graph(
         logging.warning("Graph traversal failed (non-critical): %s", e)
 
     return memories, graph_triples
+
+
+async def search_memories_with_llm_judge(
+    user_id: int,
+    query: str,
+    api_key: str,
+    *,
+    limit: int = 3,
+    candidate_floor: float = 0.42,
+) -> list[dict[str, Any]]:
+    """Low-confidence fallback: fetch candidates + LLM relevance judge.
+
+    Called when primary vector search (min_similarity=0.60) returns nothing.
+    Strategy (RF-Mem "recollection path", 2025):
+      1. Retrieve top-k candidates at a lower floor (default 0.42) — broad net.
+      2. One cheap Flash-Lite call judges each candidate's relevance to the query.
+      3. Only genuinely relevant ones are returned (tagged llm_judged=True).
+
+    This avoids discarding valid memories that scored just below the primary
+    threshold due to multimodal embedding space compression (gemini-embedding-2-preview)
+    or semantically diluted phrasing (e.g., "Мою жену зовут X. А твою?").
+
+    Returns at most `limit` memories tagged with {'llm_judged': True}.
+    Returns [] silently on any error — this is strictly non-blocking.
+    """
+    import json
+
+    # Step 1: Over-fetch low-confidence candidates
+    candidates = await search_memories(
+        user_id,
+        query,
+        api_key,
+        limit=limit * 2,
+        min_similarity=candidate_floor,
+    )
+    if not candidates:
+        logging.debug(
+            "LLM judge fallback: no candidates even at floor=%.2f for user %d",
+            candidate_floor,
+            user_id,
+        )
+        return []
+
+    # Step 2: Build batch judge prompt — one call for all candidates
+    facts_lines = "\n".join(f"{i}. {c['content'][:300]}" for i, c in enumerate(candidates))
+    prompt = (
+        "You are a relevance judge for a personal memory assistant.\n"
+        f'User message: "{query[:400]}"\n\n'
+        "These are stored personal facts. Decide which facts are clearly relevant "
+        "to answering the user's message (even if indirectly).\n"
+        "Output ONLY valid JSON array: "
+        '[{"index": 0, "relevant": true}, {"index": 1, "relevant": false}, ...]\n\n'
+        f"Facts:\n{facts_lines}"
+    )
+
+    try:
+        client = get_cached_genai_client(api_key)
+        resp = await client.aio.models.generate_content(
+            model=QUERY_EXPANSION_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=256,
+                response_mime_type="application/json",
+            ),
+        )
+        judgements: list[dict[str, Any]] = json.loads(resp.text or "[]")
+        relevant_indices = {int(j["index"]) for j in judgements if j.get("relevant")}
+
+        result = [{**c, "llm_judged": True} for i, c in enumerate(candidates) if i in relevant_indices][:limit]
+
+        logging.info(
+            "LLM judge fallback: %d/%d candidates relevant for user %d (query=%r)",
+            len(result),
+            len(candidates),
+            user_id,
+            query[:60],
+        )
+        return result
+
+    except Exception as exc:
+        logging.debug("LLM judge fallback skipped (non-critical): %s", exc)
+        return []
 
 
 def get_last_retrieved_edge_ids(user_id: int) -> list[Any]:

@@ -205,7 +205,9 @@ async def test_rate_limited_edit_retries_with_backoff():
     call_count = 0
 
     class FloodAdapter(FakeAdapter):
-        async def edit_message(self, text: str, parse_mode: str | None = None, reply_markup: object | None = None) -> None:
+        async def edit_message(
+            self, text: str, parse_mode: str | None = None, reply_markup: object | None = None
+        ) -> None:
             nonlocal call_count
             call_count += 1
             if call_count < 3:
@@ -231,7 +233,9 @@ async def test_non_rate_limited_error_fails_immediately():
     call_count = 0
 
     class ErrorAdapter(FakeAdapter):
-        async def edit_message(self, text: str, parse_mode: str | None = None, reply_markup: object | None = None) -> None:
+        async def edit_message(
+            self, text: str, parse_mode: str | None = None, reply_markup: object | None = None
+        ) -> None:
             nonlocal call_count
             call_count += 1
             raise Exception("message not found")
@@ -249,9 +253,12 @@ async def test_non_rate_limited_error_fails_immediately():
 @pytest.mark.asyncio
 async def test_not_modified_error_counted_as_success():
     """'Message not modified' error must be treated as success (text unchanged)."""
+
     # Arrange
     class NotModifiedAdapter(FakeAdapter):
-        async def edit_message(self, text: str, parse_mode: str | None = None, reply_markup: object | None = None) -> None:
+        async def edit_message(
+            self, text: str, parse_mode: str | None = None, reply_markup: object | None = None
+        ) -> None:
             raise Exception("Message is not modified")
 
     writer = StreamingWriter(NotModifiedAdapter(), use_telegraph_fallback=False)

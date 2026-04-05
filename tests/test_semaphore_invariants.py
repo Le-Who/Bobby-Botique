@@ -39,9 +39,7 @@ async def test_semaphore_acquired_and_released_on_success():
             pass  # Just hold and release the slot
 
     # Assert — slot must be restored after exit
-    assert sem._local_semaphore._value == 2, (
-        "Semaphore must fully release after normal exit"
-    )
+    assert sem._local_semaphore._value == 2, "Semaphore must fully release after normal exit"
 
 
 @pytest.mark.asyncio
@@ -57,9 +55,7 @@ async def test_semaphore_released_on_exception():
                 raise ValueError("Simulated failure inside semaphore block")
 
     # Assert — slot must be restored after exception
-    assert sem._local_semaphore._value == 1, (
-        "Semaphore must release when exception propagates"
-    )
+    assert sem._local_semaphore._value == 1, "Semaphore must release when exception propagates"
 
 
 @pytest.mark.asyncio
@@ -79,9 +75,7 @@ async def test_semaphore_released_on_asyncio_cancelled_error():
             pass
 
     # Assert — semaphore must be released despite cancellation
-    assert sem._local_semaphore._value == 1, (
-        "Semaphore must release on task cancellation"
-    )
+    assert sem._local_semaphore._value == 1, "Semaphore must release on task cancellation"
 
 
 async def _cancel_scenario(sem: GlobalLLMSemaphore) -> None:
@@ -114,9 +108,7 @@ async def test_semaphore_limits_concurrency_to_configured_limit():
         await asyncio.gather(*(task() for _ in range(5)))
 
     # Assert — peak concurrency must never exceed configured limit
-    assert concurrent_peak <= limit, (
-        f"Peak concurrency {concurrent_peak} exceeded limit {limit}"
-    )
+    assert concurrent_peak <= limit, f"Peak concurrency {concurrent_peak} exceeded limit {limit}"
 
 
 @pytest.mark.asyncio
@@ -136,9 +128,7 @@ async def test_semaphore_returns_to_full_capacity_after_all_tasks_complete():
         await asyncio.gather(*(task() for _ in range(limit * 2)))
 
     # Assert
-    assert sem._local_semaphore._value == limit, (
-        f"All {limit} slots must be returned after task completion"
-    )
+    assert sem._local_semaphore._value == limit, f"All {limit} slots must be returned after task completion"
 
 
 @pytest.mark.asyncio

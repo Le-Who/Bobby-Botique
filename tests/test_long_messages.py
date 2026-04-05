@@ -154,9 +154,7 @@ async def test_create_telegraph_page_returns_url():
         # Build a realistic sync-method response for createPage
         response_page = MagicMock()
         response_page.raise_for_status = MagicMock(return_value=None)  # sync call
-        response_page.json = MagicMock(
-            return_value={"ok": True, "result": {"url": "https://telegra.ph/Mock-Page"}}
-        )
+        response_page.json = MagicMock(return_value={"ok": True, "result": {"url": "https://telegra.ph/Mock-Page"}})
 
         # Wire the context-manager chain: AsyncClient().__aenter__() → mock_client
         mock_client = AsyncMock()

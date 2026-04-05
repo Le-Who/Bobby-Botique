@@ -112,9 +112,7 @@ async def test_webhook_valid_payload(webhook_client):
     )
 
     response_text = await response.get_data(as_text=True)
-    assert response.status_code == 200, (
-        f"Expected 200 OK, got {response.status_code}: {response_text}"
-    )
+    assert response.status_code == 200, f"Expected 200 OK, got {response.status_code}: {response_text}"
 
     mock_app.process_update.assert_awaited_once()
     passed_update = mock_app.process_update.await_args[0][0]

@@ -13,6 +13,7 @@ Covers gaps in the existing test_errors.py:
 
 These tests verify behavior (observable transformations) not implementation details.
 """
+
 import pytest
 
 from app.errors import (
@@ -166,6 +167,7 @@ def test_classify_error_from_exception_typed_path(exc_class, expected_code):
 
 def test_classify_error_subclass_uses_mro_walk():
     """Subclass of a registered exception type must be classified via MRO walk."""
+
     # Arrange
     class MySpecialQuotaError(APIQuotaExceededError):
         pass
@@ -206,6 +208,7 @@ def test_classify_error_from_status_code(http_status, expected_code):
 
 def test_classify_error_from_exception_reads_status_code_attribute():
     """Exception with status_code attribute must use HTTP-path classification."""
+
     # Arrange
     class FakeAPIError(Exception):
         def __init__(self, msg, status_code):
@@ -254,6 +257,7 @@ def test_classify_error_string_fallback(message, expected_code):
 
 def test_convert_asyncpg_timeout_becomes_database_connection_error():
     """asyncpg exceptions with 'connection' keyword should become DatabaseConnectionError."""
+
     # Arrange
     class FakeAsyncpgError(Exception):
         pass
@@ -297,9 +301,7 @@ def test_domain_errors_inherit_from_base():
 
     # Act / Assert
     for cls in domain_classes:
-        assert issubclass(cls, GemaibotBaseException), (
-            f"{cls.__name__} must inherit from GemaibotBaseException"
-        )
+        assert issubclass(cls, GemaibotBaseException), f"{cls.__name__} must inherit from GemaibotBaseException"
 
 
 def test_gemaibot_base_exception_includes_details():

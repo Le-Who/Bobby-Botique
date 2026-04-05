@@ -202,9 +202,7 @@ class TestOverflowFormattingContext:
         )
 
     @pytest.mark.asyncio
-    async def test_overflow_clean_split_does_not_prepend_bold_to_continuation(
-        self, mock_adapter, monkeypatch
-    ):
+    async def test_overflow_clean_split_does_not_prepend_bold_to_continuation(self, mock_adapter, monkeypatch):
         """When bold is properly closed before the split point, the continuation
         message (reply_new_message) must NOT start with a stray <b> tag.
         """
@@ -227,9 +225,7 @@ class TestOverflowFormattingContext:
         reply_html = mock_adapter.reply_new_message.call_args[0][0]
         # Continuation must not open with a dangling bold marker
         stripped = reply_html.lstrip()
-        assert not stripped.startswith("<b>"), (
-            f"Continuation message starts with unexpected <b> tag:\n{stripped[:100]}"
-        )
+        assert not stripped.startswith("<b>"), f"Continuation message starts with unexpected <b> tag:\n{stripped[:100]}"
 
 
 # ── Overflow retry and circuit-breaker tests ─────────────────────────────────
@@ -265,14 +261,10 @@ class TestOverflowRetryStorm:
 
         # Act — three direct overflow calls to exhaust retries
         await writer._overflow_to_new_message()  # _overflow_retries = 1
-        assert not getattr(writer, "_overflow_failed", False), (
-            "Should NOT circuit-break after retry 1"
-        )
+        assert not getattr(writer, "_overflow_failed", False), "Should NOT circuit-break after retry 1"
 
         await writer._overflow_to_new_message()  # _overflow_retries = 2
-        assert not getattr(writer, "_overflow_failed", False), (
-            "Should NOT circuit-break after retry 2"
-        )
+        assert not getattr(writer, "_overflow_failed", False), "Should NOT circuit-break after retry 2"
 
         await writer._overflow_to_new_message()  # _overflow_retries = 3 → breaker
         # Assert — circuit breaker engaged after the 3rd failure
@@ -354,9 +346,7 @@ class TestTelegraphFallback:
         adapter.edit_message.assert_called()
         # Find the call that contains the telegraph indicator (should be the freeze edit)
         all_calls = adapter.edit_message.call_args_list
-        indicator_found = any(
-            "формирую статью" in str(call[0][0]) for call in all_calls
-        )
+        indicator_found = any("формирую статью" in str(call[0][0]) for call in all_calls)
         assert indicator_found, (
             f"Expected 'формирую статью' in one of the edit_message calls.\n"
             f"Actual calls (last 150 chars): {[str(c[0][0])[-150:] for c in all_calls]}"

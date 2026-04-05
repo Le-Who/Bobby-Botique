@@ -3,7 +3,65 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.25] - 2026-04-05 - LTM Retrieval False-Negative Fix & LLM-as-Judge Fallback
+
+### 🐛 Critical Bug Fix: Adaptive Gap Filter Double-Threshold
+
+#### Problem
+`search_memories()` applied `min_similarity` **twice** — once via `adaptive_floor` passed to the SQL `WHERE` clause, and again inside the Python post-filter via `gap_threshold = max(min_similarity, top_sim - 0.15)`.
+
+A memory with `sim=0.65` (e.g., `"Мою жену зовут Евдокия. А твою?"`) correctly passed the SQL gate (`adaptive_floor=0.48`) but was silently discarded by the Python gate (`gap_threshold=0.68`). The result: zero memories injected despite the fact being stored. The LLM responded with *"У меня нет доступа к вашим личным данным."*
+
+#### Root Cause Detail
+The gap filter's intent is to prune *outliers within the candidate set* (≤ 15pp below the top result). It was never designed to act as a second absolute hard floor. Using `max(min_similarity, ...)` violated that invariant.
+
+#### Fix (`app/repos/memory.py`)
+- Gap threshold now uses `max(adaptive_floor, top_sim - 0.15)` — the relaxed floor enforced by SQL, not the caller's soft threshold.
+- Added `DEBUG` log when all candidates are dropped by the gap filter, reporting `top_sim`, `gap_threshold`, and `min_similarity` for future diagnostics.
+
+### 🔧 Parameter Tuning (`app/handlers/ai_chat.py`)
+- Lowered `min_similarity`: `0.68` → `0.60` (aligns with MemoryOS θ=0.60, experimentally validated on LoCoMo conversational benchmark; calibrated for `gemini-embedding-2-preview` multimodal embedding space where cross-lingual personal-fact similarities cluster at 0.55–0.72, below text-only model norms).
+- Added `DEBUG` log when LTM retrieval returns 0 memories/triples (previously silent, making threshold debugging require guesswork).
+
+### 🧠 LLM-as-Judge Fallback — RF-Mem "Recollection Path" (`app/repos/memory.py`, `app/handlers/ai_chat.py`)
+
+Implements the dual-process memory architecture from **RF-Mem (2025)**: when the primary vector search (floor ~0.48) returns nothing, a second pass is attempted:
+1. Fetch top-6 candidates at `floor=0.42` (wide net).
+2. One cheap `gemini-3.1-flash-lite-preview` call rates each candidate's relevance to the user's query (single batched JSON response).
+3. Only genuinely relevant candidates (rated `true`) are injected, capped at 3.
+4. Results are tagged `llm_judged=True` for observability.
+5. All errors are caught and silently return `[]` — strictly non-blocking.
+
+This handles recall-intent queries ("Напомни-ка...") that are by design semantically vague — vectors score low not because the memory is irrelevant, but because the query phrasing creates cosine distance.
+
+### 🐛 Pre-Existing Test Fixture Fix (`tests/test_cb_feedback.py`)
+- `_update_with_feedback` fixture created `query.message` as a bare `MagicMock()`, causing `isinstance(msg, Message)` to return `False` inside `_handle_vote`. `save_feedback` was never reached, making `test_thumbs_up_calls_save` (and others) fail silently when `_handle_vote` exited early via the guard.
+- Fixed by using `MagicMock(spec=Message)` (and `spec=InlineKeyboardMarkup` for `reply_markup`).
+
+### 🔧 Code Quality
+- `ruff check app/ tests/` — 0 errors ✅
+- `ruff format app/ tests/` — 290 files already formatted, 0 violations ✅
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check app/ tests/` | 0 errors ✅ |
+| `ruff format app/ tests/ --check` | 0 violations ✅ |
+| `pytest` (full suite) | **1613 passed**, 0 failed ✅ |
+
+### 📐 LTM Parameter Changes
+
+| Parameter | Old | New |
+|-----------|-----|-----|
+| `min_similarity` (caller floor) | 0.68 | **0.60** |
+| `gap_threshold` (Python post-filter) | `max(min_similarity, top_sim − 0.15)` | `max(adaptive_floor, top_sim − 0.15)` |
+| LLM-judge fallback | — | ✅ `floor=0.42`, top-3, Flash-Lite batch |
+
+---
+
 ## [2.9.24] - 2026-04-05 - RLHF Feedback Fix, Citation Badges & Graph Canvas
+
 
 ### 🐛 Critical Bug Fix: Telegram Bot API Reaction Limitation
 

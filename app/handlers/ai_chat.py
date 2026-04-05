@@ -202,7 +202,7 @@ async def _handle_regular_chat(
                     user_message,
                     key_data["api_key"],
                     limit=5,  # raised: adaptive thresholding filters noise
-                    min_similarity=0.68,  # relaxed: gap-filter handles quality control
+                    min_similarity=0.60,  # gap-filter is the real quality gate; 0.68 was causing false negatives
                 )
                 if memories:
                     memory_xml = format_memories_for_system_prompt(memories)
@@ -251,6 +251,34 @@ async def _handle_regular_chat(
                         _memories_injected,
                         user_id,
                     )
+                else:
+                    # ── LLM-as-judge fallback (RF-Mem "recollection path") ──
+                    # Primary search (floor ~0.48) found nothing. Try a wider
+                    # net (floor 0.42) with a cheap Flash-Lite call to judge
+                    # which low-confidence candidates are actually relevant.
+                    logging.debug(
+                        "LTM: primary search empty for user %s — trying LLM judge fallback",
+                        user_id,
+                    )
+                    from app.repos.memory import search_memories_with_llm_judge
+
+                    judged = await search_memories_with_llm_judge(
+                        user_id,
+                        user_message,
+                        key_data["api_key"],
+                        limit=3,
+                        candidate_floor=0.42,
+                    )
+                    if judged:
+                        memory_xml = format_memories_for_system_prompt(judged)
+                        if memory_xml:
+                            system_instruction = system_instruction + "\n\n" + memory_xml
+                        _memories_injected = len(judged)
+                        logging.info(
+                            "LTM fallback injected %d LLM-judged memories for user %s",
+                            _memories_injected,
+                            user_id,
+                        )
         except Exception as mem_err:
             logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
 
