@@ -355,7 +355,7 @@ async def get_long_message(uid: str) -> str | None:
 
 async def store_telegraph_url(uid: str, url: str) -> bool:
     """Persist a Telegraph fallback URL for a long message (no expiry).
-    
+
     This key survives after the primary long_msg key expires, providing
     a permanent fallback once the 24h Redis window closes.
     """
@@ -384,4 +384,3 @@ async def get_telegraph_url(uid: str) -> str | None:
     except Exception as e:
         logging.warning("Failed to get telegraph URL uid=%s: %s", uid, e)
         return None
-

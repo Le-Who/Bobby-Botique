@@ -722,17 +722,20 @@ async def stream_and_display(
                     summary_lines += "…"
 
                 from app.utils.ux_improvements import wrap_in_expandable_blockquote
+
                 sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
                 summary_html = wrap_in_expandable_blockquote(sanitized_summary)
 
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
                 full_text_html = f'{summary_html}\n\n📖 <a href="{reader_url}">Читать полностью</a>'
 
                 buttons = []
                 if markup and getattr(markup, "inline_keyboard", None):
                     buttons = list(getattr(markup, "inline_keyboard", []))
-                
+
                 from telegram import WebAppInfo
+
                 buttons.insert(0, [InlineKeyboardButton("📖 Читать полностью", web_app=WebAppInfo(url=reader_url))])
                 new_markup = InlineKeyboardMarkup(buttons)
 
@@ -778,10 +781,12 @@ async def stream_and_display(
                     summary_lines += "…"
 
                 from app.utils.ux_improvements import wrap_in_expandable_blockquote
+
                 sanitized_summary = sanitize_html_tags(TelegramFormatter.format_text(summary_lines)[0]) or summary_lines
                 summary_html = wrap_in_expandable_blockquote(sanitized_summary)
 
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
                 full_text_html = f'{summary_html}\n\n📖 <a href="{t_url}">Читать статью (Instant View)</a>'
 
                 buttons = []
@@ -801,8 +806,8 @@ async def stream_and_display(
             else:
                 logging.warning("Telegraph creation failed for frozen stream; sending long message fallback.")
                 from app.utils.messaging import send_long_message
-                await send_long_message(writer.last_message, final_text, reply_markup=markup)  # type: ignore[arg-type]
 
+                await send_long_message(writer.last_message, final_text, reply_markup=markup)  # type: ignore[arg-type]
 
     # Check finish_reason for blocked/truncated responses
     fr = _last_finish_reason.get()

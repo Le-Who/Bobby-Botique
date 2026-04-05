@@ -276,6 +276,9 @@ class AgenticSearch:
         model_name: str,
         api_key: str,
         on_key_used: Callable[[], Awaitable[None]] | None = None,
+        *,
+        ltm_enabled: bool = False,
+        ltm_api_key: str | None = None,
     ):
         self.model_name = model_name
         self.api_key = api_key
@@ -288,6 +291,9 @@ class AgenticSearch:
         # Called after every generate_content call so the handler can
         # increment key usage (+1 per LLM invocation).
         self._on_key_used = on_key_used
+        # Agentic RAG: when LTM is enabled, the agent can call recall_memory
+        self._ltm_enabled = ltm_enabled
+        self._ltm_api_key = ltm_api_key
 
     def _get_system_instruction(self) -> str:
         """Compose the RESEARCH_AGENT_SYSTEM prompt with configuration injected."""
@@ -301,55 +307,59 @@ class AgenticSearch:
 
     def _get_tools(self) -> list[Any]:
         """Define the tools available to the agent."""
-        return [
-            types.Tool(
-                function_declarations=[
-                    types.FunctionDeclaration(
-                        name="search_web",
-                        description="Perform parallel web searches. Prioritize diverse queries to find the best sources.",
-                        parameters=types.Schema(
-                            type=types.Type.OBJECT,
-                            properties={
-                                "queries": types.Schema(
-                                    type=types.Type.ARRAY,
-                                    items=types.Schema(type=types.Type.STRING),
-                                    description="List of 1 to 3 search queries to execute in parallel.",
-                                )
-                            },
-                            required=["queries"],
-                        ),
-                    ),
-                    types.FunctionDeclaration(
-                        name="read_page",
-                        description="Extract clean text content from a specific URL. Use this to read the full context of a page.",
-                        parameters=types.Schema(
-                            type=types.Type.OBJECT,
-                            properties={
-                                "url": types.Schema(
-                                    type=types.Type.STRING,
-                                    description="The target URL to read.",
-                                )
-                            },
-                            required=["url"],
-                        ),
-                    ),
-                    types.FunctionDeclaration(
-                        name="conclude_research",
-                        description="End the research phase and provide the final answer to the user.",
-                        parameters=types.Schema(
-                            type=types.Type.OBJECT,
-                            properties={
-                                "answer": types.Schema(
-                                    type=types.Type.STRING,
-                                    description="The final, formatted markdown answer to present to the user.",
-                                )
-                            },
-                            required=["answer"],
-                        ),
-                    ),
-                ]
-            )
+        declarations = [
+            types.FunctionDeclaration(
+                name="search_web",
+                description="Perform parallel web searches. Prioritize diverse queries to find the best sources.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "queries": types.Schema(
+                            type=types.Type.ARRAY,
+                            items=types.Schema(type=types.Type.STRING),
+                            description="List of 1 to 3 search queries to execute in parallel.",
+                        )
+                    },
+                    required=["queries"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="read_page",
+                description="Extract clean text content from a specific URL. Use this to read the full context of a page.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "url": types.Schema(
+                            type=types.Type.STRING,
+                            description="The target URL to read.",
+                        )
+                    },
+                    required=["url"],
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="conclude_research",
+                description="End the research phase and provide the final answer to the user.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "answer": types.Schema(
+                            type=types.Type.STRING,
+                            description="The final, formatted markdown answer to present to the user.",
+                        )
+                    },
+                    required=["answer"],
+                ),
+            ),
         ]
+
+        # Agentic RAG: add recall_memory tool when LTM is enabled
+        if self._ltm_enabled:
+            from app.repos.memory_tools import get_memory_tool_declaration
+
+            declarations.append(get_memory_tool_declaration())
+
+        return [types.Tool(function_declarations=declarations)]
 
     async def _execute_tool(
         self,
@@ -439,6 +449,19 @@ class AgenticSearch:
             elif name == "conclude_research":
                 # We handle conclude differently in the main loop, but just in case
                 return {"status": "concluded"}
+
+            elif name == "recall_memory":
+                # Agentic RAG: search user's long-term memory
+                safe_args = args if isinstance(args, dict) else {}
+                query = safe_args.get("query", "")
+                if not query:
+                    return {"error": "No query provided for recall_memory."}
+                if not user_id or not self._ltm_api_key:
+                    return {"error": "Memory not available (no user context or API key)."}
+                logger.info("Agent requested recall_memory: %s", query[:60])
+                from app.repos.memory_tools import execute_memory_tool
+
+                return await execute_memory_tool(user_id, query, self._ltm_api_key)
             else:
                 return {"error": f"Unknown tool: {name}"}
 

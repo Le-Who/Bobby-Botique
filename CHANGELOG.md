@@ -3,6 +3,64 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.23] - 2026-04-05 - Agentic GraphRAG Evolution (Phases 1–3)
+
+### 🧠 Phase 1: Core Infrastructure — Real-Time Streaming Extraction
+
+#### Real-Time Graph Extraction
+- **New module `memory_extraction.py`**: Replaces batch-only consolidation with a streaming pipeline that fires on every qualifying user message (≥30 chars). Uses Gemini Structured Outputs (Pydantic `GraphExtractionResult` schema) with `thinking_level="medium"` for hallucination-resistant entity/relation extraction.
+- 3-retry wrapper with exponential backoff for transient API errors (503, rate-limit, timeout).
+- Entities → `memory_nodes` (semantic dedup, cosine < 0.12). Relations → `memory_edges` (semantic predicate dedup, cosine < 0.25).
+- Wired into `ai_chat._store_memory_in_background()` as a second background task.
+
+#### Temporal Conflict Management
+- **Migration `028_add_temporal_edges.sql`**: Adds `valid_from TIMESTAMPTZ` / `valid_to TIMESTAMPTZ` to `memory_edges` with partial index on current edges.
+- When a new edge conflicts with an existing one (same src→tgt, different predicate), old edge is closed (`valid_to = now()`) and new one inserted — preserving full history.
+- `search_memories_with_graph()` updated with `WHERE valid_to IS NULL` filter and bilingual `<temporal_context>` injection for LLM awareness of life changes.
+
+#### RLHF Feedback Loop
+- Edge-ID caching in `memory.py`: `_last_retrieved_edge_ids` maps user_id → list of edge IDs from last retrieval.
+- New `penalize_graph_edges()` function: on 👎 reaction, decays edge weights by 0.10 (clamped to 0.05 min).
+- Bot pre-places 👍/👎 reactions on its own messages via `set_feedback_reactions()` as a silent invitation.
+
+### 🔍 Phase 2: Agentic RAG & Multimodal Memory
+
+#### Agentic RAG — `recall_memory` Tool
+- **New module `memory_tools.py`**: Exposes LTM search as a Gemini function declaration (`recall_memory`) for the agentic research loop.
+- `AgenticSearch` constructor gains `ltm_enabled` and `ltm_api_key` kwargs; when user has LTM enabled, the `recall_memory` tool is registered.
+- `_execute_tool()` routes `recall_memory` calls to `execute_memory_tool()` which returns memories + graph triples as structured JSON.
+
+#### Multimodal Memory — Image/Audio to Graph
+- `process_media_for_memory()` now fires background graph extraction after storing media in LTM.
+- New `_extract_graph_from_media()` function stores `file_id`/`file_type` on resulting `memory_nodes` for future media re-delivery.
+- Works for both image descriptions and voice transcriptions.
+
+### 🌐 Phase 3: Social Graph & Visualization
+
+#### Group Chat Social Graph
+- **Migration `029_add_multimodal_and_social_graph.sql`**: Adds `file_id`, `file_type`, `chat_id`, `actor_user_id` to `memory_nodes`; `chat_id`, `actor_user_id`, `is_public` to `memory_edges`. Partial indexes for group and multimodal queries.
+- `extract_and_store_graph()` gains `chat_id` and `actor_user_id` parameters for social graph attribution.
+- `GroupChatManager.log_group_message()` now fires background social graph extraction for non-bot messages (≥30 chars).
+
+#### Knowledge Graph Visualization API
+- New Mini App endpoint `GET /webapp/api/graph`: returns nodes and edges as JSON with optional query-based filtering (limit, entity name ILIKE). Authenticated via Telegram initData.
+
+### 🔧 Code Quality
+- Full `ruff check` + `ruff format` pass on all modified files — 0 errors.
+- 6 pre-existing format violations fixed in `cache.py`, `streaming.py`, `voice_engine.py`, etc.
+
+### 📝 README
+- Expanded GraphRAG Memory section with 7 new sub-bullets documenting all Phase 1–3 capabilities.
+
+### 🗄️ Database Migrations
+
+| Migration | Detail |
+|-----------|--------|
+| `028_add_temporal_edges.sql` | `valid_from TIMESTAMPTZ` + `valid_to TIMESTAMPTZ` on `memory_edges`. Partial index `idx_memory_edges_temporal WHERE valid_to IS NULL`. |
+| `029_add_multimodal_and_social_graph.sql` | `file_id`, `file_type`, `chat_id`, `actor_user_id` on `memory_nodes`; `chat_id`, `actor_user_id`, `is_public` on `memory_edges`. 3 partial indexes. |
+
+---
+
 ## [2.9.22] - 2026-04-05 - Graph & LTM Cognitive Architecture Optimization
 
 ### 🧠 GraphRAG Memory — Query Intent Gate & Edge Provenance

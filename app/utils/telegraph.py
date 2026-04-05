@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-
 # Telegraph API endpoint
 _TELEGRAPH_API = "https://api.telegra.ph"
 
@@ -74,7 +73,7 @@ class TelegraphHTMLParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         node: dict = {"tag": tag.lower()}
-        
+
         # Valid Telegraph tags: a, aside, b, blockquote, br, code, em, figcaption, figure, h3, h4, hr, i, iframe, img, li, ol, p, pre, s, strong, u, ul, video
         if attrs:
             valid_attrs = {}
@@ -83,8 +82,8 @@ class TelegraphHTMLParser(HTMLParser):
                     valid_attrs[k] = v
             if valid_attrs:
                 node["attrs"] = valid_attrs
-        
-        if tag.lower() not in ('br', 'hr', 'img'):
+
+        if tag.lower() not in ("br", "hr", "img"):
             node["children"] = []
             self.stack[-1].setdefault("children", []).append(node)
             self.stack.append(node)
@@ -103,25 +102,27 @@ class TelegraphHTMLParser(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         data = html.unescape(data)
-        lines = data.split('\n')
+        lines = data.split("\n")
         for i, line in enumerate(lines):
             if line:
                 self.stack[-1].setdefault("children", []).append(line)
             if i < len(lines) - 1:
                 self.stack[-1].setdefault("children", []).append({"tag": "br"})
 
+
 def _markdown_to_telegraph_nodes(text: str) -> list[dict]:
     """Convert markdown text to Telegraph Node format utilizing standard formatting."""
     # Convert to standard Telegram HTML which accurately parses code blocks and escapes
     html_out = markdown_to_html(text)
-    
+
     # Split by block-level elements before paragraph wrapping
     segments = re.split(r"(<pre(?:>| [^>]*>).*?</pre>|<blockquote>.*?</blockquote>)", html_out, flags=re.DOTALL)
     final_nodes: list[dict] = []
-    
+
     for segment in segments:
-        if (segment.startswith("<pre") and segment.endswith("</pre>")) or \
-           (segment.startswith("<blockquote") and segment.endswith("</blockquote>")):
+        if (segment.startswith("<pre") and segment.endswith("</pre>")) or (
+            segment.startswith("<blockquote") and segment.endswith("</blockquote>")
+        ):
             parser = TelegraphHTMLParser()
             parser.feed(segment)
             final_nodes.extend(parser.nodes)
@@ -139,6 +140,7 @@ def _markdown_to_telegraph_nodes(text: str) -> list[dict]:
                     final_nodes.append({"tag": "p", "children": parser.nodes})
 
     return final_nodes
+
 
 async def create_telegraph_page(title: str, markdown_content: str) -> str | None:
     """Create a Telegraph page from markdown content.
@@ -183,6 +185,3 @@ async def create_telegraph_page(title: str, markdown_content: str) -> str | None
     except Exception as e:
         logger.warning("Telegraph page creation failed: %s", e)
         return None
-
-
-

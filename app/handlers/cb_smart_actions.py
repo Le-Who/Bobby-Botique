@@ -32,10 +32,10 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     from app.utils.response_tags import SUGGESTION_CACHE
-    
+
     # Try to look up the full text from the cache using the hash ID
     suggestion_text = SUGGESTION_CACHE.get(suggestion_id_or_text, suggestion_id_or_text)
-    
+
     user = update.effective_user
     chat = update.effective_chat
     if not user or not chat:
@@ -51,11 +51,13 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         logging.warning("Failed to send fake user message: %s", e)
 
     from app.state import get_user_lock, get_user_state
+
     user_state = get_user_state(user.id)
     if user_state.is_processing or get_user_lock(user.id).locked():
         # Inform user but don't crash
         try:
             from app.handlers.messages import _send_busy_ephemeral
+
             await _send_busy_ephemeral(update)
         except Exception:
             pass
@@ -65,13 +67,11 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     from app.i18n import t as _t
     from app.state import set_last_bot_message, set_last_sent_message
+
     set_last_sent_message(user.id, suggestion_text)
-    
+
     try:
-        placeholder_message = await context.bot.send_message(
-            chat_id=chat.id,
-            text=_t("msg.thinking", "ru")
-        )
+        placeholder_message = await context.bot.send_message(chat_id=chat.id, text=_t("msg.thinking", "ru"))
         set_last_bot_message(user.id, placeholder_message.message_id, chat.id)
     except Exception as e:
         logging.error("Failed to send placeholder: %s", e)
@@ -89,12 +89,8 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         try:
             async with get_user_lock(user.id):
                 from app.handlers.agent import process_long_request
-                await process_long_request(
-                    placeholder_message,
-                    update,
-                    context,
-                    text_override=suggestion_text
-                )
+
+                await process_long_request(placeholder_message, update, context, text_override=suggestion_text)
         except Exception as _e:
             logging.error("Smart suggestion error: %s", _e, exc_info=True)
             try:
@@ -110,6 +106,7 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 stop_heartbeat(placeholder_message.message_id)
 
     from app.utils.background_tasks import submit_task
+
     submit_task(_run_suggestion())
 
 

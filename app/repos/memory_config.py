@@ -29,3 +29,11 @@ MAX_PERSONA_FACTS = 8
 MIN_PERSONA_FACTS = 5
 # Consolidation model — cheapest available free-tier model
 CONSOLIDATION_MODEL = "gemini-3.1-flash-lite-preview"
+
+# ── Real-Time Graph Extraction ───────────────────────────────────────────────
+# Model for real-time entity/relation extraction from user messages
+GRAPH_EXTRACTION_MODEL = "gemini-3.1-flash-lite-preview"
+# ThinkingConfig level — at least "medium" for reliable extraction
+GRAPH_EXTRACTION_THINKING_LEVEL = "medium"
+# Minimum user message length to qualify for graph extraction
+MIN_EXTRACTION_LENGTH = 30

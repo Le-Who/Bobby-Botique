@@ -487,13 +487,87 @@ async def process_media_for_memory(
         k_tuple = await _get_api_key_for_media()
         res_key = k_tuple[0] or ""
 
-    return await store_memory(
+    memory_id = await store_memory(
         user_id,
         extracted,
         res_key,
         source_type=media_type,
         metadata=metadata,
     )
+
+    # ── Real-time graph extraction from media (background, non-blocking) ──
+    if memory_id and extracted and len(extracted) >= 30:
+        from app.utils.background_tasks import submit_task
+
+        submit_task(
+            _extract_graph_from_media(
+                user_id=user_id,
+                text=extracted,
+                api_key=res_key,
+                source_memory_id=memory_id,
+                media_type=media_type,
+                telegram_file_id=telegram_file_id,
+            )
+        )
+
+    return memory_id
+
+
+async def _extract_graph_from_media(
+    user_id: int,
+    text: str,
+    api_key: str,
+    source_memory_id: int | None,
+    media_type: str,
+    telegram_file_id: str | None,
+) -> None:
+    """Fire real-time graph extraction from media-derived text.
+
+    After extraction, if a file_id is available, upsert it on all resulting
+    memory_nodes so the bot can later re-send the original media.
+    """
+    try:
+        from app.repos.memory_extraction import extract_and_store_graph
+
+        edges = await extract_and_store_graph(
+            user_id,
+            text,
+            api_key,
+            source_memory_id=source_memory_id,
+        )
+
+        # Attach file_id to memory_nodes created from this media
+        if edges > 0 and telegram_file_id and source_memory_id:
+            from app.database import db_manager, db_query
+            from app.repos.db_helpers import clear_user_context, set_user_context
+
+            async with db_manager.pool.acquire() as conn:
+                await set_user_context(user_id, False, conn=conn)
+                try:
+                    await conn.execute(
+                        """
+                        UPDATE memory_nodes
+                        SET file_id = $1, file_type = $2
+                        WHERE user_id = $3
+                          AND updated_at >= now() - INTERVAL '30 seconds'
+                          AND file_id IS NULL
+                        """,
+                        telegram_file_id,
+                        media_type,
+                        user_id,
+                    )
+                finally:
+                    await clear_user_context(conn=conn)
+
+        if edges > 0:
+            logging.info(
+                "Media graph extraction: %d edges from %s for user %d",
+                edges,
+                media_type,
+                user_id,
+            )
+    except Exception as e:
+        logging.debug("Media graph extraction skipped: %s", e)
 
 
 async def _transcribe_voice_for_ltm(

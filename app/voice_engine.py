@@ -61,7 +61,9 @@ async def _generate_single_chunk_gemini(
     status_mgr = get_key_status_manager()
 
     for attempt in range(3):
-        key_data, model_used, _ = await _resolve_ai_request("gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys)
+        key_data, model_used, _ = await _resolve_ai_request(
+            "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
+        )
         if not key_data:
             break
 

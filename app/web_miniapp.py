@@ -408,3 +408,99 @@ async def api_reader_content(uid: str):
     except Exception as e:
         logger.error("Long read API error uid=%s: %s", uid, e, exc_info=True)
         return jsonify({"error": "internal_error"}), 500
+
+
+# ── Knowledge Graph Visualization API ────────────────────────────────────────
+
+
+@miniapp_blueprint.route("/api/graph")
+@require_webapp_auth
+async def api_graph_data(user_id: int):
+    """Return the user's knowledge graph nodes and edges for visualization.
+
+    Query params:
+        limit (int): max nodes to return (default 50, max 200)
+        query (str): optional search filter on entity names
+
+    Returns JSON:
+        {
+            "nodes": [{"id": int, "name": str, "type": str, "description": str}],
+            "edges": [{"source": int, "target": int, "predicate": str, "weight": float, "is_core": bool}],
+        }
+    """
+    try:
+        from app.database import db_query
+
+        limit = min(request.args.get("limit", 50, type=int), 200)
+        query_filter = request.args.get("query", "").strip()
+
+        # Fetch nodes
+        if query_filter:
+            nodes_rows = await db_query(
+                """
+                SELECT id, entity_name, entity_type, description
+                FROM memory_nodes
+                WHERE user_id = $1
+                  AND entity_name ILIKE $2
+                ORDER BY updated_at DESC
+                LIMIT $3
+                """,
+                (user_id, f"%{query_filter}%", limit),
+            )
+        else:
+            nodes_rows = await db_query(
+                """
+                SELECT id, entity_name, entity_type, description
+                FROM memory_nodes
+                WHERE user_id = $1
+                ORDER BY updated_at DESC
+                LIMIT $2
+                """,
+                (user_id, limit),
+            )
+
+        node_ids = {r["id"] for r in nodes_rows}
+        nodes = [
+            {
+                "id": r["id"],
+                "name": r["entity_name"],
+                "type": r["entity_type"],
+                "description": r.get("description", ""),
+            }
+            for r in nodes_rows
+        ]
+
+        # Fetch edges connecting the returned nodes
+        if node_ids:
+            id_list = list(node_ids)
+            edges_rows = await db_query(
+                """
+                SELECT source_node, target_node, predicate, weight, is_core
+                FROM memory_edges
+                WHERE user_id = $1
+                  AND source_node = ANY($2::bigint[])
+                  AND target_node = ANY($2::bigint[])
+                  AND valid_to IS NULL
+                ORDER BY weight DESC
+                LIMIT 500
+                """,
+                (user_id, id_list),
+            )
+            edges = [
+                {
+                    "source": r["source_node"],
+                    "target": r["target_node"],
+                    "predicate": r["predicate"],
+                    "weight": float(r["weight"]),
+                    "is_core": r["is_core"],
+                }
+                for r in edges_rows
+            ]
+        else:
+            edges = []
+
+        return jsonify({"nodes": nodes, "edges": edges})
+
+    except Exception as e:
+        logger.error("Mini App graph API error: %s", e, exc_info=True)
+        return jsonify({"error": "internal_error"}), 500

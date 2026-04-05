@@ -258,7 +258,7 @@ class GroupChatManager:
         message_type: str = "text",
         is_bot_response: bool = False,
     ):
-        """Логирует сообщение в группе"""
+        """Логирует сообщение в группе + запускает social graph extraction."""
         try:
             await db.db_query(
                 "INSERT INTO group_messages (chat_id, user_id, message_text, message_type, is_bot_response) VALUES ($1, $2, $3, $4, $5)",
@@ -267,8 +267,57 @@ class GroupChatManager:
 
             await self.update_group_activity(chat_id)
 
+            # ── Social Graph Extraction (background, non-blocking) ─────
+            # Only extract from user messages (not bot responses), with enough content.
+            if not is_bot_response and message_text and len(message_text.strip()) >= 30:
+                try:
+                    from app.utils.background_tasks import submit_task
+
+                    submit_task(
+                        self._extract_social_graph(
+                            chat_id=chat_id,
+                            user_id=user_id,
+                            actor_user_id=user_id,
+                            text=message_text,
+                        )
+                    )
+                except Exception as graph_err:
+                    logging.debug("Social graph extraction task failed to submit: %s", graph_err)
+
         except Exception as e:
             logging.error("Error logging group message: %s", e, exc_info=True)
+
+    async def _extract_social_graph(
+        self,
+        chat_id: int,
+        user_id: int,
+        actor_user_id: int,
+        text: str,
+    ) -> None:
+        """Extract social graph from a group chat message (background task).
+
+        Attributes entities/edges to the specific speaker (actor_user_id)
+        and isolates them within the group context (chat_id).
+        """
+        try:
+            from app.repos.keys import get_available_gemini_key
+            from app.repos.memory import EMBEDDING_MODEL
+
+            key_data = await get_available_gemini_key(model_name=EMBEDDING_MODEL)
+            if not key_data:
+                return
+
+            from app.repos.memory_extraction import extract_and_store_graph
+
+            await extract_and_store_graph(
+                user_id,
+                text,
+                key_data["api_key"],
+                chat_id=chat_id,
+                actor_user_id=actor_user_id,
+            )
+        except Exception as e:
+            logging.debug("Social graph extraction failed for chat %d: %s", chat_id, e)
 
     async def get_group_stats(self, chat_id: int) -> dict[str, Any]:
         """Получает статистику группы"""

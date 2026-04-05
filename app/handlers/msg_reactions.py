@@ -147,6 +147,23 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
                     logging.debug("LTM negative signal failed: %s", mem_err)
 
             submit_task(_store_negative_signal())
+
+            # ── RLHF: penalize graph edges used for this response ─────────
+            async def _penalize_edges():
+                try:
+                    from app.repos.memory import penalize_graph_edges
+
+                    count = await penalize_graph_edges(user_id, penalty=0.10)
+                    if count > 0:
+                        logging.info(
+                            "RLHF: user %d downvote penalized %d graph edges",
+                            user_id,
+                            count,
+                        )
+                except Exception as pen_err:
+                    logging.debug("RLHF edge penalization skipped: %s", pen_err)
+
+            submit_task(_penalize_edges())
     except Exception as action_err:
         logging.debug("Post-feedback action failed (non-critical): %s", action_err)
 

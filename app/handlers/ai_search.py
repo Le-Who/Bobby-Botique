@@ -14,7 +14,7 @@ from app.config import settings
 from app.core.agentic import AgenticResult, AgenticSearch
 from app.database import ChatState
 
-_bg_tasks = set() # Store background tasks to prevent garbage collection (RUF006)
+_bg_tasks = set()  # Store background tasks to prevent garbage collection (RUF006)
 
 from app.errors import _TAG_PREFIX, is_error_message
 from app.handlers.ai_core import (
@@ -319,10 +319,17 @@ async def _handle_research_agent(
             await metrics_collector.record_api_call("gemini_agentic", model=_cm, user_id=trace_user_id)
 
         assert key_data is not None
+
+        # Agentic RAG: enable recall_memory tool when user has LTM enabled
+        _ltm_enabled = getattr(chat_state, "ltm_enabled", False)
+        _ltm_key = key_data["api_key"] if _ltm_enabled else None
+
         agent = AgenticSearch(
             model_name=model_used,
             api_key=key_data["api_key"],
             on_key_used=_on_key_used,
+            ltm_enabled=_ltm_enabled,
+            ltm_api_key=_ltm_key,
         )
 
         try:
@@ -394,16 +401,17 @@ async def _handle_research_agent(
                 import uuid
 
                 from app.cache import store_long_message, store_telegraph_url
-                
+
                 uid = str(uuid.uuid4())
                 await store_long_message(uid, final_answer)
                 reader_url = f"{settings.WEBAPP_BASE_URL}/webapp/reader?id={uid}"
                 logging.info(f"AgenticSearch: Created MiniApp Reader URL for {len(final_answer)} chars: {reader_url}")
-                
+
                 # Launch background telegraph fallback
                 from app.utils.telegraph import create_telegraph_page
+
                 page_title = actual_search_query[:60].strip() or "Исследование"
-                
+
                 async def _bg_telegraph_fallback(u: str, t: str, a: str) -> None:
                     try:
                         tg_url = await create_telegraph_page(t, a)
@@ -411,7 +419,7 @@ async def _handle_research_agent(
                             await store_telegraph_url(u, tg_url)
                     except Exception as fallback_err:
                         logging.debug("Background telegraph fallback failed: %s", fallback_err)
-                        
+
                 task = asyncio.create_task(_bg_telegraph_fallback(uid, page_title, final_answer))
                 _bg_tasks.add(task)
                 task.add_done_callback(_bg_tasks.discard)
@@ -427,10 +435,10 @@ async def _handle_research_agent(
             from telegram import WebAppInfo
 
             from app.utils.ux_improvements import wrap_in_expandable_blockquote
-            
+
             summary_html = wrap_in_expandable_blockquote(summary_lines)
             full_text = f'{summary_html}\n\n📖 <a href="{reader_url}">Читать полностью</a>'
-            
+
             buttons.insert(0, [InlineKeyboardButton("📖 Читать полностью", web_app=WebAppInfo(url=reader_url))])
             reply_markup = InlineKeyboardMarkup(buttons)
 

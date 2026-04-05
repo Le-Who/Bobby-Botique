@@ -43,7 +43,7 @@ def extract_intent(text: str) -> tuple[str, str | None]:
     """
     m = _INTENT_RE.search(text)
     if m:
-        cleaned = text[:m.start()] + text[m.end():]
+        cleaned = text[: m.start()] + text[m.end() :]
         return cleaned, m.group(1).lower()
     return text, None
 
@@ -78,20 +78,20 @@ def extract_suggestions(text: str) -> tuple[str, list[dict[str, str]]]:
         s = s.strip()
         if not s:
             continue
-            
+
         full_text = s
         # Truncate visual label just for UI aesthetics, not callback_data limit
         if len(s) > MAX_SUGGESTION_LABEL_LEN:
-            s = s[:MAX_SUGGESTION_LABEL_LEN - 3] + "..."
-            
+            s = s[: MAX_SUGGESTION_LABEL_LEN - 3] + "..."
+
         # Create a short 10-char hash for callback_data
         s_id = hashlib.md5(full_text.encode("utf-8")).hexdigest()[:10]
         SUGGESTION_CACHE[s_id] = full_text
-        
+
         suggestions.append({"id": s_id, "label": s})
 
     suggestions = suggestions[:MAX_SUGGESTIONS]
-    cleaned = text[:m.start()] + text[m.end():]
+    cleaned = text[: m.start()] + text[m.end() :]
     return cleaned, suggestions
 
 
@@ -105,9 +105,9 @@ def parse_response_tags(text: str) -> tuple[str, str | None, list[dict[str, str]
     text, suggestions = extract_suggestions(text)
     # Then intent tag
     text, intent = extract_intent(text)
-    
+
     # Cleanup any excessive blank lines left behind by tag extraction
-    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text, intent, suggestions
 
 
