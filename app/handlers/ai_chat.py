@@ -213,17 +213,17 @@ async def _handle_regular_chat(
                 # Inject graph triples if available
                 if graph_triples:
                     # Separate current and superseded triples
-                    current_triples = [t for t in graph_triples if not t.startswith("[SUPERSEDED")]
-                    temporal_triples = [t for t in graph_triples if t.startswith("[SUPERSEDED")]
+                    current_triples = [triple for triple in graph_triples if not triple.startswith("[SUPERSEDED")]
+                    temporal_triples = [triple for triple in graph_triples if triple.startswith("[SUPERSEDED")]
 
                     graph_parts = ["\n\n<knowledge_graph>"]
-                    for t in current_triples:
-                        graph_parts.append(f"  {t}")
+                    for triple in current_triples:
+                        graph_parts.append(f"  {triple}")
 
                     if temporal_triples:
                         graph_parts.append("\n  <temporal_context>")
-                        for t in temporal_triples:
-                            graph_parts.append(f"    {t}")
+                        for triple in temporal_triples:
+                            graph_parts.append(f"    {triple}")
                         graph_parts.append("  </temporal_context>")
                         graph_parts.append(
                             "  <temporal_instruction>"

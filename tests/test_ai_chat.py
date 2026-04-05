@@ -174,3 +174,62 @@ async def test_empty_response_rolls_back_history(mock_boundaries):
 
     placeholder.edit_text.assert_awaited()
     assert "ответ от api" in placeholder.edit_text.call_args_list[-1][0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_graph_triples_do_not_shadow_translation_function(mock_boundaries):
+    """
+    Regression test for incident 2026-04-05:
+    UnboundLocalError: cannot access local variable 't' where it is not associated with a value.
+
+    Root cause: `for t in current_triples` loop in the graph injection block was
+    shadowing `from app.i18n import t`, causing the translation function to become
+    unreachable for the rest of _handle_regular_chat.
+
+    This test verifies that when LTM returns both memories AND graph_triples, the
+    handler completes without crashing and the final state is persisted normally.
+
+    Risk Covered: Memory-recall queries crash silently mid-response with UnboundLocalError.
+    Level: Unit.
+    """
+    # ── Arrange ──
+    user_id = 456
+    user_message = "Напомни-ка, как зовут мою жену?"
+    placeholder = make_telegram_message(user_id=user_id)
+    placeholder.chat.type = "private"
+    placeholder.get_bot = MagicMock(return_value=None)
+
+    # LTM enabled so the graph injection code path is triggered
+    chat_state = make_chat_state(ltm_enabled=True)
+
+    # Simulate LTM returning memories + both current and SUPERSEDED graph triples —
+    # exactly the inputs that caused the variable shadowing crash.
+    mock_memories = [{"content": "wife: Anna", "similarity": 0.9}]
+    mock_graph_triples = [
+        "user HAS_WIFE Anna",
+        "[SUPERSEDED] user HAS_WIFE Maria",  # temporal triple — also triggers inner loop
+    ]
+
+    with (
+        patch(
+            "app.repos.memory.search_memories_with_graph",
+            new_callable=AsyncMock,
+            return_value=(mock_memories, mock_graph_triples),
+        ),
+        patch(
+            "app.handlers.chat_logic.format_memories_for_system_prompt",
+            return_value="<memories>wife: Anna</memories>",
+        ),
+    ):
+        # ── Act — must complete without raising UnboundLocalError ──
+        await _handle_regular_chat(placeholder, user_id, user_message, chat_state)
+
+    # ── Assert ──
+    # Handler completed: state was persisted (not crashed before update_user_chat)
+    mock_boundaries["update_chat"].assert_awaited()
+
+    # The response was appended to history (not rolled back due to an error)
+    saved_state = mock_boundaries["update_chat"].call_args_list[-1][0][1]
+    assert saved_state.history[-1]["role"] == "model", (
+        "Expected model response in history; crash before buttons would leave no model turn"
+    )

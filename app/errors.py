@@ -373,6 +373,11 @@ _EXCEPTION_TYPE_MAP: dict[type, ErrorCode] = {
     UserLimitExceededError: ErrorCode.USER_RATE_LIMIT,
     DecryptionError: ErrorCode.DECRYPTION_FAILED,
     AuthenticationError: ErrorCode.INVALID_KEY,
+    # Python programmer-error builtins: code bugs → PROCESSING (not GENERIC)
+    UnboundLocalError: ErrorCode.PROCESSING,
+    AttributeError: ErrorCode.PROCESSING,
+    TypeError: ErrorCode.PROCESSING,
+    NameError: ErrorCode.PROCESSING,
 }
 
 # HTTP status code → ErrorCode mapping
