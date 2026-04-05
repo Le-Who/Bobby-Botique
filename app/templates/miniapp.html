@@ -20,16 +20,35 @@
   font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
 }
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+
+/* ── FIX #7: Prevent overscroll from triggering Telegram close gesture ── */
+html { height: 100%; overflow: hidden; }
 body {
   background: var(--secondary-bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
-  padding-bottom: 80px;
-  min-height: 100vh;
+  /* Viewport is fixed; .page elements scroll internally */
+  height: 100%;
+  overflow: hidden;
+  position: fixed;
+  width: 100%;
+  /* overscroll-behavior blocks the pull-to-close bounce on both iOS and Android */
+  overscroll-behavior-y: none;
 }
 
 /* ── Stack Navigation ── */
-.page { display: none; background: var(--secondary-bg); min-height: 100vh; animation: fadeSlide .3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+/* Each page fills the fixed viewport and scrolls internally. */
+.page {
+  display: none;
+  background: var(--secondary-bg);
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding-bottom: 80px;
+  animation: fadeSlide .3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
 .page.active { display: block; }
 @keyframes fadeSlide { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
@@ -58,6 +77,46 @@ body {
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--secondary-bg); color: var(--hint); font-weight: 500; }
 .memory-time { font-size: 12px; color: var(--hint); }
 .delete-action { position: absolute; right: 0; top: 0; bottom: 0; width: 100%; background: var(--destructive); display: flex; align-items: center; justify-content: flex-end; padding-right: 24px; color: #fff; font-size: 15px; font-weight: 600; z-index: 0; }
+
+/* ── FIX #2: Desktop hover-reveal delete button ── */
+.memory-delete-hover {
+  display: none; /* only shown via @media(hover:hover) below */
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 52px;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--destructive);
+  opacity: 0;
+  transition: opacity .2s ease, transform .2s ease;
+  transform: translateX(6px);
+}
+.memory-delete-hover svg { width: 20px; height: 20px; }
+
+@media (hover: hover) {
+  /* On pointer devices: show hover-delete icon on card hover */
+  .memory-delete-hover { display: flex; }
+  .memory-card:hover .memory-delete-hover {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  .memory-card:hover .memory-card-inner { padding-right: 56px; }
+  /* On real desktop we also tone down the mobile swipe delete bg */
+  .memory-delete-hover:hover {
+    color: #c62828;
+  }
+  /* Subtle card hover lift */
+  .memory-card:hover .memory-card-inner {
+    background: color-mix(in srgb, var(--bg) 90%, var(--link) 10%);
+    transition: background .15s ease, padding-right .2s ease;
+  }
+}
+
 .bottom-sentinel { height: 40px; }
 
 /* ── Settings Controls ── */
@@ -88,11 +147,57 @@ body {
 .range-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.2); border: 1px solid #ddd; }
 .slider-val-input { width: 50px; text-align: center; font-size: 15px; border: none; background: var(--secondary-bg); color: var(--text); border-radius: 6px; padding: 6px; }
 
-/* Chips */
-.chips-wrap { display: flex; overflow-x: auto; gap: 8px; padding: 12px 16px; scrollbar-width: none; }
+/* ── FIX #1: Chips with scroll arrows and gradient fade ── */
+.chips-container {
+  position: relative;
+  overflow: hidden; /* clips the gradient masks */
+}
+.chips-wrap { display: flex; overflow-x: auto; gap: 8px; padding: 12px 16px; scrollbar-width: none; scroll-behavior: smooth; }
 .chips-wrap::-webkit-scrollbar { display: none; }
-.chip { flex-shrink: 0; background: var(--secondary-bg); padding: 8px 14px; border-radius: 16px; font-size: 14px; font-weight: 500; color: var(--text); cursor: pointer; transition: .2s; }
+.chip { flex-shrink: 0; background: var(--secondary-bg); padding: 8px 14px; border-radius: 16px; font-size: 14px; font-weight: 500; color: var(--text); cursor: pointer; transition: background .2s, color .2s, transform .1s; }
+.chip:active { transform: scale(0.96); }
 .chip.active { background: var(--link); color: #fff; }
+
+/* Fade-out gradient edges — always visible to hint overflow */
+.chips-fade-left, .chips-fade-right {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 32px;
+  pointer-events: none;
+  z-index: 2;
+  transition: opacity .2s;
+}
+.chips-fade-left  { left: 0;  background: linear-gradient(to right, var(--section-bg), transparent); }
+.chips-fade-right { right: 0; background: linear-gradient(to left,  var(--section-bg), transparent); }
+.chips-fade-left.hidden, .chips-fade-right.hidden { opacity: 0; }
+
+/* Scroll arrow buttons — desktop only */
+.chips-arrow {
+  display: none;
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--secondary-bg);
+  box-shadow: 0 2px 8px rgba(0,0,0,.12);
+  align-items: center; justify-content: center;
+  cursor: pointer;
+  z-index: 3;
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0;
+  transition: opacity .2s ease;
+  user-select: none;
+}
+.chips-arrow-left  { left: 4px; }
+.chips-arrow-right { right: 4px; }
+.chips-arrow.visible { opacity: 1; }
+
+@media (hover: hover) {
+  .chips-arrow { display: flex; }
+  .chips-container:hover .chips-arrow.visible { opacity: 1; }
+}
 
 /* Prompt */
 .prompt-preview { font-size: 15px; color: var(--hint); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -118,34 +223,148 @@ body {
 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 .toast-undo { color: var(--bg); background: rgba(255,255,255,0.2); border: none; padding: 6px 12px; border-radius: 6px; font-weight: 600; cursor: pointer; }
 
-/* Destructive Hold Button */
-.btn-hold { background: var(--bg); color: var(--destructive); padding: 16px; text-align: center; font-size: 16px; font-weight: 600; border-radius: 12px; box-shadow: var(--shadow); user-select: none; position: relative; overflow: hidden; cursor: pointer; margin-top: 16px;}
+/* ── FIX #3: Destructive Morphing Button ── */
+.btn-hold {
+  background: var(--bg);
+  color: var(--destructive);
+  padding: 16px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  user-select: none;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  margin-top: 16px;
+  border: 1.5px solid transparent;
+  transition: background .25s ease, border-color .25s ease, color .25s ease, box-shadow .25s ease;
+}
+.btn-hold.confirming {
+  background: var(--destructive);
+  color: #fff;
+  border-color: #c62828;
+  box-shadow: 0 0 0 3px rgba(229, 57, 53, 0.18);
+}
+/* progress fill still used for touch hold */
 .btn-hold-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(229, 57, 53, 0.1); transition: width 0.1s linear; }
-.btn-hold-label { position: relative; z-index: 1; }
+.btn-hold-label { position: relative; z-index: 1; transition: opacity .15s; }
+/* Countdown ring (desktop) */
+.btn-hold-countdown {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.85;
+}
 
 .empty-state { text-align: center; padding: 60px 20px; color: var(--hint); }
 .empty-state-icon { font-size: 50px; margin-bottom: 16px; opacity: 0.5; }
 .empty-state-title { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
 .empty-state-desc { font-size: 14px; line-height: 1.5; }
 
-/* ── Tab Bar ── */
-.tab-bar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--bg); border-top: 1px solid var(--secondary-bg); padding: 6px 0 max(6px, env(safe-area-inset-bottom)); z-index: 50; }
-.tab-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0; cursor: pointer; color: var(--hint); font-size: 10px; font-weight: 500; transition: color .2s; }
+/* ── FIX #4: Tab Bar — Mobile attached, Desktop floating dock ── */
+.tab-bar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  display: flex;
+  background: var(--bg);
+  border-top: 1px solid var(--secondary-bg);
+  padding: 6px 0 max(6px, env(safe-area-inset-bottom));
+  z-index: 50;
+  transition: all .3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tab-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0;
+  cursor: pointer;
+  color: var(--hint);
+  font-size: 10px;
+  font-weight: 500;
+  transition: color .2s, transform .15s;
+}
+.tab-btn:hover { color: var(--text); }
 .tab-btn.active { color: var(--link); }
-.tab-btn-icon { font-size: 20px; }
+.tab-btn.active .tab-btn-icon { transform: scale(1.12); }
+.tab-btn-icon { font-size: 20px; transition: transform .2s cubic-bezier(0.34, 1.56, 0.64, 1); }
 
-/* ── Graph Canvas ── */
+/* Desktop floating dock */
+@media (hover: hover) and (min-width: 450px) {
+  .tab-bar {
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    bottom: 16px;
+    width: auto;
+    min-width: 280px;
+    max-width: 340px;
+    border-radius: 22px;
+    border-top: none;
+    box-shadow:
+      0 8px 32px rgba(0,0,0,.18),
+      0 2px 8px rgba(0,0,0,.10),
+      inset 0 1px 0 rgba(255,255,255,.15);
+    backdrop-filter: blur(20px) saturate(1.6);
+    -webkit-backdrop-filter: blur(20px) saturate(1.6);
+    background: color-mix(in srgb, var(--bg) 80%, transparent);
+    padding: 6px 12px 6px;
+    gap: 8px;
+  }
+  .tab-btn { min-width: 64px; border-radius: 14px; padding: 6px 4px; }
+  .tab-btn:hover { background: var(--secondary-bg); }
+  .tab-btn.active { background: color-mix(in srgb, var(--link) 12%, var(--secondary-bg) 88%); }
+}
+
+/* ── FIX #5 + #6: Graph Canvas & Settings density ── */
 #graph-canvas { width: 100%; height: calc(100vh - 120px); background: var(--secondary-bg); border-radius: var(--radius); margin: 8px; overflow: hidden; position: relative; }
 .graph-controls { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px; z-index: 5; }
-.graph-btn { width: 36px; height: 36px; border-radius: 8px; background: var(--bg); border: none; font-size: 16px; box-shadow: var(--shadow); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.graph-btn {
+  width: 36px; height: 36px; border-radius: 8px;
+  background: var(--bg); border: none; font-size: 16px;
+  box-shadow: var(--shadow); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .15s, transform .1s;
+}
+.graph-btn:hover { background: var(--secondary-bg); }
+.graph-btn:active { transform: scale(0.92); }
 .graph-node { cursor: pointer; }
-.graph-node circle { stroke-width: 2; }
+.graph-node circle { stroke-width: 2; transition: r .1s; }
+.graph-node:hover circle { filter: brightness(1.15); }
 .graph-node text { font-size: 10px; fill: var(--text); pointer-events: none; text-anchor: middle; dy: -12; }
 .graph-edge line { stroke: var(--hint); stroke-opacity: 0.6; }
 .graph-edge text { font-size: 8px; fill: var(--hint); text-anchor: middle; }
 .graph-tooltip { position: absolute; background: var(--text); color: var(--bg); padding: 8px 12px; border-radius: 8px; font-size: 12px; pointer-events: none; z-index: 10; white-space: nowrap; opacity: 0; transition: opacity .2s; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
 .graph-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--hint); }
 .graph-stats { position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: var(--hint); background: var(--bg); padding: 4px 8px; border-radius: 6px; box-shadow: var(--shadow); z-index: 5; }
+/* Graph wheel-zoom hint */
+.graph-hint { position: absolute; bottom: 12px; right: 12px; font-size: 10px; color: var(--hint); opacity: 0; transition: opacity 1s; }
+.graph-hint.show { opacity: 1; }
+
+/* ── FIX #6: Settings — Adaptive density for desktop precision ── */
+@media (hover: hover) {
+  /* Slimmer settings rows — cursor is precise, no need for huge tap targets */
+  .setting-row { min-height: 38px; padding: 10px 16px; }
+  /* More refined slider thumb */
+  .range-slider::-webkit-slider-thumb {
+    width: 16px; height: 16px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.15);
+    cursor: ew-resize;
+  }
+  .range-slider { cursor: ew-resize; }
+  /* Crisper toggles */
+  .toggle { width: 44px; height: 26px; }
+  .toggle-track::after { width: 22px; height: 22px; left: 2px; top: 2px; }
+  .toggle input:checked + .toggle-track::after { transform: translateX(18px); }
+  /* Chip hover state */
+  .chip:hover:not(.active) { background: color-mix(in srgb, var(--secondary-bg) 70%, var(--link) 30%); color: var(--link); }
+  /* Segmented control — tighter on desktop */
+  .segment { padding: 6px 0; font-size: 12px; }
+}
 </style>
 </head>
 <body>
@@ -215,8 +434,15 @@ body {
 
   <div class="section-header">Мои Роли</div>
   <div class="section">
-    <div class="chips-wrap" id="s-roles-wrap">
-      <div class="chip active" onclick="setRole(null, this)">Стандартная</div>
+    <!-- FIX #1: chips-container wraps the scroll row with arrow buttons and fade masks -->
+    <div class="chips-container" id="s-roles-container">
+      <div class="chips-fade-left hidden" id="roles-fade-left"></div>
+      <div class="chips-fade-right hidden" id="roles-fade-right"></div>
+      <button class="chips-arrow chips-arrow-left" id="roles-arrow-left" aria-label="Прокрутить влево" onclick="chipsScroll('s-roles-wrap', -160)">‹</button>
+      <button class="chips-arrow chips-arrow-right" id="roles-arrow-right" aria-label="Прокрутить вправо" onclick="chipsScroll('s-roles-wrap', 160)">›</button>
+      <div class="chips-wrap" id="s-roles-wrap">
+        <div class="chip active" onclick="setRole(null, this)">Стандартная</div>
+      </div>
     </div>
   </div>
 
@@ -244,9 +470,9 @@ body {
   <div style="padding: 16px;">
     <div class="btn-hold" id="btn-reset-context">
       <div class="btn-hold-fill" id="reset-fill"></div>
-      <span class="btn-hold-label">⚠️ Удерживайте для сброса контекста</span>
+      <span class="btn-hold-label" id="reset-label">⚠️ Удерживайте для сброса контекста</span>
     </div>
-    <div style="text-align: center; font-size: 12px; color: var(--hint); margin-top: 8px;">Очищает текущую историю диалога (кроме памяти)</div>
+    <div style="text-align: center; font-size: 12px; color: var(--hint); margin-top: 8px;" id="reset-hint">Очищает текущую историю диалога (кроме памяти)</div>
   </div>
 </div>
 
@@ -526,8 +752,17 @@ function renderBlock(items) {
     card.dataset.id = m.id;
     card.dataset.dateLabel = dateStr;
     
+    const memId = m.id;
     card.innerHTML = `
       <div class="delete-action">УДАЛИТЬ</div>
+      <button class="memory-delete-hover" aria-label="Удалить воспоминание" data-mem-id="${memId}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+          <path d="M10 11v6M14 11v6"/>
+          <path d="M9 6V4h6v2"/>
+        </svg>
+      </button>
       <div class="memory-card-inner">
         <div class="memory-content">${esc(m.content)}</div>
         <div class="memory-meta">
@@ -536,6 +771,15 @@ function renderBlock(items) {
         </div>
       </div>
     `;
+    // Desktop hover-delete button
+    card.querySelector('.memory-delete-hover').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+      const inner = card.querySelector('.memory-card-inner');
+      inner.style.transition = 'opacity .2s';
+      inner.style.opacity = '0';
+      setTimeout(() => scheduleDelete(memId, card), 200);
+    });
     listEl.appendChild(card);
     renderedMemoryIds.add(m.id);
     initSwipeToDelete(card);
@@ -751,6 +995,11 @@ function renderRoles(activePrompt) {
     roleHtml += `<div class="chip ${isA ? 'active':''}" onclick="setRole(decodeURIComponent('${safePrompt}'), this)">${esc(role.title)}</div>`;
   });
   document.getElementById('s-roles-wrap').innerHTML = roleHtml;
+  // FIX #1: refresh arrow/fade states after chips DOM change
+  requestAnimationFrame(() => {
+    const wrap = document.getElementById('s-roles-wrap');
+    if (wrap) wrap.dispatchEvent(new Event('scroll'));
+  });
 }
 
 function markDirty() {
@@ -892,38 +1141,91 @@ function onSliderNumChange() {
   markDirty();
 }
 
-// ── Reset Context Logic ──
-const resetBtn = document.getElementById('btn-reset-context');
-const resetFill = document.getElementById('reset-fill');
-let resetTimer = null;
+// ── FIX #3: Reset Context — Adaptive interaction ──
+// Mobile/Touch: hold 1s (fill progress). Desktop/Mouse: click once → confirm → click again.
+const resetBtn    = document.getElementById('btn-reset-context');
+const resetFill   = document.getElementById('reset-fill');
+const resetLabel  = document.getElementById('reset-label');
+const resetHint   = document.getElementById('reset-hint');
+let resetTimer    = null;
+let resetConfirming = false;
+let resetCountdownTimer = null;
 
-// Hold-to-delete: Pointer Events work on both touch and mouse (desktop).
-resetBtn.addEventListener('pointerdown', (e) => {
-  e.preventDefault();
-  resetBtn.setPointerCapture(e.pointerId);
-  resetFill.style.transition = 'width 1s linear';
-  resetFill.style.width = '100%';
-  if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-  resetTimer = setTimeout(async () => {
-    if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
-    resetFill.style.transition = 'none';
-    resetFill.style.width = '0';
-    try {
-      await api('/context/reset', { method: 'POST' });
-      showToast('Контекст успешно сброшен ✓');
-    } catch(e) { showToast('Ошибка сброса'); }
-  }, 1000);
-}, { passive: false });
+const RESET_ORIGINAL_LABEL = '⚠️ Удерживайте для сброса контекста';
+const RESET_ORIGINAL_HINT  = 'Очищает текущую историю диалога (кроме памяти)';
 
-const cancelReset = (e) => {
-  if (e) e.preventDefault();
+function resetBtnAbort() {
   clearTimeout(resetTimer);
+  clearTimeout(resetCountdownTimer);
   resetFill.style.transition = 'width 0.2s ease';
   resetFill.style.width = '0';
-};
-resetBtn.addEventListener('pointerup', cancelReset);
-resetBtn.addEventListener('pointercancel', cancelReset);
-resetBtn.addEventListener('pointerleave', cancelReset);
+}
+
+async function doContextReset() {
+  resetBtnAbort();
+  resetConfirming = false;
+  resetBtn.classList.remove('confirming');
+  resetLabel.textContent = RESET_ORIGINAL_LABEL;
+  resetHint.textContent  = RESET_ORIGINAL_HINT;
+  if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+  try {
+    await api('/context/reset', { method: 'POST' });
+    showToast('Контекст успешно сброшен ✓');
+  } catch(e) { showToast('Ошибка сброса'); }
+}
+
+// Desktop: detect if it is a pointer device (hover capable)
+const isPointerDevice = window.matchMedia('(hover: hover)').matches;
+
+if (isPointerDevice) {
+  // ── Desktop path: morph button on first click, then confirm on second click ──
+  // Disable touch hold on desktop to avoid conflict
+  resetBtn.addEventListener('click', async () => {
+    if (!resetConfirming) {
+      // First click → enter confirming state
+      resetConfirming = true;
+      resetBtn.classList.add('confirming');
+      if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+      let countdown = 3;
+      resetLabel.innerHTML = `Нажмите ещё раз для сброса <span class="btn-hold-countdown">· ${countdown}s</span>`;
+      resetHint.textContent = 'Будет очищена история диалога';
+      resetCountdownTimer = setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+          // Timed out — cancel
+          clearInterval(resetCountdownTimer);
+          resetConfirming = false;
+          resetBtn.classList.remove('confirming');
+          resetLabel.textContent = RESET_ORIGINAL_LABEL;
+          resetHint.textContent  = RESET_ORIGINAL_HINT;
+        } else {
+          const span = resetLabel.querySelector('.btn-hold-countdown');
+          if (span) span.textContent = `· ${countdown}s`;
+        }
+      }, 1000);
+    } else {
+      // Second click → execute
+      clearInterval(resetCountdownTimer);
+      await doContextReset();
+    }
+  });
+} else {
+  // ── Mobile path: hold-to-confirm with fill animation (Pointer Events) ──
+  resetBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    resetBtn.setPointerCapture(e.pointerId);
+    resetFill.style.transition = 'width 1s linear';
+    resetFill.style.width = '100%';
+    if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    resetTimer = setTimeout(async () => {
+      if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
+      await doContextReset();
+    }, 1000);
+  }, { passive: false });
+  resetBtn.addEventListener('pointerup',     resetBtnAbort);
+  resetBtn.addEventListener('pointercancel', resetBtnAbort);
+  resetBtn.addEventListener('pointerleave',  resetBtnAbort);
+}
 
 // Prompt length
 document.getElementById('s-prompt-area').addEventListener('input', e => {
@@ -967,6 +1269,48 @@ function switchTab(tab) {
   if (tab === 'settings' && !settingsData) loadSettings();
   if (tab === 'graph' && !graphLoaded) loadGraph();
   updateMainButton();
+}
+
+// ── FIX #1: Chips scroll helper + arrow update + wheel redirect ──
+function chipsScroll(wrapId, delta) {
+  const wrap = document.getElementById(wrapId);
+  if (!wrap) return;
+  wrap.scrollBy({ left: delta, behavior: 'smooth' });
+}
+
+function initChipsScroll(containerId, wrapId, leftArrowId, rightArrowId, fadeLeftId, fadeRightId) {
+  const wrap      = document.getElementById(wrapId);
+  const arrowL    = document.getElementById(leftArrowId);
+  const arrowR    = document.getElementById(rightArrowId);
+  const fadeL     = document.getElementById(fadeLeftId);
+  const fadeR     = document.getElementById(fadeRightId);
+  if (!wrap) return;
+
+  const update = () => {
+    const atStart = wrap.scrollLeft <= 4;
+    const atEnd   = wrap.scrollLeft >= wrap.scrollWidth - wrap.clientWidth - 4;
+    fadeL.classList.toggle('hidden', atStart);
+    fadeR.classList.toggle('hidden', atEnd);
+    if (arrowL) arrowL.classList.toggle('visible', !atStart);
+    if (arrowR) arrowR.classList.toggle('visible', !atEnd);
+  };
+
+  wrap.addEventListener('scroll', update, { passive: true });
+
+  // ── Wheel-Y → Wheel-X redirect (desktop trackpad vertical scroll redirected to horizontal)
+  wrap.addEventListener('wheel', (e) => {
+    // Only intercept if predominantly vertical
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      e.preventDefault();
+      wrap.scrollBy({ left: e.deltaY * 0.8, behavior: 'auto' });
+    }
+  }, { passive: false });
+
+  // Initial state
+  requestAnimationFrame(update);
+  // Also update when content changes (MutationObserver)
+  const mo = new MutationObserver(update);
+  mo.observe(wrap, { childList: true });
 }
 
 // ── Graph Visualization (D3.js Force-Directed) ──
@@ -1155,17 +1499,57 @@ async function loadGraph() {
     simulate(120);
     updateGraphPositions();
     
-    // Zoom via transform
+    // ── FIX #5: Zoom via smooth CSS transition on the <g> transform
     let currentZoom = 1;
     let panX = 0, panY = 0;
-    window.zoomGraph = function(factor) {
-      currentZoom *= factor;
+
+    function applyGraphTransform(animate = false) {
+      if (animate) g.style.transition = 'transform .25s cubic-bezier(0.2, 0.8, 0.2, 1)';
+      else g.style.transition = 'none';
       g.setAttribute('transform', `translate(${panX},${panY}) scale(${currentZoom})`);
+    }
+
+    window.zoomGraph = function(factor, cx, cy) {
+      // Zoom toward center of canvas (or provided point)
+      const prevZoom = currentZoom;
+      currentZoom = Math.max(0.3, Math.min(5, currentZoom * factor));
+      const zoomDelta = currentZoom / prevZoom;
+      const pivotX = (cx !== undefined ? cx : width / 2);
+      const pivotY = (cy !== undefined ? cy : height / 2);
+      panX = pivotX - zoomDelta * (pivotX - panX);
+      panY = pivotY - zoomDelta * (pivotY - panY);
+      applyGraphTransform(true);
     };
     window.resetGraphZoom = function() {
       currentZoom = 1; panX = 0; panY = 0;
-      g.setAttribute('transform', '');
+      applyGraphTransform(true);
     };
+
+    // Mouse wheel zoom on the graph canvas
+    svg.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const factor = e.deltaY < 0 ? 1.12 : 0.89;
+      zoomGraph(factor, mouseX, mouseY);
+    }, { passive: false });
+
+    // Show hint on first hover
+    let hintShown = false;
+    canvas.addEventListener('mouseenter', () => {
+      if (hintShown) return;
+      hintShown = true;
+      let graphHint = canvas.querySelector('.graph-hint');
+      if (!graphHint) {
+        graphHint = document.createElement('div');
+        graphHint.className = 'graph-hint';
+        graphHint.textContent = '🖱 Колесо для зума';
+        canvas.appendChild(graphHint);
+      }
+      graphHint.classList.add('show');
+      setTimeout(() => graphHint.classList.remove('show'), 2500);
+    }, { once: false });
     
     graphLoaded = true;
   } catch(e) {
@@ -1174,6 +1558,15 @@ async function loadGraph() {
   }
 }
 
+// ── FIX #1: Initialize chips scroll once (script runs end-of-body, DOM already ready) ──
+initChipsScroll(
+  's-roles-container',
+  's-roles-wrap',
+  'roles-arrow-left',
+  'roles-arrow-right',
+  'roles-fade-left',
+  'roles-fade-right'
+);
 </script>
 </body>
 </html>
