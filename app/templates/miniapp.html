@@ -1175,78 +1175,105 @@ let resetCountdownTimer = null;
 const RESET_ORIGINAL_LABEL = '⚠️ Удерживайте для сброса контекста';
 const RESET_ORIGINAL_HINT  = 'Очищает текущую историю диалога (кроме памяти)';
 
-function resetBtnAbort() {
-  clearTimeout(resetTimer);
-  clearInterval(resetCountdownTimer); // Audit fix M-2: was clearTimeout — wrong for setInterval
-  resetFill.style.transition = 'width 0.2s ease';
-  resetFill.style.width = '0';
-}
+// M-1 fix: reactive pointer-device detection.
+// matchMedia('(hover: hover)').matches is evaluated ONCE at load time (const).
+// On hybrid devices (e.g., Surface with detachable keyboard/mouse), the hover
+// media feature can change during a session. We use a MediaQueryList listener
+// to rebind handlers when the environment changes.
+const hoverMQL = window.matchMedia('(hover: hover)');
 
-async function doContextReset() {
-  resetBtnAbort();
-  resetConfirming = false;
-  resetBtn.classList.remove('confirming');
-  resetLabel.textContent = RESET_ORIGINAL_LABEL;
-  resetHint.textContent  = RESET_ORIGINAL_HINT;
-  if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
-  try {
-    await api('/context/reset', { method: 'POST' });
-    showToast('Контекст успешно сброшен ✓');
-  } catch(e) { showToast('Ошибка сброса'); }
-}
+function bindResetBtn(isPointer) {
+  // Remove all previous listeners by cloning the node (simplest safe approach
+  // for a node that has no children that need event listeners).
+  const oldBtn = resetBtn;
+  const newBtn = oldBtn.cloneNode(true);
+  // Re-acquire inner element references since we cloned the node
+  const newFill  = newBtn.querySelector('#reset-fill');
+  const newLabel = newBtn.querySelector('#reset-label');
+  oldBtn.parentNode.replaceChild(newBtn, oldBtn);
 
-// Desktop: detect if it is a pointer device (hover capable)
-const isPointerDevice = window.matchMedia('(hover: hover)').matches;
+  // Remap module-level vars to the new DOM nodes
+  // (resetBtn, resetFill, resetLabel, resetHint are `const` — use a wrapper)
+  const btn   = newBtn;
+  const fill  = newFill || document.getElementById('reset-fill');
+  const label = newLabel || document.getElementById('reset-label');
 
-if (isPointerDevice) {
-  // ── Desktop path: morph button on first click, then confirm on second click ──
-  // Disable touch hold on desktop to avoid conflict
-  resetBtn.addEventListener('click', async () => {
-    if (!resetConfirming) {
-      // First click → enter confirming state
-      resetConfirming = true;
-      resetBtn.classList.add('confirming');
-      if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
-      let countdown = 3;
-      resetLabel.innerHTML = `Нажмите ещё раз для сброса <span class="btn-hold-countdown">· ${countdown}s</span>`;
-      resetHint.textContent = 'Будет очищена история диалога';
-      resetCountdownTimer = setInterval(() => {
-        countdown--;
-        if (countdown <= 0) {
-          // Timed out — cancel
-          clearInterval(resetCountdownTimer);
-          resetConfirming = false;
-          resetBtn.classList.remove('confirming');
-          resetLabel.textContent = RESET_ORIGINAL_LABEL;
-          resetHint.textContent  = RESET_ORIGINAL_HINT;
-        } else {
-          const span = resetLabel.querySelector('.btn-hold-countdown');
-          if (span) span.textContent = `· ${countdown}s`;
-        }
+  if (isPointer) {
+    // ── Desktop path: morph button on first click, confirm on second ──
+    btn.addEventListener('click', async () => {
+      if (!resetConfirming) {
+        resetConfirming = true;
+        btn.classList.add('confirming');
+        if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+        let countdown = 3;
+        label.innerHTML = `Нажмите ещё раз для сброса <span class="btn-hold-countdown">· ${countdown}s</span>`;
+        resetHint.textContent = 'Будет очищена история диалога';
+        resetCountdownTimer = setInterval(() => {
+          countdown--;
+          if (countdown <= 0) {
+            clearInterval(resetCountdownTimer);
+            resetConfirming = false;
+            btn.classList.remove('confirming');
+            label.textContent = RESET_ORIGINAL_LABEL;
+            resetHint.textContent = RESET_ORIGINAL_HINT;
+          } else {
+            const span = label.querySelector('.btn-hold-countdown');
+            if (span) span.textContent = `· ${countdown}s`;
+          }
+        }, 1000);
+      } else {
+        clearInterval(resetCountdownTimer);
+        resetConfirming = false;
+        btn.classList.remove('confirming');
+        label.textContent = RESET_ORIGINAL_LABEL;
+        resetHint.textContent = RESET_ORIGINAL_HINT;
+        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+        try {
+          await api('/context/reset', { method: 'POST' });
+          showToast('Контекст успешно сброшен ✓');
+        } catch(e) { showToast('Ошибка сброса'); }
+      }
+    });
+  } else {
+    // ── Mobile path: hold-to-confirm with fill animation ──
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      btn.setPointerCapture(e.pointerId);
+      fill.style.transition = 'width 1s linear';
+      fill.style.width = '100%';
+      if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+      resetTimer = setTimeout(async () => {
+        if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
+        fill.style.transition = 'width 0.2s ease';
+        fill.style.width = '0';
+        resetConfirming = false;
+        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+        try {
+          await api('/context/reset', { method: 'POST' });
+          showToast('Контекст успешно сброшен ✓');
+        } catch(e) { showToast('Ошибка сброса'); }
       }, 1000);
-    } else {
-      // Second click → execute
-      clearInterval(resetCountdownTimer); // Audit fix M-2: was clearTimeout
-      await doContextReset();
-    }
-  });
-} else {
-  // ── Mobile path: hold-to-confirm with fill animation (Pointer Events) ──
-  resetBtn.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    resetBtn.setPointerCapture(e.pointerId);
-    resetFill.style.transition = 'width 1s linear';
-    resetFill.style.width = '100%';
-    if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
-    resetTimer = setTimeout(async () => {
-      if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
-      await doContextReset();
-    }, 1000);
-  }, { passive: false });
-  resetBtn.addEventListener('pointerup',     resetBtnAbort);
-  resetBtn.addEventListener('pointercancel', resetBtnAbort);
-  resetBtn.addEventListener('pointerleave',  resetBtnAbort);
+    }, { passive: false });
+    const abortFill = () => {
+      clearTimeout(resetTimer);
+      fill.style.transition = 'width 0.2s ease';
+      fill.style.width = '0';
+    };
+    btn.addEventListener('pointerup',     abortFill);
+    btn.addEventListener('pointercancel', abortFill);
+    btn.addEventListener('pointerleave',  abortFill);
+  }
 }
+
+// Initial bind
+bindResetBtn(hoverMQL.matches);
+// Re-bind if hover capability changes (hybrid device connect/disconnect)
+hoverMQL.addEventListener('change', (e) => {
+  clearInterval(resetCountdownTimer);
+  clearTimeout(resetTimer);
+  resetConfirming = false;
+  bindResetBtn(e.matches);
+});
 
 // Prompt length
 document.getElementById('s-prompt-area').addEventListener('input', e => {

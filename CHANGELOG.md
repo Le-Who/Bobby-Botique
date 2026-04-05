@@ -3,6 +3,123 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.27] - 2026-04-05 - MiniApp Audit Patch: 6 Correctness Bugs + M-1 Reactive Pointer Fix
+
+### 🔴 Critical Fixes (found in post-implementation audit)
+
+#### C-2: SVG `applyGraphTransform` — CSS transition never fired
+- `g.setAttribute('transform', ...)` modifies an SVG attribute; the browser's CSS transition engine only fires on **CSS properties** (`element.style.*`), not SVG attributes. The entire smooth zoom animation was a no-op.
+- Fix: `g.style.transform = 'translate(Xpx, Ypx) scale(Z)'` + `g.style.transformOrigin = '0 0'`. Individual node positions remain via `gNode.setAttribute('transform', ...)` since they have no transition.
+
+#### C-3: Double `scheduleDelete` — swipe + synthesized click from pointer drag
+- After a pointer drag (swipe), the browser synthesizes a `click` event on `pointerup` if delta < threshold. If the pointer lifted near the `.memory-delete-hover` button area, both the swipe path (`endSwipe`) and the click handler called `scheduleDelete(id, card)`. The second call overwrote `pendingDeletions[id]`, making the first timer orphaned and un-undoable.
+- Fix: early return guard in hover-delete click: `if (pendingDeletions[memId]) return`. Mirror guard in `endSwipe`: `if (!pendingDeletions[id])`.
+
+#### C-4: `prompt-area` used `calc(100vh - 120px)` — broken on iOS with virtual keyboard
+- `100vh` inside `position: fixed` body does not shrink when the iOS virtual keyboard opens. Textarea extended below the keyboard, making bottom rows inaccessible.
+- Fix: `#page-prompt` is now `display: flex; flex-direction: column`. `.prompt-area` uses `flex: 1; min-height: 0` to fill available height correctly regardless of keyboard state.
+
+### 🟡 Medium Fixes
+
+#### M-2: `clearTimeout` called on a `setInterval` ID — interval never stopped
+- `resetCountdownTimer` is created with `setInterval()`. `clearTimeout(id)` on a `setInterval` ID is a no-op in all major browsers (they share an ID space but `clearTimeout` only operates on timeout callbacks).
+- Memory leak: the countdown interval continued ticking after the user left confirming state, consuming CPU and risking double-execution.
+- Fix: replaced all `clearTimeout(resetCountdownTimer)` with `clearInterval(resetCountdownTimer)`.
+
+#### M-5: Hover state CSS transition dropped `transform` — swipe snap instead of spring
+- `.memory-card:hover .memory-card-inner` declared `transition: background .15s, padding-right .2s`. This overwrote the base `transition: transform .3s cubic-bezier(0.2,0.8,0.2,1)`. On hover state, the swipe-back animation (`translateX → 0`) had no transition — hard snap.
+- Fix: Added `transform .3s cubic-bezier(0.2, 0.8, 0.2, 1)` to the hover-state transition rule.
+
+#### C-1: `transition: all` on `.tab-bar` — layout properties animate on resize
+- On Telegram Desktop, `transition: all .3s` caused layout properties (`left`, `border-radius`, `width`) to animate when the viewport was resized (dock ↔ mobile mode transition). Visually jarring.
+- Fix: `transition: background .2s ease, box-shadow .2s ease` — only safe cosmetic properties.
+
+### 🟢 Low Fixes
+
+#### M-4: Dead parameter `containerId` in `initChipsScroll`
+- First parameter was accepted by the function but never used. Removed from signature and call-site.
+
+### 🔧 M-1 Fix: Reactive pointer-device detection (previously deferred low-risk item)
+- Old: `const isPointerDevice = window.matchMedia('(hover: hover)').matches` — evaluated once at load; wouldn't update if a user connected/disconnected a mouse on a hybrid laptop during the session.
+- New: `hoverMQL.addEventListener('change', ...)` calls `bindResetBtn(e.matches)`, which clones and replaces the button DOM node (to cleanly remove all prior listeners) and re-attaches the correct interaction model (desktop morph vs. mobile hold).
+- Removed now-dead `resetBtnAbort()` / `doContextReset()` helper functions (their logic is inlined inside `bindResetBtn()` to use stable local references that survive `cloneNode`).
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check app/ tests/` | 0 errors ✅ |
+| `ruff format app/ tests/ --check` | 290 files — 0 violations ✅ |
+| `pytest` (full suite) | **1613 passed**, 0 failed ✅ |
+
+---
+
+## [2.9.26] - 2026-04-05 - Telegram MiniApp 7-Point UX/UI Overhaul (Desktop-First Cross-Platform)
+
+### 🎨 UX/UI Overhaul — `app/templates/miniapp.html`
+
+Full redesign of the MiniApp focusing on desktop (mouse/trackpad) usability parity without regressing mobile (touch) experience. Addresses 7 identified interaction pain points through adaptive, pointer-aware patterns.
+
+#### FIX #1 — Role Chips: Wheel-Y→X redirect + hover arrows + gradient fade masks
+- Wrapped `.chips-wrap` in `.chips-container` (`overflow: hidden`) to clip gradient masks.
+- `.chips-fade-left` / `.chips-fade-right` gradient overlays always visible when content overflows (opacity transitions via `.hidden` class).
+- `.chips-arrow` left/right `‹›` buttons visible on `@media(hover:hover)` via `.chips-container:hover`. Hidden on touch-only devices.
+- `initChipsScroll()` attaches a `wheel` listener that redirects predominant vertical `deltaY` input to `scrollLeft` with `e.preventDefault()` (`{passive: false}`). Factor `0.8` for natural feel.
+- `MutationObserver` + `scroll` listener keep arrow/fade visibility in sync with scroll position.
+- `renderRoles()` dispatches a `scroll` event after DOM update so arrows reflect new content width.
+
+#### FIX #2 — Memory Cards: Desktop hover-reveal trash button
+- `.memory-delete-hover` `<button>` (SVG trash icon) added to each memory card template.
+- On `@media(hover:hover)`: slides in from right (`translateX(6px → 0)`) and fades to `opacity: 1` on card hover.
+- Click: fades `.memory-card-inner` in 0.2s, then calls `scheduleDelete()` (with guard against double-scheduling — see C-3 audit fix).
+- Mobile swipe-to-delete (`initSwipeToDelete`) unchanged and still operational.
+
+#### FIX #3 — Reset Context Button: Adaptive morphing (desktop: double-click / mobile: hold)
+- Detects interaction model via `window.matchMedia('(hover: hover)')` (MediaQueryList, reactive — see M-1).
+- **Desktop**: first click morphs button to `.confirming` state (destructive red bg, glow border). Label updates to `"Нажмите ещё раз · 3s"` with a `setInterval` countdown. Second click within 3s executes reset. Timeout auto-reverts.
+- **Mobile**: original hold-to-confirm with 1s fill animation (Pointer Events, `pointerdown` + `pointerup/cancel/leave`).
+- Both paths provide haptic feedback at appropriate moments.
+
+#### FIX #4 — Tab Bar: Floating glassmorphic dock on desktop
+- `@media(hover: hover) and (min-width: 450px)`: tab-bar detaches from left+right edges, centers via `translate(-50%)`, `border-radius: 22px`, `backdrop-filter: blur(20px) saturate(1.6)`, layered `box-shadow`, background `color-mix(in srgb, var(--bg) 80%, transparent)`.
+- Tab buttons gain per-item `border-radius: 14px`, hover background, active state highlight.
+- `.tab-btn-icon` spring animation on active (scale 1.12, `cubic-bezier(0.34, 1.56, 0.64, 1)`).
+- Mobile: unchanged fixed bottom bar.
+
+#### FIX #5 — Knowledge Graph: Mouse wheel zoom with cursor-as-pivot
+- `svg 'wheel'` listener extracts cursor position relative to SVG rect and passes as `(cx, cy)` pivot to `zoomGraph()`.
+- `zoomGraph(factor, cx, cy)` applies zoom mathematics: `panX = cx - zoomDelta * (cx - panX)` — zoom tracks cursor precisely.
+- `applyGraphTransform(animate)` uses `g.style.transform` (CSS property, not SVG attribute) for smooth `0.25s cubic-bezier` transition.
+- Zoom clamped: `[0.3×, 5×]`. Buttons `+`, `-`, `⟳` still available.
+- First `mouseenter` shows `.graph-hint` tooltip `"🖱 Колесо для зума"` (2.5s fade).
+
+#### FIX #6 — Settings: Adaptive density for desktop (mouse precision)
+- `@media(hover: hover)`: `.setting-row` min-height `44→38px`, padding `14→10px`.
+- Slider thumb `20→16px`, `cursor: ew-resize`. `.range-slider` track `cursor: ew-resize`.
+- `.toggle` `51×31→44×26px`, thumb `27→22px`, translate `20→18px`.
+- `.chip:hover:not(.active)`: `color-mix(in srgb, var(--secondary-bg) 70%, var(--link) 30%)` hover highlight.
+- `.segment` tighter: `padding: 6px`, `font-size: 12px`.
+
+#### FIX #7 — Scroll Isolation: Prevent Telegram close gesture on content scroll
+- `html, body`: `height: 100%; overflow: hidden; position: fixed; width: 100%; overscroll-behavior-y: none`. Prevents iOS/Android pull-to-dismiss propagating from content scroll up to Telegram WebView close gesture.
+- `.page`: `position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; padding-bottom: 80px`. Each page is a self-contained scroll viewport.
+
+### 🐛 Critical Bug Fix: Memory deletion restoration on app close
+- If the user swiped a MiniApp closed before the 5-second undo window expired, the `scheduleDelete` `setTimeout` was garbage-collected. The deletion request never reached the server — the memory was "restored" on next load.
+- Fix: `flushPendingDeletions()` uses `fetch(..., { keepalive: true })` (survives page teardown) triggered on:
+  - `tg.onEvent('viewportChanged', ...)` when `isStateStable && tg.viewportHeight < 10` (Telegram native close gesture)
+  - `window.addEventListener('beforeunload', ...)` (desktop/browser close)
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check app/ tests/` | 0 errors ✅ |
+| `ruff format app/ tests/ --check` | 0 violations ✅ |
+| `pytest` (full suite) | **1613 passed**, 0 failed ✅ |
+
+---
+
 ## [2.9.25] - 2026-04-05 - LTM Retrieval False-Negative Fix & LLM-as-Judge Fallback
 
 ### 🐛 Critical Bug Fix: Adaptive Gap Filter Double-Threshold
