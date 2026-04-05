@@ -171,13 +171,23 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            text_parts: list[str] = []
+            for part in content:
+                if isinstance(part, (bytes, bytearray)):
+                    continue
+                if isinstance(part, str):
+                    text_parts.append(part)
+                elif isinstance(part, dict) and "text" in part:
+                    text_parts.append(str(part["text"]))
+            return " ".join(text_parts)
         return str(content)
 
     text_parts: list[str] = []
     for part in parts:
+        if isinstance(part, (bytes, bytearray)):
+            continue
         if isinstance(part, str):
             text_parts.append(part)
         elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+            text_parts.append(str(part["text"]))
     return " ".join(text_parts)
