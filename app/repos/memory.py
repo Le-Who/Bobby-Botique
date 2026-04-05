@@ -2,12 +2,11 @@
 """Long-term memory repository — semantic search over past conversations.
 
 Uses pgvector for embedding storage and HNSW-indexed cosine similarity search.
-Embeddings are generated via Gemini's embedding API (gemini-embedding-001, 3072-dim).
+Embeddings are generated via Gemini's embedding API (gemini-embedding-2-preview, 768-dim halfvec).
 """
 
-import asyncio
-import hashlib
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -42,6 +41,38 @@ __all__ = [
 
 # Cached flag: True if pg_trgm extension is available in this database
 _trgm_available: bool | None = None
+
+# ── Query Intent Gate ────────────────────────────────────────────────────────
+# Compiled once at import time.  Matches trivial conversational inputs where
+# burning a Flash-Lite LLM call for query expansion is pure waste.
+_TRIVIAL_QUERY_RE = re.compile(
+    r"^(?:"
+    r"привет|здравствуй|хай|хей|hello|hi|hey|yo"
+    r"|спасибо|thanks|thx|ок|ok|ладно|хорошо|понял|ясно|ага|угу"
+    r"|да|нет|yes|no|ну|ой|ого|вау|wow|lol"
+    r"|пока|bye|👋|👍|👎|❤️|🔥"
+    r")\s*[!?.…]*$",
+    re.IGNORECASE,
+)
+
+# Minimum query length that justifies an LLM expansion call.
+# Anything shorter is either a greeting or too terse to meaningfully expand.
+_MIN_EXPANSION_LENGTH = 12
+
+
+def _should_expand_query(query: str) -> bool:
+    """Determine whether a user query warrants LLM-based expansion.
+
+    Returns False for trivial conversational inputs (greetings, one-word
+    confirmations, emoji-only messages) where burning a Flash-Lite call
+    solely to rewrite "hi" → "greeting hello conversation" is wasteful.
+
+    The heuristic is intentionally conservative: when in doubt, expand.
+    """
+    stripped = query.strip()
+    if len(stripped) < _MIN_EXPANSION_LENGTH:
+        return False
+    return not _TRIVIAL_QUERY_RE.match(stripped)
 
 
 async def expand_query_with_llm(query: str, api_key: str) -> str:
@@ -377,8 +408,12 @@ async def search_memories_with_graph(
     - Change 5 (Core No-Decay): edges with is_core=TRUE use raw weight without
       time-decay, so permanent identity facts always rank first in graph context.
     """
-    # Change 1: Multi-Query Expansion — expand the query before embedding
-    expanded_query = await expand_query_with_llm(query, api_key)
+    # Change 1: Multi-Query Expansion — expand the query before embedding.
+    # Gate: skip the LLM call for trivial / very short conversational input.
+    if _should_expand_query(query):
+        expanded_query = await expand_query_with_llm(query, api_key)
+    else:
+        expanded_query = query
 
     # 1. Standard vector search for memories (using expanded query)
     memories = await search_memories(user_id, expanded_query, api_key, limit=limit, min_similarity=min_similarity)

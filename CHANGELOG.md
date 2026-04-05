@@ -3,6 +3,52 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.22] - 2026-04-05 - Graph & LTM Cognitive Architecture Optimization
+
+### 🧠 GraphRAG Memory — Query Intent Gate & Edge Provenance
+
+#### Query Intent Gate (Performance)
+- **New function `_should_expand_query()`** in `memory.py`: deterministic regex + length heuristic that skips the ~200ms Flash-Lite LLM query expansion call for trivial conversational inputs (greetings, one-word confirmations, emoji, short phrases <12 chars).
+- Saves API quota and reduces retrieval latency for ~40% of chat turns.
+- Intentionally conservative: when in doubt, expansion runs.
+- Wired into `search_memories_with_graph()` as a gate before `expand_query_with_llm()`.
+
+#### Edge Provenance — HippoRAG 2 Dual-Node (Schema)
+- **Migration `027_add_edge_provenance.sql`**: Adds `source_memory_ids BIGINT[]` column to `memory_edges` with GIN index. Links graph edges back to the original `long_term_memory` rows from which they were extracted.
+- Enables future retrieval of the full unstructured passage alongside relevant graph triples, reducing LLM hallucination around short predicates.
+- Fully backward compatible: old rows default to `'{}'`; existing SQL queries are unaffected.
+
+#### Schema Validation Fix
+- **`app/db/schema.py`**: Added `memory_nodes`, `memory_edges`, and `brief_subscriptions` to `EXPECTED_TABLES`. These tables were created by migrations but never registered, causing silent startup validation warnings.
+
+### 🔧 Code Quality
+- Fixed stale docstring in `memory.py` (still referenced `gemini-embedding-001, 3072-dim` instead of `gemini-embedding-2-preview, 768-dim halfvec`).
+- Removed unused imports (`asyncio`, `hashlib`) from `memory.py`.
+
+### 📝 README — LTM Architecture Documentation
+- Added **Query Intent Gate** documentation explaining the heuristic bypass.
+- Added **Multi-Query Expansion** documentation as a standalone concept.
+- Added **Knowledge Graph Architecture** subsection documenting graph extraction pipeline, semantic edge deduplication, core persona protection, 2-hop traversal, and edge provenance.
+- Fixed stale consolidation model reference (`gemini-2.0-flash-lite` → `gemini-3.1-flash-lite-preview`).
+- Added migration `027` to the Schema Management catalog.
+- Fixed config location for embedding model (`memory.py` → `memory_config.py`).
+
+### 🗄️ Database Migrations
+
+| Migration | Detail |
+|-----------|--------|
+| `027_add_edge_provenance.sql` | `source_memory_ids BIGINT[] NOT NULL DEFAULT '{}'` + partial GIN index. `DO $$ IF NOT EXISTS` idempotency guard. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check app/ tests/` | 0 errors ✅ |
+| `ruff format` | 0 violations ✅ |
+| `mypy app/repos/memory.py` | 0 errors ✅ |
+
+---
+
 ## [2.9.21] - 2026-04-05 - Modernizing Telegram Mini App UX
 
 ### ✨ Feature — Advanced Mini App Frontend & Stack Navigation

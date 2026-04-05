@@ -39,7 +39,11 @@ EXPECTED_TABLES = frozenset(
         "group_chats",
         "group_members",
         "group_messages",
-        # Feature tables (022)
+        # GraphRAG memory (000/018 backfill + 025/026/026b/027)
+        "memory_nodes",
+        "memory_edges",
+        # Feature tables (021, 022)
+        "brief_subscriptions",
         "conversation_branches",
         "user_reminders",
         # Infrastructure

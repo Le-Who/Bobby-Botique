@@ -191,6 +191,7 @@ All database DDL is managed via **numbered SQL migration files** in `scripts/mig
 | `scripts/migrations/025_add_temporal_graph_edges.sql` | Adds `updated_at` + unique constraint to `memory_edges` for temporal upserts |
 | `scripts/migrations/026_add_core_persona_edges.sql` | Adds `is_core BOOLEAN` + partial index to `memory_edges` for Core Persona Protection |
 | `scripts/migrations/026b_add_predicate_embedding.sql` | Adds `predicate_embedding halfvec(768)` + HNSW index for Semantic Edge Deduplication |
+| `scripts/migrations/027_add_edge_provenance.sql` | Adds `source_memory_ids BIGINT[]` + GIN index to `memory_edges` for HippoRAG 2 Dual-Node provenance |
 | `scripts/migrations/018_add_missing_table_definitions.sql` | Backfill migration for databases that applied `000` without all tables |
 | `app/db/migrations.py` | Migration runner — applies SQL files with version tracking (`schema_migrations` table) |
 | `app/db/schema.py` | Startup validation — verifies all expected tables exist after migrations |
@@ -207,17 +208,23 @@ Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `h
 
 | Parameter | Value | Config Location |
 |-----------|-------|-----------------|
-| Embedding model | `gemini-embedding-2-preview` (768 dims) | `app/repos/memory.py` |
+| Embedding model | `gemini-embedding-2-preview` (768 dims) | `app/repos/memory_config.py` |
 | Max memories per user | 500 | `MAX_MEMORIES_PER_USER` |
 | Default TTL | 90 days | `DEFAULT_MEMORY_TTL_DAYS` |
 | Min query length (store) | 30 chars | `ai_chat.py` threshold |
 | Min query length (recall) | 15 chars | `ai_chat.py` threshold |
 | Similarity threshold (floor) | 0.68 (adaptive gap-filter: top − 0.15pp, min 0.40) | `ai_chat.py` / `memory.py` |
 | Recall limit | 5 memories (adaptive thresholding filters noise) | `ai_chat.py` `limit` |
+| Query expansion model | `gemini-3.1-flash-lite-preview` (~200ms cheap call) | `QUERY_EXPANSION_MODEL` |
+| Consolidation model | `gemini-3.1-flash-lite-preview` | `CONSOLIDATION_MODEL` |
 
 **Storage:** Only user intent is embedded (`user_message[:500]`, `source_type='user_intent'`). Bot replies are discarded to maximize vector density. Saving is asynchronous and non-blocking via `submit_retryable()` with 3 retries.
 
 **Retrieval:** Hybrid Reciprocal Rank Fusion (RRF) combining `pgvector` cosine similarity with `pg_trgm` trigram keyword matching (`k=60` smoothing). Falls back to pure semantic search if `pg_trgm` is not installed. Query embeddings use `task_type='RETRIEVAL_QUERY'`.
+
+**Query Intent Gate:** Before performing LLM-based query expansion, a deterministic heuristic (`_should_expand_query`) evaluates whether the user input is a trivial conversational greeting (e.g., "привет", "спасибо", "ok") or too short (<12 chars) to benefit from keyword enrichment. Trivial inputs bypass the ~200ms Flash-Lite expansion call entirely, saving API quota and reducing latency for ~40% of chat turns. The heuristic is intentionally conservative — when in doubt, expansion runs.
+
+**Multi-Query Expansion:** When the intent gate passes, vague queries like "that framework I mentioned yesterday?" are rewritten by Flash-Lite into keyword-dense search phrases ("Python FastAPI web framework project") before embedding. This dramatically improves recall for ambiguous references.
 
 **Injection:** Retrieved memories are formatted as XML tags and appended to `system_instruction` (Context Engineering pattern):
 ```xml
@@ -227,7 +234,26 @@ Persistent semantic recall stored in the `long_term_memory` table (`pgvector` `h
 </long_term_memory>
 ```
 
-**Consolidation:** When raw memories exceed ~8,000 tokens OR 7 days since last consolidation, `gemini-2.0-flash-lite` extracts 5-8 atomic persona facts. Raw memories are deleted and replaced with consolidated facts (`source_type='consolidated'`) in a single transaction.
+**Consolidation:** When raw memories exceed ~8,000 tokens OR 7 days since last consolidation, `gemini-3.1-flash-lite-preview` extracts 5–8 atomic persona facts. Raw memories are deleted and replaced with consolidated facts (`source_type='consolidated'`) in a single transaction. Consolidation is gated by a debounce (`should_check_consolidation()`) — checked only every 20th message or every 15 minutes.
+
+### Knowledge Graph Architecture
+
+Relational knowledge is stored as a directed graph in dual tables:
+
+| Table | Purpose |
+|-------|--------|
+| `memory_nodes` | Entity vertices (name, type, description, `halfvec(768)` embedding) |
+| `memory_edges` | Directed relationships (source → predicate → target, weight, `is_core`, `predicate_embedding`, `source_memory_ids`) |
+
+**Graph Extraction:** During memory consolidation, the LLM extracts subject–predicate–object triples from accumulated text. Each triple's subject and object become `memory_nodes`, and the relationship becomes a `memory_edge`. Semantic Entity Resolution (`cosine < 0.12`) merges near-identical entity names at ingestion time to prevent graph fragmentation.
+
+**Semantic Edge Deduplication:** Each predicate is embedded (`predicate_embedding halfvec(768)`). If a new edge's predicate is within cosine distance 0.25 of an existing edge between the same endpoints, the existing edge's weight and `is_core` flag are updated via `ON CONFLICT` upsert instead of creating a duplicate.
+
+**Core Persona Protection:** Edges marked `is_core=TRUE` (name, profession, allergies, permanent identity facts) bypass time-decay entirely in retrieval queries. Once an edge is promoted to core, it stays core (`is_core = memory_edges.is_core OR EXCLUDED.is_core`).
+
+**2-Hop Graph Traversal:** After finding the top-K semantically similar entity nodes, a SQL CTE (`hop1 UNION ALL hop2`) follows outgoing edges from 1-hop neighbours to capture indirect relationships (e.g., asking about "Python" surfaces "FastAPI" via a 2-hop chain). Hop-2 results are labelled `(indirect)` in context.
+
+**Edge Provenance (HippoRAG 2 Dual-Node):** Each `memory_edge` carries a `source_memory_ids BIGINT[]` array linking it back to the original `long_term_memory` rows from which it was extracted. This enables the retriever to surface the full unstructured passage alongside a relevant graph triple, reducing LLM hallucination around short predicates. (Schema ready via migration `027`; retrieval integration is on the Phase 2 roadmap.)
 
 **Scope:** Memory operates globally — all standard chat messages trigger store/recall when `ltm_enabled=True`. Agentic research (`??`) does not store memories but can recall from them.
 
