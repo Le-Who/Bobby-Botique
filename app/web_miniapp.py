@@ -274,7 +274,7 @@ async def api_update_settings(user_id: int):
                 changed = True
             elif isinstance(temp, (int, float)):
                 temp = float(temp)
-                if 0.0 <= temp <= 1.0:
+                if 0.0 <= temp <= 2.0:
                     chat_state.temperature = temp
                     changed = True
 

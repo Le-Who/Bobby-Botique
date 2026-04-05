@@ -2,8 +2,8 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>GemAI — Настройки</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>GemAI</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
 :root {
@@ -11,20 +11,16 @@
   --text: var(--tg-theme-text-color, #000000);
   --hint: var(--tg-theme-hint-color, #999999);
   --link: var(--tg-theme-link-color, #2678b6);
-  --btn: var(--tg-theme-button-color, #2678b6);
-  --btn-text: var(--tg-theme-button-text-color, #ffffff);
   --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f0);
-  --header-bg: var(--tg-theme-header-bg-color, var(--btn));
   --destructive: var(--tg-theme-destructive-text-color, #e53935);
   --section-bg: var(--tg-theme-section-bg-color, var(--bg));
   --section-header: var(--tg-theme-section-header-text-color, var(--hint));
-  --subtitle: var(--tg-theme-subtitle-text-color, var(--hint));
   --radius: 12px;
   --shadow: 0 1px 3px rgba(0,0,0,.08);
+  font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif;
 }
-* { margin:0; padding:0; box-sizing:border-box; }
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
 body {
-  font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
   background: var(--secondary-bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -32,575 +28,820 @@ body {
   min-height: 100vh;
 }
 
-/* ── Tabs ─────────────────────────────────────────────────── */
-.tabs {
-  display: flex;
-  background: var(--bg);
-  border-bottom: 1px solid var(--secondary-bg);
-  position: sticky; top: 0; z-index: 10;
-}
-.tab {
-  flex: 1; padding: 14px 0; text-align: center;
-  font-size: 14px; font-weight: 600;
-  color: var(--hint); cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all .2s;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-}
-.tab.active { color: var(--link); border-bottom-color: var(--link); }
-
-/* ── Sections ─────────────────────────────────────────────── */
-.page { display: none; animation: fadeIn .25s; }
+/* ── Stack Navigation ── */
+.page { display: none; background: var(--secondary-bg); min-height: 100vh; animation: fadeSlide .3s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .page.active { display: block; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes fadeSlide { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 
-.section { background: var(--section-bg); margin: 8px 0; border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
-.section-header { padding: 8px 16px 4px; font-size: 13px; font-weight: 600; color: var(--section-header); text-transform: uppercase; letter-spacing: .3px; }
+/* ── Common Sections ── */
+.section { background: var(--section-bg); margin: 8px 16px; border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.section-full { background: var(--section-bg); margin: 8px 0; border-top: 1px solid var(--secondary-bg); border-bottom: 1px solid var(--secondary-bg); }
+.section-header { padding: 16px 16px 4px; font-size: 13px; font-weight: 600; color: var(--section-header); text-transform: uppercase; letter-spacing: .3px; }
 
-/* ── Stats bar ────────────────────────────────────────────── */
-.stats-bar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 12px 16px; background: var(--bg);
-  border-bottom: 1px solid var(--secondary-bg);
-}
-.stats-bar .count { font-size: 15px; font-weight: 600; }
-.stats-bar .label { font-size: 13px; color: var(--hint); }
-.progress-bar { flex: 1; height: 4px; background: var(--secondary-bg); border-radius: 2px; overflow: hidden; }
-.progress-fill { height: 100%; background: var(--link); border-radius: 2px; transition: width .4s ease; }
+/* ── Skeletons ── */
+.skeleton { background: linear-gradient(90deg, var(--secondary-bg) 25%, var(--bg) 50%, var(--secondary-bg) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 6px; }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 
-/* ── Memory cards ─────────────────────────────────────────── */
-.memory-list { padding: 0 0 12px; }
-.memory-card {
-  position: relative; overflow: hidden;
-  background: var(--bg); margin: 0;
-  border-bottom: .5px solid var(--secondary-bg);
-  transition: transform .2s;
-}
-.memory-card-inner {
-  padding: 12px 16px;
-  transition: transform .2s;
-  position: relative; z-index: 1;
-  background: var(--bg);
-}
-.memory-content { font-size: 14px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+/* ── Page: Memories ── */
+.search-header { position: sticky; top: 0; z-index: 10; background: var(--bg); padding: 12px 16px; border-bottom: 1px solid var(--secondary-bg); display: flex; gap: 12px; align-items: center; }
+.search-input { flex: 1; padding: 10px 14px; border: none; background: var(--secondary-bg); border-radius: 10px; font-size: 16px; color: var(--text); outline: none; }
+.search-input::placeholder { color: var(--hint); }
+.settings-btn { flex-shrink: 0; width: 40px; height: 40px; border-radius: 50%; background: var(--secondary-bg); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 20px; transition: transform .1s; }
+.settings-btn:active { transform: scale(0.92); }
+
+.memory-list { padding: 0; }
+.timeline-date { padding: 16px 16px 4px; font-size: 12px; font-weight: 600; color: var(--hint); text-transform: uppercase; letter-spacing: 0.5px; position: sticky; top: 65px; background: rgba(var(--secondary-bg), 0.95); backdrop-filter: blur(4px); z-index: 5; }
+.memory-card { position: relative; overflow: hidden; background: var(--bg); margin: 0; border-bottom: .5px solid var(--secondary-bg); }
+.memory-card-inner { padding: 12px 16px; transition: transform .3s cubic-bezier(0.2, 0.8, 0.2, 1); position: relative; z-index: 1; background: var(--bg); }
+.memory-content { font-size: 15px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
 .memory-meta { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--secondary-bg); color: var(--hint); font-weight: 500; }
-.memory-date { font-size: 11px; color: var(--subtitle); }
-.delete-bg {
-  position: absolute; right: 0; top: 0; bottom: 0; width: 80px;
-  background: var(--destructive); display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 13px; font-weight: 600;
-}
+.memory-time { font-size: 12px; color: var(--hint); }
+.delete-action { position: absolute; right: 0; top: 0; bottom: 0; width: 100%; background: var(--destructive); display: flex; align-items: center; justify-content: flex-end; padding-right: 24px; color: #fff; font-size: 15px; font-weight: 600; z-index: 0; }
+.bottom-sentinel { height: 40px; }
 
-/* ── Search ───────────────────────────────────────────────── */
-.search-wrap { padding: 8px 16px; background: var(--bg); }
-.search-input {
-  width: 100%; padding: 10px 14px; border: none;
-  background: var(--secondary-bg); border-radius: 10px;
-  font-size: 15px; color: var(--text); outline: none;
-}
-.search-input::placeholder { color: var(--hint); }
-
-/* ── Settings form ────────────────────────────────────────── */
-.setting-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px; min-height: 44px;
-  border-bottom: .5px solid var(--secondary-bg);
-}
+/* ── Settings Controls ── */
+.setting-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; min-height: 44px; border-bottom: .5px solid var(--secondary-bg); cursor: pointer; }
 .setting-row:last-child { border-bottom: none; }
-.setting-label { font-size: 15px; }
-.setting-hint { font-size: 12px; color: var(--hint); margin-top: 2px; }
+.setting-label { font-size: 16px; font-weight: 400; }
+.setting-val { font-size: 16px; color: var(--link); display: flex; align-items: center; gap: 4px; }
+.setting-hint-text { font-size: 13px; color: var(--hint); margin-top: 2px; line-height: 1.3; }
 
-/* Toggle switch */
+/* Toggles */
 .toggle { position: relative; width: 51px; height: 31px; flex-shrink: 0; }
 .toggle input { opacity: 0; width: 0; height: 0; }
-.toggle-track {
-  position: absolute; inset: 0; border-radius: 16px;
-  background: var(--secondary-bg); transition: background .2s; cursor: pointer;
-}
-.toggle-track::after {
-  content: ''; position: absolute; width: 27px; height: 27px;
-  left: 2px; top: 2px; border-radius: 50%;
-  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2);
-  transition: transform .2s;
-}
-.toggle input:checked + .toggle-track { background: var(--link); }
+.toggle-track { position: absolute; inset: 0; border-radius: 16px; background: var(--hint); opacity: 0.3; transition: all .2s; cursor: pointer; }
+.toggle-track::after { content: ''; position: absolute; width: 27px; height: 27px; left: 2px; top: 2px; border-radius: 50%; background: #fff; box-shadow: var(--shadow); transition: transform .2s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.toggle input:checked + .toggle-track { background: var(--link); opacity: 1; }
 .toggle input:checked + .toggle-track::after { transform: translateX(20px); }
 
-/* Select */
-.setting-select {
-  padding: 6px 12px; border: 1px solid var(--secondary-bg);
-  border-radius: 8px; background: var(--bg); color: var(--text);
-  font-size: 14px; min-width: 140px; text-align: right;
-  -webkit-appearance: none; appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='%23999' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 8px center;
-  padding-right: 28px;
-}
-
-/* Textarea */
-.prompt-area {
-  width: 100%; padding: 12px 16px; border: none;
-  background: var(--bg); color: var(--text);
-  font-family: inherit; font-size: 14px; line-height: 1.5;
-  resize: vertical; min-height: 100px; max-height: 300px;
-  outline: none;
-}
-.char-count { padding: 4px 16px 8px; font-size: 11px; color: var(--hint); text-align: right; }
-
-/* ── Empty / loading states ───────────────────────────────── */
-.empty-state { text-align: center; padding: 48px 24px; color: var(--hint); }
-.empty-state .icon { font-size: 48px; margin-bottom: 12px; }
-.empty-state .title { font-size: 16px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
-.empty-state .desc { font-size: 13px; line-height: 1.5; }
-
-.loading { text-align: center; padding: 32px; color: var(--hint); font-size: 14px; }
-
-/* ── Toast ────────────────────────────────────────────────── */
-.toast {
-  position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
-  background: var(--text); color: var(--bg); padding: 10px 20px;
-  border-radius: 10px; font-size: 14px; font-weight: 500;
-  box-shadow: 0 4px 12px rgba(0,0,0,.2); z-index: 100;
-  opacity: 0; pointer-events: none; transition: opacity .3s;
-}
-.toast.show { opacity: 1; }
-
-/* ── Load more button ─────────────────────────────────────── */
-/* ── Segmented Control ── */
-.segmented { display: flex; background: var(--secondary-bg); border-radius: 8px; padding: 2px; }
-.segment { flex: 1; text-align: center; padding: 8px 0; font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 6px; color: var(--hint); transition: .2s; }
+/* Segmented */
+.segmented { display: flex; background: var(--secondary-bg); border-radius: 8px; padding: 2px; margin: 12px 16px; }
+.segment { flex: 1; text-align: center; padding: 8px 0; font-size: 13px; font-weight: 500; cursor: pointer; border-radius: 6px; color: var(--hint); transition: all .2s; }
 .segment.active { background: var(--bg); color: var(--text); box-shadow: var(--shadow); }
 
-/* ── Scrollable Chips ── */
+/* Slider */
+.slider-wrap { padding: 0 16px 16px; display: none; animation: slideDown 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.slider-wrap.show { display: flex; align-items: center; gap: 12px; }
+@keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+.range-slider { flex: 1; -webkit-appearance: none; height: 4px; border-radius: 2px; background: var(--secondary-bg); outline: none; }
+.range-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.2); border: 1px solid #ddd; }
+.slider-val-input { width: 50px; text-align: center; font-size: 15px; border: none; background: var(--secondary-bg); color: var(--text); border-radius: 6px; padding: 6px; }
+
+/* Chips */
 .chips-wrap { display: flex; overflow-x: auto; gap: 8px; padding: 12px 16px; scrollbar-width: none; }
 .chips-wrap::-webkit-scrollbar { display: none; }
-.chip { flex-shrink: 0; background: var(--secondary-bg); padding: 8px 14px; border-radius: 16px; font-size: 14px; color: var(--text); cursor: pointer; border: 1px solid transparent; transition: .2s; }
+.chip { flex-shrink: 0; background: var(--secondary-bg); padding: 8px 14px; border-radius: 16px; font-size: 14px; font-weight: 500; color: var(--text); cursor: pointer; transition: .2s; }
 .chip.active { background: var(--link); color: #fff; }
 
-/* ── List View (Radio/Check) ── */
-.list-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: .5px solid var(--secondary-bg); cursor: pointer; color: var(--text); font-size: 15px;}
-.list-row:last-child { border-bottom: none; }
-.list-check { display: none; color: var(--link); font-weight: bold;}
-.list-row.active .list-check { display: block; }
+/* Prompt */
+.prompt-preview { font-size: 15px; color: var(--hint); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ── Destructive Button ── */
-.btn-destructive { width: 100%; text-align: center; color: var(--destructive); padding: 14px; font-size: 16px; font-weight: 500; background: var(--bg); cursor: pointer; border-radius: inherit; }
+/* Prompt Page */
+#page-prompt { padding: 16px; }
+.prompt-area { width: 100%; height: calc(100vh - 120px); border: none; background: var(--bg); border-radius: var(--radius); padding: 16px; color: var(--text); font-family: inherit; font-size: 15px; line-height: 1.5; resize: none; outline: none; box-shadow: var(--shadow); }
+.char-count { padding: 8px; font-size: 12px; color: var(--hint); text-align: right; }
 
-.load-more {
-  display: block; margin: 12px auto; padding: 10px 24px;
-  background: var(--secondary-bg); border: none; border-radius: 10px;
-  color: var(--link); font-size: 14px; font-weight: 600; cursor: pointer;
-}
+/* Bottom Sheet */
+.bottom-sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; opacity: 0; pointer-events: none; transition: opacity .3s; }
+.bottom-sheet-overlay.show { opacity: 1; pointer-events: auto; }
+.bottom-sheet { position: absolute; bottom: 0; left: 0; right: 0; background: var(--bg); border-top-left-radius: 20px; border-top-right-radius: 20px; transform: translateY(100%); transition: transform .3s cubic-bezier(0.2, 0.8, 0.2, 1); max-height: 80vh; overflow-y: auto; }
+.bottom-sheet-overlay.show .bottom-sheet { transform: translateY(0); }
+.sheet-header { position: sticky; top: 0; background: var(--bg); padding: 16px; font-size: 18px; font-weight: 600; text-align: center; border-bottom: 1px solid var(--secondary-bg); z-index: 2; }
+.sheet-row { padding: 16px; font-size: 16px; border-bottom: 1px solid var(--secondary-bg); display: flex; justify-content: space-between; cursor: pointer; }
+.sheet-row.active { color: var(--link); font-weight: 600; }
+.sheet-row.active::after { content: "✓"; }
+
+/* Toast */
+.toast-wrap { position: fixed; bottom: 84px; left: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 200; pointer-events: none; }
+.toast { background: var(--text); color: var(--bg); padding: 12px 16px; border-radius: 12px; font-size: 14px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,.15); pointer-events: auto; animation: slideUp .3s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+.toast-undo { color: var(--bg); background: rgba(255,255,255,0.2); border: none; padding: 6px 12px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+
+/* Destructive Hold Button */
+.btn-hold { background: var(--bg); color: var(--destructive); padding: 16px; text-align: center; font-size: 16px; font-weight: 600; border-radius: 12px; box-shadow: var(--shadow); user-select: none; position: relative; overflow: hidden; cursor: pointer; margin-top: 16px;}
+.btn-hold-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(229, 57, 53, 0.1); transition: width 0.1s linear; }
+.btn-hold-label { position: relative; z-index: 1; }
+
+.empty-state { text-align: center; padding: 60px 20px; color: var(--hint); }
+.empty-state-icon { font-size: 50px; margin-bottom: 16px; opacity: 0.5; }
+.empty-state-title { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.empty-state-desc { font-size: 14px; line-height: 1.5; }
 </style>
 </head>
 <body>
 
-<!-- Tabs -->
-<div class="tabs">
-  <div class="tab active" data-tab="memories" onclick="switchTab('memories')">🧠 Память</div>
-  <div class="tab" data-tab="settings" onclick="switchTab('settings')">⚙️ Настройки</div>
-</div>
+<!-- Page: Memories (Root) -->
+<div id="page-memories" class="page">
+  <div class="search-header">
+    <div class="settings-btn" onclick="pushPage('page-settings')">⚙️</div>
+    <input class="search-input" type="text" placeholder="Поиск по памяти…" id="search-input">
+  </div>
+  
+  <div class="section-full" style="margin-top:0; border-top:none;">
+    <div class="setting-row" style="border-bottom:none; min-height:36px; padding: 8px 16px;">
+      <div style="font-size: 13px; color: var(--hint); font-weight:500">Использовано памяти</div>
+      <div style="font-size: 13px; font-weight:600" id="mem-stats-text">- / -</div>
+    </div>
+    <div style="height: 2px; background: var(--secondary-bg); border-radius: 1px; margin: 0 16px 12px; overflow:hidden">
+      <div id="mem-progress" style="height: 100%; width: 0; background: var(--link); transition: width .4s;"></div>
+    </div>
+  </div>
 
-<!-- Page: Memories -->
-<div id="page-memories" class="page active">
-  <div class="search-wrap">
-    <input class="search-input" type="text" placeholder="Поиск по памяти…" oninput="filterMemories(this.value)">
-  </div>
-  <div id="memory-stats" class="stats-bar" style="display:none">
-    <span class="count" id="mem-count">0</span>
-    <span class="label">/ <span id="mem-limit">500</span></span>
-    <div class="progress-bar"><div class="progress-fill" id="mem-progress"></div></div>
-  </div>
   <div id="memory-list" class="memory-list">
-    <div class="loading">Загрузка…</div>
+    <div style="padding: 16px; display:flex; flex-direction:column; gap:12px">
+      <div class="skeleton" style="height: 80px;"></div>
+      <div class="skeleton" style="height: 60px;"></div>
+      <div class="skeleton" style="height: 100px;"></div>
+    </div>
   </div>
-  <button id="load-more-btn" class="load-more" style="display:none" onclick="loadMoreMemories()">Загрузить ещё</button>
+  <div class="bottom-sentinel" id="bottom-sentinel"></div>
 </div>
 
 <!-- Page: Settings -->
 <div id="page-settings" class="page">
-  <div id="settings-loading" class="loading">Загрузка…</div>
-  <div id="settings-form" style="display:none">
-
-    <div class="section-header" style="margin-top:8px">Системный промпт</div>
-    <div class="section">
-      <textarea class="prompt-area" id="s-prompt" placeholder="Введите свой системный промпт…" oninput="onPromptInput()"></textarea>
-      <div class="char-count"><span id="s-prompt-count">0</span> / 4000</div>
+  <div class="section-header">LLM & Персонаж</div>
+  <div class="section">
+    <div class="setting-row" onclick="openSheet('sheet-models')">
+      <div class="setting-label">AI Модель</div>
+      <div class="setting-val" id="val-model">--- ❭</div>
     </div>
-
-    <div class="section-header">Модель</div>
-    <div class="section">
-      <div class="setting-row">
-        <div>
-          <div class="setting-label">AI модель</div>
-          <div class="setting-hint">Как в /model</div>
-        </div>
-        <select class="setting-select" id="s-model"></select>
+    
+    <div class="setting-row" onclick="pushPage('page-prompt')">
+      <div class="setting-label">Системный Промпт</div>
+      <div class="setting-val">
+        <span class="prompt-preview" id="val-prompt-preview">Стандартная</span> ❭
       </div>
     </div>
+  </div>
+  
+  <div class="section-header">Температура</div>
+  <div class="section">
+    <div class="segmented" id="s-temp">
+      <div class="segment active" data-val="0.2" onclick="setTempSeg(this)">Точный</div>
+      <div class="segment" data-val="null" onclick="setTempSeg(this)">Баланс</div>
+      <div class="segment" data-val="0.9" onclick="setTempSeg(this)">Творческий</div>
+      <div class="segment" data-val="custom" onclick="setTempSeg(this)">Свой</div>
+    </div>
+    <div class="slider-wrap" id="slider-temp-wrap">
+      <input type="range" class="range-slider" id="s-temp-slider" min="0" max="2" step="0.05" value="1.0" oninput="onSliderInput()">
+      <input type="number" class="slider-val-input" id="s-temp-num" min="0" max="2" step="0.05" value="1.0" onchange="onSliderNumChange()">
+    </div>
+  </div>
 
-    <div class="section-header">Температура (Креативность)</div>
-    <div class="section" style="padding: 12px 16px;">
-      <div class="segmented" id="s-temp">
-        <div class="segment" data-val="0.2" onclick="setTemp(this)">Точный</div>
-        <div class="segment" data-val="null" onclick="setTemp(this)">Баланс</div>
-        <div class="segment" data-val="0.9" onclick="setTemp(this)">Творческий</div>
+  <div class="section-header">Голос (TTS)</div>
+  <div class="section" id="settings-voices-list">
+    <div class="skeleton" style="height: 48px; margin: 8px 16px;"></div>
+  </div>
+
+  <div class="section-header">Мои Роли</div>
+  <div class="section">
+    <div class="chips-wrap" id="s-roles-wrap">
+      <div class="chip active" onclick="setRole(null, this)">Стандартная</div>
+    </div>
+  </div>
+
+  <div class="section-header">Дополнительно</div>
+  <div class="section">
+    <div class="setting-row" onclick="openSheet('sheet-thinking')">
+      <div>
+        <div class="setting-label">Уровень размышлений</div>
+        <div class="setting-hint-text">Длительность thinking-фазы</div>
       </div>
+      <div class="setting-val" id="val-thinking">Выкл ❭</div>
     </div>
 
-    <div class="section-header">Голос (TTS)</div>
-    <div class="section" id="s-voices-wrap">
-      <div class="loading" style="padding:16px"><small>Загрузка голосов...</small></div>
+    <div class="setting-row">
+      <div><div class="setting-label">Долгосрочная память</div></div>
+      <label class="toggle"><input type="checkbox" id="s-ltm" onchange="markDirty()"><span class="toggle-track"></span></label>
     </div>
 
-    <div class="section-header">Мои Роли</div>
-    <div class="section">
-      <div class="chips-wrap" id="s-roles-wrap">
-        <div class="chip active" onclick="setRole(null)">Стандартная</div>
-      </div>
+    <div class="setting-row">
+      <div><div class="setting-label">Веб-поиск</div></div>
+      <label class="toggle"><input type="checkbox" id="s-search" onchange="markDirty()"><span class="toggle-track"></span></label>
     </div>
+  </div>
 
-    <div class="section-header">Режимы</div>
-    <div class="section">
-      <div class="setting-row">
-        <div>
-          <div class="setting-label">Уровень размышлений</div>
-          <div class="setting-hint">off / low / medium / high</div>
-        </div>
-        <select class="setting-select" id="s-thinking">
-          <option value="off">Выкл</option>
-          <option value="low">Низкий</option>
-          <option value="medium">Средний</option>
-          <option value="high">Высокий</option>
-        </select>
-      </div>
-
-      <div class="setting-row">
-        <div><div class="setting-label">Долгосрочная память</div></div>
-        <label class="toggle"><input type="checkbox" id="s-ltm"><span class="toggle-track"></span></label>
-      </div>
-
-      <div class="setting-row">
-        <div><div class="setting-label">Веб-поиск</div></div>
-        <label class="toggle"><input type="checkbox" id="s-search"><span class="toggle-track"></span></label>
-      </div>
+  <div style="padding: 16px;">
+    <div class="btn-hold" id="btn-reset-context">
+      <div class="btn-hold-fill" id="reset-fill"></div>
+      <span class="btn-hold-label">⚠️ Удерживайте для сброса контекста</span>
     </div>
-
-    <div class="section" style="margin-top: 24px;">
-      <div class="btn-destructive" onclick="confirmResetContext()">⚠️ Сбросить контекст чата</div>
-    </div>
+    <div style="text-align: center; font-size: 12px; color: var(--hint); margin-top: 8px;">Очищает текущую историю диалога (кроме памяти)</div>
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<!-- Page: Prompt Editor -->
+<div id="page-prompt" class="page">
+  <textarea id="s-prompt-area" class="prompt-area" placeholder="Введите инструкции для бота..."></textarea>
+  <div class="char-count"><span id="s-prompt-count">0</span> / 4000</div>
+</div>
+
+<!-- Bottom Sheets -->
+<div class="bottom-sheet-overlay" id="sheet-overlay" onclick="closeSheet()">
+  <!-- Models -->
+  <div class="bottom-sheet" id="sheet-models" onclick="event.stopPropagation()">
+    <div class="sheet-header">Выберите AI Модель</div>
+    <div id="sheet-models-list"></div>
+  </div>
+  
+  <!-- Thinking -->
+  <div class="bottom-sheet" id="sheet-thinking" onclick="event.stopPropagation()">
+    <div class="sheet-header">Уровень размышлений</div>
+    <div class="sheet-row" data-val="off" onclick="setThinking('off')">Выкл</div>
+    <div class="sheet-row" data-val="low" onclick="setThinking('low')">Низкий</div>
+    <div class="sheet-row" data-val="medium" onclick="setThinking('medium')">Средний</div>
+    <div class="sheet-row" data-val="high" onclick="setThinking('high')">Высокий</div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toast-container"></div>
 
 <script>
 const tg = window.Telegram.WebApp;
 tg.ready();
 tg.expand();
 
+// Enable header color to match background
+tg.setHeaderColor('secondary_bg_color');
+tg.setBackgroundColor('secondary_bg_color');
+
 const AUTH = 'tma ' + tg.initData;
 const API = '/webapp/api';
 
 // ── State ──
+let stack = [];
 let allMemories = [];
+let renderedMemoryIds = new Set();
 let memoryOffset = 0;
-const MEMORY_PAGE = 20;
-let settingsLoaded = false;
-let originalSettings = {};
+const MEMORY_PAGE = 50;
+const DOM_LIMIT = 100;
+let hasMoreMemories = true;
+let isFetching = false;
+let observer = null;
 
-let currentVoiceId = null;
-let currentTemp = null;
-let currentRolePrompt = null;
-let availableRoles = [];
-let availableVoices = [];
+let settingsData = null;
+let isDirty = false;
+let availableModels = [];
+let thinkingMap = { "off": "Выкл", "low": "Низкий", "medium": "Средний", "high": "Высокий" };
+let currentTargetSheet = null;
+let roleDataCache = []; // Cache to prevent missing titles/prompts
 
-// ── Tabs ──
-function switchTab(name) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + name));
-  if (name === 'memories' && allMemories.length === 0) loadMemories();
-  if (name === 'settings' && !settingsLoaded) loadSettings();
-  tg.MainButton.hide();
+let pendingDeletions = {};
+
+// ── Navigation Stack ──
+function pushPage(pageId) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  if (stack.length > 0) {
+    document.getElementById(stack[stack.length - 1]).classList.remove('active');
+  }
+  stack.push(pageId);
+  document.getElementById(pageId).classList.add('active');
+  
+  if (stack.length > 1) {
+    tg.BackButton.show();
+  } else {
+    tg.BackButton.hide();
+  }
+  
+  if (pageId === 'page-settings' && !settingsData) {
+    loadSettings();
+  }
+  updateMainButton();
 }
 
-// ── API helper ──
+function popPage() {
+  if (stack.length <= 1) {
+    tg.close();
+    return;
+  }
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  const popped = stack.pop();
+  document.getElementById(popped).classList.remove('active');
+  document.getElementById(stack[stack.length - 1]).classList.add('active');
+  
+  if (stack.length > 1) {
+    tg.BackButton.show();
+  } else {
+    tg.BackButton.hide();
+  }
+  
+  if (popped === 'page-prompt') {
+    // Left prompt editor, update preview
+    const text = document.getElementById('s-prompt-area').value;
+    document.getElementById('val-prompt-preview').textContent = text ? text.substring(0, 20) + '...' : 'Стандартная';
+    markDirty();
+  }
+  
+  updateMainButton();
+}
+
+tg.BackButton.onClick(() => popPage());
+
+// ── Intersections ──
+function initObserver() {
+  observer = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting && hasMoreMemories && !isFetching) {
+      loadMemoriesBlock();
+    }
+  }, { rootMargin: '200px' });
+  observer.observe(document.getElementById('bottom-sentinel'));
+}
+
+// ── API ──
 async function api(path, opts = {}) {
   const r = await fetch(API + path, { ...opts, headers: { 'Authorization': AUTH, 'Content-Type': 'application/json', ...opts.headers } });
-  if (!r.ok) throw new Error(`${r.status}`);
+  if (!r.ok) throw new Error(r.status);
   return r.json();
 }
 
-// ── Toast ──
-function toast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 2000);
+function showToast(msg, type = 'normal') {
+  const wrap = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<div>${msg}</div>`;
+  wrap.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 3000);
 }
 
-// ── MEMORIES ──
+function showUndoToast(msg, onUndo) {
+  const wrap = document.getElementById('toast-container');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<div>${msg}</div><button class="toast-undo">ОТМЕНИТЬ</button>`;
+  wrap.appendChild(t);
+  
+  let cleared = false;
+  const undoBtn = t.querySelector('.toast-undo');
+  undoBtn.onclick = () => {
+    if (cleared) return;
+    cleared = true;
+    if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+    onUndo();
+    t.style.opacity = '0'; setTimeout(() => t.remove(), 300);
+  };
+  
+  setTimeout(() => { if (!cleared) { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); } }, 5000);
+}
 
-async function loadMemories() {
+// ── Memories (Infinite Scroll, Swipe) ──
+async function loadMemoriesBlock() {
+  isFetching = true;
   try {
-    const [data, stats] = await Promise.all([
-      api(`/memories?offset=${memoryOffset}&limit=${MEMORY_PAGE}`),
-      api('/memories/stats')
-    ]);
-    allMemories = allMemories.concat(data.memories || []);
-    renderMemories(allMemories);
-    renderStats(stats);
+    const listEl = document.getElementById('memory-list');
+    if (memoryOffset === 0) listEl.innerHTML = ''; // first load clear skeletons
+    
+    // Also load stats if first time
+    if (memoryOffset === 0) {
+      api('/memories/stats').then(s => {
+        document.getElementById('mem-stats-text').textContent = `${s.total_memories || 0} / ${s.limit || 500}`;
+        const pct = Math.min(100, ((s.total_memories || 0) / (s.limit || 500)) * 100);
+        document.getElementById('mem-progress').style.width = pct + '%';
+      }).catch(console.error);
+    }
+    
+    // Apply search filter locally if loaded
+    const query = document.getElementById('search-input').value.trim();
+    
+    const data = await api(`/memories?offset=${memoryOffset}&limit=${MEMORY_PAGE}`);
+    const newItems = data.memories || [];
+    
+    if (newItems.length < MEMORY_PAGE) hasMoreMemories = false;
     memoryOffset += MEMORY_PAGE;
-    document.getElementById('load-more-btn').style.display = (data.memories || []).length >= MEMORY_PAGE ? 'block' : 'none';
+    
+    allMemories = allMemories.concat(newItems);
+    
+    let itemsToRender = newItems;
+    if (query && allMemories.length > 0) {
+      const lowerQuery = query.toLowerCase();
+      const filtered = allMemories.filter(m => m.content.toLowerCase().includes(lowerQuery));
+      listEl.innerHTML = ''; // Full re-render of local filter
+      renderedMemoryIds.clear();
+      itemsToRender = filtered;
+    }
+    
+    renderBlock(itemsToRender);
+    
+    if (allMemories.length === 0) {
+      listEl.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🧠</div><div class="empty-state-title">Память пуста</div><div class="empty-state-desc">Здесь появятся важные факты, которые бот запомнит из диалога.</div></div>';
+    }
   } catch (e) {
-    document.getElementById('memory-list').innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div class="title">Ошибка загрузки</div></div>';
+    if (memoryOffset === 0) document.getElementById('memory-list').innerHTML = '<div class="empty-state"><div class="empty-state-title">Ошибка загрузки</div></div>';
+  } finally {
+    isFetching = false;
   }
 }
 
-function loadMoreMemories() { loadMemories(); }
+// Attach local filter handler
+document.getElementById('search-input').addEventListener('input', (e) => {
+  const query = e.target.value.trim().toLowerCase();
+  const listEl = document.getElementById('memory-list');
+  listEl.innerHTML = '';
+  renderedMemoryIds.clear();
+  if (allMemories.length === 0) return;
+  const filtered = query ? allMemories.filter(m => m.content.toLowerCase().includes(query)) : allMemories;
+  renderBlock(filtered);
+});
 
-function renderStats(stats) {
-  const bar = document.getElementById('memory-stats');
-  bar.style.display = 'flex';
-  document.getElementById('mem-count').textContent = stats.total_memories || 0;
-  document.getElementById('mem-limit').textContent = stats.limit || 500;
-  const pct = Math.min(100, ((stats.total_memories || 0) / (stats.limit || 500)) * 100);
-  document.getElementById('mem-progress').style.width = pct + '%';
-}
 
-function renderMemories(memories) {
-  const list = document.getElementById('memory-list');
-  if (!memories.length) {
-    list.innerHTML = '<div class="empty-state"><div class="icon">🧠</div><div class="title">Память пуста</div><div class="desc">Бот запоминает важную информацию из ваших разговоров</div></div>';
-    return;
+function renderBlock(items) {
+  const listEl = document.getElementById('memory-list');
+  let lastDate = "";
+  if (listEl.lastElementChild && listEl.lastElementChild.dataset.dateLabel) {
+    lastDate = listEl.lastElementChild.dataset.dateLabel;
   }
-  list.innerHTML = memories.map(m => `
-    <div class="memory-card" id="mem-${m.id}" data-id="${m.id}">
-      <div class="delete-bg">Удалить</div>
+  
+  items.forEach(m => {
+    if (renderedMemoryIds.has(m.id)) return;
+    
+    const d = new Date(m.created_at);
+    let dateStr = d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+    const today = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+    if (dateStr === today) dateStr = "Сегодня";
+    
+    if (dateStr !== lastDate) {
+      const header = document.createElement('div');
+      header.className = 'timeline-date';
+      header.textContent = dateStr;
+      header.dataset.isHeader = "true";
+      listEl.appendChild(header);
+      lastDate = dateStr;
+    }
+    
+    const card = document.createElement('div');
+    card.className = 'memory-card';
+    card.id = 'mem-' + m.id;
+    card.dataset.id = m.id;
+    card.dataset.dateLabel = dateStr;
+    
+    card.innerHTML = `
+      <div class="delete-action">УДАЛИТЬ</div>
       <div class="memory-card-inner">
         <div class="memory-content">${esc(m.content)}</div>
         <div class="memory-meta">
-          <span class="badge">${esc(m.source_type || 'memory')}</span>
-          <span class="memory-date">${fmtDate(m.created_at)}</span>
+          <span class="badge">${esc(m.source_type || 'auto')}</span>
+          <span class="memory-time">${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
         </div>
       </div>
-    </div>`).join('');
-  // Attach swipe handlers
-  list.querySelectorAll('.memory-card').forEach(initSwipe);
+    `;
+    listEl.appendChild(card);
+    renderedMemoryIds.add(m.id);
+    initSwipeToDelete(card);
+  });
+  
+  enforceDOMBudget();
 }
 
-function filterMemories(q) {
-  const lower = q.toLowerCase();
-  const filtered = q ? allMemories.filter(m => m.content.toLowerCase().includes(lower)) : allMemories;
-  renderMemories(filtered);
+function enforceDOMBudget() {
+  const listEl = document.getElementById('memory-list');
+  const cards = Array.from(listEl.querySelectorAll('.memory-card'));
+  if (cards.length > DOM_LIMIT) {
+    const toRemove = cards.length - DOM_LIMIT;
+    // Remove from top
+    for (let i = 0; i < toRemove; i++) {
+        const el = cards[i];
+        if (el.previousElementSibling && el.previousElementSibling.classList.contains('timeline-date')) {
+            if (!el.nextElementSibling || el.nextElementSibling.classList.contains('timeline-date')) {
+                el.previousElementSibling.remove();
+            }
+        }
+        renderedMemoryIds.delete(parseInt(el.dataset.id));
+        el.remove();
+    }
+  }
 }
 
-async function deleteMemory(id) {
-  try {
-    await api(`/memories/${id}`, { method: 'DELETE' });
-    allMemories = allMemories.filter(m => m.id !== id);
-    const el = document.getElementById('mem-' + id);
-    if (el) { el.style.height = el.offsetHeight + 'px'; requestAnimationFrame(() => { el.style.transition = 'height .3s, opacity .3s'; el.style.height = '0'; el.style.opacity = '0'; }); setTimeout(() => el.remove(), 300); }
-    toast('Удалено');
-    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-    // Update count
-    const cnt = document.getElementById('mem-count');
-    cnt.textContent = Math.max(0, parseInt(cnt.textContent) - 1);
-  } catch (e) { toast('Ошибка удаления'); }
-}
-
-// ── Swipe to delete ──
-function initSwipe(card) {
+function initSwipeToDelete(card) {
   const inner = card.querySelector('.memory-card-inner');
-  let startX = 0, currentX = 0, swiping = false;
-  inner.addEventListener('touchstart', e => { startX = e.touches[0].clientX; swiping = true; }, { passive: true });
+  const id = parseInt(card.dataset.id);
+  let startX = 0, currentX = 0, swiping = false, startTime = 0;
+  
+  inner.addEventListener('touchstart', e => { startX = e.touches[0].clientX; swiping = true; startTime = Date.now(); inner.style.transition = 'none'; }, { passive: true });
   inner.addEventListener('touchmove', e => {
     if (!swiping) return;
     currentX = e.touches[0].clientX - startX;
-    if (currentX > 0) currentX = 0; // only left swipe
-    inner.style.transform = `translateX(${Math.max(-80, currentX)}px)`;
-    inner.style.transition = 'none';
+    if (currentX > 0) currentX = 0; // Left only
+    inner.style.transform = `translateX(${currentX}px)`;
   }, { passive: true });
   inner.addEventListener('touchend', () => {
     swiping = false;
-    inner.style.transition = 'transform .2s';
-    if (currentX < -50) {
-      inner.style.transform = 'translateX(-80px)';
-      // Tap the red zone to confirm
-      card.querySelector('.delete-bg').onclick = () => deleteMemory(parseInt(card.dataset.id));
+    inner.style.transition = 'transform .3s cubic-bezier(0.2, 0.8, 0.2, 1)';
+    const velocity = Math.abs(currentX) / (Date.now() - startTime);
+    
+    // Swipe out if >40% width or fast swipe
+    if (currentX < -(window.innerWidth * 0.4) || (velocity > 0.8 && currentX < -50)) {
+      if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
+      inner.style.transform = `translateX(-100%)`;
+      setTimeout(() => scheduleDelete(id, card), 300);
     } else {
       inner.style.transform = 'translateX(0)';
     }
-    currentX = 0;
   });
 }
 
-// ── SETTINGS ──
-
-async function loadSettings() {
-  try {
-    const [data, rolesData, voicesData] = await Promise.all([
-      api('/settings'),
-      api('/roles'),
-      api('/voices')
-    ]);
-    const s = data.settings;
-    originalSettings = { ...s };
-    availableRoles = rolesData.roles || [];
-    availableVoices = voicesData.voices || [];
-
-    document.getElementById('s-prompt').value = s.system_prompt || '';
-    onPromptInput();
-
-    // Populate model select
-    const sel = document.getElementById('s-model');
-    sel.innerHTML = (data.available_models || []).map(m => `<option value="${esc(m)}" ${m === s.model ? 'selected' : ''}>${esc(m)}</option>`).join('');
-
-    document.getElementById('s-thinking').value = s.thinking_level || 'off';
-    document.getElementById('s-ltm').checked = s.ltm_enabled;
-    document.getElementById('s-search').checked = s.search_enabled;
-    
-    // Set Temp
-    setTempVal(s.temperature);
-    // Render Roles
-    renderRoles(s.system_prompt);
-    // Render Voices
-    renderVoices(s.voice_id);
-
-    document.getElementById('settings-loading').style.display = 'none';
-    document.getElementById('settings-form').style.display = 'block';
-    settingsLoaded = true;
-
-    // Show MainButton for save
-    tg.MainButton.setText('Сохранить');
-    tg.MainButton.onClick(saveSettings);
-    tg.MainButton.show();
-  } catch (e) {
-    document.getElementById('settings-loading').innerHTML = '<div class="empty-state"><div class="icon">⚠️</div><div class="title">Ошибка загрузки</div></div>';
+function scheduleDelete(id, cardNode) {
+  // Hide element visually
+  cardNode.style.height = cardNode.offsetHeight + 'px';
+  cardNode.style.opacity = '1';
+  // Check if header needs removing
+  let prevHeader = null;
+  if (cardNode.previousElementSibling && cardNode.previousElementSibling.classList.contains('timeline-date')) {
+      if (!cardNode.nextElementSibling || cardNode.nextElementSibling.classList.contains('timeline-date')) {
+          prevHeader = cardNode.previousElementSibling;
+      }
   }
-}
 
-function setTempVal(val) {
-  currentTemp = val;
-  const segments = document.querySelectorAll('#s-temp .segment');
-  segments.forEach(el => el.classList.remove('active'));
-  let matched = false;
-  segments.forEach(el => {
-    let elVal = el.dataset.val === 'null' ? null : parseFloat(el.dataset.val);
-    if (elVal === currentTemp) { el.classList.add('active'); matched = true; }
-  });
-  if(!matched) segments[1].classList.add('active'); // fallback balance
-}
-
-function setTemp(element) {
-  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
-  let val = element.dataset.val === 'null' ? null : parseFloat(element.dataset.val);
-  setTempVal(val);
-}
-
-function renderRoles(activePrompt) {
-  const wrap = document.getElementById('s-roles-wrap');
-  let html = `<div class="chip ${!activePrompt ? 'active' : ''}" onclick="setRole(null)">Стандартная</div>`;
-  if (dataRoles = dataRoles || availableRoles) {
-    dataRoles.forEach(r => {
-      let isAct = (activePrompt && activePrompt === r.prompt);
-      html += `<div class="chip ${isAct ? 'active' : ''}" onclick="setRole('${esc(r.prompt)}', this)">${esc(r.title)}</div>`;
-    });
+  cardNode.offsetHeight; // force reflow
+  cardNode.style.transition = 'height .3s, opacity .3s, margin .3s, padding .3s';
+  cardNode.style.height = '0';
+  cardNode.style.opacity = '0';
+  cardNode.style.margin = '0';
+  cardNode.style.border = 'none';
+  if (prevHeader) {
+      prevHeader.style.transition = 'height .3s, opacity .3s';
+      prevHeader.style.opacity = '0';
+      prevHeader.style.height = '0';
   }
-  wrap.innerHTML = html;
-}
-
-let dataRoles = null;
-function setRole(prompt, element) {
-  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
-  document.getElementById('s-prompt').value = prompt || '';
-  onPromptInput();
-  document.querySelectorAll('#s-roles-wrap .chip').forEach(c => c.classList.remove('active'));
-  if (element) {
-    element.classList.add('active');
-  } else {
-    document.querySelector('#s-roles-wrap .chip').classList.add('active');
-  }
-}
-
-function renderVoices(activeVid) {
-  currentVoiceId = activeVid;
-  const wrap = document.getElementById('s-voices-wrap');
-  let html = '';
-  availableVoices.forEach(v => {
-    let act = (activeVid === v.id || (!activeVid && v.name.includes("Charlotte")));
-    html += `
-      <div class="list-row ${act ? 'active' : ''}" onclick="setVoice('${v.id}', this)">
-        <div class="list-title">${esc(v.name)}</div>
-        <div class="list-check">✓</div>
-      </div>
-    `;
-  });
-  wrap.innerHTML = html;
-}
-
-function setVoice(vid, element) {
-  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
-  currentVoiceId = vid;
-  document.querySelectorAll('#s-voices-wrap .list-row').forEach(c => c.classList.remove('active'));
-  element.classList.add('active');
-}
-
-function confirmResetContext() {
-  if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
-  tg.showConfirm('Вы уверены, что хотите сбросить контекст текущего диалога? Это действие нельзя отменить.', async (conf) => {
-    if (conf) {
-      try {
-        await api('/context/reset', { method: 'POST' });
-        toast('Контекст сброшен');
-      } catch (e) { toast('Ошибка сброса'); }
+  
+  // Set deletion timer
+  let timer = setTimeout(async () => {
+    delete pendingDeletions[id];
+    try {
+      await api(`/memories/${id}`, { method: 'DELETE' });
+      cardNode.remove();
+      if (prevHeader) prevHeader.remove();
+      // Update count
+      const st = document.getElementById('mem-stats-text');
+      const parts = st.textContent.split('/');
+      if (parts.length === 2) {
+          st.textContent = `${Math.max(0, parseInt(parts[0]) - 1)} / ${parts[1].trim()}`;
+      }
+      allMemories = allMemories.filter(m => m.id !== id);
+    } catch(e) { showToast('Ошибка удаления'); cardNode.style.height = ''; cardNode.style.opacity = '1'; if (prevHeader) prevHeader.style.opacity = '1'; }
+  }, 5000);
+  
+  pendingDeletions[id] = timer;
+  
+  showUndoToast('Воспоминание удалено', () => {
+    clearTimeout(timer);
+    delete pendingDeletions[id];
+    // Restore DOM
+    cardNode.style.height = '';
+    cardNode.style.opacity = '1';
+    cardNode.style.margin = '';
+    cardNode.style.borderBottom = '.5px solid var(--secondary-bg)';
+    const inner = cardNode.querySelector('.memory-card-inner');
+    inner.style.transform = 'translateX(0)';
+    if (prevHeader) {
+        prevHeader.style.opacity = '1';
+        prevHeader.style.height = '';
     }
   });
 }
 
-function onPromptInput() {
-  const ta = document.getElementById('s-prompt');
-  document.getElementById('s-prompt-count').textContent = ta.value.length;
+// ── Settings Subsystem ──
+async function loadSettings() {
+  try {
+    const [d, r, v] = await Promise.all([ api('/settings'), api('/roles'), api('/voices') ]);
+    settingsData = d.settings;
+    availableModels = d.available_models || [];
+    roleDataCache = r.roles || [];
+    
+    // Populate model sheet
+    document.getElementById('sheet-models-list').innerHTML = availableModels.map(m => 
+      `<div class="sheet-row ${m === settingsData.model ? 'active':''}" onclick="setModel('${esc(m)}')">${esc(m)}</div>`
+    ).join('');
+    document.getElementById('val-model').textContent = `${settingsData.model} ❭`;
+    
+    renderRoles(settingsData.system_prompt);
+    
+    // Prompt
+    const prev = settingsData.system_prompt || 'Стандартная';
+    document.getElementById('val-prompt-preview').textContent = prev.length > 20 ? prev.substring(0, 20)+'...' : prev;
+    document.getElementById('s-prompt-area').value = settingsData.system_prompt || '';
+    
+    // Toggles
+    document.getElementById('s-ltm').checked = settingsData.ltm_enabled;
+    document.getElementById('s-search').checked = settingsData.search_enabled;
+    
+    // Thinking
+    setThinking(settingsData.thinking_level || 'off', true);
+    
+    // Temp
+    syncTempControls(settingsData.temperature);
+    
+    // Voices
+    let vHtml = '';
+    (v.voices || []).forEach(voice => {
+      let isActive = settingsData.voice_id === voice.id || (!settingsData.voice_id && voice.name.includes("Charlotte"));
+      vHtml += `<div class="setting-row" onclick="setVoice('${voice.id}')">
+        <div class="setting-label">${esc(voice.name)}</div>
+        <div class="setting-val">${isActive ? '✓' : ''}</div>
+      </div>`;
+    });
+    document.getElementById('settings-voices-list').innerHTML = vHtml;
+    
+    isDirty = false;
+  } catch(e) { showToast('Ошибка загрузки настроек'); }
+}
+
+function renderRoles(activePrompt) {
+  let roleHtml = `<div class="chip ${!activePrompt ? 'active':''}" onclick="setRole(null, this)">Стандартная</div>`;
+  roleDataCache.forEach(role => {
+    let isA = activePrompt === role.prompt;
+    let safePrompt = encodeURIComponent(role.prompt || '');
+    roleHtml += `<div class="chip ${isA ? 'active':''}" onclick="setRole(decodeURIComponent('${safePrompt}'), this)">${esc(role.title)}</div>`;
+  });
+  document.getElementById('s-roles-wrap').innerHTML = roleHtml;
+}
+
+function markDirty() {
+  if (!isDirty && stack[stack.length -1 ] === 'page-settings') {
+    isDirty = true;
+    updateMainButton();
+  }
+}
+
+function updateMainButton() {
+  if (stack[stack.length - 1] === 'page-settings' && isDirty) {
+    tg.MainButton.setText('СОХРАНИТЬ НАСТРОЙКИ');
+    tg.MainButton.onClick(saveSettings);
+    tg.MainButton.show();
+  } else {
+    tg.MainButton.hide();
+  }
 }
 
 async function saveSettings() {
   tg.MainButton.showProgress();
+  if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+  
+  const body = {
+    model: settingsData.model,
+    system_prompt: document.getElementById('s-prompt-area').value.trim() || undefined,
+    thinking_level: settingsData.thinking_level,
+    ltm_enabled: document.getElementById('s-ltm').checked,
+    search_enabled: document.getElementById('s-search').checked,
+    temperature: settingsData.temperature,
+    voice_id: settingsData.voice_id
+  };
+  
   try {
-    const body = {
-      system_prompt: document.getElementById('s-prompt').value,
-      model: document.getElementById('s-model').value,
-      thinking_level: document.getElementById('s-thinking').value,
-      ltm_enabled: document.getElementById('s-ltm').checked,
-      search_enabled: document.getElementById('s-search').checked,
-      temperature: currentTemp,
-      voice_id: currentVoiceId
-    };
     await api('/settings', { method: 'PATCH', body: JSON.stringify(body) });
-    toast('Сохранено ✓');
     if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-    originalSettings = { ...body };
-  } catch (e) {
-    toast('Ошибка сохранения');
+    settingsData.system_prompt = body.system_prompt;
+    isDirty = false;
+    tg.MainButton.hide();
+    showToast('Настройки сохранены ✓');
+  } catch(e) {
     if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+    showToast('Ошибка сохранения');
   } finally {
     tg.MainButton.hideProgress();
   }
 }
 
-// ── Utils ──
-function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
-function fmtDate(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+// ── UI Helpers ──
+function openSheet(id) {
+  if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+  currentTargetSheet = id;
+  const overlay = document.getElementById('sheet-overlay');
+  document.querySelectorAll('.bottom-sheet').forEach(s => s.style.display = 'none');
+  document.getElementById(id).style.display = 'block';
+  overlay.classList.add('show');
+}
+function closeSheet() { document.getElementById('sheet-overlay').classList.remove('show'); currentTargetSheet = null;}
+
+function setModel(model) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  settingsData.model = model;
+  document.getElementById('val-model').textContent = `${model} ❭`;
+  document.querySelectorAll('#sheet-models .sheet-row').forEach(row => row.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+  closeSheet();
+  markDirty();
 }
 
-// ── Init ──
-const urlParams = new URLSearchParams(window.location.search);
-const startTab = urlParams.get('tab') || 'memories';
-switchTab(startTab);
+function setThinking(level, init=false) {
+  if (!init && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  settingsData.thinking_level = level;
+  document.getElementById('val-thinking').textContent = `${thinkingMap[level]} ❭`;
+  document.querySelectorAll('#sheet-thinking .sheet-row').forEach(row => row.classList.toggle('active', row.dataset.val === level));
+  if (!init) { closeSheet(); markDirty(); }
+}
+
+function setRole(prompt, el) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  document.querySelectorAll('#s-roles-wrap .chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('s-prompt-area').value = prompt || '';
+  document.getElementById('val-prompt-preview').textContent = prompt ? prompt.substring(0, 20)+'...' : 'Стандартная';
+  markDirty();
+}
+
+function setVoice(vid) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  settingsData.voice_id = vid;
+  const rows = document.querySelectorAll('#settings-voices-list .setting-row');
+  rows.forEach(r => r.querySelector('.setting-val').textContent = '');
+  event.currentTarget.querySelector('.setting-val').textContent = '✓';
+  markDirty();
+}
+
+// ── Temperature Controller ──
+function syncTempControls(val) {
+  const isCustom = val !== null && val !== 0.2 && val !== 0.9;
+  document.querySelectorAll('#s-temp .segment').forEach(s => s.classList.remove('active'));
+  let mapped = isCustom ? 'custom' : (val === null ? 'null' : val.toString());
+  document.querySelector(`#s-temp .segment[data-val="${mapped}"]`).classList.add('active');
+  
+  const w = document.getElementById('slider-temp-wrap');
+  if (isCustom) {
+    w.classList.add('show');
+    document.getElementById('s-temp-slider').value = val;
+    document.getElementById('s-temp-num').value = val;
+  } else {
+    w.classList.remove('show');
+  }
+}
+
+function setTempSeg(el) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  const raw = el.dataset.val;
+  if (raw === 'custom') {
+    settingsData.temperature = parseFloat(document.getElementById('s-temp-slider').value);
+  } else {
+    settingsData.temperature = raw === 'null' ? null : parseFloat(raw);
+  }
+  syncTempControls(settingsData.temperature);
+  markDirty();
+}
+
+function onSliderInput() {
+  const v = document.getElementById('s-temp-slider').value;
+  document.getElementById('s-temp-num').value = v;
+  if (tg.HapticFeedback && (v==0.2 || v==0.5 || v==0.9 || v==1.0 || v==2.0)) tg.HapticFeedback.selectionChanged();
+  settingsData.temperature = parseFloat(v);
+  markDirty();
+}
+function onSliderNumChange() {
+  let v = parseFloat(document.getElementById('s-temp-num').value);
+  if (isNaN(v)) v = 1.0;
+  if (v < 0) v = 0; if (v > 2.0) v = 2.0;
+  document.getElementById('s-temp-num').value = v;
+  document.getElementById('s-temp-slider').value = v;
+  settingsData.temperature = v;
+  markDirty();
+}
+
+// ── Reset Context Logic ──
+const resetBtn = document.getElementById('btn-reset-context');
+const resetFill = document.getElementById('reset-fill');
+let resetTimer = null;
+
+resetBtn.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  resetFill.style.transition = 'width 1s linear';
+  resetFill.style.width = '100%';
+  if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+  resetTimer = setTimeout(async () => {
+    if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
+    resetFill.style.transition = 'none';
+    resetFill.style.width = '0';
+    try {
+      await api('/context/reset', { method: 'POST' });
+      showToast('Контекст успешно сброшен ✓');
+    } catch(e) { showToast('Ошибка сброса'); }
+  }, 1000);
+}, {passive: false});
+
+const cancelReset = (e) => {
+  if(e) e.preventDefault();
+  clearTimeout(resetTimer);
+  resetFill.style.transition = 'width 0.2s ease';
+  resetFill.style.width = '0';
+};
+resetBtn.addEventListener('touchend', cancelReset);
+resetBtn.addEventListener('touchcancel', cancelReset);
+resetBtn.addEventListener('mouseleave', cancelReset); // Mouse support mostly for desktop tests
+
+// Prompt length
+document.getElementById('s-prompt-area').addEventListener('input', e => {
+  document.getElementById('s-prompt-count').textContent = e.target.value.length;
+  markDirty();
+});
+
+// Helper
+function esc(s) { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
+
+// Init
+const params = new URLSearchParams(window.location.search);
+pushPage('page-memories');
+if (params.get('tab') === 'settings') {
+  pushPage('page-settings');
+}
+initObserver();
+
 </script>
 </body>
 </html>

@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.21] - 2026-04-05 - Modernizing Telegram Mini App UX
+
+### ✨ Feature — Advanced Mini App Frontend & Stack Navigation
+
+*   **Native App Feel (Push/Pop Stack):** Migrated from basic tab-switching to a dynamic push/pop navigation stack in `miniapp.html`, deep-linking the Telegram BackButton exactly like a native iOS/Android settings menu.
+*   **100-Card DOM Budget (Infinite Scroll):** Rearchitected the memories list interface to strict DOM virtualization restrictions, dropping older DOM nodes (FIFO) while grouping elements temporally to optimize low-end mobile performance.
+*   **Interactive Swipe Design:** Brought iOS-like swipe-to-delete mechanisms directly to HTML alongside an interactive Undo Toast (5-second grace period) leveraging WebApp `HapticFeedback.impactOccurred` APIs.
+*   **Component-Driven Settings Forms:** Extracted raw `<select>` elements into smooth "Bottom Sheets", introduced Hybrid Segmented Controls ( Точный, Баланс, Творческий, Свой ), and created a standalone Screen overlay for prompting textareas. Correctly bounded server APIs up to 2.0 temperature.
+*   **Reader UX Refresh:** Injected a 2px top "Reading Progress Bar" directly into the WebApp Reader UI (`reader.html`). Supplemented with Auto-Hiding scroll mechanics to maximize text estate and added a one-click `word-break: break-all` toggle button ("Перенос") to code headers for fixing horizontal overflow.
+
+---
+
 ## [2.9.20] - 2026-04-05 - CI-Ready Testing Architecture & Environment Isolation
 
 ### 🧪 Test Suite — Production Hardening & Security Isolation
