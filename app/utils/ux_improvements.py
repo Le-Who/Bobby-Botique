@@ -62,6 +62,11 @@ async def set_message_reaction(
 
     Uses ReactionTypeEmoji — available on Bot API 7.0+ (PTB 20.7+).
     Silently no-ops if the API call fails (e.g. bot lacks permissions).
+
+    **Atomic replacement**: Telegram's ``setMessageReaction`` replaces ALL
+    existing reactions from the caller (bot) on the target message.  There is
+    no need to check for or clear previous bot reactions — calling this with
+    a new emoji will implicitly remove the old one (e.g. 🔍 → ⚡).
     """
     try:
         from telegram import ReactionTypeEmoji
@@ -224,25 +229,26 @@ def tg_time_tag(unix_timestamp: int, *, fmt: str = "wDT") -> str:
 # Telegram Bot API limits non-premium bots to 1 reaction per message.
 # Pre-placing two reactions (👍+👎) via setMessageReaction is therefore BROKEN.
 # Instead, we use inline keyboard buttons — the industry-standard pattern.
+#
+# UX: To avoid cluttering every response (already 6-8 action buttons),
+# we show a single "Оценить" toggle. Tapping it reveals 👍/👎 choices.
 FEEDBACK_THUMBSUP = "👍"
 FEEDBACK_THUMBSDOWN = "👎"
 
 
 def make_feedback_buttons() -> list:
-    """Return a single-row list of 👍/👎 InlineKeyboardButtons for RLHF feedback.
+    """Return a single-row list with a compact "📝 Оценить" toggle button.
 
-    Append this row to any inline keyboard on the bot's AI response messages.
-    Handled by ``cb_feedback.feedback_callback`` via ``feedback:up`` / ``feedback:down``
-    callback data patterns.
+    When tapped, ``cb_feedback.feedback_reveal_callback`` replaces this button
+    with the actual 👍/👎 choice pair. This keeps the response keyboard clean.
 
     Returns:
-        A list containing two InlineKeyboardButtons (one row for InlineKeyboardMarkup).
+        A list containing one InlineKeyboardButton (one row for InlineKeyboardMarkup).
     """
     from telegram import InlineKeyboardButton
 
     return [
-        InlineKeyboardButton(FEEDBACK_THUMBSUP, callback_data="feedback:up"),
-        InlineKeyboardButton(FEEDBACK_THUMBSDOWN, callback_data="feedback:down"),
+        InlineKeyboardButton("📝 Оценить", callback_data="feedback:reveal"),
     ]
 
 
