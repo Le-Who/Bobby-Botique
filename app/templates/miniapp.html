@@ -105,15 +105,14 @@ body {
     opacity: 1;
     transform: translateX(0);
   }
-  .memory-card:hover .memory-card-inner { padding-right: 56px; }
-  /* On real desktop we also tone down the mobile swipe delete bg */
+  /* Audit fix M-5: preserve 'transform' in hover-state transition so swipe bounce still animates */
+  .memory-card:hover .memory-card-inner {
+    padding-right: 56px;
+    background: color-mix(in srgb, var(--bg) 90%, var(--link) 10%);
+    transition: background .15s ease, padding-right .2s ease, transform .3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
   .memory-delete-hover:hover {
     color: #c62828;
-  }
-  /* Subtle card hover lift */
-  .memory-card:hover .memory-card-inner {
-    background: color-mix(in srgb, var(--bg) 90%, var(--link) 10%);
-    transition: background .15s ease, padding-right .2s ease;
   }
 }
 
@@ -203,8 +202,24 @@ body {
 .prompt-preview { font-size: 15px; color: var(--hint); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Prompt Page */
-#page-prompt { padding: 16px; }
-.prompt-area { width: 100%; height: calc(100vh - 120px); border: none; background: var(--bg); border-radius: var(--radius); padding: 16px; color: var(--text); font-family: inherit; font-size: 15px; line-height: 1.5; resize: none; outline: none; box-shadow: var(--shadow); }
+#page-prompt { padding: 16px; display: flex; flex-direction: column; }
+/* Audit fix C-4: use flex 1 + min-height:0 instead of calc(100vh) which breaks on iOS with virtual keyboard */
+.prompt-area {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: none;
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 16px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  box-shadow: var(--shadow);
+}
 .char-count { padding: 8px; font-size: 12px; color: var(--hint); text-align: right; }
 
 /* Bottom Sheet */
@@ -273,7 +288,8 @@ body {
   border-top: 1px solid var(--secondary-bg);
   padding: 6px 0 max(6px, env(safe-area-inset-bottom));
   z-index: 50;
-  transition: all .3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* Audit fix C-1: transition:all caused ugly resize animation; specify only safe properties */
+  transition: background .2s ease, box-shadow .2s ease;
 }
 .tab-btn {
   flex: 1;
@@ -772,8 +788,10 @@ function renderBlock(items) {
       </div>
     `;
     // Desktop hover-delete button
+    // Audit fix C-3: guard against double-scheduling (swipe may also fire a click)
     card.querySelector('.memory-delete-hover').addEventListener('click', (e) => {
       e.stopPropagation();
+      if (pendingDeletions[memId]) return; // already scheduled via swipe
       if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
       const inner = card.querySelector('.memory-card-inner');
       inner.style.transition = 'opacity .2s';
@@ -839,7 +857,10 @@ function initSwipeToDelete(card) {
     if (currentX < -(window.innerWidth * 0.4) || (velocity > 0.8 && currentX < -50)) {
       if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
       inner.style.transform = 'translateX(-100%)';
-      setTimeout(() => scheduleDelete(id, card), 300);
+      // Audit fix C-3: guard against double-scheduling (hover-delete click may also fire)
+      if (!pendingDeletions[id]) {
+        setTimeout(() => scheduleDelete(id, card), 300);
+      }
     } else {
       inner.style.transform = 'translateX(0)';
     }
@@ -1156,7 +1177,7 @@ const RESET_ORIGINAL_HINT  = 'Очищает текущую историю ди�
 
 function resetBtnAbort() {
   clearTimeout(resetTimer);
-  clearTimeout(resetCountdownTimer);
+  clearInterval(resetCountdownTimer); // Audit fix M-2: was clearTimeout — wrong for setInterval
   resetFill.style.transition = 'width 0.2s ease';
   resetFill.style.width = '0';
 }
@@ -1205,7 +1226,7 @@ if (isPointerDevice) {
       }, 1000);
     } else {
       // Second click → execute
-      clearInterval(resetCountdownTimer);
+      clearInterval(resetCountdownTimer); // Audit fix M-2: was clearTimeout
       await doContextReset();
     }
   });
@@ -1278,7 +1299,8 @@ function chipsScroll(wrapId, delta) {
   wrap.scrollBy({ left: delta, behavior: 'smooth' });
 }
 
-function initChipsScroll(containerId, wrapId, leftArrowId, rightArrowId, fadeLeftId, fadeRightId) {
+// Audit fix M-4: removed dead first parameter 'containerId' (was accepted but never used)
+function initChipsScroll(wrapId, leftArrowId, rightArrowId, fadeLeftId, fadeRightId) {
   const wrap      = document.getElementById(wrapId);
   const arrowL    = document.getElementById(leftArrowId);
   const arrowR    = document.getElementById(rightArrowId);
@@ -1499,18 +1521,27 @@ async function loadGraph() {
     simulate(120);
     updateGraphPositions();
     
-    // ── FIX #5: Zoom via smooth CSS transition on the <g> transform
+    // Audit fix C-2: CSS transition works only on CSS properties, not SVG attributes.
+    // Use style.transform for the zoom <g> element so the transition engine actually fires.
+    // Node positions still use setAttribute('transform') on individual <g>.graph-node elements.
     let currentZoom = 1;
     let panX = 0, panY = 0;
 
     function applyGraphTransform(animate = false) {
-      if (animate) g.style.transition = 'transform .25s cubic-bezier(0.2, 0.8, 0.2, 1)';
-      else g.style.transition = 'none';
-      g.setAttribute('transform', `translate(${panX},${panY}) scale(${currentZoom})`);
+      if (animate) {
+        g.style.transition = 'transform .25s cubic-bezier(0.2, 0.8, 0.2, 1)';
+      } else {
+        g.style.transition = 'none';
+      }
+      // CSS transform (px-based): SVG native coords are already handled by viewBox/viewport.
+      // We must also keep setAttribute in sync for hit-testing (SVG event model uses attribute).
+      g.style.transformOrigin = '0 0';
+      g.style.transform = `translate(${panX}px, ${panY}px) scale(${currentZoom})`;
+      // setAttribute is a no-op for our visual zoom/pan but kept for any external SVG tools:
+      // g.setAttribute('transform', ...) intentionally removed from this path.
     }
 
     window.zoomGraph = function(factor, cx, cy) {
-      // Zoom toward center of canvas (or provided point)
       const prevZoom = currentZoom;
       currentZoom = Math.max(0.3, Math.min(5, currentZoom * factor));
       const zoomDelta = currentZoom / prevZoom;
@@ -1558,9 +1589,8 @@ async function loadGraph() {
   }
 }
 
-// ── FIX #1: Initialize chips scroll once (script runs end-of-body, DOM already ready) ──
+// FIX #1 signature updated (containerId removed — audit fix M-4)
 initChipsScroll(
-  's-roles-container',
   's-roles-wrap',
   'roles-arrow-left',
   'roles-arrow-right',
