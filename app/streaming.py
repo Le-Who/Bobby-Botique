@@ -666,13 +666,13 @@ async def stream_and_display(
     if post_processor:
         # Strip tags natively before flushing final text to Telegram
         clean_text, markup = post_processor(writer._full_text)
-        removed = len(writer._full_text) - len(clean_text)
-        if removed > 0:
-            if removed <= len(writer._buffer):
-                writer._buffer = writer._buffer[:-removed]
-            else:
-                # Fallback if tags spanned multiple chunks (rare)
-                writer._buffer = ""
+        if clean_text != writer._full_text:
+            # Recompute _buffer as the corresponding tail of clean_text.
+            # Old approach (writer._buffer[:-removed]) only worked when the
+            # tag was literally the last bytes of _buffer; any trailing text
+            # after the tag caused it to cut the wrong bytes.
+            buf_start_in_full = len(writer._full_text) - len(writer._buffer)
+            writer._buffer = clean_text[buf_start_in_full:] if buf_start_in_full < len(clean_text) else ""
             writer._full_text = clean_text
 
     final_text = await writer.finalize(reply_markup=markup)
