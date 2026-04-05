@@ -59,16 +59,16 @@ async def _handle_reveal(query) -> None:
 
     try:
         old_markup = msg.reply_markup
-        new_buttons = []
+        new_buttons: list[tuple[InlineKeyboardButton, ...]] = []
         if old_markup and old_markup.inline_keyboard:
             for row in old_markup.inline_keyboard:
                 # Replace the reveal button row with actual 👍/👎 buttons
                 if any((getattr(btn, "callback_data", "") or "") == "feedback:reveal" for btn in row):
                     new_buttons.append(
-                        [
+                        (
                             InlineKeyboardButton("👍", callback_data="feedback:up"),
                             InlineKeyboardButton("👎", callback_data="feedback:down"),
-                        ]
+                        )
                     )
                 else:
                     new_buttons.append(row)
@@ -152,7 +152,7 @@ async def _handle_vote(query, rating: str) -> None:
     # ── 3. Visual confirmation: replace feedback row in keyboard ──────────
     try:
         old_markup = msg.reply_markup
-        new_buttons = []
+        new_buttons: list[tuple[InlineKeyboardButton, ...]] = []
         if old_markup and old_markup.inline_keyboard:
             for row in old_markup.inline_keyboard:
                 # Skip the feedback row (contains feedback: callbacks)
@@ -161,7 +161,7 @@ async def _handle_vote(query, rating: str) -> None:
                 new_buttons.append(row)
 
         # Add confirmed feedback indicator as last row (where feedback was)
-        confirmed_row = [InlineKeyboardButton(f"{emoji} Отзыв учтён ✓", callback_data="noop")]
+        confirmed_row = (InlineKeyboardButton(f"{emoji} Отзыв учтён ✓", callback_data="noop"),)
         new_buttons.append(confirmed_row)
 
         await msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_buttons))

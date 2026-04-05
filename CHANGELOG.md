@@ -11,8 +11,10 @@ Format is optimized for agent-parseable context.
 `set_feedback_reactions()` attempted to set TWO reactions (👍+👎) per message via `setMessageReaction`. **Telegram Bot API hard-limits non-premium bots to 1 reaction per message.** The call silently failed — users never saw the feedback invitation.
 
 #### Solution
-- **Replaced broken dual-reaction** with inline keyboard buttons (`[👍] [👎]`) appended as the last row on every AI response.
-- Button handler `cb_feedback.py` upgraded with full RLHF pipeline: on 👎 → LTM negative signal + graph edge penalty; on 👍 → ❤️ reaction acknowledgment (safe: 1 reaction).
+- **Replaced broken dual-reaction** with a two-stage "📝 Оценить" inline toggle button to reduce UI clutter.
+- Tapping the toggle safely replaces it in-place with `[👍] [👎]` choices.
+- Button handler `cb_feedback.py` upgraded with full RLHF pipeline: on 👎 → LTM negative signal + graph edge penalty.
+- Removed ❤️ reaction on upvote to prevent clashing with primary `🔍 → ⚡` status reactions.
 - Organic reactions (via Telegram reaction picker) still captured by `msg_reactions.py` as a fallback channel.
 - `set_feedback_reactions()` deleted from `ux_improvements.py`, replaced by `make_feedback_buttons()`.
 
