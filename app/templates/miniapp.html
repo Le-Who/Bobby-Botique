@@ -567,28 +567,42 @@ function initSwipeToDelete(card) {
   const inner = card.querySelector('.memory-card-inner');
   const id = parseInt(card.dataset.id);
   let startX = 0, currentX = 0, swiping = false, startTime = 0;
-  
-  inner.addEventListener('touchstart', e => { startX = e.touches[0].clientX; swiping = true; startTime = Date.now(); inner.style.transition = 'none'; }, { passive: true });
-  inner.addEventListener('touchmove', e => {
-    if (!swiping) return;
-    currentX = e.touches[0].clientX - startX;
-    if (currentX > 0) currentX = 0; // Left only
+
+  // Pointer Events work on both touch (mobile) and mouse (desktop).
+  inner.addEventListener('pointerdown', e => {
+    // Only react to primary pointer (left mouse button or first touch)
+    if (!e.isPrimary) return;
+    startX = e.clientX;
+    currentX = 0;
+    swiping = true;
+    startTime = Date.now();
+    inner.style.transition = 'none';
+    inner.setPointerCapture(e.pointerId);
+  });
+
+  inner.addEventListener('pointermove', e => {
+    if (!swiping || !e.isPrimary) return;
+    currentX = e.clientX - startX;
+    if (currentX > 0) currentX = 0; // left-only
     inner.style.transform = `translateX(${currentX}px)`;
-  }, { passive: true });
-  inner.addEventListener('touchend', () => {
+  });
+
+  const endSwipe = () => {
+    if (!swiping) return;
     swiping = false;
     inner.style.transition = 'transform .3s cubic-bezier(0.2, 0.8, 0.2, 1)';
-    const velocity = Math.abs(currentX) / (Date.now() - startTime);
-    
-    // Swipe out if >40% width or fast swipe
+    const velocity = Math.abs(currentX) / Math.max(1, Date.now() - startTime);
     if (currentX < -(window.innerWidth * 0.4) || (velocity > 0.8 && currentX < -50)) {
       if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy');
-      inner.style.transform = `translateX(-100%)`;
+      inner.style.transform = 'translateX(-100%)';
       setTimeout(() => scheduleDelete(id, card), 300);
     } else {
       inner.style.transform = 'translateX(0)';
     }
-  });
+  };
+
+  inner.addEventListener('pointerup', endSwipe);
+  inner.addEventListener('pointercancel', endSwipe);
 }
 
 function scheduleDelete(id, cardNode) {
@@ -616,28 +630,32 @@ function scheduleDelete(id, cardNode) {
   }
   
   // Set deletion timer
-  let timer = setTimeout(async () => {
+  const doDelete = async () => {
     delete pendingDeletions[id];
     try {
       await api(`/memories/${id}`, { method: 'DELETE' });
       cardNode.remove();
       if (prevHeader) prevHeader.remove();
-      // Update count
       const st = document.getElementById('mem-stats-text');
       const parts = st.textContent.split('/');
       if (parts.length === 2) {
-          st.textContent = `${Math.max(0, parseInt(parts[0]) - 1)} / ${parts[1].trim()}`;
+        st.textContent = `${Math.max(0, parseInt(parts[0]) - 1)} / ${parts[1].trim()}`;
       }
       allMemories = allMemories.filter(m => m.id !== id);
-    } catch(e) { showToast('Ошибка удаления'); cardNode.style.height = ''; cardNode.style.opacity = '1'; if (prevHeader) prevHeader.style.opacity = '1'; }
-  }, 5000);
+    } catch(e) {
+      showToast('Ошибка удаления');
+      cardNode.style.height = ''; cardNode.style.opacity = '1';
+      if (prevHeader) prevHeader.style.opacity = '1';
+    }
+  };
+  let timer = setTimeout(doDelete, 5000);
   
-  pendingDeletions[id] = timer;
-  
+  // Store both the timer and the doDelete fn so we can flush on app close.
+  pendingDeletions[id] = { timer, doDelete };
+
   showUndoToast('Воспоминание удалено', () => {
     clearTimeout(timer);
     delete pendingDeletions[id];
-    // Restore DOM
     cardNode.style.height = '';
     cardNode.style.opacity = '1';
     cardNode.style.margin = '';
@@ -645,11 +663,39 @@ function scheduleDelete(id, cardNode) {
     const inner = cardNode.querySelector('.memory-card-inner');
     inner.style.transform = 'translateX(0)';
     if (prevHeader) {
-        prevHeader.style.opacity = '1';
-        prevHeader.style.height = '';
+      prevHeader.style.opacity = '1';
+      prevHeader.style.height = '';
     }
   });
 }
+
+// ── Flush pending deletes immediately on app close ──
+// If the user swipes the MiniApp closed before the 5s undo window expires,
+// we fire all outstanding DELETE requests synchronously via sendBeacon so
+// they survive page teardown. The undo window is effectively cancelled.
+async function flushPendingDeletions() {
+  const ids = Object.keys(pendingDeletions);
+  if (ids.length === 0) return;
+  ids.forEach(id => {
+    clearTimeout(pendingDeletions[id].timer);
+    // sendBeacon for guaranteed delivery on page unload
+    const url = API + `/memories/${id}`;
+    // sendBeacon does not support DELETE; fall back to fetch(keepalive)
+    fetch(url, {
+      method: 'DELETE',
+      headers: { 'Authorization': AUTH, 'Content-Type': 'application/json' },
+      keepalive: true,
+    }).catch(() => {});
+  });
+  pendingDeletions = {};
+}
+
+// Fired when the native Telegram close gesture collapses the viewport
+tg.onEvent('viewportChanged', ({ isStateStable }) => {
+  if (isStateStable && tg.viewportHeight < 10) flushPendingDeletions();
+});
+// Standard browser unload (covers desktop/browser opens)
+window.addEventListener('beforeunload', () => flushPendingDeletions());
 
 // ── Settings Subsystem ──
 async function loadSettings() {
@@ -851,8 +897,10 @@ const resetBtn = document.getElementById('btn-reset-context');
 const resetFill = document.getElementById('reset-fill');
 let resetTimer = null;
 
-resetBtn.addEventListener('touchstart', (e) => {
+// Hold-to-delete: Pointer Events work on both touch and mouse (desktop).
+resetBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault();
+  resetBtn.setPointerCapture(e.pointerId);
   resetFill.style.transition = 'width 1s linear';
   resetFill.style.width = '100%';
   if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
@@ -865,17 +913,17 @@ resetBtn.addEventListener('touchstart', (e) => {
       showToast('Контекст успешно сброшен ✓');
     } catch(e) { showToast('Ошибка сброса'); }
   }, 1000);
-}, {passive: false});
+}, { passive: false });
 
 const cancelReset = (e) => {
-  if(e) e.preventDefault();
+  if (e) e.preventDefault();
   clearTimeout(resetTimer);
   resetFill.style.transition = 'width 0.2s ease';
   resetFill.style.width = '0';
 };
-resetBtn.addEventListener('touchend', cancelReset);
-resetBtn.addEventListener('touchcancel', cancelReset);
-resetBtn.addEventListener('mouseleave', cancelReset); // Mouse support mostly for desktop tests
+resetBtn.addEventListener('pointerup', cancelReset);
+resetBtn.addEventListener('pointercancel', cancelReset);
+resetBtn.addEventListener('pointerleave', cancelReset);
 
 // Prompt length
 document.getElementById('s-prompt-area').addEventListener('input', e => {
