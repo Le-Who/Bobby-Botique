@@ -21,9 +21,9 @@ from app.utils.formatting import TelegramFormatter
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_CHAT, update_stage
 from app.utils.ux_improvements import (
+    make_feedback_buttons,
     set_done_reaction,
     set_error_reaction,
-    set_feedback_reactions,
     set_thinking_reaction,
 )
 
@@ -191,6 +191,7 @@ async def _handle_regular_chat(
 
     # ── Inject long-term memories (semantic recall) ──────────────────────
     _memories_injected = 0
+    _graph_triples_count = 0
     if chat_state.ltm_enabled and key_data:
         try:
             from app.repos.memory import search_memories_with_graph
@@ -237,10 +238,11 @@ async def _handle_regular_chat(
 
                     graph_parts.append("</knowledge_graph>")
                     system_instruction = system_instruction + "\n".join(graph_parts)
+                    _graph_triples_count = len(graph_triples)
                     logging.info(
                         "Injected %d memories + %d graph triples for user %s",
                         _memories_injected,
-                        len(graph_triples),
+                        _graph_triples_count,
                         user_id,
                     )
                 elif _memories_injected:
@@ -479,6 +481,15 @@ async def _handle_regular_chat(
                     if _copy_btn:
                         buttons.append([_copy_btn])
 
+                # ── Citation badge when graph memory was used ────────────
+                if _graph_triples_count > 0:
+                    _total_sources = _memories_injected + _graph_triples_count
+                    _cite_label = f"🧠 {_total_sources} fact{'s' if _total_sources != 1 else ''}"
+                    buttons.append([InlineKeyboardButton(_cite_label, callback_data="noop")])
+
+                # ── RLHF: 👍/👎 inline feedback buttons (last row) ───────
+                buttons.append(make_feedback_buttons())
+
                 reply_markup = InlineKeyboardMarkup(buttons)
 
             if not streamed:
@@ -509,10 +520,9 @@ async def _handle_regular_chat(
             if _user_msg_id and not was_interrupted:
                 await set_done_reaction(_bot, _chat_id, _user_msg_id)
 
-            # ── UX: pre-place 👍/👎 on bot's response for tap-to-rate ────
-            if not was_interrupted:
-                _response_msg = stream_last_msg or placeholder_message
-                await set_feedback_reactions(_bot, _chat_id, _response_msg.message_id)
+            # NOTE: Feedback is now handled via inline buttons (make_feedback_buttons)
+            # appended to reply_markup above. No need for set_feedback_reactions().
+            # The old dual-reaction approach violated Bot API 1-reaction limit.
 
             # ── Voice reply (fire-and-forget background task) ────────────
             # Fired BEFORE state save to start TTS generation ASAP.

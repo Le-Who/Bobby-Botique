@@ -1,18 +1,22 @@
 # /app/handlers/msg_reactions.py
-"""Native Telegram reaction handler — ambient feedback via pre-placed reactions.
+"""Native Telegram reaction handler — ambient feedback via organic reactions.
 
 Architecture:
-    The bot pre-places 👍/👎 reactions on its OWN messages (via
-    ``set_feedback_reactions`` in ux_improvements.py). Users simply tap
-    one of the pre-placed reactions to give feedback — zero friction.
+    **Primary feedback channel**: Inline keyboard buttons (👍/👎) handled
+    by ``cb_feedback.feedback_callback``. Those buttons are appended to every
+    AI response message.
+
+    **Secondary/fallback channel** (this module): Users can also react to bot
+    messages with native Telegram reactions (long-press → reaction picker).
+    This handler captures those organic reactions.
 
     When a user reacts:
       👍 / ❤️ / 🔥 / 👏  → record positive + bot responds with ❤️ reaction
       👎 / 💩 / 🤮        → record negative + store LTM correction signal
 
-    **Critical filter**: The bot's own pre-placed reactions are ignored
-    by checking ``actor.id != bot.id``. Without this, the bot would count
-    its own seeds as user feedback.
+    **Safety filter**: The bot may still set single reactions (e.g. ❤️ on
+    upvote). We filter ``actor.id == bot.id`` to avoid counting those as
+    user feedback.
 
     Reactions arrive via ``message_reaction`` updates (UpdateType.MESSAGE_REACTION).
     We handle ONLY ``update.message_reaction`` (individual reactions), not
@@ -68,9 +72,9 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
 
     user_id: int = actor.id
 
-    # ── CRITICAL: filter out bot's own pre-placed reactions ────────────────
-    # The bot places 👍/👎 on its messages via set_feedback_reactions().
-    # Telegram delivers that as a message_reaction update with actor=bot.
+    # ── Filter out bot's own reactions ─────────────────────────────────────
+    # The bot may set single reactions (e.g. ❤️ on upvote via cb_feedback).
+    # Telegram delivers those as message_reaction updates with actor=bot.
     # We must not count those as user feedback.
     bot_id = context.bot.id
     if user_id == bot_id:

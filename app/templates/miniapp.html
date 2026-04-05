@@ -127,13 +127,32 @@ body {
 .empty-state-icon { font-size: 50px; margin-bottom: 16px; opacity: 0.5; }
 .empty-state-title { font-size: 18px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
 .empty-state-desc { font-size: 14px; line-height: 1.5; }
+
+/* ── Tab Bar ── */
+.tab-bar { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--bg); border-top: 1px solid var(--secondary-bg); padding: 6px 0 max(6px, env(safe-area-inset-bottom)); z-index: 50; }
+.tab-btn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0; cursor: pointer; color: var(--hint); font-size: 10px; font-weight: 500; transition: color .2s; }
+.tab-btn.active { color: var(--link); }
+.tab-btn-icon { font-size: 20px; }
+
+/* ── Graph Canvas ── */
+#graph-canvas { width: 100%; height: calc(100vh - 120px); background: var(--secondary-bg); border-radius: var(--radius); margin: 8px; overflow: hidden; position: relative; }
+.graph-controls { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px; z-index: 5; }
+.graph-btn { width: 36px; height: 36px; border-radius: 8px; background: var(--bg); border: none; font-size: 16px; box-shadow: var(--shadow); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.graph-node { cursor: pointer; }
+.graph-node circle { stroke-width: 2; }
+.graph-node text { font-size: 10px; fill: var(--text); pointer-events: none; text-anchor: middle; dy: -12; }
+.graph-edge line { stroke: var(--hint); stroke-opacity: 0.6; }
+.graph-edge text { font-size: 8px; fill: var(--hint); text-anchor: middle; }
+.graph-tooltip { position: absolute; background: var(--text); color: var(--bg); padding: 8px 12px; border-radius: 8px; font-size: 12px; pointer-events: none; z-index: 10; white-space: nowrap; opacity: 0; transition: opacity .2s; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+.graph-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--hint); }
+.graph-stats { position: absolute; bottom: 12px; left: 12px; font-size: 11px; color: var(--hint); background: var(--bg); padding: 4px 8px; border-radius: 6px; box-shadow: var(--shadow); z-index: 5; }
 </style>
 </head>
 <body>
 
 <!-- Page: Memories (Root) -->
 <div id="page-memories" class="page">
-  <div class="search-header">
+<div class="search-header">
     <div class="settings-btn" onclick="pushPage('page-settings')">⚙️</div>
     <input class="search-input" type="text" placeholder="Поиск по памяти…" id="search-input">
   </div>
@@ -228,6 +247,39 @@ body {
       <span class="btn-hold-label">⚠️ Удерживайте для сброса контекста</span>
     </div>
     <div style="text-align: center; font-size: 12px; color: var(--hint); margin-top: 8px;">Очищает текущую историю диалога (кроме памяти)</div>
+  </div>
+</div>
+
+<!-- Page: Knowledge Graph -->
+<div id="page-graph" class="page">
+  <div class="search-header" style="justify-content: center; gap: 12px;">
+    <span style="font-size: 16px; font-weight: 600;">🕸️ Граф знаний</span>
+  </div>
+  <div id="graph-canvas">
+    <div class="graph-tooltip" id="graph-tooltip"></div>
+    <div class="graph-controls">
+      <button class="graph-btn" onclick="zoomGraph(1.3)" title="Zoom In">➕</button>
+      <button class="graph-btn" onclick="zoomGraph(0.7)" title="Zoom Out">➖</button>
+      <button class="graph-btn" onclick="resetGraphZoom()" title="Reset">⟳</button>
+    </div>
+    <div class="graph-stats" id="graph-stats"></div>
+    <svg id="graph-svg" width="100%" height="100%"></svg>
+  </div>
+</div>
+
+<!-- Tab Bar -->
+<div class="tab-bar">
+  <div class="tab-btn active" id="tab-memories" onclick="switchTab('memories')">
+    <span class="tab-btn-icon">🧠</span>
+    <span>Память</span>
+  </div>
+  <div class="tab-btn" id="tab-graph" onclick="switchTab('graph')">
+    <span class="tab-btn-icon">🕸️</span>
+    <span>Граф</span>
+  </div>
+  <div class="tab-btn" id="tab-settings" onclick="switchTab('settings')">
+    <span class="tab-btn-icon">⚙️</span>
+    <span>Настройки</span>
   </div>
 </div>
 
@@ -837,10 +889,242 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s||''
 // Init
 const params = new URLSearchParams(window.location.search);
 pushPage('page-memories');
-if (params.get('tab') === 'settings') {
-  pushPage('page-settings');
+const tabParam = params.get('tab');
+if (tabParam === 'settings') {
+  switchTab('settings');
+} else if (tabParam === 'graph') {
+  switchTab('graph');
 }
 initObserver();
+
+// ── Tab Switcher ──
+function switchTab(tab) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  const map = {
+    'memories': 'page-memories',
+    'graph': 'page-graph',
+    'settings': 'page-settings'
+  };
+  
+  // Reset stack to root
+  stack.forEach(id => document.getElementById(id).classList.remove('active'));
+  stack = [map[tab]];
+  document.getElementById(map[tab]).classList.add('active');
+  tg.BackButton.hide();
+  
+  // Active tab button
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  
+  if (tab === 'settings' && !settingsData) loadSettings();
+  if (tab === 'graph' && !graphLoaded) loadGraph();
+  updateMainButton();
+}
+
+// ── Graph Visualization (D3.js Force-Directed) ──
+let graphLoaded = false;
+let graphSimulation = null;
+let graphZoomBehavior = null;
+
+async function loadGraph() {
+  const canvas = document.getElementById('graph-canvas');
+  const svg = document.getElementById('graph-svg');
+  
+  try {
+    const data = await api('/graph?limit=150');
+    const nodes = data.nodes || [];
+    const edges = data.edges || [];
+    
+    if (nodes.length === 0) {
+      svg.innerHTML = '';
+      canvas.querySelector('.graph-stats').textContent = '';
+      const empty = document.createElement('div');
+      empty.className = 'graph-empty';
+      empty.innerHTML = '<div style="font-size:50px;opacity:.5">🕸️</div><div style="font-size:16px;font-weight:600;margin-top:12px">Граф пуст</div><div style="font-size:13px;margin-top:8px">Общайтесь с ботом, чтобы заполнить граф знаний</div>';
+      canvas.appendChild(empty);
+      graphLoaded = true;
+      return;
+    }
+    
+    document.getElementById('graph-stats').textContent = `${nodes.length} nodes · ${edges.length} edges`;
+    
+    // Build D3 data
+    const nodeMap = new Map(nodes.map(n => [n.id, {...n, x: undefined, y: undefined}]));
+    const links = edges.filter(e => nodeMap.has(e.source_node_id) && nodeMap.has(e.target_node_id))
+                       .map(e => ({source: e.source_node_id, target: e.target_node_id, label: e.relation_type || '', weight: e.weight || 0.5}));
+    const nodeArr = Array.from(nodeMap.values());
+    
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    
+    // Inline D3 force simulation (minimal, no external dependency)
+    // Using native SVG manipulation
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.innerHTML = '<g id="graph-g"></g>';
+    const g = svg.querySelector('#graph-g');
+    
+    // Assign initial positions
+    nodeArr.forEach((n, i) => {
+      const angle = (2 * Math.PI * i) / nodeArr.length;
+      const radius = Math.min(width, height) * 0.35;
+      n.x = width/2 + radius * Math.cos(angle);
+      n.y = height/2 + radius * Math.sin(angle);
+      n.vx = 0; n.vy = 0;
+    });
+    
+    // Color palette by entity type
+    const typeColors = {
+      'PERSON': '#4A90D9', 'SKILL': '#50C878', 'ORGANIZATION': '#E8A838',
+      'LOCATION': '#C75050', 'CONCEPT': '#9B59B6', 'TECHNOLOGY': '#1ABC9C',
+      'EVENT': '#E67E22', 'PRODUCT': '#3498DB', 'DEFAULT': '#7F8C8D'
+    };
+    function nodeColor(type) { return typeColors[(type||'').toUpperCase()] || typeColors.DEFAULT; }
+    function nodeRadius(n) { return Math.max(6, Math.min(16, 6 + (links.filter(l => l.source === n.id || l.target === n.id).length) * 1.5)); }
+    
+    // Render edges
+    links.forEach(l => {
+      const src = nodeMap.get(typeof l.source === 'object' ? l.source.id : l.source);
+      const tgt = nodeMap.get(typeof l.target === 'object' ? l.target.id : l.target);
+      if (!src || !tgt) return;
+      
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.classList.add('graph-link');
+      line.setAttribute('stroke', 'var(--hint)');
+      line.setAttribute('stroke-opacity', Math.max(0.15, l.weight));
+      line.setAttribute('stroke-width', Math.max(0.5, l.weight * 2));
+      line.dataset.src = src.id; line.dataset.tgt = tgt.id;
+      g.appendChild(line);
+    });
+    
+    // Render nodes
+    nodeArr.forEach(n => {
+      const gNode = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      gNode.classList.add('graph-node');
+      gNode.dataset.id = n.id;
+      
+      const r = nodeRadius(n);
+      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circle.setAttribute('r', r);
+      circle.setAttribute('fill', nodeColor(n.entity_type));
+      circle.setAttribute('stroke', '#fff');
+      circle.setAttribute('stroke-width', '1.5');
+      gNode.appendChild(circle);
+      
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('dy', -(r + 4));
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('font-size', '9');
+      text.setAttribute('fill', 'var(--text)');
+      text.textContent = (n.name || '').substring(0, 18);
+      gNode.appendChild(text);
+      
+      // Tooltip
+      gNode.addEventListener('click', () => {
+        if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+        const tip = document.getElementById('graph-tooltip');
+        tip.textContent = `${n.name} (${n.entity_type || 'unknown'})`;
+        tip.style.left = (n.x + 20) + 'px';
+        tip.style.top = (n.y - 10) + 'px';
+        tip.style.opacity = '1';
+        setTimeout(() => tip.style.opacity = '0', 2500);
+      });
+      
+      // Dragging
+      let dragging = false, dragX, dragY;
+      gNode.addEventListener('pointerdown', e => {
+        dragging = true; dragX = e.clientX - n.x; dragY = e.clientY - n.y;
+        gNode.setPointerCapture(e.pointerId);
+      });
+      gNode.addEventListener('pointermove', e => {
+        if (!dragging) return;
+        n.x = e.clientX - dragX; n.y = e.clientY - dragY;
+        updateGraphPositions();
+      });
+      gNode.addEventListener('pointerup', () => dragging = false);
+      
+      g.appendChild(gNode);
+    });
+    
+    // Simple force simulation (no D3 dependency)
+    function simulate(iterations) {
+      for (let i = 0; i < iterations; i++) {
+        // Repulsion between nodes
+        for (let a = 0; a < nodeArr.length; a++) {
+          for (let b = a+1; b < nodeArr.length; b++) {
+            let dx = nodeArr[b].x - nodeArr[a].x;
+            let dy = nodeArr[b].y - nodeArr[a].y;
+            let d = Math.sqrt(dx*dx + dy*dy) || 1;
+            let force = 800 / (d * d);
+            nodeArr[a].vx -= (dx/d) * force;
+            nodeArr[a].vy -= (dy/d) * force;
+            nodeArr[b].vx += (dx/d) * force;
+            nodeArr[b].vy += (dy/d) * force;
+          }
+        }
+        // Attraction along links
+        links.forEach(l => {
+          let src = nodeMap.get(typeof l.source === 'object' ? l.source.id : l.source);
+          let tgt = nodeMap.get(typeof l.target === 'object' ? l.target.id : l.target);
+          if (!src || !tgt) return;
+          let dx = tgt.x - src.x;
+          let dy = tgt.y - src.y;
+          let d = Math.sqrt(dx*dx + dy*dy) || 1;
+          let force = (d - 80) * 0.02;
+          src.vx += (dx/d) * force;
+          src.vy += (dy/d) * force;
+          tgt.vx -= (dx/d) * force;
+          tgt.vy -= (dy/d) * force;
+        });
+        // Center gravity
+        nodeArr.forEach(n => {
+          n.vx += (width/2 - n.x) * 0.005;
+          n.vy += (height/2 - n.y) * 0.005;
+          n.vx *= 0.9; n.vy *= 0.9;
+          n.x += n.vx; n.y += n.vy;
+          // Bounds
+          n.x = Math.max(20, Math.min(width - 20, n.x));
+          n.y = Math.max(20, Math.min(height - 20, n.y));
+        });
+      }
+    }
+    
+    function updateGraphPositions() {
+      g.querySelectorAll('.graph-link').forEach(line => {
+        const src = nodeMap.get(parseInt(line.dataset.src));
+        const tgt = nodeMap.get(parseInt(line.dataset.tgt));
+        if (src && tgt) {
+          line.setAttribute('x1', src.x); line.setAttribute('y1', src.y);
+          line.setAttribute('x2', tgt.x); line.setAttribute('y2', tgt.y);
+        }
+      });
+      g.querySelectorAll('.graph-node').forEach(gNode => {
+        const n = nodeMap.get(parseInt(gNode.dataset.id));
+        if (n) gNode.setAttribute('transform', `translate(${n.x},${n.y})`);
+      });
+    }
+    
+    // Run physics in chunks for smooth animation
+    simulate(120);
+    updateGraphPositions();
+    
+    // Zoom via transform
+    let currentZoom = 1;
+    let panX = 0, panY = 0;
+    window.zoomGraph = function(factor) {
+      currentZoom *= factor;
+      g.setAttribute('transform', `translate(${panX},${panY}) scale(${currentZoom})`);
+    };
+    window.resetGraphZoom = function() {
+      currentZoom = 1; panX = 0; panY = 0;
+      g.setAttribute('transform', '');
+    };
+    
+    graphLoaded = true;
+  } catch(e) {
+    console.error('Graph load failed:', e);
+    showToast('Ошибка загрузки графа');
+  }
+}
 
 </script>
 </body>

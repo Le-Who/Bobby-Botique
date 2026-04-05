@@ -3,6 +3,44 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.24] - 2026-04-05 - RLHF Feedback Fix, Citation Badges & Graph Canvas
+
+### 🐛 Critical Bug Fix: Telegram Bot API Reaction Limitation
+
+#### Problem
+`set_feedback_reactions()` attempted to set TWO reactions (👍+👎) per message via `setMessageReaction`. **Telegram Bot API hard-limits non-premium bots to 1 reaction per message.** The call silently failed — users never saw the feedback invitation.
+
+#### Solution
+- **Replaced broken dual-reaction** with inline keyboard buttons (`[👍] [👎]`) appended as the last row on every AI response.
+- Button handler `cb_feedback.py` upgraded with full RLHF pipeline: on 👎 → LTM negative signal + graph edge penalty; on 👍 → ❤️ reaction acknowledgment (safe: 1 reaction).
+- Organic reactions (via Telegram reaction picker) still captured by `msg_reactions.py` as a fallback channel.
+- `set_feedback_reactions()` deleted from `ux_improvements.py`, replaced by `make_feedback_buttons()`.
+
+### 🧠 Citation Badges `[🧠 N facts]`
+- When graph triples + memories were used to generate a response, a `[🧠 N facts]` badge is added to the inline keyboard (decorative noop button).
+- Tracks `_graph_triples_count` alongside `_memories_injected` for accurate source counting.
+
+### 🕸️ Knowledge Graph Visualization Canvas
+- **New Mini App tab**: "🕸️ Граф" — interactive force-directed graph canvas.
+- Renders nodes (circle radius ∝ edge degree) and edges (opacity ∝ weight) from `/webapp/api/graph`.
+- Color palette by entity type: PERSON (blue), SKILL (green), ORGANIZATION (gold), LOCATION (red), CONCEPT (purple), TECHNOLOGY (teal).
+- Pointer drag to reposition nodes, zoom in/out/reset controls.
+- Tap node for tooltip with entity name and type.
+- Tab-bar navigation (🧠 Память / 🕸️ Граф / ⚙️ Настройки) replaces old settings-button pattern.
+- Zero external dependencies — force simulation implemented with native SVG + vanilla JS (120-iteration physics).
+
+### 🔧 Code Quality
+- `ruff check + format` — 0 errors across all 137 Python files.
+- Stale docstrings and comments in `msg_reactions.py` updated to reflect new architecture.
+- Mypy error fixed in `cb_feedback.py` (`isinstance(msg, Message)` guard).
+
+### 📝 README
+- Updated Smart UX section to describe inline button feedback pattern.
+- Updated Mini App section: two-tab → three-tab with graph canvas.
+- Updated RLHF sub-bullet under GraphRAG Memory.
+
+---
+
 ## [2.9.23] - 2026-04-05 - Agentic GraphRAG Evolution (Phases 1–3)
 
 ### 🧠 Phase 1: Core Infrastructure — Real-Time Streaming Extraction

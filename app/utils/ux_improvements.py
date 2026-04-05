@@ -219,40 +219,31 @@ def tg_time_tag(unix_timestamp: int, *, fmt: str = "wDT") -> str:
     return f'<tg-time unix="{unix_timestamp}" format="{fmt}">{html.escape(fallback)}</tg-time>'
 
 
-# ── Pre-placed Feedback Reactions ─────────────────────────────────────────────
+# ── RLHF Feedback Buttons (Inline Keyboard) ──────────────────────────────────
 
-# Emoji used by the bot to pre-seed feedback options on its OWN messages.
-# Users tap one of these to give feedback without needing to find the reaction menu.
+# Telegram Bot API limits non-premium bots to 1 reaction per message.
+# Pre-placing two reactions (👍+👎) via setMessageReaction is therefore BROKEN.
+# Instead, we use inline keyboard buttons — the industry-standard pattern.
 FEEDBACK_THUMBSUP = "👍"
 FEEDBACK_THUMBSDOWN = "👎"
 
 
-async def set_feedback_reactions(
-    bot: Bot,
-    chat_id: int,
-    message_id: int,
-) -> None:
-    """Pre-place 👍 and 👎 reactions on the bot's own message.
+def make_feedback_buttons() -> list:
+    """Return a single-row list of 👍/👎 InlineKeyboardButtons for RLHF feedback.
 
-    The bot sets BOTH reactions simultaneously so the user only needs to
-    tap the one they agree with.  These bot-placed reactions are filtered
-    out by msg_reactions.py to avoid counting the bot's own reactions
-    as user feedback.
+    Append this row to any inline keyboard on the bot's AI response messages.
+    Handled by ``cb_feedback.feedback_callback`` via ``feedback:up`` / ``feedback:down``
+    callback data patterns.
+
+    Returns:
+        A list containing two InlineKeyboardButtons (one row for InlineKeyboardMarkup).
     """
-    try:
-        from telegram import ReactionTypeEmoji
+    from telegram import InlineKeyboardButton
 
-        await bot.set_message_reaction(
-            chat_id=chat_id,
-            message_id=message_id,
-            reaction=[
-                ReactionTypeEmoji(emoji=FEEDBACK_THUMBSUP),
-                ReactionTypeEmoji(emoji=FEEDBACK_THUMBSDOWN),
-            ],
-            is_big=False,
-        )
-    except Exception as exc:
-        logger.debug("set_feedback_reactions failed (non-critical): %s", exc)
+    return [
+        InlineKeyboardButton(FEEDBACK_THUMBSUP, callback_data="feedback:up"),
+        InlineKeyboardButton(FEEDBACK_THUMBSDOWN, callback_data="feedback:down"),
+    ]
 
 
 # ── CopyTextButton helper ─────────────────────────────────────────────────────
