@@ -22,3 +22,7 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+## 2024-11-20 - Deprecate MD5 Usage
+**Vulnerability:** Weak cryptographic hashing (`hashlib.md5`) used for generating IDs and deduplication hashes. Although not directly exploited for authentication, using MD5 can trigger security scanners and violates general security best practices.
+**Learning:** Even for non-critical use cases like deduplication or short UI IDs, using cryptographically weak algorithms like MD5 introduces technical debt and potential audit failures.
+**Prevention:** Always default to modern, secure hashing algorithms (like `hashlib.sha256()`) across the codebase to ensure compliance and avoid false positives in security scanning tools.
