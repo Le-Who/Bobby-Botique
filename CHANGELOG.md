@@ -3,7 +3,13 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [2.9.30] - 2026-04-06 - Zero-Latency Voice Engine 4.0 & Mini App Refactoring
+## [2.9.31] - 2026-04-06 - Voice Engine 4.1 Reliability & Bug Fixes
+
+### 🐛 Critical Bug Fixes
+- **TTS Generator Stability (500 Error Fix):** Reverted the "Zero-Latency" single-batch chunking approach that was introduced in Voice Engine 4.0. Passing extremely large contiguous text directly to Gemini `flash-preview-tts` exceeded API structural constraints, causing 44s timeouts or hard `500 INTERNAL` API crashes. The system now safely re-chunks outputs over `2500` bytes iteratively to secure latency resilience. Additionally restored config temperature from `0.3` to `0.5` to alleviate AI generation loop collapse (audible stuttering/hallucinations).
+- **Audio Retranscription Crash:** Handled an asynchronous tuple unpack error (`ValueError: too many values to unpack (expected 2, got 3)`) that blocked the ⚡ Re-transcribe (Flash) UI and Dev `/asr` command. Correctly unpacked the `draw_prompt` parameter globally, ensuring production functionality is totally restored.
+
+## [2.9.30] - 2026-04-06 - Voice Engine 4.0 & Mini App Refactoring
 
 ### ✨ UX Enhancements & TTS Tuning
 - **Zero-Latency Single-Batch UX (Gemini TTS):** Completely decoupled the Gemini API wrapper from legacy GCP 3500-byte constraint loops. The `gemini-2.5-flash-preview-tts` orchestrator now passes up to 40,000 bytes into a single request, eliminating sequential recursive HTTP network wait times and producing near-instant TTS Time-To-First-Byte for even the longest messages.
