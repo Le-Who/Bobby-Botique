@@ -366,24 +366,130 @@ async def api_get_voices(user_id: int):
 
 @miniapp_blueprint.route("/reader")
 async def reader_page():
-    """Serve the Long Read Mini App HTML shell.
+    """Serve the Long Read reader (Server-Side Rendered).
+
+    Query params:
+        id (str): Opaque UUID identifying the stored message.
 
     This endpoint is intentionally public (no auth) — content is accessed by
     opaque UUID, so there is nothing to enumerate without the original link.
-    """
-    from quart import render_template
 
-    return await render_template("reader.html")
+    SSR flow:
+        1. Fetch markdown from Redis by UID.
+        2. If Redis miss → try to pull content from Telegraph (cold storage).
+        3. Render Markdown → HTML and extract TOC on the server.
+        4. Inject pre-rendered HTML + TOC JSON into the Jinja2 template so the
+           client renders instantly without a second fetch round-trip.
+    """
+    import json
+    import re as _re
+
+    from quart import render_template
+    from quart import request as _req
+
+    uid = _req.args.get("id", "")
+
+    # ── 1. Validate UID
+    if uid and not _re.match(r"^[0-9a-f-]{36}$", uid, _re.IGNORECASE):
+        uid = ""  # treat as missing rather than raising
+
+    body_html = ""
+    toc_json = "[]"
+    telegraph_fallback_url = ""
+    source_label = ""
+
+    if uid:
+        try:
+            from app.cache import get_long_message, get_telegraph_url
+            from app.utils.reader_utils import extract_toc, markdown_to_reader_html
+
+            markdown = await get_long_message(uid)
+
+            if markdown:
+                # ── 2. Redis hit — SSR
+                toc = extract_toc(markdown)
+                body_html = markdown_to_reader_html(markdown, toc)
+                toc_json = json.dumps(toc, ensure_ascii=False)
+                source_label = "redis"
+            else:
+                # ── 3. Redis miss — try Telegraph cold-storage
+                tg_url = await get_telegraph_url(uid)
+                if tg_url:
+                    pulled = await _fetch_telegraph_content(tg_url)
+                    if pulled:
+                        toc = extract_toc(pulled)
+                        body_html = markdown_to_reader_html(pulled, toc)
+                        toc_json = json.dumps(toc, ensure_ascii=False)
+                        source_label = "telegraph"
+                    else:
+                        # Could fetch URL but could not parse content → redirect
+                        telegraph_fallback_url = tg_url
+
+        except Exception as _e:
+            logger.warning("SSR reader render failed uid=%s: %s", uid, _e)
+
+    return await render_template(
+        "reader.html",
+        body_html=body_html,
+        toc_json=toc_json,
+        telegraph_fallback_url=telegraph_fallback_url,
+        uid=uid,
+        source_label=source_label,
+    )
+
+
+async def _fetch_telegraph_content(tg_url: str) -> str | None:
+    """Fetch a Telegraph page and extract its text content.
+
+    Used as cold-storage fallback when Redis TTL has expired.
+    Returns plain text suitable for re-rendering through our Reader, or None
+    on network/parse failure.
+
+    Args:
+        tg_url: Full ``https://telegra.ph/...`` URL of the page.
+
+    Returns:
+        Extracted text, or None if the fetch or parse failed.
+    """
+    import httpx
+
+    from app.utils.reader_utils import extract_text_from_telegraph_html
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            resp = await client.get(tg_url)
+            resp.raise_for_status()
+            page_html = resp.text
+
+        # Extract the <article> body from the Telegraph page HTML
+        import re as _re
+
+        article_match = _re.search(
+            r"<article[^>]*>(.*?)</article>", page_html, _re.DOTALL
+        )
+        if not article_match:
+            logger.warning("No <article> tag found in Telegraph page: %s", tg_url)
+            return None
+
+        return extract_text_from_telegraph_html(article_match.group(1))
+
+    except Exception as exc:
+        logger.warning("Telegraph reverse-proxy fetch failed (%s): %s", tg_url, exc)
+        return None
 
 
 @miniapp_blueprint.route("/api/reader/<uid>")
 async def api_reader_content(uid: str):
     """Return the stored long message content for a given UID.
 
+    Kept for backward-compatibility with clients that still perform an explicit
+    XHR fetch (e.g., older cached versions of ``reader.html``).  New visits use
+    the SSR path built directly into ``/reader``.
+
     Response schema (one of):
-      {"markdown": "<full text>"}                       — Redis hit, fresh content
-      {"telegraph_url": "https://telegra.ph/..."}       — Redis expired, use fallback
-      {"error": "not_found"}  HTTP 404                  — nothing available
+      {"markdown": "<full text>"}                         — Redis hit, fresh content
+      {"telegraph_url": "https://telegra.ph/..."}         — Redis miss, cold fallback URL
+      {"error": "not_found"}  HTTP 404                    — nothing available
     """
     import re
 

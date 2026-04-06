@@ -3,6 +3,108 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.28] - 2026-04-06 - Long Read Reader Overhaul: SSR, Cold Storage Fallback & 5-Point UX
+
+### 🚀 Architecture: Server-Side Rendering (SSR) for Long Read Reader
+
+**Problem:** The `/webapp/reader` page used client-side rendering (CSR) with `marked.js`.
+Every visit required: navigate → load shell → JS parses markdown → render.  This produced a
+visible "skeleton" load state degrading FCP on mobile Telegram WebViews.
+
+**Fix:** `/webapp/reader` is now SSR-rendered by the FastAPI/Quart handler before any HTML
+is sent to the browser.  The Jinja2 template receives `body_html`, `toc_json`,
+`source_label`, and `telegraph_fallback_url` — the page paints instantly with full content.
+
+#### New: `app/utils/reader_utils.py`
+- **`markdown_to_reader_html(markdown, toc)`** — Full-featured Markdown→HTML renderer targeting
+  a standalone WebApp (emits `<h1>`–`<h3>`, `<hr>`, `<blockquote>`, `<ul>`, `<ol>`, `<a target="_blank">`,
+  and rich `.code-block` divs with `data-lang` + encoded `data-code` for client JS).
+  Processes fenced code blocks first so later passes never touch code content.
+- **`extract_toc(markdown)`** — Extracts H1–H3 headings (skips headings inside code fences),
+  generates URL-safe deduplicated anchors, returns empty list when fewer than 2 headings found.
+- **`apply_bionic_reading(html_text)`** — Wraps word stems in `<b>` tags throughout
+  text nodes (skips `<code>`, `<pre>`, `<b>`, `<strong>`, `<a>` content).
+  Bionic fraction scales with word length: 1→1 char, 4–6→2, 7–9→3, 10+→4.
+- **`extract_text_from_telegraph_html(html)`** — Strips tags then decodes HTML entities
+  for the cold-storage fallback pipeline (order matters: strip first so decoded `<` chars
+  aren't mistaken for new tags).
+
+### 🔄 Feature: Telegraph Reverse-Proxy Cold Storage
+
+When the Redis 24h TTL expires but a Telegraph URL is still present:
+1. `reader_page()` calls `_fetch_telegraph_content(tg_url)` — fetches the Telegraph HTML,
+   extracts the `<article>` body, converts to plain text via `extract_text_from_telegraph_html`.
+2. The extracted text is rendered through `markdown_to_reader_html` + `extract_toc` just like
+   a live Redis hit — user sees our own Reader UI, not a Telegraph redirect.
+3. If the reverse-proxy fetch fails (timeout, blocked network, no `<article>` tag), the template
+   falls back to a Telegraph link button (`telegraph_fallback_url`), which auto-redirects
+   inside Telegram 900ms after page load.
+
+`_fetch_telegraph_content()` silently returns `None` on any network or parse failure — no
+exception leaks to the user.
+
+### 🎨 Feature: Floating Table of Contents (TOC FAB + Bottom Sheet)
+
+- **FAB button** (☰) appears in the bottom-right corner whenever `extract_toc()` finds ≥ 2 headings.
+- Tap → bottom sheet slides up (spring cubic-bezier animation) with a full heading list.
+- Tap any entry → smooth scroll to heading with a topbar offset.
+- Swipe down → closes the sheet (native mobile gesture).
+- Sheet closes automatically after navigation.
+- Haptic feedback via `Telegram.WebApp.HapticFeedback`.
+
+### ⛶ Feature: Full-Screen Code Modal + File Download
+
+Each `.code-block` header now has three action buttons:
+- **⛶ Expand** → opens a bottom-sheet-style full-screen modal with the raw code, re-highlighted
+  by `hljs` with correct language class (`language-{lang}`).
+- **↓ Download** → auto-detects file extension from the language label (`python→.py`,
+  `typescript→.ts`, etc.) and triggers a `Blob` download. 20+ languages supported.
+- **Копия** → copies raw code from `data-code` attribute to clipboard; shows ✓ confirmation
+  for 1.8 s.
+
+Code blocks also feature gradient fade-right indicators (`::after` overlay) to signal
+horizontal overflow on mobile.
+
+### 👁 Feature: Bionic Reading Toggle
+
+- **Top-bar toggle button** "👁 Bionic" activates Bionic Reading mode.
+- On first activation, a `TreeWalker` traverses all text nodes in `#md-body` (skipping
+  `<code>`, `<pre>`, `<b>`, `<strong>`) and wraps word stems in `<b>` tags via `.innerHTML`
+  replacement.
+- CSS class `body.bionic b { font-weight: 800 }` makes the injected `<b>` tags visually
+  heavier.
+- Preference persisted in `sessionStorage` — survives tab navigation within the session.
+
+### 🔊 Feature: Text-to-Speech (Read Aloud)
+
+- **Top-bar "🔊 Вслух" toggle** invokes `window.speechSynthesis`.
+- Uses `SpeechSynthesisUtterance` with `lang: 'ru-RU'`, `rate: 0.92`, `pitch: 1.0`.
+- Button morphs to "⏹ Стоп" while active.
+- Auto-stops when the browser tab is hidden (`visibilitychange` event).
+- Graceful degradation: shows toast if `speechSynthesis` is unavailable.
+
+### 🛠 Modified Files
+
+| File | Change |
+|------|--------|
+| `app/utils/reader_utils.py` | [NEW] SSR rendering utilities |
+| `app/web_miniapp.py` | `/reader` upgraded to SSR; `_fetch_telegraph_content()` added |
+| `app/templates/reader.html` | Complete rewrite — SSR Jinja2 vars, TOC sheet, code modal, Bionic, TTS |
+| `tests/test_reader_utils.py` | [NEW] 23 unit tests for all reader utility functions |
+| `tests/test_reader_ssr.py` | [NEW] 7 tests for Telegraph reverse-proxy + API endpoint paths |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check` (changed files) | 0 errors ✅ |
+| `mypy app/utils/reader_utils.py app/web_miniapp.py` | Exit 0 ✅ |
+| `pytest tests/test_reader_utils.py` | **23 passed** ✅ |
+| `pytest tests/test_reader_ssr.py` | **7 passed** ✅ |
+| `pytest` (full suite) | **1643 passed**, 0 failed ✅ |
+
+---
+
 ## [2.9.27] - 2026-04-05 - MiniApp Audit Patch: 6 Correctness Bugs + M-1 Reactive Pointer Fix
 
 ### 🔴 Critical Fixes (found in post-implementation audit)
