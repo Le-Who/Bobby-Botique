@@ -437,9 +437,9 @@ async def _handle_research_agent(
             from app.utils.ux_improvements import wrap_in_expandable_blockquote
 
             summary_html = wrap_in_expandable_blockquote(summary_lines)
-            full_text = f'{summary_html}\n\n📖 <a href="{reader_url}">Читать полностью</a>'
+            full_text = f'{summary_html}\n\n<i>(...текст превышает лимит. Продолжение доступно по кнопке <b>«Развернуть статью»</b> 👇)</i> <a href="{reader_url}">&#8203;</a>'
 
-            buttons.insert(0, [InlineKeyboardButton("📖 Читать полностью", web_app=WebAppInfo(url=reader_url))])
+            buttons.insert(0, [InlineKeyboardButton("📄 Развернуть статью (Mini App)", web_app=WebAppInfo(url=reader_url))])
             reply_markup = InlineKeyboardMarkup(buttons)
 
             try:

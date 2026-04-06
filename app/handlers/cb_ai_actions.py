@@ -253,13 +253,36 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Extract text from the message that has the button
     response_text = query.message.text if query.message else None
+
+    # Check if there's a WebApp url with a UID (Long-read)
+    if query.message and query.message.reply_markup:
+        for row in query.message.reply_markup.inline_keyboard:
+            for btn in row:
+                if btn.web_app and "/reader?id=" in btn.web_app.url:
+                    uid = btn.web_app.url.split("/reader?id=")[1].split("&")[0]
+                    try:
+                        from app.cache import get_long_message
+                        full_text = await get_long_message(uid)
+                        if full_text:
+                            response_text = full_text
+                            logging.info("tts_reply_callback: Fetched full text (%d chars) for uid=%s", len(full_text), uid)
+                    except Exception as e:
+                        logging.warning("tts_reply_callback: Failed to load long message from cache: %s", e)
+                    break
+
     if not response_text or len(response_text.strip()) < 5:
         return
+
+    # Strip code blocks (triple backticks) for TTS so we don't synthesize raw code visually represented by the code block
+    import re
+    response_text = re.sub(r'```.*?```', '', response_text, flags=re.DOTALL)
 
     chat_id = query.message.chat_id
     message_id = query.message.message_id
 
     try:
+        from app.repos.chats import get_user_chat
+        chat_state = await get_user_chat(query.from_user.id)
         from app.voice_engine import fire_voice_reply
 
         fire_voice_reply(
@@ -267,6 +290,7 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             chat_id=chat_id,
             reply_to_message_id=message_id,
             response_text=response_text,
+            voice=chat_state.voice_id or "Aoede",
         )
     except Exception as e:
         logging.error("TTS reply callback failed: %s", e)

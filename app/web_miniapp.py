@@ -348,16 +348,28 @@ async def api_delete_role(user_id: int, role_id: int):
 @miniapp_blueprint.route("/api/voices", methods=["GET"])
 @require_webapp_auth
 async def api_get_voices(user_id: int):
-    """Provide a list of curated ElevenLabs voices."""
-    # A predefined list of high-quality standard voices
-    voices = [
-        {"id": "XB0fDUnXU5powFXDhCwa", "name": "Charlotte (Conversational)"},
-        {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel (Calm)"},
-        {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam (Deep)"},
-        {"id": "ErXwobaYiN019PkySvjV", "name": "Antoni (Friendly)"},
-        {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella (Soft)"},
-        {"id": "t0jbNlBVZ17f02VDIeMI", "name": "Jessie (Energetic)"},
-    ]
+    """Provide a list of curated voices depending on available provider."""
+    from app.config import settings
+
+    if settings.ELEVENLABS_API_KEYS:
+        voices = [
+            {"id": "XB0fDUnXU5powFXDhCwa", "name": "Charlotte (Conversational)"},
+            {"id": "21m00Tcm4TlvDq8ikWAM", "name": "Rachel (Calm)"},
+            {"id": "pNInz6obpgDQGcFmaJgB", "name": "Adam (Deep)"},
+            {"id": "ErXwobaYiN019PkySvjV", "name": "Antoni (Friendly)"},
+            {"id": "EXAVITQu4vr4xnSDxMaL", "name": "Bella (Soft)"},
+            {"id": "t0jbNlBVZ17f02VDIeMI", "name": "Jessie (Energetic)"},
+        ]
+    else:
+        voices = [
+            {"id": "Aoede", "name": "Aoede (Natural/Breezy)"},
+            {"id": "Kore", "name": "Kore (Confident/Energetic)"},
+            {"id": "Puck", "name": "Puck (Upbeat Male)"},
+            {"id": "Charon", "name": "Charon (Professional)"},
+            {"id": "Leda", "name": "Leda (Light/Youthful)"},
+            {"id": "Orus", "name": "Orus (Deep/Authoritative)"},
+            {"id": "Zephyr", "name": "Zephyr (Clear/Cheerful)"},
+        ]
     return jsonify({"voices": voices})
 
 

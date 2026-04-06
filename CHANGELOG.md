@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.29] - 2026-04-06 - Mini App Reader UX & Core Stability Fixes
+
+### 🌟 UX Enhancements & Bug Fixes
+- **Swipe-To-Delete Gestures**: Fixed critical gesture conflict on high-resolution Android/iOS WebViews where the `.memory-card-inner` swipe-to-delete action was immediately interrupted by the browser's native pan actions. Added `touch-action: pan-y` to guarantee clean horizontal sweep captures.
+- **Voice Preferences Routing**: Resolved a regression where user-selected voices in the settings UI were ignored by the backend TTS orchestration engine. `fire_voice_reply` now accurately passes the selected voice ID, seamlessly degrading across ElevenLabs and Gemini text-to-speech providers based on runtime configurations (`use_elevenlabs`).
+- **Read More Buttons Redesign**: Overhauled inline Telegram buttons guiding users into the Long-Read reader (`streaming.py` and `ai_search.py`). Migrated from the ambiguous `📖 Читать полностью` to a polished `📄 Развернуть статью (Mini App)` accompanied by explanatory fallback text `(Продолжение доступно по кнопке...)` to clearly indicate out-of-chat transitions. 
+- **TTS Content Filtering**: Extended the "Озвучить вслух" background task generator to strip code blocks (\`\`\`) via RegEx `DOTALL` patterns across both truncated messages and fully resurrected Long-Read texts. This prevents robotic readouts of raw programming code, maintaining native conversational immersion.
+
 ## [2.9.28] - 2026-04-06 - Long Read Reader Overhaul: SSR, Cold Storage Fallback & 5-Point UX
 
 ### 🚀 Architecture: Server-Side Rendering (SSR) for Long Read Reader

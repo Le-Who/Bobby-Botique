@@ -728,7 +728,7 @@ async def stream_and_display(
 
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-                full_text_html = f'{summary_html}\n\n📖 <a href="{reader_url}">Читать полностью</a>'
+                full_text_html = f'{summary_html}\n\n<i>(...текст превышает лимит. Продолжение доступно по кнопке <b>«Развернуть статью»</b> 👇)</i> <a href="{reader_url}">&#8203;</a>'
 
                 buttons = []
                 if markup and getattr(markup, "inline_keyboard", None):
@@ -736,7 +736,7 @@ async def stream_and_display(
 
                 from telegram import WebAppInfo
 
-                buttons.insert(0, [InlineKeyboardButton("📖 Читать полностью", web_app=WebAppInfo(url=reader_url))])
+                buttons.insert(0, [InlineKeyboardButton("📄 Развернуть статью (Mini App)", web_app=WebAppInfo(url=reader_url))])
                 new_markup = InlineKeyboardMarkup(buttons)
 
                 try:

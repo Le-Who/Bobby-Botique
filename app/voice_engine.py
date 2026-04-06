@@ -182,7 +182,7 @@ async def _generate_and_send_voice(
 
         # 2. Resolve ElevenLabs configuration
         el_keys = settings.ELEVENLABS_API_KEYS
-        el_voice_id = settings.ELEVENLABS_VOICE_ID
+        el_voice_id = voice if voice and len(voice) > 10 else settings.ELEVENLABS_VOICE_ID
         use_elevenlabs = bool(el_keys)
 
         pcm_parts: list[bytes] | None = None
@@ -234,7 +234,8 @@ async def _generate_and_send_voice(
             # Adaptive timeout: ~1 s per 60 chars + 15 s base; capped at [30, 120].
             gemini_timeout = min(120.0, max(30.0, len(clean_text) / 60.0 + 15.0))
 
-            gemini_pcm_parts = await _run_gemini_pipeline(gemini_chunks, voice, gemini_timeout)
+            gemini_voice = voice if voice and len(voice) <= 10 else "Aoede"
+            gemini_pcm_parts = await _run_gemini_pipeline(gemini_chunks, gemini_voice, gemini_timeout)
 
             if gemini_pcm_parts:
                 pcm_parts = gemini_pcm_parts
