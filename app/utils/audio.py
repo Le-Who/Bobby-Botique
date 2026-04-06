@@ -107,3 +107,129 @@ def make_voice_file(ogg_bytes: bytes) -> io.BytesIO:
     buf = io.BytesIO(ogg_bytes)
     buf.name = "voice.ogg"
     return buf
+
+
+# ─── PCM post-processing ─────────────────────────────────────────────────────
+
+# PCM format: signed 16-bit little-endian, mono, 24 kHz
+_SAMPLE_BYTES = 2
+_SAMPLE_RATE = 24000
+
+
+def trim_trailing_silence(
+    pcm: bytes,
+    *,
+    threshold: int = 400,
+    min_tail_ms: int = 150,
+) -> bytes:
+    """Remove trailing silence from raw PCM 16-bit LE mono audio.
+
+    Gemini TTS often pads short chunks with 10-25 seconds of near-zero samples.
+    This function scans backwards from the end of the buffer to find the last
+    "loud" sample (|value| > threshold) and trims everything after it, keeping
+    a small fade-out tail (min_tail_ms) for natural ending.
+
+    Args:
+        pcm: Raw PCM bytes (s16le, mono, 24kHz).
+        threshold: Amplitude below which a sample counts as silent (out of 32768).
+        min_tail_ms: Milliseconds of silence to keep after the last loud sample.
+
+    Returns:
+        Trimmed PCM bytes. Never returns empty — returns original if all silent.
+    """
+    import struct
+
+    n_samples = len(pcm) // _SAMPLE_BYTES
+    if n_samples < _SAMPLE_RATE:  # less than 1 second — don't trim
+        return pcm
+
+    # Scan backwards to find the last non-silent sample
+    last_loud = n_samples - 1
+    for i in range(n_samples - 1, -1, -1):
+        sample = struct.unpack_from("<h", pcm, i * _SAMPLE_BYTES)[0]
+        if abs(sample) > threshold:
+            last_loud = i
+            break
+    else:
+        # Entire buffer is silence — return as-is (caller will handle)
+        return pcm
+
+    # Keep min_tail_ms of padding after the last loud sample for fade-out
+    tail_samples = int(_SAMPLE_RATE * min_tail_ms / 1000)
+    cut_at = min(last_loud + tail_samples, n_samples)
+    trimmed = pcm[: cut_at * _SAMPLE_BYTES]
+
+    trimmed_duration_ms = (n_samples - cut_at) * 1000 // _SAMPLE_RATE
+    if trimmed_duration_ms > 500:
+        logging.debug(
+            "Trimmed %dms trailing silence from PCM chunk (%d → %d bytes)",
+            trimmed_duration_ms,
+            len(pcm),
+            len(trimmed),
+        )
+
+    return trimmed
+
+
+def crossfade_pcm_chunks(
+    chunks: list[bytes],
+    *,
+    fade_ms: int = 80,
+) -> bytes:
+    """Concatenate PCM chunks with cross-fade to reduce audible seams.
+
+    Each chunk boundary gets a short linear cross-fade where the outgoing
+    chunk fades out and the incoming chunk fades in, smoothing the tonal
+    discontinuity between independently generated TTS segments.
+
+    Args:
+        chunks: List of raw PCM byte blobs (s16le, mono, 24kHz).
+        fade_ms: Cross-fade duration in milliseconds at each boundary.
+
+    Returns:
+        Single concatenated PCM buffer with cross-fades applied.
+    """
+    import struct
+
+    if not chunks:
+        return b""
+    if len(chunks) == 1:
+        return chunks[0]
+
+    fade_samples = int(_SAMPLE_RATE * fade_ms / 1000)
+
+    result = bytearray(chunks[0])
+
+    for chunk in chunks[1:]:
+        if not chunk:
+            continue
+
+        overlap = min(fade_samples, len(result) // _SAMPLE_BYTES, len(chunk) // _SAMPLE_BYTES)
+
+        if overlap < 10:
+            # Too short to cross-fade — just concatenate
+            result.extend(chunk)
+            continue
+
+        # Cross-fade region: last `overlap` samples of result × first `overlap` samples of chunk
+        result_offset = len(result) - overlap * _SAMPLE_BYTES
+
+        for i in range(overlap):
+            # Linear fade: outgoing fades 1→0, incoming fades 0→1
+            alpha = i / overlap  # 0.0 → 1.0
+
+            out_pos = result_offset + i * _SAMPLE_BYTES
+            out_sample = struct.unpack_from("<h", result, out_pos)[0]
+
+            in_pos = i * _SAMPLE_BYTES
+            in_sample = struct.unpack_from("<h", chunk, in_pos)[0]
+
+            mixed = int(out_sample * (1.0 - alpha) + in_sample * alpha)
+            mixed = max(-32768, min(32767, mixed))
+
+            struct.pack_into("<h", result, out_pos, mixed)
+
+        # Append the rest of the incoming chunk (after the overlap region)
+        result.extend(chunk[overlap * _SAMPLE_BYTES :])
+
+    return bytes(result)

@@ -222,6 +222,15 @@ async def _route_tts(msg: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
             await msg.reply_text("❌ Нет текста для озвучивания.")
             return
 
+        # Resolve the user's configured voice preference
+        user = msg.from_user or (context._user_id if hasattr(context, "_user_id") else None)  # type: ignore[union-attr]
+        tts_voice = "Aoede"
+        if user:
+            from app.repos.chats import get_user_chat
+
+            chat_state = await get_user_chat(user.id if hasattr(user, "id") else user)
+            tts_voice = chat_state.voice_id or "Aoede"
+
         from app.voice_engine import fire_voice_reply
 
         fire_voice_reply(
@@ -229,6 +238,7 @@ async def _route_tts(msg: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
             chat_id=msg.chat_id,
             reply_to_message_id=msg.message_id,
             response_text=response_text,
+            voice=tts_voice,
         )
         await msg.reply_text("🎧 Генерирую аудио...")
     except Exception as e:

@@ -1,5 +1,5 @@
 # /app/voice_engine.py
-"""Voice Engine 4.0 — orchestrates TTS generation and Telegram voice delivery.
+"""Voice Engine 4.1 — orchestrates TTS generation and Telegram voice delivery.
 
 Provides a single entry point for the chat handler to fire-and-forget
 voice reply generation after text streaming completes.
@@ -104,10 +104,12 @@ async def _run_gemini_pipeline(
     failed_keys: set[str] = set()
     pcm_parts: list[bytes] = []
 
+    from app.utils.audio import trim_trailing_silence
+
     for i, chunk in enumerate(chunks):
         pcm = await _generate_single_chunk_gemini(chunk, voice, failed_keys, timeout=adaptive_timeout)
         if pcm:
-            pcm_parts.append(pcm)
+            pcm_parts.append(trim_trailing_silence(pcm))
         else:
             if i == 0:
                 logging.warning("Gemini TTS: first chunk failed, aborting")
@@ -158,7 +160,7 @@ async def _generate_and_send_voice(
         generate_speech_with_key_rotation,
     )
     from app.providers.tts import _chunk_text_by_sentences, _clean_text_for_speech
-    from app.utils.audio import make_voice_file, pcm_to_ogg_opus
+    from app.utils.audio import crossfade_pcm_chunks, make_voice_file, pcm_to_ogg_opus
 
     # Show recording indicator message to user
     status_msg = None
@@ -264,8 +266,9 @@ async def _generate_and_send_voice(
             chat_id,
         )
 
-        # 4. Concatenate raw PCM buffers (same 24kHz 16-bit mono from both providers)
-        pcm_audio = b"".join(pcm_parts)
+        # 4. Concatenate raw PCM buffers with cross-fade at chunk boundaries
+        #    to smooth tonal discontinuities between independent TTS calls
+        pcm_audio = crossfade_pcm_chunks(pcm_parts)
         del pcm_parts  # free list references
 
         logging.info("Voice reply: TTS audio generated (%d bytes PCM)", len(pcm_audio))
