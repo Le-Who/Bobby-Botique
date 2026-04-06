@@ -310,7 +310,7 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
 
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
                 # Retranscribe with the specific premium model requested
-                new_transcript, new_intent = await transcribe_voice(voice_bytes, model="gemini-3-flash-preview")
+                new_transcript, new_intent, new_draw_prompt = await transcribe_voice(voice_bytes, model="gemini-3-flash-preview")
 
                 if new_transcript is None:
                     # Revert nicely
@@ -319,6 +319,8 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
 
                 # We need to update the transcript in the context so the user can Confirm the NEW transcript
                 pending["transcript"] = new_transcript
+                pending["intent"] = new_intent
+                pending["draw_prompt"] = new_draw_prompt
                 if context.user_data:
                     context.user_data[pending_key] = pending
 
