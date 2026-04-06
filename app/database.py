@@ -31,6 +31,7 @@ class ChatState:
     branch_id: int | None = None  # Active branch snapshot ID (branching mode)
     temperature: float | None = None  # LLM creativity 0.0–1.0, None = model default
     voice_id: str | None = None  # ElevenLabs voice override, None = global default
+    tts_temperature: float | None = None  # TTS creativity, None = model default
     _original_length: int = 0
 
 

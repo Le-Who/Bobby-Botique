@@ -153,16 +153,17 @@ def _chunk_text_by_sentences(text: str, max_bytes: int = 3500) -> list[str]:
 #   2. The transcript language is auto-detected from the text itself
 #   3. English instructions produce more reliable style adherence
 
-_DIRECTOR_NOTES = """\
-### DIRECTOR'S NOTES
-[extremely fast]
-**Character**: Warm, natural companion. Clear, smooth voice without breathiness or artifacts.
-**Pacing**: Brisk and measured. Micro-pauses at punctuation.
-**Strict Pronunciation**:
-- Read Russian with perfect standard phonetics. Convert 'е' to 'ё' when grammatically correct (звезды → звёзды).
-- Abbreviations: ИИ=ай-ай, ООН=о-о-эн.
-**Constraints**: Read ONLY the transcript. NO preamble ("Here is"). Skip Markdown (*, #).
-### TRANSCRIPT
+_TTS_STYLE_PROMPT = """\
+Read the following text aloud in Russian.
+Voice Style: Warm, natural and conversational. Clear and smooth, without breathiness or audio artifacts.
+Pacing: Brisk and measured, with micro-pauses at punctuation.
+Pronunciation Rules:
+- Apply perfect standard Russian phonetics.
+- Convert "е" to "ё" where grammatically correct (e.g., "звезды" -> "звёзды").
+- Expand abbreviations correctly (e.g., "ИИ" read as "ай-ай", "ООН" read as "о-о-эн").
+Constraint: Do NOT add any preamble, introductions, or commentary. Read ONLY the text provided below.
+
+Text to read:
 """
 
 
@@ -171,6 +172,7 @@ async def generate_speech(
     api_key: str,
     *,
     voice: str = DEFAULT_VOICE,
+    tts_temperature: float | None = None,
     timeout: float = 120.0,
 ) -> bytes | None:
     """Generate speech audio from text using Gemini TTS REST API.
@@ -204,10 +206,11 @@ async def generate_speech(
 
     # 2. Build structured prompt (no truncation — caller handles chunking)
     tts_text = clean
-    prompt = _DIRECTOR_NOTES + tts_text
+    # Inject speed control tag natively recognized by steerable Gemini TTS
+    prompt = f"{_TTS_STYLE_PROMPT}[extremely fast] {tts_text}"
 
     config = types.GenerateContentConfig(
-        temperature=0.5,  # <--- 0.5 balances predictability while preventing generation collapse/Internal errors
+        temperature=tts_temperature if tts_temperature is not None else 0.5,
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(

@@ -42,6 +42,7 @@ async def _generate_single_chunk_gemini(
     voice: str,
     failed_keys: set[str],
     timeout: float = 120.0,
+    tts_temperature: float | None = None,
 ) -> bytes | None:
     """Generate PCM audio for a single text chunk via Gemini TTS with key rotation.
 
@@ -68,7 +69,9 @@ async def _generate_single_chunk_gemini(
             break
 
         try:
-            pcm = await generate_speech(text_chunk, key_data["api_key"], voice=voice, timeout=timeout)
+            pcm = await generate_speech(
+                text_chunk, key_data["api_key"], voice=voice, tts_temperature=tts_temperature, timeout=timeout
+            )
             if pcm:
                 return pcm
             else:
@@ -95,6 +98,7 @@ async def _run_gemini_pipeline(
     chunks: list[str],
     voice: str,
     adaptive_timeout: float,
+    tts_temperature: float | None = None,
 ) -> list[bytes] | None:
     """Run the full Gemini TTS pipeline over all chunks.
 
@@ -107,7 +111,9 @@ async def _run_gemini_pipeline(
     from app.utils.audio import trim_trailing_silence
 
     for i, chunk in enumerate(chunks):
-        pcm = await _generate_single_chunk_gemini(chunk, voice, failed_keys, timeout=adaptive_timeout)
+        pcm = await _generate_single_chunk_gemini(
+            chunk, voice, failed_keys, timeout=adaptive_timeout, tts_temperature=tts_temperature
+        )
         if pcm:
             pcm_parts.append(trim_trailing_silence(pcm))
         else:
@@ -134,6 +140,7 @@ async def _generate_and_send_voice(
     response_text: str,
     *,
     voice: str = "Aoede",
+    tts_temperature: float | None = None,
 ) -> None:
     """Generate TTS audio and send as Telegram voice message.
 
@@ -239,7 +246,9 @@ async def _generate_and_send_voice(
             gemini_timeout = min(120.0, max(30.0, len(clean_text) / 60.0 + 15.0))
 
             gemini_voice = voice if voice and len(voice) <= 10 else "Aoede"
-            gemini_pcm_parts = await _run_gemini_pipeline(gemini_chunks, gemini_voice, gemini_timeout)
+            gemini_pcm_parts = await _run_gemini_pipeline(
+                gemini_chunks, gemini_voice, gemini_timeout, tts_temperature=tts_temperature
+            )
 
             if gemini_pcm_parts:
                 pcm_parts = gemini_pcm_parts
@@ -319,6 +328,7 @@ def fire_voice_reply(
     response_text: str,
     *,
     voice: str = "Aoede",
+    tts_temperature: float | None = None,
 ) -> None:
     """Fire-and-forget: schedule voice reply as a retryable background task.
 
@@ -330,6 +340,7 @@ def fire_voice_reply(
     _reply_to = reply_to_message_id
     _text = response_text
     _voice = voice
+    _tts_temperature = tts_temperature
 
     def _factory() -> Coroutine[Any, Any, None]:
         return _generate_and_send_voice(
@@ -338,6 +349,7 @@ def fire_voice_reply(
             _reply_to,
             _text,
             voice=_voice,
+            tts_temperature=_tts_temperature,
         )
 
     submit_retryable(_factory, retry=2)

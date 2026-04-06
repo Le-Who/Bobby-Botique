@@ -444,6 +444,20 @@ body {
     </div>
   </div>
 
+  <div class="section-header">Температура аудио (TTS)</div>
+  <div class="section">
+    <div class="segmented" id="s-tts-temp">
+      <div class="segment active" data-val="0.2" onclick="setTtsTempSeg(this)">Строгий</div>
+      <div class="segment" data-val="null" onclick="setTtsTempSeg(this)">Авто</div>
+      <div class="segment" data-val="0.9" onclick="setTtsTempSeg(this)">Творческий</div>
+      <div class="segment" data-val="custom" onclick="setTtsTempSeg(this)">Свой</div>
+    </div>
+    <div class="slider-wrap" id="slider-tts-temp-wrap">
+      <input type="range" class="range-slider" id="s-tts-temp-slider" min="0" max="2" step="0.05" value="1.0" oninput="onTtsSliderInput()">
+      <input type="number" class="slider-val-input" id="s-tts-temp-num" min="0" max="2" step="0.05" value="1.0" onchange="onTtsSliderNumChange()">
+    </div>
+  </div>
+
   <div class="section-header">Голос (TTS)</div>
   <div class="section" id="settings-voices-list">
     <div class="skeleton" style="height: 48px; margin: 8px 16px;"></div>
@@ -993,6 +1007,7 @@ async function loadSettings() {
     
     // Temp
     syncTempControls(settingsData.temperature);
+    syncTtsTempControls(settingsData.tts_temperature);
     
     // Voices
     let vHtml = '';
@@ -1052,6 +1067,7 @@ async function saveSettings() {
     ltm_enabled: document.getElementById('s-ltm').checked,
     search_enabled: document.getElementById('s-search').checked,
     temperature: settingsData.temperature,
+    tts_temperature: settingsData.tts_temperature,
     voice_id: settingsData.voice_id
   };
   
@@ -1160,6 +1176,51 @@ function onSliderNumChange() {
   document.getElementById('s-temp-num').value = v;
   document.getElementById('s-temp-slider').value = v;
   settingsData.temperature = v;
+  markDirty();
+}
+
+function syncTtsTempControls(val) {
+  const isCustom = val !== null && val !== 0.2 && val !== 0.9;
+  document.querySelectorAll('#s-tts-temp .segment').forEach(s => s.classList.remove('active'));
+  let mapped = isCustom ? 'custom' : (val === null ? 'null' : val.toString());
+  document.querySelector(`#s-tts-temp .segment[data-val="${mapped}"]`).classList.add('active');
+  
+  const w = document.getElementById('slider-tts-temp-wrap');
+  if (isCustom) {
+    w.classList.add('show');
+    document.getElementById('s-tts-temp-slider').value = val;
+    document.getElementById('s-tts-temp-num').value = val;
+  } else {
+    w.classList.remove('show');
+  }
+}
+
+function setTtsTempSeg(el) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  const raw = el.dataset.val;
+  if (raw === 'custom') {
+    settingsData.tts_temperature = parseFloat(document.getElementById('s-tts-temp-slider').value);
+  } else {
+    settingsData.tts_temperature = raw === 'null' ? null : parseFloat(raw);
+  }
+  syncTtsTempControls(settingsData.tts_temperature);
+  markDirty();
+}
+
+function onTtsSliderInput() {
+  const v = document.getElementById('s-tts-temp-slider').value;
+  document.getElementById('s-tts-temp-num').value = v;
+  if (tg.HapticFeedback && (v==0.2 || v==0.5 || v==0.9 || v==1.0 || v==2.0)) tg.HapticFeedback.selectionChanged();
+  settingsData.tts_temperature = parseFloat(v);
+  markDirty();
+}
+function onTtsSliderNumChange() {
+  let v = parseFloat(document.getElementById('s-tts-temp-num').value);
+  if (isNaN(v)) v = 1.0;
+  if (v < 0) v = 0; if (v > 2.0) v = 2.0;
+  document.getElementById('s-tts-temp-num').value = v;
+  document.getElementById('s-tts-temp-slider').value = v;
+  settingsData.tts_temperature = v;
   markDirty();
 }
 

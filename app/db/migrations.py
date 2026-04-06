@@ -128,5 +128,8 @@ async def _run_legacy_migrations(db_query):
         if "ltm_enabled" not in chats_col_names:
             await db_query("ALTER TABLE chats ADD COLUMN ltm_enabled BOOLEAN DEFAULT TRUE;")
 
+        if "tts_temperature" not in chats_col_names:
+            await db_query("ALTER TABLE chats ADD COLUMN tts_temperature FLOAT;")
+
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Legacy migration warning: %s", e)

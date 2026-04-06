@@ -484,6 +484,8 @@ async def _handle_research_agent(
                         chat_id=_chat_id,
                         reply_to_message_id=placeholder_message.message_id,
                         response_text=final_answer,
+                        voice=chat_state.voice_id if "chat_state" in locals() and chat_state else "Aoede",
+                        tts_temperature=chat_state.tts_temperature if "chat_state" in locals() and chat_state else None,
                     )
             except Exception as tts_err:
                 logging.debug("Auto TTS for research skipped: %s", tts_err)

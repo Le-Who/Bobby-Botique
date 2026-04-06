@@ -207,6 +207,7 @@ async def api_get_settings(user_id: int):
                     "search_enabled": chat_state.search_enabled,
                     "temperature": chat_state.temperature,
                     "voice_id": chat_state.voice_id,
+                    "tts_temperature": chat_state.tts_temperature,
                 },
                 "available_models": all_models,
                 "thinking_levels": ["off", "low", "medium", "high"],
@@ -276,6 +277,18 @@ async def api_update_settings(user_id: int):
                 temp = float(temp)
                 if 0.0 <= temp <= 2.0:
                     chat_state.temperature = temp
+                    changed = True
+
+        # TTS Temperature
+        if "tts_temperature" in body:
+            temp = body["tts_temperature"]
+            if temp is None:
+                chat_state.tts_temperature = None
+                changed = True
+            elif isinstance(temp, (int, float)):
+                temp = float(temp)
+                if 0.0 <= temp <= 2.0:
+                    chat_state.tts_temperature = temp
                     changed = True
 
         # Voice ID

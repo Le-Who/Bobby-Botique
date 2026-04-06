@@ -41,6 +41,7 @@ class ChatStateRow(BaseModel):
     branch_id: int | None = None
     temperature: float | None = None
     voice_id: str | None = None
+    tts_temperature: float | None = None
 
 
 class UserInfoRow(BaseModel):

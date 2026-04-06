@@ -55,7 +55,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
             query = """
                 SELECT
                     (SELECT row_to_json(u)::jsonb FROM (SELECT is_deep_dive, deep_dive_thread_id FROM public.users WHERE user_id = $1) u) as user_info,
-                    (SELECT row_to_json(c)::jsonb FROM (SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id, temperature, voice_id FROM public.chats WHERE user_id = $1) c) as chat_info,
+                    (SELECT row_to_json(c)::jsonb FROM (SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id, temperature, voice_id, tts_temperature FROM public.chats WHERE user_id = $1) c) as chat_info,
                     (SELECT COALESCE(jsonb_agg(jsonb_build_object('role', role, 'content', content) ORDER BY id ASC), '[]'::jsonb) FROM public.active_chat_messages WHERE user_id = $1) as messages
             """
             result = await db_query(query, (user_id,), conn=conn)
@@ -99,6 +99,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                         branch_id=validated.branch_id,
                         temperature=validated.temperature,
                         voice_id=validated.voice_id,
+                        tts_temperature=validated.tts_temperature,
                     )
                 except ValidationError as ve:
                     logging.warning(
@@ -121,6 +122,7 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                         branch_id=chat_info.get("branch_id"),
                         temperature=chat_info.get("temperature"),
                         voice_id=chat_info.get("voice_id"),
+                        tts_temperature=chat_info.get("tts_temperature"),
                     )
 
             if user_info:
@@ -196,15 +198,15 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
 
             query = """
             WITH update_chats AS (
-                INSERT INTO public.chats (user_id, model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id, temperature, voice_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $13, $14, $15)
+                INSERT INTO public.chats (user_id, model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id, temperature, voice_id, tts_temperature)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $13, $14, $15, $16)
                 ON CONFLICT (user_id)
                 DO UPDATE SET
                     model = EXCLUDED.model, token_count = EXCLUDED.token_count,
                     search_enabled = EXCLUDED.search_enabled, system_prompt = EXCLUDED.system_prompt,
                     context_summary = EXCLUDED.context_summary, thinking_level = EXCLUDED.thinking_level,
                     ltm_enabled = EXCLUDED.ltm_enabled, branch_id = EXCLUDED.branch_id,
-                    temperature = EXCLUDED.temperature, voice_id = EXCLUDED.voice_id
+                    temperature = EXCLUDED.temperature, voice_id = EXCLUDED.voice_id, tts_temperature = EXCLUDED.tts_temperature
             ),
             update_users AS (
                 UPDATE public.users SET is_deep_dive = $9, deep_dive_thread_id = $10 WHERE user_id = $1
@@ -235,6 +237,7 @@ async def update_user_chat(user_id: int, chat_state: ChatState) -> None:
                     chat_state.branch_id,
                     chat_state.temperature,
                     chat_state.voice_id,
+                    chat_state.tts_temperature,
                 ),
                 conn=conn,
             )

@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.32] - 2026-04-06 - Independent TTS Temperature & Steerable Voice Prompting
+
+### ✨ UX Enhancements & Generative Polish
+- **Independent TTS Controls:** Divorced Text generation temperature from Audio generation (TTS) temperature via database-level updates (`public.chats`). The Telegram MiniApp Settings menu now features a dedicated "Температура аудио (TTS)" slider.
+- **Steerable Voice Instructions (Gemini):** Refactored the core text-to-speech orchestration in `voice_engine.py` / `tts.py`, replacing unsupported "Director's Notes" blocks with strictly native Steerable Voice syntax. Injected inline rules for Russian phonetics, abbreviation expansion, and directly mapped pacing tags (`[extremely fast]`) right into the synthesis payload for maximum phonetic adherence.
+
 ## [2.9.31] - 2026-04-06 - Voice Engine 4.1 Reliability & Bug Fixes
 
 ### 🐛 Critical Bug Fixes
