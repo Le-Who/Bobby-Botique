@@ -35,7 +35,7 @@ async def asr_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         file_bytes = await voice_file.download_as_bytearray()
 
         # Transcribe using specific model
-        transcript, intent = await transcribe_voice(
+        transcript, intent, _draw_prompt = await transcribe_voice(
             bytes(file_bytes),
             mime_type=voice.mime_type or "audio/ogg",
             model=model_name,
