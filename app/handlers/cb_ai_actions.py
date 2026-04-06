@@ -262,10 +262,13 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     uid = btn.web_app.url.split("/reader?id=")[1].split("&")[0]
                     try:
                         from app.cache import get_long_message
+
                         full_text = await get_long_message(uid)
                         if full_text:
                             response_text = full_text
-                            logging.info("tts_reply_callback: Fetched full text (%d chars) for uid=%s", len(full_text), uid)
+                            logging.info(
+                                "tts_reply_callback: Fetched full text (%d chars) for uid=%s", len(full_text), uid
+                            )
                     except Exception as e:
                         logging.warning("tts_reply_callback: Failed to load long message from cache: %s", e)
                     break
@@ -275,13 +278,15 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Strip code blocks (triple backticks) for TTS so we don't synthesize raw code visually represented by the code block
     import re
-    response_text = re.sub(r'```.*?```', '', response_text, flags=re.DOTALL)
+
+    response_text = re.sub(r"```.*?```", "", response_text, flags=re.DOTALL)
 
     chat_id = query.message.chat_id
     message_id = query.message.message_id
 
     try:
         from app.repos.chats import get_user_chat
+
         chat_state = await get_user_chat(query.from_user.id)
         from app.voice_engine import fire_voice_reply
 

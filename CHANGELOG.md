@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.30] - 2026-04-06 - Zero-Latency Voice Engine 4.0 & Mini App Refactoring
+
+### ✨ UX Enhancements & TTS Tuning
+- **Zero-Latency Single-Batch UX (Gemini TTS):** Completely decoupled the Gemini API wrapper from legacy GCP 3500-byte constraint loops. The `gemini-2.5-flash-preview-tts` orchestrator now passes up to 40,000 bytes into a single request, eliminating sequential recursive HTTP network wait times and producing near-instant TTS Time-To-First-Byte for even the longest messages.
+- **Micro-Optimization & Dictation Control:** Configured native `[extremely fast]` internal tags to force brisk pacing organically. Added structural stability by enforcing `temperature=0.3` on speech synthesis generation configs, aggressively reducing vocal hallmarks like phantom sighing, random trailing, or artifacts while tightening Standard Russian phonetics parsing. Greatly shortened the Director's Note prefix prompt by ~68% to speed up Token/s input processing latency.
+- **Rasalgethi Voice Availability:** Pushed internal Voice Provider manifest updates so 'Rasalgethi' now appears across inline pickers and UI.
+- **Mini App Interface Tuning:** Reordered the Quart-served Mini App navigation (`app/templates/miniapp.html`) to present `Settings | Graph | Memory` sequentially. Realigned the Graph shortcut to a high-visibility top-left anchor. 
+
 ## [2.9.29] - 2026-04-06 - Mini App Reader UX & Core Stability Fixes
 
 ### 🌟 UX Enhancements & Bug Fixes

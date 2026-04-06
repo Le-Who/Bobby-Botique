@@ -389,7 +389,7 @@ body {
 <!-- Page: Memories (Root) -->
 <div id="page-memories" class="page">
 <div class="search-header">
-    <div class="settings-btn" onclick="pushPage('page-settings')">⚙️</div>
+    <div class="settings-btn" onclick="switchTab('graph')" title="Граф знаний">🕸️</div>
     <input class="search-input" type="text" placeholder="Поиск по памяти…" id="search-input">
   </div>
   
@@ -512,17 +512,17 @@ body {
 
 <!-- Tab Bar -->
 <div class="tab-bar">
-  <div class="tab-btn active" id="tab-memories" onclick="switchTab('memories')">
-    <span class="tab-btn-icon">🧠</span>
-    <span>Память</span>
+  <div class="tab-btn" id="tab-settings" onclick="switchTab('settings')">
+    <span class="tab-btn-icon">⚙️</span>
+    <span>Настройки</span>
   </div>
   <div class="tab-btn" id="tab-graph" onclick="switchTab('graph')">
     <span class="tab-btn-icon">🕸️</span>
     <span>Граф</span>
   </div>
-  <div class="tab-btn" id="tab-settings" onclick="switchTab('settings')">
-    <span class="tab-btn-icon">⚙️</span>
-    <span>Настройки</span>
+  <div class="tab-btn active" id="tab-memories" onclick="switchTab('memories')">
+    <span class="tab-btn-icon">🧠</span>
+    <span>Память</span>
   </div>
 </div>
 

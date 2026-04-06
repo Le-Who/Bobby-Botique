@@ -155,36 +155,13 @@ def _chunk_text_by_sentences(text: str, max_bytes: int = 3500) -> list[str]:
 
 _DIRECTOR_NOTES = """\
 ### DIRECTOR'S NOTES
-
-**Character:** A knowledgeable, warm companion. Speak naturally, \
-as if talking to a close friend — not as a newsreader or announcer.
-
-**Delivery:**
-- Clear, smooth voice. No breathiness, no rasp, no whispery artifacts.
-- Natural, measured pace with organic micro-pauses at commas and periods.
-- Slightly lower pitch register for calm authority.
-- Vary intonation naturally; avoid monotone or robotic cadence.
-
-**Pronunciation rules (CRITICAL — follow strictly):**
-- Russian text: pronounce every word with **correct stress and diacritics \
-per standard Russian phonetics**, even if the written text has errors.
-- Treat 'е' as 'ё' wherever standard pronunciation demands it: \
-'звездной' → read as 'звёздной', 'зеленый' → 'зелёный', \
-'щелкнул' → 'щёлкнул', 'все' → 'все' or 'всё' depending on meaning.
-- Common Russian abbreviations: 'ИИ' → 'ай-ай', 'ООН' → 'о-о-эн', \
-'и т.д.' → 'и так далее', 'т.е.' → 'то есть', 'г.' → 'год' or 'город'.
-- Numbers and dates: read in the language of the surrounding text.
-- Foreign names and terms: preserve original pronunciation where possible.
-- If you encounter a word that looks like a typo or misspelling, \
-read the word the speaker most likely intended based on context.
-
-**Constraints:**
-- Do NOT add any words, commentary, greetings, or sign-offs.
-- Do NOT say "Here is...", "Sure!", "Of course!" or similar preambles.
-- Read ONLY the transcript below, nothing else.
-- If the transcript contains formatting symbols (*, #, -, etc.), \
-skip them silently — do not read them aloud.
-
+[extremely fast]
+**Character**: Warm, natural companion. Clear, smooth voice without breathiness or artifacts.
+**Pacing**: Brisk and measured. Micro-pauses at punctuation.
+**Strict Pronunciation**:
+- Read Russian with perfect standard phonetics. Convert 'е' to 'ё' when grammatically correct (звезды → звёзды).
+- Abbreviations: ИИ=ай-ай, ООН=о-о-эн.
+**Constraints**: Read ONLY the transcript. NO preamble ("Here is"). Skip Markdown (*, #).
 ### TRANSCRIPT
 """
 
@@ -230,6 +207,7 @@ async def generate_speech(
     prompt = _DIRECTOR_NOTES + tts_text
 
     config = types.GenerateContentConfig(
+        temperature=0.3,  # <--- 0.3 enforces strict predictability, minimizing hallucinated breaths and voice breaks
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(

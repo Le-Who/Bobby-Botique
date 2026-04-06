@@ -369,6 +369,7 @@ async def api_get_voices(user_id: int):
             {"id": "Leda", "name": "Leda (Light/Youthful)"},
             {"id": "Orus", "name": "Orus (Deep/Authoritative)"},
             {"id": "Zephyr", "name": "Zephyr (Clear/Cheerful)"},
+            {"id": "Rasalgethi", "name": "Rasalgethi (Informative)"},
         ]
     return jsonify({"voices": voices})
 
@@ -476,9 +477,7 @@ async def _fetch_telegraph_content(tg_url: str) -> str | None:
         # Extract the <article> body from the Telegraph page HTML
         import re as _re
 
-        article_match = _re.search(
-            r"<article[^>]*>(.*?)</article>", page_html, _re.DOTALL
-        )
+        article_match = _re.search(r"<article[^>]*>(.*?)</article>", page_html, _re.DOTALL)
         if not article_match:
             logger.warning("No <article> tag found in Telegraph page: %s", tg_url)
             return None

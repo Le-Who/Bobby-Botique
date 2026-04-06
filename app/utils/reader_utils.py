@@ -69,6 +69,7 @@ def extract_toc(markdown: str) -> list[dict[str, str]]:
 
 # ── Bionic Reading transform ──────────────────────────────────────────────────
 
+
 def apply_bionic_reading(html_text: str) -> str:
     """Apply Bionic Reading transform to rendered HTML.
 
@@ -201,7 +202,7 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
             f'<button class="code-action" onclick="expandCode(this)" title="Развернуть">⛶</button>'
             f'<button class="code-action" onclick="downloadCode(this)" data-lang="{lang_display}">↓</button>'
             f'<button class="code-action" onclick="copyCode(this)">Копия</button>'
-            f'</div></div>'
+            f"</div></div>"
             f'<pre><code class="language-{lang_display}" data-code="{html.escape(m.group(2))}">'
             f"{code}"
             f"</code></pre>"

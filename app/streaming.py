@@ -736,7 +736,9 @@ async def stream_and_display(
 
                 from telegram import WebAppInfo
 
-                buttons.insert(0, [InlineKeyboardButton("📄 Развернуть статью (Mini App)", web_app=WebAppInfo(url=reader_url))])
+                buttons.insert(
+                    0, [InlineKeyboardButton("📄 Развернуть статью (Mini App)", web_app=WebAppInfo(url=reader_url))]
+                )
                 new_markup = InlineKeyboardMarkup(buttons)
 
                 try:

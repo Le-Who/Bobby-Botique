@@ -26,11 +26,7 @@ async def test_fetch_telegraph_content_extracts_article():
 
     from app.web_miniapp import _fetch_telegraph_content
 
-    fake_html = (
-        "<html><body>"
-        "<article><h3>My Title</h3><p>Some content here.</p></article>"
-        "</body></html>"
-    )
+    fake_html = "<html><body><article><h3>My Title</h3><p>Some content here.</p></article></body></html>"
     mock_resp = MagicMock()
     mock_resp.raise_for_status = MagicMock(return_value=None)
     mock_resp.text = fake_html

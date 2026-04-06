@@ -33,11 +33,7 @@ def test_extract_toc_returns_empty_for_single_heading():
 
 def test_extract_toc_skips_headings_inside_fenced_code():
     """Headings inside code blocks are NOT included in the TOC."""
-    md = (
-        "# Real Heading\n\n"
-        "```python\n# This is a comment, not a heading\n```\n\n"
-        "## Real Section\n"
-    )
+    md = "# Real Heading\n\n```python\n# This is a comment, not a heading\n```\n\n## Real Section\n"
     toc = extract_toc(md)
     texts = [e["text"] for e in toc]
     assert "Real Heading" in texts

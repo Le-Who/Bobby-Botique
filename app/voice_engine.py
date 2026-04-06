@@ -222,8 +222,10 @@ async def _generate_and_send_voice(
 
         # ── Branch B: Gemini TTS (primary if no EL keys, fallback otherwise) ─
         if pcm_parts is None:
-            # 3500 bytes ≤ Gemini TTS 4000-byte text-field limit; safe for Cyrillic.
-            gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=3500)
+            # Gemini models accept 8192 tokens (~30k chars), safely covering Telegram's 4096 limit.
+            # Processing the text as a single chunk drastically improves UX by eliminating
+            # sequential HTTP latency and overlapping model startup time.
+            gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=40000)
             logging.info(
                 "Voice reply (Gemini TTS): %d chars / %d bytes → %d chunk(s)",
                 len(clean_text),
