@@ -225,6 +225,7 @@ async def _route_tts(msg: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Resolve the user's configured voice preference
         user = msg.from_user or (context._user_id if hasattr(context, "_user_id") else None)  # type: ignore[union-attr]
         tts_voice = "Aoede"
+        tts_temperature_val: float | None = None
         if user:
             from app.repos.chats import get_user_chat
 
