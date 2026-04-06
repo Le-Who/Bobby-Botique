@@ -207,7 +207,7 @@ async def generate_speech(
     prompt = _DIRECTOR_NOTES + tts_text
 
     config = types.GenerateContentConfig(
-        temperature=0.3,  # <--- 0.3 enforces strict predictability, minimizing hallucinated breaths and voice breaks
+        temperature=0.5,  # <--- 0.5 balances predictability while preventing generation collapse/Internal errors
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
