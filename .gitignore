@@ -43,8 +43,11 @@ Desktop.ini
 test_script.py
 test_sim.py
 test_perf.py
+test_size.py
+test_stream.py
 load_test.py
 benchmark*.py
+pytest*.log
 implementation_plan.md
 skills-lock.json
 walkthrough.md
