@@ -153,18 +153,55 @@ def _chunk_text_by_sentences(text: str, max_bytes: int = 3500) -> list[str]:
 #   2. The transcript language is auto-detected from the text itself
 #   3. English instructions produce more reliable style adherence
 
-_TTS_STYLE_PROMPT = """\
-Read the following text aloud in Russian.
-Voice Style: Warm, natural and conversational. Clear and smooth, without breathiness or audio artifacts.
-Pacing: Brisk and measured, with micro-pauses at punctuation.
-Pronunciation Rules:
-- Apply perfect standard Russian phonetics.
-- Convert "е" to "ё" where grammatically correct (e.g., "звезды" -> "звёзды").
-- Expand abbreviations correctly (e.g., "ИИ" read as "ай-ай", "ООН" read as "о-о-эн").
-Constraint: Do NOT add any preamble, introductions, or commentary. Read ONLY the text provided below.
 
-Text to read:
-"""
+def _get_steerable_tts_prompt(temperature: float) -> tuple[str, str]:
+    """
+    Dynamically generates Steerable Voice prompt and pacing tags
+    based on the requested TTS temperature.
+
+    Returns:
+        tuple[str, str]: (System style instructions, Inline prefix tags)
+    """
+    # 1. Base pronunciation rules (immutable across temperatures)
+    base_instructions = (
+        "Read the following text aloud in Russian.\n"
+        "Pronunciation Rules:\n"
+        "- Apply perfect standard Russian phonetics.\n"
+        '- Convert "е" to "ё" where grammatically correct (e.g., "звезды" -> "звёзды").\n'
+        '- Expand abbreviations correctly (e.g., "ИИ" read as "ай-ай", "ООН" read as "о-о-эн").\n'
+        "Constraint: Do NOT add any preamble, introductions, or commentary. Read ONLY the text provided below.\n\n"
+    )
+
+    # 2. Dynamic Style and Pacing based on Temp
+    if temperature <= 0.3:
+        # LOW TEMP: Neutral, objective, flat news-anchor.
+        style = (
+            "Voice Style: Professional, neutral, and highly articulated news-anchor. "
+            "Flat intonation, emotionally detached, maximum clarity.\n"
+            "Pacing: Strict and measured, rigid structure.\n\n"
+            "Text to read:\n"
+        )
+        tag = "[fast, flat intonation]"
+    elif temperature >= 0.8:
+        # HIGH TEMP: Expressive, dynamic storytelling.
+        style = (
+            "Voice Style: Highly expressive, energetic, and engaging storyteller. "
+            "Dynamic pitch variance, high emotional depth, dramatic and lively delivery.\n"
+            "Pacing: Fluid, rapid, energetic.\n\n"
+            "Text to read:\n"
+        )
+        tag = "[extremely fast, highly expressive]"
+    else:
+        # MEDIUM TEMP (0.4 - 0.7): Conversational, warm, natural assistant.
+        style = (
+            "Voice Style: Warm, natural and conversational assistant. "
+            "Clear and smooth, welcoming and balanced tone.\n"
+            "Pacing: Brisk and measured, with micro-pauses at punctuation.\n\n"
+            "Text to read:\n"
+        )
+        tag = "[extremely fast]"
+
+    return (f"{base_instructions}{style}", tag)
 
 
 async def generate_speech(
@@ -206,11 +243,14 @@ async def generate_speech(
 
     # 2. Build structured prompt (no truncation — caller handles chunking)
     tts_text = clean
-    # Inject speed control tag natively recognized by steerable Gemini TTS
-    prompt = f"{_TTS_STYLE_PROMPT}[extremely fast] {tts_text}"
+    current_temp = tts_temperature if tts_temperature is not None else 0.5
+
+    # Fetch Steerable Voice instructions customized by temperature
+    base_prompt, pacing_tag = _get_steerable_tts_prompt(current_temp)
+    prompt = f"{base_prompt}{pacing_tag} {tts_text}"
 
     config = types.GenerateContentConfig(
-        temperature=tts_temperature if tts_temperature is not None else 0.5,
+        temperature=current_temp,
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
