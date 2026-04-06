@@ -202,7 +202,8 @@ body {
 .prompt-preview { font-size: 15px; color: var(--hint); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Prompt Page */
-#page-prompt { padding: 16px; display: flex; flex-direction: column; }
+#page-prompt { padding: 16px; flex-direction: column; }
+#page-prompt.active { display: flex; }
 /* Audit fix C-4: use flex 1 + min-height:0 instead of calc(100vh) which breaks on iOS with virtual keyboard */
 .prompt-area {
   flex: 1;
