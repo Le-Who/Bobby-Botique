@@ -1,0 +1,141 @@
+name: Deploy Telegram Bot
+
+on:
+  push:
+    branches:
+      - TEST_gemaibotv2
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set lowercase repository name
+        run: echo "REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.REPO }}:latest
+
+      - name: Deploy to DigitalOcean VPS
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ env.REPO }}
+          REGISTRY: ${{ env.REGISTRY }}
+          # --- НАЧАЛО ВАШИХ ПЕРЕМЕННЫХ ---
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENABLE_PERSISTENT_QUEUE: ${{ secrets.ENABLE_PERSISTENT_QUEUE }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          LOG_JSON: ${{ secrets.LOG_JSON }}
+          PORT: ${{ secrets.PORT }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          OPENROUTER_API_KEYS: ${{ secrets.OPENROUTER_API_KEYS }}
+          USE_OPENROUTER: ${{ secrets.USE_OPENROUTER }}
+          GEMINI_AVAILABLE_MODELS: ${{ secrets.GEMINI_AVAILABLE_MODELS }}
+          DEFAULT_MODEL: ${{ secrets.DEFAULT_MODEL }}
+          QNA_MODEL: ${{ secrets.QNA_MODEL }}
+          RESEARCH_MODEL: ${{ secrets.RESEARCH_MODEL }}
+          URL_SELECTION_MODEL: ${{ secrets.URL_SELECTION_MODEL }}
+          OPENROUTER_AVAILABLE_MODELS: ${{ secrets.OPENROUTER_AVAILABLE_MODELS }}
+          OPENROUTER_DEFAULT_MODEL: ${{ secrets.OPENROUTER_DEFAULT_MODEL }}
+          OPENROUTER_QNA_MODEL: ${{ secrets.OPENROUTER_QNA_MODEL }}
+          OPENROUTER_RESEARCH_MODEL: ${{ secrets.OPENROUTER_RESEARCH_MODEL }}
+          OPENROUTER_URL_SELECTION_MODEL: ${{ secrets.OPENROUTER_URL_SELECTION_MODEL }}
+          DAILY_LIMITS: ${{ secrets.DAILY_LIMITS }}
+          ENABLE_WEB_SERVER: ${{ secrets.ENABLE_WEB_SERVER }}
+          MAX_CONCURRENT_HEAVY_REQUESTS: ${{ secrets.MAX_CONCURRENT_HEAVY_REQUESTS }}
+          MAX_CONCURRENT_HEAVY_CALLBACKS: ${{ secrets.MAX_CONCURRENT_HEAVY_CALLBACKS }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          STRUCTURED_LOGGING: ${{ secrets.STRUCTURED_LOGGING }}
+          LOG_PRETTY: ${{ secrets.LOG_PRETTY }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          AGENTIC_MODEL: ${{ secrets.AGENTIC_MODEL }}
+          MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS: ${{ secrets.MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS }}
+          AGENTIC_MAX_TOKENS: ${{ secrets.AGENTIC_MAX_TOKENS }}
+          AGENTIC_TIMEOUT_SECONDS: ${{ secrets.AGENTIC_TIMEOUT_SECONDS }}
+          IMAGE_MODELS: ${{ secrets.IMAGE_MODELS }}
+          DEFAULT_IMAGE_MODEL: ${{ secrets.DEFAULT_IMAGE_MODEL }}
+          POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY }}
+          WEBAPP_BASE_URL: ${{ secrets.WEBAPP_BASE_URL }}
+          # --- КОНЕЦ ВАШИХ ПЕРЕМЕННЫХ ---
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          # Перечисляем ВСЕ переменные через запятую для проброса в SSH
+          envs: GITHUB_TOKEN, REPO, REGISTRY, ADMIN_ID, DATABASE_URL, ENABLE_PERSISTENT_QUEUE, GEMINI_API_KEYS, LOG_JSON, PORT, REDIS_URL, TAVILY_API_KEYS, TELEGRAM_BOT_TOKEN, OPENROUTER_API_KEYS, USE_OPENROUTER, GEMINI_AVAILABLE_MODELS, DEFAULT_MODEL, QNA_MODEL, RESEARCH_MODEL, URL_SELECTION_MODEL, OPENROUTER_AVAILABLE_MODELS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_QNA_MODEL, OPENROUTER_RESEARCH_MODEL, OPENROUTER_URL_SELECTION_MODEL, DAILY_LIMITS, ENABLE_WEB_SERVER, MAX_CONCURRENT_HEAVY_REQUESTS, MAX_CONCURRENT_HEAVY_CALLBACKS, ADMIN_SECRET, STRUCTURED_LOGGING, LOG_PRETTY, WEBHOOK_URL, AGENTIC_MODEL, MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS, AGENTIC_MAX_TOKENS, AGENTIC_TIMEOUT_SECONDS, IMAGE_MODELS, DEFAULT_IMAGE_MODEL, POLLINATIONS_API_KEY, WEBAPP_BASE_URL
+          script: |
+            echo $GITHUB_TOKEN | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+            
+            docker pull $REGISTRY/$REPO:latest
+            
+            docker stop tg-bot || true
+            docker rm tg-bot || true
+            
+            # Запускаем контейнер с передачей всех переменных
+            docker run -d \
+              --name tg-bot \
+              --restart unless-stopped \
+              -e ADMIN_ID="$ADMIN_ID" \
+              -e DATABASE_URL="$DATABASE_URL" \
+              -e ENABLE_PERSISTENT_QUEUE="$ENABLE_PERSISTENT_QUEUE" \
+              -e GEMINI_API_KEYS="$GEMINI_API_KEYS" \
+              -e LOG_JSON="$LOG_JSON" \
+              -e PORT="$PORT" \
+              -e REDIS_URL="$REDIS_URL" \
+              -e TAVILY_API_KEYS="$TAVILY_API_KEYS" \
+              -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+              -e OPENROUTER_API_KEYS="$OPENROUTER_API_KEYS" \
+              -e USE_OPENROUTER="$USE_OPENROUTER" \
+              -e GEMINI_AVAILABLE_MODELS="$GEMINI_AVAILABLE_MODELS" \
+              -e DEFAULT_MODEL="$DEFAULT_MODEL" \
+              -e QNA_MODEL="$QNA_MODEL" \
+              -e RESEARCH_MODEL="$RESEARCH_MODEL" \
+              -e URL_SELECTION_MODEL="$URL_SELECTION_MODEL" \
+              -e OPENROUTER_AVAILABLE_MODELS="$OPENROUTER_AVAILABLE_MODELS" \
+              -e OPENROUTER_DEFAULT_MODEL="$OPENROUTER_DEFAULT_MODEL" \
+              -e OPENROUTER_QNA_MODEL="$OPENROUTER_QNA_MODEL" \
+              -e OPENROUTER_RESEARCH_MODEL="$OPENROUTER_RESEARCH_MODEL" \
+              -e OPENROUTER_URL_SELECTION_MODEL="$OPENROUTER_URL_SELECTION_MODEL" \
+              -e DAILY_LIMITS="$DAILY_LIMITS" \
+              -e ENABLE_WEB_SERVER="$ENABLE_WEB_SERVER" \
+              -e MAX_CONCURRENT_HEAVY_REQUESTS="$MAX_CONCURRENT_HEAVY_REQUESTS" \
+              -e MAX_CONCURRENT_HEAVY_CALLBACKS="$MAX_CONCURRENT_HEAVY_CALLBACKS" \
+              -e ADMIN_SECRET="$ADMIN_SECRET" \
+              -e STRUCTURED_LOGGING="$STRUCTURED_LOGGING" \
+              -e LOG_PRETTY="$LOG_PRETTY" \
+              -e WEBHOOK_URL="$WEBHOOK_URL" \
+              -e AGENTIC_MODEL="$AGENTIC_MODEL" \
+              -e MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS="$MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS" \
+              -e AGENTIC_MAX_TOKENS="$AGENTIC_MAX_TOKENS" \
+              -e AGENTIC_TIMEOUT_SECONDS="$AGENTIC_TIMEOUT_SECONDS" \
+              -e IMAGE_MODELS="$IMAGE_MODELS" \
+              -e DEFAULT_IMAGE_MODEL="$DEFAULT_IMAGE_MODEL" \
+              -e POLLINATIONS_API_KEY="$POLLINATIONS_API_KEY" \
+              -e WEBAPP_BASE_URL="$WEBAPP_BASE_URL" \
+              $REGISTRY/$REPO:latest
+            
+            docker image prune -f
