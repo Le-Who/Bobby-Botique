@@ -37,3 +37,42 @@ GRAPH_EXTRACTION_MODEL = "gemini-3.1-flash-lite-preview"
 GRAPH_EXTRACTION_THINKING_LEVEL = "medium"
 # Minimum user message length to qualify for graph extraction
 MIN_EXTRACTION_LENGTH = 30
+
+# ── MemPalace Wing/Room Taxonomy ─────────────────────────────────────────────
+TAXONOMY_WINGS = ("identity", "projects", "social", "knowledge", "temporal")
+TAXONOMY_ROOMS = {
+    "identity": ("bio", "prefs", "health", "skills", "values"),
+    "projects": ("active", "archived", "ideas"),
+    "social": ("family", "friends", "colleagues", "contacts"),
+    "knowledge": ("tech", "science", "culture", "languages"),
+    "temporal": ("events", "plans", "routines", "milestones"),
+}
+TAXONOMY_HALL_TYPES = ("fact", "opinion", "event", "plan", "preference", "habit")
+
+# Model for taxonomy classification is admin-configurable via env TAXONOMY_MODEL
+# or runtime via config_manager.update_setting("TAXONOMY_MODEL", "new-model-name").
+# Defaults to gemini-3.1-flash-lite-preview (cheap, fast, sufficient for classification).
+_TAXONOMY_MODEL_FALLBACK = "gemini-3.1-flash-lite-preview"
+
+
+def get_taxonomy_model() -> str:
+    """Return the taxonomy classification model from live config (hot-reloadable)."""
+    try:
+        from app.config import config_manager
+        return config_manager.get_setting("TAXONOMY_MODEL", _TAXONOMY_MODEL_FALLBACK)
+    except Exception:
+        return _TAXONOMY_MODEL_FALLBACK
+
+# ── AAAK Tiered Compression ──────────────────────────────────────────────────
+# L0: Core facts (always injected, compact JSON)
+L0_MAX_TOKENS = 250
+# L1: Active context (structured summary from recent LTM + role diaries)
+L1_MAX_TOKENS = 600
+# L2: Semantic recall (search_memories_with_graph results)
+L2_MAX_TOKENS = 1500
+# L3: Full history (assembler.py handles this via existing token budget)
+
+# ── Role Diaries ─────────────────────────────────────────────────────────────
+MAX_DIARY_ENTRIES_PER_ROLE = 20
+DIARY_ENTRY_MAX_LENGTH = 500
+

@@ -172,6 +172,9 @@ async def store_memory(
     source_type: str = "conversation",
     metadata: dict[str, Any] | None = None,
     ttl_days: int = DEFAULT_MEMORY_TTL_DAYS,
+    wing: str | None = None,
+    room: str | None = None,
+    hall_type: str | None = None,
 ) -> int | None:
     """Store a memory with its embedding.
 
@@ -182,6 +185,9 @@ async def store_memory(
         source_type: 'conversation', 'summary', 'document', etc.
         metadata: Additional JSON metadata.
         ttl_days: Days until auto-expiration (0 = no expiry).
+        wing: MemPalace wing classification (identity/projects/social/knowledge/temporal).
+        room: MemPalace room within wing.
+        hall_type: Content type (fact/opinion/event/plan/preference/habit).
 
     Returns:
         Memory ID on success, None on failure.
@@ -225,17 +231,37 @@ async def store_memory(
                         conn=conn,
                     )
 
+                # Build column list dynamically — taxonomy columns are optional
+                # until migration 032 runs on the target database.
+                cols = ["user_id", "content", "embedding", "source_type", "metadata", "expires_at"]
+                vals = ["$1", "$2", "$3::halfvec", "$4", "$5::jsonb", "$6"]
+                params: list = [
+                    user_id,
+                    db_text_content,
+                    f"[{','.join(str(v) for v in embedding)}]",
+                    source_type,
+                    __import__("json").dumps(metadata or {}),
+                    expires_at,
+                ]
+
+                if wing or room or hall_type:
+                    idx = len(params) + 1
+                    cols.append("wing")
+                    vals.append(f"${idx}")
+                    params.append(wing)
+                    idx += 1
+                    cols.append("room")
+                    vals.append(f"${idx}")
+                    params.append(room)
+                    idx += 1
+                    cols.append("hall_type")
+                    vals.append(f"${idx}")
+                    params.append(hall_type)
+
                 result = await db_query(
-                    "INSERT INTO long_term_memory (user_id, content, embedding, source_type, metadata, expires_at) "
-                    "VALUES ($1, $2, $3::halfvec, $4, $5::jsonb, $6) RETURNING id",
-                    (
-                        user_id,
-                        db_text_content,  # Truncated or serialized to text for Postgres
-                        f"[{','.join(str(v) for v in embedding)}]",
-                        source_type,
-                        __import__("json").dumps(metadata or {}),
-                        expires_at,
-                    ),
+                    f"INSERT INTO long_term_memory ({', '.join(cols)}) "
+                    f"VALUES ({', '.join(vals)}) RETURNING id",
+                    tuple(params),
                     conn=conn,
                 )
                 if result:

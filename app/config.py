@@ -177,6 +177,7 @@ class Settings(BaseModel):
     QNA_MODEL: str = "gemini-2.5-flash-lite"
     RESEARCH_MODEL: str = "gemini-3.1-flash-lite-preview"
     URL_SELECTION_MODEL: str = "gemini-3.1-flash-lite-preview"
+    TAXONOMY_MODEL: str = "gemini-3.1-flash-lite-preview"  # MemPalace: wing/room classification + contradiction judge
 
     # --- OPENROUTER MODELS ---
     # Модели загружаются from env переменных, значения by default используются if не указаны
@@ -275,6 +276,7 @@ def load_settings() -> Settings:
             "QNA_MODEL": os.getenv("QNA_MODEL", "gemini-2.5-flash-lite"),
             "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-3.1-flash-lite-preview"),
             "URL_SELECTION_MODEL": os.getenv("URL_SELECTION_MODEL", "gemini-3.1-flash-lite-preview"),
+            "TAXONOMY_MODEL": os.getenv("TAXONOMY_MODEL", "gemini-3.1-flash-lite-preview"),
             "OPENROUTER_DEFAULT_MODEL": os.getenv("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_QNA_MODEL": os.getenv("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_RESEARCH_MODEL": os.getenv("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),

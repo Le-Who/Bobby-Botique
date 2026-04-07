@@ -166,6 +166,20 @@ async def _cleanup_application(application, reason: str = "cleanup"):
     except Exception:
         pass  # Best-effort
 
+    # ── Drain in-flight memory writes (MemPalace safety layer) ───────────
+    try:
+        from app.repos.memory_autosave import (
+            drain_pending_memory_writes,
+            pre_shutdown_compact,
+        )
+
+        await drain_pending_memory_writes(timeout=5.0)
+        compacted = await pre_shutdown_compact(timeout=8.0)
+        if compacted:
+            logging.info("Pre-shutdown compact: %d users consolidated", compacted)
+    except Exception as e:
+        logging.warning("Memory autosave drain on shutdown failed: %s", e)
+
     # ── Drain pending state persists ──────────────────────────────────────
     # Flush all debounced _schedule_persist timers so no user state is lost.
     try:

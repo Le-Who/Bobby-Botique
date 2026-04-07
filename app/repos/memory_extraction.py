@@ -29,6 +29,8 @@ from app.repos.memory_config import (
     GRAPH_EXTRACTION_MODEL,
     GRAPH_EXTRACTION_THINKING_LEVEL,
     MIN_EXTRACTION_LENGTH,
+    TAXONOMY_WINGS,
+    get_taxonomy_model,
 )
 
 # ── Pydantic schemas for Structured Output ────────────────────────────────────
@@ -40,6 +42,11 @@ class ExtractedEntity(BaseModel):
     name: str = Field(description="Canonical entity name (person, project, skill, place, concept)")
     type: str = Field(description="Entity type: person, project, skill, preference, place, concept, organization")
     description: str = Field(default="", description="Brief factual description of the entity")
+    wing: str = Field(
+        default="knowledge",
+        description="MemPalace wing: identity, projects, social, knowledge, temporal",
+    )
+    room: str = Field(default="", description="MemPalace room within wing (e.g., bio, prefs, active)")
 
 
 class ExtractedRelation(BaseModel):
@@ -56,6 +63,10 @@ class ExtractedRelation(BaseModel):
             "real name, profession, permanent home, chronic conditions. "
             "FALSE for preferences, habits, projects, opinions, goals."
         ),
+    )
+    wing: str = Field(
+        default="knowledge",
+        description="MemPalace wing for this relation: identity, projects, social, knowledge, temporal",
     )
 
 
@@ -78,6 +89,13 @@ Rules:
 - weight: 0.0-1.0 confidence/strength of the relation.
 - is_core: TRUE ONLY for permanent identity facts (real name, profession, home location, medical conditions).
   FALSE for everything else (preferences, habits, projects, opinions, goals).
+- wing: Classify each entity and relation into a MemPalace wing:
+  * identity — personal facts (name, age, health, skills, values)
+  * projects — work, coding, creative endeavors
+  * social — people, relationships, organizations
+  * knowledge — concepts, technologies, science
+  * temporal — events, plans, routines, dates
+- room: Subcategory within the wing (e.g., "bio", "prefs", "active", "family").
 - Write names and predicates in the same language as the source text.
 - Be concise. No speculation — only explicitly stated facts.
 
@@ -245,28 +263,61 @@ async def _upsert_graph(
                             if similar_node:
                                 name = similar_node["entity_name"]
 
-                        row = await conn.fetchrow(
-                            """
-                            INSERT INTO memory_nodes (user_id, entity_name, entity_type, description, embedding)
-                            VALUES ($1, $2, $3, $4, $5::halfvec)
-                            ON CONFLICT (user_id, entity_name)
-                            DO UPDATE SET
-                                description = CASE
-                                    WHEN LENGTH(EXCLUDED.description) > LENGTH(memory_nodes.description)
-                                    THEN EXCLUDED.description
-                                    ELSE memory_nodes.description
-                                END,
-                                entity_type = EXCLUDED.entity_type,
-                                embedding = COALESCE(EXCLUDED.embedding, memory_nodes.embedding),
-                                updated_at = now()
-                            RETURNING id
-                            """,
-                            user_id,
-                            name,
-                            ent.type,
-                            ent.description,
-                            ent_emb_str,
-                        )
+                        # Validate wing against allowed values
+                        ent_wing = ent.wing if ent.wing in TAXONOMY_WINGS else "knowledge"
+                        ent_room = ent.room or ""
+
+                        try:
+                            row = await conn.fetchrow(
+                                """
+                                INSERT INTO memory_nodes (user_id, entity_name, entity_type, description, embedding, wing, room)
+                                VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7)
+                                ON CONFLICT (user_id, entity_name)
+                                DO UPDATE SET
+                                    description = CASE
+                                        WHEN LENGTH(EXCLUDED.description) > LENGTH(memory_nodes.description)
+                                        THEN EXCLUDED.description
+                                        ELSE memory_nodes.description
+                                    END,
+                                    entity_type = EXCLUDED.entity_type,
+                                    embedding = COALESCE(EXCLUDED.embedding, memory_nodes.embedding),
+                                    wing = COALESCE(EXCLUDED.wing, memory_nodes.wing),
+                                    room = COALESCE(EXCLUDED.room, memory_nodes.room),
+                                    updated_at = now()
+                                RETURNING id
+                                """,
+                                user_id,
+                                name,
+                                ent.type,
+                                ent.description,
+                                ent_emb_str,
+                                ent_wing,
+                                ent_room,
+                            )
+                        except Exception:
+                            # Fallback: taxonomy columns not yet added (pre-migration 032)
+                            row = await conn.fetchrow(
+                                """
+                                INSERT INTO memory_nodes (user_id, entity_name, entity_type, description, embedding)
+                                VALUES ($1, $2, $3, $4, $5::halfvec)
+                                ON CONFLICT (user_id, entity_name)
+                                DO UPDATE SET
+                                    description = CASE
+                                        WHEN LENGTH(EXCLUDED.description) > LENGTH(memory_nodes.description)
+                                        THEN EXCLUDED.description
+                                        ELSE memory_nodes.description
+                                    END,
+                                    entity_type = EXCLUDED.entity_type,
+                                    embedding = COALESCE(EXCLUDED.embedding, memory_nodes.embedding),
+                                    updated_at = now()
+                                RETURNING id
+                                """,
+                                user_id,
+                                name,
+                                ent.type,
+                                ent.description,
+                                ent_emb_str,
+                            )
                         if row:
                             node_ids[ent.name.strip()] = row["id"]
                             # Also map canonical name if deduped
@@ -328,21 +379,23 @@ async def _upsert_graph(
                                 edges_upserted += 1
                                 continue
 
-                        # ── Temporal conflict: close old contradictory edges ──
-                        # If same src→tgt pair has an active edge with a DIFFERENT
-                        # predicate that is NOT semantically similar → it's a
-                        # factual change. Close the old one.
+                        # ── Temporal conflict: 2-stage gate (MemPalace) ────────
+                        # Stage 1: Embedding distance triage
+                        #   < 0.15  → near-duplicate, handled by merge above
+                        #   0.15-0.35 → ambiguous zone → LLM judge
+                        #   >= 0.35 → clearly different → close old edge
                         if pred_emb_str:
                             conflicting = await conn.fetch(
                                 """
-                                SELECT id, predicate
+                                SELECT id, predicate,
+                                       predicate_embedding <=> $4::halfvec AS distance
                                 FROM memory_edges
                                 WHERE user_id = $1
                                   AND source_node = $2
                                   AND target_node = $3
                                   AND valid_to IS NULL
                                   AND predicate_embedding IS NOT NULL
-                                  AND predicate_embedding <=> $4::halfvec >= 0.25
+                                  AND predicate_embedding <=> $4::halfvec >= 0.15
                                 """,
                                 user_id,
                                 src_id,
@@ -350,16 +403,73 @@ async def _upsert_graph(
                                 pred_emb_str,
                             )
                             for old_edge in conflicting:
-                                await conn.execute(
-                                    "UPDATE memory_edges SET valid_to = now() WHERE id = $1",
-                                    old_edge["id"],
-                                )
-                                logging.info(
-                                    "Temporal close: edge '%s' superseded by '%s' for user %d",
-                                    old_edge["predicate"],
-                                    rel.predicate,
-                                    user_id,
-                                )
+                                distance = float(old_edge.get("distance", 1.0))
+
+                                if distance >= 0.35:
+                                    # Stage 1: clearly different → close old
+                                    await conn.execute(
+                                        "UPDATE memory_edges SET valid_to = now() WHERE id = $1",
+                                        old_edge["id"],
+                                    )
+                                    logging.info(
+                                        "Temporal close: edge '%s' superseded by '%s' for user %d (dist=%.3f)",
+                                        old_edge["predicate"],
+                                        rel.predicate,
+                                        user_id,
+                                        distance,
+                                    )
+                                else:
+                                    # Stage 2: ambiguous zone (0.15-0.35) → LLM judge
+                                    verdict = await _resolve_ambiguous_conflict(
+                                        old_edge["predicate"],
+                                        rel.predicate,
+                                        src_name,
+                                        tgt_name,
+                                        api_key,
+                                    )
+                                    if verdict == "update":
+                                        await conn.execute(
+                                            "UPDATE memory_edges SET valid_to = now() WHERE id = $1",
+                                            old_edge["id"],
+                                        )
+                                        logging.info(
+                                            "LLM judge: edge '%s' → '%s' = UPDATE for user %d",
+                                            old_edge["predicate"],
+                                            rel.predicate,
+                                            user_id,
+                                        )
+                                    elif verdict == "refinement":
+                                        # Merge into existing edge (update predicate text)
+                                        await conn.execute(
+                                            """
+                                            UPDATE memory_edges
+                                            SET predicate = $1,
+                                                predicate_embedding = $2::halfvec,
+                                                weight = GREATEST(weight, $3),
+                                                updated_at = now()
+                                            WHERE id = $4
+                                            """,
+                                            rel.predicate,
+                                            pred_emb_str,
+                                            rel.weight,
+                                            old_edge["id"],
+                                        )
+                                        edges_upserted += 1
+                                        logging.info(
+                                            "LLM judge: edge '%s' → '%s' = REFINEMENT for user %d",
+                                            old_edge["predicate"],
+                                            rel.predicate,
+                                            user_id,
+                                        )
+                                        continue  # skip insert below
+                                    else:
+                                        # parallel — keep both, no action on old
+                                        logging.info(
+                                            "LLM judge: edge '%s' ∥ '%s' = PARALLEL for user %d",
+                                            old_edge["predicate"],
+                                            rel.predicate,
+                                            user_id,
+                                        )
 
                         # Insert new edge
                         await conn.execute(
@@ -401,3 +511,55 @@ async def _upsert_graph(
         logging.error("Graph upsert failed for user %d: %s", user_id, e, exc_info=True)
 
     return edges_upserted
+
+
+async def _resolve_ambiguous_conflict(
+    old_predicate: str,
+    new_predicate: str,
+    source_name: str,
+    target_name: str,
+    api_key: str,
+) -> str:
+    """LLM judge for ambiguous edge conflicts (cosine distance 0.15-0.35).
+
+    When two predicates between the same entity pair are in the "grey zone"
+    (not similar enough to merge, not different enough to supersede), this
+    cheap Flash-Lite call determines the relationship:
+
+    Returns one of:
+        "update"     — factual change (close old, insert new)
+        "parallel"   — both are simultaneously true (keep both)
+        "refinement" — new is a more precise version of old (merge)
+    """
+    from app.providers.gemini import get_cached_genai_client
+
+    prompt = (
+        f"Two knowledge graph edges exist between '{source_name}' and '{target_name}':\n"
+        f"  OLD: \"{old_predicate}\"\n"
+        f"  NEW: \"{new_predicate}\"\n\n"
+        "Classify the relationship between OLD and NEW as exactly one of:\n"
+        "  update — NEW replaces OLD (factual change, e.g. new job, new city)\n"
+        "  parallel — both are simultaneously true (e.g. likes Python AND likes TypeScript)\n"
+        "  refinement — NEW is a more precise version of OLD (merge them)\n\n"
+        "Output ONLY the word: update, parallel, or refinement."
+    )
+
+    try:
+        client = get_cached_genai_client(api_key)
+        response = await client.aio.models.generate_content(
+            model=get_taxonomy_model(),
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=10,
+            ),
+        )
+        answer = (response.text or "").strip().lower()
+        if answer in ("update", "parallel", "refinement"):
+            return answer
+        logging.debug("LLM judge returned unexpected: %r, defaulting to 'parallel'", answer)
+        return "parallel"
+    except Exception as exc:
+        logging.debug("LLM judge failed (non-critical): %s", exc)
+        return "parallel"  # safe default: keep both edges
+

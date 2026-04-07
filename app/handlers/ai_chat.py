@@ -189,96 +189,24 @@ async def _handle_regular_chat(
     chat_state.history = assembled.history
     chat_state.context_summary = assembled.summary
 
-    # ── Inject long-term memories (semantic recall) ──────────────────────
+    # ── Inject tiered memory context — MemPalace L0-L2 ─────────────────────
     _memories_injected = 0
     _graph_triples_count = 0
     if chat_state.ltm_enabled and key_data:
         try:
-            from app.repos.memory import search_memories_with_graph
+            from app.context.compression import inject_memory_layers
 
-            if user_message and len(user_message) > 15:
-                memories, graph_triples = await search_memories_with_graph(
-                    user_id,
-                    user_message,
-                    key_data["api_key"],
-                    limit=5,  # raised: adaptive thresholding filters noise
-                    min_similarity=0.60,  # gap-filter is the real quality gate; 0.68 was causing false negatives
-                )
-                if memories:
-                    memory_xml = format_memories_for_system_prompt(memories)
-                    if memory_xml:
-                        system_instruction = system_instruction + "\n\n" + memory_xml
-                    _memories_injected = len(memories)
-
-                # Inject graph triples if available
-                if graph_triples:
-                    # Separate current and superseded triples
-                    current_triples = [triple for triple in graph_triples if not triple.startswith("[SUPERSEDED")]
-                    temporal_triples = [triple for triple in graph_triples if triple.startswith("[SUPERSEDED")]
-
-                    graph_parts = ["\n\n<knowledge_graph>"]
-                    for triple in current_triples:
-                        graph_parts.append(f"  {triple}")
-
-                    if temporal_triples:
-                        graph_parts.append("\n  <temporal_context>")
-                        for triple in temporal_triples:
-                            graph_parts.append(f"    {triple}")
-                        graph_parts.append("  </temporal_context>")
-                        graph_parts.append(
-                            "  <temporal_instruction>"
-                            "If you notice a factual change compared to superseded data "
-                            "(e.g. new job, new city, health update, relationship change), "
-                            "acknowledge it naturally — congratulate, empathize, or ask about it. "
-                            "Если ты замечаешь, что факт изменился (новая работа, переезд, "
-                            "изменение статуса), элегантно отметь это — поздравь, посочувствуй "
-                            "или спроси об этом."
-                            "</temporal_instruction>"
-                        )
-
-                    graph_parts.append("</knowledge_graph>")
-                    system_instruction = system_instruction + "\n".join(graph_parts)
-                    _graph_triples_count = len(graph_triples)
-                    logging.info(
-                        "Injected %d memories + %d graph triples for user %s",
-                        _memories_injected,
-                        _graph_triples_count,
-                        user_id,
-                    )
-                elif _memories_injected:
-                    logging.info(
-                        "Injected %d memories into system_instruction for user %s",
-                        _memories_injected,
-                        user_id,
-                    )
-                else:
-                    # ── LLM-as-judge fallback (RF-Mem "recollection path") ──
-                    # Primary search (floor ~0.48) found nothing. Try a wider
-                    # net (floor 0.42) with a cheap Flash-Lite call to judge
-                    # which low-confidence candidates are actually relevant.
-                    logging.debug(
-                        "LTM: primary search empty for user %s — trying LLM judge fallback",
-                        user_id,
-                    )
-                    from app.repos.memory import search_memories_with_llm_judge
-
-                    judged = await search_memories_with_llm_judge(
-                        user_id,
-                        user_message,
-                        key_data["api_key"],
-                        limit=3,
-                        candidate_floor=0.42,
-                    )
-                    if judged:
-                        memory_xml = format_memories_for_system_prompt(judged)
-                        if memory_xml:
-                            system_instruction = system_instruction + "\n\n" + memory_xml
-                        _memories_injected = len(judged)
-                        logging.info(
-                            "LTM fallback injected %d LLM-judged memories for user %s",
-                            _memories_injected,
-                            user_id,
-                        )
+            system_instruction, _injection_stats = await inject_memory_layers(
+                user_id=user_id,
+                query=user_message,
+                api_key=key_data["api_key"],
+                system_instruction=system_instruction,
+                role_id=getattr(chat_state, "system_prompt_id", None),
+                limit=5,
+                min_similarity=0.60,
+            )
+            _memories_injected = _injection_stats.get("l2_memories", 0)
+            _graph_triples_count = _injection_stats.get("l2_graph_triples", 0)
         except Exception as mem_err:
             logging.warning("Memory recall failed for user %s: %s", user_id, mem_err)
 

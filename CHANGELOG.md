@@ -3,6 +3,65 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.33] - 2026-04-07 - MemPalace Memory Architecture Integration
+
+### 🧠 MemPalace: Wing/Room Taxonomy (Phase 2)
+- **Hierarchical Memory Classification**: Every memory and knowledge graph entity is now classified into a MemPalace Wing → Room → Hall hierarchy, enabling targeted retrieval (e.g., only search "identity" wing for personal facts).
+- **5 Wings**: `identity`, `projects`, `social`, `knowledge`, `temporal` — with 4–5 rooms each.
+- **6 Hall Types**: `fact`, `opinion`, `event`, `plan`, `preference`, `habit`.
+- **Partial HNSW Indexes**: High-traffic wings (`identity`, `projects`) get dedicated pgvector HNSW indexes for sub-10ms vector search within a single wing.
+- **LLM-Classified**: Graph extraction prompt now instructs Gemini to assign wing/room alongside entities and relations. Validated against allowed values with `knowledge` fallback.
+- **Admin-Configurable Model** (`TAXONOMY_MODEL`): The classification model is hot-reloadable via `config_manager.update_setting("TAXONOMY_MODEL", "...")` or env var `TAXONOMY_MODEL`. Defaults to `gemini-3.1-flash-lite-preview`.
+- **Migration**: `032_add_wing_room_taxonomy.sql` — adds `wing`, `room`, `hall_type` columns to `long_term_memory` and `wing`, `room` to `memory_nodes` with B-tree + partial HNSW indexes.
+
+### 🗜️ AAAK Tiered Context Compression (Phase 3)
+- **New Module**: `app/context/compression.py` — 4-layer memory stack inspired by AAAK lossless shorthand:
+  - **L0: Core Facts** (~250 tokens) — JSON shorthand from `is_core=TRUE` graph edges, always injected.
+  - **L1: Active Context** (~600 tokens) — structured summary from recent consolidated memories + role diary entries.
+  - **L2: Semantic Recall** (~1500 tokens) — full `search_memories_with_graph()` results + LLM-judge fallback.
+  - **L3: Full History** — managed by existing `assembler.py` token budget.
+- **XML Memory Palace Block**: All layers wrapped in `<memory_palace>` / `<core_identity>` / `<active_context>` / `<knowledge_graph>` XML tags for structured LLM consumption.
+- **Unified Injection**: Replaced 90-line inline memory injection block in `ai_chat.py` with single `inject_memory_layers()` call.
+
+### ⚔️ 2-Stage Contradiction Detection (Phase 4)
+- **Embedding Distance Triage**: Edge conflicts are now classified by cosine distance into three zones:
+  - `< 0.15` — near-duplicate, handled by semantic merge.
+  - `0.15–0.35` — ambiguous zone → triggers **LLM-as-judge** (cheap Flash-Lite call).
+  - `≥ 0.35` — clearly different → temporal close (old edge superseded).
+- **LLM Judge Verdicts**: `update` (factual change), `parallel` (both true), `refinement` (merge predicates).
+- **New Function**: `_resolve_ambiguous_conflict()` in `memory_extraction.py`.
+
+### 📔 Persistent Role Diaries (Phase 5)
+- **Per-Role Session Memory**: Each custom role accumulates diary entries (key learnings, user preferences, style observations) that persist across sessions.
+- **State Integration**: `UserState.role_diaries` dict (`{role_id: [entries]}`) persisted to `user_state.role_diaries` JSONB column.
+- **Public API**: `get_role_diary()`, `append_role_diary()`, `clear_role_diary()` in `app/state.py`.
+- **L1 Context Injection**: Active role's diary entries are automatically included in the L1 compression layer.
+- **Migration**: `033_add_role_diaries.sql` — adds `role_diaries JSONB DEFAULT '{}'` to `user_state`.
+
+### 🛡️ Auto-Save & Graceful Shutdown Hooks (Phase 1)
+- **New Module**: `app/repos/memory_autosave.py` — centralized heartbeat saves, pre-shutdown compaction, and in-flight memory write draining.
+- **Shutdown Integration**: `bot.py` `_cleanup_application` now drains pending memory writes and runs pre-shutdown compaction before process exit.
+
+### 🔧 Infrastructure
+- **Host**: Migrated to dedicated 2 vCPU / 4GB RAM / 120GB NVMe SSD server.
+- **Backward Compatibility**: All new columns are optional — code gracefully degrades on databases that haven't run migrations 032/033 yet.
+
+### 🗄️ Database Migrations
+
+| Migration | Detail |
+|-----------|--------|
+| `032_add_wing_room_taxonomy.sql` | `wing TEXT`, `room TEXT`, `hall_type TEXT` on `long_term_memory`; `wing TEXT`, `room TEXT` on `memory_nodes`. B-tree + partial HNSW indexes. |
+| `033_add_role_diaries.sql` | `role_diaries JSONB DEFAULT '{}'` on `user_state`. |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check` (modified files) | 0 errors ✅ |
+| `pytest` (full suite, excl. pre-existing `tts_temperature` failures) | **1641 passed**, 0 failed ✅ |
+
+---
+
 ## [2.9.32] - 2026-04-06 - Independent TTS Temperature & Steerable Voice Prompting
 
 ### ✨ UX Enhancements & Generative Polish

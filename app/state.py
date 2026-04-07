@@ -40,6 +40,8 @@ class UserState:
         "awaiting_manual_role_prompt",
         "manual_role_title",
         "manual_role_prompt",
+        # MemPalace: persistent role diaries
+        "role_diaries",
         # Internal bookkeeping
         "_loaded_from_db",
         "_dirty",
@@ -64,6 +66,8 @@ class UserState:
         self.awaiting_manual_role_prompt: bool = False
         self.manual_role_title: str = ""
         self.manual_role_prompt: str = ""
+        # MemPalace role diaries: {role_id: ["entry1", "entry2", ...]}
+        self.role_diaries: dict[str, list[str]] = {}
         # Internal
         self._loaded_from_db: bool = False
         self._dirty: bool = False
@@ -158,6 +162,7 @@ async def _ensure_loaded(state: UserState) -> UserState:
                 state.awaiting_manual_role_prompt = data.get("awaiting_manual_role_prompt", False)
                 state.manual_role_title = data.get("manual_role_title", "")
                 state.manual_role_prompt = data.get("manual_role_prompt", "")
+                state.role_diaries = data.get("role_diaries") or {}
         except Exception as e:
             logging.warning("Could not load state for %s: %s", state._user_id, e)
 
@@ -186,6 +191,7 @@ async def _persist(state: UserState) -> None:
             awaiting_manual_role_prompt=state.awaiting_manual_role_prompt,
             manual_role_title=state.manual_role_title,
             manual_role_prompt=state.manual_role_prompt,
+            role_diaries=state.role_diaries,
         )
     except Exception as e:
         logging.warning("Could not persist state for %s: %s", state._user_id, e)
@@ -428,6 +434,44 @@ def get_manual_role_title(user_id: int) -> str:
 
 def get_manual_role_prompt(user_id: int) -> str:
     return get_user_state(user_id).manual_role_prompt
+
+
+# --- MemPalace Role Diaries ---
+
+
+def get_role_diary(user_id: int, role_id: str) -> list[str]:
+    """Get diary entries for a specific role."""
+    state = get_user_state(user_id)
+    return list(state.role_diaries.get(role_id, []))
+
+
+def append_role_diary(user_id: int, role_id: str, entry: str) -> None:
+    """Append an entry to a role's diary (trimmed to limit)."""
+    from app.repos.memory_config import (
+        DIARY_ENTRY_MAX_LENGTH,
+        MAX_DIARY_ENTRIES_PER_ROLE,
+    )
+
+    state = get_user_state(user_id)
+    if role_id not in state.role_diaries:
+        state.role_diaries[role_id] = []
+
+    trimmed = entry[:DIARY_ENTRY_MAX_LENGTH]
+    state.role_diaries[role_id].append(trimmed)
+
+    # Evict oldest entries if over limit
+    if len(state.role_diaries[role_id]) > MAX_DIARY_ENTRIES_PER_ROLE:
+        state.role_diaries[role_id] = state.role_diaries[role_id][-MAX_DIARY_ENTRIES_PER_ROLE:]
+
+    _schedule_persist(state)
+
+
+def clear_role_diary(user_id: int, role_id: str) -> None:
+    """Clear all diary entries for a role."""
+    state = get_user_state(user_id)
+    if role_id in state.role_diaries:
+        del state.role_diaries[role_id]
+        _schedule_persist(state)
 
 
 # =============================================================================
