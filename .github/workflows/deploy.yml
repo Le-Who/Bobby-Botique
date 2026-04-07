@@ -33,6 +33,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: ./Dockerfile.northflank
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.REPO }}:latest
 
