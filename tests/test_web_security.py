@@ -252,3 +252,29 @@ async def test_error_leakage_prevented(client):
 
         response_text = (await response.get_data()).decode()
         assert secret_message not in response_text
+
+
+@pytest.mark.asyncio
+async def test_asgi_proxy_fix_ip_spoofing(client):
+    """Test that ASGIProxyFix properly extracts IP and prevents spoofing."""
+    from quart import request
+
+    from app.web import quart_app
+
+    # Add a test endpoint
+    @quart_app.route("/test-ip")
+    async def test_ip():
+        return {"ip": request.remote_addr}
+
+    # Simulate Northflank appending the real client IP (2.2.2.2) to any existing X-Forwarded-For
+    headers = {"X-Forwarded-For": "8.8.8.8, 1.1.1.1, 2.2.2.2"}
+    response = await client.get("/test-ip", headers=headers)
+    data = await response.get_json()
+
+    # trusted_hops=1 should take the last IP
+    assert data["ip"] == "2.2.2.2", f"Expected 2.2.2.2, got {data['ip']}"
+
+    # Missing header should fallback to raw connection IP
+    response = await client.get("/test-ip")
+    data = await response.get_json()
+    assert data["ip"] == "127.0.0.1" or "local" in str(data["ip"]).lower(), "Expected local IP"

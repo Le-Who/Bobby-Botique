@@ -50,6 +50,35 @@ from app.web_miniapp import miniapp_blueprint  # noqa: E402
 quart_app.register_blueprint(miniapp_blueprint, url_prefix="/webapp")
 
 
+class ASGIProxyFix:
+    """
+    Middleware to securely parse proxy headers.
+    It extracts the real client IP from X-Forwarded-For, respecting trusted hops,
+    preventing both rate-limit bypassing and IP spoofing vulnerabilities.
+    """
+    def __init__(self, app, trusted_hops=1):
+        self.app = app
+        self.trusted_hops = trusted_hops
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            headers = dict(scope.get("headers", []))
+            if b"x-forwarded-for" in headers:
+                x_forwarded_for = headers[b"x-forwarded-for"].decode("latin1")
+                ips = [ip.strip() for ip in x_forwarded_for.split(",")]
+                if len(ips) >= self.trusted_hops:
+                    # The client IP is 'trusted_hops' positions from the right
+                    client_ip = ips[-self.trusted_hops]
+                    if "client" in scope and scope["client"]:
+                        scope["client"] = (client_ip, scope["client"][1])
+                    else:
+                        scope["client"] = (client_ip, 0)
+        return await self.app(scope, receive, send)
+
+# Apply proxy fix with 1 trusted hop for Northflank
+quart_app.asgi_app = ASGIProxyFix(quart_app.asgi_app, trusted_hops=1)
+
+
 # Derive a secret key for sessions from ADMIN_SECRET
 def _get_admin_secret():
     """Returns the configured admin secret."""
