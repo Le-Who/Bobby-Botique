@@ -101,6 +101,7 @@ jobs:
               --name tg-bot \
               --restart unless-stopped \
               -p 127.0.0.1:$PORT:$PORT \
+              -e TZ="Europe/Kyiv" \
               -e ADMIN_ID="$ADMIN_ID" \
               -e DATABASE_URL="$DATABASE_URL" \
               -e ENABLE_PERSISTENT_QUEUE="$ENABLE_PERSISTENT_QUEUE" \
