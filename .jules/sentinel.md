@@ -22,3 +22,8 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+
+## 2025-05-24 - [Cryptography] Weak Hashing Algorithms
+**Vulnerability:** `hashlib.md5` was used for request deduplication and generating callback cache IDs.
+**Learning:** MD5 is cryptographically broken and prone to collision attacks. Even if it's not used for password hashing, using weak algorithms can trigger static analysis tools (like Bandit) and establish bad practices.
+**Prevention:** Default to modern, secure algorithms like `hashlib.sha256()` for all hashing needs, regardless of the perceived criticality of the use case.
