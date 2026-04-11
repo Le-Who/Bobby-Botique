@@ -119,7 +119,7 @@ _SAMPLE_RATE = 24000
 def trim_trailing_silence(
     pcm: bytes,
     *,
-    threshold: int = 1500,
+    threshold: int = 400,
     min_tail_ms: int = 150,
 ) -> bytes:
     """Remove trailing silence from raw PCM 16-bit LE mono audio.

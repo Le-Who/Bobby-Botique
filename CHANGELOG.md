@@ -17,7 +17,7 @@ Format is optimized for agent-parseable context.
 ### 🔊 Voice Engine 4.1 Stability Polish
 - **Strict Verbatim Constraints**: Hardened the Gemini TTS Steerable Voice prompt to strictly forbid summarization, abbreviation, or generative conversational fillers (like "Продолжение следует..."), resolving severe text hallucinations on long messages.
 - **Adaptive Chunk Sizing**: Recalibrated the Gemini sequential chunking limit to `max_bytes=1800` (up from 1000, down from 2500) to find the perfect medium between generation stability (preventing 500 timeouts) and maintaining cohesive multi-sentence intonation arcs. Chunking respects sentence boundaries safely without severing mid-word.
-- **PCM Silence Trimming Threshold**: Greatly increased the trailing silence trim threshold from `400` to `1500` amplitude in raw 16-bit LE PCM data. This effectively gates out and strips the extended low-level "hissing" generative noise artifacts that Gemini TTS sometimes produces at the tail end of long prompts.
+- **PCM Silence Trimming Threshold**: Reverted the trailing silence trim threshold from 1500 back to `400` amplitude in raw 16-bit LE PCM data. The previous high threshold inadvertently truncated valid quiet speech (e.g. dropping 19 seconds of speech simply because it didn't cross 1500 amplitude). `400` correctly strips digital zeros without clipping quiet speech.
 
 ---
 
