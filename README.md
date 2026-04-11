@@ -135,43 +135,171 @@ graph TD;
 
 ## Configuration
 
-All configuration variables are loaded from the environment (or a `.env` file).
+All configuration is loaded from environment variables (or a `.env` file). Variables are grouped below by functional category.
 
-| Variable                            | Required | Default                       | Description                                                        | Used In                            |
-| ----------------------------------- | -------- | ----------------------------- | ------------------------------------------------------------------ | ---------------------------------- |
-| `TELEGRAM_BOT_TOKEN`                | ✅       | -                             | Your Telegram bot API token.                                       | `config.py`, `bot.py`              |
-| `DATABASE_URL`                      | ✅       | -                             | Postgres connection string (must support pgvector).                | `config.py`, `database.py`         |
-| `ADMIN_ID`                          | ✅       | -                             | Telegram User ID of the bot administrator.                         | `config.py`, Handlers              |
-| `JINA_API_KEY`                      | ❌       | -                             | API key for Jina Reader API (web content extraction).              | `config.py`, `web_reader.py`       |
-| `AGENTIC_MAX_ITERATIONS`            | ❌       | 3                             | Maximum number of research loop iterations for the agent.          | `config.py`, `agentic.py`          |
-| `AGENTIC_MAX_PAGES`                 | ❌       | 3                             | Maximum number of pages to read per iteration.                     | `config.py`, `agentic.py`          |
-| `AGENTIC_MAX_TOKENS`                | ❌       | `100000`                      | Token budget cap for the entire agentic research session.          | `config.py`, `agentic.py`          |
-| `AGENTIC_TIMEOUT_SECONDS`           | ❌       | `90`                          | Wall-clock timeout (seconds) for the agentic research loop.        | `config.py`, `agentic.py`          |
-| `AGENTIC_MODEL`                     | ❌       | `gemini-2.5-flash`              | Recommended reasoning model to use for the agentic loop.           | `config.py`, `agentic.py`          |
-| `ADMIN_SECRET`                      | ❌       | -                             | Secret for Dashboard auth and key encryption.                      | `config.py`, `web.py`, `crypto.py` |
-| `PORT`                              | ❌       | `10000`                       | Port for the Quart Web Server to bind to.                          | `config.py`, `bot.py`              |
-| `ENABLE_WEB_SERVER`                 | ❌       | `true`                        | Enables the built-in diagnostic dashboard.                         | `config.py`, `bot.py`              |
-| `GEMINI_API_KEYS`                   | ✅       | -                             | Comma-separated Google access keys.                                | `config.py`                        |
-| `TAVILY_API_KEYS`                   | ✅       | -                             | Comma-separated Tavily access keys.                                | `config.py`                        |
-| `OPENROUTER_API_KEYS`               | ❌       | `[]`                          | Comma-separated OpenRouter access keys.                            | `config.py`                        |
-| `WEBHOOK_URL`                       | ❌       | -                             | Public URL for Telegram Webhook mode. If empty, uses Long-Polling. | `bot.py`                           |
-| `STRUCTURED_LOGGING` / `LOG_FORMAT` | ❌       | Auto                          | Enables JSON-structured application logs.                          | `bot.py`                           |
-| `DEFAULT_MODEL` / `QNA_MODEL` / ... | ❌       | `gemini-2.5-flash` etc.       | Default Gemini models for specific operations. Supported: `3.0-flash`, `3.1-flash-lite`, `2.5-flash`, `2.5-flash-lite`. | `config.py`                        |
-| `OPENROUTER_DEFAULT_MODEL` / ...    | ❌       | `stepfun/step-3.5-flash:free` | Default OpenRouter models for operations.                          | `config.py`                        |
-| `DAILY_LIMITS`                      | ❌       | Default dict                  | JSON or compact `model:limit` format for daily rate limits.        | `config.py`                        |
-| `USE_OPENROUTER`                    | ❌       | `false`                       | Force OpenRouter as the default provider instead of Gemini.        | `config.py`                        |
-| `IMAGE_MODELS`                      | ❌       | `flux,zimage`                 | Comma-separated list of Pollinations image models to show in UI.   | `config.py`, `pollinations.py`     |
-| `DEFAULT_IMAGE_MODEL`               | ❌       | `flux`                        | Default image model for `/draw` commands.                          | `config.py`                        |
-| `POLLINATIONS_API_KEY`              | ❌       | -                             | Optional API key for Pollinations.ai generation (better limits).   | `config.py`, `pollinations.py`     |
-| `ELEVENLABS_API_KEYS`               | ❌       | `[]`                          | Comma-separated ElevenLabs API keys (load-balanced rotation). If empty, falls back to Gemini TTS. | `config.py`, `elevenlabs_tts.py` |
-| `ELEVENLABS_VOICE_ID`               | ❌       | `XB0fDUnXU5powFXDhCwa`        | ElevenLabs voice ID to use (default: Charlotte).                  | `config.py`, `elevenlabs_tts.py` |
-| `IMAGE_GEN_RPD_PER_KEY`             | ❌       | `25`                          | Imagen free-tier RPD cap per API key per day. Tracked in Redis (`imagen:rpd:<hash>`), in-memory fallback. | `config.py`, `imagen_provider.py` |
-| `IMAGE_GEN_TIMEOUT`                 | ❌       | `60.0`                        | Max seconds to wait for the Imagen API response.                  | `config.py`, `imagen_provider.py` |
-| `IMAGE_GEN_MAX_RETRIES`             | ❌       | `3`                           | Key rotation retry attempts before failing image generation.      | `config.py`, `imagen_provider.py` |
-| `IMAGE_GEN_DAILY_LIMIT`             | ❌       | `10`                          | Reserved per-user daily cap (not yet enforced at handler level).  | `config.py`                       |
-| `MAX_CONCURRENT_HEAVY_REQUESTS`     | ❌       | `4`                           | Max parallel normal AI request handlers to prevent exhaustion.     | `config.py`                        |
-| `MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS` | ❌       | `1`                           | Max parallel isolated ultra-heavy tasks (e.g., Agentic Research).  | `config.py`                        |
-| `LRU_STATE_CACHE_SIZE`              | ❌       | `1000`                        | Max entries in the in-memory user state cache (prevents OOM crashes). | `config.py`, `state.py`            |
+> [!IMPORTANT]
+> Variables marked ✅ are **required** — the application will refuse to start if they are absent. Variables marked ❌ are optional and will use the listed defaults.
+
+---
+
+### 🔐 Core / Authentication
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | ✅ | `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11` | — | Obtained from [@BotFather](https://t.me/BotFather). Must match the running bot. |
+| `ADMIN_ID` | ✅ | `6913772015` | — | Your personal Telegram User ID. Get it via [@userinfobot](https://t.me/userinfobot). Used to gate all `/admin` commands. |
+| `ADMIN_SECRET` | ❌ | Any secure random string, e.g. `openssl rand -hex 24` | — | Password for the admin web dashboard login form. Also used as encryption seed for stored API keys in the DB. **Keep stable across restarts** — changing it breaks decryption of stored keys. |
+
+---
+
+### 🗄️ Database
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `DATABASE_URL` | ✅ | `postgresql://user:pass@localhost:5432/gemaibotv2` | — | Standard asyncpg/libpq DSN. **Must** have the `pgvector` extension available — the bot won't start without it. For local VPS deployments, use `localhost`; for Supabase use the pooler URL. |
+| `DB_POOL_MIN_SIZE` | ❌ | `2`–`10` | `2` | Minimum open asyncpg connections. Increase on high-traffic deployments to avoid connection storms. |
+| `DB_POOL_MAX_SIZE` | ❌ | `10`–`50` | `10` | Maximum open asyncpg connections. Keep below the PostgreSQL `max_connections` limit (default 100). For a 4-vCPU VPS, `20`–`30` is a safe value. |
+| `TEST_DATABASE_URL` | ❌ | Same DSN format, pointing to a test DB | — | Used **only** during integration test execution (`pytest -m integration`). Completely isolated from production data. |
+
+> **Migrating from Supabase to a local DB:**
+> ```bash
+> # 1. Dump from Supabase
+> pg_dump "postgresql://postgres.xxx:PASS@aws-1-eu-north-1.pooler.supabase.com:5432/postgres" \
+>   --no-owner --no-acl -Fc -f backup.dump
+>
+> # 2. Create local DB with pgvector
+> createdb -U postgres gemaibotv2
+> psql -U postgres gemaibotv2 -c "CREATE EXTENSION IF NOT EXISTS vector;"
+>
+> # 3. Restore data
+> pg_restore -h localhost -U postgres -d gemaibotv2 --no-owner --no-acl -Fc backup.dump
+> ```
+> After restore, update `DATABASE_URL` to `postgresql://postgres:pass@localhost:5432/gemaibotv2` and redeploy. **No data is lost.**
+
+---
+
+### 📦 Cache & Queue (Redis)
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `REDIS_URL` | ❌ | `redis://localhost:6379/0` or `rediss://user:pass@host:6379` | — | Used for: distributed LLM semaphores (multi-replica safety), Telegram Mini App Reader page cache (24h TTL), Imagen RPD-per-key counters. If absent, the app falls back to in-process locking (works fine for single-replica deployments). Use `rediss://` scheme for TLS connections. |
+
+---
+
+### 🌐 Network & Web Server
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `PORT` | ❌ | `10000` | `10000` | Port the Quart web server and admin dashboard binds to. On VPS, expose via Caddy/Nginx reverse proxy — do **not** bind directly to `0.0.0.0` in production. |
+| `ENABLE_WEB_SERVER` | ❌ | `true` / `false` | `true` | Disabling this skips starting the Quart server entirely. Set `false` only for local dev without the dashboard. |
+| `WEBHOOK_URL` | ❌ | `https://bot.example.com` | — | If set, the bot registers itself as a Telegram Webhook at this URL and stops long-polling. **Must be HTTPS.** Required for production webhook deployments. If absent, the bot uses long-polling (simpler for single-server setups). |
+| `WEBAPP_BASE_URL` | ❌ | `https://bot.example.com` | `""` | Public URL from which the Telegram Mini App settings panel and reader are served. If empty, long-response reader falls back to Telegraph links. Must equal `WEBHOOK_URL` in most deployments. |
+
+---
+
+### 🤖 Gemini Models (Primary LLM Provider)
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `GEMINI_API_KEYS` | ✅ | `key1,key2,key3` | — | Comma-separated Google AI Studio API keys. The system rotates through them automatically on quota exhaustion or 503 errors. Each key has an independent daily request budget tracked in the DB. Minimum 1 key required. |
+| `GEMINI_AVAILABLE_MODELS` | ❌ | `gemini-2.5-flash,gemini-3.1-flash-lite-preview` | See `config.py` | Controls which Gemini models appear in the `/model` selector for users. If a `DEFAULT_MODEL` is not in this list, it is added automatically with a warning at startup. |
+| `DEFAULT_MODEL` | ❌ | `gemini-3.1-flash-lite-preview` | `gemini-3.1-flash-lite-preview` | Model used for standard conversational messages. Recommended: `gemini-3.1-flash-lite-preview` (fast + cheap) or `gemini-2.5-flash` (smarter, higher cost). |
+| `QNA_MODEL` | ❌ | `gemini-2.5-flash-lite` | `gemini-2.5-flash-lite` | Model used for quick Q&A web search queries (`?` prefix). Optimized for fast factual one-shot answers. |
+| `RESEARCH_MODEL` | ❌ | `gemini-3.1-flash-lite-preview` | `gemini-3.1-flash-lite-preview` | Model used for synthesizing Tavily search results into a final research answer. |
+| `URL_SELECTION_MODEL` | ❌ | `gemini-3.1-flash-lite-preview` | `gemini-3.1-flash-lite-preview` | Lightweight model that scores and filters candidate URLs during agentic web research before full content extraction. |
+| `TAXONOMY_MODEL` | ❌ | `gemini-3.1-flash-lite-preview` | `gemini-3.1-flash-lite-preview` | Model used by MemPalace to classify memories into the Wing/Room taxonomy and to judge temporal contradictions (LLM-as-Judge). Can be set to a cheaper model without quality loss. |
+
+---
+
+### 🔀 OpenRouter Models (Secondary LLM Provider)
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `OPENROUTER_API_KEYS` | ❌ | `sk-or-v1-abc,sk-or-v1-xyz` | `[]` | Comma-separated OpenRouter API keys. Required if `USE_OPENROUTER=true`. Rotated same as Gemini keys. Note: OpenRouter is **disabled for multimodal (image) requests** — Gemini is always used for vision. |
+| `USE_OPENROUTER` | ❌ | `true` / `false` | `false` | If `true`, routes all standard chat, research, and Q&A operations through OpenRouter instead of Gemini. Overrides `DEFAULT_MODEL` etc. with their `OPENROUTER_*` counterparts. Gemini keys are still needed for embeddings and TTS. |
+| `OPENROUTER_AVAILABLE_MODELS` | ❌ | `stepfun/step-3.5-flash:free,qwen/qwen3-4b:free` | `[]` | Models shown in /model selector when OpenRouter is active. |
+| `OPENROUTER_DEFAULT_MODEL` | ❌ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | Default model for standard chat on OpenRouter. |
+| `OPENROUTER_QNA_MODEL` | ❌ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for quick Q&A search synthesis. |
+| `OPENROUTER_RESEARCH_MODEL` | ❌ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for agentic research synthesis. |
+| `OPENROUTER_URL_SELECTION_MODEL` | ❌ | `stepfun/step-3.5-flash:free` | `stepfun/step-3.5-flash:free` | OpenRouter model for URL scoring during agentic research. |
+
+---
+
+### 🔍 Search & Web Research
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `TAVILY_API_KEYS` | ✅ | `tvly-key1,tvly-key2` | — | Comma-separated Tavily Search API keys. Used for both the quick `?` search and deep agentic `??` research. Monthly credit budget tracked in the DB with alerting at 97% utilization. |
+| `JINA_API_KEY` | ❌ | `jina_xxx...` | — | API key for [Jina Reader](https://jina.ai/reader/) — used to extract clean Markdown text from web pages during agentic research. Without this key, the agent falls back to raw HTML parsing, which is less reliable. |
+
+---
+
+### 🧠 Agentic Research Engine
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `AGENTIC_MODEL` | ❌ | `gemini-2.5-flash` | `""` (uses `RESEARCH_MODEL`) | Overrides the LLM used inside the agentic research loop. Set to a more capable model (e.g. `gemini-2.5-flash`) for better research quality at higher cost. If empty, falls back to `RESEARCH_MODEL`. |
+| `AGENTIC_MAX_ITERATIONS` | ❌ | `5`–`15` | `5` | Maximum research loop cycles before the agent is forced to synthesize an answer. Each iteration = one round of query → search → read → reflect. Higher = deeper research, higher API cost. |
+| `AGENTIC_MAX_PAGES` | ❌ | `3`–`10` | `3` | Maximum web pages the agent reads per iteration. Each page consumes Jina/Tavily credits and LLM tokens. |
+| `AGENTIC_MAX_TOKENS` | ❌ | `100000`–`500000` | `100000` | Hard token budget cap for the entire agentic session. The loop terminates if accumulated prompt + completion tokens exceed this value. Prevents runaway sessions on complex queries. |
+| `AGENTIC_TIMEOUT_SECONDS` | ❌ | `90`–`300` | `90` | Wall-clock time limit for the entire agentic session. If the loop doesn't finish within this window, a partial result is returned. Increase to `180`+ on powerful VPS for deeper research. |
+| `AGENTIC_PAGE_CONTENT_LIMIT` | ❌ | `4096`–`16384` | `8192` | Maximum characters extracted from each web page before truncation. Higher = more context per page, more LLM tokens consumed. |
+| `ADAPTIVE_THINKING_ENABLED` | ❌ | `true` / `false` | `true` | Enables the automatic `thinking_level` selector (14-rule heuristic). When `true`, simple greetings get `low` depth and complex code/research queries get `high`. User's manual `/thinking` setting always overrides this. |
+
+---
+
+### 📊 Rate Limits & Concurrency
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `DAILY_LIMITS` | ❌ | JSON: `{"gemini-2.5-flash":250}` or compact: `gemini-2.5-flash:250,gemini-2.5-flash-lite:15` | `15` per model | Per-user daily request caps by model name. Requests beyond the limit receive a "quota exceeded" reply. Tracked in the DB with reset at midnight UTC. The TTS model `gemini-2.5-flash-preview-tts` can be included with a separate limit. |
+| `MAX_CONCURRENT_HEAVY_REQUESTS` | ❌ | `4`–`32` | `4` | Global asyncio semaphore limiting simultaneously active LLM/TTS requests. Backed by Redis for multi-replica safety. On a single-core free container: `4`. On a 4-vCPU VPS with 8 GB RAM: `16`–`24` is safe (LLM calls are I/O-bound, not CPU-bound). |
+| `MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS` | ❌ | `1`–`8` | `1` | Separate semaphore for agentic research (`??`) sessions. These are memory-intensive due to iterative context accumulation. On a 4-vCPU VPS: `4` is safe. |
+| `LRU_STATE_CACHE_SIZE` | ❌ | `1000`–`50000` | `1000` | Maximum number of `UserState` objects held in the in-process LRU cache. Each entry is ~2–5 KB. `1000` was conservatively set for free-tier 512 MB containers. On a VPS with 8 GB RAM, set to `20000`+ to dramatically reduce DB round-trips. |
+| `DB_POOL_MIN_SIZE` | ❌ | `2`–`10` | `2` | See Database section. |
+| `DB_POOL_MAX_SIZE` | ❌ | `10`–`50` | `10` | See Database section. |
+
+---
+
+### 🎨 Image Generation
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `IMAGE_MODELS` | ❌ | `flux,zimage,gptimage` | `flux,zimage` | Pollinations.ai models displayed as buttons in the interactive `/draw` Canvas. Add `gptimage` for OpenAI-backed generation (requires Pollinations API key for higher rate limits). |
+| `DEFAULT_IMAGE_MODEL` | ❌ | `flux` | `flux` | Which Pollinations model is pre-selected by default in the Canvas keyboard. |
+| `POLLINATIONS_API_KEY` | ❌ | `pollinations-xxx` | — | Optional key for Pollinations.ai. Without it, the API works but with stricter rate limits. Get it at [pollinations.ai](https://pollinations.ai). |
+| `IMAGE_GEN_DAILY_LIMIT` | ❌ | `10`–`100` | `10` | Per-user daily cap for Imagen 4 generations via Google API. Counted separately from Pollinations. |
+| `IMAGE_GEN_RPD_PER_KEY` | ❌ | `25` | `25` | Requests-per-day budget per Gemini API key for Imagen 4. The free tier allows 25 RPD. Tracked in Redis with in-memory fallback. Prevents image quota from consuming keys needed for LLM chat. |
+| `IMAGE_GEN_TIMEOUT` | ❌ | `30.0`–`120.0` | `60.0` | Max seconds to wait for an Imagen 4 API response before timing out and rotating to the next key. |
+| `IMAGE_GEN_MAX_RETRIES` | ❌ | `1`–`5` | `3` | Number of Gemini key rotation attempts on quota/error before failing image generation entirely. |
+
+---
+
+### 🔊 Voice / TTS (ElevenLabs & Gemini)
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `ELEVENLABS_API_KEYS` | ❌ | `sk_abc,sk_xyz` | `[]` | Comma-separated ElevenLabs API keys used for outbound voice synthesis. Load-balanced with round-robin rotation. If empty, the system falls back exclusively to Gemini REST TTS (`gemini-2.5-flash-preview-tts`). Free ElevenLabs tier gives ~10k chars/month per key. |
+| `ELEVENLABS_VOICE_ID` | ❌ | `XB0fDUnXU5powFXDhCwa` | `XB0fDUnXU5powFXDhCwa` | ElevenLabs Voice ID to use for synthesis. Default is Charlotte (conversational, English/Russian). Browse voices at [elevenlabs.io/voice-library](https://elevenlabs.io/voice-library). |
+
+---
+
+### 📋 Logging & Observability
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `STRUCTURED_LOGGING` | ❌ | `1` / `true` / `json` | Auto-detected | When set, forces JSON-structured log output instead of plain text. Auto-detection uses `HOSTNAME` length and `PORT` presence as heuristics — runs structured in cloud, plain locally. Set `1` explicitly to always force JSON. |
+| `LOG_PRETTY` | ❌ | `1` / `true` | `false` | Formats JSON logs with indentation for human readability during local development. Disabling in production reduces stdout volume by ~30%. |
+| `HOSTNAME` | ❌ | Auto-injected by Docker | `unknown` | Docker/Kubernetes injects this automatically. Used as `instance_id` in structured log records for multi-replica tracing. Do not set manually. |
+| `SERVICE_NAME` | ❌ | `gemaibotv2` | `gemaibotv2` | Service label added to every structured log record. Override if running multiple bot instances under different names. |
+
+---
+
+### 🧪 Testing Only
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `TEST_DATABASE_URL` | ❌ | `postgresql://user:pass@localhost:5432/test_db` | — | Postgres connection string used **exclusively** by `pytest -m integration`. Must point to a clean, separate database — integration tests run destructive DDL and DML. Never set this to the production DB. |
 
 ## Run
 
