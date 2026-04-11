@@ -3,7 +3,61 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.36] - 2026-04-11 - Inline Mode: Cross-Chat Bot Interaction via @mention
+
+### ✨ New Feature — Inline Mode (`@gemaibotv2 <query>`)
+
+Users can now invoke the bot from **any Telegram chat** (including private conversations with other people) by typing `@gemaibotv2 <query>`. This implements Telegram's [Inline Mode](https://core.telegram.org/bots/inline) with a hybrid async delivery pipeline.
+
+#### UX Flow
+
+1. User types `@gemaibotv2 <query>` → bot instantly returns **3 `InlineQueryResultArticle`** tone options:
+   - 📋 **Формальный** — strict, professional, facts-only
+   - 😊 **Дружеский** — warm, casual, emoji-friendly
+   - 😏 **Саркастичный** — light irony, still helpful
+2. User selects a tone → a styled `⚡️ Gemaibotv2 генерирует ответ…` placeholder is posted to the chat.
+3. Bot captures `ChosenInlineResult` with `inline_message_id`, launches a **background generation task**.
+4. Background pipeline:
+   a. **Tavily QnA search** (`search_type="qna"`, 8 s timeout, best-effort) — same search infrastructure as `?` prefix and agentic research.
+   b. Freshness context injected into system prompt alongside tone hint.
+   c. **`gemini-3.1-flash-lite-preview`** generates a concise answer (≤ 3–4 paragraphs).
+   d. `markdown_to_html()` formats the response → `bot.edit_message_text(inline_message_id=..., parse_mode="HTML")` edits the placeholder **in-place**.
+5. Two-level fallback: HTML parse error → plain-text retry. Both log errors without propagating to the user.
+
+#### Technical Details
+
+- **Model**: `gemini-3.1-flash-lite-preview` (ultra-low latency, free-tier compatible).
+- **Formatting**: fully HTML-based via `app.utils.text_format.markdown_to_html` — consistent with every other bot message.
+- **`_bg_tasks` set**: fire-and-forget `asyncio.create_task` tasks pinned in a module-level set to prevent GC before completion.
+- **Background task GC safety**: task is held in `_bg_tasks: set[asyncio.Task]`; removed via `task.add_done_callback(_bg_tasks.discard)`.
+- **`cache_time=0`**: inline results are never cached by Telegram, ensuring each keystroke returns a fresh result list.
+
+#### BotFather Configuration Required (one-time)
+
+| Action | Setting |
+|--------|---------|
+| `/setinline` | Enable inline mode; set placeholder text (e.g., `Введите запрос…`) |
+| `/setinlinefeedback` | **100%** probability — required to receive `ChosenInlineResult` with `inline_message_id` for in-place editing |
+
+#### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/handlers/inline.py` | **[NEW]** `handle_inline_query`, `handle_chosen_inline_result`, `_generate_and_edit_inline` |
+| `bot.py` | `InlineQueryHandler` + `ChosenInlineResultHandler` registered; `"chosen_inline_result"` added to `_ALLOWED_UPDATES` |
+| `README.md` | Inline Mode feature, handler table, Architecture Decisions, Main User Flows updated |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check app/handlers/inline.py` | 0 errors ✅ |
+| `python -c "ast.parse(...)"` (inline.py + bot.py) | Syntax OK ✅ |
+
+---
+
 ## [2.9.35] - 2026-04-11 - Gemini TTS Timeout & Null Buffer Fixes
+
 
 ### 🐛 Critical Bug Fixes
 - **TTFT (Time-To-First-Token) Timeout Fix**: Addressed a severe bug where Gemini TTS generation frequently timed out with `TTS generation timed out after 30s`. Current generation audio models have a large TTFT under load (>35s). Adjusted `voice_engine.py` adaptive timeout floor from `30s` to `120s`, completely mitigating premature cancellation and timeout rotation.
