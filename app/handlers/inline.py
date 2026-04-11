@@ -165,7 +165,17 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     tone_id = chosen.result_id
     user_id = chosen.from_user.id if chosen.from_user else None
 
-    if not user_query:
+    if not user_query or tone_id == "hint":
+        bot_name = context.bot.first_name or "бота"
+        try:
+            await context.bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=f"❌ <b>Ошибка:</b> Пустой запрос.\nВведите текст после @{bot_name} (например, <i>какая сегодня погода?</i>)",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([]),
+            )
+        except Exception as e:
+            logging.error("Inline: Failed to edit empty query hint: %s", e)
         return
 
     task = asyncio.create_task(
