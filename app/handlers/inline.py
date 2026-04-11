@@ -210,6 +210,7 @@ async def _generate_and_edit_inline(
     4. Edit the placeholder inline message in-place.
     """
     from app.handlers.ai_core import _get_ai_response_with_routing
+    from app.prompt_registry import FORMATTING_RULES_COMPACT
     from app.search_services import tavily_search_agent
 
     tone_sys_hint = _tone_hint(tone_id)
@@ -236,10 +237,8 @@ async def _generate_and_edit_inline(
         f"Тон ответа: {tone_sys_hint}\n"
         "Ты — ассистент в инлайн-режиме Telegram. "
         "Пользователь задаёт вопрос прямо из переписки с другим человеком — "
-        "отвечай КРАТКО и по существу (не более 3–4 абзацев). "
-        "Используй Markdown для форматирования (жирный, курсив, списки).\n"
-        "СТРОГИЙ ЗАПРЕТ: НИКАКОГО LaTeX (`$...$`, `\\times`, `\\frac`). "
-        "Пиши математику обычным текстом (например: '6 * 6 * 6').\n"
+        "отвечай КРАТКО и по существу (не более 3–4 абзацев).\n\n"
+        f"{FORMATTING_RULES_COMPACT}\n"
     )
     if search_context:
         system_instruction += (
