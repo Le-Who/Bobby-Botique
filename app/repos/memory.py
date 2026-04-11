@@ -259,8 +259,7 @@ async def store_memory(
                     params.append(hall_type)
 
                 result = await db_query(
-                    f"INSERT INTO long_term_memory ({', '.join(cols)}) "
-                    f"VALUES ({', '.join(vals)}) RETURNING id",
+                    f"INSERT INTO long_term_memory ({', '.join(cols)}) VALUES ({', '.join(vals)}) RETURNING id",
                     tuple(params),
                     conn=conn,
                 )

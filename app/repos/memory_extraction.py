@@ -535,8 +535,8 @@ async def _resolve_ambiguous_conflict(
 
     prompt = (
         f"Two knowledge graph edges exist between '{source_name}' and '{target_name}':\n"
-        f"  OLD: \"{old_predicate}\"\n"
-        f"  NEW: \"{new_predicate}\"\n\n"
+        f'  OLD: "{old_predicate}"\n'
+        f'  NEW: "{new_predicate}"\n\n'
         "Classify the relationship between OLD and NEW as exactly one of:\n"
         "  update — NEW replaces OLD (factual change, e.g. new job, new city)\n"
         "  parallel — both are simultaneously true (e.g. likes Python AND likes TypeScript)\n"
@@ -562,4 +562,3 @@ async def _resolve_ambiguous_conflict(
     except Exception as exc:
         logging.debug("LLM judge failed (non-critical): %s", exc)
         return "parallel"  # safe default: keep both edges
-

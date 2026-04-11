@@ -86,11 +86,7 @@ async def pre_shutdown_compact(timeout: float = 8.0) -> int:
         )
 
         half_gate = _MSG_GATE // 2
-        candidates = [
-            uid
-            for uid, state in _consolidation_state.items()
-            if state.get("msg_count", 0) >= half_gate
-        ]
+        candidates = [uid for uid, state in _consolidation_state.items() if state.get("msg_count", 0) >= half_gate]
 
         if not candidates:
             logger.info("Pre-shutdown compact: no candidates (all below half-gate)")

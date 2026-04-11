@@ -296,7 +296,9 @@ def load_settings() -> Settings:
             "OPENROUTER_DEFAULT_MODEL": _load_single_model("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_QNA_MODEL": _load_single_model("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
             "OPENROUTER_RESEARCH_MODEL": _load_single_model("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),
-            "OPENROUTER_URL_SELECTION_MODEL": _load_single_model("OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"),
+            "OPENROUTER_URL_SELECTION_MODEL": _load_single_model(
+                "OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"
+            ),
             "DAILY_LIMITS": _load_daily_limits(),
             "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
             "MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS", "1")),

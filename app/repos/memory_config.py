@@ -59,9 +59,11 @@ def get_taxonomy_model() -> str:
     """Return the taxonomy classification model from live config (hot-reloadable)."""
     try:
         from app.config import config_manager
+
         return config_manager.get_setting("TAXONOMY_MODEL", _TAXONOMY_MODEL_FALLBACK)
     except Exception:
         return _TAXONOMY_MODEL_FALLBACK
+
 
 # ── AAAK Tiered Compression ──────────────────────────────────────────────────
 # L0: Core facts (always injected, compact JSON)
@@ -75,4 +77,3 @@ L2_MAX_TOKENS = 1500
 # ── Role Diaries ─────────────────────────────────────────────────────────────
 MAX_DIARY_ENTRIES_PER_ROLE = 20
 DIARY_ENTRY_MAX_LENGTH = 500
-
