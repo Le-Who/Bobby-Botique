@@ -242,8 +242,9 @@ async def _generate_and_send_voice(
                 len(gemini_chunks),
             )
 
-            # Adaptive timeout: ~1 s per 60 chars + 15 s base; capped at [30, 120].
-            gemini_timeout = min(120.0, max(30.0, len(clean_text) / 60.0 + 15.0))
+            # Adaptive timeout: ~1 s per 60 chars + 120 s base; capped at [120, 300].
+            # Models have long Time-to-First-Token (>35s) for audio tasks in current versions.
+            gemini_timeout = min(300.0, max(120.0, len(clean_text) / 20.0 + 120.0))
 
             gemini_voice = voice if voice and len(voice) <= 10 else "Aoede"
             gemini_pcm_parts = await _run_gemini_pipeline(

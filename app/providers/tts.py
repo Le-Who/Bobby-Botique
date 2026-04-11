@@ -243,14 +243,21 @@ async def generate_speech(
 
     # 2. Build structured prompt (no truncation — caller handles chunking)
     tts_text = clean
-    current_temp = tts_temperature if tts_temperature is not None else 0.5
 
-    # Fetch Steerable Voice instructions customized by temperature
-    base_prompt, pacing_tag = _get_steerable_tts_prompt(current_temp)
+    # The prompt steering depends on user_prefs.tts_temperature (which can be < 0.5).
+    # We pass the original requested temperature to fetch tags (so it can be 0.3 for news anchor).
+    user_temp = tts_temperature if tts_temperature is not None else 0.5
+    base_prompt, pacing_tag = _get_steerable_tts_prompt(user_temp)
     prompt = f"{base_prompt}{pacing_tag} {tts_text}"
 
+    # GenerateContentConfig temperature: Gemini 2.5 Flash audio generation models have a bug (April 2026)
+    # where temp < 0.5 causes "hangs, timeouts, or empty silent buffers". We must clamp the API temp to 0.5
+    # while leaving the prompt strictly constrained by `user_temp`.
+    api_temp = max(user_temp, 0.5)
+
     config = types.GenerateContentConfig(
-        temperature=current_temp,
+        temperature=api_temp,
+        max_output_tokens=8192,
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
