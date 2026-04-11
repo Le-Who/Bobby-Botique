@@ -26,7 +26,13 @@ import html as _html
 import logging
 from datetime import UTC, datetime
 
-from telegram import InlineQueryResultArticle, InputTextMessageContent, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+    Update,
+)
 from telegram.ext import ContextTypes
 
 from app.utils.text_format import markdown_to_html, strip_formatting
@@ -59,6 +65,14 @@ _TONES: list[tuple[str, str, str]] = [
 
 # Prevent fire-and-forget background tasks from being garbage-collected.
 _bg_tasks: set[asyncio.Task] = set()
+
+# Inline keyboard attached to every result — Telegram Bot API REQUIRES this
+# for ChosenInlineResult to include `inline_message_id`.  Without it the bot
+# cannot edit the placeholder in-place.  The button itself is cosmetic and
+# gets replaced once the final response is ready.
+_LOADING_KEYBOARD = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("⏳ Генерация…", callback_data="inline_noop")]]
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -100,6 +114,7 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                         message_text=_PLACEHOLDER_HTML,
                         parse_mode="HTML",
                     ),
+                    reply_markup=_LOADING_KEYBOARD,
                 )
             ],
             cache_time=0,
@@ -116,6 +131,7 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                 message_text=_PLACEHOLDER_HTML,
                 parse_mode="HTML",
             ),
+            reply_markup=_LOADING_KEYBOARD,
         )
         for tone_id, label, _ in _TONES
     ]
@@ -253,6 +269,7 @@ async def _generate_and_edit_inline(
             inline_message_id=inline_message_id,
             text=formatted,
             parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([]),  # strip loading indicator
         )
     except Exception as edit_err:
         logging.error(
