@@ -42,7 +42,11 @@ from app.utils.text_format import markdown_to_html, strip_formatting
 _INLINE_MODEL = "gemini-3.1-flash-lite-preview"
 
 # Placeholder sent to the chat immediately upon selection (before generation).
-_PLACEHOLDER_HTML = "⚡️ <b>Gemaibotv2</b> генерирует ответ…"
+# Resolved dynamically at runtime via context.bot.first_name.
+
+
+def _placeholder_html(bot_name: str) -> str:
+    return f"⚡️ <b>{_html.escape(bot_name)}</b> генерирует ответ…"
 
 # (result_id, display_label, system_tone_hint)
 _TONES: list[tuple[str, str, str]] = [
@@ -102,6 +106,9 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     user_query = query.query.strip()
+    bot_name = context.bot.first_name or "Bot"
+    placeholder = _placeholder_html(bot_name)
+
     if not user_query:
         # Guide the user when no text has been typed yet.
         await query.answer(
@@ -111,7 +118,7 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                     title="🤖 Введите запрос после @бота…",
                     description="Например: какая погода в Москве?",
                     input_message_content=InputTextMessageContent(
-                        message_text=_PLACEHOLDER_HTML,
+                        message_text=placeholder,
                         parse_mode="HTML",
                     ),
                     reply_markup=_LOADING_KEYBOARD,
@@ -128,7 +135,7 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             title=label,
             description=user_query[:120],
             input_message_content=InputTextMessageContent(
-                message_text=_PLACEHOLDER_HTML,
+                message_text=placeholder,
                 parse_mode="HTML",
             ),
             reply_markup=_LOADING_KEYBOARD,
