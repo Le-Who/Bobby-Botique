@@ -234,7 +234,7 @@ async def _generate_and_send_voice(
             # Gemini models accept 8192 tokens (~30k chars), but generating long audio
             # streams frequently results in 500 Internal errors and timeouts (40+ seconds).
             # Sequential chunking safely batches audio generation to maintain stability.
-            gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=2500)
+            gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=1800)
             logging.info(
                 "Voice reply (Gemini TTS): %d chars / %d bytes → %d chunk(s)",
                 len(clean_text),

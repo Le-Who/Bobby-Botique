@@ -169,7 +169,7 @@ def _get_steerable_tts_prompt(temperature: float) -> tuple[str, str]:
         "- Apply perfect standard Russian phonetics.\n"
         '- Convert "е" to "ё" where grammatically correct (e.g., "звезды" -> "звёзды").\n'
         '- Expand abbreviations correctly (e.g., "ИИ" read as "ай-ай", "ООН" read as "о-о-эн").\n'
-        "Constraint: Do NOT add any preamble, introductions, or commentary. Read ONLY the text provided below.\n\n"
+        "Constraint: Do NOT add any preamble, introductions, or commentary. Do NOT summarize or abbreviate. Read every word VERBATIM. Do NOT output 'Продолжение следует'. Read ONLY the exact text provided below.\n\n"
     )
 
     # 2. Dynamic Style and Pacing based on Temp
