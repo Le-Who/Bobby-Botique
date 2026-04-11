@@ -30,12 +30,25 @@ def _extract_message_content(msg: dict) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            # ⚡ Bolt Optimization: Avoid stringifying dicts with binary payloads to prevent O(N) memory allocation overhead
+            return " ".join(
+                str(p) for p in content if not isinstance(p, dict) or not any(k in p for k in ("inline_data", "image_url", "file_data"))
+            )
         return str(content)
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
+            # ⚡ Bolt Optimization: Safely extract text from dicts or skip binary payloads
+            text_parts = []
+            for p in parts:
+                if isinstance(p, dict):
+                    if "text" in p:
+                        text_parts.append(str(p["text"]))
+                    elif not any(k in p for k in ("inline_data", "image_url", "file_data")):
+                        text_parts.append(str(p))
+                else:
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
         return str(parts)
     return ""
 

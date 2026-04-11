@@ -171,7 +171,10 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            # ⚡ Bolt Optimization: Avoid stringifying dicts with binary payloads to prevent O(N) memory allocation overhead
+            return " ".join(
+                str(p) for p in content if not isinstance(p, dict) or not any(k in p for k in ("inline_data", "image_url", "file_data"))
+            )
         return str(content)
 
     text_parts: list[str] = []
@@ -179,5 +182,5 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(part, str):
             text_parts.append(part)
         elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+            text_parts.append(str(part["text"]))
     return " ".join(text_parts)
