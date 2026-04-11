@@ -231,7 +231,7 @@ async def _generate_and_send_voice(
 
         # ── Branch B: Gemini TTS (primary if no EL keys, fallback otherwise) ─
         if pcm_parts is None:
-            # Gemini models accept 8192 tokens (~30k chars), but generating long audio
+            # Gemini models accept 16384 output tokens for audio generation, but streaming long audio
             # streams frequently results in 500 Internal errors and timeouts (40+ seconds).
             # Sequential chunking safely batches audio generation to maintain stability.
             gemini_chunks = _chunk_text_by_sentences(clean_text, max_bytes=1800)

@@ -257,7 +257,7 @@ async def generate_speech(
 
     config = types.GenerateContentConfig(
         temperature=api_temp,
-        max_output_tokens=8192,
+        max_output_tokens=16384,
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(

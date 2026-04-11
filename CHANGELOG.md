@@ -8,7 +8,7 @@ Format is optimized for agent-parseable context.
 ### 🐛 Critical Bug Fixes
 - **TTFT (Time-To-First-Token) Timeout Fix**: Addressed a severe bug where Gemini TTS generation frequently timed out with `TTS generation timed out after 30s`. Current generation audio models have a large TTFT under load (>35s). Adjusted `voice_engine.py` adaptive timeout floor from `30s` to `120s`, completely mitigating premature cancellation and timeout rotation.
 - **Empty Audio Buffer Fix (`finishReason: STOP`)**: Fixed a bug on Gemini 2.5 Flash Audio generation models affecting API calls with a `temperature` below `0.5`, which resulted in internal empty audio buffers despite correct API formatting. Clamped the `GenerateContentConfig` temperature minimum to `0.5`, while preserving the separate `user_prefs.tts_temperature` string value to drive the steerable prompt stylistic directives accurately.
-- **Output Token Truncation**: Enforced explicit `max_output_tokens=8192` parameter in the Generation Config in `tts.py`. Resolves situations where internal reasoning tokens would crowd out output limits leading to silent truncation and suppression.
+- **Output Token Truncation**: Enforced explicit `max_output_tokens=16384` parameter in the Generation Config in `tts.py` (matching the official model spec limits for audio). Resolves situations where internal reasoning tokens would crowd out output limits leading to silent truncation and suppression.
 
 ---
 
