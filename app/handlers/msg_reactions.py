@@ -83,8 +83,8 @@ async def handle_message_reaction(update: Update, context: ContextTypes.DEFAULT_
     message_id: int = reaction_update.message_id
     chat_id: int = reaction_update.chat.id
 
-    new_reactions: list = reaction_update.new_reaction or []
-    old_reactions: list = reaction_update.old_reaction or []
+    new_reactions = list(reaction_update.new_reaction or [])
+    old_reactions = list(reaction_update.old_reaction or [])
 
     # Collect emojis that were *added* in this update
     new_emojis = {r.emoji for r in new_reactions if hasattr(r, "emoji")}
