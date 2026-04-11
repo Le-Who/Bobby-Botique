@@ -69,6 +69,22 @@ def _load_and_clean_keys(env_var_name: str, required: bool = True) -> list[str]:
     return keys
 
 
+def _load_single_model(env_var_name: str, fallback: str) -> str:
+    """
+    Робустно загружает имя одной модели из env.
+    Если пользователь случайно передал список через запятую, берет первую модель.
+    """
+    value = os.getenv(env_var_name)
+    if not value or not value.strip():
+        return fallback
+
+    cleaned_v = value.strip().strip('"').strip("'")
+    keys = [key.strip() for key in cleaned_v.split(",") if key.strip()]
+    if keys:
+        return keys[0]
+    return fallback
+
+
 def _load_daily_limits() -> dict[str, int]:
     """
     Загружает DAILY_LIMITS from env переменной to formatе JSON or компактном формате.
@@ -272,17 +288,15 @@ def load_settings() -> Settings:
             or default_gemini_models,
             "OPENROUTER_AVAILABLE_MODELS": _load_and_clean_keys("OPENROUTER_AVAILABLE_MODELS", required=False)
             or default_openrouter_models,
-            "DEFAULT_MODEL": os.getenv("DEFAULT_MODEL", "gemini-3.1-flash-lite-preview"),
-            "QNA_MODEL": os.getenv("QNA_MODEL", "gemini-2.5-flash-lite"),
-            "RESEARCH_MODEL": os.getenv("RESEARCH_MODEL", "gemini-3.1-flash-lite-preview"),
-            "URL_SELECTION_MODEL": os.getenv("URL_SELECTION_MODEL", "gemini-3.1-flash-lite-preview"),
-            "TAXONOMY_MODEL": os.getenv("TAXONOMY_MODEL", "gemini-3.1-flash-lite-preview"),
-            "OPENROUTER_DEFAULT_MODEL": os.getenv("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
-            "OPENROUTER_QNA_MODEL": os.getenv("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
-            "OPENROUTER_RESEARCH_MODEL": os.getenv("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),
-            "OPENROUTER_URL_SELECTION_MODEL": os.getenv(
-                "OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"
-            ),
+            "DEFAULT_MODEL": _load_single_model("DEFAULT_MODEL", "gemini-3.1-flash-lite-preview"),
+            "QNA_MODEL": _load_single_model("QNA_MODEL", "gemini-2.5-flash-lite"),
+            "RESEARCH_MODEL": _load_single_model("RESEARCH_MODEL", "gemini-3.1-flash-lite-preview"),
+            "URL_SELECTION_MODEL": _load_single_model("URL_SELECTION_MODEL", "gemini-3.1-flash-lite-preview"),
+            "TAXONOMY_MODEL": _load_single_model("TAXONOMY_MODEL", "gemini-3.1-flash-lite-preview"),
+            "OPENROUTER_DEFAULT_MODEL": _load_single_model("OPENROUTER_DEFAULT_MODEL", "stepfun/step-3.5-flash:free"),
+            "OPENROUTER_QNA_MODEL": _load_single_model("OPENROUTER_QNA_MODEL", "stepfun/step-3.5-flash:free"),
+            "OPENROUTER_RESEARCH_MODEL": _load_single_model("OPENROUTER_RESEARCH_MODEL", "stepfun/step-3.5-flash:free"),
+            "OPENROUTER_URL_SELECTION_MODEL": _load_single_model("OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"),
             "DAILY_LIMITS": _load_daily_limits(),
             "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
             "MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS", "1")),
