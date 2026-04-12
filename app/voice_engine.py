@@ -41,18 +41,18 @@ async def _generate_single_chunk_gemini(
     text_chunk: str,
     voice: str,
     failed_keys: set[str],
-    timeout: float = 120.0,
+    timeout: float = 50.0,
     tts_temperature: float | None = None,
 ) -> bytes | None:
-    """Generate PCM audio for a single text chunk via Gemini TTS with key rotation.
+    """Generate PCM audio for a single text chunk via Gemini TTS — parallel race edition.
 
-    Args:
-        text_chunk:  Pre-cleaned text fragment to synthesise.
-        voice:       Prebuilt Gemini TTS voice name.
-        failed_keys: Shared set of key hashes to skip (mutated in place).
-        timeout:     HTTP timeout forwarded to generate_speech.
+    Fires two TTS requests simultaneously with different API keys.
+    The first to return valid PCM wins; the loser is cancelled.
+    If both fail, both keys are marked failed and the next pair is tried.
 
-    Returns raw PCM 24kHz 16-bit mono bytes, or None on failure.
+    Mirrors the ProviderRouter Race Requests pattern:
+      sequential (before): attempt1 ~90s fail → attempt2 ~25s = ~115s total
+      race (after):         attempt1 || attempt2 → fastest wins = ~25s total
     """
     from app.errors import classify_key_error
     from app.handlers.ai_core import _resolve_ai_request
@@ -61,37 +61,94 @@ async def _generate_single_chunk_gemini(
 
     status_mgr = get_key_status_manager()
 
-    for attempt in range(3):
-        key_data, model_used, _ = await _resolve_ai_request(
+    async def _tts_race_call(key_data: dict) -> bytes | None:
+        """Single TTS attempt — returns PCM or raises on any failure."""
+        pcm = await generate_speech(
+            text_chunk,
+            key_data["api_key"],
+            voice=voice,
+            tts_temperature=tts_temperature,
+            timeout=timeout,
+        )
+        if not pcm:
+            raise ValueError("TTS provider returned empty audio buffer")
+        return pcm
+
+    for _pair_attempt in range(2):  # up to 2 pairs of keys = 4 unique keys
+        # Pick 2 healthy keys for this race round
+        key_a, model_a, _ = await _resolve_ai_request(
             "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
         )
-        if not key_data:
-            break
+        if not key_a:
+            break  # No keys left
 
-        try:
-            pcm = await generate_speech(
-                text_chunk, key_data["api_key"], voice=voice, tts_temperature=tts_temperature, timeout=timeout
-            )
-            if pcm:
-                return pcm
-            else:
-                raise ValueError("TTS provider returned empty audio buffer")
-        except Exception as e:
-            err_str = str(e)
-            logging.warning(
-                "Gemini TTS chunk failed (attempt %d/3, %d chars): %s",
-                attempt + 1,
-                len(text_chunk),
-                err_str,
-            )
-            failed_keys.add(key_data["key_hash"])
-            try:
-                err_cat = classify_key_error(err_str)
-                await status_mgr.suspend_key(key_data["key_hash"], model_used, err_cat, err_str[:200])
-            except Exception:
-                pass
+        # Try to get a second key for the race
+        failed_keys.add(key_a["key_hash"])  # temporarily exclude A so B is different
+        key_b, _, _ = await _resolve_ai_request(
+            "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
+        )
+        failed_keys.discard(key_a["key_hash"])  # restore A — it's not failed yet
+
+        keys_to_race = [key_a] + ([key_b] if key_b else [])
+        kh_labels = [k["key_hash"][:8] for k in keys_to_race]
+        logging.info(
+            "TTS Race: keys=[%s] attempt=%d/2, %d chars",
+            ", ".join(f"{h}…" for h in kh_labels),
+            _pair_attempt + 1,
+            len(text_chunk),
+        )
+
+        tasks = {
+            asyncio.create_task(_tts_race_call(kd)): kd
+            for kd in keys_to_race
+        }
+        winner_pcm: bytes | None = None
+        race_errors: dict[str, Exception] = {}
+
+        pending = set(tasks)
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                kd = tasks[task]
+                exc = task.exception()
+                if exc is None:
+                    # Winner — grab PCM and cancel remaining tasks
+                    winner_pcm = task.result()
+                    logging.info("TTS Race winner: key=%s…", kd["key_hash"][:8])
+                    for p in pending:
+                        p.cancel()
+                    # Drain cancelled tasks to prevent unhandled-exception warnings
+                    if pending:
+                        await asyncio.wait(pending, timeout=0.5)
+                    pending.clear()
+                    break
+                else:
+                    # This key failed — record and continue waiting
+                    race_errors[kd["key_hash"]] = exc
+                    logging.warning(
+                        "TTS key %s… failed: %s",
+                        kd["key_hash"][:8],
+                        exc,
+                    )
+                    # Suspend the failed key
+                    try:
+                        err_cat = classify_key_error(str(exc))
+                        await status_mgr.suspend_key(kd["key_hash"], model_a, err_cat, str(exc)[:200])
+                    except Exception:
+                        pass
+                    failed_keys.add(kd["key_hash"])
+
+        if winner_pcm is not None:
+            return winner_pcm
+
+        # Both keys in this pair failed — log and try next pair
+        logging.warning(
+            "TTS Race: all %d key(s) in pair failed, trying next pair",
+            len(keys_to_race),
+        )
 
     return None
+
 
 
 async def _run_gemini_pipeline(
