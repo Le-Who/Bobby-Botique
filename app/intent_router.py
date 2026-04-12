@@ -85,12 +85,30 @@ _CURRENCY_CODES = {
 
 # Pattern to extract a city candidate from weather queries.
 # Captures the word(s) immediately following trigger prepositions/words.
-# Works for Russian ("в Саратове", "погода Лондон") and English ("weather in Paris").
+# Works for Russian ("погода сегодня в Когалыме") and English ("weather in New York").
+#
+# Design: two branches:
+#   Branch A: triggered by "погода/weather" → temporal words are CONSUMED (не захватываются),
+#             then "в/во / in/for" is REQUIRED so we skip to the actual city word.
+#   Branch B: plain "в/во" preposition fallback when Branch A misses.
+#
+# BUG HISTORY: v1 had (в\s+)? as optional in Branch A, causing temporal modifiers like
+# "сегодня", "завтра", "сейчас" to be captured as the city name. Fixed by making the
+# preposition required and temporal words an explicit whitelist.
 _CITY_EXTRACT_PATTERN = re.compile(
-    r"(?:погод[ауеыя]\s+(?:сейчас\s+)?(?:в\s+|во\s+)?|weather\s+(?:in\s+|for\s+)?|в\s+|во\s+)"
-    r"([а-яёa-z][а-яёa-z\-\s]{1,30}?)(?:\s*$|[,?!.\s])",
+    # Branch A: "погода [сегодня|завтра|сейчас] в <город>" — preposition is required here
+    r"(?:погод[ауеыя]\s+(?:(?:сейчас|сегодня|завтра)\s+)?(?:в\s+|во\s+)"
+    r"|weather\s+(?:(?:today|tomorrow|now)\s+)?(?:in\s+|for\s+)"
+    # Branch B: bare "в/во" preposition anywhere in the sentence
+    r"|(?<![а-яёa-z])в\s+|(?<![а-яёa-z])во\s+)"
+    # Capture: city name — 1 or 2 hyphenated/spaced words (e.g. "New York", "Нью-Йорк").
+    # The optional second word must be immediately followed by a hard boundary so that
+    # trailing temporal words ("сейчас", "today") are not swallowed.
+    r"([А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*(?:\s[А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*)?)(?=[,?!.\s]|$)",
     re.IGNORECASE,
 )
+
+
 
 # Common Russian locative/prepositional case suffixes to strip before geocoding.
 # Order matters: longer suffixes first to avoid partial matches.
@@ -101,6 +119,27 @@ _RUSSIAN_CITY_SUFFIXES = (
     "ах", "ях",
     "е", "и", "у", "ю",
 )
+
+# Words that may trail after the city name in a voice query.
+# Stripped from the raw regex capture before geocoding.
+_TRAILING_TEMPORAL_WORDS = frozenset({
+    "сейчас", "сегодня", "завтра", "утром", "вечером", "ночью",
+    "today", "tomorrow", "now", "tonight", "morning", "evening",
+    "пожалуйста", "now", "please",
+})
+
+
+def _clean_candidate(raw: str) -> str:
+    """Strip known trailing temporal/query words from a city candidate.
+
+    Example: 'Санкт-Петербурге сейчас' → 'Санкт-Петербурге'
+             'Los Angeles today' → 'Los Angeles'
+    """
+    words = raw.strip().split()
+    while words and words[-1].lower() in _TRAILING_TEMPORAL_WORDS:
+        words.pop()
+    return " ".join(words)
+
 
 
 def _normalize_city_candidate(raw: str) -> str:
@@ -226,7 +265,7 @@ async def _handle_weather(text: str) -> IntentResult | None:
     if not coords:
         # Alias miss — try live geocoding
         m = _CITY_EXTRACT_PATTERN.search(text)
-        candidate = m.group(1).strip() if m else ""
+        candidate = _clean_candidate(m.group(1)) if m else ""
 
         if candidate:
             geo = await _geocode_city(candidate)
