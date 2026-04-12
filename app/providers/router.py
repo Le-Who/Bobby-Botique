@@ -343,15 +343,21 @@ class ProviderRouter:
                 # Strategy: fire both streams as tasks. The first to yield a chunk
                 # wins — we cancel the loser and forward the winner's chunks.
                 # If both fail before yielding, mark both as failed and retry.
-                winner_queue: asyncio.Queue[tuple[int, str | None, Exception | None]] = asyncio.Queue()
+                #
+                # Sentinel-based completion: each racer puts _STREAM_END after
+                # all chunks, so the consumer never relies on task.done() which
+                # has a TOCTOU race (task finishes while last chunk is still in queue).
+                _STREAM_END = object()  # unique sentinel per race attempt
+                winner_queue: asyncio.Queue[tuple[int, str | object | None, Exception | None]] = asyncio.Queue()
 
                 async def _race_stream(
                     idx: int,
                     kd: dict,
                     mod: str = model_used,
                     q: asyncio.Queue = winner_queue,
+                    sentinel: object = _STREAM_END,
                 ) -> None:
-                    """Race participant: stream from one key, push first-chunk signal to queue."""
+                    """Race participant: stream from one key, push chunks + sentinel to queue."""
                     try:
                         prov = get_provider_for_model(mod, kd["api_key"])
                         async for chunk in prov.stream_response(  # type: ignore[attr-defined]
@@ -362,8 +368,15 @@ class ProviderRouter:
                             enable_web_search=enable_web_search,
                         ):
                             await q.put((idx, chunk, None))
+                    except asyncio.CancelledError:
+                        # Loser was cancelled — put sentinel so consumer doesn't hang
+                        await q.put((idx, sentinel, None))
+                        return
                     except Exception as exc_:
                         await q.put((idx, None, exc_))
+                        return
+                    # Normal completion: signal end of stream
+                    await q.put((idx, sentinel, None))
 
                 kh_a = keys_to_race[0]["key_hash"][:8]
                 kh_b = keys_to_race[1]["key_hash"][:8]
@@ -396,6 +409,10 @@ class ProviderRouter:
                         break
                     if exc is not None:
                         race_errors[idx] = exc
+                        continue
+                    if chunk is _STREAM_END:
+                        # Racer finished without yielding any real chunk — treat as error
+                        race_errors[idx] = RuntimeError("stream ended without chunks")
                         continue
                     # We have a winner!
                     winner_idx = idx
@@ -438,24 +455,18 @@ class ProviderRouter:
                 assert chunk is not None
                 yield chunk
 
-                # Forward remaining chunks from winner task
+                # Forward remaining chunks from winner — break only on sentinel
                 try:
-                    while not tasks[winner_idx].done():
+                    while True:
                         try:
                             idx, chunk, exc = await asyncio.wait_for(winner_queue.get(), timeout=120.0)
                         except TimeoutError:
+                            logging.warning("Race drain timed out after 120s — forcing exit")
                             break
                         if idx != winner_idx:
                             continue  # Stale chunk from loser
-                        if exc is not None:
-                            raise exc
-                        if chunk is not None:
-                            yield chunk
-                    # Drain any buffered chunks that arrived before .done() was checked
-                    while not winner_queue.empty():
-                        idx, chunk, exc = winner_queue.get_nowait()
-                        if idx != winner_idx:
-                            continue
+                        if chunk is _STREAM_END:
+                            break  # Winner stream completed — all chunks delivered
                         if exc is not None:
                             raise exc
                         if chunk is not None:
@@ -467,8 +478,11 @@ class ProviderRouter:
                     raise
                 finally:
                     # Suppress unhandled-task-exception warning from loser
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
                     try:
-                        await asyncio.wait([tasks[loser_idx]], timeout=0.1)
+                        await asyncio.wait(tasks, timeout=0.5)
                     except Exception:
                         pass
                 return  # Race completed successfully
