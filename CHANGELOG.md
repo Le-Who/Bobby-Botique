@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.5] - 2026-04-12 - Production Audit Polish: Zero-Delay TTS Drain & Inline Quota UX
+
+### 🐛 Bugfix / Optimization — Zero-Delay TTS Exception Sink
+- **Problem**: The Gemini TTS Race Requests loop (`app/voice_engine.py`) had a flaw where `pending.clear()` broke the background task drain loop. The initial fix attempt used a blocking `asyncio.wait(timeout=0.5)` drain sequence, which artificially delayed TTS output by 0.5s while waiting for loser HTTP connections to close, and still risked `Task exception was never retrieved` if closure was slow.
+- **Solution**: Completely removed the post-winner `asyncio.wait()` and replaced it with a pure asynchronous `task.add_done_callback(_suppress)`. 
+- **Result**: Loser tasks now cleanly sink their own exceptions (like `CancelledError` or `httpx.ConnectTimeout`) completely dynamically without blocking the main TTS event loop, entirely eliminating the 0.5s lag wall and silencing asyncio GC warnings.
+
+### 🐛 Bugfix — Inline Mode Proper Error Transparency
+- **Problem**: During API Quota exhaustion in Inline Mode (`app/handlers/inline.py`), the UI presented a standard static fallback `"❌ Не удалось получить ответ."`, overriding and discarding the actual quota error provided by the router (e.g. `🚫 Все доступные ключи...`).
+- **Solution**: Integrated `strip_error_tag` from `app.errors` to intercept quota/failure strings. If `_is_api_error` is True, it now correctly outputs the localized string (stripped of invisible engine tags) directly to the user message.
+- **Result**: Users trying to generate inline requests during heavy API usage spikes will now properly see "🚫 Достигнут лимит" combined with the 'Retry' button, providing transparent semantic UX.
+
+---
+
 ## [2.10.4] - 2026-04-12 - Inline 3-Way Race Requests & Circuit Breaker Hardening
 
 ### ⚡ Architecture — Inline Generation: 3-Way Parallel Race Requests

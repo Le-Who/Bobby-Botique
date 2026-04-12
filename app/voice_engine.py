@@ -94,7 +94,16 @@ async def _generate_single_chunk_gemini(
             len(text_chunk),
         )
 
+        def _suppress(t: asyncio.Task) -> None:
+            try:
+                t.exception()
+            except (asyncio.CancelledError, Exception):
+                pass
+
         tasks = {asyncio.create_task(_tts_race_call(kd)): kd for kd in keys_to_race}
+        for t in tasks:
+            t.add_done_callback(_suppress)
+
         winner_pcm: bytes | None = None
         race_errors: dict[str, Exception] = {}
 
@@ -104,7 +113,11 @@ async def _generate_single_chunk_gemini(
 
             for task in done:
                 kd = tasks[task]
-                exc = task.exception()
+                try:
+                    exc = task.exception()
+                except asyncio.CancelledError:
+                    exc = asyncio.CancelledError("TTS task was cancelled")
+
                 if exc is None and winner_pcm is None:
                     # First winner — grab PCM
                     winner_pcm = task.result()
@@ -112,41 +125,29 @@ async def _generate_single_chunk_gemini(
                     # Cancel remaining tasks
                     for p in pending:
                         p.cancel()
-                    pending.clear()
+                    break
                 elif exc is None and winner_pcm is not None:
                     # Concurrent second completion after winner already found.
                     # Suppress silently — result is valid but not needed.
                     pass
                 else:
                     # This key failed — record and continue waiting
-                    race_errors[kd["key_hash"]] = exc
-                    logging.warning(
-                        "TTS key %s… failed: %s",
-                        kd["key_hash"][:8],
-                        exc,
-                    )
-                    # Suppress exception so asyncio doesn't log it again
-                    try:
-                        task.exception()  # retrieve to prevent "never retrieved" warning
-                    except Exception:
-                        pass
-                    # Suspend the failed key
-                    try:
-                        err_cat = classify_key_error(str(exc))
-                        await status_mgr.suspend_key(kd["key_hash"], model_a, err_cat, str(exc)[:200])
-                    except Exception:
-                        pass
-                    failed_keys.add(kd["key_hash"])
+                    if not isinstance(exc, asyncio.CancelledError):
+                        race_errors[kd["key_hash"]] = exc
+                        logging.warning(
+                            "TTS key %s… failed: %s",
+                            kd["key_hash"][:8],
+                            exc,
+                        )
+                        # Suspend the failed key
+                        try:
+                            err_cat = classify_key_error(str(exc))
+                            await status_mgr.suspend_key(kd["key_hash"], model_a, err_cat, str(exc)[:200])
+                        except Exception:
+                            pass
+                        failed_keys.add(kd["key_hash"])
 
             if winner_pcm is not None:
-                # Drain any remaining cancelled tasks to suppress their exceptions
-                if pending:
-                    done2, _ = await asyncio.wait(pending, timeout=0.5)
-                    for t in done2:
-                        try:
-                            t.exception()  # retrieve to prevent warning
-                        except (asyncio.CancelledError, Exception):
-                            pass
                 break
 
         if winner_pcm is not None:

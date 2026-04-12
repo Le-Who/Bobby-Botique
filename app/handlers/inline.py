@@ -476,7 +476,11 @@ async def _generate_and_edit_inline(
         if len(formatted) > 4000:
             formatted = formatted[:3997] + "…"
     else:
-        formatted = "⏰ Модель не успела ответить вовремя." if _gen_timed_out else "❌ Не удалось получить ответ."
+        from app.errors import strip_error_tag
+        if _is_api_error and final_answer:
+            formatted = strip_error_tag(final_answer)
+        else:
+            formatted = "⏰ Модель не успела ответить вовремя." if _gen_timed_out else "❌ Не удалось получить ответ."
 
     # On failure, attach a retry button so the user can re-trigger generation.
     # is_failure is True in two cases:
