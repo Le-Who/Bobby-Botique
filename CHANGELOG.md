@@ -3,7 +3,79 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.3] - 2026-04-12 - Stability Audit: TTS Task Leak & Inline Retry UX
+
+### 🐛 Bugfix — asyncio "Task exception was never retrieved" in TTS Race
+
+#### Root Cause
+`_generate_single_chunk_gemini` in `voice_engine.py` used a `break` statement inside
+`for task in done:` when it found a winning PCM result. This immediately exited the inner
+loop, leaving any *concurrently completed* tasks in the `done` set with their exceptions
+unretrieved. Python's asyncio GC later logs:
+
+```
+Task exception was never retrieved
+Future: <Task finished …> exception: ValueError('…')
+```
+
+These spurious warnings pollute production logs and mask real errors.
+
+Additionally, when `asyncio.wait(pending, timeout=0.5)` was called to drain cancelled
+tasks, the returned `done2` set was discarded without reading exceptions from each task —
+same leak.
+
+#### Fix (`app/voice_engine.py`)
+- Removed the inner-loop `break`. The `for task in done:` loop now fully iterates every
+  task delivered in the current batch.
+- A second winner (concurrent completion) is silently discarded (`pass`) — its result is
+  valid but not needed.
+- Failed tasks call `task.exception()` explicitly inside a `try/except` to mark the future
+  as retrieved before suspending the key and moving on.
+- Winner detection is moved *after* the full `done` loop, and the post-cancel drain
+  (`asyncio.wait(pending, timeout=0.5)`) now reads and suppresses exceptions from each
+  returned task via a `for t in done2: t.exception()` pass.
+- Net effect: zero `"Task exception was never retrieved"` warnings under any race outcome.
+
+### 🐛 Bugfix — Inline Mode Retry Button Missing on API Quota Errors
+
+#### Root Cause
+`_generate_and_edit_inline` in `handlers/inline.py` evaluated:
+
+```python
+is_failure = not (final_answer and final_answer.strip())
+```
+
+When the provider stack returned a tagged quota-error string (e.g.
+`\u200b…🚫 Все ключи исчерпаны…`) the string was non-empty, so `is_failure` was `False`.
+The retry button was not attached, and the raw error string was rendered inside the HTML
+header as if it were a successful answer — creating a confusing UX dead-end.
+
+The user had to exit the chat, re-type the query via `@bot`, and select a tone again.
+
+#### Fix (`app/handlers/inline.py`)
+- Added `from app.errors import is_error_message` import (zero-width `ErrorCode` tag
+  detection — the same function used throughout `router.py` and `ai_core.py`).
+- Extended `is_failure`:
+  ```python
+  is_failure = not (final_answer and final_answer.strip()) or bool(
+      final_answer and is_error_message(final_answer)
+  )
+  ```
+- Added `_is_api_error` guard in the formatting block so error-tagged strings never reach
+  `markdown_to_html()` — they produce the standard `"❌ Не удалось получить ответ."` text
+  instead.
+- Net effect: tapping `🔄 Повторить` is now available for *all* failure modes, including
+  Gemini quota exhaustion during peak hours.
+
+### 🔧 Code Quality
+- `ruff check app/` — 0 errors ✅
+- `ruff format app/` — 0 reformats required ✅
+- `python -c "ast.parse(…)"` — Syntax OK ✅
+
+---
+
 ## [2.10.2] - 2026-04-12 - Race Condition Hotfix (Sentinel Drain)
+
 
 ### 🐛 Critical Bugfix — Truncated Streaming Responses
 

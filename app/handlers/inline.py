@@ -36,6 +36,7 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
+from app.errors import is_error_message
 from app.utils.text_format import markdown_to_html, strip_formatting
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -286,7 +287,10 @@ async def _generate_and_edit_inline(
         )
 
     # ── Step 4: Format and edit inline message ────────────────────────────────
-    if final_answer and final_answer.strip():
+    # A tagged error response (e.g. quota exhausted) is treated as a failure:
+    # we show the clean error message instead of rendering the raw tag string.
+    _is_api_error = bool(final_answer and is_error_message(final_answer))
+    if final_answer and final_answer.strip() and not _is_api_error:
         header = f"<b>{_html.escape(tone_label)}</b> · <code>{_html.escape(user_query[:60])}</code>\n\n"
         body = markdown_to_html(final_answer.strip())
         formatted = header + body
@@ -297,8 +301,12 @@ async def _generate_and_edit_inline(
         formatted = "⏰ Модель не успела ответить вовремя." if _gen_timed_out else "❌ Не удалось получить ответ."
 
     # On failure, attach a retry button so the user can re-trigger generation.
+    # is_failure is True in two cases:
+    #   1. AI returned nothing (timeout, exception, empty string)
+    #   2. AI returned a tagged error string (e.g. "🚧 Все ключи исчерпаны")
+    #      — is_error_message() detects zero-width ErrorCode tags embedded by tag_error()
     reply_markup: InlineKeyboardMarkup | None = None
-    is_failure = not (final_answer and final_answer.strip())
+    is_failure = not (final_answer and final_answer.strip()) or bool(final_answer and is_error_message(final_answer))
     if is_failure:
         retry_id = _store_retry_params(
             user_query=user_query,

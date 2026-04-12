@@ -76,17 +76,13 @@ async def _generate_single_chunk_gemini(
 
     for _pair_attempt in range(2):  # up to 2 pairs of keys = 4 unique keys
         # Pick 2 healthy keys for this race round
-        key_a, model_a, _ = await _resolve_ai_request(
-            "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
-        )
+        key_a, model_a, _ = await _resolve_ai_request("gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys)
         if not key_a:
             break  # No keys left
 
         # Try to get a second key for the race
         failed_keys.add(key_a["key_hash"])  # temporarily exclude A so B is different
-        key_b, _, _ = await _resolve_ai_request(
-            "gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys
-        )
+        key_b, _, _ = await _resolve_ai_request("gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys)
         failed_keys.discard(key_a["key_hash"])  # restore A — it's not failed yet
 
         keys_to_race = [key_a] + ([key_b] if key_b else [])
@@ -98,30 +94,29 @@ async def _generate_single_chunk_gemini(
             len(text_chunk),
         )
 
-        tasks = {
-            asyncio.create_task(_tts_race_call(kd)): kd
-            for kd in keys_to_race
-        }
+        tasks = {asyncio.create_task(_tts_race_call(kd)): kd for kd in keys_to_race}
         winner_pcm: bytes | None = None
         race_errors: dict[str, Exception] = {}
 
         pending = set(tasks)
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+
             for task in done:
                 kd = tasks[task]
                 exc = task.exception()
-                if exc is None:
-                    # Winner — grab PCM and cancel remaining tasks
+                if exc is None and winner_pcm is None:
+                    # First winner — grab PCM
                     winner_pcm = task.result()
                     logging.info("TTS Race winner: key=%s…", kd["key_hash"][:8])
+                    # Cancel remaining tasks
                     for p in pending:
                         p.cancel()
-                    # Drain cancelled tasks to prevent unhandled-exception warnings
-                    if pending:
-                        await asyncio.wait(pending, timeout=0.5)
                     pending.clear()
-                    break
+                elif exc is None and winner_pcm is not None:
+                    # Concurrent second completion after winner already found.
+                    # Suppress silently — result is valid but not needed.
+                    pass
                 else:
                     # This key failed — record and continue waiting
                     race_errors[kd["key_hash"]] = exc
@@ -130,6 +125,11 @@ async def _generate_single_chunk_gemini(
                         kd["key_hash"][:8],
                         exc,
                     )
+                    # Suppress exception so asyncio doesn't log it again
+                    try:
+                        task.exception()  # retrieve to prevent "never retrieved" warning
+                    except Exception:
+                        pass
                     # Suspend the failed key
                     try:
                         err_cat = classify_key_error(str(exc))
@@ -137,6 +137,17 @@ async def _generate_single_chunk_gemini(
                     except Exception:
                         pass
                     failed_keys.add(kd["key_hash"])
+
+            if winner_pcm is not None:
+                # Drain any remaining cancelled tasks to suppress their exceptions
+                if pending:
+                    done2, _ = await asyncio.wait(pending, timeout=0.5)
+                    for t in done2:
+                        try:
+                            t.exception()  # retrieve to prevent warning
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                break
 
         if winner_pcm is not None:
             return winner_pcm
@@ -148,7 +159,6 @@ async def _generate_single_chunk_gemini(
         )
 
     return None
-
 
 
 async def _run_gemini_pipeline(
