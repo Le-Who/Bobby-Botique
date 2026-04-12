@@ -141,20 +141,56 @@ async def _process_voice_pipeline(
             chat_state=None,
         )
     elif intent == "search":
-        # Intent: user wants to search the web → show with Deep Search button
-        await _show_confirmation_ui(
-            placeholder,
-            transcript,
-            lang,
-            user_id,
-            voice_bytes,
-            voice,
-            context,
-            intent=intent,
-            attached_image=attached_image,
-        )
+        # Check if we should auto-route even for search
+        from app.intent_router import try_direct_intent
+
+        intent_result = await try_direct_intent(transcript)
+        if intent_result and intent_result.handled:
+            logging.info("Voice fast intent routing handled for user %s", user_id)
+            try:
+                await placeholder.edit_text(intent_result.text, parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+
+        should_auto = _should_auto_route(transcript)
+        if should_auto and not attached_image:
+            logging.info("Voice auto-route triggered for user %s (SEARCH intent)", user_id)
+            await _auto_route_to_search(
+                placeholder,
+                transcript,
+                lang,
+                user_id,
+                voice_bytes,
+                voice,
+                context,
+            )
+        else:
+            # Intent: user wants to search the web → show with Deep Search button
+            await _show_confirmation_ui(
+                placeholder,
+                transcript,
+                lang,
+                user_id,
+                voice_bytes,
+                voice,
+                context,
+                intent=intent,
+                attached_image=attached_image,
+            )
     else:
         # Intent: conversational → check if auto-routing is applicable
+        from app.intent_router import try_direct_intent
+
+        intent_result = await try_direct_intent(transcript)
+        if intent_result and intent_result.handled:
+            logging.info("Voice fast intent routing handled for user %s", user_id)
+            try:
+                await placeholder.edit_text(intent_result.text, parse_mode="Markdown")
+            except Exception:
+                pass
+            return
+
         should_auto = _should_auto_route(transcript)
 
         if should_auto and not attached_image:
@@ -205,8 +241,8 @@ def _should_auto_route(transcript: str) -> bool:
     # Give some leeway for ASR padding/filler words at the beginning
     import re
 
-    action_pattern = re.compile(r"^(?:вот,?\s*)?(сочини|напиши|бот,?|расскажи|сделай)\s", re.IGNORECASE)
-    if action_pattern.match(text_lower) and len(text_lower) > 10:
+    action_pattern = re.compile(r"^(?:вот,?\s*)?(сочини|напиши|бот,?|расскажи|сделай|найди|поищи|скажи|подскажи)\s", re.IGNORECASE)
+    if action_pattern.match(text_lower) and len(text_lower) > 8:
         return True
 
     # Heuristic 2: Low-complexity classifier (greetings, confirmations)
@@ -502,3 +538,42 @@ async def _show_transcript_only(
             return _store()
 
         submit_retryable(_bg_voice_ltm, retry=2)
+
+
+async def _auto_route_to_search(
+    placeholder: Message,
+    transcript: str,
+    lang: str,
+    user_id: int,
+    voice_bytes: bytes,
+    voice,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Auto-route search voice requests directly to the research agent.
+    
+    Shows a brief indicator that auto-routing happened, then runs the
+    research agent pipeline using a NEW placeholder message.
+    """
+    from app.i18n import t
+    from app.utils.formatting import TelegramFormatter
+
+    auto_text = f"{t('voice.transcript_label', lang)}\n\n{transcript}\n\n🔎 _{t('voice.auto_confirm', lang)}_"
+    formatted, parse_mode = TelegramFormatter.format_text(auto_text)
+    await placeholder.edit_text(formatted, parse_mode=parse_mode, reply_markup=None)
+
+    new_placeholder = await placeholder.reply_text("⏳ _Ищу информацию в сети..._", parse_mode="Markdown")
+
+    from app.repos.chats import get_user_chat
+    chat_state = await get_user_chat(user_id)
+    
+    user_message_with_marker = f"{t('voice.history_marker', lang)}\n{transcript}"
+    
+    from app.handlers.ai_search import _handle_research_agent
+    
+    await _handle_research_agent(
+        placeholder_message=new_placeholder,
+        user_id=user_id,
+        user_message=user_message_with_marker,
+        chat_state=chat_state,
+        search_query=transcript,
+    )
