@@ -9,6 +9,7 @@ network call via api.telegram.org.
 """
 
 import logging
+import os
 from pathlib import Path
 
 from telegram import Bot, File
@@ -33,6 +34,30 @@ def _extract_local_path(file_path: str) -> str | None:
     return None
 
 
+def _diagnose_missing_file(local_path: Path) -> None:
+    """Log diagnostic info when a local file is not found — runs ONCE per miss."""
+    parts = local_path.parts  # ('/', 'var', 'lib', 'telegram-bot-api', '{token}', ...)
+    # Walk down the path tree to find exactly where it breaks
+    for i in range(1, len(parts) + 1):
+        segment = Path(*parts[:i])
+        if segment.exists():
+            if segment.is_dir():
+                try:
+                    children = os.listdir(segment)
+                    logging.warning(
+                        "  [diag] EXISTS dir %s → children: %s",
+                        segment,
+                        children[:20] if children else "(empty)",
+                    )
+                except PermissionError:
+                    logging.warning("  [diag] EXISTS dir %s → PERMISSION DENIED", segment)
+            else:
+                logging.warning("  [diag] EXISTS file %s (%d bytes)", segment, segment.stat().st_size)
+        else:
+            logging.warning("  [diag] MISSING %s ← breaks here", segment)
+            break
+
+
 async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
     """Return raw bytes for a Telegram File object.
 
@@ -54,9 +79,10 @@ async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
                 logging.debug("get_file_bytes: local read %s (%d bytes)", local_path, size)
                 return local_path.read_bytes()
             logging.warning(
-                "get_file_bytes: local path not found (%s), falling back to network download",
+                "get_file_bytes: local path not found (%s), diagnosing volume mount...",
                 local_path,
             )
+            _diagnose_missing_file(local_path)
         else:
             logging.warning(
                 "get_file_bytes: could not extract local path from file_path (%s), "
