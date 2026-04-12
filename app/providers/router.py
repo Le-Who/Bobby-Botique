@@ -343,11 +343,25 @@ class ProviderRouter:
                 # Strategy: fire both streams as tasks. The first to yield a chunk
                 # wins — we cancel the loser and forward the winner's chunks.
                 # If both fail before yielding, mark both as failed and retry.
-                #
-                # Sentinel-based completion: each racer puts _STREAM_END after
+                # Sentinel-based completion: each racer puts a _StreamEndSignal after
                 # all chunks, so the consumer never relies on task.done() which
                 # has a TOCTOU race (task finishes while last chunk is still in queue).
-                _STREAM_END = object()  # unique sentinel per race attempt
+                # _StreamEndSignal also carries finish_reason from the task's own ContextVar
+                # (asyncio.create_task copies ContextVars so mutations inside the task
+                # are invisible to the parent).
+
+                class _StreamEndSignal:
+                    """Sentinel put by the producer after all chunks.
+
+                    Carries finish_reason extracted from within the task's own context,
+                    since asyncio.create_task copies ContextVars and mutations inside
+                    the task are invisible to the parent context.
+                    """
+                    __slots__ = ("finish_reason",)
+
+                    def __init__(self, finish_reason: str | None) -> None:
+                        self.finish_reason = finish_reason
+
                 winner_queue: asyncio.Queue[tuple[int, str | object | None, Exception | None]] = asyncio.Queue()
 
                 async def _race_stream(
@@ -355,7 +369,6 @@ class ProviderRouter:
                     kd: dict,
                     mod: str = model_used,
                     q: asyncio.Queue = winner_queue,
-                    sentinel: object = _STREAM_END,
                 ) -> None:
                     """Race participant: stream from one key, push chunks + sentinel to queue."""
                     try:
@@ -370,13 +383,16 @@ class ProviderRouter:
                             await q.put((idx, chunk, None))
                     except asyncio.CancelledError:
                         # Loser was cancelled — put sentinel so consumer doesn't hang
-                        await q.put((idx, sentinel, None))
+                        await q.put((idx, _StreamEndSignal(None), None))
                         return
                     except Exception as exc_:
                         await q.put((idx, None, exc_))
                         return
-                    # Normal completion: signal end of stream
-                    await q.put((idx, sentinel, None))
+                    # Normal completion: read finish_reason from this task's own ContextVar
+                    # and carry it in the sentinel so the parent context can apply it.
+                    from app.streaming import _last_finish_reason as _fr_var
+                    own_fr = _fr_var.get()
+                    await q.put((idx, _StreamEndSignal(own_fr), None))
 
                 kh_a = keys_to_race[0]["key_hash"][:8]
                 kh_b = keys_to_race[1]["key_hash"][:8]
@@ -410,7 +426,7 @@ class ProviderRouter:
                     if exc is not None:
                         race_errors[idx] = exc
                         continue
-                    if chunk is _STREAM_END:
+                    if isinstance(chunk, _StreamEndSignal):
                         # Racer finished without yielding any real chunk — treat as error
                         race_errors[idx] = RuntimeError("stream ended without chunks")
                         continue
@@ -465,8 +481,12 @@ class ProviderRouter:
                             break
                         if idx != winner_idx:
                             continue  # Stale chunk from loser
-                        if chunk is _STREAM_END:
-                            break  # Winner stream completed — all chunks delivered
+                        if isinstance(chunk, _StreamEndSignal):
+                            # Winner stream completed — apply finish_reason to parent context
+                            if chunk.finish_reason:
+                                from app.streaming import set_last_finish_reason
+                                set_last_finish_reason(chunk.finish_reason)
+                            break  # All chunks delivered
                         if exc is not None:
                             raise exc
                         if chunk is not None:
