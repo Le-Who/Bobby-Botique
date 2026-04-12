@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from telegram import Message
 
+from app.utils.tg_file import get_file_bytes
+
 logger = logging.getLogger(__name__)
 
 # ── Timing constants ─────────────────────────────────────────────────────────
@@ -528,7 +530,7 @@ async def _transcribe_forwarded_voice(message: Message, future: asyncio.Future[s
                 future.set_result("")
             return
         voice_file = await voice.get_file()
-        voice_bytes = bytes(await voice_file.download_as_bytearray())
+        voice_bytes = await get_file_bytes(message.get_bot(), voice_file)
 
         from app.utils.multimodal_processor import transcribe_voice
 

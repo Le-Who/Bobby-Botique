@@ -69,14 +69,16 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 ## Architecture
 
 - **Monolithic Container**: A single async event loop runs both the Telegram long-polling (or webhook) updater and the Quart web server via Hypercorn.
+- **Local Bot API Server**: Self-hosted `telegram-bot-api` container communicates with Telegram via MTProto. The bot sends HTTP requests to `http://tg-api:8081/bot` instead of `api.telegram.org`. Shared Docker volume enables zero-copy file access for voice/photo/document processing. File limit: 2 GB (vs 50 MB cloud API).
 - **Database (PostgreSQL)**: Source of truth for users, chats, messages, metrics, roles, and pgvector embeddings.
 - **Cache (Redis)**: Optional high-speed layer for caching rate limits and transient states.
-- **Third-Party APIs**: Google Gemini (native SDK), OpenRouter (HTTPX), Tavily (HTTPX), Telegram Bot API (HTTPX-based `python-telegram-bot`).
+- **Third-Party APIs**: Google Gemini (native SDK), OpenRouter (HTTPX), Tavily (HTTPX).
 
 ```mermaid
 graph TD;
-    User-->TelegramAPI;
-    TelegramAPI-->BotHandler;
+    User-->TelegramCloud[Telegram Cloud];
+    TelegramCloud-->LocalAPI[Local Bot API Server<br/>MTProto ↔ REST];
+    LocalAPI-->BotHandler;
     Admin-->QuartServer;
 
     BotHandler-->ProviderRouter;
@@ -88,6 +90,9 @@ graph TD;
     BotHandler-->Cache[(Redis)];
     BotHandler-->DB[(PostgreSQL/pgvector)];
     QuartServer-->DB;
+
+    LocalAPI-.->SharedVolume[/var/lib/telegram-bot-api<br/>Shared Docker Volume/];
+    BotHandler-.->SharedVolume;
 ```
 
 ## Repository Structure
@@ -195,6 +200,18 @@ All configuration is loaded from environment variables (or a `.env` file). Varia
 | `ENABLE_WEB_SERVER` | ❌ | `true` / `false` | `true` | Disabling this skips starting the Quart server entirely. Set `false` only for local dev without the dashboard. |
 | `WEBHOOK_URL` | ❌ | `https://bot.example.com` | — | If set, the bot registers itself as a Telegram Webhook at this URL and stops long-polling. **Must be HTTPS.** Required for production webhook deployments. If absent, the bot uses long-polling (simpler for single-server setups). |
 | `WEBAPP_BASE_URL` | ❌ | `https://bot.example.com` | `""` | Public URL from which the Telegram Mini App settings panel and reader are served. If empty, long-response reader falls back to Telegraph links. Must equal `WEBHOOK_URL` in most deployments. |
+
+---
+
+### 🖥️ Local Bot API Server (Optional)
+
+When configured, the bot communicates with a self-hosted Local Bot API Server instead of `api.telegram.org`. This eliminates network latency for file operations, enables 2 GB file uploads, and provides zero-copy media access via a shared Docker volume.
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `TELEGRAM_API_ID` | ⚠️ | `12345678` | — | From [my.telegram.org](https://my.telegram.org). Required only when running the Local Bot API Server container. |
+| `TELEGRAM_API_HASH` | ⚠️ | `0123456789abcdef...` | — | From [my.telegram.org](https://my.telegram.org). Required only when running the Local Bot API Server container. |
+| `TELEGRAM_LOCAL_SERVER_URL` | ❌ | `http://tg-api:8081/bot` | `""` | URL of the Local Bot API Server. When set, enables `local_mode=True` in PTB. When empty (default), the bot uses the official Telegram cloud API. |
 
 ---
 

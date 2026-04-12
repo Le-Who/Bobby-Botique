@@ -27,6 +27,7 @@ from app.utils.heartbeat import stop_heartbeat
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import STAGES_PHOTO, update_stage
+from app.utils.tg_file import get_file_bytes
 
 # Sentinel returned by _process_ai_vision when error was already displayed to user.
 _VISION_ERROR_HANDLED = object()
@@ -181,8 +182,7 @@ async def _handle_photo(placeholder_message: Message, original_message: Message,
     stop_heartbeat(placeholder_message.message_id)
     try:
         photo_file = await original_message.photo[-1].get_file()
-        photo_data = await photo_file.download_as_bytearray()
-        img_raw = bytes(photo_data)
+        img_raw = await get_file_bytes(original_message.get_bot(), photo_file)
 
         # Pre-compress with cache_key for retry savings
         file_unique_id = original_message.photo[-1].file_unique_id
@@ -325,8 +325,7 @@ async def _download_images_concurrently(
         async with _DL_SEMAPHORE:
             try:
                 photo_file = await message.photo[-1].get_file()
-                photo_data = await photo_file.download_as_bytearray()
-                img = bytes(photo_data)
+                img = await get_file_bytes(message.get_bot(), photo_file)
                 async with _progress_lock:
                     progress["done"] += 1
 

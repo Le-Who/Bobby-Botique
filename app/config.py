@@ -182,6 +182,12 @@ class Settings(BaseModel):
     # Required for Mini App reader links. If empty, system falls back to Telegraph.
     WEBAPP_BASE_URL: str = ""
 
+    # --- LOCAL BOT API SERVER ---
+    # If set, the bot routes through a self-hosted Local Bot API Server
+    # instead of api.telegram.org and enables local_mode in PTB.
+    # Example: "http://tg-api:8081/bot"
+    TELEGRAM_LOCAL_SERVER_URL: str = ""
+
     # --- CHAT ---
     CHAT_TOKEN_LIMIT: int = 384000
     TELEGRAM_MESSAGE_LIMIT: int = 4096
@@ -273,6 +279,7 @@ def load_settings() -> Settings:
             "PORT": os.getenv("PORT", "10000"),  # Provide a default for PORT
             "ENABLE_WEB_SERVER": os.getenv("ENABLE_WEB_SERVER", "true").lower() == "true",
             "WEBAPP_BASE_URL": os.getenv("WEBAPP_BASE_URL", "").rstrip("/"),
+            "TELEGRAM_LOCAL_SERVER_URL": os.getenv("TELEGRAM_LOCAL_SERVER_URL", "").rstrip("/"),
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),
             "OPENROUTER_API_KEYS": _load_and_clean_keys("OPENROUTER_API_KEYS", required=False),

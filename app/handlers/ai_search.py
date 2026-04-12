@@ -31,6 +31,7 @@ from app.utils.stage_indicators import (
     STAGES_SEARCH_QUICK,
     update_stage,
 )
+from app.utils.tg_file import get_file_bytes
 from app.utils.waiting_facts import get_waiting_message
 
 
@@ -537,7 +538,7 @@ async def _handle_complex_agent_search(placeholder_message: Message, original_me
     vision_model = settings.RESEARCH_MODEL
 
     photo_file = await original_message.photo[-1].get_file()
-    photo_data = await photo_file.download_as_bytearray()
+    photo_data = await get_file_bytes(original_message.get_bot(), photo_file)
     import io
 
     from PIL import Image

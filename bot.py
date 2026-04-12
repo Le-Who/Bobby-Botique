@@ -273,13 +273,23 @@ async def run_bot_with_retry():
             write_timeout=30.0,
             pool_timeout=60.0,
         )
-        application = (
+
+        builder = (
             Application.builder()
             .token(settings.TELEGRAM_BOT_TOKEN)
             .request(custom_request)
             .concurrent_updates(50)  # Matches connection_pool_size to prevent timeouts
-            .build()
         )
+
+        # Inject Local Bot API Server if configured
+        local_server_url = settings.TELEGRAM_LOCAL_SERVER_URL
+        if local_server_url:
+            builder = builder.base_url(local_server_url).local_mode(True)
+            logging.info("Local Bot API Server: %s (local_mode=True)", local_server_url)
+        else:
+            logging.info("Using official Telegram cloud API (api.telegram.org)")
+
+        application = builder.build()
         commands.register(application)
         callbacks.register(application)
         messages.register(application)

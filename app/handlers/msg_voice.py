@@ -25,6 +25,7 @@ from telegram.ext import ContextTypes
 from app.i18n import detect_language, t
 from app.repos.chats import get_user_chat, update_user_chat
 from app.utils.background_tasks import submit_retryable
+from app.utils.tg_file import get_file_bytes
 
 # Overall timeout for the entire voice processing pipeline (download + transcribe + UI).
 # Safety net above the per-call resilience timeouts (30s × 2 retries × 3 keys = 180s max).
@@ -82,7 +83,7 @@ async def _process_voice_pipeline(
     """Core voice pipeline: download → transcribe → show UI / auto-route."""
     # 1. Download OGG bytes from Telegram
     voice_file = await voice.get_file()
-    voice_bytes = bytes(await voice_file.download_as_bytearray())
+    voice_bytes = await get_file_bytes(context.bot, voice_file)
 
     if not voice_bytes:
         await placeholder.edit_text(t("voice.download_failed", lang))
@@ -244,7 +245,7 @@ async def _detect_show_and_tell(update: Update) -> dict | None:
 
         # Cache miss — download from Telegram (fast fallback)
         photo_file = await photo.get_file()
-        photo_bytes = bytes(await photo_file.download_as_bytearray())
+        photo_bytes = await get_file_bytes(update.message.reply_to_message.get_bot(), photo_file)
         if photo_bytes:
             logging.info("Show & Tell: downloaded image %s (%d bytes)", file_unique_id, len(photo_bytes))
             return {

@@ -87,8 +87,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     document = update.message.document
 
-    # Check file size (max 50MB)
-    if document.file_size and document.file_size > 50 * 1024 * 1024:
+    # Dynamic file size guard: 2 GB with Local Bot API, 50 MB via cloud
+    _max_file_size = (
+        2 * 1024 * 1024 * 1024  # 2 GB — Local Bot API Server limit
+        if getattr(context.bot, "local_mode", False)
+        else 50 * 1024 * 1024  # 50 MB — official cloud API limit
+    )
+    if document.file_size and document.file_size > _max_file_size:
         await update.message.reply_text(t("doc.file_too_large"))
         return
 
@@ -107,27 +112,38 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         import tempfile
 
         file = await document.get_file()
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=f".{file_ext}")
-        os.close(tmp_fd)
 
-        try:
-            await file.download_to_drive(custom_path=tmp_path)
+        # Local mode: process directly from shared volume (zero copy)
+        if getattr(context.bot, "local_mode", False) and file.file_path:
             result = await process_uploaded_document(
-                tmp_path,
+                file.file_path,
                 document.file_name or f"document.{file_ext}",
                 user_id,
                 is_path=True,
             )
-        finally:
-            if os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError as cleanup_error:
-                    logging.warning(
-                        "Failed to cleanup temp doc file %s: %s",
-                        tmp_path,
-                        cleanup_error,
-                    )
+        else:
+            # Cloud mode: download to tempfile
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=f".{file_ext}")
+            os.close(tmp_fd)
+
+            try:
+                await file.download_to_drive(custom_path=tmp_path)
+                result = await process_uploaded_document(
+                    tmp_path,
+                    document.file_name or f"document.{file_ext}",
+                    user_id,
+                    is_path=True,
+                )
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError as cleanup_error:
+                        logging.warning(
+                            "Failed to cleanup temp doc file %s: %s",
+                            tmp_path,
+                            cleanup_error,
+                        )
 
         if result.get("error"):
             if result.get("error") == "duplicate":

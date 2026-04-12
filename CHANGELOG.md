@@ -3,6 +3,35 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.0] - 2026-04-12 - Local Telegram Bot API Server Migration
+
+### 🏗️ Infrastructure — Self-Hosted Local Bot API Server
+
+Migrated the entire Telegram communication layer from `api.telegram.org` (cloud) to a self-hosted **Local Bot API Server** (`aiogram/telegram-bot-api`) running on the same VPS. This eliminates network round-trip latency for all file operations and unlocks Telegram's 2 GB file transfer limit.
+
+#### Architecture
+- **`telegram-bot-api` container**: Runs the official Telegram Bot API binary via MTProto, exposing a REST API on port `8081` inside the Docker network.
+- **Shared Docker volume** (`tg-api-data`): Both the API server and the bot container mount `/var/lib/telegram-bot-api` at the same path, enabling zero-copy file access.
+- **`tg-media-cleanup` container**: Lightweight Alpine cron that deletes cached media files older than 7 days every 24 hours, preventing disk overflow.
+- **Docker network** (`tg-net`): Bridge network for inter-container communication via hostname resolution.
+
+#### Key Changes
+- **`app/config.py`**: New `TELEGRAM_LOCAL_SERVER_URL` setting (default: empty = cloud mode).
+- **`bot.py`**: Conditional `builder.base_url().local_mode(True)` injection when the setting is present.
+- **`app/utils/tg_file.py`** *(new)*: Centralized `get_file_bytes(bot, file)` utility — reads from local filesystem in `local_mode`, falls back to `download_as_bytearray()` in cloud mode.
+- **8 call-site migrations**: All `download_as_bytearray()` and `download_to_drive()` calls across `msg_voice`, `ai_photo`, `ai_search`, `cmd_asr_test`, `debounce`, and `msg_document` now use the new utility.
+- **`msg_document.py`**: Dynamic file size guard — 2 GB in local mode, 50 MB in cloud mode. Documents in local mode are processed directly from the shared volume with zero tempfile copy.
+
+### 🚀 CI/CD Automation — `deploy.yml`
+- **Automated one-time cloud logout**: First deploy runs `bot.log_out()` in a throwaway container, touches `/opt/tg-local-api-migrated` flag, waits 30s. All subsequent deploys skip this step.
+- **Multi-container deployment**: Deploy script now manages `tg-api` → health poll → `tg-bot` → `tg-media-cleanup` in sequence.
+- **New GitHub Secrets**: `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` injected from secrets — zero manual VPS configuration.
+- **Backward-compatible**: When `TELEGRAM_LOCAL_SERVER_URL` is unset, the bot uses `api.telegram.org` as before.
+
+### 🔧 Code Quality
+- All changed files pass `ruff check` and `ruff format`.
+- 1578 unit tests pass (0 failures).
+
 ## [2.9.37] - 2026-04-12 - Inline Mode: Timeout Budget Propagation & Retry UX
 
 ### 🐛 Critical Bug Fix — Inline Timeout Contention

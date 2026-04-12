@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
 from app.utils.multimodal_processor import transcribe_voice
+from app.utils.tg_file import get_file_bytes
 
 
 @authorized_only
@@ -32,11 +33,11 @@ async def asr_test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     try:
         # Download voice bytes
         voice_file = await voice.get_file()
-        file_bytes = await voice_file.download_as_bytearray()
+        file_bytes = await get_file_bytes(context.bot, voice_file)
 
         # Transcribe using specific model
         transcript, intent, _draw_prompt = await transcribe_voice(
-            bytes(file_bytes),
+            file_bytes,
             mime_type=voice.mime_type or "audio/ogg",
             model=model_name,
         )

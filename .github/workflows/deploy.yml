@@ -53,6 +53,9 @@ jobs:
           WEBAPP_BASE_URL: ${{ secrets.WEBAPP_BASE_URL }}
           PORT: ${{ secrets.PORT }}
           ENABLE_WEB_SERVER: ${{ secrets.ENABLE_WEB_SERVER }}
+          # --- LOCAL BOT API SERVER ---
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           # --- GEMINI MODELS ---
           GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           GEMINI_AVAILABLE_MODELS: ${{ secrets.GEMINI_AVAILABLE_MODELS }}
@@ -105,21 +108,84 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          # Перечисляем ВСЕ переменные через запятую для проброса в SSH
-          envs: GITHUB_TOKEN, REPO, REGISTRY, ADMIN_ID, ADMIN_SECRET, TELEGRAM_BOT_TOKEN, DATABASE_URL, REDIS_URL, WEBHOOK_URL, WEBAPP_BASE_URL, PORT, ENABLE_WEB_SERVER, GEMINI_API_KEYS, GEMINI_AVAILABLE_MODELS, DEFAULT_MODEL, QNA_MODEL, RESEARCH_MODEL, URL_SELECTION_MODEL, TAXONOMY_MODEL, OPENROUTER_API_KEYS, USE_OPENROUTER, OPENROUTER_AVAILABLE_MODELS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_QNA_MODEL, OPENROUTER_RESEARCH_MODEL, OPENROUTER_URL_SELECTION_MODEL, TAVILY_API_KEYS, JINA_API_KEY, DAILY_LIMITS, MAX_CONCURRENT_HEAVY_REQUESTS, MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS, LRU_STATE_CACHE_SIZE, DB_POOL_MIN_SIZE, DB_POOL_MAX_SIZE, AGENTIC_MODEL, AGENTIC_MAX_TOKENS, AGENTIC_TIMEOUT_SECONDS, AGENTIC_MAX_ITERATIONS, AGENTIC_MAX_PAGES, AGENTIC_PAGE_CONTENT_LIMIT, ADAPTIVE_THINKING_ENABLED, IMAGE_MODELS, DEFAULT_IMAGE_MODEL, POLLINATIONS_API_KEY, IMAGE_GEN_DAILY_LIMIT, IMAGE_GEN_RPD_PER_KEY, IMAGE_GEN_TIMEOUT, IMAGE_GEN_MAX_RETRIES, ELEVENLABS_API_KEYS, ELEVENLABS_VOICE_ID, STRUCTURED_LOGGING, LOG_PRETTY
+          # All env vars forwarded to SSH session
+          envs: GITHUB_TOKEN, REPO, REGISTRY, ADMIN_ID, ADMIN_SECRET, TELEGRAM_BOT_TOKEN, DATABASE_URL, REDIS_URL, WEBHOOK_URL, WEBAPP_BASE_URL, PORT, ENABLE_WEB_SERVER, TELEGRAM_API_ID, TELEGRAM_API_HASH, GEMINI_API_KEYS, GEMINI_AVAILABLE_MODELS, DEFAULT_MODEL, QNA_MODEL, RESEARCH_MODEL, URL_SELECTION_MODEL, TAXONOMY_MODEL, OPENROUTER_API_KEYS, USE_OPENROUTER, OPENROUTER_AVAILABLE_MODELS, OPENROUTER_DEFAULT_MODEL, OPENROUTER_QNA_MODEL, OPENROUTER_RESEARCH_MODEL, OPENROUTER_URL_SELECTION_MODEL, TAVILY_API_KEYS, JINA_API_KEY, DAILY_LIMITS, MAX_CONCURRENT_HEAVY_REQUESTS, MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS, LRU_STATE_CACHE_SIZE, DB_POOL_MIN_SIZE, DB_POOL_MAX_SIZE, AGENTIC_MODEL, AGENTIC_MAX_TOKENS, AGENTIC_TIMEOUT_SECONDS, AGENTIC_MAX_ITERATIONS, AGENTIC_MAX_PAGES, AGENTIC_PAGE_CONTENT_LIMIT, ADAPTIVE_THINKING_ENABLED, IMAGE_MODELS, DEFAULT_IMAGE_MODEL, POLLINATIONS_API_KEY, IMAGE_GEN_DAILY_LIMIT, IMAGE_GEN_RPD_PER_KEY, IMAGE_GEN_TIMEOUT, IMAGE_GEN_MAX_RETRIES, ELEVENLABS_API_KEYS, ELEVENLABS_VOICE_ID, STRUCTURED_LOGGING, LOG_PRETTY
           script: |
             echo $GITHUB_TOKEN | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
 
             docker pull $REGISTRY/$REPO:latest
 
+            # ── Ensure shared infrastructure (idempotent) ────────────────
+            docker network create tg-net 2>/dev/null || true
+            docker volume create tg-api-data 2>/dev/null || true
+
+            # ── ONE-TIME: Log out from Telegram cloud ────────────────────
+            # Flag file ensures log_out runs only on the FIRST deploy.
+            # After successful logout, the file persists and all subsequent
+            # deployments skip this step.
+            if [ ! -f /opt/tg-local-api-migrated ]; then
+              echo ">>> First-time migration: logging out from Telegram cloud servers..."
+              docker run --rm \
+                -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+                $REGISTRY/$REPO:latest \
+                python -c "
+            import asyncio, os
+            from telegram import Bot
+
+            async def main():
+                bot = Bot(token=os.environ['TELEGRAM_BOT_TOKEN'])
+                async with bot:
+                    me = await bot.get_me()
+                    print(f'Connected as @{me.username}')
+                    result = await bot.log_out()
+                    print(f'log_out result: {result}')
+
+            asyncio.run(main())
+            "
+              touch /opt/tg-local-api-migrated
+              echo ">>> Logged out. Waiting 30s for Telegram to release the token..."
+              sleep 30
+            else
+              echo ">>> Local API migration already completed, skipping log_out."
+            fi
+
+            # ── Local Telegram Bot API Server ─────────────────────────────
+            docker stop tg-api || true
+            docker rm tg-api || true
+
+            docker run -d \
+              --name tg-api \
+              --restart unless-stopped \
+              --network tg-net \
+              -e TELEGRAM_API_ID="$TELEGRAM_API_ID" \
+              -e TELEGRAM_API_HASH="$TELEGRAM_API_HASH" \
+              -e TELEGRAM_LOCAL=1 \
+              -v tg-api-data:/var/lib/telegram-bot-api \
+              aiogram/telegram-bot-api:latest
+
+            # Wait for local API server to be ready
+            echo ">>> Waiting for Local Bot API Server to start..."
+            for i in $(seq 1 30); do
+              if docker exec tg-api wget -qO- http://localhost:8081/ 2>/dev/null | grep -q '"ok"'; then
+                echo ">>> Local API Server is ready."
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo ">>> WARNING: Local API Server health check timed out after 60s"
+              fi
+              sleep 2
+            done
+
+            # ── Bot Container ─────────────────────────────────────────────
             docker stop tg-bot || true
             docker rm tg-bot || true
 
-            # Запускаем контейнер с передачей всех переменных
             docker run -d \
               --name tg-bot \
               --restart unless-stopped \
+              --network tg-net \
               -p 127.0.0.1:$PORT:$PORT \
+              -v tg-api-data:/var/lib/telegram-bot-api \
               -e ADMIN_ID="$ADMIN_ID" \
               -e ADMIN_SECRET="$ADMIN_SECRET" \
               -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
@@ -129,6 +195,7 @@ jobs:
               -e WEBAPP_BASE_URL="$WEBAPP_BASE_URL" \
               -e PORT="$PORT" \
               -e ENABLE_WEB_SERVER="$ENABLE_WEB_SERVER" \
+              -e TELEGRAM_LOCAL_SERVER_URL="http://tg-api:8081/bot" \
               -e GEMINI_API_KEYS="$GEMINI_API_KEYS" \
               -e GEMINI_AVAILABLE_MODELS="$GEMINI_AVAILABLE_MODELS" \
               -e DEFAULT_MODEL="$DEFAULT_MODEL" \
@@ -170,5 +237,18 @@ jobs:
               -e STRUCTURED_LOGGING="$STRUCTURED_LOGGING" \
               -e LOG_PRETTY="$LOG_PRETTY" \
               $REGISTRY/$REPO:latest
+
+            # ── Media Cleanup Cron ────────────────────────────────────────
+            # Deletes cached media files older than 7 days. Runs every 24h.
+            docker stop tg-media-cleanup || true
+            docker rm tg-media-cleanup || true
+
+            docker run -d \
+              --name tg-media-cleanup \
+              --restart unless-stopped \
+              --network tg-net \
+              -v tg-api-data:/var/lib/telegram-bot-api \
+              alpine:3.21 \
+              sh -c "while true; do echo '[cleanup] Deleting files older than 7 days...'; find /var/lib/telegram-bot-api -type f -mtime +7 -delete 2>/dev/null; echo '[cleanup] Done. Sleeping 24h.'; sleep 86400; done"
 
             docker image prune -f
