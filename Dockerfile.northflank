@@ -18,9 +18,13 @@ RUN pip install --no-cache-dir --upgrade pip \
 # Copy application code
 COPY . .
 
-# Prepare startup script + create non-root user
+# Prepare startup script + create non-root user with access to tg-api shared volume
+# GID 101 matches the telegram-bot-api group inside the aiogram/telegram-bot-api container.
+# Files on the shared Docker volume are owned by 101:101 — adding 'app' to GID 101
+# allows the bot to read voice/photo/document files written by the Local Bot API Server.
 RUN chmod +x /app/start.sh \
-    && useradd --create-home --shell /bin/bash app \
+    && groupadd --gid 101 telegram-bot-api \
+    && useradd --create-home --shell /bin/bash --groups telegram-bot-api app \
     && chown -R app:app /app
 
 ENV PYTHONUNBUFFERED=1

@@ -177,6 +177,10 @@ jobs:
               sleep 2
             done
 
+            # Fix shared volume permissions: telegram-bot-api (uid 101) creates dirs
+            # with 700. The bot container runs as 'app' (GID 101) and needs group-read.
+            docker exec tg-api chmod -R g+rX /var/lib/telegram-bot-api/ 2>/dev/null || true
+
             # ── Bot Container ─────────────────────────────────────────────
             docker stop tg-bot || true
             docker rm tg-bot || true
@@ -252,6 +256,6 @@ jobs:
               -v tg-api-data:/var/lib/telegram-bot-api \
               -e TZ=Europe/Kyiv \
               alpine:3.21 \
-              sh -c "while true; do echo '[cleanup] Deleting files older than 7 days...'; find /var/lib/telegram-bot-api -type f -mtime +7 -delete 2>/dev/null; echo '[cleanup] Done. Sleeping 24h.'; sleep 86400; done"
+              sh -c 'LAST_CLEANUP=0; while true; do chmod -R g+rX /var/lib/telegram-bot-api/ 2>/dev/null; NOW=$(date +%s); if [ $((NOW - LAST_CLEANUP)) -ge 86400 ]; then echo "[cleanup] Deleting files older than 7 days..."; find /var/lib/telegram-bot-api -type f -mtime +7 -delete 2>/dev/null; LAST_CLEANUP=$NOW; echo "[cleanup] Done."; fi; sleep 60; done'
 
             docker image prune -f
