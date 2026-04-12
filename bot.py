@@ -297,10 +297,15 @@ async def run_bot_with_retry():
         # Inline mode — cross-chat bot interaction via @mention
         from telegram.ext import ChosenInlineResultHandler, InlineQueryHandler
 
-        from app.handlers.inline import handle_chosen_inline_result, handle_inline_query
+        from app.handlers.inline import (
+            handle_chosen_inline_result,
+            handle_inline_query,
+            handle_inline_retry_callback,
+        )
 
         application.add_handler(InlineQueryHandler(handle_inline_query))
         application.add_handler(ChosenInlineResultHandler(handle_chosen_inline_result))
+        application.add_handler(CallbackQueryHandler(handle_inline_retry_callback, pattern=r"^inl_retry:"))
 
         application.add_handler(CallbackQueryHandler(new_topic_callback, pattern="^new_topic$"))
 
@@ -332,10 +337,10 @@ async def run_bot_with_retry():
         # Using Update.ALL_TYPES is wasteful (delivers business_connection, polls, etc.
         # that we have no handlers for) and can cause rare fallthrough crashes.
         _ALLOWED_UPDATES = [
-            "message",           # New text/photo/voice/document
-            "edited_message",    # User corrected a message → in-place edit UX
-            "callback_query",    # Inline keyboard button presses
-            "inline_query",      # Inline mode — @mention in other chats
+            "message",  # New text/photo/voice/document
+            "edited_message",  # User corrected a message → in-place edit UX
+            "callback_query",  # Inline keyboard button presses
+            "inline_query",  # Inline mode — @mention in other chats
             "chosen_inline_result",  # Required for in-place inline message editing
             "message_reaction",  # Native 👍/👎 reactions → ambient feedback
         ]

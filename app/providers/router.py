@@ -45,6 +45,7 @@ class ProviderRouter:
         use_openrouter: bool | None = None,
         max_key_retries: int = 3,
         thinking_level: str | None = None,
+        timeout: float | None = None,
     ) -> tuple[str, int | None]:
         """
         Get AI response with automatic key rotation and health-aware selection.
@@ -129,6 +130,7 @@ class ProviderRouter:
                 chat_id,
                 use_openrouter,
                 thinking_level=thinking_level,
+                timeout=timeout,
             )
 
             # Track health based on response

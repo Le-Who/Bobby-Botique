@@ -3,6 +3,54 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.9.37] - 2026-04-12 - Inline Mode: Timeout Budget Propagation & Retry UX
+
+### 🐛 Critical Bug Fix — Inline Timeout Contention
+
+#### Problem
+Inline mode responses consistently timed out (`TimeoutError`) before the model could finish generating. The inline handler enforced a 25s outer `asyncio.wait_for`, but the underlying provider stack (Router → UseCase → ResiliencePolicy → GeminiProvider) defaulted to a 120s internal timeout with up to 3 retries. The outer wrapper always cancelled the inner logic before it could complete or retry, producing generic "failed" error messages.
+
+#### Fix — Timeout Budget Propagation
+Threaded a `timeout` parameter from the inline handler down through the entire call chain:
+- `inline.py` → `ai_core.py` → `router.py` → `agent_use_cases.py` → `provider.py`
+- Inline generation now uses a strict **20s budget** (inner) with a **22s outer guard**.
+- `ResiliencePolicy` is forced to `max_retries=1` when a timeout budget is propagated, preventing wasted retries.
+- `thinking_level="off"` (mapped to `"minimal"`) for inline queries to prioritize speed over deep reasoning.
+
+### ✨ New Feature — Inline Retry Button
+
+When an inline generation fails (timeout or any error), the edited message now shows:
+- **Timeout**: `⏰ Модель не успела ответить вовремя.`
+- **General failure**: `❌ Не удалось получить ответ.`
+- **`🔄 Повторить` inline button** to re-trigger generation without re-typing the query.
+
+The retry mechanism uses a TTL-based in-memory store (5-minute expiry) that preserves the original query, tone, and user ID. On tap, the callback handler re-launches the full generation pipeline and updates the message in-place.
+
+### 🔧 Code Quality
+- Fixed `C408` ruff lint: replaced `dict()` call with `{}` literal in `agent_use_cases.py`.
+- Fixed `SIM108` ruff lint: collapsed `if/else` into ternary in `inline.py`.
+- Auto-formatted `inline.py` and `bot.py` via `ruff format`.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/handlers/inline.py` | Timeout budget (20s inner + 22s outer), `thinking_level="off"`, retry button with TTL store, `handle_inline_retry_callback`, ternary lint fix |
+| `app/handlers/ai_core.py` | `timeout` param threaded to router |
+| `app/providers/router.py` | `timeout` param threaded to use case |
+| `app/agent_use_cases.py` | `timeout` forces `max_retries=1`; dict literal fix |
+| `bot.py` | Registered `handle_inline_retry_callback` with `^inl_retry:` pattern |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `ruff check .` | 0 errors ✅ |
+| `ruff format --check .` | 307 files, 0 violations ✅ |
+| `pytest` (unit suite) | **1578 passed**, 0 failed ✅ |
+
+---
+
 ## [2.9.36] - 2026-04-11 - Inline Mode: Cross-Chat Bot Interaction via @mention
 
 ### ✨ New Feature — Inline Mode (`@gemaibotv2 <query>`)

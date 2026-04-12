@@ -24,6 +24,7 @@ Prerequisites (one-time BotFather setup):
 import asyncio
 import html as _html
 import logging
+import uuid
 from datetime import UTC, datetime
 
 from telegram import (
@@ -47,6 +48,7 @@ _INLINE_MODEL = "gemini-3.1-flash-lite-preview"
 
 def _placeholder_html(bot_name: str) -> str:
     return f"⚡️ <b>{_html.escape(bot_name)}</b> генерирует ответ…"
+
 
 # (result_id, display_label, system_tone_hint)
 _TONES: list[tuple[str, str, str]] = [
@@ -74,9 +76,13 @@ _bg_tasks: set[asyncio.Task] = set()
 # for ChosenInlineResult to include `inline_message_id`.  Without it the bot
 # cannot edit the placeholder in-place.  The button itself is cosmetic and
 # gets replaced once the final response is ready.
-_LOADING_KEYBOARD = InlineKeyboardMarkup(
-    [[InlineKeyboardButton("⏳ Генерация…", callback_data="inline_noop")]]
-)
+_LOADING_KEYBOARD = InlineKeyboardMarkup([[InlineKeyboardButton("⏳ Генерация…", callback_data="inline_noop")]])
+
+# ── Retry store ──────────────────────────────────────────────────────────────
+# Keyed by short UUID, stores params needed to re-run _generate_and_edit_inline.
+# Entries auto-expire; we prune on every new insert. TTL = 5 minutes.
+_RETRY_TTL_S = 300.0
+_retry_store: dict[str, dict] = {}
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -156,8 +162,7 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     inline_message_id = chosen.inline_message_id
     if not inline_message_id:
         logging.warning(
-            "Inline: no inline_message_id received — "
-            "ensure /setinlinefeedback is set to 100%% in BotFather."
+            "Inline: no inline_message_id received — ensure /setinlinefeedback is set to 100%% in BotFather."
         )
         return
 
@@ -227,9 +232,7 @@ async def _generate_and_edit_inline(
         if isinstance(search_result, dict) and search_result.get("type") == "answer":
             search_context = (search_result.get("content") or "").strip()
     except Exception as search_err:
-        logging.warning(
-            "Inline: Tavily QnA failed, proceeding without context: %s", search_err
-        )
+        logging.warning("Inline: Tavily QnA failed, proceeding without context: %s", search_err)
 
     # ── Step 2: Build system prompt ───────────────────────────────────────────
     system_instruction = (
@@ -242,14 +245,18 @@ async def _generate_and_edit_inline(
     )
     if search_context:
         system_instruction += (
-            "\n[Актуальная информация из интернета (используй при необходимости)]:\n"
-            f"{search_context[:2000]}"
+            f"\n[Актуальная информация из интернета (используй при необходимости)]:\n{search_context[:2000]}"
         )
 
     history = [{"role": "user", "parts": [user_query]}]
 
     # ── Step 3: Generate with lightweight model ───────────────────────────────
+    # Budget: 20s for the API call itself (leaves headroom from the outer UX
+    # deadline).  Pass timeout all the way down so inner layers (resilience,
+    # Gemini wait_for) use the same budget instead of the default 120s.
+    _GEN_TIMEOUT_S = 20.0
     final_answer: str | None = None
+    _gen_timed_out = False
     try:
         final_answer, _ = await asyncio.wait_for(
             _get_ai_response_with_routing(
@@ -257,8 +264,18 @@ async def _generate_and_edit_inline(
                 history=history,
                 system_instruction=system_instruction,
                 user_id=user_id,
+                max_key_retries=1,  # tight budget → no key rotation retries
+                timeout=_GEN_TIMEOUT_S,  # propagated to provider layer
+                thinking_level="off",  # "off" → minimal thinking for speed
             ),
-            timeout=25.0,
+            timeout=_GEN_TIMEOUT_S + 2.0,  # outer guard slightly above inner
+        )
+    except TimeoutError:
+        _gen_timed_out = True
+        logging.warning(
+            "Inline: Generation timed out after %.0fs for query '%s'",
+            _GEN_TIMEOUT_S,
+            user_query[:60],
         )
     except Exception as gen_err:
         logging.error(
@@ -270,24 +287,36 @@ async def _generate_and_edit_inline(
 
     # ── Step 4: Format and edit inline message ────────────────────────────────
     if final_answer and final_answer.strip():
-        header = (
-            f"<b>{_html.escape(tone_label)}</b>"
-            f" · <code>{_html.escape(user_query[:60])}</code>\n\n"
-        )
+        header = f"<b>{_html.escape(tone_label)}</b> · <code>{_html.escape(user_query[:60])}</code>\n\n"
         body = markdown_to_html(final_answer.strip())
         formatted = header + body
         # Telegram inline messages: hard 4096-char limit.
         if len(formatted) > 4000:
             formatted = formatted[:3997] + "…"
     else:
-        formatted = "❌ Не удалось получить ответ. Попробуйте ещё раз."
+        formatted = "⏰ Модель не успела ответить вовремя." if _gen_timed_out else "❌ Не удалось получить ответ."
+
+    # On failure, attach a retry button so the user can re-trigger generation.
+    reply_markup: InlineKeyboardMarkup | None = None
+    is_failure = not (final_answer and final_answer.strip())
+    if is_failure:
+        retry_id = _store_retry_params(
+            user_query=user_query,
+            tone_id=tone_id,
+            user_id=user_id,
+        )
+        reply_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔄 Повторить", callback_data=f"inl_retry:{retry_id}")]]
+        )
+    else:
+        reply_markup = InlineKeyboardMarkup([])  # strip loading indicator
 
     try:
         await bot.edit_message_text(
             inline_message_id=inline_message_id,
             text=formatted,
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([]),  # strip loading indicator
+            reply_markup=reply_markup,
         )
     except Exception as edit_err:
         logging.error(
@@ -301,8 +330,93 @@ async def _generate_and_edit_inline(
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
                 text=plain or "Ошибка генерации ответа.",
+                reply_markup=reply_markup,
             )
         except Exception as fallback_err:
-            logging.error(
-                "Inline: Plain-text fallback also failed: %s", fallback_err
+            logging.error("Inline: Plain-text fallback also failed: %s", fallback_err)
+
+
+# ── Retry store helpers ───────────────────────────────────────────────────────
+
+
+def _store_retry_params(
+    user_query: str,
+    tone_id: str,
+    user_id: int | None,
+) -> str:
+    """Store retry params and return a short ID (fits in callback_data)."""
+    # Prune expired entries
+    import time as _time
+
+    now = _time.monotonic()
+    expired = [k for k, v in _retry_store.items() if now - v["ts"] > _RETRY_TTL_S]
+    for k in expired:
+        _retry_store.pop(k, None)
+
+    retry_id = uuid.uuid4().hex[:12]
+    _retry_store[retry_id] = {
+        "query": user_query,
+        "tone": tone_id,
+        "user_id": user_id,
+        "ts": now,
+    }
+    return retry_id
+
+
+# ── Retry callback handler ────────────────────────────────────────────────────
+
+
+async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle the 🔄 Повторить button press on failed inline messages."""
+    import time as _time
+
+    query = update.callback_query
+    if not query:
+        return
+
+    await query.answer()  # dismiss the spinner immediately
+
+    data = query.data or ""
+    if not data.startswith("inl_retry:"):
+        return
+
+    retry_id = data.split(":", 1)[1]
+    entry = _retry_store.pop(retry_id, None)
+
+    if not entry or (_time.monotonic() - entry["ts"] > _RETRY_TTL_S):
+        # Expired or unknown — edit with a polite message
+        try:
+            await query.edit_message_text(
+                "⏳ Запрос устарел. Пожалуйста, вызовите бот заново.",
             )
+        except Exception:
+            pass
+        return
+
+    inline_message_id = query.inline_message_id
+    if not inline_message_id:
+        return
+
+    # Show loading state
+    bot_name = context.bot.first_name or "Bot"
+    try:
+        await query.edit_message_text(
+            text=_placeholder_html(bot_name),
+            parse_mode="HTML",
+            reply_markup=_LOADING_KEYBOARD,
+        )
+    except Exception:
+        pass
+
+    # Re-run generation as a background task
+    task = asyncio.create_task(
+        _generate_and_edit_inline(
+            bot=context.bot,
+            inline_message_id=inline_message_id,
+            user_query=entry["query"],
+            tone_id=entry["tone"],
+            user_id=entry["user_id"],
+        )
+    )
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)

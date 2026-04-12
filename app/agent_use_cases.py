@@ -148,6 +148,7 @@ class AgentRequestUseCase:
         chat_id: int | None = None,
         use_openrouter: bool | None = None,
         thinking_level: str | None = None,
+        timeout: float | None = None,
     ) -> tuple[str, int | None]:
         if use_openrouter is None:
             use_openrouter = "/" in model_name or get_use_openrouter()
@@ -162,14 +163,19 @@ class AgentRequestUseCase:
         from app.providers import get_provider_for_model
 
         provider = get_provider_for_model(model_name, api_key)
-        response = await provider.get_response(
-            history=history,
-            model_name=model_name,
-            system_instruction=system_instruction,
-            user_id=user_id,
-            chat_id=chat_id,
-            thinking_level=thinking_level,
-        )
+        # Build kwargs, only pass timeout if caller specified one
+        kwargs: dict[str, Any] = {
+            "history": history,
+            "model_name": model_name,
+            "system_instruction": system_instruction,
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "thinking_level": thinking_level,
+        }
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+            kwargs["max_retries"] = 1  # tight budget → no retries
+        response = await provider.get_response(**kwargs)
 
         token_count = response.token_count if response.success else None
         return response.text, token_count

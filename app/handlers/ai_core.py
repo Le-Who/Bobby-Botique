@@ -107,6 +107,7 @@ async def _get_ai_response_with_routing(
     use_openrouter: bool | None = None,
     max_key_retries: int = 3,
     thinking_level: str | None = None,
+    timeout: float | None = None,
 ):
     """Health-aware key rotation via ProviderRouter (preferred over plain key rotation)."""
     from app.providers import get_provider_router
@@ -121,4 +122,5 @@ async def _get_ai_response_with_routing(
         use_openrouter=use_openrouter,
         max_key_retries=max_key_retries,
         thinking_level=thinking_level,
+        timeout=timeout,
     )
