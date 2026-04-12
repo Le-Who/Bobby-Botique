@@ -566,11 +566,42 @@ async def stream_and_display(
     _voice_requested.set(False)
     _was_interrupted = False
 
+    # ── UX State Indication: delayed feedback if API is slow ─────────
+    # If no chunks arrive within 5 seconds, update placeholder to inform
+    # the user and offer a [Cancel] button.
+    _first_chunk_received = False
+    _ux_feedback_task: asyncio.Task | None = None
+
+    async def _send_delayed_feedback() -> None:
+        """Show 'high load' status after 5s if no chunks arrived."""
+        await asyncio.sleep(5.0)
+        if _first_chunk_received:
+            return
+        try:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+            cancel_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Отменить", callback_data="cancel_generation")],
+            ])
+            await placeholder_message.edit_text(
+                "⏳ Запрос в обработке: высокая нагрузка на сервера...",
+                reply_markup=cancel_kb,
+            )
+        except Exception as e:
+            logging.debug("Delayed UX feedback failed (non-critical): %s", e)
+
+    _ux_feedback_task = asyncio.create_task(_send_delayed_feedback())
+
     try:
         from app.providers import get_provider_router
 
         router = get_provider_router()
         _voice_tag_checked = False
+
+        # Mark task as waiting for network headers (TTFB tracking)
+        if user_id:
+            from app import state as _state_mod
+            _state_mod.mark_network_waiting(user_id)
 
         async for delta in router.stream_response(
             preferred_model=model_name,
@@ -604,6 +635,16 @@ async def stream_and_display(
                     _voice_tag_checked = True
 
             if delta:
+                # Cancel the delayed UX feedback on first real chunk
+                if not _first_chunk_received:
+                    _first_chunk_received = True
+                    if _ux_feedback_task and not _ux_feedback_task.done():
+                        _ux_feedback_task.cancel()
+                    # Mark task as alive (receiving data) — disables stall cancellation
+                    if user_id:
+                        from app import state as _state_mod
+                        _state_mod.mark_network_alive(user_id)
+
                 if yield_hook is not None:
                     if inspect.iscoroutinefunction(yield_hook):
                         await yield_hook()
@@ -661,6 +702,15 @@ async def stream_and_display(
             )
         writer._full_text += "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_"
         writer._buffer += "\n\n⚠️ _(ответ был прерван из-за непредвиденной ошибки)_"
+
+    # Ensure the delayed UX feedback timer is always cancelled
+    if _ux_feedback_task and not _ux_feedback_task.done():
+        _ux_feedback_task.cancel()
+
+    # Clean up network stall tracking
+    if user_id:
+        from app import state as _state_mod
+        _state_mod.clear_network_stall(user_id)
 
     markup = reply_markup
     if post_processor:

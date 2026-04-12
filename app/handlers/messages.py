@@ -418,9 +418,50 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # ── 8. Create placeholder & heartbeat, then process AI request ───────
         user_state = state.get_user_state(user_id)
         if user_state.is_processing or state.get_user_lock(user_id).locked():
-            await _send_busy_ephemeral(update)
-            return
+            # ── Network-Stall Cancellation (Plan §7) ─────────────────────
+            # If the previous task is stuck waiting for HTTP headers (TTFB >15s),
+            # cancel it and process the new message. If the task is healthy
+            # (actively streaming/searching), show the usual busy toast.
+            if state.is_task_stalled(user_id):
+                was_cancelled = state.cancel_active_task(user_id)
+                if was_cancelled:
+                    logging.info(
+                        "Network-stall cancellation: cancelled stalled task for user %s (new message arrived)",
+                        user_id,
+                    )
+                    # Brief yield for the cancelled task's finally-block to release user_lock
+                    await asyncio.sleep(0.15)
+                    # Re-check: lock should be released now
+                    if state.get_user_lock(user_id).locked():
+                        await _send_busy_ephemeral(update)
+                        return
+                else:
+                    await _send_busy_ephemeral(update)
+                    return
+            else:
+                await _send_busy_ephemeral(update)
+                return
         user_state.is_processing = True
+
+        # ── Intent Direct Routing (Plan §4) ──────────────────────────────
+        # For text-only messages, try resolving via lightweight APIs
+        # (weather, currency) before consuming an LLM call.
+        if not is_photo and message_text:
+            try:
+                from app.intent_router import try_direct_intent
+
+                intent_result = await try_direct_intent(message_text)
+                if intent_result and intent_result.handled:
+                    user_state.is_processing = False
+                    await effective_msg.reply_text(
+                        intent_result.text,
+                        parse_mode="Markdown",
+                    )
+                    state.set_last_sent_message(user_id, message_text)
+                    logging.info("Intent direct routing handled for user %s", user_id)
+                    return
+            except Exception as e:
+                logging.debug("Intent routing failed (falling back to LLM): %s", e)
 
         if is_photo:
             logging.info("Processing single photo from user %s", user_id)

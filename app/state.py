@@ -507,6 +507,47 @@ def clear_active_task(user_id: int) -> None:
     _ACTIVE_TASKS.pop(user_id, None)
 
 
+# user_id → timestamp when the current HTTP request entered "waiting for headers" state.
+# None means the task is actively receiving data (healthy).
+_NETWORK_STALL_SINCE: dict[int, float | None] = {}
+
+# Threshold: if waiting for TTFB longer than this, the task is considered stalled.
+_STALL_THRESHOLD_S = 15.0
+
+
+def mark_network_waiting(user_id: int) -> None:
+    """Mark the user's active task as waiting for HTTP response headers (TTFB)."""
+    import time
+
+    _NETWORK_STALL_SINCE[user_id] = time.monotonic()
+
+
+def mark_network_alive(user_id: int) -> None:
+    """Mark the user's active task as receiving data (not stalled)."""
+    _NETWORK_STALL_SINCE[user_id] = None
+
+
+def is_task_stalled(user_id: int) -> bool:
+    """Check if the user's active task is network-stalled (TTFB exceeded threshold).
+
+    Returns False if:
+    - No active task
+    - Task is actively receiving data
+    - Stall duration hasn't exceeded threshold yet
+    """
+    import time
+
+    stall_start = _NETWORK_STALL_SINCE.get(user_id)
+    if stall_start is None:
+        return False
+    return (time.monotonic() - stall_start) > _STALL_THRESHOLD_S
+
+
+def clear_network_stall(user_id: int) -> None:
+    """Clean up stall tracking for a user."""
+    _NETWORK_STALL_SINCE.pop(user_id, None)
+
+
 # =============================================================================
 # LAST BOT MESSAGE REGISTRY — for edit-in-place UX
 # =============================================================================

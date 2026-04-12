@@ -240,6 +240,13 @@ async def _cleanup_application(application, reason: str = "cleanup"):
         logging.warning(f"Cleanup error (Tavily http client): {cleanup_error}")
 
     try:
+        from app.intent_router import close_http_client
+
+        await close_http_client()
+    except Exception as cleanup_error:
+        logging.warning(f"Cleanup error (Intent Router http client): {cleanup_error}")
+
+    try:
         from app.cache import shutdown_redis
 
         await shutdown_redis()

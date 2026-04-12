@@ -3,6 +3,42 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.1] - 2026-04-12 - Bot Resilience Architecture & 503 Mitigation
+
+### 🛡️ Core Resilience Architecture
+
+Successfully deployed a production-grade resilience layer to eliminate service disruptions caused by Gemini `503 UNAVAILABLE` errors under high load. Implemented a 6-phase strategy targeting latency mitigation, model cascading, UX transparency, network-stall recovery, and background queuing.
+
+#### 1. High-Speed Race Requests (Phase 1)
+- **`ProviderRouter.stream_response`**: Completely refactored. The bot now spins up two simultaneous streaming requests (`asyncio.create_task`) using two different API keys.
+- **First-Chunk Wins**: The first request to successfully return a chunk signals the winner queue; the loser is cleanly cancelled.
+- **Race Condition Fix**: Added secondary queue draining in a finally-block to guarantee no trailing chunks are lost if the winning task completes unexpectedly fast.
+
+#### 2. Model Cascade Fallback (Phase 2)
+- If the primary heavy model (e.g., `gemini-exp-1206` or `gemini-2.5-pro`) exhausts all retries due to 503 errors, the system cascades down to a lighter, more reliable model (e.g. `gemini-3.1-flash-lite-preview`).
+- Avoids total failure by sacrificing some reasoning capacity during extreme API outages.
+
+#### 3. Delayed UX State Indication (Phase 3)
+- If no chunks arrive within 5 seconds, an ephemeral toast (`⏳ Запрос в обработке...`) is sent, showing users that the bot is alive but waiting on the API.
+- Replaces silent, confusing waiting periods with transparent feedback and a `[❌ Отменить]` inline button.
+
+#### 4. Network-Stall Recovery (Phase 4)
+- **TTFB-based Stall Tracking**: `app/state.py` now tracks `_NETWORK_STALL_SINCE` dictionaries.
+- New user messages now intelligently detect if the preceding task is genuinely stalled (waiting >15s for HTTP headers). If yes, the stuck socket is cancelled, and the new query takes precedence.
+- If the stream is healthy (actively yielding tokens), the bot preserves FIFO safety by rejecting interruption and showing the standard busy toast.
+
+#### 5. Async Deferred Queue (Phase 5)
+- For extreme edge cases where even the fallback model fails, the request is shipped to Redis via `app/deferred_response.py`.
+- The bot gracefully informs the user that the request is queued, and delivers the answer as a follow-up message when the Gemini API stabilizes.
+
+#### 6. Intent Direct Routing (Phase 6)
+- **`intent_router.py`**: Intercepts simple utility queries (weather, currency conversion) before they hit the LLM. 
+- Bypasses Gemini fully by routing directly to `Open-Meteo` and `Frankfurter` APIs, ensuring near-0ms intent fulfillment when the LLM provider is down.
+
+### 🔧 Code Quality & Hooks
+- Added Graceful shutdown bindings for `intent_router` HTTP clients in `bot.py`.
+- Fixed multiple linter and type-checking warnings across routing and configuration paths.
+
 ## [2.10.0] - 2026-04-12 - Local Telegram Bot API Server Migration
 
 ### 🏗️ Infrastructure — Self-Hosted Local Bot API Server

@@ -232,3 +232,24 @@ def register(application: Application) -> None:
     _add_fast_callback(application, suggestion_callback, "^suggest:")
     _add_fast_callback(application, edit_query_callback, "^edit_query$")
     application.add_handler(CallbackQueryHandler(intent_route_callback, pattern="^intent_route:"))
+
+    # Cancel generation button (shown during high API load)
+    _add_fast_callback(application, _cancel_generation_callback, "^cancel_generation$")
+
+
+async def _cancel_generation_callback(update, context) -> None:
+    """Handle the '❌ Отменить' button pressed during slow API response."""
+    query = update.callback_query
+    await query.answer("Запрос отменён.")
+    user_id = update.effective_user.id
+
+    was_cancelled = state.cancel_active_task(user_id)
+    if was_cancelled:
+        import logging
+
+        logging.info("User %s cancelled generation via inline button", user_id)
+
+    try:
+        await query.edit_message_text("❌ Запрос отменён.")
+    except Exception:
+        pass

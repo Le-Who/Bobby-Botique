@@ -134,6 +134,7 @@ class TaskQueue:
         self._task_handlers = {
             "document_processing": self._handle_document_processing,
             "cleanup_metrics": self._handle_cleanup_metrics,
+            "deferred_ai_response": self._handle_deferred_ai_response,
         }
 
     async def start(self):
@@ -503,6 +504,12 @@ class TaskQueue:
         except Exception as e:
             logging.error("Error cleaning up metrics: %s", e, exc_info=True)
             return {"status": "failed", "error": str(e)}
+
+    async def _handle_deferred_ai_response(self, **kwargs) -> dict[str, Any]:
+        """Handler for deferred AI generation retry (Plan §5)."""
+        from app.deferred_response import handle_deferred_ai_response
+
+        return await handle_deferred_ai_response(**kwargs)
 
     async def _cleanup_old_tasks(self):
         """Очищает старые задачи"""
