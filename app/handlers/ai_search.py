@@ -41,7 +41,7 @@ async def _handle_qna_search(
     user_message: str,
     chat_state: ChatState,
     search_query: str | None = None,
-):
+) -> str | None:
     """Quick search using Google Search Grounding (single LLM call, no Tavily).
 
     Fallback chain: gemini-3.1-flash-lite-preview → gemini-2.5-flash-lite.
@@ -206,6 +206,8 @@ async def _handle_qna_search(
             )
         except (BadRequest, NetworkError) as edit_error:
             logging.error("Could not edit placeholder message: %s", edit_error)
+
+    return final_answer or None
 
 
 @track_metrics("research_search")

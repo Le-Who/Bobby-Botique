@@ -549,12 +549,16 @@ async def _auto_route_to_search(
     voice,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    """Auto-route search voice requests directly to the research agent.
-    
+    """Auto-route search voice requests to QnA search (or deep research if enabled).
+
     Shows a brief indicator that auto-routing happened, then runs the
-    research agent pipeline using a NEW placeholder message.
+    search pipeline using a NEW placeholder message.
+
+    History persistence:
+      - Deep research path: handled internally by _handle_research_agent.
+      - QnA path: captured here and saved via update_user_chat so QnA
+        results are not silently lost between sessions.
     """
-    from app.i18n import t
     from app.utils.formatting import TelegramFormatter
 
     auto_text = f"{t('voice.transcript_label', lang)}\n\n{transcript}\n\n🔎 _{t('voice.auto_confirm', lang)}_"
@@ -563,17 +567,39 @@ async def _auto_route_to_search(
 
     new_placeholder = await placeholder.reply_text("⏳ _Ищу информацию в сети..._", parse_mode="Markdown")
 
-    from app.repos.chats import get_user_chat
     chat_state = await get_user_chat(user_id)
-    
+
     user_message_with_marker = f"{t('voice.history_marker', lang)}\n{transcript}"
-    
-    from app.handlers.ai_search import _handle_research_agent
-    
-    await _handle_research_agent(
-        placeholder_message=new_placeholder,
-        user_id=user_id,
-        user_message=user_message_with_marker,
-        chat_state=chat_state,
-        search_query=transcript,
-    )
+
+    # ── Decide between Deep Research and Quick Search ──────────────────────
+    # Deep Research path: _handle_research_agent saves history internally.
+    # QnA path: we capture the answer and persist it ourselves.
+    if getattr(chat_state, "is_deep_dive", False) or getattr(chat_state, "search_enabled", False):
+        from app.handlers.ai_search import _handle_research_agent
+
+        await _handle_research_agent(
+            placeholder_message=new_placeholder,
+            user_id=user_id,
+            user_message=user_message_with_marker,
+            chat_state=chat_state,
+            search_query=transcript,
+        )
+    else:
+        from app.handlers.ai_search import _handle_qna_search
+
+        answer = await _handle_qna_search(
+            placeholder_message=new_placeholder,
+            user_message=user_message_with_marker,
+            chat_state=chat_state,
+            search_query=transcript,
+        )
+
+        # ── Persist QnA turn to chat history (Bug fix: QnA was not saved) ─
+        # _handle_qna_search uses a throwaway history dict for the API call;
+        # it does NOT write back to chat_state. We do it here so the user's
+        # QnA searches survive session restarts and feed into future LTM.
+        if answer:
+            chat_state.history.append({"role": "user", "parts": [user_message_with_marker]})
+            chat_state.history.append({"role": "model", "parts": [answer]})
+            await update_user_chat(user_id, chat_state)
+
