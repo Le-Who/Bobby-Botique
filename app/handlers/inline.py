@@ -40,6 +40,7 @@ from telegram.ext import ContextTypes
 from app.config import settings
 from app.errors import is_error_message
 from app.metrics import metrics_collector
+from app.repos.settings_repo import get_global_setting
 from app.utils.api_logger import api_logger
 from app.utils.text_format import markdown_to_html, strip_formatting
 
@@ -255,6 +256,12 @@ async def _stream_inline_fast(
         if not keys or not resolved_model:
             return None  # No keys available at all
 
+        # Read thinking level dynamically — admin can change via /set_inline_thinking
+        # without restarting the container. Falls back to env-var default.
+        thinking_level = await get_global_setting(
+            "inline_thinking_level", settings.INLINE_THINKING_LEVEL
+        )
+
         q: asyncio.Queue = asyncio.Queue()
 
         async def _race(kd: dict, mod: str = resolved_model, _q: asyncio.Queue = q) -> None:  # type: ignore[assignment]  # noqa: B023
@@ -265,7 +272,7 @@ async def _stream_inline_fast(
                     history=history,
                     model_name=mod,
                     system_instruction=system_instruction,
-                    thinking_level=settings.INLINE_THINKING_LEVEL,
+                    thinking_level=thinking_level,
                     timeout=18.0,
                 ):
                     await _q.put((kh, chunk, None))

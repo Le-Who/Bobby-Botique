@@ -26,6 +26,7 @@ from app.repos.admin import (
     revoke_user,
 )
 from app.repos.keys import force_update_tavily_keys, get_available_gemini_key
+from app.repos.settings_repo import get_global_setting, set_global_setting
 from app.repos.users import invalidate_user_auth_cache
 from app.utils import time as time_utils
 from app.utils.decorators import admin_only, authorized_only
@@ -636,3 +637,40 @@ async def check_gemini_keys_command(update: Update, context: ContextTypes.DEFAUL
         error_msg = f"Ошибка при проверке ключей Gemini: {e}"
         logging.error(error_msg, exc_info=True)
         await update.message.reply_text(f"💥 {error_msg}")
+
+
+_VALID_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high"})
+
+
+@admin_only
+async def set_inline_thinking_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set the inline generation thinking level on-the-fly (no restart required).
+
+    Usage: /set_inline_thinking <level>
+    Valid levels: minimal, low, medium, high
+    """
+    args = context.args or []
+    if not args or args[0].lower() not in _VALID_THINKING_LEVELS:
+        current = await get_global_setting("inline_thinking_level", settings.INLINE_THINKING_LEVEL)
+        await update.message.reply_text(
+            f"⚙️ <b>Текущий уровень:</b> <code>{current}</code>\n\n"
+            "Использование: <code>/set_inline_thinking &lt;level&gt;</code>\n"
+            "Допустимые значения: <code>minimal</code>, <code>low</code>, <code>medium</code>, <code>high</code>\n\n"
+            "📝 <b>Рекомендации:</b>\n"
+            "• <code>low</code> — оптимальный баланс скорости и качества (default)\n"
+            "• <code>medium</code> — лучше для сложных/многошаговых запросов\n"
+            "• <code>minimal</code> — максимальная скорость, минимум рассуждений\n"
+            "• <code>high</code> — медленно, только для отладки",
+            parse_mode="HTML",
+        )
+        return
+
+    level = args[0].lower()
+    await set_global_setting("inline_thinking_level", level)
+    logging.info("Admin %s set inline_thinking_level → %s", update.effective_user.id, level)
+    await update.message.reply_text(
+        f"✅ Уровень размышлений для inline-режима установлен в: <code>{level}</code>\n"
+        f"Изменение вступит в силу немедленно (кеш сброшен).",
+        parse_mode="HTML",
+    )
+

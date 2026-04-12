@@ -83,6 +83,77 @@ _CURRENCY_CODES = {
     "kgs": "KGS", "uzs": "UZS", "try": "TRY", "chf": "CHF",
 }
 
+# Pattern to extract a city candidate from weather queries.
+# Captures the word(s) immediately following trigger prepositions/words.
+# Works for Russian ("в Саратове", "погода Лондон") and English ("weather in Paris").
+_CITY_EXTRACT_PATTERN = re.compile(
+    r"(?:погод[ауеыя]\s+(?:сейчас\s+)?(?:в\s+|во\s+)?|weather\s+(?:in\s+|for\s+)?|в\s+|во\s+)"
+    r"([а-яёa-z][а-яёa-z\-\s]{1,30}?)(?:\s*$|[,?!.\s])",
+    re.IGNORECASE,
+)
+
+# Common Russian locative/prepositional case suffixes to strip before geocoding.
+# Order matters: longer suffixes first to avoid partial matches.
+_RUSSIAN_CITY_SUFFIXES = (
+    "ском", "ской", "ского", "овске", "евске", "инске",
+    "ове", "еве", "еве", "ове",
+    "ске", "зке",
+    "ах", "ях",
+    "е", "и", "у", "ю",
+)
+
+
+def _normalize_city_candidate(raw: str) -> str:
+    """Strip common Russian locative/prepositional case suffixes for geocoding.
+
+    Example: 'Саратове' -> 'Саратов', 'Москве' -> 'Москв' (still resolves fine
+    because open-meteo does prefix matching on city names).
+    """
+    word = raw.strip()
+    lower = word.lower()
+    for suffix in _RUSSIAN_CITY_SUFFIXES:
+        if lower.endswith(suffix) and len(lower) - len(suffix) >= 3:  # keep ≥ 3 root chars
+            return word[: len(word) - len(suffix)]
+    return word
+
+
+async def _geocode_city(candidate: str) -> tuple[str, float, float] | None:
+    """Look up *candidate* via the Open-Meteo Geocoding API (free, no key).
+
+    Returns (display_name, lat, lon) on success, or None if the city is
+    not found or the request fails.  Results are not cached — callers
+    should only call this after the local alias dict misses.
+    """
+    # Strip suffixes to improve match rate ("Саратове" → "Саратов")
+    normalized = _normalize_city_candidate(candidate)
+    if len(normalized) < 3:
+        return None
+
+    try:
+        resp = await _get_http().get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": normalized, "count": 1, "language": "ru", "format": "json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logging.warning("Geocoding API failed for '%s': %s", normalized, exc)
+        return None
+
+    results = data.get("results")
+    if not results:
+        logging.debug("Geocoding: no results for '%s'", normalized)
+        return None
+
+    hit = results[0]
+    lat: float = hit["latitude"]
+    lon: float = hit["longitude"]
+    # Prefer the English "name" field — it's the canonical city name and
+    # safe to display regardless of terminal/encoding issues on the server.
+    display: str = hit.get("name") or normalized.capitalize()
+    return display, lat, lon
+
+
 # Shared HTTP client for lightweight API calls
 _http: httpx.AsyncClient | None = None
 
@@ -143,8 +214,27 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
 
 
 async def _handle_weather(text: str) -> IntentResult | None:
-    """Extract city and fetch current weather from Open-Meteo (free, no API key)."""
+    """Extract city and fetch current weather from Open-Meteo (free, no API key).
+
+    Resolution order:
+      1. Hardcoded _CITY_ALIASES (O(n) scan, ~zero latency)
+      2. Open-Meteo Geocoding API fallback (~300 ms, handles any world city)
+      3. Return None → fall back to LLM/QnA Search
+    """
     city_name, coords = _extract_city(text)
+
+    if not coords:
+        # Alias miss — try live geocoding
+        m = _CITY_EXTRACT_PATTERN.search(text)
+        candidate = m.group(1).strip() if m else ""
+
+        if candidate:
+            geo = await _geocode_city(candidate)
+            if geo:
+                city_name, lat, lon = geo
+                coords = (lat, lon)
+                logging.debug("Geocoded '%s' → %s (%.4f, %.4f)", candidate, city_name, lat, lon)
+
     if not coords:
         return None  # Can't determine city → fall back to LLM
 

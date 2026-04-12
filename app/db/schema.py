@@ -48,6 +48,8 @@ EXPECTED_TABLES = frozenset(
         "user_reminders",
         # Infrastructure
         "schema_migrations",
+        # Runtime-configurable admin settings (034_global_settings)
+        "global_settings",
     }
 )
 
