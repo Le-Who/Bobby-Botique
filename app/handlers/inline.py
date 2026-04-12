@@ -37,6 +37,7 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
+from app.config import settings
 from app.errors import is_error_message
 from app.metrics import metrics_collector
 from app.utils.api_logger import api_logger
@@ -264,7 +265,7 @@ async def _stream_inline_fast(
                     history=history,
                     model_name=mod,
                     system_instruction=system_instruction,
-                    thinking_level="off",
+                    thinking_level=settings.INLINE_THINKING_LEVEL,
                     timeout=18.0,
                 ):
                     await _q.put((kh, chunk, None))

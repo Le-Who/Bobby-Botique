@@ -235,6 +235,7 @@ class Settings(BaseModel):
     AGENTIC_MODEL: str = ""  # Defaults to RESEARCH_MODEL if empty
     AGENTIC_PAGE_CONTENT_LIMIT: int = 8192  # Max chars per page (truncation threshold)
     ADAPTIVE_THINKING_ENABLED: bool = True  # Auto-resolve thinking_level when user has no preference
+    INLINE_THINKING_LEVEL: str = "low"  # minimal, low, medium, or high
 
     # --- CONTEXT BUDGETS (per-model effective token limits) ---
     # All Gemini models have 1M token context windows, but reasoning quality
@@ -269,6 +270,11 @@ def load_settings() -> Settings:
         # Значения by default for моделей
         default_gemini_models = DEFAULT_GEMINI_MODELS.copy()
         default_openrouter_models: list[str] = []
+
+        inline_thinking = os.getenv("INLINE_THINKING_LEVEL", "low").lower()
+        if inline_thinking not in ("minimal", "low", "medium", "high"):
+            logging.warning("Invalid INLINE_THINKING_LEVEL '%s', falling back to 'low'", inline_thinking)
+            inline_thinking = "low"
 
         # Manually load all values from the environment.
         raw_settings = {
@@ -318,6 +324,7 @@ def load_settings() -> Settings:
             "AGENTIC_MODEL": os.getenv("AGENTIC_MODEL", ""),
             "AGENTIC_PAGE_CONTENT_LIMIT": int(os.getenv("AGENTIC_PAGE_CONTENT_LIMIT", "8192")),
             "ADAPTIVE_THINKING_ENABLED": os.getenv("ADAPTIVE_THINKING_ENABLED", "true").lower() == "true",
+            "INLINE_THINKING_LEVEL": inline_thinking,
         }
 
         # Validation: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей
