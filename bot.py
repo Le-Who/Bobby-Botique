@@ -284,17 +284,25 @@ async def run_bot_with_retry():
         # Inject Local Bot API Server if configured
         local_server_url = settings.TELEGRAM_LOCAL_SERVER_URL
         if local_server_url:
+            custom_request = HTTPXRequest(
+                connection_pool_size=50,
+                connect_timeout=10.0,
+                read_timeout=60.0,
+                write_timeout=60.0,
+                pool_timeout=60.0,
+            )
             # base_url  → API calls:   http://tg-api:8081/bot{token}/sendMessage
             # base_file_url → file DL: http://tg-api:8081/file/bot{token}/path
             # Derive base_file_url from base_url: /bot → /file/bot
             file_url = local_server_url.replace("/bot", "/file/bot", 1)
             builder = (
-                builder
+                Application.builder()
+                .token(settings.TELEGRAM_BOT_TOKEN)
+                .request(custom_request)
+                .concurrent_updates(50)
                 .base_url(local_server_url)
                 .base_file_url(file_url)
                 .local_mode(True)
-                .read_timeout(60.0)
-                .write_timeout(60.0)
             )
             logging.info("Local Bot API Server: %s (local_mode=True)", local_server_url)
         else:
