@@ -3,6 +3,30 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.2] - 2026-04-12 - Race Condition Hotfix (Sentinel Drain)
+
+### 🐛 Critical Bugfix — Truncated Streaming Responses
+
+Fixed a TOCTOU (time-of-check/time-of-use) race condition in the Race Requests drain loop that caused **streaming responses to truncate mid-sentence**.
+
+#### Root Cause
+The drain loop used `while not tasks[winner_idx].done()` to decide when to stop consuming chunks from the shared `asyncio.Queue`. This races because:
+1. The winner task puts its last chunk into the queue and finishes → `task.done()` returns `True`
+2. The drain loop checks `done()` — sees `True` — **exits immediately**
+3. The last chunk(s) remain unconsumed in the queue → user sees truncated text
+
+The secondary drain (`while not winner_queue.empty()`) was unreliable because `Queue.empty()` can return `True` while items are still being enqueued.
+
+#### Fix — Sentinel-Based Stream Completion
+- Each race participant now puts a `_STREAM_END` sentinel object after all real chunks (or after `CancelledError`/exceptions)
+- The consumer drain loop is now `while True` and breaks **only** when it receives the winner's sentinel
+- This guarantees every chunk is consumed before exit, regardless of task lifecycle timing
+- `CancelledError` handler also pushes a sentinel, preventing the consumer from hanging on a cancelled loser
+
+### 🔧 Code Quality
+- Fixed I001 import sort violation in `app/deferred_response.py`
+- Full `ruff check` passes with zero violations
+
 ## [2.10.1] - 2026-04-12 - Bot Resilience Architecture & 503 Mitigation
 
 ### 🛡️ Core Resilience Architecture
@@ -12,7 +36,7 @@ Successfully deployed a production-grade resilience layer to eliminate service d
 #### 1. High-Speed Race Requests (Phase 1)
 - **`ProviderRouter.stream_response`**: Completely refactored. The bot now spins up two simultaneous streaming requests (`asyncio.create_task`) using two different API keys.
 - **First-Chunk Wins**: The first request to successfully return a chunk signals the winner queue; the loser is cleanly cancelled.
-- **Race Condition Fix**: Added secondary queue draining in a finally-block to guarantee no trailing chunks are lost if the winning task completes unexpectedly fast.
+- **Sentinel-Based Completion**: Producer tasks push a `_STREAM_END` sentinel after all chunks, and the consumer breaks only on sentinel receipt — eliminates the `task.done()` TOCTOU race.
 
 #### 2. Model Cascade Fallback (Phase 2)
 - If the primary heavy model (e.g., `gemini-exp-1206` or `gemini-2.5-pro`) exhausts all retries due to 503 errors, the system cascades down to a lighter, more reliable model (e.g. `gemini-3.1-flash-lite-preview`).

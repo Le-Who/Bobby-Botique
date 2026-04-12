@@ -103,6 +103,7 @@ async def handle_deferred_ai_response(**kwargs) -> dict:
 
     # Deliver the result to the user
     from telegram import Bot
+
     from app.config import settings
 
     try:
