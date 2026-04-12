@@ -24,6 +24,7 @@ Prerequisites (one-time BotFather setup):
 import asyncio
 import html as _html
 import logging
+import time
 import uuid
 from datetime import UTC, datetime
 
@@ -37,6 +38,8 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from app.errors import is_error_message
+from app.metrics import metrics_collector
+from app.utils.api_logger import api_logger
 from app.utils.text_format import markdown_to_html, strip_formatting
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -197,6 +200,160 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     task.add_done_callback(_bg_tasks.discard)
 
 
+# ── Fast 3-way Race Requests for inline generation ──────────────────────────
+
+
+async def _stream_inline_fast(
+    preferred_model: str,
+    history: list,
+    system_instruction: str | None,
+    user_id: int | None,
+    max_rounds: int = 4,
+) -> str | None:
+    """3-way Race Requests accumulator optimised for inline speed.
+
+    Fires 3 keys simultaneously per round. The first to yield a real chunk
+    wins; the other two are cancelled instantly. Zero sleep between rounds.
+    With 15+ keys and generous gemini-3.1-flash-lite RPD limits, burning
+    3 simultaneous slots per round is essentially free operationally.
+
+    Returns:
+        Accumulated full-response text, or None if all rounds fail.
+    """
+    from app.agent_use_cases import AgentRequestUseCase
+    from app.providers.base import get_provider_for_model
+    from app.repos.keys import get_key_status_manager
+
+    use_case = AgentRequestUseCase()
+    status_mgr = get_key_status_manager()
+    failed_keys: set[str] = set()
+
+    class _End:
+        """Sentinel: producer puts this when its stream finishes or is cancelled."""
+
+        __slots__ = ("key_hash",)
+
+        def __init__(self, kh: str) -> None:
+            self.key_hash = kh
+
+    for _round in range(max_rounds):
+        # ── Resolve up to 3 distinct keys for this round ────────────────────
+        keys: list[dict] = []
+        resolved_model: str | None = None
+        for _ in range(3):
+            kd, mdl, _ = await use_case.resolve_ai_request(
+                preferred_model,
+                excluded_key_hashes=failed_keys | {k["key_hash"] for k in keys},
+            )
+            if kd and mdl:
+                keys.append(kd)
+                resolved_model = mdl
+            else:
+                break  # No more available keys
+
+        if not keys or not resolved_model:
+            return None  # No keys available at all
+
+        q: asyncio.Queue = asyncio.Queue()
+
+        async def _race(kd: dict, mod: str = resolved_model, _q: asyncio.Queue = q) -> None:  # type: ignore[assignment]  # noqa: B023
+            kh = kd["key_hash"]
+            try:
+                prov = get_provider_for_model(mod, kd["api_key"])
+                async for chunk in prov.stream_response(  # type: ignore[attr-defined]
+                    history=history,
+                    model_name=mod,
+                    system_instruction=system_instruction,
+                    thinking_level="off",
+                    timeout=18.0,
+                ):
+                    await _q.put((kh, chunk, None))
+            except asyncio.CancelledError:
+                pass  # Loser cancelled normally — no sentinel needed
+            except Exception as exc:
+                await _q.put((kh, None, exc))  # noqa: B023
+                return
+            await _q.put((kh, _End(kh), None))
+
+        tasks: dict[str, asyncio.Task] = {
+            kd["key_hash"]: asyncio.create_task(_race(kd)) for kd in keys
+        }
+        winner_kh: str | None = None
+        chunks: list[str] = []
+        errors: dict[str, Exception] = {}
+
+        # ── Phase 1: find the first key to yield a real chunk ────────────────
+        try:
+            while winner_kh is None and len(errors) < len(keys):
+                try:
+                    kh, chunk, exc = await asyncio.wait_for(q.get(), timeout=20.0)
+                except TimeoutError:
+                    failed_keys.update(kd["key_hash"] for kd in keys)
+                    break
+
+                if exc is not None:
+                    errors[kh] = exc
+                    failed_keys.add(kh)
+                    continue
+                if isinstance(chunk, _End):
+                    errors[kh] = RuntimeError("stream ended without chunks")
+                    failed_keys.add(kh)
+                    continue
+                if chunk and not is_error_message(chunk):
+                    winner_kh = kh
+                    chunks.append(chunk)
+                    # Cancel all losers immediately
+                    for k, t in tasks.items():
+                        if k != winner_kh and not t.done():
+                            t.cancel()
+        except Exception:
+            pass  # Unexpected queue/task error — fall through to None check
+
+        if winner_kh is None:
+            for t in tasks.values():
+                if not t.done():
+                    t.cancel()
+            continue  # Next round with fresh keys
+
+        # Record winner health (non-critical)
+        try:
+            await status_mgr.record_success(winner_kh, resolved_model)
+            await use_case.increment_key_usage(winner_kh, resolved_model, False)
+        except Exception:
+            pass
+
+        # ── Phase 2: drain remaining chunks from winner ──────────────────────
+        try:
+            while True:
+                try:
+                    kh, chunk, exc = await asyncio.wait_for(q.get(), timeout=18.0)
+                except TimeoutError:
+                    logging.warning("Inline: winner drain timed out after 18s")
+                    break
+                if kh != winner_kh:
+                    continue  # Stale item from cancelled loser — discard
+                if exc is not None:
+                    logging.warning("Inline: winner stream failed mid-flight: %s", exc)
+                    break
+                if isinstance(chunk, _End):
+                    break  # Clean completion
+                if chunk:
+                    chunks.append(chunk)
+        finally:
+            for t in tasks.values():
+                if not t.done():
+                    t.cancel()
+
+        result = "".join(chunks)
+        if result.strip() and not is_error_message(result):
+            return result
+
+        # Winner produced error-tagged text — mark all keys failed and retry
+        failed_keys.update(kd["key_hash"] for kd in keys)
+
+    return None  # All rounds exhausted
+
+
 # ── Background generation ─────────────────────────────────────────────────────
 
 
@@ -215,7 +372,6 @@ async def _generate_and_edit_inline(
     3. Convert Markdown response to Telegram HTML.
     4. Edit the placeholder inline message in-place.
     """
-    from app.handlers.ai_core import _get_ai_response_with_routing
     from app.prompt_registry import FORMATTING_RULES_COMPACT
     from app.search_services import tavily_search_agent
 
@@ -251,25 +407,29 @@ async def _generate_and_edit_inline(
 
     history = [{"role": "user", "parts": [user_query]}]
 
-    # ── Step 3: Generate with lightweight model ───────────────────────────────
-    # Budget: 20s for the API call itself (leaves headroom from the outer UX
-    # deadline).  Pass timeout all the way down so inner layers (resilience,
-    # Gemini wait_for) use the same budget instead of the default 120s.
-    _GEN_TIMEOUT_S = 20.0
+    # ── Step 3: Generate (3-way Race Requests, up to 4 rounds = 12 key slots) ─
+    # For gemini-3.1-flash-lite-preview with 15+ keys at hundreds RPD each,
+    # burning 3 simultaneous slots is operationally free and minimises TTFR.
+    _GEN_TIMEOUT_S = 22.0
+    _gen_start = time.monotonic()
     final_answer: str | None = None
     _gen_timed_out = False
+    _log_start = api_logger.log_request(
+        "gemini_inline",
+        model=_INLINE_MODEL,
+        query_length=len(user_query),
+        tone=tone_id,
+    )
     try:
-        final_answer, _ = await asyncio.wait_for(
-            _get_ai_response_with_routing(
+        final_answer = await asyncio.wait_for(
+            _stream_inline_fast(
                 preferred_model=_INLINE_MODEL,
                 history=history,
                 system_instruction=system_instruction,
                 user_id=user_id,
-                max_key_retries=1,  # tight budget → no key rotation retries
-                timeout=_GEN_TIMEOUT_S,  # propagated to provider layer
-                thinking_level="off",  # "off" → minimal thinking for speed
+                max_rounds=4,
             ),
-            timeout=_GEN_TIMEOUT_S + 2.0,  # outer guard slightly above inner
+            timeout=_GEN_TIMEOUT_S,
         )
     except TimeoutError:
         _gen_timed_out = True
@@ -285,6 +445,24 @@ async def _generate_and_edit_inline(
             gen_err,
             exc_info=True,
         )
+    finally:
+        _gen_success = bool(final_answer and not is_error_message(final_answer))
+        api_logger.log_response(
+            "gemini_inline",
+            _log_start,
+            success=_gen_success,
+            model=_INLINE_MODEL,
+            response_length=len(final_answer or ""),
+        )
+
+    # Record metrics (we're already in a background task — awaiting is safe)
+    await metrics_collector.record_api_call("gemini_inline", _INLINE_MODEL, user_id=user_id)
+    await metrics_collector.record_request(
+        "inline",
+        response_time=time.monotonic() - _gen_start,
+        success=_gen_success,
+        user_id=user_id,
+    )
 
     # ── Step 4: Format and edit inline message ────────────────────────────────
     # A tagged error response (e.g. quota exhausted) is treated as a failure:

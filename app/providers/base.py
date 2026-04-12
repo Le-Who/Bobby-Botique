@@ -152,7 +152,11 @@ class BaseAIProvider(ABC):
                 is_retryable=lambda e: self._is_transient_error(str(e)),
             )
             return response
-        except (APIError, httpx.HTTPError) as e:
+        except Exception as e:
+            # Catches APIError, httpx.HTTPError, CircuitBreakerOpenError, and any
+            # other exception that escapes run_with_resilience after all retries,
+            # converting it into a structured AIResponse instead of an unhandled
+            # background-task exception.
             last_error = e
 
         error_msg = user_friendly_error(last_error) if last_error else "Unknown error"

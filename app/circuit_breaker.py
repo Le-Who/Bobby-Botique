@@ -311,8 +311,8 @@ async def shutdown_all_circuit_breakers() -> None:
 
 # Predefined configurations for common use cases
 GEMINI_API_CONFIG = CircuitBreakerConfig(
-    failure_threshold=3,
-    recovery_timeout=30.0,
+    failure_threshold=15,  # was 3 — allows key rotation to exhaust options before tripping
+    recovery_timeout=45.0,  # was 30s — gives Gemini 503 overload windows time to clear
     expected_exception=Exception,
     monitor_interval=5.0,
 )

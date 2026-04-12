@@ -3,6 +3,63 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.4] - 2026-04-12 - Inline 3-Way Race Requests & Circuit Breaker Hardening
+
+### ⚡ Architecture — Inline Generation: 3-Way Parallel Race Requests
+
+#### Problem
+Inline generation (`@bot <query>`) used a sequential `get_response` path with `max_key_retries=1` — a single API key, a single attempt, no fallback. Under any transient Gemini 503, the generation failed and the user saw an error message. The mechanism was architecturally incompatible with the Race Requests resilience system that all other request types use.
+
+#### Solution — Dedicated `_stream_inline_fast()` Accumulator (`app/handlers/inline.py`)
+Replaced the `_get_ai_response_with_routing` call with a self-contained `_stream_inline_fast()` helper that fires **3 API keys simultaneously per round** (vs. 2 keys in the standard `stream_response` router):
+
+| | Old | New |
+|---|---|---|
+| Keys per attempt | 1 (sequential) | **3 (parallel, Race Requests)** |
+| Max rounds | 1 | 4 |
+| Total key slots | 1 | **12** |
+| Zero sleep between rounds | ❌ | ✅ |
+| Loser cancellation | n/a | Instant `t.cancel()` on first chunk |
+
+**Why 3 keys (not 2):** `gemini-3.1-flash-lite-preview` has RPD limits in the hundreds per key, and there are 15+ keys configured. Burning 3 simultaneous slots per round is operationally free — at most one key completes, the other two are cancelled the moment the first chunk arrives. This reduces TTFR (time-to-first-result) to `min(key_1, key_2, key_3)` response time.
+
+**Round loop:** Up to 4 rounds × 3 keys = 12 key slots before returning `None`. Keys that fail (503, exception, empty stream) are added to `failed_keys` and excluded from the next round — each round draws fresh keys.
+
+**Winner drain:** After selecting the winner, the accumulator drains all remaining chunks from its queue until an `_End` sentinel is received, guaranteeing zero truncation.
+
+#### Fix — `CircuitBreakerOpenError` Handling (`app/providers/base.py`)
+Broadened the `except` clause from `except (APIError, httpx.HTTPError)` to bare `except Exception`. Previously, `CircuitBreakerOpenError` escaped this block and reached the background task runner as an unhandled exception, producing `Task exception was never retrieved` log spam. It is now caught and converted into a structured `AIResponse(success=False)`.
+
+#### Fix — Circuit Breaker Threshold (`app/circuit_breaker.py`)
+Updated `GEMINI_API_CONFIG`:
+
+| Parameter | Old | New | Rationale |
+|-----------|-----|-----|-----------|
+| `failure_threshold` | 3 | **15** | With 3 keys × 4 rounds per request = 12 key slots, a threshold of 3 opened the circuit before a single user request could complete |
+| `recovery_timeout` | 30s | **45s** | Gives Gemini 503 overload windows sufficient time to clear before the system retries |
+
+### 📊 Feature — Inline Metrics Visibility
+Inline generation was previously a blind spot in the `/metrics` dashboard. Now tracks:
+- `api_logger.log_request("gemini_inline", model=..., query_length=..., tone=...)` — logged on every inline attempt
+- `api_logger.log_response("gemini_inline", ...)` — response duration, success flag, and response length
+- `metrics_collector.record_api_call("gemini_inline", model, user_id)` — API usage counter
+- `metrics_collector.record_request("inline", response_time, success, user_id)` — per-request performance tracking
+
+### 🔧 Code Quality
+- Ruff B023 false positive suppressed via `# noqa: B023` on the `except Exception as exc:` usage inside `_race` inner function (B023 incorrectly flags `except ... as` bindings as "unbound loop variables")
+- `ruff check app/handlers/inline.py app/providers/base.py app/circuit_breaker.py` — 0 errors ✅
+- `python -m py_compile` — All OK ✅
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/handlers/inline.py` | New `_stream_inline_fast()` 3-way race accumulator; removed `_get_ai_response_with_routing` dependency; added `api_logger` + `metrics_collector` integration; `import time` |
+| `app/providers/base.py` | `except (APIError, httpx.HTTPError)` → `except Exception` to catch `CircuitBreakerOpenError` |
+| `app/circuit_breaker.py` | `GEMINI_API_CONFIG`: `failure_threshold` 3→15, `recovery_timeout` 30s→45s |
+
+---
+
 ## [2.10.3] - 2026-04-12 - Stability Audit: TTS Task Leak & Inline Retry UX
 
 ### 🐛 Bugfix — asyncio "Task exception was never retrieved" in TTS Race
