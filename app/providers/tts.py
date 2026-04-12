@@ -226,7 +226,8 @@ async def generate_speech(
         voice: Prebuilt voice name (default: Aoede).
         timeout: Maximum seconds to wait for TTS response. Callers should
             compute an adaptive value based on text length; the default of
-            120 s is a safe upper bound for the maximum chunk size.
+            50 s covers short chunks adequately — voice_engine.py passes
+            an adaptive value capped at [40, 120] s for longer texts.
 
     Returns:
         Raw PCM 24kHz 16-bit mono bytes, or None on failure.

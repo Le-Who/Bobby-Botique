@@ -353,6 +353,15 @@ def _store_retry_params(
     for k in expired:
         _retry_store.pop(k, None)
 
+    # Hard cap: evict oldest entries if store grows beyond 500 items.
+    # Protects against memory accumulation under sustained inline traffic
+    # where inserts outpace the 5-minute TTL eviction.
+    _STORE_MAX = 500
+    if len(_retry_store) >= _STORE_MAX:
+        oldest_keys = sorted(_retry_store, key=lambda k: _retry_store[k]["ts"])[: len(_retry_store) - _STORE_MAX + 100]
+        for k in oldest_keys:
+            _retry_store.pop(k, None)
+
     retry_id = uuid.uuid4().hex[:12]
     _retry_store[retry_id] = {
         "query": user_query,

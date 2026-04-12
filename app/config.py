@@ -439,7 +439,7 @@ class ConfigManager:
         """Reloads configuration from environment."""
         async with self._lock:
             try:
-                new_settings = get_settings()
+                new_settings = load_settings()  # bypass singleton cache — get_settings() returns stale instance
 
                 # Check if any critical settings changed
                 critical_changed = (

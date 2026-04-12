@@ -61,7 +61,7 @@ def _truncate_history(history: list, max_entries: int = 10) -> list:
             parts = entry.get("parts", [])
             text_parts = []
             for part in parts:
-                if isinstance(part, dict) and "text" in part or isinstance(part, str):
+                if (isinstance(part, dict) and "text" in part) or isinstance(part, str):
                     text_parts.append(part)
                 # Skip inline_data (images, audio) — too large for Redis
             clean.append({**entry, "parts": text_parts})
