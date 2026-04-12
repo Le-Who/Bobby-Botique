@@ -3,7 +3,37 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.6] - 2026-04-12 - Voice Search Pipeline: Data-Loss Audit & History Persistence Fix
+
+### 🐛 Bugfix — QnA Search Results Never Saved to Chat History (Data Loss)
+
+**Severity:** High (data loss — silent, no visible error)
+
+- **Root Cause:** `_auto_route_to_search` in `app/handlers/msg_voice.py` called `_handle_qna_search` but discarded its result. Internally, `_handle_qna_search` constructs a throwaway `history = [{"role": "user", ...}]` dict for the Grounding API call and never writes back to `chat_state`. Neither the voice transcript nor the AI answer was persisted to the DB. Every QnA voice search was invisible to future sessions and LTM.
+- **Contrast:** `_handle_research_agent` (deep dive path) correctly appends both turns and calls `update_user_chat` at lines 494–510 of `ai_search.py`. The QnA path had no equivalent.
+- **Fix (`app/handlers/ai_search.py`):** Changed `_handle_qna_search` return type from `None` to `str | None`. Function now `return final_answer or None` at exit. Backward-compatible: all existing callers that ignore the return value continue working unchanged.
+- **Fix (`app/handlers/msg_voice.py`):** Capture `answer = await _handle_qna_search(...)`. If non-empty, append user + model turns to `chat_state.history` and call `await update_user_chat(user_id, chat_state)`. This mirrors the deep research persistence pattern.
+
+### 🐛 Bugfix — Dead TTS Code Block in `_auto_route_to_search`
+
+- **Root Cause:** ~20 lines of TTS-trigger code (lines 592–611) were a `pass` statement inside a `try/except Exception: pass` block. The code imported `fire_voice_reply`, computed `_bot` and `_chat_id`, then did nothing. It was structurally unreachable for its stated purpose (producing audio) and consumed 20 lines of misleading noise.
+- **Fix:** Removed entirely. If TTS is needed for QnA voice results in future, it should be implemented inside `_handle_qna_search` itself, consistent with `_handle_research_agent` which has its own auto-TTS at `ai_search.py:475–492`.
+
+### 🔧 Hygiene — Redundant Inline Re-Imports Removed
+
+- `from app.i18n import t` and `from app.repos.chats import get_user_chat` were re-imported inside `_auto_route_to_search`, but both are already present as top-level module imports (`msg_voice.py:25–26`). Removed the redundant inline imports.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/handlers/ai_search.py` | `_handle_qna_search` return type `None` → `str \| None`; `return final_answer or None` added at function exit |
+| `app/handlers/msg_voice.py` | Capture `answer` from `_handle_qna_search`; persist to `chat_state.history` + `update_user_chat`; remove dead TTS block; remove redundant inline imports |
+
+---
+
 ## [2.10.5] - 2026-04-12 - Production Audit Polish: Zero-Delay TTS Drain & Inline Quota UX
+
 
 ### 🐛 Bugfix / Optimization — Zero-Delay TTS Exception Sink
 - **Problem**: The Gemini TTS Race Requests loop (`app/voice_engine.py`) had a flaw where `pending.clear()` broke the background task drain loop. The initial fix attempt used a blocking `asyncio.wait(timeout=0.5)` drain sequence, which artificially delayed TTS output by 0.5s while waiting for loser HTTP connections to close, and still risked `Task exception was never retrieved` if closure was slow.
