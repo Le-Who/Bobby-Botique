@@ -47,39 +47,37 @@ async def run_migrations(db_query, db_manager):
     else:
         sql_files = sorted(migrations_dir.glob("*.sql"))
 
-        try:
-            pending_migrations = []
-            async with db_manager.pool.acquire() as conn, conn.transaction():
-                for sql_file in sql_files:
-                    version = sql_file.stem.split("_", 1)[0]
+        for sql_file in sql_files:
+            version = sql_file.stem.split("_", 1)[0]
 
-                    if version in applied_versions:
-                        continue
+            if version in applied_versions:
+                continue
 
-                    logging.info("Applying migration %s (%s)...", version, sql_file.name)
+            logging.info("Applying migration %s (%s)...", version, sql_file.name)
 
+            try:
+                async with db_manager.pool.acquire() as conn, conn.transaction():
                     sql_content = sql_file.read_text(encoding="utf-8")
                     await conn.execute(sql_content)
 
-                    pending_migrations.append((version, sql_file.name))
-
-                if pending_migrations:
-                    await conn.executemany(
+                    await conn.execute(
                         "INSERT INTO schema_migrations (version, filename) VALUES ($1, $2)",
-                        pending_migrations,
+                        version,
+                        sql_file.name,
                     )
 
-            # Update applied_versions memory state only if transaction succeeds entirely
-            for version, _ in pending_migrations:
-                logging.info("Migration %s applied successfully.", version)
                 applied_versions.add(version)
+                logging.info("Migration %s applied successfully.", version)
 
-        except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
-            failed_version = (
-                pending_migrations[-1][0] if "pending_migrations" in locals() and pending_migrations else "unknown"
-            )
-            logging.error("Migration %s FAILED: %s", failed_version, e, exc_info=True)
-            # Don't halt startup — log and continue
+            except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+                logging.error(
+                    "Migration %s (%s) FAILED — skipping: %s",
+                    version,
+                    sql_file.name,
+                    e,
+                    exc_info=True,
+                )
+                # Per-file isolation: continue to next migration
 
     # 4. Legacy inline migrations (for environments without SQL files)
     #    These are idempotent column-add checks that run on every startup.

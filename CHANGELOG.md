@@ -3,6 +3,70 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.7] - 2026-04-13 - Migration Resilience & Progressive Inline Timeout UX
+
+### 🐛 Critical Bugfix — Migrations 025–034 Never Applied on Production
+
+**Severity:** High (silent feature degradation — `global_settings` table missing)
+
+- **Root Cause:** The migration runner (`app/db/migrations.py`) wrapped ALL pending SQL files in a single giant transaction. Migrations 025–033 had been applied manually via Supabase MCP during development, but their versions were never recorded in `schema_migrations`. On every bot restart, the runner attempted to re-apply 025+, one of them conflicted (e.g., `ALTER EXTENSION pg_trgm SET SCHEMA extensions`), and the entire batch — including migration 034 (`global_settings`) — was rolled back. The `settings_repo` silently fell back to defaults, so the `inline_thinking_level` admin control was non-functional.
+- **Immediate Fix (Supabase MCP):** Backfilled `schema_migrations` entries for 025–033 and applied migration 034 (`CREATE TABLE global_settings`) directly on production.
+
+### 🏗️ Architecture — Migration Runner Per-File Isolation (`app/db/migrations.py`)
+
+Replaced the all-or-nothing batch transaction with **per-file independent transactions**:
+
+| | Old | New |
+|---|---|---|
+| Transaction scope | One transaction for ALL pending files | Individual transaction per SQL file |
+| On failure | Entire batch rolled back — blocks all later migrations | Failed file skipped with WARNING, runner continues |
+| `schema_migrations` recording | Batched INSERT at end | Immediate INSERT per successful file |
+| Partial application | Impossible | Expected and safe (each file is idempotent) |
+
+### ⏱️ UX — Progressive Inline Timeout (Two-Phase Feedback)
+
+Replaced the hard 22s error with a **two-phase progressive timeout** for inline generation:
+
+| | Old | New |
+|---|---|---|
+| Hard timeout | 22s | **55s** |
+| Progress feedback | None — user stares at static placeholder | **Phase 1 (post-search):** "🧠 *Bot* собрал информацию, теперь генерирует ответ…" · **Phase 2 (20s):** "⏳ *Bot* задерживается…" |
+| Timeout message | "⏰ Модель не успела ответить вовремя." | "⏰ Модель не успела ответить вовремя. Нажмите «Повторить» ниже." |
+| Inner stream timeouts | 18s drain, 20s queue wait | **45s drain, 50s queue wait** (proportional to outer 55s) |
+
+**Mechanism:** A background `asyncio.Task` (`_delayed_progress_edit`) sleeps for 20s then edits the placeholder. If the generation completes before 20s, the task is cancelled. After Tavily search returns results, the placeholder is immediately updated to show the bot has gathered context. Bot name is resolved dynamically from `bot.first_name`.
+
+### 🛡️ Self-Healing — Settings Repo Lazy Bootstrap (`app/repos/settings_repo.py`)
+
+Defense-in-depth: if the `global_settings` table is missing (migrations failed), the settings repo now **auto-creates it on first access**:
+
+- On `asyncpg.UndefinedTableError`: creates the table via `CREATE TABLE IF NOT EXISTS`, then retries the query once.
+- Singleton `_table_verified` flag ensures the bootstrap check runs at most once per process lifetime.
+- `set_global_setting()` also calls `_ensure_table()` before upserts.
+
+### 🔧 Code Quality
+
+- All hardcoded Russian inline error/progress strings moved to named module-level constants (`_TIMEOUT_ERROR`, `_GENERATION_ERROR`, `_FALLBACK_ERROR`, `_placeholder_html()`, `_progress_search_done_html()`, `_progress_delayed_html()`)
+- Ruff UP045 fix: `Optional[str]` → `str | None` in settings_repo
+- Removed unused `TYPE_CHECKING` import
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/db/migrations.py` | Single-transaction batch → per-file independent transactions |
+| `app/handlers/inline.py` | `_GEN_TIMEOUT_S` 22→55s; two-phase progress edits; named UX constants; inner timeouts scaled |
+| `app/repos/settings_repo.py` | Lazy `_ensure_table()` bootstrap; `asyncpg.UndefinedTableError` catch-and-retry |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `py_compile` (all 3 files) | OK ✅ |
+| `ruff check` (all 3 files) | 0 new errors ✅ |
+
+---
+
 ## [2.10.6] - 2026-04-12 - Voice Search Pipeline: Data-Loss Audit & History Persistence Fix
 
 ### 🐛 Bugfix — QnA Search Results Never Saved to Chat History (Data Loss)

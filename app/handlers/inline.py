@@ -48,12 +48,30 @@ from app.utils.text_format import markdown_to_html, strip_formatting
 
 _INLINE_MODEL = "gemini-3.1-flash-lite-preview"
 
-# Placeholder sent to the chat immediately upon selection (before generation).
-# Resolved dynamically at runtime via context.bot.first_name.
+# Outer timeout for the entire generation pipeline (after Tavily search).
+_GEN_TIMEOUT_S = 55.0
+# Seconds after which we edit the placeholder to show a progress message.
+_GEN_PROGRESS_AFTER_S = 20.0
+
+# ── User-facing inline UX strings ────────────────────────────────────────────
+# Kept as named constants for easy future extraction to i18n.
 
 
 def _placeholder_html(bot_name: str) -> str:
     return f"⚡️ <b>{_html.escape(bot_name)}</b> генерирует ответ…"
+
+
+def _progress_search_done_html(bot_name: str) -> str:
+    return f"🧠 <b>{_html.escape(bot_name)}</b> собрал информацию, теперь генерирует ответ…"
+
+
+def _progress_delayed_html(bot_name: str) -> str:
+    return f"⏳ <b>{_html.escape(bot_name)}</b> задерживается…"
+
+
+_TIMEOUT_ERROR = "⏰ Модель не успела ответить вовремя. Нажмите «Повторить» ниже."
+_GENERATION_ERROR = "❌ Не удалось получить ответ."
+_FALLBACK_ERROR = "Ошибка генерации ответа."
 
 
 # (result_id, display_label, system_tone_hint)
@@ -273,7 +291,7 @@ async def _stream_inline_fast(
                     model_name=mod,
                     system_instruction=system_instruction,
                     thinking_level=thinking_level,
-                    timeout=18.0,
+                    timeout=45.0,
                 ):
                     await _q.put((kh, chunk, None))
             except asyncio.CancelledError:
@@ -294,7 +312,7 @@ async def _stream_inline_fast(
         try:
             while winner_kh is None and len(errors) < len(keys):
                 try:
-                    kh, chunk, exc = await asyncio.wait_for(q.get(), timeout=20.0)
+                    kh, chunk, exc = await asyncio.wait_for(q.get(), timeout=50.0)
                 except TimeoutError:
                     failed_keys.update(kd["key_hash"] for kd in keys)
                     break
@@ -334,9 +352,9 @@ async def _stream_inline_fast(
         try:
             while True:
                 try:
-                    kh, chunk, exc = await asyncio.wait_for(q.get(), timeout=18.0)
+                    kh, chunk, exc = await asyncio.wait_for(q.get(), timeout=45.0)
                 except TimeoutError:
-                    logging.warning("Inline: winner drain timed out after 18s")
+                    logging.warning("Inline: winner drain timed out after 45s")
                     break
                 if kh != winner_kh:
                     continue  # Stale item from cancelled loser — discard
@@ -373,16 +391,20 @@ async def _generate_and_edit_inline(
     user_id: int | None,
 ) -> None:
     """
-    Core async pipeline:
+    Core async pipeline with progressive UX feedback:
 
     1. Tavily QnA search for real-time context (best-effort, 8 s timeout).
+       → After search: edit placeholder to "🧠 собрал информацию, генерирует…"
     2. Call ``gemini-3.1-flash-lite-preview`` with context + tone in system prompt.
+       → At 20 s mark: edit placeholder to "⏳ задерживается…" (if still running).
+       → Hard timeout at 55 s.
     3. Convert Markdown response to Telegram HTML.
     4. Edit the placeholder inline message in-place.
     """
     from app.prompt_registry import FORMATTING_RULES_COMPACT
     from app.search_services import tavily_search_agent
 
+    bot_name = bot.first_name or "Bot"
     tone_sys_hint = _tone_hint(tone_id)
     tone_label = _tone_display(tone_id)
     today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
@@ -398,6 +420,18 @@ async def _generate_and_edit_inline(
             search_context = (search_result.get("content") or "").strip()
     except Exception as search_err:
         logging.warning("Inline: Tavily QnA failed, proceeding without context: %s", search_err)
+
+    # ── Progress: update placeholder after search ────────────────────────────
+    if search_context:
+        try:
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=_progress_search_done_html(bot_name),
+                parse_mode="HTML",
+                reply_markup=_LOADING_KEYBOARD,
+            )
+        except Exception:
+            pass  # Non-critical; placeholder edit may fail on throttle
 
     # ── Step 2: Build system prompt ───────────────────────────────────────────
     system_instruction = (
@@ -418,16 +452,36 @@ async def _generate_and_edit_inline(
     # ── Step 3: Generate (3-way Race Requests, up to 4 rounds = 12 key slots) ─
     # For gemini-3.1-flash-lite-preview with 15+ keys at hundreds RPD each,
     # burning 3 simultaneous slots is operationally free and minimises TTFR.
-    _GEN_TIMEOUT_S = 22.0
     _gen_start = time.monotonic()
     final_answer: str | None = None
     _gen_timed_out = False
+    _progress_shown = False
     _log_start = api_logger.log_request(
         "gemini_inline",
         model=_INLINE_MODEL,
         query_length=len(user_query),
         tone=tone_id,
     )
+
+    async def _delayed_progress_edit() -> None:
+        """At _GEN_PROGRESS_AFTER_S seconds, edit placeholder to show delay notice."""
+        nonlocal _progress_shown
+        await asyncio.sleep(_GEN_PROGRESS_AFTER_S)
+        if _progress_shown:
+            return
+        _progress_shown = True
+        try:
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text=_progress_delayed_html(bot_name),
+                parse_mode="HTML",
+                reply_markup=_LOADING_KEYBOARD,
+            )
+        except Exception:
+            pass  # Non-critical
+
+    progress_task = asyncio.create_task(_delayed_progress_edit())
+
     try:
         final_answer = await asyncio.wait_for(
             _stream_inline_fast(
@@ -454,6 +508,7 @@ async def _generate_and_edit_inline(
             exc_info=True,
         )
     finally:
+        progress_task.cancel()
         _gen_success = bool(final_answer and not is_error_message(final_answer))
         api_logger.log_response(
             "gemini_inline",
@@ -488,7 +543,7 @@ async def _generate_and_edit_inline(
         if _is_api_error and final_answer:
             formatted = strip_error_tag(final_answer)
         else:
-            formatted = "⏰ Модель не успела ответить вовремя." if _gen_timed_out else "❌ Не удалось получить ответ."
+            formatted = _TIMEOUT_ERROR if _gen_timed_out else _GENERATION_ERROR
 
     # On failure, attach a retry button so the user can re-trigger generation.
     # is_failure is True in two cases:
@@ -527,7 +582,7 @@ async def _generate_and_edit_inline(
             plain = strip_formatting(formatted)[:4000]
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
-                text=plain or "Ошибка генерации ответа.",
+                text=plain or _FALLBACK_ERROR,
                 reply_markup=reply_markup,
             )
         except Exception as fallback_err:

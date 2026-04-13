@@ -4,11 +4,14 @@ Repository for bot-wide runtime configuration stored in global_settings table.
 Provides a simple key-value interface with a short-lived TTL cache so that
 reads are O(1) in-memory for the common case while still picking up changes
 set by admins within ~30 seconds.
+
+Self-healing: if the table is missing (migrations haven't run yet), the first
+access lazily creates it so the feature never blocks bot startup.
 """
 
 import logging
-from typing import Optional
 
+import asyncpg
 from cachetools import TTLCache
 
 from app import database as db
@@ -19,6 +22,30 @@ logger = logging.getLogger(__name__)
 # This means admin changes propagate to all workers within ~30 s
 # without any per-request DB round-trip in steady state.
 _cache: TTLCache = TTLCache(maxsize=64, ttl=30)
+
+# Singleton flag — once the table is confirmed (or created), skip re-checks.
+_table_verified: bool = False
+
+
+async def _ensure_table() -> None:
+    """Create global_settings table if it doesn't exist (lazy bootstrap)."""
+    global _table_verified
+    if _table_verified:
+        return
+    try:
+        await db.db_query(
+            """
+            CREATE TABLE IF NOT EXISTS global_settings (
+                key_name   TEXT        PRIMARY KEY,
+                value_data TEXT        NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        _table_verified = True
+        logger.info("settings_repo: global_settings table verified/created")
+    except Exception as exc:
+        logger.warning("settings_repo: failed to bootstrap global_settings: %s", exc)
 
 
 async def get_global_setting(key: str, default: str = "") -> str:
@@ -36,6 +63,19 @@ async def get_global_setting(key: str, default: str = "") -> str:
             (key,),
         )
         value: str = rows[0]["value_data"] if rows else default
+    except asyncpg.UndefinedTableError:
+        # Table doesn't exist yet — bootstrap it, then retry once.
+        logger.warning("settings_repo: table missing, bootstrapping…")
+        await _ensure_table()
+        try:
+            rows = await db.db_query(
+                "SELECT value_data FROM global_settings WHERE key_name = $1",
+                (key,),
+            )
+            value = rows[0]["value_data"] if rows else default
+        except Exception as exc:
+            logger.warning("settings_repo: retry after bootstrap failed for '%s': %s — using default '%s'", key, exc, default)
+            value = default
     except Exception as exc:
         logger.warning("settings_repo: failed to read '%s': %s — using default '%s'", key, exc, default)
         value = default
@@ -50,6 +90,7 @@ async def set_global_setting(key: str, value: str) -> None:
     The UPSERT ensures the row is created on first write even if the INSERT
     from the migration seed was skipped or rolled back.
     """
+    await _ensure_table()
     await db.db_query(
         """
         INSERT INTO global_settings (key_name, value_data, updated_at)
@@ -65,7 +106,7 @@ async def set_global_setting(key: str, value: str) -> None:
     logger.info("settings_repo: set '%s' = '%s'", key, value)
 
 
-def invalidate(key: Optional[str] = None) -> None:
+def invalidate(key: str | None = None) -> None:
     """Evict *key* from the in-process cache (or clear all if None).
 
     Useful in tests or when the DB is written from outside this process.
