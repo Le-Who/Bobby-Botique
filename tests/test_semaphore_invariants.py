@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from app.adapters.concurrency import GlobalLLMSemaphore
+from app.errors import UserLimitExceededError
 
 
 def make_semaphore(limit: int) -> GlobalLLMSemaphore:
@@ -151,3 +152,20 @@ async def test_semaphore_limit_one_sequential_execution():
     # Assert — all tasks ran, order may vary but no overlap occurred
     assert sorted(execution_order) == [1, 2, 3]
     assert sem._local_semaphore._value == 1
+
+
+@pytest.mark.asyncio
+async def test_semaphore_local_acquire_timeout_raises_user_limit():
+    """When local slot can't be acquired within timeout, fail fast."""
+    sem = make_semaphore(limit=1)
+    sem._timeout = 0.05
+
+    # Occupy the only slot so the next acquire attempt must wait.
+    await sem._local_semaphore.acquire()
+    try:
+        with patch("app.cache.redis_client", None):
+            with pytest.raises(UserLimitExceededError):
+                async with sem:
+                    pass
+    finally:
+        sem._local_semaphore.release()

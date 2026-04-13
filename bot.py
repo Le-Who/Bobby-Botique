@@ -22,6 +22,7 @@ import logging
 import signal
 import threading
 import time
+from asyncio import QueueFull
 
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
@@ -285,6 +286,7 @@ async def run_bot_with_retry():
             Application.builder()
             .token(settings.TELEGRAM_BOT_TOKEN)
             .request(custom_request)
+            .update_queue(asyncio.Queue(maxsize=max(100, settings.UPDATE_QUEUE_MAXSIZE)))
             .concurrent_updates(50)  # Matches connection_pool_size to prevent timeouts
         )
 
@@ -306,6 +308,7 @@ async def run_bot_with_retry():
                 Application.builder()
                 .token(settings.TELEGRAM_BOT_TOKEN)
                 .request(custom_request)
+                .update_queue(asyncio.Queue(maxsize=max(100, settings.UPDATE_QUEUE_MAXSIZE)))
                 .concurrent_updates(50)
                 .base_url(local_server_url)
                 .base_file_url(file_url)
@@ -385,21 +388,67 @@ async def run_bot_with_retry():
             # ── Webhook mode ─────────────────────────────────────────────
             webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
             full_url = f"{webhook_url.rstrip('/')}{webhook_path}"
+            webhook_secret = (settings.WEBHOOK_SECRET_TOKEN or "").strip()
+            seen_update_ids: dict[int, float] = {}
+            seen_lock = asyncio.Lock()
+            dedup_ttl_seconds = 180.0
+            dedup_capacity = 10_000
 
             # Register webhook route on Quart app
             @quart_app.route(webhook_path, methods=["POST"])
             async def webhook_handler():
                 from quart import request as quart_request
 
-                json_data = await quart_request.get_json()
-                update_obj = Update.de_json(json_data, application.bot)
-                await application.process_update(update_obj)
+                if webhook_secret:
+                    inbound_secret = quart_request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+                    if inbound_secret != webhook_secret:
+                        logging.warning("Webhook rejected: invalid secret token")
+                        return "Forbidden", 403
+
+                json_data = await quart_request.get_json(silent=True)
+                if not isinstance(json_data, dict):
+                    return "Bad Request: invalid JSON", 400
+
+                update_id = json_data.get("update_id")
+                if isinstance(update_id, int):
+                    now = time.monotonic()
+                    async with seen_lock:
+                        # Opportunistic cleanup before capacity check
+                        stale = [uid for uid, ts in seen_update_ids.items() if now - ts > dedup_ttl_seconds]
+                        for uid in stale:
+                            seen_update_ids.pop(uid, None)
+
+                        if update_id in seen_update_ids:
+                            return "", 200
+
+                        if len(seen_update_ids) >= dedup_capacity:
+                            # Drop oldest entries first to keep memory bounded
+                            oldest = sorted(seen_update_ids.items(), key=lambda item: item[1])[: dedup_capacity // 10]
+                            for uid, _ in oldest:
+                                seen_update_ids.pop(uid, None)
+                        seen_update_ids[update_id] = now
+
+                try:
+                    update_obj = Update.de_json(json_data, application.bot)
+                except Exception as e:
+                    logging.warning("Webhook payload decode failed: %s", e)
+                    return "Bad Request: invalid update payload", 400
+
+                # Correctly leverage PTB's update_queue to apply `concurrent_updates()` bounds
+                try:
+                    application.update_queue.put_nowait(update_obj)
+                except QueueFull:
+                    # Signal temporary overload so Telegram retries delivery.
+                    logging.warning("Webhook update_queue is full; returning 503 for retry")
+                    return "Service Unavailable", 503
                 return "", 200
 
             await application.bot.set_webhook(
                 url=full_url,
                 allowed_updates=_ALLOWED_UPDATES,
                 drop_pending_updates=True,
+                max_connections=max(1, min(100, settings.WEBHOOK_MAX_CONNECTIONS)),
+                secret_token=webhook_secret or None,
             )
             logging.info("Bot started in WEBHOOK mode: %s", full_url)
         else:
@@ -523,7 +572,13 @@ async def run_bot_and_server():
 
     server_task = None
     if settings.ENABLE_WEB_SERVER:
-        server_task = asyncio.create_task(serve(quart_app, hypercorn_config))
+        server_task = asyncio.create_task(
+            serve(
+                quart_app,
+                hypercorn_config,
+                shutdown_trigger=shutdown_event.wait,
+            )
+        )
         logging.info(f"Web server started on port {settings.PORT}")
     else:
         logging.info("Web server is DISABLED by configuration")

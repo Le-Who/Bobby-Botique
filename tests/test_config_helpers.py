@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from app.config import _load_and_clean_keys, _load_daily_limits, get_model_hash
+from app.config import _load_and_clean_keys, _load_daily_limits, get_model_hash, load_settings
 
 # ── get_model_hash ───────────────────────────────────────────────────────────
 
@@ -100,3 +100,19 @@ class TestLoadDailyLimits:
         # Quoted but incomplete JSON — should fallback to defaults
         result = _load_daily_limits()
         assert isinstance(result, dict)
+
+
+def test_load_settings_reads_webhook_backpressure_envs(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@localhost:5432/db")
+    monkeypatch.setenv("ADMIN_ID", "123")
+    monkeypatch.setenv("GEMINI_API_KEYS", "k1")
+    monkeypatch.setenv("TAVILY_API_KEYS", "k2")
+    monkeypatch.setenv("WEBHOOK_SECRET_TOKEN", "my-secret-token")
+    monkeypatch.setenv("WEBHOOK_MAX_CONNECTIONS", "75")
+    monkeypatch.setenv("UPDATE_QUEUE_MAXSIZE", "2500")
+
+    settings = load_settings()
+    assert settings.WEBHOOK_SECRET_TOKEN == "my-secret-token"
+    assert settings.WEBHOOK_MAX_CONNECTIONS == 75
+    assert settings.UPDATE_QUEUE_MAXSIZE == 2500

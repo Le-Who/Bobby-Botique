@@ -20,10 +20,29 @@ class GlobalLLMSemaphore:
         self._timeout = timeout
         self._local_semaphore = asyncio.Semaphore(limit)
         self._key = redis_key
+        self._waiting_count = 0
 
     async def __aenter__(self):
-        # 1. Acquire local semaphore first (limits per-node concurrency to max limit)
-        await self._local_semaphore.__aenter__()
+        # Fail fast: bounded wait queue. Max waiters = 3x concurrency limit before rejecting.
+        # This prevents 1-hour delays and hanging placeholders when system is swamped.
+        waiter_limit = self._limit * 3
+        if self._waiting_count >= waiter_limit:
+            logging.warning(
+                "LLM semaphore at capacity: %d waiters (limit=%d, key=%s). System overloaded.",
+                self._waiting_count, waiter_limit, self._key,
+            )
+            from app.errors import UserLimitExceededError
+            raise UserLimitExceededError("Система перегружена большим количеством запросов. Пожалуйста, попробуйте еще раз через несколько минут.")
+            
+        self._waiting_count += 1
+        try:
+            # 1. Acquire local semaphore first (limits per-node concurrency to max limit)
+            await asyncio.wait_for(self._local_semaphore.__aenter__(), timeout=float(self._timeout))
+        except TimeoutError:
+            from app.errors import UserLimitExceededError
+            raise UserLimitExceededError("Слишком много одновременных запросов. Попробуйте еще раз через несколько секунд.") from None
+        finally:
+            self._waiting_count -= 1
 
         token = str(uuid.uuid4())
         _semaphore_token.set(token)
@@ -34,6 +53,7 @@ class GlobalLLMSemaphore:
             if not redis_client:
                 return self
 
+            started_waiting = time.monotonic()
             while True:
                 now = time.time()
                 # Clean up zombies
@@ -52,6 +72,9 @@ class GlobalLLMSemaphore:
                     # Lost the race, remove and wait
                     await redis_client.zrem(self._key, token)
 
+                if (time.monotonic() - started_waiting) > float(self._timeout):
+                    from app.errors import UserLimitExceededError
+                    raise UserLimitExceededError("Система перегружена. Пожалуйста, повторите запрос немного позже.")
                 await asyncio.sleep(0.5)
         except Exception as e:
             logging.warning("Redis distributed semaphore failed, using local fallback: %s", e)

@@ -178,6 +178,9 @@ class Settings(BaseModel):
     ADMIN_ID: int
     PORT: int
     ENABLE_WEB_SERVER: bool = True  # Default to True for cloud deployments
+    WEBHOOK_SECRET_TOKEN: str = ""
+    WEBHOOK_MAX_CONNECTIONS: int = 40
+    UPDATE_QUEUE_MAXSIZE: int = 1000
     # Base URL of the web server (e.g. https://gemaibotv2-xxxx.northflank.app).
     # Required for Mini App reader links. If empty, system falls back to Telegraph.
     WEBAPP_BASE_URL: str = ""
@@ -284,6 +287,9 @@ def load_settings() -> Settings:
             "ADMIN_ID": _load_int_env("ADMIN_ID"),
             "PORT": os.getenv("PORT", "10000"),  # Provide a default for PORT
             "ENABLE_WEB_SERVER": os.getenv("ENABLE_WEB_SERVER", "true").lower() == "true",
+            "WEBHOOK_SECRET_TOKEN": os.getenv("WEBHOOK_SECRET_TOKEN", "").strip(),
+            "WEBHOOK_MAX_CONNECTIONS": int(os.getenv("WEBHOOK_MAX_CONNECTIONS", "40")),
+            "UPDATE_QUEUE_MAXSIZE": int(os.getenv("UPDATE_QUEUE_MAXSIZE", "1000")),
             "WEBAPP_BASE_URL": os.getenv("WEBAPP_BASE_URL", "").rstrip("/"),
             "TELEGRAM_LOCAL_SERVER_URL": os.getenv("TELEGRAM_LOCAL_SERVER_URL", "").rstrip("/"),
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
