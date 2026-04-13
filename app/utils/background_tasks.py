@@ -51,7 +51,7 @@ class TaskManager:
     ``task_manager`` is provided for production use.
     """
 
-    MAX_TASKS = 100  # Prevent unbounded background task accumulation
+    MAX_TASKS = 2500  # Elevated limit to prevent dropping valid DB/metrics tasks (AI backpressure handled by global semaphore limits)
 
     def __init__(self) -> None:
         self._tasks: set[asyncio.Task] = set()
@@ -100,6 +100,9 @@ class TaskManager:
                 self.MAX_TASKS,
                 coro_name,
             )
+
+            if coro is not None:
+                coro.close()
 
             async def _noop():
                 pass
