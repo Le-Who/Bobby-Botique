@@ -171,13 +171,33 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            text_parts: list[str] = []
+            for p in content:
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, str):
+                    text_parts.append(p)
+                elif isinstance(p, dict):
+                    if "text" in p:
+                        text_parts.append(str(p["text"]))
+                    elif not any(k in p for k in ("inline_data", "image_url", "file_data")):
+                        text_parts.append(str(p))
+                else:
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
+        return str(content) if not isinstance(content, (bytes, bytearray)) else ""
 
-    text_parts: list[str] = []
+    text_parts_fallback: list[str] = []
     for part in parts:
+        if isinstance(part, (bytes, bytearray)):
+            continue
         if isinstance(part, str):
-            text_parts.append(part)
-        elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
-    return " ".join(text_parts)
+            text_parts_fallback.append(part)
+        elif isinstance(part, dict):
+            if "text" in part:
+                text_parts_fallback.append(str(part["text"]))
+            elif not any(k in part for k in ("inline_data", "image_url", "file_data")):
+                text_parts_fallback.append(str(part))
+        else:
+            text_parts_fallback.append(str(part))
+    return " ".join(text_parts_fallback)

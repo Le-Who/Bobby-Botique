@@ -30,13 +30,35 @@ def _extract_message_content(msg: dict) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            text_parts = []
+            for p in content:
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, dict):
+                    if "text" in p:
+                        text_parts.append(str(p["text"]))
+                    elif not any(k in p for k in ("inline_data", "image_url", "file_data")):
+                        text_parts.append(str(p))
+                else:
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
+        return str(content) if not isinstance(content, (bytes, bytearray)) else ""
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
-        return str(parts)
+            text_parts = []
+            for p in parts:
+                if isinstance(p, (bytes, bytearray)):
+                    continue
+                if isinstance(p, dict):
+                    if "text" in p:
+                        text_parts.append(str(p["text"]))
+                    elif not any(k in p for k in ("inline_data", "image_url", "file_data")):
+                        text_parts.append(str(p))
+                else:
+                    text_parts.append(str(p))
+            return " ".join(text_parts)
+        return str(parts) if not isinstance(parts, (bytes, bytearray)) else ""
     return ""
 
 
