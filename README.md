@@ -8,13 +8,13 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 
 ## Current Status
 
-**Production-Ready** (`v2.10.7`). The application uses industry-standard libraries (Quart, asyncpg, python-telegram-bot[job-queue] v20+) and supports Docker deployments with built-in telemetry, circuit breakers, and connection pooling. All critical concurrency limitations and shutdown bottlenecks have been recently stabilized for safe horizontal scaling. The testing architecture has been heavily refactored to align with the strictly deterministic Arrange-Act-Assert (AAA) pattern, achieving a CI-ready 100% pass rate across over 1643 unit and E2E integration tests.
+**Production-Ready** (`v2.10.7`). Deployed as a **3-container Docker stack** on a DigitalOcean VPS: Local Telegram Bot API server (MTProto), Python bot (Quart + Hypercorn + PTB v20+ webhook), and an Alpine-based media cleanup cron. Uses `concurrent_updates(50)` with a Quart webhook handler to decouple update processing from HTTP acknowledgment. Built-in telemetry, circuit breakers, and connection pooling. The testing architecture follows strictly deterministic Arrange-Act-Assert (AAA), achieving a CI-ready 100% pass rate across over 1643 unit and E2E integration tests.
 
 ## Features
 
 - **Smart Provider Routing**: Automatic failover and API key rotation across Google Gemini (3.0-flash, 3.1-flash-lite, 2.5-flash, 2.5-flash-lite) and OpenRouter models. Features **Race Requests** (two API keys race in parallel per attempt — first chunk wins, loser is cancelled) with sentinel-based stream completion to guarantee zero truncation, **Model Cascade Fallback** (automatic downgrade to flash-lite on sustained 503 errors), and **Redis-backed Deferred Queue** (background retry + follow-up delivery when all keys are exhausted).
 - **Quick Search (`?` prefix)**: Single-call web search using **native Google Search Grounding** — the LLM queries the web internally, eliminating extra network hops. Uses a resilient model fallback chain (`gemini-3.1-flash-lite-preview` → `gemini-2.5-flash-lite`) for low latency.
-- **Inline Mode (Cross-Chat Bot Interaction)**: Users invoke the bot from **any Telegram chat** by typing `@gemaibotv2 <query>`. The bot instantly returns 3 tone options (📋 Formal, 😊 Friendly, 😏 Sarcastic) as placeholder inline results. Upon selection, a styled "thinking…" message is sent and then **edited in-place** once the response is ready. **Progressive UX feedback**: after Tavily search completes, the placeholder updates to "🧠 *Bot* собрал информацию, генерирует ответ…"; if generation exceeds 20s, a delay notice ("⏳ *Bot* задерживается…") is shown. Hard timeout at 55s. Powered by `gemini-3.1-flash-lite-preview` with `thinking_level="off"` (minimal reasoning for speed) and real-time context from `tavily_search_agent` (QnA mode). Uses a dedicated **`_stream_inline_fast()` 3-way Race Requests** accumulator: 3 API keys fire simultaneously per round (vs. 2 in the standard router), up to 4 rounds = 12 key slots total. The first key to yield a chunk wins; the other two are cancelled immediately. With 15+ keys at hundreds of RPD each, burning 3 simultaneous slots is operationally free and reduces TTFR to `min(key_1, key_2, key_3)`. Zero sleep between rounds. On failure — including API quota exhaustion detected via `is_error_message()` zero-width tag inspection — the system suppresses raw tags but passes explicit translated warnings ("🚫 Достигнут лимит запросов к API") structurally, attaching a **🔄 Повторить** inline retry button (5-min TTL store) for one-tap re-generation. Inline requests are fully tracked in the `/metrics` dashboard via `api_logger` and `metrics_collector`. Requires `/setinline` + `/setinlinefeedback` at 100% in BotFather.
+- **Inline Mode (Cross-Chat Bot Interaction)**: Users invoke the bot from **any Telegram chat** by typing `@gemaibotv2 <query>`. The bot instantly returns 3 tone options (📋 Formal, 😊 Friendly, 😏 Sarcastic) as placeholder inline results. Upon selection, a styled "thinking…" message is sent and then **edited in-place** once the response is ready. **Progressive UX feedback**: after Tavily search completes, the placeholder updates to "🧠 *Bot* собрал информацию, генерирует ответ…"; if generation exceeds 20s, a delay notice ("⏳ *Bot* задерживается…") is shown. Hard timeout at 55s. Powered by `gemini-3.1-flash-lite-preview` with **dynamic `thinking_level`** (default `"low"`, admin-configurable at runtime via `/set_inline_thinking` — stored in `global_settings` table, no restart required) and real-time context from `tavily_search_agent` (QnA mode). Uses a dedicated **`_stream_inline_fast()` 3-way Race Requests** accumulator: 3 API keys fire simultaneously per round (vs. 2 in the standard router), up to 4 rounds = 12 key slots total. The first key to yield a chunk wins; the other two are cancelled immediately. With 15+ keys at hundreds of RPD each, burning 3 simultaneous slots is operationally free and reduces TTFR to `min(key_1, key_2, key_3)`. Zero sleep between rounds. Background generation tasks are managed by the centralized `TaskManager` (graceful shutdown drain, error alerting, MAX_TASKS=100 cap). On failure — including API quota exhaustion detected via `is_error_message()` zero-width tag inspection — the system suppresses raw tags but passes explicit translated warnings ("🚫 Достигнут лимит запросов к API") structurally, attaching a **🔄 Повторить** inline retry button (5-min TTL store, hard-capped at 500 entries) for one-tap re-generation. Inline requests are fully tracked in the `/metrics` dashboard via `api_logger` and `metrics_collector`. Requires `/setinline` + `/setinlinefeedback` at 100% in BotFather.
 - **Agentic Web Browsing (`??` prefix)**: Deep research mode utilizing Tavily API and Jina Reader API for multi-step query decomposition, autonomous site triage, content extraction, and dynamic self-correction loops. Hardened against memory leaks caused by gRPC protobuf cyclic references during long-running iterations (including threaded, non-blocking asynchronous Garbage Collection). Per-call API key usage tracking ensures accurate quota accounting across all LLM invocations within the agentic loop. Features an intelligent **Model Fallback Cascade** (automatically retries failed LLM requests or 503 errors using the next most capable model according to the capability tier rankings), parallel tool execution (`asyncio.gather` with semaphore), two-layer page content caching (session + global, 30-min TTL), source quality scoring (domain classification, freshness labels, citation validation), adaptive iteration budget (query deduplication, configurable token cap and wall-clock timeout), and rich streaming progress with search queries and iteration counters.
 - **Image Processing Pipeline**: Context-aware adaptive resize (`TASK_DIMS`: describe 1280px, search 768px, OCR 2048px) governed by **Shannon Entropy Analysis** (dynamically boosts +50% dimension for text-dense screenshots while reducing -25% for simple photos, optimizing token usage). Uses a 3-stage compression pipeline (thumbnail → JPEG q85 → fallback q75/65), TTL-cached results (`cache_key` by `file_unique_id`), and `TaggedImage` metadata carrier across handler→provider boundary to eliminate redundant recompression. Media group downloads use `Semaphore(5)` with debounced progress indicator.
 - **Image Generation (Dual Provider)**: Text-to-image generation via `/draw <prompt>` or via **implicit natural language triggers** (e.g., *"Бот, нарисуй кота"* / *"сгенерируй картинку леса"*). Uses a multi-layered Regex heuristics engine to isolate the artistic prompt without leaking pronouns or conversational fillers (e.g. extracts "леса" from "сгенерируй мне пожалуйста картинку леса"). Implicit triggers are natively intercepted in both text and voice channels. Voice requests trigger an **Interactive Pre-Canvas Confirmation** where the parsed text and generation keyboard are rendered interactively before consuming API resources. Uses a Factory Pattern for provider routing:
@@ -56,7 +56,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Key Rotation Observability**: Structured `KEY_EVENT` logging for usage milestones, near-limit warnings (70%), threshold rotations, and a `get_health_summary()` dashboard API with per-key status snapshots.
 - **Structured Error Classification**: O(1) type-based error classification via `ErrorCode` enum (17 exception types + 8 HTTP status codes), replacing fragile emoji/text pattern matching. Full error-to-user-message mapping.
 - **Graceful Shutdown**: Two-phase drain (pending state persists + task queue) before resource cleanup, preventing data loss during deploys. Includes shutdown hooks for `intent_router` HTTP clients and background task managers.
-- **Intent Direct Routing**: Lightweight API bypass for simple utility queries (weather via Open-Meteo, currency via Frankfurter) — intercepted before hitting the LLM, providing near-instant responses even during complete API outages.
+- **Intent Direct Routing**: Lightweight API bypass for simple utility queries (weather via Open-Meteo, currency via Frankfurter) — intercepted before hitting the LLM, providing near-instant responses even during complete API outages. Weather queries use a 2-tier city resolution: hardcoded alias dictionary (O(1) for ~30 cities in RU/EN) → **live Open-Meteo Geocoding API fallback** (handles any world city, ~300ms). Russian locative/prepositional case suffixes are stripped before geocoding ("Саратове" → "Саратов"). Trailing temporal words ("сегодня", "завтра") are cleaned from regex captures to prevent false geocoding hits.
 - **Streaming Reliability**: Exponential backoff retry (0.5→1→2s + jitter) for Telegram rate-limit errors with adaptive debounce escalation (auto-scales up to 3s).
 - **Security & GDPR**: CSRF-protected dashboard authentication, brute-force rate limiting (60 req/min/IP on all API endpoints), API key masking in status endpoints, and Telegram commands for data export (`/mydata`) and deletion (`/deleteme`).
 
@@ -69,18 +69,21 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 
 ## Architecture
 
-- **Monolithic Container**: A single async event loop runs both the Telegram long-polling (or webhook) updater and the Quart web server via Hypercorn.
-- **Local Bot API Server**: Self-hosted `telegram-bot-api` container communicates with Telegram via MTProto. The bot sends HTTP requests to `http://tg-api:8081/bot` instead of `api.telegram.org`. Shared Docker volume enables zero-copy file access for voice/photo/document processing. File limit: 2 GB (vs 50 MB cloud API).
+- **Bot Container (`tg-bot`)**: A single async event loop runs both the Telegram webhook updater and the Quart web server via Hypercorn. Webhook mode: Quart receives `POST /webhook/<token>`, deserializes `Update`, and passes it to PTB's internal `concurrent_updates(50)` queue — the HTTP response returns `200` immediately while processing runs asynchronously. Falls back to long-polling if `WEBHOOK_URL` is unset.
+- **Local Bot API Server (`tg-api`)**: Self-hosted `telegram-bot-api` container (`aiogram/telegram-bot-api:latest`) communicates with Telegram via MTProto. The bot sends HTTP requests to `http://tg-api:8081/bot` instead of `api.telegram.org`. Shared Docker volume (`tg-api-data`) enables zero-copy file access for voice/photo/document processing. File limit: 2 GB (vs 50 MB cloud API). Timezone: `Europe/Kyiv`.
+- **Media Cleanup Cron (`tg-media-cleanup`)**: Alpine-based sidecar container that runs a 60s-tick loop: (1) `chmod -R g+rX` on the shared volume to fix permission conflicts between `telegram-bot-api` (UID 101) and the bot container (GID 101), and (2) deletes cached media files older than 7 days every 24 hours to prevent disk exhaustion.
 - **Database (PostgreSQL)**: Source of truth for users, chats, messages, metrics, roles, and pgvector embeddings.
 - **Cache (Redis)**: Optional high-speed layer for caching rate limits and transient states.
 - **Third-Party APIs**: Google Gemini (native SDK), OpenRouter (HTTPX), Tavily (HTTPX).
 
+> **Docker networking:** All three containers share a `tg-net` bridge network. The shared volume `tg-api-data` is mounted at `/var/lib/telegram-bot-api` in both `tg-api` and `tg-bot`. The bot's web server binds to `127.0.0.1:$PORT` on the host (not `0.0.0.0`) — Caddy/Nginx reverse proxy is expected in front.
+
 ```mermaid
 graph TD;
     User-->TelegramCloud[Telegram Cloud];
-    TelegramCloud-->LocalAPI[Local Bot API Server<br/>MTProto ↔ REST];
-    LocalAPI-->BotHandler;
-    Admin-->QuartServer;
+    TelegramCloud-->LocalAPI["tg-api<br/>Local Bot API Server<br/>MTProto ↔ REST"];
+    LocalAPI-->BotHandler["tg-bot<br/>Python Bot + Quart"];
+    Admin-->QuartServer["Quart Web Server<br/>/metrics, /health, /webapp"];
 
     BotHandler-->ProviderRouter;
     ProviderRouter-->Gemini[Google Gemini];
@@ -92,8 +95,9 @@ graph TD;
     BotHandler-->DB[(PostgreSQL/pgvector)];
     QuartServer-->DB;
 
-    LocalAPI-.->SharedVolume[/var/lib/telegram-bot-api<br/>Shared Docker Volume/];
+    LocalAPI-.->SharedVolume["tg-api-data<br/>/var/lib/telegram-bot-api<br/>Shared Docker Volume"];
     BotHandler-.->SharedVolume;
+    Cleanup["tg-media-cleanup<br/>Alpine cron<br/>chmod + 7d prune"]-.->SharedVolume;
 ```
 
 ## Repository Structure
@@ -325,19 +329,54 @@ When configured, the bot communicates with a self-hosted Local Bot API Server in
 
 ## Run
 
-**Local Python:**
+**Local Python (dev, long-polling):**
 
 ```bash
 python bot.py
 ```
 
-**Docker Container:**
+**Docker Compose (legacy Northflank, single container):**
 
 ```bash
-./start.sh
-# OR via docker-compose:
 docker-compose -f docker-compose.northflank.yml up -d
 ```
+
+**Production VPS (3-container stack via GitHub Actions CI/CD):**
+
+The canonical deployment is automated by `.github/workflows/deploy.yml` (triggers on push to `vps_testai` branch). It builds and pushes a Docker image to GHCR, then SSH-deploys 3 containers:
+
+1. **`tg-api`** — Local Telegram Bot API Server (`aiogram/telegram-bot-api:latest`). Requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from [my.telegram.org](https://my.telegram.org). On first deploy, the workflow runs `bot.log_out()` against the Telegram cloud to release the token for local API use (one-time, idempotent via `/opt/tg-local-api-migrated` flag file).
+2. **`tg-bot`** — The Python bot container. Connected to `tg-api` via `TELEGRAM_LOCAL_SERVER_URL=http://tg-api:8081/bot`. Mounts the shared volume `tg-api-data` at `/var/lib/telegram-bot-api` for zero-copy file access.
+3. **`tg-media-cleanup`** — Alpine cron sidecar. Runs `chmod -R g+rX` every 60s (fixes UID 101 permission conflicts) and `find -mtime +7 -delete` every 24h (prevents disk exhaustion from cached media).
+
+All containers share the `tg-net` Docker bridge network and `TZ=Europe/Kyiv`.
+
+> **Manual deploy (without CI):**
+> ```bash
+> docker network create tg-net 2>/dev/null || true
+> docker volume create tg-api-data 2>/dev/null || true
+> 
+> # 1. Local API Server
+> docker run -d --name tg-api --network tg-net \
+>   -e TELEGRAM_API_ID="$TELEGRAM_API_ID" \
+>   -e TELEGRAM_API_HASH="$TELEGRAM_API_HASH" \
+>   -e TELEGRAM_LOCAL=1 -e TZ=Europe/Kyiv \
+>   -v tg-api-data:/var/lib/telegram-bot-api \
+>   aiogram/telegram-bot-api:latest
+> 
+> # 2. Bot
+> docker run -d --name tg-bot --network tg-net \
+>   -p 127.0.0.1:10000:10000 \
+>   -v tg-api-data:/var/lib/telegram-bot-api \
+>   -e TELEGRAM_LOCAL_SERVER_URL="http://tg-api:8081/bot" \
+>   --env-file .env \
+>   ghcr.io/<your-repo>:latest
+> 
+> # 3. Media Cleanup Cron
+> docker run -d --name tg-media-cleanup --network tg-net \
+>   -v tg-api-data:/var/lib/telegram-bot-api -e TZ=Europe/Kyiv \
+>   alpine:3.21 sh -c 'while true; do chmod -R g+rX /var/lib/telegram-bot-api/ 2>/dev/null; sleep 60; done'
+> ```
 
 ## Schema Management
 
@@ -484,6 +523,8 @@ The application features a heavily engineered test suite (**1643 unit and integr
   - `/cachestats`, `/queuestats`, `/docstats`, `/groupstats` — Performance monitoring for different subsystems.
   - `/clearcache`, `/clearoldmetrics`, `/clearolddocs` — System maintenance and cleanup.
   - `/updatetavilykeys`, `/checktavilykeys` — Hot-swap and verify search API keys.
+  - `/checkgeminikeys` — Async parallel health check of all Gemini API keys against the Google API.
+  - `/set_inline_thinking <level>` — Set inline generation `thinking_level` at runtime (stored in `global_settings` DB table, no restart required). Valid: `minimal`, `low`, `medium`, `high`.
   - `/registergroup` — Authorize the bot for use in a specific Telegram group.
   - `/reloadconfig` — Trigger an immediate hot-reload of the environment configuration.
 
@@ -501,8 +542,8 @@ The application features a heavily engineered test suite (**1643 unit and integr
 
 - **Inline Mode**
   - _Preconditions_: `/setinline` + `/setinlinefeedback` (100%) configured in BotFather.
-  - _Steps_: From any Telegram chat, user types `@gemaibotv2 <query>`. Bot instantly returns 3 tone variants (placeholder). User selects tone → placeholder sent to chat. Bot receives `ChosenInlineResult`, runs Tavily search + `_stream_inline_fast()` in background: 3 Gemini keys race in parallel (round 1), first chunk winner selected, losers cancelled; up to 4 rounds = 12 key slots. Edited message shows HTML-formatted response. All activity tracked via `api_logger` / `metrics_collector`.
-  - _Expected Outcome_: Full AI answer (with fresh web context) appears in the original chat, in-place, within ~5–15 s (min of 3 parallel key latencies). Progressive placeholder updates show search and generation progress. On all-rounds failure, user can retry with one tap (`🔄 Повторить`, 5-min TTL).
+  - _Steps_: From any Telegram chat, user types `@gemaibotv2 <query>`. Bot instantly returns 3 tone variants (placeholder). User selects tone → placeholder sent to chat. Bot receives `ChosenInlineResult`, runs `_stream_inline_fast()` with **Google Search Grounding** (`enable_web_search=True`) in background via `TaskManager`: `gemini-2.5-flash-lite` with 3 keys racing in parallel (round 1), first chunk winner selected, losers cancelled; up to 4 rounds = 12 key slots. The model searches the web natively for factual queries (exchange rates, weather, news). Edited message shows HTML-formatted response. All activity tracked via `api_logger` / `metrics_collector`.
+  - _Expected Outcome_: Full AI answer (with real-time web data via Google Search) appears in the original chat, in-place, within ~5–15 s. On all-rounds failure, user can retry with one tap (`🔄 Повторить`, 5-min TTL).
 - **Standard Conversation**
   - _Preconditions_: User selects `/newchat`.
   - _Steps_: User inputs text. The orchestrator embeds it in context, pulls long-term memory via pgvector, and dispatches it to the current AI provider model (Gemini or OpenRouter).
@@ -524,10 +565,11 @@ The application features a heavily engineered test suite (**1643 unit and integr
 
 ## Known Documentation Gaps
 
-- **Logging Variable Chain**: Northflank compose config sets `LOG_JSON=true`, but runtime uses `LOG_FORMAT` environment variable detected in `app/utils/logging_config.py`. The variable `STRUCTURED_LOGGING` referenced in earlier docs is not present in the `Settings` model — `LOG_FORMAT` is the actual control variable.
+- **Logging Variable Chain**: Northflank compose config sets `LOG_JSON=true`, but runtime uses `LOG_FORMAT` environment variable detected in `app/utils/logging_config.py`. The variable `STRUCTURED_LOGGING` referenced in earlier docs is not present in the `Settings` model — `LOG_FORMAT` is the actual control variable. However, `bot.py:main()` now checks `STRUCTURED_LOGGING` env var directly (alongside `LOG_FORMAT`) for backwards compatibility.
 - **OpenRouter Multimodal Capabilities**: OpenRouter is explicitly disabled for multimodal interactions (images); this architectural decision is under-documented in internal application documentation.
 - **Healthcheck Start Period**: `Dockerfile.northflank` sets `--start-period=40s` while `docker-compose.northflank.yml` overrides with `start_period: 120s`. The compose value takes precedence in production.
 - **CI pytest.ini Comment**: CI workflow (line 74) comments "runs with -m 'not integration' due to pytest.ini" but `pytest.ini` does not set `-m "not integration"` in `addopts`. All tests (unit + integration) run by default; integration tests simply pass without a database.
+- **docker-compose.northflank.yml is legacy**: The compose file describes a single-container deployment from the Northflank era. The canonical production deployment is the 3-container stack defined in `.github/workflows/deploy.yml`. The compose file is retained for backwards compatibility but does not include the Local Bot API Server or media cleanup sidecar.
 
 ## Architecture Decisions
 

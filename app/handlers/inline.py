@@ -46,9 +46,9 @@ from app.utils.text_format import markdown_to_html, strip_formatting
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-_INLINE_MODEL = "gemini-3.1-flash-lite-preview"
+_INLINE_MODEL = "gemini-2.5-flash-lite"
 
-# Outer timeout for the entire generation pipeline (after Tavily search).
+# Outer timeout for the entire generation pipeline.
 _GEN_TIMEOUT_S = 55.0
 # Seconds after which we edit the placeholder to show a progress message.
 _GEN_PROGRESS_AFTER_S = 20.0
@@ -93,8 +93,7 @@ _TONES: list[tuple[str, str, str]] = [
     ),
 ]
 
-# Prevent fire-and-forget background tasks from being garbage-collected.
-_bg_tasks: set[asyncio.Task] = set()
+
 
 # Inline keyboard attached to every result — Telegram Bot API REQUIRES this
 # for ChosenInlineResult to include `inline_message_id`.  Without it the bot
@@ -207,7 +206,9 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
             logging.error("Inline: Failed to edit empty query hint: %s", e)
         return
 
-    task = asyncio.create_task(
+    from app.utils.background_tasks import get_task_manager
+
+    get_task_manager().submit(
         _generate_and_edit_inline(
             bot=context.bot,
             inline_message_id=inline_message_id,
@@ -216,8 +217,6 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
             user_id=user_id,
         )
     )
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
 
 
 # ── Fast 3-way Race Requests for inline generation ──────────────────────────
@@ -229,6 +228,7 @@ async def _stream_inline_fast(
     system_instruction: str | None,
     user_id: int | None,
     max_rounds: int = 4,
+    enable_web_search: bool = False,
 ) -> str | None:
     """3-way Race Requests accumulator optimised for inline speed.
 
@@ -292,6 +292,7 @@ async def _stream_inline_fast(
                     system_instruction=system_instruction,
                     thinking_level=thinking_level,
                     timeout=45.0,
+                    enable_web_search=enable_web_search,
                 ):
                     await _q.put((kh, chunk, None))
             except asyncio.CancelledError:
@@ -393,64 +394,41 @@ async def _generate_and_edit_inline(
     """
     Core async pipeline with progressive UX feedback:
 
-    1. Tavily QnA search for real-time context (best-effort, 8 s timeout).
-       → After search: edit placeholder to "🧠 собрал информацию, генерирует…"
-    2. Call ``gemini-3.1-flash-lite-preview`` with context + tone in system prompt.
+    1. Call ``gemini-2.5-flash-lite`` with **Google Search Grounding** enabled.
+       The model searches the web natively for factual/current queries — no
+       separate Tavily call needed.  This ensures real-time data (exchange
+       rates, weather, news) instead of potentially stale Tavily QnA cache.
        → At 20 s mark: edit placeholder to "⏳ задерживается…" (if still running).
        → Hard timeout at 55 s.
-    3. Convert Markdown response to Telegram HTML.
-    4. Edit the placeholder inline message in-place.
+    2. Convert Markdown response to Telegram HTML.
+    3. Edit the placeholder inline message in-place.
     """
     from app.prompt_registry import FORMATTING_RULES_COMPACT
-    from app.search_services import tavily_search_agent
 
     bot_name = bot.first_name or "Bot"
     tone_sys_hint = _tone_hint(tone_id)
     tone_label = _tone_display(tone_id)
     today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
-    # ── Step 1: Fetch search context (non-blocking, best-effort) ─────────────
-    search_context = ""
-    try:
-        search_result = await asyncio.wait_for(
-            tavily_search_agent(user_query, search_type="qna", user_id=user_id),
-            timeout=8.0,
-        )
-        if isinstance(search_result, dict) and search_result.get("type") == "answer":
-            search_context = (search_result.get("content") or "").strip()
-    except Exception as search_err:
-        logging.warning("Inline: Tavily QnA failed, proceeding without context: %s", search_err)
-
-    # ── Progress: update placeholder after search ────────────────────────────
-    if search_context:
-        try:
-            await bot.edit_message_text(
-                inline_message_id=inline_message_id,
-                text=_progress_search_done_html(bot_name),
-                parse_mode="HTML",
-                reply_markup=_LOADING_KEYBOARD,
-            )
-        except Exception:
-            pass  # Non-critical; placeholder edit may fail on throttle
-
-    # ── Step 2: Build system prompt ───────────────────────────────────────────
+    # ── Step 1: Build system prompt ───────────────────────────────────────────
+    # Google Search Grounding (enable_web_search=True) lets the model search
+    # the web internally — we just inject today's date so it knows what "now"
+    # means, and instruct it to ALWAYS use Google Search for factual queries.
     system_instruction = (
         f"[system: current_utc_date={today}]\n"
         f"Тон ответа: {tone_sys_hint}\n"
         "Ты — ассистент в инлайн-режиме Telegram. "
         "Пользователь задаёт вопрос прямо из переписки с другим человеком — "
-        "отвечай КРАТКО и по существу (не более 3–4 абзацев).\n\n"
+        "отвечай КРАТКО и по существу (не более 3–4 абзацев).\n"
+        "Используй инструмент Google Search для каждого фактического запроса "
+        "(курсы валют, погода, новости, даты, цены, статистика).\n\n"
         f"{FORMATTING_RULES_COMPACT}\n"
     )
-    if search_context:
-        system_instruction += (
-            f"\n[Актуальная информация из интернета (используй при необходимости)]:\n{search_context[:2000]}"
-        )
 
     history = [{"role": "user", "parts": [user_query]}]
 
-    # ── Step 3: Generate (3-way Race Requests, up to 4 rounds = 12 key slots) ─
-    # For gemini-3.1-flash-lite-preview with 15+ keys at hundreds RPD each,
+    # ── Step 2: Generate (3-way Race Requests, up to 4 rounds = 12 key slots) ─
+    # For gemini-2.5-flash-lite with 15+ keys at hundreds RPD each,
     # burning 3 simultaneous slots is operationally free and minimises TTFR.
     _gen_start = time.monotonic()
     final_answer: str | None = None
@@ -490,6 +468,7 @@ async def _generate_and_edit_inline(
                 system_instruction=system_instruction,
                 user_id=user_id,
                 max_rounds=4,
+                enable_web_search=True,
             ),
             timeout=_GEN_TIMEOUT_S,
         )
@@ -527,7 +506,7 @@ async def _generate_and_edit_inline(
         user_id=user_id,
     )
 
-    # ── Step 4: Format and edit inline message ────────────────────────────────
+    # ── Step 3: Format and edit inline message ────────────────────────────────
     # A tagged error response (e.g. quota exhausted) is treated as a failure:
     # we show the clean error message instead of rendering the raw tag string.
     _is_api_error = bool(final_answer and is_error_message(final_answer))
@@ -671,7 +650,9 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
         pass
 
     # Re-run generation as a background task
-    task = asyncio.create_task(
+    from app.utils.background_tasks import get_task_manager
+
+    get_task_manager().submit(
         _generate_and_edit_inline(
             bot=context.bot,
             inline_message_id=inline_message_id,
@@ -680,5 +661,3 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
             user_id=entry["user_id"],
         )
     )
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
