@@ -268,10 +268,25 @@ class MemoryManager:
         await self.stop()
 
     def __del__(self):
-        """Cleanup on destruction."""
+        """Cleanup on destruction.
+
+        IMPORTANT: Never call ``logging`` here. During interpreter shutdown
+        ``sys.meta_path`` is set to ``None`` before module-level globals are
+        collected, so rich's lazy imports inside ``logging.emit()`` raise
+        ``ImportError: sys.meta_path is None``.  Use ``sys.stderr`` only,
+        guarded by an existence check.
+        """
         if self._running:
-            logging.warning("Memory manager destroyed while running")
-            # Note: We can't await here, but we can try to cancel the task
+            try:
+                import sys as _sys  # noqa: PLC0415 — intentional late import
+
+                _sys.stderr.write(
+                    "[MemoryManager] destroyed while still running — "
+                    "call await memory_manager.stop() before process exit\n"
+                )
+            except Exception:  # noqa: BLE001 — swallow everything in __del__
+                pass
+            # Best-effort task cancellation; may be a no-op if the loop is gone.
             if self._monitoring_task and not self._monitoring_task.done():
                 self._monitoring_task.cancel()
 

@@ -261,6 +261,13 @@ async def _cleanup_application(application, reason: str = "cleanup"):
     except Exception as cleanup_error:
         logging.warning(f"Cleanup error (image process pool): {cleanup_error}")
 
+    try:
+        from app.memory_manager import shutdown_memory_manager
+
+        await shutdown_memory_manager()
+    except Exception as cleanup_error:
+        logging.warning(f"Cleanup error (memory manager): {cleanup_error}")
+
 
 async def run_bot_with_retry():
     """Запускает бота с устойчивостью к ошибкам"""
