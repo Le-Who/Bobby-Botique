@@ -32,7 +32,7 @@ CONSOLIDATION_MODEL = "gemini-3.1-flash-lite-preview"
 
 # ── Real-Time Graph Extraction ───────────────────────────────────────────────
 # Model for real-time entity/relation extraction from user messages
-GRAPH_EXTRACTION_MODEL = "gemini-3.1-flash-lite-preview"
+GRAPH_EXTRACTION_MODEL = "gemini-2.5-flash"
 # ThinkingConfig level — at least "medium" for reliable extraction
 GRAPH_EXTRACTION_THINKING_LEVEL = "medium"
 # Minimum user message length to qualify for graph extraction
