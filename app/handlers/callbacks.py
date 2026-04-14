@@ -236,6 +236,38 @@ def register(application: Application) -> None:
     # Cancel generation button (shown during high API load)
     _add_fast_callback(application, _cancel_generation_callback, "^cancel_generation$")
 
+    # ── Inline UX callbacks ────────────────────────────────────────────────────
+    # No-op: used as placeholder keyboard on loading inline results (required
+    # for ChosenInlineResult to include inline_message_id; button is cosmetic).
+    _add_fast_callback(
+        application,
+        lambda u, c: u.callback_query.answer(),
+        "^inline_noop$",
+    )
+
+    # Inline retry (re-run generation for a failed inline result)
+    from app.handlers.inline import handle_inline_retry_callback
+
+    _add_fast_callback(application, handle_inline_retry_callback, "^inl_retry:")
+
+    # Tabbed response UI tab-switch (TL;DR ↔ Details ↔ Sources)
+    from app.handlers.inline import handle_inline_tab_switch
+
+    _add_fast_callback(application, handle_inline_tab_switch, "^inl_tab:")
+
+    # ── Collaborative AI-Notes (Board) callbacks ───────────────────────────────
+    from app.handlers.board_handler import (
+        handle_board_close_callback,
+        handle_board_link_callback,
+        handle_board_refresh_callback,
+    )
+
+    # board_link: fires on first press after a board is posted (links chat coords)
+    _add_fast_callback(application, handle_board_link_callback, "^board_link:")
+    # board_refresh / board_close: action buttons on the board card
+    _add_fast_callback(application, handle_board_refresh_callback, "^board_refresh:")
+    _add_fast_callback(application, handle_board_close_callback, "^board_close:")
+
 
 async def _cancel_generation_callback(update, context) -> None:
     """Handle the '❌ Отменить' button pressed during slow API response."""

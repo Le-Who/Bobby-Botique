@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.8] - 2026-04-14 - Advanced Inline UX & Collaborative AI-Notes
+
+### ✨ Inline Architecture — Advanced Progressive UX
+
+- **Implicit Media Swap**: Prompts starting with `"нарисуй"` immediately push a fast Pollinations.ai image to the inline grid (via static placeholder), which is then asynchronously generated and swapped in-place, achieving zero-latency interactive media.
+- **Tabbed Response UI**: Inline responses are structured using XML tags (`<tldr>`, `<details>`, `<sources>`) extracted by the LLM and rendered dynamically via inline buttons. Users can seamlessly switch tabs without re-triggering generation. Admin-toggleable via `/set_inline_tabs <on|off>`.
+- **Collaborative AI-Notes (Topic Aggregator boards)**: Prefixing a query with `доска: <topic>` initializes a persistent, shared workspace. Any user can reply to the board to add notes (bypassing privacy mode via `via_bot` detection). The bot debounces new entries (60s window) and automatically synthesizes them into an evolving structural summary via the `TaskManager`. Backed by PostgreSQL `inline_boards`.
+
+### 🛡️ System Resilience & Multi-Threaded Hardening
+
+- Resolved database schema discrepancies in integration tests by synchronizing missing columns (`tts_temperature`) in `tests/integration/conftest.py`.
+- **Migration**: Applied `035_create_inline_boards.sql` via Supabase MCP. added `inline_boards` table with JSONB entries, indexes on `inline_msg_id` and `(chat_id, message_id)`.
+- Verified entire system via robust multi-threaded test suite (1643 tests passing).
+
+---
+
 ## [2.10.7] - 2026-04-13 - Migration Resilience & Progressive Inline Timeout UX
 
 ### 🐛 Critical Bugfix — Migrations 025–034 Never Applied on Production

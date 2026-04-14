@@ -260,6 +260,15 @@ async def _handle_weather(text: str) -> IntentResult | None:
       2. Open-Meteo Geocoding API fallback (~300 ms, handles any world city)
       3. Return None → fall back to LLM/QnA Search
     """
+    # Bail out to LLM if the user asks for a future or multi-day/hourly forecast.
+    # The LLM (with Search Grounding) is much better at formatting localized or specific-time forecasts.
+    if re.search(
+        r"(завтра|послезавтра|недел|дней|дня|выходны|tomorrow|week|days|вечер|утр[ао]|ноч[ью]|час|hour|night|evening|morning)",
+        text,
+        re.IGNORECASE,
+    ):
+        return None
+
     city_name, coords = _extract_city(text)
 
     if not coords:

@@ -584,6 +584,7 @@ def register(application: Application) -> None:
         register_group_command,
         reload_config_command,
         role_conv_metrics_command,
+        set_inline_tabs_command,
         set_inline_thinking_command,
         update_tavily_keys_command,
     )
@@ -608,6 +609,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("reloadconfig", reload_config_command))
     application.add_handler(CommandHandler("set_inline_thinking", set_inline_thinking_command))
+    application.add_handler(CommandHandler("set_inline_tabs", set_inline_tabs_command))
 
     # Conversation commands (from cmd_conversations)
     from app.handlers.cmd_conversations import (

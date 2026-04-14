@@ -28,10 +28,14 @@ import time
 import uuid
 from datetime import UTC, datetime
 
+import re
+
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InlineQueryResultArticle,
+    InlineQueryResultPhoto,
+    InputMediaPhoto,
     InputTextMessageContent,
     Update,
 )
@@ -52,6 +56,65 @@ _INLINE_MODEL = "gemini-2.5-flash-lite"
 _GEN_TIMEOUT_S = 55.0
 # Seconds after which we edit the placeholder to show a progress message.
 _GEN_PROGRESS_AFTER_S = 20.0
+
+# ── Image intent detection ────────────────────────────────────────────────────
+# Matches: "нарисуй", "draw", "сгенерируй картинку", "imagine", "изобрази", etc.
+_IMAGE_INTENT_RE = re.compile(
+    r"(?:наруй|нарисуй|draw|draws|изобрази|imagine|сгенерируй\s*(?:картинку|изображение|фото|image)|portrait|generate\s*image)",
+    re.IGNORECASE,
+)
+
+# Image model variants surfaced in inline results
+# (result_id_prefix, display_title, pollinations_model)
+_IMAGE_MODELS: list[tuple[str, str, str]] = [
+    ("img_flux",   "✨ Flux — быстрая генерация",  "flux"),
+    ("img_zimage", "⚡ Z-Image — качество HD",    "zimage"),
+]
+
+# Static placeholder photo URL — Pollinations generates this once at first request;
+# Telegram caches it by URL so subsequent inline answers are instantaneous.
+_IMG_PLACEHOLDER_URL = (
+    "https://image.pollinations.ai/prompt/"
+    "minimalist%20futuristic%20loading%20animation%2C%20text%20generating%2C%20dark%20background%2C%20neon%20blue"
+    "?model=flux&width=800&height=450&seed=42&enhance=false&nologo=true"
+)
+
+# Board intent prefix — compiled once; shared by query and result handlers.
+_BOARD_PREFIX_RE = re.compile(r"^(?:доска|board|трекер)\s*:\s*", re.IGNORECASE)
+
+# ── Tabbed response store ──────────────────────────────────────────────────────
+# In-memory TTL dict for segmented responses. Keyed by inline_message_id.
+# Entries expire after _TABS_TTL_S. Capped at _TABS_STORE_MAX entries (FIFO eviction).
+_TABS_TTL_S = 600.0   # 10 minutes
+_TABS_STORE_MAX = 256
+_inline_tabs_store: dict[str, dict] = {}  # {imid: {tldr, details, sources, created}}
+
+
+def _tabs_store_put(inline_message_id: str, segments: dict) -> None:
+    """Insert segmented response; evict oldest entries when cap is reached."""
+    now = time.monotonic()
+    # Evict expired first
+    expired = [k for k, v in _inline_tabs_store.items() if now - v["created"] > _TABS_TTL_S]
+    for k in expired:
+        _inline_tabs_store.pop(k, None)
+    # Enforce cap
+    if len(_inline_tabs_store) >= _TABS_STORE_MAX:
+        oldest = sorted(_inline_tabs_store, key=lambda k: _inline_tabs_store[k]["created"])
+        for k in oldest[: len(oldest) // 4 + 1]:
+            _inline_tabs_store.pop(k, None)
+    _inline_tabs_store[inline_message_id] = {**segments, "created": now}
+
+
+def _tabs_store_get(inline_message_id: str) -> dict | None:
+    """Return segments for inline_message_id, or None if missing/expired."""
+    entry = _inline_tabs_store.get(inline_message_id)
+    if not entry:
+        return None
+    if time.monotonic() - entry["created"] > _TABS_TTL_S:
+        _inline_tabs_store.pop(inline_message_id, None)
+        return None
+    return entry
+
 
 # ── User-facing inline UX strings ────────────────────────────────────────────
 # Kept as named constants for easy future extraction to i18n.
@@ -125,11 +188,18 @@ def _tone_hint(tone_id: str) -> str:
     return ""
 
 
+
 # ── Public handlers ───────────────────────────────────────────────────────────
 
 
 async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Return 3 tone-variant placeholder results instantly for any non-empty query."""
+    """Return instant placeholder results for any non-empty query.
+
+    Intent routing:
+      - Image intent (нарисуй / draw / etc.) → 2 InlineQueryResultPhoto (model variants)
+      - Board intent (доска: / board:)        → 1 InlineQueryResultArticle (board template)
+      - Default                               → 3 InlineQueryResultArticle (tone variants)
+    """
     query = update.inline_query
     if not query:
         return
@@ -158,6 +228,54 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
+    # ── Image intent ──────────────────────────────────────────────────────────
+    if _IMAGE_INTENT_RE.search(user_query):
+        # Strip the intent verb from the prompt ("нарисуй кота" → "кота")
+        stripped_prompt = _IMAGE_INTENT_RE.sub("", user_query, count=1).strip(" ,-.!") or user_query
+        results_img = [
+            InlineQueryResultPhoto(
+                id=result_id,
+                photo_url=_IMG_PLACEHOLDER_URL,
+                thumbnail_url=_IMG_PLACEHOLDER_URL,
+                title=title,
+                description=stripped_prompt[:100],
+                caption=f"🎨 <b>Запрос:</b> {_html.escape(stripped_prompt[:200])}\n⏳ Генерация…",
+                parse_mode="HTML",
+                reply_markup=_LOADING_KEYBOARD,
+            )
+            for result_id, title, _ in _IMAGE_MODELS
+        ]
+        await query.answer(results_img, cache_time=0, is_personal=True)
+        return
+
+    # ── Board / Topic Aggregator intent ───────────────────────────────────────
+    if _BOARD_PREFIX_RE.match(user_query):
+        topic = _BOARD_PREFIX_RE.sub("", user_query).strip() or user_query
+        board_init_html = (
+            f"📋 <b>{_html.escape(topic)}</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "<i>Отвечайте (reply) на это сообщение, чтобы добавить свои идеи.</i>\n\n"
+            "Пока ничего не предложено."
+        )
+        board_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("📋 Доска активирована", callback_data="board_link:pending")]]
+        )
+        results_board = [
+            InlineQueryResultArticle(
+                id="board",
+                title=f"📋 Создать доску: {topic[:60]}",
+                description="Участники смогут добавлять идеи через reply",
+                input_message_content=InputTextMessageContent(
+                    message_text=board_init_html,
+                    parse_mode="HTML",
+                ),
+                reply_markup=board_keyboard,
+            )
+        ]
+        await query.answer(results_board, cache_time=0, is_personal=True)
+        return
+
+    # ── Default: 3 tone variants ──────────────────────────────────────────────
     results = [
         InlineQueryResultArticle(
             id=tone_id,
@@ -177,7 +295,13 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Capture ChosenInlineResult metadata and launch background generation."""
+    """Capture ChosenInlineResult metadata and launch the correct background task.
+
+    Dispatch table:
+      result_id starts with "img_"  → _generate_and_swap_media (Photo Placeholder Swap)
+      result_id == "board"          → create board in DB, register inline_message_id
+      otherwise                     → _generate_and_edit_inline (text + optional tabs)
+    """
     chosen = update.chosen_inline_result
     if not chosen:
         return
@@ -190,10 +314,11 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
         return
 
     user_query = chosen.query.strip()
-    tone_id = chosen.result_id
+    result_id = chosen.result_id
     user_id = chosen.from_user.id if chosen.from_user else None
 
-    if not user_query or tone_id == "hint":
+    # ── Guard: empty / hint ───────────────────────────────────────────────────
+    if not user_query or result_id == "hint":
         bot_name = context.bot.first_name or "бота"
         try:
             await context.bot.edit_message_text(
@@ -208,18 +333,169 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
 
     from app.utils.background_tasks import get_task_manager
 
+    # ── Image generation path ─────────────────────────────────────────────────
+    if result_id.startswith("img_"):
+        # Find the matching pollinations model
+        prov_model = next(
+            (m for rid, _, m in _IMAGE_MODELS if rid == result_id),
+            "flux",  # fallback
+        )
+        # Extract clean prompt: remove intent verb prefix
+        prompt = _IMAGE_INTENT_RE.sub("", user_query, count=1).strip(" ,-.!") or user_query
+        get_task_manager().submit(
+            _generate_and_swap_media(
+                bot=context.bot,
+                inline_message_id=inline_message_id,
+                prompt=prompt,
+                model=prov_model,
+                user_id=user_id,
+            )
+        )
+        return
+
+    # ── Board / Topic Aggregator path ─────────────────────────────────────────
+    if result_id == "board":
+        topic = _BOARD_PREFIX_RE.sub("", user_query).strip() or user_query
+        get_task_manager().submit(
+            _init_board_async(
+                bot=context.bot,
+                inline_message_id=inline_message_id,
+                topic=topic,
+                creator_id=user_id or 0,
+            )
+        )
+        return
+
+    # ── Default text generation path ──────────────────────────────────────────
     get_task_manager().submit(
         _generate_and_edit_inline(
             bot=context.bot,
             inline_message_id=inline_message_id,
             user_query=user_query,
-            tone_id=tone_id,
+            tone_id=result_id,
             user_id=user_id,
         )
     )
 
 
-# ── Fast 3-way Race Requests for inline generation ──────────────────────────
+# ── Photo Placeholder Swap ────────────────────────────────────────────────────
+
+
+async def _generate_and_swap_media(
+    bot,
+    inline_message_id: str,
+    prompt: str,
+    model: str,
+    user_id: int | None,
+) -> None:
+    """Generate an image via Pollinations and swap the inline placeholder photo.
+
+    Flow:
+      1. Call PollinationsProvider.generate() to get image bytes.
+      2. Build the Pollinations GET URL (deterministic, no hosting required).
+      3. Call bot.edit_message_media(inline_message_id=..., media=InputMediaPhoto(url)).
+      4. On failure, edit caption to show error + retry hint.
+    """
+    import urllib.parse
+
+    from app.providers.pollinations import get_pollinations_provider
+
+    _gen_start = time.monotonic()
+    provider = get_pollinations_provider()
+
+    try:
+        result = await provider.generate(prompt=prompt, model=model, seed=-1)
+    except Exception as exc:
+        logging.error("Inline image: generation exception: %s", exc, exc_info=True)
+        result = None
+
+    elapsed = time.monotonic() - _gen_start
+
+    if result and result.success:
+        # Build the deterministic GET URL — Telegram fetches it directly, no upload needed.
+        import urllib.parse as _up
+        encoded_prompt = _up.quote(prompt, safe="")
+        image_url = (
+            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+            f"?model={model}&width=1024&height=1024&seed=-1&enhance=false&nologo=true"
+        )
+        try:
+            await bot.edit_message_media(
+                inline_message_id=inline_message_id,
+                media=InputMediaPhoto(
+                    media=image_url,
+                    caption=f"🎨 <b>{_html.escape(prompt[:200])}</b>\n<i>⚡ {model.title()} • {elapsed:.1f}s</i>",
+                    parse_mode="HTML",
+                ),
+                reply_markup=InlineKeyboardMarkup([]),
+            )
+            logging.info(
+                "Inline image: swapped placeholder in %.1fs for prompt %r",
+                elapsed,
+                prompt[:60],
+            )
+        except Exception as edit_err:
+            logging.error("Inline image: edit_message_media failed: %s", edit_err)
+            try:
+                await bot.edit_message_caption(
+                    inline_message_id=inline_message_id,
+                    caption="❌ Не удалось обновить изображение. Попробуйте снова.",
+                )
+            except Exception:
+                pass
+    else:
+        err_msg = getattr(result, "error_message", "unknown") if result else "provider_exception"
+        logging.warning("Inline image: generation failed (%s) for prompt %r", err_msg, prompt[:60])
+        try:
+            await bot.edit_message_caption(
+                inline_message_id=inline_message_id,
+                caption=(
+                    f"❌ <b>Не удалось сгенерировать изображение.</b>\n"
+                    f"<code>{_html.escape(err_msg)}</code>\n\n"
+                    "Попробуйте другой запрос или модель."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+    await metrics_collector.record_api_call("pollinations_inline", model, user_id=user_id)
+
+
+# ── Board initialisation (async) ──────────────────────────────────────────────
+
+
+async def _init_board_async(
+    bot,
+    inline_message_id: str,
+    topic: str,
+    creator_id: int,
+) -> None:
+    """Persist a new board in the DB. Called as background task from ChosenInlineResult.
+
+    We cannot determine chat_id/message_id here — that happens via the first
+    callback press (board_link:pending -> board_handler.handle_board_link_callback).
+    """
+    try:
+        from app.repos.boards_repo import create_board
+
+        await create_board(
+            inline_msg_id=inline_message_id,
+            topic=topic,
+            creator_id=creator_id,
+        )
+        logging.info(
+            "Board created: inline_msg_id=%s topic=%r creator=%s",
+            inline_message_id,
+            topic,
+            creator_id,
+        )
+    except Exception as exc:
+        logging.error("Board init failed for inline_msg_id=%s: %s", inline_message_id, exc, exc_info=True)
+
+
+# ── Fast 3-way Race Requests for inline generation ───────────────────────────
+
 
 
 async def _stream_inline_fast(
@@ -410,10 +686,22 @@ async def _generate_and_edit_inline(
     tone_label = _tone_display(tone_id)
     today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
 
+    # ── Check tabs setting early (needed for system prompt) ──────────────────
+    tabs_enabled_now = await get_global_setting("inline_tabs_enabled", "off") == "on"
+
     # ── Step 1: Build system prompt ───────────────────────────────────────────
     # Google Search Grounding (enable_web_search=True) lets the model search
     # the web internally — we just inject today's date so it knows what "now"
     # means, and instruct it to ALWAYS use Google Search for factual queries.
+    _tabs_directive = (
+        "\n\nВерни ответ строго в формате XML (без пояснений вне тегов):\n"
+        "<response>\n"
+        "  <tldr>Краткая выжимка в 2-3 предложения</tldr>\n"
+        "  <details>Полный развёрнутый ответ</details>\n"
+        "  <sources>Список источников, если есть (иначе оставь пустым)</sources>\n"
+        "</response>"
+    ) if tabs_enabled_now else ""
+
     system_instruction = (
         f"[system: current_utc_date={today}]\n"
         f"Тон ответа: {tone_sys_hint}\n"
@@ -423,6 +711,7 @@ async def _generate_and_edit_inline(
         "Используй инструмент Google Search для каждого фактического запроса "
         "(курсы валют, погода, новости, даты, цены, статистика).\n\n"
         f"{FORMATTING_RULES_COMPACT}\n"
+        f"{_tabs_directive}"
     )
 
     history = [{"role": "user", "parts": [user_query]}]
@@ -507,10 +796,51 @@ async def _generate_and_edit_inline(
     )
 
     # ── Step 3: Format and edit inline message ────────────────────────────────
-    # A tagged error response (e.g. quota exhausted) is treated as a failure:
-    # we show the clean error message instead of rendering the raw tag string.
+    # A tagged error response (e.g. quota exhausted) is treated as a failure.
     _is_api_error = bool(final_answer and is_error_message(final_answer))
+
     if final_answer and final_answer.strip() and not _is_api_error:
+        # ── Tabs mode: parse XML segments and show TL;DR with navigation buttons ─
+        if tabs_enabled_now:
+            segments = _parse_xml_segments(final_answer)
+            if segments:  # successful parse — show tabbed UI
+                _tabs_store_put(inline_message_id, segments)
+                header = (
+                    f"<b>{_html.escape(tone_label)}</b> · "
+                    f"<code>{_html.escape(user_query[:60])}</code>\n\n"
+                )
+                tldr_body = markdown_to_html(segments["tldr"])
+                formatted = header + tldr_body
+                if len(formatted) > 4000:
+                    formatted = formatted[:3997] + "…"
+                # Show tldr first; Details/Sources buttons let user switch view.
+                has_sources = bool(segments.get("sources", "").strip())
+                btn_row = [InlineKeyboardButton("📑 Подробнее", callback_data=f"inl_tab:details:{inline_message_id}")]
+                if has_sources:
+                    btn_row.append(
+                        InlineKeyboardButton("🔗 Источники", callback_data=f"inl_tab:sources:{inline_message_id}")
+                    )
+                reply_markup = InlineKeyboardMarkup([btn_row])
+                try:
+                    await bot.edit_message_text(
+                        inline_message_id=inline_message_id,
+                        text=formatted,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup,
+                    )
+                except Exception as edit_err:
+                    logging.error("Inline tabs: edit failed: %s", edit_err)
+                    try:
+                        await bot.edit_message_text(
+                            inline_message_id=inline_message_id,
+                            text=strip_formatting(formatted)[:4000] or _FALLBACK_ERROR,
+                            reply_markup=reply_markup,
+                        )
+                    except Exception:
+                        pass
+                return  # Done — tabs path handled
+
+        # ── Plain text path (tabs off or XML parse failed) ────────────────────
         header = f"<b>{_html.escape(tone_label)}</b> · <code>{_html.escape(user_query[:60])}</code>\n\n"
         body = markdown_to_html(final_answer.strip())
         formatted = header + body
@@ -525,11 +855,7 @@ async def _generate_and_edit_inline(
             formatted = _TIMEOUT_ERROR if _gen_timed_out else _GENERATION_ERROR
 
     # On failure, attach a retry button so the user can re-trigger generation.
-    # is_failure is True in two cases:
-    #   1. AI returned nothing (timeout, exception, empty string)
-    #   2. AI returned a tagged error string (e.g. "🚧 Все ключи исчерпаны")
-    #      — is_error_message() detects zero-width ErrorCode tags embedded by tag_error()
-    reply_markup: InlineKeyboardMarkup | None = None
+    reply_markup_out: InlineKeyboardMarkup | None = None
     is_failure = not (final_answer and final_answer.strip()) or bool(final_answer and is_error_message(final_answer))
     if is_failure:
         retry_id = _store_retry_params(
@@ -537,18 +863,18 @@ async def _generate_and_edit_inline(
             tone_id=tone_id,
             user_id=user_id,
         )
-        reply_markup = InlineKeyboardMarkup(
+        reply_markup_out = InlineKeyboardMarkup(
             [[InlineKeyboardButton("🔄 Повторить", callback_data=f"inl_retry:{retry_id}")]]
         )
     else:
-        reply_markup = InlineKeyboardMarkup([])  # strip loading indicator
+        reply_markup_out = InlineKeyboardMarkup([])  # strip loading indicator
 
     try:
         await bot.edit_message_text(
             inline_message_id=inline_message_id,
             text=formatted,
             parse_mode="HTML",
-            reply_markup=reply_markup,
+            reply_markup=reply_markup_out,
         )
     except Exception as edit_err:
         logging.error(
@@ -562,10 +888,11 @@ async def _generate_and_edit_inline(
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
                 text=plain or _FALLBACK_ERROR,
-                reply_markup=reply_markup,
+                reply_markup=reply_markup_out,
             )
         except Exception as fallback_err:
             logging.error("Inline: Plain-text fallback also failed: %s", fallback_err)
+
 
 
 # ── Retry store helpers ───────────────────────────────────────────────────────
@@ -661,3 +988,110 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
             user_id=entry["user_id"],
         )
     )
+
+
+# ── XML segment parser (Tabbed Response UI) ───────────────────────────────────
+
+
+def _parse_xml_segments(text: str) -> dict | None:
+    """Extract <tldr>, <details>, <sources> tags from LLM output.
+
+    Returns a dict {tldr, details, sources} on success, or None if the
+    expected structure is missing (graceful degradation to plain text).
+
+    Strategy:
+      1. Try regex instead of xml.etree to tolerate slightly malformed XML
+         and Gemini's occasional markdown wrapping around the response block.
+      2. Require at a minimum a non-empty <tldr> block to consider it parseable.
+    """
+    import re as _re
+
+    def _extract(tag: str) -> str:
+        m = _re.search(rf"<{tag}>(.*?)</{tag}>", text, _re.DOTALL | _re.IGNORECASE)
+        return m.group(1).strip() if m else ""
+
+    tldr = _extract("tldr")
+    if not tldr:
+        return None  # Model didn't follow XML format — graceful fallback
+
+    return {
+        "tldr": tldr,
+        "details": _extract("details"),
+        "sources": _extract("sources"),
+    }
+
+
+# ── Tab-switch callback handler ────────────────────────────────────────────────
+
+
+async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle tab navigation buttons: 'inl_tab:<segment>:<inline_message_id>'.
+
+    Swaps the inline message content to the requested segment (tldr/details/sources)
+    and updates the keyboard to show the back-navigation button.
+    """
+    query = update.callback_query
+    if not query:
+        return
+
+    await query.answer()
+
+    data = query.data or ""
+    # Pattern: inl_tab:<segment>:<inline_message_id>
+    parts = data.split(":", 2)
+    if len(parts) != 3 or parts[0] != "inl_tab":
+        return
+
+    segment_key = parts[1]   # "tldr" | "details" | "sources"
+    inline_message_id = parts[2]
+
+    if segment_key not in ("tldr", "details", "sources"):
+        return
+
+    segments = _tabs_store_get(inline_message_id)
+    if not segments:
+        try:
+            await query.answer("⏳ Данные устарели. Повторите запрос.", show_alert=True)
+        except Exception:
+            pass
+        return
+
+    content = segments.get(segment_key, "").strip()
+    if not content:
+        await query.answer("ℹ️ Этот раздел пуст.", show_alert=True)
+        return
+
+    body = markdown_to_html(content)
+    if len(body) > 4000:
+        body = body[:3997] + "…"
+
+    # Build keyboard: show "back to TL;DR" for detail/source views; show full nav for tldr
+    if segment_key == "tldr":
+        has_sources = bool(segments.get("sources", "").strip())
+        btn_row = [InlineKeyboardButton("📑 Подробнее", callback_data=f"inl_tab:details:{inline_message_id}")]
+        if has_sources:
+            btn_row.append(InlineKeyboardButton("🔗 Источники", callback_data=f"inl_tab:sources:{inline_message_id}"))
+        reply_markup = InlineKeyboardMarkup([btn_row])
+    elif segment_key == "details":
+        btn_row = [
+            InlineKeyboardButton("🔼 TL;DR", callback_data=f"inl_tab:tldr:{inline_message_id}"),
+        ]
+        if segments.get("sources", "").strip():
+            btn_row.append(InlineKeyboardButton("🔗 Источники", callback_data=f"inl_tab:sources:{inline_message_id}"))
+        reply_markup = InlineKeyboardMarkup([btn_row])
+    else:  # sources
+        reply_markup = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔼 TL;DR", callback_data=f"inl_tab:tldr:{inline_message_id}")]]
+        )
+
+    _LABELS = {"tldr": "TL;DR", "details": "📑 Подробнее", "sources": "🔗 Источники"}
+    label = _LABELS.get(segment_key, segment_key)
+
+    try:
+        await query.edit_message_text(
+            text=f"<b>{label}</b>\n\n{body}",
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+        )
+    except Exception as err:
+        logging.error("Inline tab switch: edit failed for %s: %s", inline_message_id, err)

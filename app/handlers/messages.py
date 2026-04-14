@@ -152,7 +152,19 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await effective_msg.reply_text(t("error.rate_limit"))
             return
 
-        # ── 3b. Request dedup (double-tap prevention) ────────────────────────
+        # ── 3b. Collaborative board reply aggregation ────────────────────────
+        # Must be intercepted BEFORE dedup/auth guards because board replies
+        # arrive via Telegram's via_bot privacy exception (no admin rights needed)
+        # and are not regular user-to-bot messages.
+        try:
+            from app.handlers.board_handler import try_handle_board_reply
+
+            if await try_handle_board_reply(update, context):
+                return
+        except Exception as _board_err:
+            logging.debug("Board reply check skipped: %s", _board_err)
+
+        # ── 3c. Request dedup (double-tap prevention) ────────────────────────
         if effective_msg.text:
             from app.middleware.dedup import is_duplicate_request
 

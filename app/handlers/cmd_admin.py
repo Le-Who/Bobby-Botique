@@ -640,6 +640,7 @@ async def check_gemini_keys_command(update: Update, context: ContextTypes.DEFAUL
 
 
 _VALID_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high"})
+_VALID_TABS_VALUES = frozenset({"on", "off"})
 
 
 @admin_only
@@ -674,3 +675,34 @@ async def set_inline_thinking_command(update: Update, context: ContextTypes.DEFA
         parse_mode="HTML",
     )
 
+
+@admin_only
+async def set_inline_tabs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle the Tabbed Response UI for inline mode (no restart required).
+
+    Usage: /set_inline_tabs <on|off>
+    Default: off
+    """
+    args = context.args or []
+    if not args or args[0].lower() not in _VALID_TABS_VALUES:
+        current = await get_global_setting("inline_tabs_enabled", "off")
+        await update.message.reply_text(
+            f"⚙️ <b>Текущее состояние вкладок:</b> <code>{current}</code>\n\n"
+            "Использование: <code>/set_inline_tabs &lt;on|off&gt;</code>\n\n"
+            "📝 <b>Описание:</b>\n"
+            "• <code>on</code>  — включить структурированные вкладки (TL;DR / Подробнее / Источники)\n"
+            "• <code>off</code> — обычный режим (по умолчанию)\n\n"
+            "При включении inline-ответы разбиваются на сегменты с кнопками переключения.",
+            parse_mode="HTML",
+        )
+        return
+
+    value = args[0].lower()
+    await set_global_setting("inline_tabs_enabled", value)
+    logging.info("Admin %s set inline_tabs_enabled → %s", update.effective_user.id, value)
+    state_label = "включены ✅" if value == "on" else "выключены ❌"
+    await update.message.reply_text(
+        f"🗂️ Вкладки для inline-режима: <b>{state_label}</b>\n"
+        "Изменение вступит в силу немедленно.",
+        parse_mode="HTML",
+    )
