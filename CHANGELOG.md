@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.10.9] - 2026-04-14 - Provider Routing: API Key Mismatch & Streaming Resilience
+
+### 🐛 Critical Bugfix — API_KEY_INVALID Database Desynchronization
+- **Root Cause**: Gemaibotv2 synchronizes keys from the `.env` configuration file into the Supabase database. The `ADMIN_SECRET` was changed, causing `app/db/seed.py` to encrypt active keys with the new secret. However, old keys encrypted with the previous secret became orphaned in the `public.openrouter_api_keys` table and could not be decrypted, leading to persistent `API_KEY_INVALID` errors.
+- **Fix**: Executed raw SQL to manually purge the old orphaned keys from `openrouter_api_keys`, `openrouter_key_usage`, and `key_model_status`, allowing the seed script to repopulate the tables properly with keys encrypted using the current `ADMIN_SECRET`.
+
+### 🐛 Critical Bugfix — Streaming Router Leaking `[RATE_LIMIT]` Tag
+- **Root Cause**: The `ProviderRouter.stream_response` loop expected network-level exceptions (e.g. `httpx.HTTPError`) to trigger key rotation. OpenRouter, however, yielded inline tagged strings like `\u200b[RATE_LIMIT] 429...` during limit exhausts. The router treated this as a valid text chunk, streamed it to the user interface, and permanently marked the stream as started, bypassing all Retry logic.
+- **Fix**: Patched both the single-key route and the parallel "Race Request" route to intercept tagged string errors (`is_error_message(chunk)`) **before** marking the stream as started.
+- **Penalty Classification Integration**: Reworked error classification. The router now parses the intercepted error tags using `classify_key_error(tag)` instead of defaulting to a static "transient" mapping. Rate limits dynamically apply a 15-second suspension, while quota exhausts apply a daily suspension, making the key rotation incredibly resilient.
+- Fixed a leaky variable scope in the race request `except` block which could clobber `err_category` state.
+
+### 🔧 Code Quality
+- Addressed multiple `ruff` issues (`SIM102`, `B023`).
+- 100% full test suite passing (1700+ tests).
+
+---
+
 ## [2.10.8] - 2026-04-14 - Advanced Inline UX & Collaborative AI-Notes
 
 ### ✨ Inline Architecture — Advanced Progressive UX

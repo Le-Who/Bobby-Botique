@@ -8,7 +8,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 
 ## Current Status
 
-**Production-Ready** (`v2.10.8`). Deployed as a **3-container Docker stack** on a DigitalOcean VPS: Local Telegram Bot API server (MTProto), Python bot (Quart + Hypercorn + PTB v20+ webhook), and an Alpine-based media cleanup cron. Uses `concurrent_updates(50)` with a Quart webhook handler to decouple update processing from HTTP acknowledgment. Built-in telemetry, circuit breakers, and connection pooling. The testing architecture follows strictly deterministic Arrange-Act-Assert (AAA), achieving a CI-ready 100% pass rate across over 1645 unit and E2E integration tests.
+**Production-Ready** (`v2.10.9`). Deployed as a **3-container Docker stack** on a DigitalOcean VPS: Local Telegram Bot API server (MTProto), Python bot (Quart + Hypercorn + PTB v20+ webhook), and an Alpine-based media cleanup cron. Uses `concurrent_updates(50)` with a Quart webhook handler to decouple update processing from HTTP acknowledgment. Built-in telemetry, circuit breakers, and connection pooling. The testing architecture follows strictly deterministic Arrange-Act-Assert (AAA), achieving a CI-ready 100% pass rate across over 1645 unit and E2E integration tests.
 
 ## Features
 

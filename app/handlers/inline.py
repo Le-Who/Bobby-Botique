@@ -553,7 +553,7 @@ async def _stream_inline_fast(
 
         q: asyncio.Queue = asyncio.Queue()
 
-        async def _race(kd: dict, mod: str = resolved_model, _q: asyncio.Queue = q) -> None:  # type: ignore[assignment]  # noqa: B023
+        async def _race(kd: dict, mod: str = resolved_model, _q: asyncio.Queue = q, _tl: str = thinking_level) -> None:  # type: ignore[assignment]
             kh = kd["key_hash"]
             try:
                 prov = get_provider_for_model(mod, kd["api_key"])
@@ -561,7 +561,7 @@ async def _stream_inline_fast(
                     history=history,
                     model_name=mod,
                     system_instruction=system_instruction,
-                    thinking_level=thinking_level,
+                    thinking_level=_tl,
                     timeout=45.0,
                     enable_web_search=enable_web_search,
                 ):

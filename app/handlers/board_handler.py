@@ -226,16 +226,15 @@ async def _maybe_synthesize(
     board_id = board["id"]
     now = time.monotonic()
 
-    if not force:
+    if not force and new_entry_count < _NEW_ENTRY_THRESHOLD:
         # Threshold: synthesize immediately when enough new entries accumulated
-        if new_entry_count < _NEW_ENTRY_THRESHOLD:
-            # Debounce: delay until window expires
-            next_allowed = _board_next_synthesis.get(board_id, 0.0)
-            if now < next_allowed:
-                return  # Still within debounce window — skip
-            # Window expired; only proceed if there are new entries
-            if new_entry_count == 0:
-                return  # No new inputs — nothing to synthesize
+        # Debounce: delay until window expires
+        next_allowed = _board_next_synthesis.get(board_id, 0.0)
+        if now < next_allowed:
+            return  # Still within debounce window — skip
+        # Window expired; only proceed if there are new entries
+        if new_entry_count == 0:
+            return  # No new inputs — nothing to synthesize
 
     # Mark next allowed synthesis time
     _board_next_synthesis[board_id] = now + _DEBOUNCE_SECONDS
