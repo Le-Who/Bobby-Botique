@@ -100,12 +100,12 @@ _IMAGE_MODELS: list[tuple[str, str, str]] = [
 _IMG_KLEIN_ID    = "img_edit"
 _IMG_KLEIN_MODEL = "klein"
 
-# Static placeholder photo URL (gen.pollinations.ai, dark loading card).
-# Telegram caches by URL so subsequent inline answers are instantaneous.
+# Static placeholder photo URL — must return a publicly accessible JPEG/PNG
+# that Telegram can verify *before* showing InlineQueryResultPhoto entries.
+# Using placehold.co (stable CDN, dark card aesthetic matching our UX).
+# The actual generated image replaces this once Pollinations finishes.
 _IMG_PLACEHOLDER_URL = (
-    "https://gen.pollinations.ai/image/"
-    "minimalist%20futuristic%20loading%20card%2C%20dark%20background%2C%20neon%20blue%20glow"
-    "?model=flux&width=800&height=450&seed=42&enhance=false&nologo=true"
+    "https://placehold.co/800x450/0d1117/58a6ff.jpg?text=Generating%E2%80%A6"
 )
 
 # Board intent prefix — compiled once; shared by query and result handlers.
