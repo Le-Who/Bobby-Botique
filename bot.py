@@ -505,6 +505,21 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register reminder delivery job: %s", e)
 
+        # Schedule provider health check (every 30 minutes)
+        try:
+            from app.handlers.cmd_keys import run_all_health_checks
+
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    run_all_health_checks,
+                    interval=1800,  # Every 30 minutes
+                    first=120,  # First run 2min after boot
+                    name="provider_health_check",
+                )
+                logging.info("Provider health check job registered (30min interval)")
+        except Exception as e:
+            logging.warning("Failed to register provider health check job: %s", e)
+
         # Wait for shutdown event
         try:
             await shutdown_event.wait()

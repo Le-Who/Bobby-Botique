@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.0] - 2026-04-14 - Edge Provenance, Provenance-Aware RLHF & Dynamic API Keys
+
+### ✨ Feature — Edge Provenance (HippoRAG 2)
+
+- **Source Traceability**: Graph queries now batch-fetch and return the raw source text for the highest-weighted edges (top 3 by default). This reduces hallucinations by grounding the LLM in verbatim user memories rather than synthesized triples.
+- **Citation Badge**: The "🧠 N фактов" badge on AI responses was upgraded to "📚 N фактов (interactive)". Tapping the badge now displays an alert showing the exact graph relationships and sources used to generate the response, utilizing a new `show_facts` callback and caching system.
+
+### ✨ Feature — Provenance-Aware RLHF
+
+- **Graph Penalty Cascading**: When a user gives a 👎 (downvote) to a response, the system not only penalizes the graph edges used, but *cascades* a negative feedback count to the source `long_term_memory` records that generated those edges.
+- **Search-Time Deprioritization**: The hybrid search engine (RRF + Semantic) now reads `rlhf_negative_count` using a safe alias (`COALESCE`), applying a strict similarity penalty (-0.03 per negative vote) at retrieval time. This effectively surfaces better memories while burying incorrect facts.
+
+### ✨ Feature — /keys Admin Wizard (Hot-Swapping)
+
+- **Centralized Provider Key Repo**: Added a global registry (`provider_keys.py`) to access and cache provider API keys.
+- **Hierarchical Lookup**: Database overrides (`global_settings`) → Environment variables (`Settings`) → Empty fallback.
+- **Inline Keyboard UI**: Built `/keys` admin command. Admins can view provider status, dynamically swap API keys, clear overrides to return to `.env` fallbacks, and run live connection checks against the providers—all without restarting the application.
+- **Active Health Checks**: Added a 30-min background `job_queue` job to ping providers (weather, exchange, etc.) and alert the admin within a 6-hour cooldown window if one goes down.
+
 ## [2.11.0] - 2026-04-14 - Search Pipeline Modernization: Weather/Currency/Crypto APIs & 5-Mode Image Generation
 
 ### ✨ Feature — Intent Router API Modernization

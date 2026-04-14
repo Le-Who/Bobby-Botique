@@ -60,7 +60,7 @@ async def execute_memory_tool(
     try:
         from app.repos.memory import search_memories_with_graph
 
-        memories, graph_triples = await search_memories_with_graph(
+        memories, graph_triples, _source_passages = await search_memories_with_graph(
             user_id,
             query,
             api_key,

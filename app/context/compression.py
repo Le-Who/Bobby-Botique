@@ -245,7 +245,7 @@ async def inject_memory_layers(
             from app.handlers.chat_logic import format_memories_for_system_prompt
             from app.repos.memory import search_memories_with_graph
 
-            memories, graph_triples = await search_memories_with_graph(
+            memories, graph_triples, source_passages = await search_memories_with_graph(
                 user_id,
                 query,
                 api_key,
@@ -265,6 +265,13 @@ async def inject_memory_layers(
                 graph_parts = ["<knowledge_graph>"]
                 for triple in current:
                     graph_parts.append(f"  {triple}")
+                    # ── Edge Provenance: inject source passage for top-K edges ──
+                    # Strip core/hop labels to match the triple key
+                    _bare = triple.replace(" ★", "").replace(" (indirect)", "")
+                    if _bare in source_passages:
+                        graph_parts.append(
+                            f"    <source_passage>{source_passages[_bare]}</source_passage>"
+                        )
 
                 if temporal:
                     graph_parts.append("\n  <temporal_context>")

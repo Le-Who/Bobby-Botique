@@ -202,11 +202,12 @@ async def _handle_weather(text: str) -> IntentResult | None:
     if not city_candidate or len(city_candidate) < 2:
         return None  # Can't determine city → fall back to LLM
 
-    from app.config import settings
+    from app.repos.provider_keys import get_provider_key
 
     # ── Primary: WeatherAPI.com ───────────────────────────────────────────────
-    if settings.WEATHER_API_KEY:
-        result = await _fetch_weatherapi(settings.WEATHER_API_KEY, city_candidate)
+    weather_key = await get_provider_key("weather")
+    if weather_key:
+        result = await _fetch_weatherapi(weather_key, city_candidate)
         if result:
             return result
         logging.info("WeatherAPI.com failed for '%s', trying Open-Meteo fallback", city_candidate)
@@ -460,11 +461,12 @@ async def _handle_fiat_currency(text: str) -> IntentResult | None:
     if not base or not target:
         return None
 
-    from app.config import settings
+    from app.repos.provider_keys import get_provider_key
 
     # ── Primary: ExchangeRate-API ─────────────────────────────────────────────
-    if settings.EXCHANGE_RATE_API_KEY:
-        result = await _fetch_exchangerate_api(settings.EXCHANGE_RATE_API_KEY, base, target)
+    exchange_key = await get_provider_key("exchange")
+    if exchange_key:
+        result = await _fetch_exchangerate_api(exchange_key, base, target)
         if result:
             return result
         logging.info("ExchangeRate-API failed for %s→%s, trying Frankfurter", base, target)

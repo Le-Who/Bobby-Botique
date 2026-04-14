@@ -342,6 +342,7 @@ async def search_memories(
                         """
                         WITH semantic AS (
                             SELECT id, content, source_type, metadata, created_at,
+                                   COALESCE(rlhf_negative_count, 0) AS rlhf_neg,
                                    1 - (embedding <=> $2::halfvec) AS sim,
                                    ROW_NUMBER() OVER (ORDER BY embedding <=> $2::halfvec) AS rank_s
                             FROM long_term_memory
@@ -361,7 +362,7 @@ async def search_memories(
                             LIMIT 20
                         )
                         SELECT s.id, s.content, s.source_type, s.metadata, s.created_at,
-                               s.sim,
+                               s.sim, s.rlhf_neg,
                                (1.0/(60+s.rank_s)) + COALESCE(1.0/(60+k.rank_k), 0) AS rrf_score
                         FROM semantic s
                         LEFT JOIN keyword k ON s.id = k.id
@@ -377,6 +378,7 @@ async def search_memories(
                     results = await db_query(
                         """
                         SELECT id, content, source_type, metadata, created_at,
+                               COALESCE(rlhf_negative_count, 0) AS rlhf_negative_count,
                                1 - (embedding <=> $2::halfvec) AS similarity
                         FROM long_term_memory
                         WHERE user_id = $1
@@ -409,7 +411,11 @@ async def search_memories(
                     {
                         "id": r["id"],
                         "content": r["content"],
-                        "similarity": float(r.get("sim", r.get("similarity", 0))),
+                        "similarity": max(
+                            0.0,
+                            float(r.get("sim", r.get("similarity", 0)))
+                            - (int(r.get("rlhf_neg", r.get("rlhf_negative_count", 0)) or 0) * 0.03),
+                        ),
                         "source_type": r["source_type"],
                         "created_at": r["created_at"],
                     }
@@ -444,7 +450,7 @@ async def search_memories_with_graph(
     *,
     limit: int = 5,
     min_similarity: float = 0.5,
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], dict[str, str]]:
     """Graph-augmented memory search with Multi-Query Expansion, 2-Hop traversal, and Temporal Context.
 
     Features:
@@ -455,6 +461,11 @@ async def search_memories_with_graph(
     - Temporal Context: when superseded edges exist for the same entity pair,
       they are injected as <temporal_context> for LLM awareness.
     - RLHF Cache: retrieved edge IDs are cached for feedback penalization.
+    - Edge Provenance: top-K edges get source passage surfacing from source_memory_ids.
+
+    Returns:
+        (memories, graph_triples, source_passages) where source_passages maps
+        triple strings to their originating LTM passage text.
     """
     # Multi-Query Expansion gate
     if _should_expand_query(query):
@@ -493,11 +504,11 @@ async def search_memories_with_graph(
                 )
 
                 if not nodes:
-                    return memories, graph_triples
+                    return memories, graph_triples, {}
 
                 relevant_ids = [n["id"] for n in nodes if float(n.get("sim", 0)) >= 0.4]
                 if not relevant_ids:
-                    return memories, graph_triples
+                    return memories, graph_triples, {}
 
                 # 2-hop traversal with temporal filtering (valid_to IS NULL)
                 edges = await db_query(
@@ -512,6 +523,7 @@ async def search_memories_with_graph(
                             e.weight,
                             e.is_core,
                             e.updated_at,
+                            e.source_memory_ids,
                             1                AS hop
                         FROM memory_edges e
                         JOIN memory_nodes src ON e.source_node = src.id
@@ -533,6 +545,7 @@ async def search_memories_with_graph(
                             e2.weight,
                             e2.is_core,
                             e2.updated_at,
+                            e2.source_memory_ids,
                             2                AS hop
                         FROM hop1
                         JOIN memory_edges e2 ON e2.source_node = hop1.tgt_id
@@ -550,6 +563,7 @@ async def search_memories_with_graph(
                     )
                     SELECT DISTINCT ON (from_name, predicate, to_name)
                         from_name, predicate, to_name, weight, is_core, hop, edge_id,
+                        source_memory_ids,
                         CASE
                             WHEN is_core THEN weight
                             ELSE weight / (
@@ -574,6 +588,46 @@ async def search_memories_with_graph(
                 # Cache edge IDs for RLHF feedback penalization
                 retrieved_edge_ids = [e["edge_id"] for e in edges_sorted if e.get("edge_id")]
                 _last_retrieved_edge_ids[user_id] = retrieved_edge_ids
+
+                # ── Edge Provenance: batch-fetch source passages for top-K ──
+                from app.repos.memory_config import SOURCE_PASSAGE_MAX_CHARS, SOURCE_PASSAGE_TOP_K
+
+                source_passages: dict[str, str] = {}
+                # Collect source_memory_ids from top-K edges
+                _top_edge_source_map: dict[str, list[int]] = {}
+                for edge in edges_sorted[:SOURCE_PASSAGE_TOP_K]:
+                    _src_ids: list[int] = edge.get("source_memory_ids") or []
+                    if _src_ids:
+                        triple_key = f"{edge['from_name']} — {edge['predicate']} → {edge['to_name']}"
+                        _top_edge_source_map[triple_key] = _src_ids
+
+                if _top_edge_source_map:
+                    all_source_ids = list(
+                        {sid for ids in _top_edge_source_map.values() for sid in ids}
+                    )
+                    try:
+                        source_rows = await db_query(
+                            """
+                            SELECT id, content FROM long_term_memory
+                            WHERE id = ANY($1::bigint[])
+                            """,
+                            (all_source_ids,),
+                            conn=conn,
+                        )
+                        _source_content_map = {
+                            r["id"]: r["content"][:SOURCE_PASSAGE_MAX_CHARS]
+                            for r in (source_rows or [])
+                        }
+                        for triple_key, src_ids in _top_edge_source_map.items():
+                            passages = [
+                                _source_content_map[sid]
+                                for sid in src_ids
+                                if sid in _source_content_map
+                            ]
+                            if passages:
+                                source_passages[triple_key] = passages[0]  # best/first source
+                    except Exception as src_exc:
+                        logging.debug("Source passage fetch failed (non-critical): %s", src_exc)
 
                 for edge in edges_sorted:
                     hop_label = " (indirect)" if edge.get("hop", 1) == 2 else ""
@@ -614,10 +668,11 @@ async def search_memories_with_graph(
                         )
 
                 logging.debug(
-                    "Graph search for user %d: %d seed nodes, %d triples (incl. 2-hop + temporal), query: %r",
+                    "Graph search for user %d: %d seed nodes, %d triples (incl. 2-hop + temporal), %d provenance, query: %r",
                     user_id,
                     len(relevant_ids),
                     len(graph_triples),
+                    len(source_passages),
                     expanded_query[:60],
                 )
             finally:
@@ -625,7 +680,7 @@ async def search_memories_with_graph(
     except Exception as e:
         logging.warning("Graph traversal failed (non-critical): %s", e)
 
-    return memories, graph_triples
+    return memories, graph_triples, source_passages
 
 
 async def search_memories_with_llm_judge(
@@ -759,6 +814,41 @@ async def penalize_graph_edges(
                 )
                 # asyncpg execute returns a status string like "UPDATE 3"
                 count = int(result.split()[-1]) if result else 0
+
+                # ── Provenance RLHF: cascade penalty to source memories ──
+                if count > 0:
+                    try:
+                        source_rows = await db_query(
+                            """
+                            SELECT DISTINCT unnest(source_memory_ids) AS mem_id
+                            FROM memory_edges
+                            WHERE id = ANY($1::uuid[])
+                              AND user_id = $2
+                              AND source_memory_ids IS NOT NULL
+                            """,
+                            (edge_ids, user_id),
+                            conn=conn,
+                        )
+                        if source_rows:
+                            source_mem_ids = [r["mem_id"] for r in source_rows]
+                            await conn.execute(
+                                """
+                                UPDATE long_term_memory
+                                SET rlhf_negative_count = COALESCE(rlhf_negative_count, 0) + 1
+                                WHERE id = ANY($1::bigint[])
+                                  AND user_id = $2
+                                """,
+                                source_mem_ids,
+                                user_id,
+                            )
+                            logging.info(
+                                "RLHF: cascaded penalty to %d source memories for user %d",
+                                len(source_mem_ids),
+                                user_id,
+                            )
+                    except Exception as cascade_exc:
+                        logging.debug("RLHF source cascade failed (non-critical): %s", cascade_exc)
+
                 if count > 0:
                     logging.info(
                         "RLHF: penalized %d graph edges (penalty=%.2f) for user %d",

@@ -74,6 +74,12 @@ L1_MAX_TOKENS = 600
 L2_MAX_TOKENS = 1500
 # L3: Full history (assembler.py handles this via existing token budget)
 
+# ── Edge Provenance (HippoRAG 2) ──────────────────────────────────────────────
+# Maximum characters per source passage injected alongside graph triples
+SOURCE_PASSAGE_MAX_CHARS = 200
+# Number of top-weighted edges that get source passage surfacing
+SOURCE_PASSAGE_TOP_K = 3
+
 # ── Role Diaries ─────────────────────────────────────────────────────────────
 MAX_DIARY_ENTRIES_PER_ROLE = 20
 DIARY_ENTRY_MAX_LENGTH = 500

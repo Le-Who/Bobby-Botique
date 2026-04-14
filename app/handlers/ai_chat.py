@@ -440,8 +440,8 @@ async def _handle_regular_chat(
                 # ── Citation badge when graph memory was used ────────────
                 if _graph_triples_count > 0:
                     _total_sources = _memories_injected + _graph_triples_count
-                    _cite_label = f"🧠 {_total_sources} fact{'s' if _total_sources != 1 else ''}"
-                    buttons.append([InlineKeyboardButton(_cite_label, callback_data="noop")])
+                    _cite_label = f"📚 {_total_sources} факт{'ов' if _total_sources >= 5 else 'а' if 2 <= _total_sources <= 4 else ''}"
+                    buttons.append([InlineKeyboardButton(_cite_label, callback_data="show_facts")])
 
                 # ── RLHF: 👍/👎 inline feedback buttons (last row) ───────
                 buttons.append(make_feedback_buttons())

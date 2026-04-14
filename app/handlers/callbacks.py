@@ -76,7 +76,7 @@ def register(application: Application) -> None:
         refresh_metrics_callback,
     )
     from app.handlers.cb_documents import document_callback
-    from app.handlers.cb_feedback import _noop_callback, feedback_callback
+    from app.handlers.cb_feedback import _noop_callback, feedback_callback, show_facts_callback
     from app.handlers.cb_models import model_button_callback, switch_model_callback
     from app.handlers.cb_navigation import (
         deep_dive_callback,
@@ -157,6 +157,7 @@ def register(application: Application) -> None:
     # Feedback buttons (👍/👎)
     _add_fast_callback(application, feedback_callback, "^feedback:")
     _add_fast_callback(application, _noop_callback, "^noop$")
+    _add_fast_callback(application, show_facts_callback, "^show_facts$")
 
     # Роль: create/delete/rename
     application.add_handler(CallbackQueryHandler(role_create_callback, pattern="^role_create$"))

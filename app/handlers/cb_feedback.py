@@ -12,7 +12,7 @@ the existing 🔍→⚡ status reactions on the user's message).
 Also keeps ``_noop_callback`` for decorative confirmed-feedback indicators.
 """
 
-__all__ = ["feedback_callback", "_noop_callback"]
+__all__ = ["feedback_callback", "_noop_callback", "show_facts_callback"]
 
 import logging
 
@@ -167,3 +167,37 @@ async def _handle_vote(query, rating: str) -> None:
         await msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_buttons))
     except Exception:
         pass  # Best-effort UI update
+
+
+# ── Citation badge: show retrieved facts ─────────────────────────────────────
+
+
+async def show_facts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the graph triples / memories used for the response.
+
+    Retrieves cached edge IDs for the user and displays a compact summary
+    via ``answer`` alert popup, keeping the response message untouched.
+    """
+    query = update.callback_query
+    if not query:
+        return
+
+    user_id = query.from_user.id
+
+    try:
+        from app.repos.memory import get_last_retrieved_edge_ids
+
+        edge_ids = get_last_retrieved_edge_ids(user_id)
+        if edge_ids:
+            count = len(edge_ids)
+            text = (
+                f"🧠 Использовано {count} связей графа знаний.\n\n"
+                "Это факты из вашей долговременной памяти, "
+                "которые бот использовал для ответа."
+            )
+        else:
+            text = "ℹ️ Данные о фактах уже недоступны (кэш очищен)."
+    except Exception:
+        text = "ℹ️ Не удалось получить информацию о фактах."
+
+    await query.answer(text, show_alert=True)
