@@ -374,6 +374,14 @@ async def run_bot_with_retry():
 
         get_task_manager().register_error_callback(_bg_task_alert)
 
+        # Restore admin-managed model lists from DB (zero-downtime model mgmt)
+        try:
+            from app.repos.models_repo import sync_models_from_db
+
+            await sync_models_from_db()
+        except Exception as _syn_err:
+            logging.warning("Could not sync model lists from DB: %s", _syn_err)
+
         await application.start()
 
         # Choose polling or webhook based on WEBHOOK_URL

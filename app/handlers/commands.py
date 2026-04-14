@@ -646,3 +646,8 @@ def register(application: Application) -> None:
     from app.handlers.cmd_keys import build_keys_conversation_handler
 
     application.add_handler(build_keys_conversation_handler())
+
+    # ── Admin /models wizard (zero-downtime model list management) ────────────
+    from app.handlers.cmd_models import build_models_conversation_handler
+
+    application.add_handler(build_models_conversation_handler())
