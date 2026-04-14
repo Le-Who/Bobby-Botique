@@ -42,7 +42,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InlineQueryResultArticle,
-    InlineQueryResultPhoto,
+    InlineQueryResultCachedPhoto,
     InputFile,
     InputMediaPhoto,
     InputTextMessageContent,
@@ -92,39 +92,33 @@ _IMAGE_EDIT_INTENT_RE = re.compile(
 #   🎨 Арт     — Qwen Image Plus, stylized / avatar quality
 #   🅰️ Мем    — Wan 2.7 Image, accurate text rendering on images
 #   🔷 Изменить — FLUX.2 Klein 4B, auto-routed only (hidden from menu)
-# Format: (result_id_prefix, display_title, pollinations_model, placeholder_url)
-# Each model gets a UNIQUE color so the 2×2 grid is visually distinct.
-_IMAGE_MODELS: list[tuple[str, str, str, str]] = [
-    (
-        "img_turbo",
-        "⚡ Турбо — быстро и красиво",
-        "zimage",
-        "https://placehold.co/800x450/0d1117/58a6ff.jpg?text=Turbo",
-    ),
-    (
-        "img_smart",
-        "🤖 Умный — бот улучшит промпт",
-        "gptimage",
-        "https://placehold.co/800x450/0d2b0d/00e676.jpg?text=Smart+AI",
-    ),
-    (
-        "img_art",
-        "🎨 Арт / Аватарка — стилизация",
-        "qwen-image",
-        "https://placehold.co/800x450/1a0d2e/cc77ff.jpg?text=Art+Style",
-    ),
-    (
-        "img_meme",
-        "🅰️ Мем / Текст — точный текст",
-        "wan-image",
-        "https://placehold.co/800x450/2b1500/ffaa00.jpg?text=Meme+Text",
-    ),
+# Format: (result_id, display_title, pollinations_model)
+_IMAGE_MODELS: list[tuple[str, str, str]] = [
+    ("img_turbo", "⚡ Турбо — быстро и красиво",     "zimage"),
+    ("img_smart", "🤖 Умный — бот улучшит промпт",   "gptimage"),
+    ("img_art",   "🎨 Арт / Аватарка — стилизация", "qwen-image"),
+    ("img_meme",  "🅰️ Мем / Текст — точный текст",  "wan-image"),
 ]
 # Klein is NOT shown in the inline menu — it is auto-routed when user attaches
 # an image with an edit intent keyword.
 _IMG_KLEIN_ID    = "img_edit"
 _IMG_KLEIN_MODEL = "klein"
-_IMG_KLEIN_PLACEHOLDER = "https://placehold.co/800x450/1a1a0d/ffe066.jpg?text=Edit+Photo"
+
+# ── Placeholder images — locally minted file_ids ──────────────────────────────
+# Instead of fetching external URLs (which the Local Bot API Server may fail to
+# reach), we generate small colored JPEGs via Pillow, upload them once to the
+# admin chat to obtain stable Telegram file_ids, then reuse those forever.
+# Mapping: result_id → (bg_rgb, fg_rgb, label)
+_PLACEHOLDER_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], str]] = {
+    "img_turbo": ((13, 17, 23),   (88, 166, 255), "⚡ Turbo"),
+    "img_smart": ((13, 43, 13),   (0, 230, 118),  "🤖 Smart"),
+    "img_art":   ((26, 13, 46),   (204, 119, 255), "🎨 Art"),
+    "img_meme":  ((43, 21, 0),    (255, 170, 0),  "🅰️ Meme"),
+    _IMG_KLEIN_ID: ((26, 26, 13), (255, 224, 102), "🪄 Edit"),
+}
+
+# Lazily populated by _ensure_placeholders() on first inline query.
+_placeholder_file_ids: dict[str, str] = {}
 
 
 # Board intent prefix — compiled once; shared by query and result handlers.
@@ -150,6 +144,71 @@ _MODEL_EMOJI: dict[str, str] = {
 
 def _get_model_emoji(model: str) -> str:
     return _MODEL_EMOJI.get(model, "🎨")
+
+
+_placeholder_mint_lock = asyncio.Lock()
+
+
+async def _ensure_placeholders(bot) -> None:
+    """Mint file_ids for placeholder images on first inline query.
+
+    Generates small colored JPEGs via Pillow (no network fetch), uploads each
+    to the admin chat to capture a stable Telegram ``file_id``, then deletes
+    the temporary messages.  Subsequent calls are no-ops.
+    """
+    if _placeholder_file_ids:
+        return
+
+    async with _placeholder_mint_lock:
+        # Double-check after acquiring lock (concurrent callers).
+        if _placeholder_file_ids:
+            return
+
+        from PIL import Image, ImageDraw
+
+        all_ids = [m[0] for m in _IMAGE_MODELS] + [_IMG_KLEIN_ID]
+
+        for result_id in all_ids:
+            style = _PLACEHOLDER_STYLES.get(result_id)
+            if not style:
+                continue
+            bg_rgb, fg_rgb, label = style
+
+            # Generate a small colored JPEG with a centered label.
+            img = Image.new("RGB", (400, 225), bg_rgb)
+            draw = ImageDraw.Draw(img)
+            # Use default font — no external .ttf needed.
+            bbox = draw.textbbox((0, 0), label)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw.text(
+                ((400 - tw) / 2, (225 - th) / 2),
+                label,
+                fill=fg_rgb,
+            )
+
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=60)
+            buf.seek(0)
+
+            try:
+                msg = await bot.send_photo(
+                    chat_id=settings.ADMIN_ID,
+                    photo=InputFile(buf, filename=f"{result_id}.jpg"),
+                )
+                _placeholder_file_ids[result_id] = msg.photo[-1].file_id
+                with contextlib.suppress(Exception):
+                    await bot.delete_message(
+                        chat_id=settings.ADMIN_ID,
+                        message_id=msg.message_id,
+                    )
+            except Exception:
+                logging.exception("Failed to mint placeholder file_id for %s", result_id)
+
+        logging.info(
+            "Minted %d/%d inline placeholder file_ids",
+            len(_placeholder_file_ids),
+            len(all_ids),
+        )
 
 
 # ── Tabbed response store ──────────────────────────────────────────────────────
@@ -265,13 +324,15 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Return instant placeholder results for any non-empty query.
 
     Intent routing:
-      - Image intent (нарисуй / draw / etc.) → 2 InlineQueryResultPhoto (model variants)
+      - Image intent (нарисуй / draw / etc.) → InlineQueryResultCachedPhoto (model variants)
       - Board intent (доска: / board:)        → 1 InlineQueryResultArticle (board template)
       - Default                               → 3 InlineQueryResultArticle (tone variants)
     """
     query = update.inline_query
     if not query:
         return
+
+    logging.info("Inline query from user=%s: %r", query.from_user.id, query.query[:80])
 
     user_query = query.query.strip()
     bot_name = context.bot.first_name or "Bot"
@@ -308,8 +369,8 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if has_edit_intent:
             # Edit/inpaint mode: show only klein
-            routed_models: list[tuple[str, str, str, str]] = [
-                (_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL, _IMG_KLEIN_PLACEHOLDER)
+            routed_models: list[tuple[str, str, str]] = [
+                (_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)
             ]
             auto_hint = "✏️ Режим редактирования (Klein)"
         elif has_quoted_text:
@@ -322,11 +383,13 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             routed_models = _IMAGE_MODELS
             auto_hint = ""
 
+        # Ensure placeholder file_ids are minted (lazy, once per process)
+        await _ensure_placeholders(context.bot)
+
         results_img = [
-            InlineQueryResultPhoto(
+            InlineQueryResultCachedPhoto(
                 id=result_id,
-                photo_url=placeholder_url,
-                thumbnail_url=placeholder_url,
+                photo_file_id=_placeholder_file_ids.get(result_id, ""),
                 title=title,
                 description=(
                     f"{auto_hint} · {stripped_prompt[:70]}" if auto_hint else stripped_prompt[:100]
@@ -339,8 +402,11 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                 parse_mode="HTML",
                 reply_markup=_LOADING_KEYBOARD,
             )
-            for result_id, title, _, placeholder_url in routed_models
+            for result_id, title, _ in routed_models
+            if result_id in _placeholder_file_ids
         ]
+        if not results_img:
+            logging.error("No placeholder file_ids minted — cannot serve inline image results")
         await query.answer(results_img, cache_time=0, is_personal=True)
         return
 
@@ -438,7 +504,7 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     if result_id.startswith("img_"):
         # Include klein (auto-routed, hidden from menu) in model lookup
         all_known_models = _IMAGE_MODELS + [
-            (_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL, _IMG_KLEIN_PLACEHOLDER)
+            (_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)
         ]
         prov_model = next(
             (entry[2] for entry in all_known_models if entry[0] == result_id),
