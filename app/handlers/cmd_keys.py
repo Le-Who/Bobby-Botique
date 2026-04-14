@@ -20,6 +20,7 @@ import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
     ConversationHandler,
     MessageHandler,
@@ -319,13 +320,19 @@ async def run_all_health_checks(context: ContextTypes.DEFAULT_TYPE) -> None:
 def build_keys_conversation_handler() -> ConversationHandler:
     """Build the ConversationHandler for the /keys wizard flow."""
     return ConversationHandler(
-        entry_points=[],  # Registered separately as CommandHandler
+        entry_points=[
+            CommandHandler("keys", keys_command),
+            CallbackQueryHandler(keys_callback, pattern=r"^keys:"),
+        ],
         states={
             AWAITING_KEY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_key_message),
             ],
         },
-        fallbacks=[],
+        fallbacks=[
+            CommandHandler("keys", keys_command),
+            CallbackQueryHandler(keys_callback, pattern=r"^keys:"),
+        ],
         per_user=True,
         per_chat=True,
         name="keys_wizard",

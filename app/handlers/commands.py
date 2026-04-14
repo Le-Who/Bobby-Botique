@@ -643,10 +643,6 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("asr", asr_test_command))
 
     # ── Admin /keys wizard (unified provider key management) ─────────────────
-    from app.handlers.cmd_keys import keys_callback, keys_command
+    from app.handlers.cmd_keys import build_keys_conversation_handler
 
-    application.add_handler(CommandHandler("keys", keys_command))
-    # The callback handler is registered via CallbackQueryHandler for keys:* pattern
-    from telegram.ext import CallbackQueryHandler
-
-    application.add_handler(CallbackQueryHandler(keys_callback, pattern=r"^keys:"))
+    application.add_handler(build_keys_conversation_handler())
