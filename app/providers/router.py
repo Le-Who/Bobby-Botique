@@ -311,6 +311,12 @@ class ProviderRouter:
                         thinking_level=thinking_level,
                         enable_web_search=enable_web_search,
                     ):
+                        # Guard: provider may yield a tagged error string instead of
+                        # raising an exception (e.g. OpenRouter 429 → RATE_LIMIT tag).
+                        # Treat that as a stream-level failure so key rotation kicks in.
+                        if not stream_started and is_error_message(chunk):
+                            raise RuntimeError(f"Provider yielded error tag before streaming: {chunk[:200]}")
+
                         if not stream_started:
                             stream_started = True
                             try:
@@ -329,14 +335,30 @@ class ProviderRouter:
                         raise
 
                     error_msg = str(e)
+                    # Use the error tag (if present) to determine the correct penalty
+                    # category rather than always hard-coding "transient".
+                    # e.g. RATE_LIMIT → "rate_limit" (15 s cooldown),
+                    #      QUOTA_EXCEEDED → "quota" (until midnight PT).
+                    inner_tag = error_msg[error_msg.find("\u200b["):] if "\u200b[" in error_msg else error_msg
+                    error_category = classify_key_error(inner_tag)
+                    if error_category == "transient":
+                        had_transient = True
+                    if error_category != "permanent":
+                        all_permanent = False
+
                     failed_keys.add(key_data["key_hash"])
-                    all_permanent = False
-                    had_transient = True
+                    logging.warning(
+                        "Single-key stream failed (category=%s) for key=%s… model=%s: %s",
+                        error_category,
+                        key_data["key_hash"][:8],
+                        model_used,
+                        error_msg[:120],
+                    )
                     try:
                         await status_mgr.suspend_key(
                             key_data["key_hash"],
                             model_used,
-                            "transient",
+                            error_category,
                             error_msg[:200],
                         )
                     except Exception as db_e:
@@ -378,6 +400,7 @@ class ProviderRouter:
                     q: asyncio.Queue = winner_queue,
                 ) -> None:
                     """Race participant: stream from one key, push chunks + sentinel to queue."""
+                    first_chunk_seen = False
                     try:
                         prov = get_provider_for_model(mod, kd["api_key"])
                         async for chunk in prov.stream_response(  # type: ignore[attr-defined]
@@ -387,6 +410,12 @@ class ProviderRouter:
                             thinking_level=thinking_level,
                             enable_web_search=enable_web_search,
                         ):
+                            # Guard: provider may yield a tagged error string instead of
+                            # raising an exception — treat it as a race failure so the
+                            # partner key can win the race and serve the user.
+                            if not first_chunk_seen and is_error_message(chunk):
+                                raise RuntimeError(f"Provider yielded error tag before streaming: {chunk[:200]}")
+                            first_chunk_seen = True
                             await q.put((idx, chunk, None))
                     except asyncio.CancelledError:
                         # Loser was cancelled — put sentinel so consumer doesn't hang
@@ -452,13 +481,29 @@ class ProviderRouter:
                         t.cancel()
                     for i, kd in enumerate(keys_to_race):
                         failed_keys.add(kd["key_hash"])
+                        # Safe default: treat unknown errors as transient
+                        err_category = "transient"
                         try:
-                            err_msg = str(race_errors.get(i, "race timeout"))[:200]
-                            await status_mgr.suspend_key(kd["key_hash"], model_used, "transient", err_msg)
+                            raw_err = str(race_errors.get(i, "race timeout"))
+                            # Derive penalty category from the error tag embedded in the
+                            # message (e.g. RATE_LIMIT, QUOTA_EXCEEDED) rather than always
+                            # defaulting to "transient", so cooldown durations are accurate.
+                            inner_tag = raw_err[raw_err.find("\u200b["):] if "\u200b[" in raw_err else raw_err
+                            err_category = classify_key_error(inner_tag)
+                            logging.warning(
+                                "Race key=%s… failed (category=%s): %s",
+                                kd["key_hash"][:8],
+                                err_category,
+                                raw_err[:120],
+                            )
+                            await status_mgr.suspend_key(kd["key_hash"], model_used, err_category, raw_err[:200])
                         except Exception:
                             pass
-                    all_permanent = False
-                    had_transient = True
+                        # Update outer flags regardless of whether suspend_key succeeded
+                        if err_category == "transient":
+                            had_transient = True
+                        if err_category != "permanent":
+                            all_permanent = False
                     continue  # Next retry — zero delay!
 
                 # Cancel the loser
