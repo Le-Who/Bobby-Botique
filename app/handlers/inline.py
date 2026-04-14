@@ -437,9 +437,11 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     # ── Image generation path ─────────────────────────────────────────────────
     if result_id.startswith("img_"):
         # Include klein (auto-routed, hidden from menu) in model lookup
-        all_known_models = _IMAGE_MODELS + [(_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)]
+        all_known_models = _IMAGE_MODELS + [
+            (_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL, _IMG_KLEIN_PLACEHOLDER)
+        ]
         prov_model = next(
-            (m for rid, _, m in all_known_models if rid == result_id),
+            (entry[2] for entry in all_known_models if entry[0] == result_id),
             "zimage",  # fallback to Турбо
         )
         # Extract clean prompt: remove intent verb prefix

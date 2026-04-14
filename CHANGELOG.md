@@ -3,6 +3,52 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.3] - 2026-04-14 - Inline Image Pipeline Hardening & Per-Model Placeholder UX
+
+### 🐛 Fix — Inline Image Swap: `Can't parse inputmedia: media not found` (Critical)
+
+- **Root cause**: The Local Bot API Server (`local_mode=True`) rejects `InputFile(io.BytesIO(...))` multipart uploads in `edit_message_media` for inline messages (identified by `inline_message_id`). Only pre-existing `file_id` strings or public HTTP URLs are accepted by the Telegram Bot API for inline media edits — this constraint exists in both the cloud API and the local server.
+- **Fix** (`app/handlers/inline.py` — `_generate_and_swap_media`): Replaced the direct bytes upload with a two-step **admin-chat file_id minting** pattern:
+  1. `bot.send_photo(chat_id=settings.ADMIN_ID, photo=InputFile(BytesIO(bytes)))` → captures `file_id` from the response.
+  2. Immediately deletes the temporary admin-chat message (no visible side-effect for admin).
+  3. Passes the minted `file_id` string to `edit_message_media(InputMediaPhoto(media=file_id))` — always accepted for inline edits.
+- **Dependency**: Requires `settings.ADMIN_ID` to be correctly configured — bot must have permission to send photos to the admin chat.
+
+### 🐛 Fix — Pollinations Model Validation Silent Fallback
+
+- **Root cause**: `DEFAULT_POLLINATIONS_IMAGE_MODELS` only contained `["flux", "zimage"]`, but the inline handler exposes 4 additional models (`gptimage`, `qwen-image`, `wan-image`, `klein`). The `PollinationsProvider` validation rejected these with a silent fallback to `flux`, causing wrong model to be used.
+- **Fix** (`app/config.py`): Expanded `DEFAULT_POLLINATIONS_IMAGE_MODELS` to `["flux", "zimage", "gptimage", "qwen-image", "wan-image", "klein"]` — matches the full inline model set.
+- **Note**: If `IMAGE_MODELS` env var is set explicitly, it must also include these models; otherwise they still fall back.
+
+### ✨ UX — Per-Model Distinct Placeholder Images in Inline 2×2 Grid
+
+- **Problem**: All 4 image model tiles in the inline results grid showed identical grey `Generating…` cards — users couldn't distinguish which model they were selecting.
+- **Fix** (`app/handlers/inline.py`): `_IMAGE_MODELS` migrated from 3-tuple to 4-tuple `(result_id, title, model, placeholder_url)`. Each model variant now has a **unique color scheme** via `placehold.co`:
+
+  | Tile | Colors | Label |
+  |------|--------|-------|
+  | ⚡ Турбо (`zimage`) | Dark navy + cyan | `Turbo` |
+  | 🤖 Умный (`gptimage`) | Dark green + green | `Smart AI` |
+  | 🎨 Арт (`qwen-image`) | Dark purple + violet | `Art Style` |
+  | 🅰️ Мем (`wan-image`) | Dark amber + orange | `Meme Text` |
+  | 🪄 Изменить (`klein`) | Olive + yellow | `Edit Photo` |
+
+- The shared `_IMG_PLACEHOLDER_URL` constant was removed; each model carries its own `placeholder_url`.
+
+### 🐛 Fix — `ValueError: too many values to unpack` in `handle_chosen_inline_result`
+
+- **Root cause**: After migrating `_IMAGE_MODELS` to 4-tuples, `handle_chosen_inline_result` still destructured with the old 3-tuple pattern `(m for rid, _, m in all_known_models)`, raising `ValueError: too many values to unpack` on every inline image selection. This caused the entire chosen-result handler to crash, showing "No results" in the inline popup.
+- **Fix**: Replaced tuple destructuring with index-based access `(entry[2] for entry in all_known_models if entry[0] == result_id)`. The klein fallback entry was also aligned to a 4-tuple.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/handlers/inline.py` | Admin-chat file_id minting in `_generate_and_swap_media`; `_IMAGE_MODELS` → 4-tuple with per-model placeholder URLs; fixed `handle_chosen_inline_result` unpack; removed `_IMG_PLACEHOLDER_URL` |
+| `app/config.py` | `DEFAULT_POLLINATIONS_IMAGE_MODELS` expanded to 6 models |
+
+---
+
 ## [2.12.2] - 2026-04-14 - Inline Image Reliability, Dynamic Model Management & Code Quality
 
 ### 🔧 Fix — Inline Image Generation (Critical)
