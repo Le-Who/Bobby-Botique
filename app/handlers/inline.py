@@ -174,20 +174,42 @@ async def _ensure_placeholders(bot) -> None:
                 continue
             bg_rgb, fg_rgb, label = style
 
-            # Generate a small colored JPEG with a centered label.
-            img = Image.new("RGB", (400, 225), bg_rgb)
+            # Generate a large colored JPEG with clearly visible centered text.
+            # 800×450 matches 16:9 aspect — looks clean in Telegram's grid.
+            W, H = 800, 450
+            img = Image.new("RGB", (W, H), bg_rgb)
             draw = ImageDraw.Draw(img)
-            # Use default font — no external .ttf needed.
-            bbox = draw.textbbox((0, 0), label)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw.text(
-                ((400 - tw) / 2, (225 - th) / 2),
-                label,
-                fill=fg_rgb,
-            )
+
+            # Load the largest available built-in font.
+            # load_default(size=N) requires Pillow ≥ 10.1; fall back for older builds.
+            from PIL import ImageFont
+            try:
+                font_large = ImageFont.load_default(size=56)
+                font_small = ImageFont.load_default(size=28)
+            except TypeError:
+                font_large = ImageFont.load_default()
+                font_small = font_large
+
+            hint_line = "⏳ Генерация…"
+
+            # Measure and center both lines
+            bb1 = draw.textbbox((0, 0), label, font=font_large)
+            tw1, th1 = bb1[2] - bb1[0], bb1[3] - bb1[1]
+            bb2 = draw.textbbox((0, 0), hint_line, font=font_small)
+            tw2, th2 = bb2[2] - bb2[0], bb2[3] - bb2[1]
+
+            gap = 18  # pixels between lines
+            total_h = th1 + gap + th2
+            y1 = (H - total_h) / 2
+            y2 = y1 + th1 + gap
+
+            draw.text(((W - tw1) / 2, y1), label, fill=fg_rgb, font=font_large)
+            # Hint line in a slightly dimmer shade
+            dim_fg = tuple(max(0, c - 60) for c in fg_rgb)
+            draw.text(((W - tw2) / 2, y2), hint_line, fill=dim_fg, font=font_small)
 
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=60)
+            img.save(buf, format="JPEG", quality=75)
             buf.seek(0)
 
             try:
