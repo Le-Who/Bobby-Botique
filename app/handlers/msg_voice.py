@@ -241,7 +241,9 @@ def _should_auto_route(transcript: str) -> bool:
     # Give some leeway for ASR padding/filler words at the beginning
     import re
 
-    action_pattern = re.compile(r"^(?:вот,?\s*)?(сочини|напиши|бот,?|расскажи|сделай|найди|поищи|скажи|подскажи)\s", re.IGNORECASE)
+    action_pattern = re.compile(
+        r"^(?:вот,?\s*)?(сочини|напиши|бот,?|расскажи|сделай|найди|поищи|скажи|подскажи)\s", re.IGNORECASE
+    )
     if action_pattern.match(text_lower) and len(text_lower) > 8:
         return True
 
@@ -602,4 +604,3 @@ async def _auto_route_to_search(
             chat_state.history.append({"role": "user", "parts": [user_message_with_marker]})
             chat_state.history.append({"role": "model", "parts": [answer]})
             await update_user_chat(user_id, chat_state)
-

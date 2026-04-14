@@ -85,8 +85,7 @@ async def get_file_bytes(bot: Bot, tg_file: File) -> bytes:
             _diagnose_missing_file(local_path)
         else:
             logging.warning(
-                "get_file_bytes: could not extract local path from file_path (%s), "
-                "falling back to network download",
+                "get_file_bytes: could not extract local path from file_path (%s), falling back to network download",
                 tg_file.file_path,
             )
 

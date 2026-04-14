@@ -283,6 +283,18 @@ class MetricsCollector:
 
             # Save per-user metrics
             if user_snapshot:
+                # FIX: Ensure unregistered casual users (e.g. from inline mode) exist in public.users
+                # so the user_metrics foreign key constraint doesn't fail.
+                user_ids = [(uid,) for uid, _ in user_snapshot]
+                await db.db_execute_many(
+                    """
+                    INSERT INTO public.users (user_id, is_authorized)
+                    VALUES ($1, 0)
+                    ON CONFLICT (user_id) DO NOTHING
+                    """,
+                    user_ids,
+                )
+
                 params_list = [
                     (
                         uid,

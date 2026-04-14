@@ -31,10 +31,10 @@ logger = logging.getLogger(__name__)
 
 # ── Debounce configuration ────────────────────────────────────────────────────
 
-_DEBOUNCE_SECONDS = 60        # synthesize at most once per 60s
-_NEW_ENTRY_THRESHOLD = 3      # also synthesize when ≥3 new entries arrive
-_MAX_ENTRIES_PER_BOARD = 50   # hard cap; oldest entries become part of summary
-_BOARD_TTL_HOURS = 24         # boards older than this are considered expired
+_DEBOUNCE_SECONDS = 60  # synthesize at most once per 60s
+_NEW_ENTRY_THRESHOLD = 3  # also synthesize when ≥3 new entries arrive
+_MAX_ENTRIES_PER_BOARD = 50  # hard cap; oldest entries become part of summary
+_BOARD_TTL_HOURS = 24  # boards older than this are considered expired
 
 # Per-board debounce tracking: {board_id: next_allowed_float}
 _board_next_synthesis: dict[int, float] = {}
@@ -44,10 +44,12 @@ _board_next_synthesis: dict[int, float] = {}
 
 def _active_keyboard(board_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        [[
-            InlineKeyboardButton("🔄 Обновить", callback_data=f"board_refresh:{board_id}"),
-            InlineKeyboardButton("🔒 Закрыть",  callback_data=f"board_close:{board_id}"),
-        ]]
+        [
+            [
+                InlineKeyboardButton("🔄 Обновить", callback_data=f"board_refresh:{board_id}"),
+                InlineKeyboardButton("🔒 Закрыть", callback_data=f"board_close:{board_id}"),
+            ]
+        ]
     )
 
 
@@ -71,9 +73,7 @@ def _render_board_card(topic: str, summary: str, entry_count: int, board_id: int
         f"{content}\n\n"
         f"<i>Обновлено • {entry_count} {'идея' if entry_count == 1 else 'идей' if 2 <= entry_count <= 4 else 'идей'} от участников</i>"
         if entry_count > 0
-        else f"📋 <b>{_html.escape(topic)}</b>\n"
-             "━━━━━━━━━━━━━━━━━━━━━\n"
-             f"{content}"
+        else f"📋 <b>{_html.escape(topic)}</b>\n━━━━━━━━━━━━━━━━━━━━━\n{content}"
     )
 
     if len(text) > 4000:
@@ -300,7 +300,7 @@ async def _run_synthesis(topic: str, entries: list[dict]) -> str:
 
     try:
         # Use the same 3-way race as inline — lightweight, fast, resilient.
-        from app.handlers.inline import _stream_inline_fast, _INLINE_MODEL
+        from app.handlers.inline import _INLINE_MODEL, _stream_inline_fast
 
         result = await asyncio.wait_for(
             _stream_inline_fast(
@@ -308,7 +308,7 @@ async def _run_synthesis(topic: str, entries: list[dict]) -> str:
                 history=[{"role": "user", "parts": [prompt]}],
                 system_instruction=None,
                 user_id=None,
-                max_rounds=2,   # fewer rounds — synthesis is non-critical
+                max_rounds=2,  # fewer rounds — synthesis is non-critical
                 enable_web_search=False,
             ),
             timeout=30.0,
@@ -341,7 +341,7 @@ async def handle_board_refresh_callback(
         return
 
     try:
-        board_id = int(parts[1])
+        _ = int(parts[1])
     except ValueError:
         return
 

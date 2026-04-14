@@ -39,7 +39,9 @@ async def enqueue_deferred_generation(
         if task_id:
             logging.info(
                 "Deferred generation enqueued: task=%s user=%s model=%s",
-                task_id, user_id, model_name,
+                task_id,
+                user_id,
+                model_name,
             )
         return task_id or None
     except Exception as e:

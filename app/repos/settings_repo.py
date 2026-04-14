@@ -74,7 +74,9 @@ async def get_global_setting(key: str, default: str = "") -> str:
             )
             value = rows[0]["value_data"] if rows else default
         except Exception as exc:
-            logger.warning("settings_repo: retry after bootstrap failed for '%s': %s — using default '%s'", key, exc, default)
+            logger.warning(
+                "settings_repo: retry after bootstrap failed for '%s': %s — using default '%s'", key, exc, default
+            )
             value = default
     except Exception as exc:
         logger.warning("settings_repo: failed to read '%s': %s — using default '%s'", key, exc, default)

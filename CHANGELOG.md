@@ -11,11 +11,13 @@ Format is optimized for agent-parseable context.
 - **Tabbed Response UI**: Inline responses are structured using XML tags (`<tldr>`, `<details>`, `<sources>`) extracted by the LLM and rendered dynamically via inline buttons. Users can seamlessly switch tabs without re-triggering generation. Admin-toggleable via `/set_inline_tabs <on|off>`.
 - **Collaborative AI-Notes (Topic Aggregator boards)**: Prefixing a query with `доска: <topic>` initializes a persistent, shared workspace. Any user can reply to the board to add notes (bypassing privacy mode via `via_bot` detection). The bot debounces new entries (60s window) and automatically synthesizes them into an evolving structural summary via the `TaskManager`. Backed by PostgreSQL `inline_boards`.
 
-### 🛡️ System Resilience & Multi-Threaded Hardening
+### 🛡️ System Resilience, Security & Multi-Threaded Hardening
 
+- **Database Security (Supabase Advisor)**: Enforced Row-Level Security (RLS) policies on `public.inline_boards` and `public.global_settings` using `RLS_POLICY_ADMIN` inside `app/db/rls.py`, explicitly addressing security flags from the Supabase deployment. Applied schema update via migration `036_enable_rls_inline_boards_global_settings.sql` (Supabase MCP).
+- **Inline Metrics Stability (FK Violation Fix)**: Resolved a persistent `ForeignKeyViolationError` in `app/metrics.py` where tracking metrics for unregistered users (like random users querying the bot inline) would crash the background DB worker. Implemented an atomic, silent 'guest' upsert (`is_authorized=0`) into `public.users` prior to metrics insertion stringently avoiding constraints failure without bypassing normal registration procedures.
 - Resolved database schema discrepancies in integration tests by synchronizing missing columns (`tts_temperature`) in `tests/integration/conftest.py`.
-- **Migration**: Applied `035_create_inline_boards.sql` via Supabase MCP. added `inline_boards` table with JSONB entries, indexes on `inline_msg_id` and `(chat_id, message_id)`.
-- Verified entire system via robust multi-threaded test suite (1643 tests passing).
+- **Migration**: Applied `035_create_inline_boards.sql` and `036_...` (RLS).
+- Verified entire system via robust multi-threaded test suite (1645 tests passing).
 
 ---
 

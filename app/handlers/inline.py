@@ -24,11 +24,10 @@ Prerequisites (one-time BotFather setup):
 import asyncio
 import html as _html
 import logging
+import re
 import time
 import uuid
 from datetime import UTC, datetime
-
-import re
 
 from telegram import (
     InlineKeyboardButton,
@@ -67,8 +66,8 @@ _IMAGE_INTENT_RE = re.compile(
 # Image model variants surfaced in inline results
 # (result_id_prefix, display_title, pollinations_model)
 _IMAGE_MODELS: list[tuple[str, str, str]] = [
-    ("img_flux",   "✨ Flux — быстрая генерация",  "flux"),
-    ("img_zimage", "⚡ Z-Image — качество HD",    "zimage"),
+    ("img_flux", "✨ Flux — быстрая генерация", "flux"),
+    ("img_zimage", "⚡ Z-Image — качество HD", "zimage"),
 ]
 
 # Static placeholder photo URL — Pollinations generates this once at first request;
@@ -85,7 +84,7 @@ _BOARD_PREFIX_RE = re.compile(r"^(?:доска|board|трекер)\s*:\s*", re.I
 # ── Tabbed response store ──────────────────────────────────────────────────────
 # In-memory TTL dict for segmented responses. Keyed by inline_message_id.
 # Entries expire after _TABS_TTL_S. Capped at _TABS_STORE_MAX entries (FIFO eviction).
-_TABS_TTL_S = 600.0   # 10 minutes
+_TABS_TTL_S = 600.0  # 10 minutes
 _TABS_STORE_MAX = 256
 _inline_tabs_store: dict[str, dict] = {}  # {imid: {tldr, details, sources, created}}
 
@@ -157,7 +156,6 @@ _TONES: list[tuple[str, str, str]] = [
 ]
 
 
-
 # Inline keyboard attached to every result — Telegram Bot API REQUIRES this
 # for ChosenInlineResult to include `inline_message_id`.  Without it the bot
 # cannot edit the placeholder in-place.  The button itself is cosmetic and
@@ -186,7 +184,6 @@ def _tone_hint(tone_id: str) -> str:
         if tid == tone_id:
             return hint
     return ""
-
 
 
 # ── Public handlers ───────────────────────────────────────────────────────────
@@ -414,6 +411,7 @@ async def _generate_and_swap_media(
     if result and result.success:
         # Build the deterministic GET URL — Telegram fetches it directly, no upload needed.
         import urllib.parse as _up
+
         encoded_prompt = _up.quote(prompt, safe="")
         image_url = (
             f"https://image.pollinations.ai/prompt/{encoded_prompt}"
@@ -497,7 +495,6 @@ async def _init_board_async(
 # ── Fast 3-way Race Requests for inline generation ───────────────────────────
 
 
-
 async def _stream_inline_fast(
     preferred_model: str,
     history: list,
@@ -552,9 +549,7 @@ async def _stream_inline_fast(
 
         # Read thinking level dynamically — admin can change via /set_inline_thinking
         # without restarting the container. Falls back to env-var default.
-        thinking_level = await get_global_setting(
-            "inline_thinking_level", settings.INLINE_THINKING_LEVEL
-        )
+        thinking_level = await get_global_setting("inline_thinking_level", settings.INLINE_THINKING_LEVEL)
 
         q: asyncio.Queue = asyncio.Queue()
 
@@ -578,9 +573,7 @@ async def _stream_inline_fast(
                 return
             await _q.put((kh, _End(kh), None))
 
-        tasks: dict[str, asyncio.Task] = {
-            kd["key_hash"]: asyncio.create_task(_race(kd)) for kd in keys
-        }
+        tasks: dict[str, asyncio.Task] = {kd["key_hash"]: asyncio.create_task(_race(kd)) for kd in keys}
         winner_kh: str | None = None
         chunks: list[str] = []
         errors: dict[str, Exception] = {}
@@ -694,13 +687,17 @@ async def _generate_and_edit_inline(
     # the web internally — we just inject today's date so it knows what "now"
     # means, and instruct it to ALWAYS use Google Search for factual queries.
     _tabs_directive = (
-        "\n\nВерни ответ строго в формате XML (без пояснений вне тегов):\n"
-        "<response>\n"
-        "  <tldr>Краткая выжимка в 2-3 предложения</tldr>\n"
-        "  <details>Полный развёрнутый ответ</details>\n"
-        "  <sources>Список источников, если есть (иначе оставь пустым)</sources>\n"
-        "</response>"
-    ) if tabs_enabled_now else ""
+        (
+            "\n\nВерни ответ строго в формате XML (без пояснений вне тегов):\n"
+            "<response>\n"
+            "  <tldr>Краткая выжимка в 2-3 предложения</tldr>\n"
+            "  <details>Полный развёрнутый ответ</details>\n"
+            "  <sources>Список источников, если есть (иначе оставь пустым)</sources>\n"
+            "</response>"
+        )
+        if tabs_enabled_now
+        else ""
+    )
 
     system_instruction = (
         f"[system: current_utc_date={today}]\n"
@@ -805,10 +802,7 @@ async def _generate_and_edit_inline(
             segments = _parse_xml_segments(final_answer)
             if segments:  # successful parse — show tabbed UI
                 _tabs_store_put(inline_message_id, segments)
-                header = (
-                    f"<b>{_html.escape(tone_label)}</b> · "
-                    f"<code>{_html.escape(user_query[:60])}</code>\n\n"
-                )
+                header = f"<b>{_html.escape(tone_label)}</b> · <code>{_html.escape(user_query[:60])}</code>\n\n"
                 tldr_body = markdown_to_html(segments["tldr"])
                 formatted = header + tldr_body
                 if len(formatted) > 4000:
@@ -849,6 +843,7 @@ async def _generate_and_edit_inline(
             formatted = formatted[:3997] + "…"
     else:
         from app.errors import strip_error_tag
+
         if _is_api_error and final_answer:
             formatted = strip_error_tag(final_answer)
         else:
@@ -892,7 +887,6 @@ async def _generate_and_edit_inline(
             )
         except Exception as fallback_err:
             logging.error("Inline: Plain-text fallback also failed: %s", fallback_err)
-
 
 
 # ── Retry store helpers ───────────────────────────────────────────────────────
@@ -1042,7 +1036,7 @@ async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT
     if len(parts) != 3 or parts[0] != "inl_tab":
         return
 
-    segment_key = parts[1]   # "tldr" | "details" | "sources"
+    segment_key = parts[1]  # "tldr" | "details" | "sources"
     inline_message_id = parts[2]
 
     if segment_key not in ("tldr", "details", "sources"):

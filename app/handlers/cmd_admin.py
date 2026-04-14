@@ -702,7 +702,6 @@ async def set_inline_tabs_command(update: Update, context: ContextTypes.DEFAULT_
     logging.info("Admin %s set inline_tabs_enabled → %s", update.effective_user.id, value)
     state_label = "включены ✅" if value == "on" else "выключены ❌"
     await update.message.reply_text(
-        f"🗂️ Вкладки для inline-режима: <b>{state_label}</b>\n"
-        "Изменение вступит в силу немедленно.",
+        f"🗂️ Вкладки для inline-режима: <b>{state_label}</b>\nИзменение вступит в силу немедленно.",
         parse_mode="HTML",
     )

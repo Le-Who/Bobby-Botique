@@ -14,7 +14,6 @@ import logging
 import time
 from typing import Any
 
-
 from app import database as db
 
 logger = logging.getLogger(__name__)
@@ -239,9 +238,7 @@ async def close_board(board_id: int) -> bool:
 async def get_active_boards_count() -> int:
     """Return the number of non-closed boards (monitoring/health check)."""
     try:
-        rows = await db.db_query(
-            "SELECT COUNT(*) AS cnt FROM inline_boards WHERE NOT closed"
-        )
+        rows = await db.db_query("SELECT COUNT(*) AS cnt FROM inline_boards WHERE NOT closed")
         return rows[0]["cnt"] if rows else 0
     except Exception as exc:
         logger.error("boards_repo.get_active_boards_count: %s", exc, exc_info=True)

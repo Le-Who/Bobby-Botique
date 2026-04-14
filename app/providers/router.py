@@ -294,7 +294,11 @@ class ProviderRouter:
                 key_suffix = raw_key[-4:] if len(raw_key) >= 4 else "????"
                 logging.info(
                     "Streaming: model=%s key=%s…(…%s) attempt=%d/%d",
-                    model_used, kh, key_suffix, _attempt + 1, max_key_retries,
+                    model_used,
+                    kh,
+                    key_suffix,
+                    _attempt + 1,
+                    max_key_retries,
                 )
 
                 provider = get_provider_for_model(model_used, key_data["api_key"])
@@ -330,8 +334,10 @@ class ProviderRouter:
                     had_transient = True
                     try:
                         await status_mgr.suspend_key(
-                            key_data["key_hash"], model_used,
-                            "transient", error_msg[:200],
+                            key_data["key_hash"],
+                            model_used,
+                            "transient",
+                            error_msg[:200],
                         )
                     except Exception as db_e:
                         logging.warning("Failed to suspend key: %s", db_e)
@@ -357,6 +363,7 @@ class ProviderRouter:
                     since asyncio.create_task copies ContextVars and mutations inside
                     the task are invisible to the parent context.
                     """
+
                     __slots__ = ("finish_reason",)
 
                     def __init__(self, finish_reason: str | None) -> None:
@@ -391,6 +398,7 @@ class ProviderRouter:
                     # Normal completion: read finish_reason from this task's own ContextVar
                     # and carry it in the sentinel so the parent context can apply it.
                     from app.streaming import _last_finish_reason as _fr_var
+
                     own_fr = _fr_var.get()
                     await q.put((idx, _StreamEndSignal(own_fr), None))
 
@@ -398,7 +406,11 @@ class ProviderRouter:
                 kh_b = keys_to_race[1]["key_hash"][:8]
                 logging.info(
                     "Race Requests: model=%s keys=[%s…, %s…] attempt=%d/%d",
-                    model_used, kh_a, kh_b, _attempt + 1, max_key_retries,
+                    model_used,
+                    kh_a,
+                    kh_b,
+                    _attempt + 1,
+                    max_key_retries,
                 )
 
                 tasks = [
@@ -485,6 +497,7 @@ class ProviderRouter:
                             # Winner stream completed — apply finish_reason to parent context
                             if chunk.finish_reason:
                                 from app.streaming import set_last_finish_reason
+
                                 set_last_finish_reason(chunk.finish_reason)
                             break  # All chunks delivered
                         if exc is not None:
@@ -517,7 +530,8 @@ class ProviderRouter:
             if fallback_model:
                 logging.info(
                     "Cascade fallback: %s → %s (all keys returned transient errors)",
-                    preferred_model, fallback_model,
+                    preferred_model,
+                    fallback_model,
                 )
                 async for chunk in self.stream_response(
                     preferred_model=fallback_model,

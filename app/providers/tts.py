@@ -303,11 +303,17 @@ async def generate_speech(
         # Re-raise retryable errors so the caller's key rotation loop can try
         # a different API key. Includes quota, overload, AND deadline exceeded —
         # 504 DEADLINE_EXCEEDED means the server timed out, not a permanent error.
-        if any(s in err_str for s in (
-            "429", "RESOURCE_EXHAUSTED",
-            "503", "UNAVAILABLE",
-            "504", "DEADLINE_EXCEEDED",
-        )):
+        if any(
+            s in err_str
+            for s in (
+                "429",
+                "RESOURCE_EXHAUSTED",
+                "503",
+                "UNAVAILABLE",
+                "504",
+                "DEADLINE_EXCEEDED",
+            )
+        ):
             logging.warning("TTS retryable error (will rotate key): %s", e)
             raise
         logging.error("TTS generation failed: %s", e)

@@ -580,9 +580,11 @@ async def stream_and_display(
         try:
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-            cancel_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Отменить", callback_data="cancel_generation")],
-            ])
+            cancel_kb = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("❌ Отменить", callback_data="cancel_generation")],
+                ]
+            )
             await placeholder_message.edit_text(
                 "⏳ Запрос в обработке: высокая нагрузка на сервера...",
                 reply_markup=cancel_kb,
@@ -601,6 +603,7 @@ async def stream_and_display(
         # Mark task as waiting for network headers (TTFB tracking)
         if user_id:
             from app import state as _state_mod
+
             _state_mod.mark_network_waiting(user_id)
 
         async for delta in router.stream_response(
@@ -643,6 +646,7 @@ async def stream_and_display(
                     # Mark task as alive (receiving data) — disables stall cancellation
                     if user_id:
                         from app import state as _state_mod
+
                         _state_mod.mark_network_alive(user_id)
 
                 if yield_hook is not None:
@@ -710,6 +714,7 @@ async def stream_and_display(
     # Clean up network stall tracking
     if user_id:
         from app import state as _state_mod
+
         _state_mod.clear_network_stall(user_id)
 
     markup = reply_markup

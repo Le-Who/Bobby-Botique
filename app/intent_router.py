@@ -67,20 +67,40 @@ _CITY_ALIASES: dict[str, tuple[float, float]] = {
 
 _CURRENCY_CODES = {
     # Russian aliases → ISO 4217
-    "доллар": "USD", "долларов": "USD", "долларах": "USD", "баксов": "USD",
+    "доллар": "USD",
+    "долларов": "USD",
+    "долларах": "USD",
+    "баксов": "USD",
     "евро": "EUR",
-    "рубль": "RUB", "рублей": "RUB", "рублях": "RUB", "рубл": "RUB",
-    "фунт": "GBP", "фунтов": "GBP",
-    "юань": "CNY", "юаней": "CNY",
-    "йена": "JPY", "иена": "JPY", "йен": "JPY",
+    "рубль": "RUB",
+    "рублей": "RUB",
+    "рублях": "RUB",
+    "рубл": "RUB",
+    "фунт": "GBP",
+    "фунтов": "GBP",
+    "юань": "CNY",
+    "юаней": "CNY",
+    "йена": "JPY",
+    "иена": "JPY",
+    "йен": "JPY",
     "тенге": "KZT",
-    "гривна": "UAH", "гривен": "UAH",
+    "гривна": "UAH",
+    "гривен": "UAH",
     "сом": "KGS",
     "сум": "UZS",
     # ISO codes (pass-through)
-    "usd": "USD", "eur": "EUR", "rub": "RUB", "gbp": "GBP",
-    "jpy": "JPY", "cny": "CNY", "kzt": "KZT", "uah": "UAH",
-    "kgs": "KGS", "uzs": "UZS", "try": "TRY", "chf": "CHF",
+    "usd": "USD",
+    "eur": "EUR",
+    "rub": "RUB",
+    "gbp": "GBP",
+    "jpy": "JPY",
+    "cny": "CNY",
+    "kzt": "KZT",
+    "uah": "UAH",
+    "kgs": "KGS",
+    "uzs": "UZS",
+    "try": "TRY",
+    "chf": "CHF",
 }
 
 # Pattern to extract a city candidate from weather queries.
@@ -109,24 +129,49 @@ _CITY_EXTRACT_PATTERN = re.compile(
 )
 
 
-
 # Common Russian locative/prepositional case suffixes to strip before geocoding.
 # Order matters: longer suffixes first to avoid partial matches.
 _RUSSIAN_CITY_SUFFIXES = (
-    "ском", "ской", "ского", "овске", "евске", "инске",
-    "ове", "еве", "еве", "ове",
-    "ске", "зке",
-    "ах", "ях",
-    "е", "и", "у", "ю",
+    "ском",
+    "ской",
+    "ского",
+    "овске",
+    "евске",
+    "инске",
+    "ове",
+    "еве",
+    "еве",
+    "ове",
+    "ске",
+    "зке",
+    "ах",
+    "ях",
+    "е",
+    "и",
+    "у",
+    "ю",
 )
 
 # Words that may trail after the city name in a voice query.
 # Stripped from the raw regex capture before geocoding.
-_TRAILING_TEMPORAL_WORDS = frozenset({
-    "сейчас", "сегодня", "завтра", "утром", "вечером", "ночью",
-    "today", "tomorrow", "now", "tonight", "morning", "evening",
-    "пожалуйста", "now", "please",
-})
+_TRAILING_TEMPORAL_WORDS = frozenset(
+    {
+        "сейчас",
+        "сегодня",
+        "завтра",
+        "утром",
+        "вечером",
+        "ночью",
+        "today",
+        "tomorrow",
+        "now",
+        "tonight",
+        "morning",
+        "evening",
+        "пожалуйста",
+        "please",
+    }
+)
 
 
 def _clean_candidate(raw: str) -> str:
@@ -139,7 +184,6 @@ def _clean_candidate(raw: str) -> str:
     while words and words[-1].lower() in _TRAILING_TEMPORAL_WORDS:
         words.pop()
     return " ".join(words)
-
 
 
 def _normalize_city_candidate(raw: str) -> str:
@@ -390,11 +434,7 @@ async def _handle_currency(text: str) -> IntentResult | None:
         return None
 
     date = data.get("date", "")
-    response = (
-        f"💱 **Курс {base} → {target}**\n\n"
-        f"1 {base} = **{rate:.4f} {target}**\n\n"
-        f"_Данные: Frankfurter ({date})_"
-    )
+    response = f"💱 **Курс {base} → {target}**\n\n1 {base} = **{rate:.4f} {target}**\n\n_Данные: Frankfurter ({date})_"
     return IntentResult(response)
 
 
