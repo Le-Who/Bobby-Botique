@@ -92,24 +92,40 @@ _IMAGE_EDIT_INTENT_RE = re.compile(
 #   🎨 Арт     — Qwen Image Plus, stylized / avatar quality
 #   🅰️ Мем    — Wan 2.7 Image, accurate text rendering on images
 #   🔷 Изменить — FLUX.2 Klein 4B, auto-routed only (hidden from menu)
-_IMAGE_MODELS: list[tuple[str, str, str]] = [
-    ("img_turbo", "⚡ Турбо — быстро и красиво",     "zimage"),
-    ("img_smart", "🤖 Умный — бот улучшит промпт",   "gptimage"),
-    ("img_art",   "🎨 Арт / Аватарка — стилизация", "qwen-image"),
-    ("img_meme",  "🅰️ Мем / Текст — точный текст",  "wan-image"),
+# Format: (result_id_prefix, display_title, pollinations_model, placeholder_url)
+# Each model gets a UNIQUE color so the 2×2 grid is visually distinct.
+_IMAGE_MODELS: list[tuple[str, str, str, str]] = [
+    (
+        "img_turbo",
+        "⚡ Турбо — быстро и красиво",
+        "zimage",
+        "https://placehold.co/800x450/0d1117/58a6ff.jpg?text=Turbo",
+    ),
+    (
+        "img_smart",
+        "🤖 Умный — бот улучшит промпт",
+        "gptimage",
+        "https://placehold.co/800x450/0d2b0d/00e676.jpg?text=Smart+AI",
+    ),
+    (
+        "img_art",
+        "🎨 Арт / Аватарка — стилизация",
+        "qwen-image",
+        "https://placehold.co/800x450/1a0d2e/cc77ff.jpg?text=Art+Style",
+    ),
+    (
+        "img_meme",
+        "🅰️ Мем / Текст — точный текст",
+        "wan-image",
+        "https://placehold.co/800x450/2b1500/ffaa00.jpg?text=Meme+Text",
+    ),
 ]
 # Klein is NOT shown in the inline menu — it is auto-routed when user attaches
 # an image with an edit intent keyword.
 _IMG_KLEIN_ID    = "img_edit"
 _IMG_KLEIN_MODEL = "klein"
+_IMG_KLEIN_PLACEHOLDER = "https://placehold.co/800x450/1a1a0d/ffe066.jpg?text=Edit+Photo"
 
-# Static placeholder photo URL — must return a publicly accessible JPEG/PNG
-# that Telegram can verify *before* showing InlineQueryResultPhoto entries.
-# Using placehold.co (stable CDN, dark card aesthetic matching our UX).
-# The actual generated image replaces this once Pollinations finishes.
-_IMG_PLACEHOLDER_URL = (
-    "https://placehold.co/800x450/0d1117/58a6ff.jpg?text=Generating%E2%80%A6"
-)
 
 # Board intent prefix — compiled once; shared by query and result handlers.
 _BOARD_PREFIX_RE = re.compile(r"^(?:доска|board|трекер)\s*:\s*", re.IGNORECASE)
@@ -292,7 +308,9 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if has_edit_intent:
             # Edit/inpaint mode: show only klein
-            routed_models: list[tuple[str, str, str]] = [(_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)]
+            routed_models: list[tuple[str, str, str, str]] = [
+                (_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL, _IMG_KLEIN_PLACEHOLDER)
+            ]
             auto_hint = "✏️ Режим редактирования (Klein)"
         elif has_quoted_text:
             # Meme/text mode: wan-image first for text accuracy
@@ -307,8 +325,8 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         results_img = [
             InlineQueryResultPhoto(
                 id=result_id,
-                photo_url=_IMG_PLACEHOLDER_URL,
-                thumbnail_url=_IMG_PLACEHOLDER_URL,
+                photo_url=placeholder_url,
+                thumbnail_url=placeholder_url,
                 title=title,
                 description=(
                     f"{auto_hint} · {stripped_prompt[:70]}" if auto_hint else stripped_prompt[:100]
@@ -321,7 +339,7 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                 parse_mode="HTML",
                 reply_markup=_LOADING_KEYBOARD,
             )
-            for result_id, title, _ in routed_models
+            for result_id, title, _, placeholder_url in routed_models
         ]
         await query.answer(results_img, cache_time=0, is_personal=True)
         return
