@@ -538,7 +538,7 @@ async def _extract_graph_from_media(
 
         # Attach file_id to memory_nodes created from this media
         if edges > 0 and telegram_file_id and source_memory_id:
-            from app.database import db_manager, db_query
+            from app.database import db_manager
             from app.repos.db_helpers import clear_user_context, set_user_context
 
             async with db_manager.pool.acquire() as conn:

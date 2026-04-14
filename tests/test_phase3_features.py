@@ -1,7 +1,6 @@
 # tests/test_phase3_features.py
 """Integration tests for Phase 3 & 4 features: streaming, memory, model selector, GDPR, Prometheus."""
 
-import asyncio
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch

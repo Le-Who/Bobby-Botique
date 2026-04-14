@@ -6,7 +6,6 @@ import pytest
 
 from app.state import (
     UserState,
-    _UserStateStore,
     begin_custom_role_creation,
     begin_manual_role_creation,
     clear_custom_role_state,

@@ -20,7 +20,6 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from google import genai
 from google.genai import types
 from google.genai.errors import APIError
 

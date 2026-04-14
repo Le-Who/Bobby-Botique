@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, r"d:\gemaibotv2\gemaibotv2")
 from app.utils.text_format import markdown_to_html
 
-text = """🎙️ **Распознанный текст**
+text = r"""🎙️ **Распознанный текст**
 _аниме-девушки с воющимися формами._
 
 🎨 **Подтвердите запрос к ИИ-художнику:**

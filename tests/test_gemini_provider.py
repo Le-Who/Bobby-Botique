@@ -2,7 +2,6 @@
 Tests for GeminiProvider._execute_request via the Provider class directly.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

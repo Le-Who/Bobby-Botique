@@ -9,7 +9,6 @@ queries in _load_metrics_from_db work correctly across multiple save cycles.
 All tests use transactional rollback — NO data persists after tests complete.
 """
 
-import json
 from datetime import date, timedelta
 
 import pytest

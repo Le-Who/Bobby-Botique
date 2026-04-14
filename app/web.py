@@ -12,13 +12,13 @@ Hypercorn — no sync↔async bridge needed.
 """
 
 import asyncio
+import contextlib
 import datetime
 import hashlib
 import hmac
 import logging
 import os
 import secrets
-import time
 from functools import wraps
 
 from quart import (
@@ -161,9 +161,6 @@ def require_auth(f):
 
     return decorated_function
 
-
-# Brute-force login protection using shared SyncRateLimiter
-import contextlib
 
 from app.security import SyncRateLimiter  # noqa: E402
 

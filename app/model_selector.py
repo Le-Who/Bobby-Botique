@@ -13,7 +13,6 @@ Design rules:
 - Suggestions should be non-intrusive hints, not commands.
 """
 
-import logging
 import re
 from dataclasses import dataclass
 

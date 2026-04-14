@@ -1,6 +1,5 @@
 """Tests for app.context.summarizer — pure chunking and text extraction logic."""
 
-import pytest
 
 from app.context.summarizer import _extract_text, split_into_chunks
 

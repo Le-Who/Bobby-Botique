@@ -1,22 +1,17 @@
 """Tests for app.documents.repository — database CRUD operations."""
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.documents.repository import (
     check_document_limit,
     check_duplicate_file,
-    cleanup_old_documents,
     cleanup_oldest_documents,
     delete_all_user_documents,
     delete_document,
-    get_document_by_id,
-    get_document_content,
     get_document_stats,
     get_user_document_stats,
-    get_user_documents,
     save_document_content,
 )
 

@@ -1,5 +1,4 @@
 import asyncio
-import os
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -13,12 +12,11 @@ mock_settings.GEMINI_API_KEYS = ["MOCK_KEY"]
 
 with patch.dict("sys.modules"):
     # Inject mocked settings
-    from app.config import settings
 
     # We gotta mock the actual config module dict
     sys.modules["app.config"].settings = mock_settings
 
-    from app.handlers.cmd_image import _check_draw_intent_fast, check_draw_intent_async
+    from app.handlers.cmd_image import check_draw_intent_async
 
     # Mock the AI extraction since we don't have a real key here
     async def mock_extract(text):

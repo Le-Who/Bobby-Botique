@@ -1,7 +1,7 @@
 """Tests for app.context_assembler — token-budget-aware context assembly."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

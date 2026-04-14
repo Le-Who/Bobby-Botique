@@ -2,7 +2,6 @@ import asyncio
 import os
 
 os.environ["ADMIN_ID"] = "123"  # mock admin to load settings
-import time
 
 from google import genai
 from google.genai import types

@@ -1,6 +1,6 @@
 """Tests for app.adapters.ui_adapter — TelegramMessageAdapter behavior."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 

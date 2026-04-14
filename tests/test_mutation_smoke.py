@@ -6,9 +6,7 @@ Each test patches a specific function with a broken variant and asserts
 that at least one real test catches the mutation.
 """
 
-from unittest.mock import patch
 
-import pytest
 
 
 def _run_test_expecting_failure(test_func, *args, **kwargs):

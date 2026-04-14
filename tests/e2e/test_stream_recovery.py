@@ -11,7 +11,6 @@ the StreamingWriter must:
 Level: E2E (hooks into stream_and_display directly; no real Telegram API)
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

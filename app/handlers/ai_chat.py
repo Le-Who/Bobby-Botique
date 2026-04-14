@@ -13,7 +13,7 @@ from app.handlers.ai_core import (
     _resolve_ai_request,
     handle_ai_response_error,
 )
-from app.handlers.chat_logic import classify_resolution, format_memories_for_system_prompt
+from app.handlers.chat_logic import classify_resolution
 from app.i18n import detect_language, t
 from app.prompt_registry import get_registry
 from app.repos.chats import update_user_chat

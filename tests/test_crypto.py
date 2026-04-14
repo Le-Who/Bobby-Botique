@@ -1,7 +1,7 @@
 """Tests for app.crypto – Fernet-based API key encryption."""
 
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

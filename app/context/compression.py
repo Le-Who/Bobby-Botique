@@ -20,7 +20,6 @@ from app.prompt_registry import estimate_tokens_cyrillic
 from app.repos.memory_config import (
     L0_MAX_TOKENS,
     L1_MAX_TOKENS,
-    L2_MAX_TOKENS,
 )
 
 logger = logging.getLogger(__name__)

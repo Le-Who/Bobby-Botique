@@ -3,9 +3,7 @@
 This module validates the bug fixes from the codebase audit to prevent regressions.
 """
 
-import asyncio
 import time
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

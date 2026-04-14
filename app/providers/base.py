@@ -13,13 +13,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
 from google.genai import types
-from google.genai.errors import APIError
 
-from app.config import settings
 from app.errors import user_friendly_error
-from app.metrics import metrics_collector
 from app.resilience_policy import ResiliencePolicy, run_with_resilience
 
 # ── Thinking config helpers ──────────────────────────────────────────

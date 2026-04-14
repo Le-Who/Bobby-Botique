@@ -13,7 +13,6 @@ from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from google.genai import types
 
 from app.core.agentic import (
     AgenticSearch,
@@ -114,13 +113,13 @@ class TestDomainClassification:
 
 class TestFreshnessClassification:
     def test_recent(self):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         recent_date = (datetime.now(UTC) - timedelta(days=5)).isoformat()
         assert _classify_freshness(recent_date) == "recent"
 
     def test_this_year(self):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         six_months_ago = (datetime.now(UTC) - timedelta(days=180)).isoformat()
         assert _classify_freshness(six_months_ago) == "this_year"

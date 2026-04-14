@@ -3,7 +3,6 @@ AI Search handlers — QnA quick answers, research agent, and complex agent sear
 """
 
 import asyncio
-import json
 import logging
 import time
 
@@ -27,7 +26,6 @@ from app.repos.chats import get_user_chat, update_user_chat
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
 from app.utils.stage_indicators import (
-    STAGES_SEARCH_DEEP,
     STAGES_SEARCH_QUICK,
     update_stage,
 )

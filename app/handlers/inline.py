@@ -29,7 +29,9 @@ Prerequisites (one-time BotFather setup):
 """
 
 import asyncio
+import contextlib
 import html as _html
+import io
 import logging
 import re
 import time
@@ -41,6 +43,7 @@ from telegram import (
     InlineKeyboardMarkup,
     InlineQueryResultArticle,
     InlineQueryResultPhoto,
+    InputFile,
     InputMediaPhoto,
     InputTextMessageContent,
     Update,
@@ -83,15 +86,15 @@ _IMAGE_EDIT_INTENT_RE = re.compile(
 
 # Image model variants surfaced in inline results.
 # Format: (result_id_prefix, display_title, pollinations_model)
-# Modes:
-#   ⚡ Турбо     — Z-Image Turbo (6B Flux + 2× upscaling), fast and crisp
-#   🧠 Умный    — GPT Image 1 Mini, prompt auto-enhanced by the model
-#   🎨 Арт      — Qwen Image Plus, stylized / avatar quality
-#   🅰️ Мем/Текст — Wan 2.7, accurate text rendering on images
-#   🪄 Изменить — FLUX.2 Klein 4B, auto-routed only (hidden from menu)
+# Approved set (2026-04-13):
+#   ⚡ Турбо    — Z-Image Turbo (6B Flux + 2× upscaling), fast & crisp
+#   🤖 Умный   — GPT Image 1 Mini, prompt auto-enhanced by the model
+#   🎨 Арт     — Qwen Image Plus, stylized / avatar quality
+#   🅰️ Мем    — Wan 2.7 Image, accurate text rendering on images
+#   🔷 Изменить — FLUX.2 Klein 4B, auto-routed only (hidden from menu)
 _IMAGE_MODELS: list[tuple[str, str, str]] = [
     ("img_turbo", "⚡ Турбо — быстро и красиво",     "zimage"),
-    ("img_smart", "🧠 Умный — бот улучшит промпт",   "gptimage"),
+    ("img_smart", "🤖 Умный — бот улучшит промпт",   "gptimage"),
     ("img_art",   "🎨 Арт / Аватарка — стилизация", "qwen-image"),
     ("img_meme",  "🅰️ Мем / Текст — точный текст",  "wan-image"),
 ]
@@ -110,6 +113,28 @@ _IMG_PLACEHOLDER_URL = (
 
 # Board intent prefix — compiled once; shared by query and result handlers.
 _BOARD_PREFIX_RE = re.compile(r"^(?:доска|board|трекер)\s*:\s*", re.IGNORECASE)
+
+# Model emoji map reused in the generated image caption.
+_MODEL_EMOJI: dict[str, str] = {
+    "zimage": "⚡",
+    "seedream5": "🌱",
+    "seedream": "🌿",
+    "gptimage": "🧠",
+    "gptimage-large": "💎",
+    "qwen-image": "🎨",
+    "wan-image": "🅰️",
+    "wan-image-pro": "🅰️",
+    "kontext": "🖋️",
+    "klein": "🪄",
+    "flux": "✨",
+    "grok-imagine": "🚀",
+    "grok-imagine-pro": "💠",
+}
+
+
+def _get_model_emoji(model: str) -> str:
+    return _MODEL_EMOJI.get(model, "🎨")
+
 
 # ── Tabbed response store ──────────────────────────────────────────────────────
 # In-memory TTL dict for segmented responses. Keyed by inline_message_id.
@@ -373,10 +398,15 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     # ── Guard: empty / hint ───────────────────────────────────────────────────
     if not user_query or result_id == "hint":
         bot_name = context.bot.first_name or "бота"
+        _empty_hint = (
+            f"❌ <b>Ошибка:</b> Пустой запрос.\n"
+            f"Введите текст после @{bot_name} "
+            f"(например, <i>какая сегодня погода?</i>)"
+        )
         try:
             await context.bot.edit_message_text(
                 inline_message_id=inline_message_id,
-                text=f"❌ <b>Ошибка:</b> Пустой запрос.\nВведите текст после @{bot_name} (например, <i>какая сегодня погода?</i>)",
+                text=_empty_hint,
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([]),
             )
@@ -449,12 +479,13 @@ async def _generate_and_swap_media(
     """Generate an image via Pollinations and swap the inline placeholder photo.
 
     Flow:
-      1. Call PollinationsProvider.generate() to get image bytes.
-      2. Build the Pollinations GET URL (deterministic, no hosting required).
-      3. Call bot.edit_message_media(inline_message_id=..., media=InputMediaPhoto(url)).
-      4. On failure, edit caption to show error + retry hint.
+      1. Call PollinationsProvider.generate() — returns raw JPEG/PNG bytes.
+      2. Upload the bytes directly via InputFile(io.BytesIO()) to edit_message_media.
+         This avoids Telegram having to re-fetch a Pollinations URL that may require
+         auth headers (nologo, rate-limits etc.) and guarantees the swap always works.
+      3. On failure, edit caption to show error with model and prompt excerpt.
     """
-    import urllib.parse
+    import contextlib
 
     from app.providers.pollinations import get_pollinations_provider
 
@@ -469,44 +500,39 @@ async def _generate_and_swap_media(
 
     elapsed = time.monotonic() - _gen_start
 
-    if result and result.success:
-        # Build the deterministic GET URL (gen.pollinations.ai) — Telegram fetches it directly.
-        import urllib.parse as _up
-
-        encoded_prompt = _up.quote(prompt, safe="")
-        enhance_param = "true" if enhance_prompt else "false"
-        image_url = (
-            f"https://gen.pollinations.ai/image/{encoded_prompt}"
-            f"?model={model}&width=1024&height=1024&seed=-1&enhance={enhance_param}&nologo=true"
+    if result and result.success and result.images:
+        image_bytes = result.images[0]
+        caption = (
+            f"🎨 <b>{_html.escape(prompt[:200])}</b>"
+            f"\n<i>{_get_model_emoji(model)} {model} • {elapsed:.1f}s</i>"
         )
         try:
             await bot.edit_message_media(
                 inline_message_id=inline_message_id,
                 media=InputMediaPhoto(
-                    media=image_url,
-                    caption=f"🎨 <b>{_html.escape(prompt[:200])}</b>\n<i>⚡ {model.title()} • {elapsed:.1f}s</i>",
+                    media=InputFile(io.BytesIO(image_bytes), filename="image.jpg"),
+                    caption=caption,
                     parse_mode="HTML",
                 ),
                 reply_markup=InlineKeyboardMarkup([]),
             )
             logging.info(
-                "Inline image: swapped placeholder in %.1fs for prompt %r",
+                "Inline image: swapped via bytes upload in %.1fs for prompt %r (model=%s)",
                 elapsed,
                 prompt[:60],
+                model,
             )
         except Exception as edit_err:
             logging.error("Inline image: edit_message_media failed: %s", edit_err)
-            try:
+            with contextlib.suppress(Exception):
                 await bot.edit_message_caption(
                     inline_message_id=inline_message_id,
                     caption="❌ Не удалось обновить изображение. Попробуйте снова.",
                 )
-            except Exception:
-                pass
     else:
         err_msg = getattr(result, "error_message", "unknown") if result else "provider_exception"
         logging.warning("Inline image: generation failed (%s) for prompt %r", err_msg, prompt[:60])
-        try:
+        with contextlib.suppress(Exception):
             await bot.edit_message_caption(
                 inline_message_id=inline_message_id,
                 caption=(
@@ -516,8 +542,6 @@ async def _generate_and_swap_media(
                 ),
                 parse_mode="HTML",
             )
-        except Exception:
-            pass
 
     await metrics_collector.record_api_call("pollinations_inline", model, user_id=user_id)
 
@@ -811,15 +835,13 @@ async def _generate_and_edit_inline(
         if _progress_shown:
             return
         _progress_shown = True
-        try:
+        with contextlib.suppress(Exception):
             await bot.edit_message_text(
                 inline_message_id=inline_message_id,
                 text=_progress_delayed_html(bot_name),
                 parse_mode="HTML",
                 reply_markup=_LOADING_KEYBOARD,
             )
-        except Exception:
-            pass  # Non-critical
 
     progress_task = asyncio.create_task(_delayed_progress_edit())
 
@@ -901,14 +923,12 @@ async def _generate_and_edit_inline(
                     )
                 except Exception as edit_err:
                     logging.error("Inline tabs: edit failed: %s", edit_err)
-                    try:
+                    with contextlib.suppress(Exception):
                         await bot.edit_message_text(
                             inline_message_id=inline_message_id,
                             text=strip_formatting(formatted)[:4000] or _FALLBACK_ERROR,
                             reply_markup=reply_markup,
                         )
-                    except Exception:
-                        pass
                 return  # Done — tabs path handled
 
         # ── Plain text path (tabs off or XML parse failed) ────────────────────
@@ -1042,12 +1062,10 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
 
     if not entry or (_time.monotonic() - entry["ts"] > _RETRY_TTL_S):
         # Expired or unknown — edit with a polite message
-        try:
+        with contextlib.suppress(Exception):
             await query.edit_message_text(
                 "⏳ Запрос устарел. Пожалуйста, вызовите бот заново.",
             )
-        except Exception:
-            pass
         return
 
     inline_message_id = query.inline_message_id
@@ -1056,14 +1074,12 @@ async def handle_inline_retry_callback(update: Update, context: ContextTypes.DEF
 
     # Show loading state
     bot_name = context.bot.first_name or "Bot"
-    try:
+    with contextlib.suppress(Exception):
         await query.edit_message_text(
             text=_placeholder_html(bot_name),
             parse_mode="HTML",
             reply_markup=_LOADING_KEYBOARD,
         )
-    except Exception:
-        pass
 
     # Re-run generation as a background task
     from app.utils.background_tasks import get_task_manager
@@ -1139,10 +1155,8 @@ async def handle_inline_tab_switch(update: Update, context: ContextTypes.DEFAULT
 
     segments = _tabs_store_get(inline_message_id)
     if not segments:
-        try:
+        with contextlib.suppress(Exception):
             await query.answer("⏳ Данные устарели. Повторите запрос.", show_alert=True)
-        except Exception:
-            pass
         return
 
     content = segments.get(segment_key, "").strip()

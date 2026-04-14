@@ -10,9 +10,8 @@ Verifies:
 - convert_to_typed_exception utility
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import asyncpg
 import pytest
 
 from app.errors import (

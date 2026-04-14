@@ -27,7 +27,6 @@ from google.genai.errors import APIError
 from app.metrics import metrics_collector
 from app.utils.formatting import TelegramFormatter
 from app.utils.text_format import sanitize_html_tags, strip_formatting
-from app.utils.ux_improvements import wrap_partial_response
 
 if TYPE_CHECKING:
     from telegram import Message

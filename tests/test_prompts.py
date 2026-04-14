@@ -1,6 +1,5 @@
 """Tests for app.prompts — system instruction composition, custom role cache, JSON extraction."""
 
-import pytest
 
 from app.prompts import (
     DEFAULT_ROLES,

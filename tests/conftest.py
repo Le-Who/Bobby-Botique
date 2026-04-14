@@ -4,8 +4,6 @@ Settings object for tests that import the production modules directly.
 """
 
 import asyncio
-import os
-import sys
 from pathlib import Path
 
 import pytest

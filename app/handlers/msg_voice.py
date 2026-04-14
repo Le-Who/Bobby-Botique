@@ -388,7 +388,7 @@ async def _auto_route_to_image(
     Shows the transcript and hands off control to the user via the interactive menu,
     allowing them to modify Model or Aspect Ratio before generating.
     """
-    from app.handlers.cmd_image import _build_main_menu, _escape_md, _get_draw_state, _set_draw_state
+    from app.handlers.cmd_image import _build_main_menu, _escape_md, _set_draw_state
     from app.utils.formatting import TelegramFormatter
 
     # 1. Update the canvas state with the detected prompt

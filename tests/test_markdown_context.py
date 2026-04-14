@@ -1,6 +1,5 @@
 """Tests for _detect_open_markdown — markdown context detection for streaming overflow."""
 
-import pytest
 
 from app.streaming import _detect_open_markdown
 

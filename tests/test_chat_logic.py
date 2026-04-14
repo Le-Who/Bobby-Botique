@@ -3,8 +3,6 @@
 import pytest
 
 from app.handlers.chat_logic import (
-    ResolutionResult,
-    ResponseAction,
     classify_resolution,
     classify_response,
 )

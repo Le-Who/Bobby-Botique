@@ -26,6 +26,7 @@ Sequential TTS calls are mandatory for both providers:
 """
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Coroutine
 from typing import Any
@@ -140,11 +141,9 @@ async def _generate_single_chunk_gemini(
                             exc,
                         )
                         # Suspend the failed key
-                        try:
+                        with contextlib.suppress(Exception):
                             err_cat = classify_key_error(str(exc))
                             await status_mgr.suspend_key(kd["key_hash"], model_a, err_cat, str(exc)[:200])
-                        except Exception:
-                            pass
                         failed_keys.add(kd["key_hash"])
 
             if winner_pcm is not None:
@@ -386,10 +385,8 @@ async def _generate_and_send_voice(
             logging.error("Failed to send voice reply to Telegram: %s", e)
     finally:
         if status_msg:
-            try:
+            with contextlib.suppress(Exception):
                 await status_msg.delete()
-            except Exception:
-                pass
 
 
 def fire_voice_reply(

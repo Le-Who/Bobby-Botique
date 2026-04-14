@@ -660,7 +660,6 @@ async def role_edit_ai_save_callback(update: Update, context: ContextTypes.DEFAU
 
     # If this role is currently active, update system_prompt
     chat_state = await get_user_chat(user_id)
-    from app.repos.roles import get_custom_role_prompt as _get_old
 
     # The role's old prompt may have been the active one — check against the stored current
     old_prompt = context.user_data.get("edit_prompt_ai_current") if context.user_data else None

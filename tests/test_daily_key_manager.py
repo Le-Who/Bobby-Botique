@@ -2,8 +2,7 @@
 Tests for DailyKeyManager in app/repos/keys.py.
 """
 
-from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

@@ -16,7 +16,6 @@ import logging
 import os
 import sys
 import time
-from typing import Any
 
 from app.request_context import get_chat_id, get_request_id, get_user_id
 

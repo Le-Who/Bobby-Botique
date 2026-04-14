@@ -1,7 +1,6 @@
 """Tests for app.middleware.dedup — request deduplication middleware."""
 
 import time
-from unittest.mock import patch
 
 import pytest
 

@@ -14,7 +14,6 @@ from app.config import settings
 from app.database import (
     ChatState,
     clear_user_context,
-    db_execute_many,
     db_manager,
     db_query,
     reconnect_database,

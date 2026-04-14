@@ -1,6 +1,5 @@
 """Tests for send_long_message — message splitting over Telegram's 4096-char limit."""
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

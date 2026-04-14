@@ -12,7 +12,6 @@ Also registers a periodic health-check job (30-min interval) that pings all prov
 and alerts the admin on first failure per provider (6h cooldown).
 """
 
-import asyncio
 import logging
 import time
 

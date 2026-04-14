@@ -1,6 +1,5 @@
 """Tests for app.repos.memory — constants and configuration validation."""
 
-import pytest
 
 
 class TestMemoryConstants:

@@ -1,6 +1,5 @@
 """Tests for app.utils.json_utils — JSON extraction from noisy model output."""
 
-import pytest
 
 from app.utils.json_utils import extract_json_object
 

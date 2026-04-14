@@ -1,8 +1,6 @@
 import pytest
 
 pytestmark = pytest.mark.integration
-import json
-import os
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
@@ -32,7 +30,6 @@ async def test_pgvector_chunking_and_fallback(db_conn, mock_db_manager):
     TC-002: Ensure large text insertion into pgvector gets properly chunked
     and handles potential database connection/dimension errors gracefully.
     """
-    from app.database import db_query
     from app.repos.memory import store_memory
 
     # 1. Arrange: Create a user and a very large memory text

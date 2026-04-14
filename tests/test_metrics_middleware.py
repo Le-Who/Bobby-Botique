@@ -1,7 +1,7 @@
 """Tests for app.utils.metrics_middleware — MetricsMiddleware + track_metrics."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

@@ -9,4 +9,3 @@ Existing imports continue to work::
 """
 
 from app.context import *  # noqa: F401,F403
-from app.context import get_assembler  # noqa: F811 — explicit re-export

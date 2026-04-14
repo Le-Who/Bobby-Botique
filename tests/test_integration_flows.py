@@ -5,7 +5,6 @@ These tests mock only external boundaries (database, AI APIs, Telegram)
 and verify that the internal business logic chain works end-to-end.
 """
 
-from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -170,7 +169,6 @@ class TestKeyRotationFlow:
     @pytest.mark.asyncio
     async def test_daily_key_manager_is_available_over_limit(self, mock_db) -> None:
         """Key is NOT available when usage >= threshold."""
-        from app.config import settings
         from app.repos.keys import DailyKeyManager
 
         km = DailyKeyManager("api_keys", "key_usage")

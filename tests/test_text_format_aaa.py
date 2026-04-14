@@ -10,7 +10,6 @@ Covers:
 These are critical risk areas: invalid HTML causes Telegram to reject edit_text.
 """
 
-import pytest
 
 from app.utils.text_format import (
     markdown_to_html,

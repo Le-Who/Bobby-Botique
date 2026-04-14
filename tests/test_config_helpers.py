@@ -1,6 +1,5 @@
 """Tests for app.config helper functions — pure parsing logic."""
 
-import os
 
 import pytest
 

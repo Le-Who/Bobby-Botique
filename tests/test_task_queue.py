@@ -1,9 +1,9 @@
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.queue import Task, TaskPriority, TaskQueue, TaskStatus
+from app.queue import TaskPriority, TaskQueue, TaskStatus
 
 
 @pytest.fixture

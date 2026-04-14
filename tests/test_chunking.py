@@ -9,7 +9,6 @@ Validates:
 6. Query relevance scoring selects better chunks.
 """
 
-import pytest
 
 from app.documents.chunking import (
     _estimate_tokens,

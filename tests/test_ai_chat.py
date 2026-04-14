@@ -1,10 +1,8 @@
 """Tests for app.handlers.ai_chat — regular conversational AI chat."""
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from telegram import InlineKeyboardMarkup, Message
 
 from app.handlers.ai_chat import _handle_regular_chat
 from tests.factories import make_chat_state, make_telegram_message

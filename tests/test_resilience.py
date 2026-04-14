@@ -1,6 +1,5 @@
 """Tests for app.resilience_policy — retry delays, transient error detection, run_with_resilience."""
 
-import asyncio
 import random
 from unittest.mock import AsyncMock, patch
 

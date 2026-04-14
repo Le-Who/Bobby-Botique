@@ -6,7 +6,6 @@ concurrent image downloads, and complex media group search.
 import asyncio
 import logging
 
-from PIL import Image
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.config import settings

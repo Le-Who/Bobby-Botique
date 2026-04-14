@@ -1,6 +1,5 @@
 """Tests for app.repos.chats — message extraction, chat state helpers."""
 
-import pytest
 
 from app.repos.chats import _extract_message_content
 

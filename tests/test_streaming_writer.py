@@ -13,7 +13,6 @@ Covers:
 These tests use a fake adapter to avoid real Telegram API calls.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

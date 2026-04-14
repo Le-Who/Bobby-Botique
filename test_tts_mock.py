@@ -1,6 +1,4 @@
 import asyncio
-import io
-import os
 
 
 class MockAIOClient:

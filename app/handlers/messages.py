@@ -23,7 +23,7 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from app import state
 from app.config import settings
-from app.handlers.cmd_image import _get_draw_state, _run_generation, check_draw_intent
+from app.handlers.cmd_image import _get_draw_state, _run_generation
 from app.handlers.msg_document import handle_document, handle_document_mode_interaction
 from app.handlers.msg_media import (
     process_media_group_update,
@@ -338,7 +338,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # split.  Applies to ALL non-photo, non-voice, non-document text.
         is_photo = bool(effective_msg.photo)
         if not is_photo and not effective_msg.voice and not effective_msg.document:
-            from app.middleware.debounce import DebounceResult, debounce_message
+            from app.middleware.debounce import debounce_message
 
             debounce_result = await debounce_message(
                 user_id,

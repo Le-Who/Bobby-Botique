@@ -1,6 +1,5 @@
 """Tests for app.handlers.cmd_admin — admin-only commands."""
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

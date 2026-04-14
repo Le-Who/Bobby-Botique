@@ -10,7 +10,6 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from app import state
 from app.handlers import agent, menus
 from app.i18n import t
 from app.metrics import role_conv_metrics

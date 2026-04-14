@@ -8,7 +8,6 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from telegram import Update
 
 from app.database import db_query
 from app.handlers.messages import handle_request

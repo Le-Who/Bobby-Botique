@@ -7,7 +7,6 @@ Provides health checks and fallback strategies for:
 - AI provider unavailable → user notification + retry
 """
 
-import logging
 from dataclasses import dataclass, field
 from enum import Enum
 

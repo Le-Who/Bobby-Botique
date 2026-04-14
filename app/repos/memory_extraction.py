@@ -25,7 +25,6 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from app.repos.memory_config import (
-    EMBEDDING_DIMENSION,
     GRAPH_EXTRACTION_MODEL,
     GRAPH_EXTRACTION_THINKING_LEVEL,
     MIN_EXTRACTION_LENGTH,

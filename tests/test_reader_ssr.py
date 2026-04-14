@@ -22,7 +22,6 @@ async def test_fetch_telegraph_content_extracts_article():
     The function uses a local ``import httpx`` inside the coroutine body,
     so we patch ``httpx.AsyncClient`` at the httpx module level.
     """
-    import httpx
 
     from app.web_miniapp import _fetch_telegraph_content
 
@@ -67,7 +66,6 @@ async def test_fetch_telegraph_content_returns_none_on_network_error():
 @pytest.mark.asyncio
 async def test_fetch_telegraph_content_returns_none_when_no_article_tag():
     """_fetch_telegraph_content() returns None if no <article> found in page HTML."""
-    import httpx
 
     from app.web_miniapp import _fetch_telegraph_content
 

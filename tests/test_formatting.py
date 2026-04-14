@@ -6,7 +6,6 @@ Rewritten from unittest.TestCase to pure pytest (AAA).
 Each test covers exactly one observable behavior.
 """
 
-import pytest
 
 from app.utils.formatting import (
     TelegramFormatter,

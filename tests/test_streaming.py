@@ -7,9 +7,7 @@ the current StreamingWriter implementation which has two paths:
   - Classic path (use_telegraph_fallback=False): creates a new reply message on overflow.
 """
 
-import asyncio
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

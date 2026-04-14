@@ -5,7 +5,6 @@ Tests the complete path from incoming Telegram update through
 handle_request → process_long_request → AI response → database.
 """
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
