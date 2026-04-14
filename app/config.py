@@ -28,9 +28,18 @@ IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
 IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
 
 # --- Pollinations.ai image models ---
-# Overridable via env: IMAGE_MODELS="flux,zimage,gptimage"
-# The list determines which buttons appear in the /draw Canvas keyboard.
-DEFAULT_POLLINATIONS_IMAGE_MODELS: list[str] = ["flux", "zimage"]
+# Overridable via env: IMAGE_MODELS="flux,zimage,gptimage,..."
+# The list determines which buttons appear in the /draw Canvas keyboard AND
+# which models are accepted by PollinationsProvider.generate() without
+# falling back.  Includes all models advertised in the inline handler.
+DEFAULT_POLLINATIONS_IMAGE_MODELS: list[str] = [
+    "flux",
+    "zimage",
+    "gptimage",
+    "qwen-image",
+    "wan-image",
+    "klein",
+]
 DEFAULT_POLLINATIONS_IMAGE_MODEL: str = "flux"
 # Pollinations API base URL
 POLLINATIONS_BASE_URL: str = "https://gen.pollinations.ai"

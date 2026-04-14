@@ -480,13 +480,17 @@ async def _generate_and_swap_media(
 
     Flow:
       1. Call PollinationsProvider.generate() — returns raw JPEG/PNG bytes.
-      2. Upload the bytes directly via InputFile(io.BytesIO()) to edit_message_media.
-         This avoids Telegram having to re-fetch a Pollinations URL that may require
-         auth headers (nologo, rate-limits etc.) and guarantees the swap always works.
-      3. On failure, edit caption to show error with model and prompt excerpt.
+      2. Upload bytes to the admin chat via send_photo() to obtain a stable file_id.
+         Telegram's Bot API does NOT accept InputFile(BytesIO(...)) for
+         edit_message_media on inline messages (inline_message_id path) —
+         only file_id strings or HTTP URLs are valid there.
+         The temp message is deleted immediately after the file_id is extracted.
+      3. Use the minted file_id in InputMediaPhoto for edit_message_media.
+      4. On any failure, edit caption to show an error.
     """
     import contextlib
 
+    from app.config import settings as _settings
     from app.providers.pollinations import get_pollinations_provider
 
     _gen_start = time.monotonic()
@@ -506,18 +510,49 @@ async def _generate_and_swap_media(
             f"🎨 <b>{_html.escape(prompt[:200])}</b>"
             f"\n<i>{_get_model_emoji(model)} {model} • {elapsed:.1f}s</i>"
         )
+
+        # ── Step 1: Mint a file_id by uploading bytes to the admin chat ───
+        # edit_message_media with inline_message_id only accepts a file_id
+        # string or a URL — InputFile(BytesIO(...)) multipart is rejected.
+        file_id: str | None = None
+        temp_msg = None
+        try:
+            temp_msg = await bot.send_photo(
+                chat_id=_settings.ADMIN_ID,
+                photo=InputFile(io.BytesIO(image_bytes), filename="image.jpg"),
+            )
+            file_id = temp_msg.photo[-1].file_id
+        except Exception as upload_err:
+            logging.error("Inline image: admin-chat upload failed: %s", upload_err)
+
+        # Delete temp message silently — non-critical
+        if temp_msg is not None:
+            with contextlib.suppress(Exception):
+                await temp_msg.delete()
+
+        if file_id is None:
+            logging.error("Inline image: could not obtain file_id, aborting swap")
+            with contextlib.suppress(Exception):
+                await bot.edit_message_caption(
+                    inline_message_id=inline_message_id,
+                    caption="❌ Не удалось загрузить изображение. Попробуйте снова.",
+                )
+            await metrics_collector.record_api_call("pollinations_inline", model, user_id=user_id)
+            return
+
+        # ── Step 2: Swap placeholder using the minted file_id ─────────────
         try:
             await bot.edit_message_media(
                 inline_message_id=inline_message_id,
                 media=InputMediaPhoto(
-                    media=InputFile(io.BytesIO(image_bytes), filename="image.jpg"),
+                    media=file_id,
                     caption=caption,
                     parse_mode="HTML",
                 ),
                 reply_markup=InlineKeyboardMarkup([]),
             )
             logging.info(
-                "Inline image: swapped via bytes upload in %.1fs for prompt %r (model=%s)",
+                "Inline image: swapped via file_id in %.1fs for prompt %r (model=%s)",
                 elapsed,
                 prompt[:60],
                 model,
