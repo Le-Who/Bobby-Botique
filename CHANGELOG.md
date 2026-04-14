@@ -3,6 +3,81 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.11.0] - 2026-04-14 - Search Pipeline Modernization: Weather/Currency/Crypto APIs & 5-Mode Image Generation
+
+### ✨ Feature — Intent Router API Modernization
+
+Replaced legacy Open-Meteo (2 requests) and Frankfurter (no RUB support) with high-performance, single-request APIs:
+
+| Service | Old Provider | New Provider | Improvement |
+|---------|-------------|--------------|-------------|
+| Weather | Open-Meteo (geocode + forecast) | **WeatherAPI.com** | 1 request; localized RU conditions (`Переменная облачность`); "feels like" temperature |
+| Fiat currency | Frankfurter (no RUB) | **ExchangeRate-API v6** | RUB, KZT, UAH, KGS, UZS support; 1,500 req/month free tier |
+| Crypto | ❌ none | **CoinGecko Demo API** | Keyless, 30 rpm; BTC/ETH/SOL/TON with Russian aliases (`биткоин`, `эфир`, `тон`); USD + RUB + 24h change |
+
+- **Graceful fallbacks**: When `WEATHER_API_KEY` is absent, falls back to Open-Meteo. When `EXCHANGE_RATE_API_KEY` is absent, falls back to Frankfurter for EU pairs.
+- **Temporal filter**: Multi-day/temporal weather queries (`завтра`, `вечером`, `на неделю`) bypass the raw API and route to LLM with Google Search Grounding instead.
+
+### ✨ Feature — 5-Mode Smart Image Routing (Inline)
+
+Redesigned inline image generation with UX-named modes and automatic intent detection:
+
+| Mode | Model | Auto-Route Trigger |
+|------|-------|--------------------|
+| ⚡ Турбо | `zimage` | Default (shown first) |
+| 🧠 Умный | `gptimage` | Manual; `enhance=true` sent to Pollinations |
+| 🎨 Арт / Аватарка | `qwen-image` | Manual |
+| 🅰️ Мем / Текст | `wan-image` | Auto: `«»""''`-quoted text detected |
+| 🪄 Изменить фото | `klein` | Auto: edit-intent verbs detected (`измени фото`, `отредактируй`) |
+
+- Klein is NOT in the inline menu — only auto-routed when edit intent is detected.
+- Placeholder URL migrated from `image.pollinations.ai` → `gen.pollinations.ai`.
+
+### ✨ Feature — Google Search Grounding Citations (Inline)
+
+- **`_GroundingMeta` sentinel** (`app/providers/gemini.py`): After `stream_response` completes with web search enabled, grounding metadata is parsed from `candidates[0].grounding_metadata.grounding_chunks` and yielded as a sentinel object.
+- **Inline capture** (`app/handlers/inline.py`): `_stream_inline_fast` intercepts `_GroundingMeta` sentinels in the Race Requests queue and stores sources from the **winner** key only.
+- **UX**: Up to 3 source URLs rendered inside an expandable blockquote (`📎 Источники`) at the bottom of inline answers. Only appended if room remains within the 4096-char Telegram limit.
+- **Zero breaking changes**: Existing callers of `stream_response` are unaffected — they check `chunk.text` which naturally skips the sentinel.
+
+### 🔧 Code Quality — Test Warning Fixes
+
+| Warning | Root Cause | Fix |
+|---------|-----------|-----|
+| `RuntimeWarning: coroutine 'dummy' never awaited` | `test_taskmanager_rejects_bare_coro_with_retry` created coro inside `pytest.raises` context | Moved coro creation outside; `coro.close()` in `finally` |
+| `DeprecationWarning: asyncio.iscoroutinefunction deprecated` | Python 3.14 deprecation, removed in 3.16 | Replaced with `inspect.iscoroutinefunction()` |
+| `RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' never awaited` | `slow_db_query` returned `original_db_query(...)` without `await` | Added `await` |
+| `DeprecationWarning: AiohttpClientSession inheritance` | Third-party `google.genai` SDK | Suppressed via `pytest.ini` `filterwarnings` |
+
+### 🔧 Config
+
+- `WEATHER_API_KEY` — WeatherAPI.com (free: 1M req/month). Falls back to Open-Meteo when empty.
+- `EXCHANGE_RATE_API_KEY` — ExchangeRate-API v6 (free: 1,500 req/month). Falls back to Frankfurter when empty.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/config.py` | Added `WEATHER_API_KEY`, `EXCHANGE_RATE_API_KEY` settings |
+| `app/intent_router.py` | Full rewrite: WeatherAPI.com + ExchangeRate-API + CoinGecko + temporal filter |
+| `app/handlers/inline.py` | 5-mode image routing, smart intent detection, grounding citations blockquote |
+| `app/providers/gemini.py` | `_GroundingMeta` sentinel for streaming grounding metadata |
+| `app/providers/pollinations.py` | `wan-image` label, `klein` emoji update |
+| `tests/test_background_tasks.py` | Fix bare coroutine warning |
+| `tests/test_factories.py` | Replace deprecated `asyncio.iscoroutinefunction` |
+| `tests/test_metrics_snapshot.py` | Await AsyncMock call |
+| `pytest.ini` | Suppress google.genai AiohttpClientSession DeprecationWarning |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `py_compile` (all files) | OK ✅ |
+| `ruff check` (all files) | 0 errors ✅ |
+| `pytest` (full suite) | **1645 passed**, 0 warnings ✅ |
+
+---
+
 ## [2.10.9] - 2026-04-14 - Provider Routing: API Key Mismatch & Streaming Resilience
 
 ### 🐛 Critical Bugfix — API_KEY_INVALID Database Desynchronization

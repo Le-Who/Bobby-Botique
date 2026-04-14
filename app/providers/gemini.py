@@ -24,6 +24,21 @@ from app.utils.image_utils import TaggedImage, save_image_as_bytes
 _gemini_clients_cache: LRUCache = LRUCache(maxsize=50)
 
 
+class _GroundingMeta:
+    """Sentinel yielded after stream_response finishes when Google Search Grounding
+    is active. Carries source citations for callers that want to surface them.
+
+    Callers that don't need grounding can simply ignore chunks where
+    isinstance(chunk, _GroundingMeta) is True.
+    """
+
+    __slots__ = ("sources",)
+
+    def __init__(self, sources: list[tuple[str, str]]) -> None:
+        # List of (url, title) pairs from grounding_metadata.grounding_chunks
+        self.sources = sources
+
+
 def get_cached_genai_client(api_key: str) -> genai.Client:
     """Return a cached genai.Client for the given API key, creating one if needed."""
     if api_key not in _gemini_clients_cache:
@@ -280,6 +295,7 @@ class GeminiProvider(BaseAIProvider):
             config.system_instruction = str(system_instruction)
 
         _content_yielded = False
+        _last_grounding_meta = None  # populated during stream if enable_web_search=True
         try:
             # wait_for to prevent hanging during connect
             coro = client.aio.models.generate_content_stream(
@@ -311,6 +327,37 @@ class GeminiProvider(BaseAIProvider):
                 if chunk.text:
                     _content_yielded = True
                     yield chunk.text
+
+                # Capture grounding_metadata from any chunk that has it
+                # (Gemini typically includes it on the last chunk when Grounding is active)
+                if enable_web_search:
+                    try:
+                        cands = getattr(chunk, "candidates", None)
+                        if cands:
+                            gm = getattr(cands[0], "grounding_metadata", None)
+                            if gm:
+                                _last_grounding_meta = gm
+                    except Exception:
+                        pass
+
+            # After stream completes: emit grounding citations as a sentinel chunk.
+            # Callers that only check `chunk.text` will skip this safely.
+            if enable_web_search and _last_grounding_meta is not None:
+                try:
+                    sources: list[tuple[str, str]] = []
+                    gc = getattr(_last_grounding_meta, "grounding_chunks", None)
+                    if gc:
+                        for grounding_chunk in gc:
+                            web = getattr(grounding_chunk, "web", None)
+                            if web:
+                                url = getattr(web, "uri", "") or ""
+                                title = getattr(web, "title", "") or url
+                                if url:
+                                    sources.append((url, title))
+                    if sources:
+                        yield _GroundingMeta(sources)
+                except Exception as meta_err:
+                    logging.debug("Grounding meta extraction failed: %s", meta_err)
         except TimeoutError:
             logging.error("Gemini API stream timed out for model %s", model_name)
             if not _content_yielded:

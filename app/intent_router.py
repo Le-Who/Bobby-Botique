@@ -2,11 +2,14 @@
 """Intent-based Direct Routing — bypass LLM for simple, deterministic queries.
 
 Detects weather and currency intents from user messages and routes them
-directly to lightweight APIs (Open-Meteo, Frankfurter) instead of
-consuming an LLM call. Falls back to the standard LLM pipeline when
-intent is ambiguous or the API call fails.
+directly to lightweight APIs instead of consuming an LLM call.
 
-Plan §4 implementation.
+Provider hierarchy (2026):
+  Weather:  WeatherAPI.com (1 req, autogeocode, Russian text) → Open-Meteo fallback
+  Fiat:     ExchangeRate-API (RUB/KZT/UAH supported) → Frankfurter fallback
+  Crypto:   CoinGecko Demo (keyless, 30 rpm)
+
+Falls back to the standard LLM pipeline when intent is ambiguous or all APIs fail.
 """
 
 import logging
@@ -24,45 +27,33 @@ _WEATHER_PATTERNS = re.compile(
 
 _CURRENCY_PATTERNS = re.compile(
     r"(?:курс|exchange\s*rate|convert)"
-    r"|(?:(?:доллар|евро|рубл|usd|eur|rub|gbp|jpy|cny)\S*\s+(?:к|в|to|in)\s+)"
-    r"|(?:сколько\s+(?:стоит\s+)?(?:доллар|евро|рубл|usd|eur|rub))",
+    r"|(?:(?:доллар|евро|рубл|биткоин|bitcoin|ethereum|btc|eth|sol|ton|usd|eur|rub|gbp|jpy|cny)\S*\s+(?:к|в|to|in)\s+)"
+    r"|(?:сколько\s+(?:стоит\s+)?(?:доллар|евро|рубл|биткоин|bitcoin|btc|usd|eur|rub))",
     re.IGNORECASE,
 )
 
-_CITY_ALIASES: dict[str, tuple[float, float]] = {
-    # Russian city names → (lat, lon)
-    "москва": (55.7558, 37.6173),
-    "москве": (55.7558, 37.6173),
-    "питер": (59.9343, 30.3351),
-    "петербург": (59.9343, 30.3351),
-    "спб": (59.9343, 30.3351),
-    "санкт-петербург": (59.9343, 30.3351),
-    "киев": (50.4501, 30.5234),
-    "київ": (50.4501, 30.5234),
-    "одесса": (46.4825, 30.7233),
-    "одессе": (46.4825, 30.7233),
-    "одеса": (46.4825, 30.7233),
-    "минск": (53.9006, 27.5590),
-    "лондон": (51.5074, -0.1278),
-    "нью-йорк": (40.7128, -74.0060),
-    "нью йорк": (40.7128, -74.0060),
-    "токио": (35.6762, 139.6503),
-    "париж": (48.8566, 2.3522),
-    "берлин": (52.5200, 13.4050),
-    "дубай": (25.2048, 55.2708),
-    "стамбул": (41.0082, 28.9784),
-    "бишкек": (42.8746, 74.5698),
-    "алматы": (43.2220, 76.8512),
-    "ташкент": (41.2995, 69.2401),
-    # English
-    "moscow": (55.7558, 37.6173),
-    "london": (51.5074, -0.1278),
-    "new york": (40.7128, -74.0060),
-    "paris": (48.8566, 2.3522),
-    "berlin": (52.5200, 13.4050),
-    "tokyo": (35.6762, 139.6503),
-    "dubai": (25.2048, 55.2708),
-    "istanbul": (41.0082, 28.9784),
+# Crypto tickers / aliases — if any of these appear, route to CoinGecko
+_CRYPTO_ALIASES: dict[str, str] = {
+    "биткоин": "bitcoin",
+    "bitcoin": "bitcoin",
+    "btc": "bitcoin",
+    "эфир": "ethereum",
+    "ethereum": "ethereum",
+    "eth": "ethereum",
+    "солана": "solana",
+    "solana": "solana",
+    "sol": "solana",
+    "тон": "the-open-network",
+    "ton": "the-open-network",
+}
+
+# CoinGecko vs_currencies we support
+_COINGECKO_FIAT_MAP: dict[str, str] = {
+    "USD": "usd",
+    "RUB": "rub",
+    "EUR": "eur",
+    "GBP": "gbp",
+    "KZT": "kzt",
 }
 
 _CURRENCY_CODES = {
@@ -104,137 +95,31 @@ _CURRENCY_CODES = {
 }
 
 # Pattern to extract a city candidate from weather queries.
-# Captures the word(s) immediately following trigger prepositions/words.
-# Works for Russian ("погода сегодня в Когалыме") and English ("weather in New York").
-#
-# Design: two branches:
-#   Branch A: triggered by "погода/weather" → temporal words are CONSUMED (не захватываются),
-#             then "в/во / in/for" is REQUIRED so we skip to the actual city word.
-#   Branch B: plain "в/во" preposition fallback when Branch A misses.
-#
-# BUG HISTORY: v1 had (в\s+)? as optional in Branch A, causing temporal modifiers like
-# "сегодня", "завтра", "сейчас" to be captured as the city name. Fixed by making the
-# preposition required and temporal words an explicit whitelist.
 _CITY_EXTRACT_PATTERN = re.compile(
     # Branch A: "погода [сегодня|завтра|сейчас] в <город>" — preposition is required here
     r"(?:погод[ауеыя]\s+(?:(?:сейчас|сегодня|завтра)\s+)?(?:в\s+|во\s+)"
     r"|weather\s+(?:(?:today|tomorrow|now)\s+)?(?:in\s+|for\s+)"
     # Branch B: bare "в/во" preposition anywhere in the sentence
     r"|(?<![а-яёa-z])в\s+|(?<![а-яёa-z])во\s+)"
-    # Capture: city name — 1 or 2 hyphenated/spaced words (e.g. "New York", "Нью-Йорк").
-    # The optional second word must be immediately followed by a hard boundary so that
-    # trailing temporal words ("сейчас", "today") are not swallowed.
     r"([А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*(?:\s[А-ЯЁа-яёa-zA-Z][а-яёa-zA-Z\-]*)?)(?=[,?!.\s]|$)",
     re.IGNORECASE,
 )
 
-
-# Common Russian locative/prepositional case suffixes to strip before geocoding.
-# Order matters: longer suffixes first to avoid partial matches.
-_RUSSIAN_CITY_SUFFIXES = (
-    "ском",
-    "ской",
-    "ского",
-    "овске",
-    "евске",
-    "инске",
-    "ове",
-    "еве",
-    "еве",
-    "ове",
-    "ске",
-    "зке",
-    "ах",
-    "ях",
-    "е",
-    "и",
-    "у",
-    "ю",
-)
-
-# Words that may trail after the city name in a voice query.
-# Stripped from the raw regex capture before geocoding.
 _TRAILING_TEMPORAL_WORDS = frozenset(
     {
-        "сейчас",
-        "сегодня",
-        "завтра",
-        "утром",
-        "вечером",
-        "ночью",
-        "today",
-        "tomorrow",
-        "now",
-        "tonight",
-        "morning",
-        "evening",
-        "пожалуйста",
-        "please",
+        "сейчас", "сегодня", "завтра", "утром", "вечером", "ночью",
+        "today", "tomorrow", "now", "tonight", "morning", "evening",
+        "пожалуйста", "please",
     }
 )
 
 
 def _clean_candidate(raw: str) -> str:
-    """Strip known trailing temporal/query words from a city candidate.
-
-    Example: 'Санкт-Петербурге сейчас' → 'Санкт-Петербурге'
-             'Los Angeles today' → 'Los Angeles'
-    """
+    """Strip known trailing temporal/query words from a city candidate."""
     words = raw.strip().split()
     while words and words[-1].lower() in _TRAILING_TEMPORAL_WORDS:
         words.pop()
     return " ".join(words)
-
-
-def _normalize_city_candidate(raw: str) -> str:
-    """Strip common Russian locative/prepositional case suffixes for geocoding.
-
-    Example: 'Саратове' -> 'Саратов', 'Москве' -> 'Москв' (still resolves fine
-    because open-meteo does prefix matching on city names).
-    """
-    word = raw.strip()
-    lower = word.lower()
-    for suffix in _RUSSIAN_CITY_SUFFIXES:
-        if lower.endswith(suffix) and len(lower) - len(suffix) >= 3:  # keep ≥ 3 root chars
-            return word[: len(word) - len(suffix)]
-    return word
-
-
-async def _geocode_city(candidate: str) -> tuple[str, float, float] | None:
-    """Look up *candidate* via the Open-Meteo Geocoding API (free, no key).
-
-    Returns (display_name, lat, lon) on success, or None if the city is
-    not found or the request fails.  Results are not cached — callers
-    should only call this after the local alias dict misses.
-    """
-    # Strip suffixes to improve match rate ("Саратове" → "Саратов")
-    normalized = _normalize_city_candidate(candidate)
-    if len(normalized) < 3:
-        return None
-
-    try:
-        resp = await _get_http().get(
-            "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": normalized, "count": 1, "language": "ru", "format": "json"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        logging.warning("Geocoding API failed for '%s': %s", normalized, exc)
-        return None
-
-    results = data.get("results")
-    if not results:
-        logging.debug("Geocoding: no results for '%s'", normalized)
-        return None
-
-    hit = results[0]
-    lat: float = hit["latitude"]
-    lon: float = hit["longitude"]
-    # Prefer the English "name" field — it's the canonical city name and
-    # safe to display regardless of terminal/encoding issues on the server.
-    display: str = hit.get("name") or normalized.capitalize()
-    return display, lat, lon
 
 
 # Shared HTTP client for lightweight API calls
@@ -284,7 +169,7 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
         if result:
             return result
 
-    # Then currency
+    # Then currency / crypto
     if _CURRENCY_PATTERNS.search(text):
         result = await _handle_currency(text)
         if result:
@@ -293,19 +178,16 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
     return None
 
 
-# ── Weather (Open-Meteo) ─────────────────────────────────────────────────────
+# ── Weather ───────────────────────────────────────────────────────────────────
 
 
 async def _handle_weather(text: str) -> IntentResult | None:
-    """Extract city and fetch current weather from Open-Meteo (free, no API key).
+    """Extract city and fetch current weather.
 
-    Resolution order:
-      1. Hardcoded _CITY_ALIASES (O(n) scan, ~zero latency)
-      2. Open-Meteo Geocoding API fallback (~300 ms, handles any world city)
-      3. Return None → fall back to LLM/QnA Search
+    Primary:  WeatherAPI.com (1 request, autogeocode, Russian conditions text)
+    Fallback: Open-Meteo (2 requests: geocode + forecast)
     """
-    # Bail out to LLM if the user asks for a future or multi-day/hourly forecast.
-    # The LLM (with Search Grounding) is much better at formatting localized or specific-time forecasts.
+    # Bail out for future/multi-day forecasts — LLM with Grounding handles these better
     if re.search(
         r"(завтра|послезавтра|недел|дней|дня|выходны|tomorrow|week|days|вечер|утр[ао]|ноч[ью]|час|hour|night|evening|morning)",
         text,
@@ -313,24 +195,99 @@ async def _handle_weather(text: str) -> IntentResult | None:
     ):
         return None
 
-    city_name, coords = _extract_city(text)
+    # Extract city candidate
+    m = _CITY_EXTRACT_PATTERN.search(text)
+    city_candidate = _clean_candidate(m.group(1)) if m else ""
 
-    if not coords:
-        # Alias miss — try live geocoding
-        m = _CITY_EXTRACT_PATTERN.search(text)
-        candidate = _clean_candidate(m.group(1)) if m else ""
-
-        if candidate:
-            geo = await _geocode_city(candidate)
-            if geo:
-                city_name, lat, lon = geo
-                coords = (lat, lon)
-                logging.debug("Geocoded '%s' → %s (%.4f, %.4f)", candidate, city_name, lat, lon)
-
-    if not coords:
+    if not city_candidate or len(city_candidate) < 2:
         return None  # Can't determine city → fall back to LLM
 
-    lat, lon = coords
+    from app.config import settings
+
+    # ── Primary: WeatherAPI.com ───────────────────────────────────────────────
+    if settings.WEATHER_API_KEY:
+        result = await _fetch_weatherapi(settings.WEATHER_API_KEY, city_candidate)
+        if result:
+            return result
+        logging.info("WeatherAPI.com failed for '%s', trying Open-Meteo fallback", city_candidate)
+
+    # ── Fallback: Open-Meteo (original implementation) ───────────────────────
+    return await _fetch_open_meteo(city_candidate)
+
+
+async def _fetch_weatherapi(api_key: str, city: str) -> IntentResult | None:
+    """Fetch weather from WeatherAPI.com — single request, includes geocoding."""
+    try:
+        resp = await _get_http().get(
+            "https://api.weatherapi.com/v1/current.json",
+            params={"key": api_key, "q": city, "lang": "ru", "aqi": "no"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logging.warning("WeatherAPI.com failed for '%s': %s", city, exc)
+        return None
+
+    try:
+        loc = data["location"]
+        cur = data["current"]
+        condition_text = cur["condition"]["text"]
+        temp = cur["temp_c"]
+        feels = cur["feelslike_c"]
+        humidity = cur["humidity"]
+        wind = cur["wind_kph"]
+        # Pick a single summary emoji from the condition icon code
+        is_day = cur.get("is_day", 1)
+        code = cur["condition"]["code"]
+        emoji = _weatherapi_code_to_emoji(code, is_day)
+        city_display = loc.get("name", city)
+        country = loc.get("country", "")
+        location_str = f"{city_display}, {country}" if country else city_display
+
+        response = (
+            f"{emoji} **Погода в {location_str}**\n\n"
+            f"🌡 {condition_text}: **{temp}°C** (ощущается {feels}°C)\n"
+            f"💧 Влажность: **{humidity}%**\n"
+            f"💨 Ветер: **{wind} км/ч**\n\n"
+            f"_Данные: WeatherAPI.com_"
+        )
+        return IntentResult(response)
+    except (KeyError, TypeError) as exc:
+        logging.warning("WeatherAPI.com: unexpected response structure: %s", exc)
+        return None
+
+
+def _weatherapi_code_to_emoji(code: int, is_day: int) -> str:
+    """Map WeatherAPI condition code to a single emoji.
+
+    Codes: https://www.weatherapi.com/docs/weather_conditions.json
+    """
+    if code == 1000:
+        return "☀️" if is_day else "🌙"
+    if code in (1003, 1006, 1009):
+        return "⛅" if is_day else "🌥"
+    if code in (1030, 1135, 1147):
+        return "🌫"
+    if code in (1063, 1180, 1183, 1186, 1189, 1192, 1195, 1240, 1243, 1246):
+        return "🌧"
+    if code in (1066, 1114, 1117, 1210, 1213, 1216, 1219, 1222, 1225, 1255, 1258):
+        return "❄️"
+    if code in (1072, 1150, 1153, 1168, 1171):
+        return "🌧"
+    if code in (1087, 1273, 1276, 1279, 1282):
+        return "⛈"
+    if code in (1198, 1201, 1204, 1207, 1237, 1249, 1252, 1261, 1264):
+        return "🌨"
+    return "🌤"
+
+
+async def _fetch_open_meteo(city_candidate: str) -> IntentResult | None:
+    """Fallback: Open-Meteo — 2 HTTP requests (geocode + forecast)."""
+    geo = await _geocode_city_open_meteo(city_candidate)
+    if not geo:
+        return None
+    city_name, lat, lon = geo
+
     try:
         resp = await _get_http().get(
             "https://api.open-meteo.com/v1/forecast",
@@ -344,9 +301,9 @@ async def _handle_weather(text: str) -> IntentResult | None:
         )
         resp.raise_for_status()
         data = resp.json()
-    except Exception as e:
-        logging.warning("Open-Meteo API failed for %s: %s", city_name, e)
-        return None  # Fall back to LLM
+    except Exception as exc:
+        logging.warning("Open-Meteo API failed for %s: %s", city_name, exc)
+        return None
 
     current = data.get("current", {})
     temp = current.get("temperature_2m")
@@ -359,64 +316,199 @@ async def _handle_weather(text: str) -> IntentResult | None:
 
     condition = _wmo_to_emoji(wmo_code)
     display_city = city_name.capitalize()
-
     response = (
         f"{condition} **Погода в {display_city}**\n\n"
         f"🌡 Температура: **{temp}°C**\n"
         f"💧 Влажность: **{humidity}%**\n"
         f"💨 Ветер: **{wind} км/ч**\n\n"
-        f"_Данные: Open-Meteo (в реальном времени)_"
+        f"_Данные: Open-Meteo_"
     )
     return IntentResult(response)
 
 
-def _extract_city(text: str) -> tuple[str, tuple[float, float] | None]:
-    """Extract city name from text and resolve to coordinates."""
-    lower = text.lower()
-    # Try direct alias match (longest match first)
-    for alias in sorted(_CITY_ALIASES.keys(), key=len, reverse=True):
-        if alias in lower:
-            return alias, _CITY_ALIASES[alias]
-    return "", None
+async def _geocode_city_open_meteo(candidate: str) -> tuple[str, float, float] | None:
+    """Look up city via Open-Meteo Geocoding API."""
+    if len(candidate) < 3:
+        return None
+    try:
+        resp = await _get_http().get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": candidate, "count": 1, "language": "ru", "format": "json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logging.warning("Open-Meteo Geocoding failed for '%s': %s", candidate, exc)
+        return None
+
+    results = data.get("results")
+    if not results:
+        return None
+
+    hit = results[0]
+    lat: float = hit["latitude"]
+    lon: float = hit["longitude"]
+    display: str = hit.get("name") or candidate.capitalize()
+    return display, lat, lon
 
 
 def _wmo_to_emoji(code: int) -> str:
-    """Convert WMO weather code to emoji description."""
+    """Convert WMO weather code to emoji description (Open-Meteo fallback)."""
     if code == 0:
         return "☀️ Ясно"
-    elif code in (1, 2, 3):
+    if code in (1, 2, 3):
         return "🌤 Переменная облачность"
-    elif code in (45, 48):
+    if code in (45, 48):
         return "🌫 Туман"
-    elif code in (51, 53, 55, 56, 57):
+    if code in (51, 53, 55, 56, 57):
         return "🌧 Морось"
-    elif code in (61, 63, 65, 66, 67):
+    if code in (61, 63, 65, 66, 67):
         return "🌧 Дождь"
-    elif code in (71, 73, 75, 77):
+    if code in (71, 73, 75, 77):
         return "🌨 Снег"
-    elif code in (80, 81, 82):
+    if code in (80, 81, 82):
         return "🌦 Ливень"
-    elif code in (85, 86):
+    if code in (85, 86):
         return "🌨 Сильный снегопад"
-    elif code in (95, 96, 99):
+    if code in (95, 96, 99):
         return "⛈ Гроза"
     return "🌥 Облачно"
 
 
-# ── Currency (Frankfurter API) ───────────────────────────────────────────────
+# ── Currency & Crypto ─────────────────────────────────────────────────────────
 
 
 async def _handle_currency(text: str) -> IntentResult | None:
-    """Extract currency pair and fetch exchange rate from Frankfurter API."""
+    """Route to CoinGecko (crypto) or ExchangeRate-API/Frankfurter (fiat)."""
+    lower = text.lower()
+
+    # ── 1. Detect crypto intent first ────────────────────────────────────────
+    crypto_id: str | None = None
+    for alias, cg_id in _CRYPTO_ALIASES.items():
+        if alias in lower:
+            crypto_id = cg_id
+            break
+
+    if crypto_id:
+        return await _handle_crypto(crypto_id, text)
+
+    # ── 2. Fiat path ──────────────────────────────────────────────────────────
+    return await _handle_fiat_currency(text)
+
+
+async def _handle_crypto(coingecko_id: str, text: str) -> IntentResult | None:
+    """Fetch crypto price (USD + RUB) from CoinGecko Demo API (keyless, 30rpm)."""
+    # Determine which fiat to pair with (default USD + RUB if Russian text)
+    lower = text.lower()
+    vs_currencies = "usd,rub" if re.search(r"рубл|rub", lower, re.IGNORECASE) else "usd,rub"  # always show both
+
+    try:
+        resp = await _get_http().get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={
+                "ids": coingecko_id,
+                "vs_currencies": vs_currencies,
+                "include_24hr_change": "true",
+            },
+            headers={"Accept": "application/json", "User-Agent": "GemaibotV2/2.0"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logging.warning("CoinGecko API failed for '%s': %s", coingecko_id, exc)
+        return None  # Fall back to LLM
+
+    coin_data = data.get(coingecko_id, {})
+    if not coin_data:
+        return None
+
+    usd_price: float = coin_data.get("usd", 0)
+    rub_price: float = coin_data.get("rub", 0)
+    change_24h: float = coin_data.get("usd_24h_change", 0)
+
+    # Human-readable coin name
+    _COIN_NAMES = {
+        "bitcoin": "Bitcoin",
+        "ethereum": "Ethereum",
+        "solana": "Solana",
+        "the-open-network": "TON",
+    }
+    coin_name = _COIN_NAMES.get(coingecko_id, coingecko_id.title())
+
+    change_sign = "+" if change_24h >= 0 else ""
+    change_str = f"{change_sign}{change_24h:.1f}%"
+
+    usd_fmt = f"{usd_price:,.0f}" if usd_price >= 100 else f"{usd_price:.2f}"
+    rub_fmt = f"{rub_price:,.0f}" if rub_price >= 1 else f"{rub_price:.4f}"
+
+    response = (
+        f"₿ **{coin_name}** ({change_str} за 24ч)\n\n"
+        f"💵 {usd_fmt} USD\n"
+        f"🇷🇺 {rub_fmt} ₽\n\n"
+        f"_Данные: CoinGecko (реальное время)_"
+    )
+    return IntentResult(response)
+
+
+async def _handle_fiat_currency(text: str) -> IntentResult | None:
+    """Extract currency pair and fetch rate.
+
+    Primary:  ExchangeRate-API (supports RUB, KZT, UAH, all major fiat)
+    Fallback: Frankfurter (ECB data, no RUB)
+    """
     base, target = _extract_currency_pair(text)
     if not base or not target:
-        return None  # Can't determine pair → fall back to LLM
+        return None
 
-    # Frankfurter doesn't support RUB — fall back to LLM for RUB pairs
+    from app.config import settings
+
+    # ── Primary: ExchangeRate-API ─────────────────────────────────────────────
+    if settings.EXCHANGE_RATE_API_KEY:
+        result = await _fetch_exchangerate_api(settings.EXCHANGE_RATE_API_KEY, base, target)
+        if result:
+            return result
+        logging.info("ExchangeRate-API failed for %s→%s, trying Frankfurter", base, target)
+
+    # ── Fallback: Frankfurter (no RUB) ────────────────────────────────────────
     unsupported = {"RUB", "KZT", "UAH", "KGS", "UZS"}
     if base in unsupported or target in unsupported:
-        return None  # LLM will handle via Tavily search
+        return None  # Frankfurter doesn't support these — let LLM handle via Grounding
 
+    return await _fetch_frankfurter(base, target)
+
+
+async def _fetch_exchangerate_api(api_key: str, base: str, target: str) -> IntentResult | None:
+    """Fetch rate from ExchangeRate-API v6 (free tier: 1,500 req/month)."""
+    try:
+        resp = await _get_http().get(
+            f"https://v6.exchangerate-api.com/v6/{api_key}/pair/{base}/{target}",
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logging.warning("ExchangeRate-API failed for %s→%s: %s", base, target, exc)
+        return None
+
+    if data.get("result") != "success":
+        logging.warning("ExchangeRate-API error: %s", data.get("error-type"))
+        return None
+
+    rate: float = data.get("conversion_rate", 0)
+    if not rate:
+        return None
+
+    update_time = data.get("time_last_update_utc", "")
+    rate_fmt = f"{rate:.2f}" if rate >= 1 else f"{rate:.4f}"
+    response = (
+        f"💱 **Курс {base} → {target}**\n\n"
+        f"1 {base} = **{rate_fmt} {target}**\n\n"
+        f"_Данные: ExchangeRate-API ({update_time[:16] if update_time else 'сейчас'})_"
+    )
+    return IntentResult(response)
+
+
+async def _fetch_frankfurter(base: str, target: str) -> IntentResult | None:
+    """Fetch rate from Frankfurter (ECB data, fallback for EU pairs)."""
     try:
         resp = await _get_http().get(
             "https://api.frankfurter.dev/v1/latest",
@@ -424,8 +516,8 @@ async def _handle_currency(text: str) -> IntentResult | None:
         )
         resp.raise_for_status()
         data = resp.json()
-    except Exception as e:
-        logging.warning("Frankfurter API failed for %s→%s: %s", base, target, e)
+    except Exception as exc:
+        logging.warning("Frankfurter API failed for %s→%s: %s", base, target, exc)
         return None
 
     rates = data.get("rates", {})
@@ -434,7 +526,12 @@ async def _handle_currency(text: str) -> IntentResult | None:
         return None
 
     date = data.get("date", "")
-    response = f"💱 **Курс {base} → {target}**\n\n1 {base} = **{rate:.4f} {target}**\n\n_Данные: Frankfurter ({date})_"
+    rate_fmt = f"{rate:.4f}" if rate < 10 else f"{rate:.2f}"
+    response = (
+        f"💱 **Курс {base} → {target}**\n\n"
+        f"1 {base} = **{rate_fmt} {target}**\n\n"
+        f"_Данные: Европейский ЦБ ({date})_"
+    )
     return IntentResult(response)
 
 
@@ -454,7 +551,7 @@ def _extract_currency_pair(text: str) -> tuple[str | None, str | None]:
 
     if len(found) >= 2:
         return found[0], found[1]
-    elif len(found) == 1:
+    if len(found) == 1:
         # Single currency mentioned — default to USD base or RUB target
         single = found[0]
         if single == "USD" or single == "RUB":

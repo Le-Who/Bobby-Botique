@@ -156,9 +156,12 @@ async def test_taskmanager_rejects_bare_coro_with_retry():
     """Fix 2: bare coroutine + retry > 0 must raise ValueError."""
     tm = TaskManager()
 
-    with pytest.raises(ValueError, match="Retryable tasks require coro_factory"):
+    async def dummy():
+        pass
 
-        async def dummy():
-            pass
-
-        tm._schedule(dummy(), coro_factory=None, retry=2)
+    coro = dummy()
+    try:
+        with pytest.raises(ValueError, match="Retryable tasks require coro_factory"):
+            tm._schedule(coro, coro_factory=None, retry=2)
+    finally:
+        coro.close()  # Prevent RuntimeWarning: coroutine was never awaited

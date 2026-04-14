@@ -49,7 +49,7 @@ _KNOWN_LABELS: dict[str, str] = {
     "gptimage": "🤖 GPT Image",
     "gptimage-large": "💎 GPT Image HD",
     "kontext": "🖋️ Kontext",
-    "klein": "🔷 Klein",
+    "klein": "🪄 Klein",
     "seedream5": "🌱 Seedream 5",
     "grok-imagine": "🚀 Grok",
     "grok-imagine-pro": "💠 Grok Pro",
@@ -58,6 +58,7 @@ _KNOWN_LABELS: dict[str, str] = {
     "nanobanana": "🍌 NanoBanana",
     "nanobanana-2": "🍌² NanoBanana 2",
     "qwen-image": "🌏 Qwen Image",
+    "wan-image": "🅰️ Wan Image",
 }
 
 

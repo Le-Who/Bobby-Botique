@@ -9,11 +9,18 @@ Flow:
   4. ``handle_chosen_inline_result`` captures ``inline_message_id`` + query
      + chosen tone, then fires ``_generate_and_edit_inline`` as a background task.
   5. ``_generate_and_edit_inline``:
-       a) Calls ``tavily_search_agent`` (QnA mode) for a real-time context snippet.
-       b) Injects context + tone hint into the system prompt of
-          ``gemini-3.1-flash-lite-preview`` via ``_get_ai_response_with_routing``.
+       a) Calls ``gemini-2.5-flash-lite`` with Google Search Grounding enabled.
+       b) Grounding citations (when available) are appended as an expandable
+          blockquote below the answer.
        c) Converts the Markdown answer to Telegram HTML and edits the inline
           placeholder message in-place using ``bot.edit_message_text(inline_message_id=…)``.
+
+Image intent routing (5 modes, auto-selected):
+  ⚡ Турбо     (zimage)      — fast, high-quality, general use
+  🧠 Умный    (gptimage)    — GPT Image 1, prompt auto-enhanced by model
+  🎨 Арт      (qwen-image)  — Qwen stylized / avatars
+  🅰️ Мем/Текст (wan-image)  — auto-routed when quoted text detected in prompt
+  🪄 Изменить фото (klein)  — auto-routed by image editing intent keywords
 
 Prerequisites (one-time BotFather setup):
   - ``/setinline``         — enable inline mode; set placeholder text.
@@ -63,18 +70,41 @@ _IMAGE_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Image model variants surfaced in inline results
-# (result_id_prefix, display_title, pollinations_model)
-_IMAGE_MODELS: list[tuple[str, str, str]] = [
-    ("img_flux", "✨ Flux — быстрая генерация", "flux"),
-    ("img_zimage", "⚡ Z-Image — качество HD", "zimage"),
-]
+# ── Smart-routing patterns ────────────────────────────────────────────────────
+# Quoted text in prompt → wan-image (renders text accurately on images)
+_QUOTED_TEXT_RE = re.compile(r'["\u00ab\u00bb\u201c\u201d].+?["\u00ab\u00bb\u201c\u201d]|\'.+?\'', re.DOTALL)
 
-# Static placeholder photo URL — Pollinations generates this once at first request;
-# Telegram caches it by URL so subsequent inline answers are instantaneous.
+# Image editing intent → klein (FLUX.2 Klein 4B, edit/inpaint capable)
+_IMAGE_EDIT_INTENT_RE = re.compile(
+    r"(?:измени|отредактируй|добавь|убери|замени|перекраси|edit|change|add|remove|replace|modify|inpaint)"
+    r"\s+(?:фото|фотку|картинку|изображение|image|photo|picture)",
+    re.IGNORECASE,
+)
+
+# Image model variants surfaced in inline results.
+# Format: (result_id_prefix, display_title, pollinations_model)
+# Modes:
+#   ⚡ Турбо     — Z-Image Turbo (6B Flux + 2× upscaling), fast and crisp
+#   🧠 Умный    — GPT Image 1 Mini, prompt auto-enhanced by the model
+#   🎨 Арт      — Qwen Image Plus, stylized / avatar quality
+#   🅰️ Мем/Текст — Wan 2.7, accurate text rendering on images
+#   🪄 Изменить — FLUX.2 Klein 4B, auto-routed only (hidden from menu)
+_IMAGE_MODELS: list[tuple[str, str, str]] = [
+    ("img_turbo", "⚡ Турбо — быстро и красиво",     "zimage"),
+    ("img_smart", "🧠 Умный — бот улучшит промпт",   "gptimage"),
+    ("img_art",   "🎨 Арт / Аватарка — стилизация", "qwen-image"),
+    ("img_meme",  "🅰️ Мем / Текст — точный текст",  "wan-image"),
+]
+# Klein is NOT shown in the inline menu — it is auto-routed when user attaches
+# an image with an edit intent keyword.
+_IMG_KLEIN_ID    = "img_edit"
+_IMG_KLEIN_MODEL = "klein"
+
+# Static placeholder photo URL (gen.pollinations.ai, dark loading card).
+# Telegram caches by URL so subsequent inline answers are instantaneous.
 _IMG_PLACEHOLDER_URL = (
-    "https://image.pollinations.ai/prompt/"
-    "minimalist%20futuristic%20loading%20animation%2C%20text%20generating%2C%20dark%20background%2C%20neon%20blue"
+    "https://gen.pollinations.ai/image/"
+    "minimalist%20futuristic%20loading%20card%2C%20dark%20background%2C%20neon%20blue%20glow"
     "?model=flux&width=800&height=450&seed=42&enhance=false&nologo=true"
 )
 
@@ -120,7 +150,8 @@ def _tabs_store_get(inline_message_id: str) -> dict | None:
 
 
 def _placeholder_html(bot_name: str) -> str:
-    return f"⚡️ <b>{_html.escape(bot_name)}</b> генерирует ответ…"
+    # Inline always uses Gemini Search Grounding → "searching" is accurate UX
+    return f"🔎 <b>{_html.escape(bot_name)}</b> ищет в интернете…"
 
 
 def _progress_search_done_html(bot_name: str) -> str:
@@ -229,18 +260,43 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     if _IMAGE_INTENT_RE.search(user_query):
         # Strip the intent verb from the prompt ("нарисуй кота" → "кота")
         stripped_prompt = _IMAGE_INTENT_RE.sub("", user_query, count=1).strip(" ,-.!") or user_query
+
+        # ── Smart auto-routing ────────────────────────────────────────────────
+        has_quoted_text = bool(_QUOTED_TEXT_RE.search(stripped_prompt))
+        has_edit_intent = bool(_IMAGE_EDIT_INTENT_RE.search(user_query))
+
+        if has_edit_intent:
+            # Edit/inpaint mode: show only klein
+            routed_models: list[tuple[str, str, str]] = [(_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)]
+            auto_hint = "✏️ Режим редактирования (Klein)"
+        elif has_quoted_text:
+            # Meme/text mode: wan-image first for text accuracy
+            meme_entry = next((m for m in _IMAGE_MODELS if m[0] == "img_meme"), None)
+            rest = [m for m in _IMAGE_MODELS if m[0] != "img_meme"]
+            routed_models = ([meme_entry] if meme_entry else []) + rest
+            auto_hint = "🅰️ Обнаружен текст → авто-выбран Мем-режим"
+        else:
+            routed_models = _IMAGE_MODELS
+            auto_hint = ""
+
         results_img = [
             InlineQueryResultPhoto(
                 id=result_id,
                 photo_url=_IMG_PLACEHOLDER_URL,
                 thumbnail_url=_IMG_PLACEHOLDER_URL,
                 title=title,
-                description=stripped_prompt[:100],
-                caption=f"🎨 <b>Запрос:</b> {_html.escape(stripped_prompt[:200])}\n⏳ Генерация…",
+                description=(
+                    f"{auto_hint} · {stripped_prompt[:70]}" if auto_hint else stripped_prompt[:100]
+                ),
+                caption=(
+                    f"🎨 <b>Запрос:</b> {_html.escape(stripped_prompt[:200])}"
+                    + (f"\n<i>{_html.escape(auto_hint)}</i>" if auto_hint else "")
+                    + "\n⏳ Генерация…"
+                ),
                 parse_mode="HTML",
                 reply_markup=_LOADING_KEYBOARD,
             )
-            for result_id, title, _ in _IMAGE_MODELS
+            for result_id, title, _ in routed_models
         ]
         await query.answer(results_img, cache_time=0, is_personal=True)
         return
@@ -332,13 +388,16 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
 
     # ── Image generation path ─────────────────────────────────────────────────
     if result_id.startswith("img_"):
-        # Find the matching pollinations model
+        # Include klein (auto-routed, hidden from menu) in model lookup
+        all_known_models = _IMAGE_MODELS + [(_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)]
         prov_model = next(
-            (m for rid, _, m in _IMAGE_MODELS if rid == result_id),
-            "flux",  # fallback
+            (m for rid, _, m in all_known_models if rid == result_id),
+            "zimage",  # fallback to Турбо
         )
         # Extract clean prompt: remove intent verb prefix
         prompt = _IMAGE_INTENT_RE.sub("", user_query, count=1).strip(" ,-.!") or user_query
+        # gptimage (Умный mode) supports prompt enhancement from Pollinations
+        enhance_prompt = result_id == "img_smart"
         get_task_manager().submit(
             _generate_and_swap_media(
                 bot=context.bot,
@@ -346,6 +405,7 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
                 prompt=prompt,
                 model=prov_model,
                 user_id=user_id,
+                enhance_prompt=enhance_prompt,
             )
         )
         return
@@ -384,6 +444,7 @@ async def _generate_and_swap_media(
     prompt: str,
     model: str,
     user_id: int | None,
+    enhance_prompt: bool = False,
 ) -> None:
     """Generate an image via Pollinations and swap the inline placeholder photo.
 
@@ -401,7 +462,7 @@ async def _generate_and_swap_media(
     provider = get_pollinations_provider()
 
     try:
-        result = await provider.generate(prompt=prompt, model=model, seed=-1)
+        result = await provider.generate(prompt=prompt, model=model, seed=-1, enhance=enhance_prompt)
     except Exception as exc:
         logging.error("Inline image: generation exception: %s", exc, exc_info=True)
         result = None
@@ -409,13 +470,14 @@ async def _generate_and_swap_media(
     elapsed = time.monotonic() - _gen_start
 
     if result and result.success:
-        # Build the deterministic GET URL — Telegram fetches it directly, no upload needed.
+        # Build the deterministic GET URL (gen.pollinations.ai) — Telegram fetches it directly.
         import urllib.parse as _up
 
         encoded_prompt = _up.quote(prompt, safe="")
+        enhance_param = "true" if enhance_prompt else "false"
         image_url = (
-            f"https://image.pollinations.ai/prompt/{encoded_prompt}"
-            f"?model={model}&width=1024&height=1024&seed=-1&enhance=false&nologo=true"
+            f"https://gen.pollinations.ai/image/{encoded_prompt}"
+            f"?model={model}&width=1024&height=1024&seed=-1&enhance={enhance_param}&nologo=true"
         )
         try:
             await bot.edit_message_media(
@@ -502,7 +564,7 @@ async def _stream_inline_fast(
     user_id: int | None,
     max_rounds: int = 4,
     enable_web_search: bool = False,
-) -> str | None:
+) -> tuple[str | None, list[tuple[str, str]]]:
     """3-way Race Requests accumulator optimised for inline speed.
 
     Fires 3 keys simultaneously per round. The first to yield a real chunk
@@ -511,15 +573,18 @@ async def _stream_inline_fast(
     3 simultaneous slots per round is essentially free operationally.
 
     Returns:
-        Accumulated full-response text, or None if all rounds fail.
+        (accumulated_text, sources) where sources is a list of (url, title)
+        tuples from Grounding metadata. Returns (None, []) when all rounds fail.
     """
     from app.agent_use_cases import AgentRequestUseCase
     from app.providers.base import get_provider_for_model
+    from app.providers.gemini import _GroundingMeta
     from app.repos.keys import get_key_status_manager
 
     use_case = AgentRequestUseCase()
     status_mgr = get_key_status_manager()
     failed_keys: set[str] = set()
+    _winner_sources: list[tuple[str, str]] = []  # Grounding citations from winner
 
     class _End:
         """Sentinel: producer puts this when its stream finishes or is cancelled."""
@@ -545,7 +610,7 @@ async def _stream_inline_fast(
                 break  # No more available keys
 
         if not keys or not resolved_model:
-            return None  # No keys available at all
+            return None, []  # No keys available at all
 
         # Read thinking level dynamically — admin can change via /set_inline_thinking
         # without restarting the container. Falls back to env-var default.
@@ -565,6 +630,10 @@ async def _stream_inline_fast(
                     timeout=45.0,
                     enable_web_search=enable_web_search,
                 ):
+                    # Intercept _GroundingMeta sentinel — don't put in queue as text chunk
+                    if isinstance(chunk, _GroundingMeta):
+                        await _q.put((kh, chunk, None))
+                        continue
                     await _q.put((kh, chunk, None))
             except asyncio.CancelledError:
                 pass  # Loser cancelled normally — no sentinel needed
@@ -594,6 +663,9 @@ async def _stream_inline_fast(
                 if isinstance(chunk, _End):
                     errors[kh] = RuntimeError("stream ended without chunks")
                     failed_keys.add(kh)
+                    continue
+                # Skip _GroundingMeta sentinels — only text triggers winner
+                if isinstance(chunk, _GroundingMeta):
                     continue
                 if chunk and not is_error_message(chunk):
                     winner_kh = kh
@@ -633,6 +705,10 @@ async def _stream_inline_fast(
                     break
                 if isinstance(chunk, _End):
                     break  # Clean completion
+                # Capture grounding sources from winner's _GroundingMeta sentinel
+                if isinstance(chunk, _GroundingMeta):
+                    _winner_sources = chunk.sources
+                    continue
                 if chunk:
                     chunks.append(chunk)
         finally:
@@ -642,12 +718,12 @@ async def _stream_inline_fast(
 
         result = "".join(chunks)
         if result.strip() and not is_error_message(result):
-            return result
+            return result, _winner_sources
 
         # Winner produced error-tagged text — mark all keys failed and retry
         failed_keys.update(kd["key_hash"] for kd in keys)
 
-    return None  # All rounds exhausted
+    return None, []  # All rounds exhausted
 
 
 # ── Background generation ─────────────────────────────────────────────────────
@@ -718,6 +794,7 @@ async def _generate_and_edit_inline(
     # burning 3 simultaneous slots is operationally free and minimises TTFR.
     _gen_start = time.monotonic()
     final_answer: str | None = None
+    _grounding_sources: list[tuple[str, str]] = []  # Grounding Citations (url, title)
     _gen_timed_out = False
     _progress_shown = False
     _log_start = api_logger.log_request(
@@ -747,7 +824,7 @@ async def _generate_and_edit_inline(
     progress_task = asyncio.create_task(_delayed_progress_edit())
 
     try:
-        final_answer = await asyncio.wait_for(
+        final_answer, _grounding_sources = await asyncio.wait_for(
             _stream_inline_fast(
                 preferred_model=_INLINE_MODEL,
                 history=history,
@@ -838,6 +915,24 @@ async def _generate_and_edit_inline(
         header = f"<b>{_html.escape(tone_label)}</b> · <code>{_html.escape(user_query[:60])}</code>\n\n"
         body = markdown_to_html(final_answer.strip())
         formatted = header + body
+
+        # ── Grounding Citations — expandable source list ─────────────────────
+        # When Gemini Search Grounding returned real citations, append them as
+        # a collapsed blockquote so the user can verify sources without clutter.
+        if _grounding_sources:
+            from app.utils.ux_improvements import wrap_in_expandable_blockquote
+
+            src_lines = "\n".join(
+                f'• <a href="{url}">{_html.escape(title[:70])}</a>'
+                for url, title in _grounding_sources[:3]
+                if url and title
+            )
+            if src_lines:
+                citations_block = wrap_in_expandable_blockquote(src_lines, label="📎 Источники")
+                # Only append if it fits (leave margin for safety)
+                if len(formatted) + len(citations_block) + 2 <= 3900:
+                    formatted += f"\n\n{citations_block}"
+
         # Telegram inline messages: hard 4096-char limit.
         if len(formatted) > 4000:
             formatted = formatted[:3997] + "…"

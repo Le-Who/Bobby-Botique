@@ -47,7 +47,7 @@ class TestMetricsSnapshotAtomicity:
         async def slow_db_query(*args, **kwargs):
             db_write_started.set()
             await db_write_done.wait()  # Block until we signal completion
-            return original_db_query(*args, **kwargs)
+            return await original_db_query(*args, **kwargs)
 
         with patch("app.metrics.db.db_query", side_effect=slow_db_query):
             with patch("app.metrics.db.db_execute_many", new_callable=AsyncMock):

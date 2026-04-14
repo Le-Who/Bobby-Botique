@@ -174,6 +174,14 @@ class Settings(BaseModel):
     POLLINATIONS_DEFAULT_IMAGE_MODEL: str = DEFAULT_POLLINATIONS_IMAGE_MODEL
     # Optional API key. Pollinations also works without a key (rate-limited).
     POLLINATIONS_API_KEY: str = ""
+
+    # --- Weather & Currency Direct APIs ---
+    # WeatherAPI.com free tier: 1M req/month. https://www.weatherapi.com/
+    # If empty, intent_router falls back to Open-Meteo (2 requests instead of 1).
+    WEATHER_API_KEY: str = ""
+    # ExchangeRate-API free tier: 1,500 req/month. https://www.exchangerate-api.com/
+    # If empty, intent_router falls back to Frankfurter (no RUB support).
+    EXCHANGE_RATE_API_KEY: str = ""
     DATABASE_URL: str
     ADMIN_ID: int
     PORT: int
@@ -302,6 +310,8 @@ def load_settings() -> Settings:
             or DEFAULT_POLLINATIONS_IMAGE_MODELS.copy(),
             "POLLINATIONS_DEFAULT_IMAGE_MODEL": os.getenv("DEFAULT_IMAGE_MODEL", DEFAULT_POLLINATIONS_IMAGE_MODEL),
             "POLLINATIONS_API_KEY": os.getenv("POLLINATIONS_API_KEY", ""),
+            "WEATHER_API_KEY": os.getenv("WEATHER_API_KEY", "").strip(),
+            "EXCHANGE_RATE_API_KEY": os.getenv("EXCHANGE_RATE_API_KEY", "").strip(),
             # Load models from env or use значения by default
             "AVAILABLE_MODELS": _load_and_clean_keys("GEMINI_AVAILABLE_MODELS", required=False)
             or default_gemini_models,

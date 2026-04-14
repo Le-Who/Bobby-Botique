@@ -110,7 +110,9 @@ def test_make_telegram_message_has_async_edit_text():
     msg = make_telegram_message()
 
     # Act / Assert — confirm it's awaitable
-    assert asyncio.iscoroutinefunction(msg.edit_text) or hasattr(msg.edit_text, "_mock_is_coroutine")
+    import inspect
+
+    assert inspect.iscoroutinefunction(msg.edit_text) or hasattr(msg.edit_text, "_mock_is_coroutine")
 
 
 def test_make_telegram_message_media_defaults_are_neutral():
