@@ -146,7 +146,10 @@ def _local_check(target: str, guess: str) -> str | None:
 async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     """Fire up to 3 Gemini keys simultaneously; return the first valid result.
 
-    Returns None if all attempts fail or timeout.
+    Fallback chain:
+        1. Race up to 3 keys on _PRIMARY_MODEL (gemini-3.1-flash-lite-preview).
+        2. If all fail (503 / timeout), retry once with _FALLBACK_MODEL (gemini-2.5-flash-lite).
+        3. If still None → caller receives judge_unavailable sentinel.
 
     NOTE: thinking_config is intentionally NOT set here.
     Structured JSON output (response_schema) and thinking_config are mutually
@@ -154,33 +157,11 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     """
     from app.agent_use_cases import AgentRequestUseCase
     from app.providers.gemini import get_cached_genai_client
-
-    use_case = AgentRequestUseCase()
-    failed_keys: set[str] = set()
-
-    keys: list[dict] = []
-    resolved_model: str | None = None
-    for _ in range(3):
-        kd, mdl, _ = await use_case.resolve_ai_request(
-            _PRIMARY_MODEL,
-            excluded_key_hashes=failed_keys | {k["key_hash"] for k in keys},
-        )
-        if kd and mdl:
-            keys.append(kd)
-            resolved_model = mdl
-        else:
-            break
-
-    if not keys or not resolved_model:
-        logger.warning("Judge: no API keys available")
-        return None
-
-    prompt = _SYSTEM_PROMPT.format(W=target, G=guess)
-
     from google.genai import types as _gtypes
 
-    # Do NOT add thinking_config: structured output (response_schema) and
-    # thinking are mutually exclusive — Gemini returns empty text when both set.
+    use_case = AgentRequestUseCase()
+    prompt = _SYSTEM_PROMPT.format(W=target, G=guess)
+
     config = _gtypes.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=GuessJudgement.model_json_schema(),
@@ -208,29 +189,69 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
             logger.warning("Judge race call failed (model=%s): %s", model, exc)
             return None
 
-    # Launch all 3 concurrently; return first non-None.
-    # Extract api_key strings before spawning so raw key material doesn't
-    # linger in frame locals if an exception propagates with exc_info=True.
-    api_keys_for_race = [kd["api_key"] for kd in keys]
-    keys.clear()
-    coros = [_one_call(ak, resolved_model) for ak in api_keys_for_race]
-    tasks = [asyncio.create_task(c) for c in coros]
+    async def _run_race(api_keys: list[str], model: str) -> GuessJudgement | None:
+        """Launch all keys concurrently; return first non-None result."""
+        tasks = [asyncio.create_task(_one_call(ak, model)) for ak in api_keys]
+        result: GuessJudgement | None = None
+        pending = set(tasks)
+        try:
+            while pending and result is None:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    r = task.result()
+                    if r is not None:
+                        result = r
+                        break
+        finally:
+            for t in pending:
+                t.cancel()
+        return result
 
-    result: GuessJudgement | None = None
-    pending = set(tasks)
-    try:
-        while pending and result is None:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                r = task.result()
-                if r is not None:
-                    result = r
-                    break
-    finally:
-        for t in pending:
-            t.cancel()
+    # ── Primary model race ────────────────────────────────────────────────────
+    keys: list[dict] = []
+    resolved_model: str | None = None
+    for _ in range(3):
+        kd, mdl, _ = await use_case.resolve_ai_request(
+            _PRIMARY_MODEL,
+            excluded_key_hashes={k["key_hash"] for k in keys},
+        )
+        if kd and mdl:
+            keys.append(kd)
+            resolved_model = mdl
+        else:
+            break
 
-    return result
+    if not keys or not resolved_model:
+        logger.warning("Judge: no API keys available for primary model")
+    else:
+        # Extract api_key strings before spawning so raw key material doesn't
+        # linger in frame locals if an exception propagates with exc_info=True.
+        primary_api_keys = [kd["api_key"] for kd in keys]
+        keys.clear()
+        result = await _run_race(primary_api_keys, resolved_model)
+        if result is not None:
+            return result
+        logger.warning(
+            "Judge: primary model %r race failed — trying fallback %r",
+            resolved_model,
+            _FALLBACK_MODEL,
+        )
+
+    # ── Fallback model race ───────────────────────────────────────────────────
+    # Primary model race returned nothing (503, all keys failed, etc.).
+    # Try the fallback model with fresh key resolution before giving up.
+    fallback_kd, fallback_mdl, _ = await use_case.resolve_ai_request(_FALLBACK_MODEL)
+    if fallback_kd and fallback_mdl:
+        fallback_api_key = fallback_kd["api_key"]
+        result = await _run_race([fallback_api_key], fallback_mdl)
+        if result is not None:
+            logger.info("Judge: fallback model %r succeeded", fallback_mdl)
+            return result
+        logger.warning("Judge: fallback model %r also failed", fallback_mdl)
+    else:
+        logger.warning("Judge: no keys available for fallback model %r", _FALLBACK_MODEL)
+
+    return None
 
 
 # ── Progressive hint generation ───────────────────────────────────────────────
