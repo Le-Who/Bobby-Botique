@@ -23,6 +23,20 @@ from app.database import (
 from app.utils.logging_config import timed_operation
 
 
+def _extract_part(p: dict | str | bytes | bytearray | list | None) -> str:
+    """Safely extract text from a message part, skipping binary data."""
+    if isinstance(p, str):
+        return p
+    if isinstance(p, (bytes, bytearray)):
+        return ""
+    if isinstance(p, dict):
+        if "text" in p:
+            return str(p["text"])
+        if any(k in p for k in ("inline_data", "image_url", "file_data")):
+            return ""
+    return str(p)
+
+
 def _extract_message_content(msg: dict) -> str:
     """Extract content string from a message dict that may use 'content' or 'parts' key."""
     if "content" in msg:
@@ -30,13 +44,13 @@ def _extract_message_content(msg: dict) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
-        return str(content)
+            return " ".join(t for p in content if (t := _extract_part(p)))
+        return _extract_part(content)
     if "parts" in msg:
         parts = msg["parts"]
         if isinstance(parts, list):
-            return " ".join(str(p.get("text", p)) if isinstance(p, dict) else str(p) for p in parts)
-        return str(parts)
+            return " ".join(t for p in parts if (t := _extract_part(p)))
+        return _extract_part(parts)
     return ""
 
 
