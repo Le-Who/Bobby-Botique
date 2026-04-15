@@ -82,7 +82,7 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     Returns None if all attempts fail or timeout.
     """
     from app.agent_use_cases import AgentRequestUseCase
-    from app.providers.base import _build_thinking_config, get_provider_for_model
+    from app.providers.base import _build_thinking_config
     from app.providers.gemini import get_cached_genai_client
 
     use_case = AgentRequestUseCase()
@@ -140,8 +140,13 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
             logger.debug("Judge race call failed (%s): %s", model, exc)
             return None
 
-    # Launch all 3 concurrently; return first non-None
-    coros = [_one_call(kd["api_key"], resolved_model) for kd in keys]
+    # Launch all 3 concurrently; return first non-None.
+    # Extract only the api_key strings from the dicts before spawning coroutines
+    # so that raw key material doesn't linger in frame locals if an exception
+    # propagates with exc_info=True in the logging layer (M2 security fix).
+    api_keys_for_race = [kd["api_key"] for kd in keys]
+    keys.clear()  # Remove key dicts from this scope
+    coros = [_one_call(api_key, resolved_model) for api_key in api_keys_for_race]
     tasks = [asyncio.create_task(c) for c in coros]
 
     result: GuessJudgement | None = None

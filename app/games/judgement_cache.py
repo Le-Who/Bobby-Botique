@@ -28,10 +28,10 @@ _CACHE_TTL = 86_400  # 24 hours
 def _cache_key(target: str, guess: str) -> str:
     """Build a normalised, deterministic Redis key for the pair."""
     pair = f"{target.lower().strip()}:{guess.lower().strip()}"
-    return f"{_CACHE_PREFIX}{hashlib.md5(pair.encode()).hexdigest()}"  # noqa: S324 (non-crypto use)
+    return f"{_CACHE_PREFIX}{hashlib.md5(pair.encode()).hexdigest()}"
 
 
-async def get_cached_judgement(target: str, guess: str) -> "GuessJudgement | None":
+async def get_cached_judgement(target: str, guess: str) -> GuessJudgement | None:
     """Look up a cached judgement. Returns None on miss or Redis error."""
     try:
         from app.cache import redis_client
@@ -52,7 +52,7 @@ async def get_cached_judgement(target: str, guess: str) -> "GuessJudgement | Non
         return None
 
 
-async def cache_judgement(target: str, guess: str, result: "GuessJudgement") -> None:
+async def cache_judgement(target: str, guess: str, result: GuessJudgement) -> None:
     """Store a judgement in Redis with TTL. Silently swallows errors."""
     try:
         from app.cache import redis_client

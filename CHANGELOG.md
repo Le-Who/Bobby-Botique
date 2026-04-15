@@ -3,6 +3,66 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.6] - 2026-04-15 - Crocodile Game: Security Hardening & Test Coverage
+
+### 🔐 Security — WebSocket Authentication Enforcement (C3)
+
+- **Eliminated anonymous WebSocket bypass**: `WS /webapp/game/ws` now unconditionally requires valid Telegram `initData` (`HMAC-SHA256`). Previous code fell back to `user_id="anonymous"` when `initData` was absent, allowing unauthenticated connections to join and guess in any active game.
+- All connections without `initData` receive `4003 initData required` immediately.
+- Removed all `!= "anonymous"` guard clauses from `is_creator` and `target_word` visibility logic — the creator check is now a clean `user_id == game.creator_id` comparison.
+
+### 🔐 Security — API Key Leakage Prevention (M2)
+
+- **`app/games/judge.py` — key material sanitization**: In `_race_generate`, the `keys` list (dicts containing raw `api_key` strings) is now fully cleared **before** coroutines are created and tasks are spawned.
+- Prevents raw API key material from lingering in frame locals if a later exception is logged with `exc_info=True`. Keys are extracted to a plain `api_keys_for_race: list[str]` and the source dict list is cleared immediately.
+
+### 🛡️ Architecture — `_game_locks` Bounded Memory (M1)
+
+- **Unbounded dict cap**: `_game_locks` previously grew indefinitely for abandoned WebSocket connections. Added `_GAME_LOCKS_MAX = 512` and a `_sweep_game_locks()` function that evicts the oldest 50% of entries when the dict exceeds capacity.
+- Sweep is called on every new connection before lock allocation — O(n) but rare (only once every 512 connections).
+
+### 🛡️ Architecture — CSP / lint fixes
+
+- **`app/web.py`**: Split long `script-src` CSP line to stay within the 120-char ruff `line-length`.
+- **`app/web_miniapp.py`**: Added `import asyncio` to top-level imports (previously `asyncio` was only imported locally inside `game_ws`). Upgraded `asyncio.TimeoutError` → builtin `TimeoutError` (UP041). Replaced quoted `asyncio.Lock` string annotation with real type.
+- **`app/games/crocodile.py` / `judgement_cache.py`**: Removed forward-reference string quotes from return type annotations (UP037 auto-fix).
+
+### ✅ Tests — `app/games/` Unit Test Suite (L2)
+
+New file: `tests/test_games.py` — 36 fully offline tests (no Redis, no LLM, no network):
+
+| Class | Tests | Coverage |
+|-------|-------|----------|
+| `TestResolveCategory` | 7 | `word_bank.resolve_category`: exact, alias, case-insensitive, prefix ≥3 chars, unknown |
+| `TestListCategories` | 2 | RU / EN category listings |
+| `TestValidateCustomWord` | 6 | Length bounds, whitespace strip, special chars, hyphen allow |
+| `TestPickRandomWord` | 3 | RU/EN dispatch, unknown category fallback |
+| `TestLocalCheck` | 5 | Exact match, case, high-similarity typo (≥0.90), below-threshold, English |
+| `TestBelowThreshold` | 1 | Documents the 0.875 < 0.90 boundary for "крокадил" |
+| `TestFallbackJudgement` | 3 | Hot/cold/warm status, score range 0.0–1.0 |
+| `TestCrocodileGameSerialisation` | 2 | Round-trip JSON, field whitelisting (injection defence) |
+| `TestCrocodileGameInMemory` | 6 | Create+load, exact guess → won, typo guess scored, max_attempts → lost, empty guess → error, nonexistent game |
+
+### 📊 Test Results
+
+- **36 / 36 new game tests: PASS** (12-worker xdist, 9.33s)
+- **1677 / 1680 total tests: PASS**
+- 2 pre-existing failures (`test_audio_processor.py::TestBackwardCompatImports`) — present on clean HEAD before these changes, unrelated to the game subsystem.
+- 2 cosmetic `PTBUserWarning` (ConversationHandler `per_message=False`) — pre-existing.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/web_miniapp.py` | WS auth enforcement; `_sweep_game_locks()`; `asyncio` top-level import; `TimeoutError` upgrade |
+| `app/games/judge.py` | Key material sanitization before task spawn; UP037 fixes |
+| `app/games/crocodile.py` | UP037 fix (unquoted return annotation) |
+| `app/games/judgement_cache.py` | UP037 fix (unquoted return annotations) |
+| `app/web.py` | E501 fix (split long CSP line) |
+| `tests/test_games.py` | **[NEW]** 36 offline unit tests |
+
+---
+
 ## [2.12.5] - 2026-04-15 - Crocodile (Charades) Game via Inline Mode
 
 ### ✨ Feature — 1-on-1 Crocodile Game Mini App

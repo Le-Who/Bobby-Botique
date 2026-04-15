@@ -13,7 +13,6 @@ Redis keys:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid
@@ -71,22 +70,30 @@ class CrocodileGame:
         )
 
     @classmethod
-    def from_json(cls, data: str | bytes) -> "CrocodileGame":
+    def from_json(cls, data: str | bytes) -> CrocodileGame:
         d = json.loads(data)
-        return cls(**d)
+        # Whitelist known fields to guard against Redis data corruption.
+        known = {
+            "game_id", "target_word", "category", "lang", "inline_message_id",
+            "creator_id", "guesser_id", "attempts", "max_attempts",
+            "status", "created_at",
+        }
+        return cls(**{k: v for k, v in d.items() if k in known})
 
     async def save(self) -> bool:
-        """Persist game to Redis. Returns False if Redis unavailable."""
+        """Persist game to Redis; fall back to in-memory store on failure."""
         try:
             from app.cache import redis_client
 
-            if not redis_client:
-                return False
-            await redis_client.set(self._redis_key(), self.to_json().encode(), ex=_GAME_TTL)  # type: ignore[misc]
-            return True
+            if redis_client:
+                await redis_client.set(self._redis_key(), self.to_json().encode(), ex=_GAME_TTL)  # type: ignore[misc]
+                return True
         except Exception as exc:
             logger.warning("CrocodileGame.save failed game=%s: %s", self.game_id, exc)
-            return False
+
+        # Redis unavailable or failed — fall back to bounded in-memory dict.
+        _mem_put(self)
+        return False
 
     async def delete(self) -> None:
         """Remove game from Redis on termination."""
@@ -204,24 +211,8 @@ async def create_game(
     return game
 
 
-async def load_game(game_id: str) -> CrocodileGame | None:
-    """Load a game from Redis. Returns None if missing or expired."""
-    try:
-        from app.cache import redis_client
-
-        if not redis_client:
-            return None
-        raw = await redis_client.get(f"{_GAME_KEY_PREFIX}{game_id}")  # type: ignore[misc]
-        if raw is None:
-            return None
-        return CrocodileGame.from_json(raw)
-    except Exception as exc:
-        logger.warning("load_game failed game=%s: %s", game_id, exc)
-        return None
-
-
 # ── In-memory fallback (Redis-less environments) ──────────────────────────────
-# Bounded to 64 active games; each ≤1KB. Evicted LRU on overflow.
+# Bounded to 64 active games; each ≤1KB. Evicted LRU on insertion overflow.
 
 _mem_games: dict[str, CrocodileGame] = {}
 _MEM_MAX = 64
@@ -229,7 +220,7 @@ _MEM_MAX = 64
 
 def _mem_put(game: CrocodileGame) -> None:
     if len(_mem_games) >= _MEM_MAX:
-        # Evict oldest
+        # Evict oldest inserted entry
         oldest = next(iter(_mem_games))
         _mem_games.pop(oldest, None)
     _mem_games[game.game_id] = game
@@ -239,24 +230,22 @@ def _mem_get(game_id: str) -> CrocodileGame | None:
     return _mem_games.get(game_id)
 
 
-# Patch save/load to use memory dict when Redis unavailable
-_orig_save = CrocodileGame.save
-_orig_load = load_game
+async def load_game(game_id: str) -> CrocodileGame | None:
+    """Load a game — Redis primary, in-memory fallback.
 
+    The fallback is transparent: callers never need to care whether Redis is
+    available. This function is the single canonical entry point; there is no
+    module-level monkey-patching.
+    """
+    try:
+        from app.cache import redis_client
 
-async def _patched_save(self: CrocodileGame) -> bool:
-    ok = await _orig_save(self)
-    if not ok:
-        _mem_put(self)
-    return ok
+        if redis_client:
+            raw = await redis_client.get(f"{_GAME_KEY_PREFIX}{game_id}")  # type: ignore[misc]
+            if raw is not None:
+                return CrocodileGame.from_json(raw)
+    except Exception as exc:
+        logger.warning("load_game Redis failed game=%s: %s", game_id, exc)
 
-
-async def _patched_load(game_id: str) -> CrocodileGame | None:
-    result = await _orig_load(game_id)
-    if result is None:
-        result = _mem_get(game_id)
-    return result
-
-
-CrocodileGame.save = _patched_save  # type: ignore[method-assign]
-load_game = _patched_load  # reassign module-level name
+    # Redis miss or unavailable — try in-memory store.
+    return _mem_get(game_id)

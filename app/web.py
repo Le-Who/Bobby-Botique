@@ -103,11 +103,12 @@ async def add_security_headers(response):
         # and framing by Telegram's WebView
         csp = (
             "default-src 'self'; "
-            "script-src 'self' https://telegram.org 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
-            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+            "script-src 'self' https://telegram.org 'unsafe-inline' "
+            "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data:; "
-            "connect-src 'self'; "
+            "connect-src 'self' wss:; "
             "frame-ancestors https://web.telegram.org https://*.telegram.org;"
         )
         # Allow Telegram to embed this page

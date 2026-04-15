@@ -10,6 +10,7 @@ Blueprint registered on the main Quart app at prefix ``/webapp``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -638,7 +639,20 @@ async def api_graph_data(user_id: int):
 
 # ── Crocodile Game ────────────────────────────────────────────────────────────
 # Per-game asyncio.Lock prevents parallel guess races from the same connection.
-_game_locks: dict[str, "asyncio.Lock"] = {}
+# Bounded: entries are cleaned up on disconnect/game-end and swept when the dict
+# exceeds _GAME_LOCKS_MAX (protects against abandoned connections).
+_game_locks: dict[str, asyncio.Lock] = {}
+_GAME_LOCKS_MAX = 512
+
+
+def _sweep_game_locks() -> None:
+    """Evict the oldest half of _game_locks when the dict exceeds capacity."""
+    if len(_game_locks) < _GAME_LOCKS_MAX:
+        return
+    keys = list(_game_locks.keys())
+    for k in keys[: len(keys) // 2]:
+        _game_locks.pop(k, None)
+    logger.debug("_game_locks swept: %d entries removed", len(keys) // 2)
 
 
 @miniapp_blueprint.route("/game")
@@ -670,21 +684,23 @@ async def game_ws():
     from app.games.crocodile import load_game
 
     raw_init_data = websocket.args.get("initData", "")
-    if raw_init_data:
-        bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
-        validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
+    if not raw_init_data:
+        # Require Telegram initData — reject unauthenticated connections.
+        # External browser links should embed initData (Telegram passes it
+        # automatically when the WebApp is opened from the bot).
+        await websocket.close(4003, "initData required")
+        return
 
-        if validated is None:
-            await websocket.close(4003, "Unauthorized")
-            return
+    bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+    validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
+    if validated is None:
+        await websocket.close(4003, "Unauthorized")
+        return
 
-        user_id = _extract_user_id(validated)
-        if not user_id:
-            await websocket.close(4003, "No user in initData")
-            return
-    else:
-        # Fallback for external browsers / missing initData
-        user_id = "anonymous"
+    user_id = _extract_user_id(validated)
+    if not user_id:
+        await websocket.close(4003, "No user in initData")
+        return
 
     # ── Resolve game ───────────────────────────────────────────────────────
     game_id = websocket.args.get("game_id", "")
@@ -707,17 +723,19 @@ async def game_ws():
         await game.save()
 
     # Send initial game state
+    is_creator = user_id == game.creator_id
     await websocket.send_json({
         "event": "game_state",
         "category": game.category,
         "lang": game.lang,
         "attempts": len(game.attempts),
         "max_attempts": game.max_attempts,
-        "is_creator": bool(user_id != "anonymous" and user_id == game.creator_id),
-        "target_word": game.target_word if user_id != "anonymous" and user_id == game.creator_id else None,
+        "is_creator": is_creator,
+        "target_word": game.target_word if is_creator else None,
     })
 
-    # Ensure per-game lock
+    # Ensure per-game lock (sweep dict if it exceeds capacity)
+    _sweep_game_locks()
     if game_id not in _game_locks:
         _game_locks[game_id] = asyncio.Lock()
     lock = _game_locks[game_id]
@@ -727,7 +745,7 @@ async def game_ws():
         while True:
             try:
                 raw = await asyncio.wait_for(websocket.receive(), timeout=300.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Connection idle for 5 minutes — close gracefully
                 await websocket.close(1000, "Idle timeout")
                 break
