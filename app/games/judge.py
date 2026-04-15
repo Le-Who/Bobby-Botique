@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -156,6 +157,24 @@ def _local_check(target: str, guess: str) -> str | None:
     return None
 
 
+# ── Key suspension helper ────────────────────────────────────────────────────
+
+
+async def _suspend_key_safe(
+    key_hash: str, model: str, category: str, error_text: str
+) -> None:
+    """Suspend a key in the background; swallows exceptions so the caller never crashes.
+
+    Called as a fire-and-forget asyncio.Task from _one_call so it doesn't
+    add latency to the race itself.
+    """
+    try:
+        from app.repos.keys import KeyHealthRepository
+        await KeyHealthRepository().suspend_key(key_hash, model, category, error_text)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Judge: key suspension task failed for %s: %s", key_hash[:8], exc)
+
+
 # ── Race×3 non-streaming generate_content ────────────────────────────────────
 
 
@@ -164,8 +183,15 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
 
     Fallback chain:
         1. Race up to 3 keys on _PRIMARY_MODEL (gemini-3.1-flash-lite-preview).
-        2. If all fail (503 / timeout), retry once with _FALLBACK_MODEL (gemini-2.5-flash-lite).
+        2. If all fail (503 / timeout / 429), retry once with _FALLBACK_MODEL.
         3. If still None → caller receives judge_unavailable sentinel.
+
+    Key rotation on 429 / quota exhaustion:
+        Each _one_call classifies the exception via classify_key_error() and
+        fires _suspend_key_safe() as a background task, writing the key into
+        key_model_status (suspended until midnight PT for quota errors).
+        resolve_ai_request() already filters suspended keys by key_hash, so
+        the next round will automatically pick a different key.
 
     NOTE: thinking_config is intentionally NOT set here.
     Structured JSON output (response_schema) and thinking_config are mutually
@@ -174,6 +200,8 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     from google.genai import types as _gtypes
 
     from app.agent_use_cases import AgentRequestUseCase
+    from app.errors import classify_key_error
+    from app.metrics import metrics_collector
     from app.providers.gemini import get_cached_genai_client
 
     use_case = AgentRequestUseCase()
@@ -182,11 +210,12 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     config = _gtypes.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=GuessJudgement.model_json_schema(),
-        temperature=0.5,   # Higher diversity — judge hint is a UX-expressive function
-        max_output_tokens=200,  # Room for model to reason before emitting JSON
+        temperature=0.5,
+        max_output_tokens=200,
     )
 
-    async def _one_call(api_key: str, model: str) -> GuessJudgement | None:
+    async def _one_call(api_key: str, key_hash: str, model: str) -> GuessJudgement | None:
+        """Single key attempt. On any error: classify → suspend key → return None."""
         try:
             client = get_cached_genai_client(api_key)
             response = await asyncio.wait_for(
@@ -201,14 +230,36 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
             if not text:
                 return None
             data = json.loads(text)
-            return GuessJudgement.model_validate(data)
+            result = GuessJudgement.model_validate(data)
+            # Increment usage counter on success (fire-and-forget)
+            asyncio.create_task(  # noqa: RUF006
+                use_case.increment_key_usage(key_hash, model, use_openrouter=False)
+            )
+            return result
         except Exception as exc:
+            err_text = str(exc)
             logger.warning("Judge race call failed (model=%s): %s", model, exc)
+            # Classify error and suspend key — prevents the same exhausted key
+            # from being re-used in subsequent resolve_ai_request() calls.
+            category = classify_key_error(err_text)
+            asyncio.create_task(  # noqa: RUF006
+                _suspend_key_safe(key_hash, model, category, err_text[:500])
+            )
             return None
+        finally:
+            # Record every LLM call attempt in metrics (success OR failure)
+            asyncio.create_task(  # noqa: RUF006
+                metrics_collector.record_api_call("gemini_judge", model=model)
+            )
 
-    async def _run_race(api_keys: list[str], model: str) -> GuessJudgement | None:
-        """Launch all keys concurrently; return first non-None result."""
-        tasks = [asyncio.create_task(_one_call(ak, model)) for ak in api_keys]
+    async def _run_race(
+        key_pairs: list[tuple[str, str]], model: str
+    ) -> GuessJudgement | None:
+        """Launch all (api_key, key_hash) pairs concurrently; return first non-None result."""
+        tasks = [
+            asyncio.create_task(_one_call(ak, kh, model))
+            for ak, kh in key_pairs
+        ]
         result: GuessJudgement | None = None
         pending = set(tasks)
         try:
@@ -241,11 +292,11 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     if not keys or not resolved_model:
         logger.warning("Judge: no API keys available for primary model")
     else:
-        # Extract api_key strings before spawning so raw key material doesn't
-        # linger in frame locals if an exception propagates with exc_info=True.
-        primary_api_keys = [kd["api_key"] for kd in keys]
+        # Extract (api_key, key_hash) pairs and wipe the raw dict list so
+        # sensitive key material doesn't linger in frame locals on exceptions.
+        primary_pairs = [(kd["api_key"], kd["key_hash"]) for kd in keys]
         keys.clear()
-        result = await _run_race(primary_api_keys, resolved_model)
+        result = await _run_race(primary_pairs, resolved_model)
         if result is not None:
             return result
         logger.warning(
@@ -255,12 +306,12 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
         )
 
     # ── Fallback model race ───────────────────────────────────────────────────
-    # Primary model race returned nothing (503, all keys failed, etc.).
-    # Try the fallback model with fresh key resolution before giving up.
+    # Primary model race returned nothing (503 / 429 / all keys failed).
+    # resolve_ai_request will skip keys already suspended by _one_call above.
     fallback_kd, fallback_mdl, _ = await use_case.resolve_ai_request(_FALLBACK_MODEL)
     if fallback_kd and fallback_mdl:
-        fallback_api_key = fallback_kd["api_key"]
-        result = await _run_race([fallback_api_key], fallback_mdl)
+        fallback_pair = [(fallback_kd["api_key"], fallback_kd["key_hash"])]
+        result = await _run_race(fallback_pair, fallback_mdl)
         if result is not None:
             logger.info("Judge: fallback model %r succeeded", fallback_mdl)
             return result
@@ -359,21 +410,32 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
         Damerau-Levenshtein → Cache → Race×3 LLM → judge_unavailable
     """
     from app.games.judgement_cache import cache_judgement, get_cached_judgement
+    from app.metrics import metrics_collector
+
+    t0 = time.monotonic()
 
     # 1. Local exact / near-match (<1ms, no I/O)
     local = _local_check(target, guess)
     if local:
         j = GuessJudgement(status="hot", score=1.0, hint="Угадано! 🎉")
+        asyncio.create_task(  # noqa: RUF006
+            metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
+        )
         return "exact_match", j
 
     # 2. Judgement cache (<5ms, local file)
     cached = await get_cached_judgement(target, guess)
     if cached is not None:
         cached.cached = True
+        asyncio.create_task(  # noqa: RUF006
+            metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
+        )
         return cached.status, cached
 
     # 3. Race×3 LLM
     result = await _race_generate(target, guess)
+
+    elapsed = time.monotonic() - t0
 
     # 4. LLM unavailable — deliberately NO character-similarity fallback.
     #    String metrics (Levenshtein, SequenceMatcher) measure orthographic
@@ -387,9 +449,15 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
             score=0.0,
             hint="🤔 Крокодил задумался... Попытка не засчитана!",
         )
+        asyncio.create_task(  # noqa: RUF006
+            metrics_collector.record_request("judge", elapsed, success=False)
+        )
         return "judge_unavailable", sentinel
 
     # Cache result for future identical guesses (fire-and-forget)
     asyncio.create_task(cache_judgement(target, guess, result))  # noqa: RUF006
 
+    asyncio.create_task(  # noqa: RUF006
+        metrics_collector.record_request("judge", elapsed, success=True)
+    )
     return result.status, result
