@@ -252,6 +252,7 @@ async def generate_words_for_category(
     for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
         try:
             from google import genai  # type: ignore[import]
+
             from app.config import settings
 
             keys = list(settings.GEMINI_API_KEYS)
@@ -262,8 +263,8 @@ async def generate_words_for_category(
             client = genai.Client(api_key=api_key)
             response = await asyncio.wait_for(
                 asyncio.to_thread(
-                    lambda: client.models.generate_content(
-                        model=model,
+                    lambda c=client, m=model: c.models.generate_content(
+                        model=m,
                         contents=prompt,
                         config={
                             "temperature": 0.9,

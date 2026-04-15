@@ -798,6 +798,10 @@ async def game_ws():
                 await websocket.send_json({"event": "error", "message": "Empty guess"})
                 continue
 
+            if is_creator:
+                await websocket.send_json({"event": "error", "message": "Создатель игры не может отгадывать свои слова."})
+                continue
+
             async with lock:
                 # Reload game state from Redis (another tab may have mutated it)
                 game = await load_game(game_id) or game

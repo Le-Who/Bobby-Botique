@@ -12,18 +12,17 @@ from unittest.mock import patch
 
 import pytest
 
+from app.games.judge import GuessJudgement
 from app.games.judgement_cache import (
     _hints_key,
+    _hints_store,
     _make_key,
     _store,
-    _hints_store,
     cache_hints,
     cache_judgement,
     get_cached_hints,
     get_cached_judgement,
 )
-from app.games.judge import GuessJudgement
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

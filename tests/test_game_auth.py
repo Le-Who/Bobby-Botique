@@ -102,6 +102,7 @@ class TestSweepGameLocks:
 
     def test_no_op_below_capacity(self):
         import asyncio
+
         import app.web_miniapp as _wm
 
         # Add 5 entries (well below _GAME_LOCKS_MAX = 512)
@@ -113,6 +114,7 @@ class TestSweepGameLocks:
 
     def test_evicts_oldest_half_at_capacity(self):
         import asyncio
+
         import app.web_miniapp as _wm
 
         cap = _wm._GAME_LOCKS_MAX

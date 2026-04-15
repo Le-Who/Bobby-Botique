@@ -13,15 +13,15 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from telegram import Bot
 
-_bot: "Bot | None" = None
+_bot: Bot | None = None
 
 
-def register_bot(bot: "Bot") -> None:
+def register_bot(bot: Bot) -> None:
     """Called once from bot.py after PTB application is initialized."""
     global _bot
     _bot = bot
 
 
-def get_bot() -> "Bot | None":
+def get_bot() -> Bot | None:
     """Return the running PTB Bot, or None if not yet initialized."""
     return _bot

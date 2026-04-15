@@ -157,9 +157,10 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     Structured JSON output (response_schema) and thinking_config are mutually
     exclusive in the Gemini API — combining them produces empty responses.
     """
+    from google.genai import types as _gtypes
+
     from app.agent_use_cases import AgentRequestUseCase
     from app.providers.gemini import get_cached_genai_client
-    from google.genai import types as _gtypes
 
     use_case = AgentRequestUseCase()
     prompt = _SYSTEM_PROMPT.format(W=target, G=guess)

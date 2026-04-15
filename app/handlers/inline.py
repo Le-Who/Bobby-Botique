@@ -472,15 +472,15 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         arg = _CROC_PREFIX_RE.sub("", user_query).strip()
         is_custom = arg.startswith("=")
         if is_custom:
-            label = f"🐊 Крокодил: своё слово"
+            label = "🐊 Крокодил: своё слово"
             desc = "Загадаешь своё слово — второй игрок будет отгадывать"
         else:
             cat = arg or "разное"
             label = f"🐊 Крокодил: {cat[:40]}"
             desc = "Бот загадает слово из категории — второй игрок отгадывает"
         croc_init_html = (
-            f"🐊 <b>Крокодил</b>\n"
-            f"<i>Игра загружается…</i>"
+            "🐊 <b>Крокодил</b>\n"
+            "<i>Игра загружается…</i>"
         )
         croc_keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton("⏳ Загрузка...", callback_data="inline_noop")]]

@@ -37,15 +37,14 @@ Format is optimized for agent-parseable context.
 ### 🔌 Protocol — WebSocket Extensions
 
 - `history_sync`: sent after `game_state` if any guesses were made in the current session.
-- `hint` message type handled in the WS loop (before `guess` type check); index-based delivery from `_mem_hints[game_id]`.
-- `pending_id` echoed back in all `result` / `judge_unavailable` events for optimistic bubble resolution.
+- `hint` message type handled in the WS loop ### 🛡️ Tests — `tests/test_games.py`, `tests/test_game_websocket.py`, `tests/test_game_llm_tasks.py` Extended
 
-### ✅ Tests — `tests/test_games.py` Extended
-
-- **Removed** `TestFallbackJudgement` (function deleted).
+- **WebSocket Integration** (`test_game_websocket.py`): Full quart test_client simulation of miniapp WS endpoints. Tests WS-01 (Auth rejection), WS-02 (history_sync on connect), WS-03 (hint requesting and LRU limits), WS-04 (guess submission routing), and WS-05 (Creator Guard checking).
+- **LLM Task Mocks** (`test_game_llm_tasks.py`): Implemented strict separation of `google.genai.Client` and `AgentRequestUseCase` mocks. Verifies JSON array schema parsing and `503 Service Unavailable` failover routing.
+- **Creator Guard Implementation**: Fixed a missing server-side authorization check in `web_miniapp.py` that allowed game creators to process guesses; WS now firmly rejects with `is_creator` context bounds.
 - **Added** `TestDamerauLevenshtein` (8 tests): all four edit operations, transposition, multi-edit, empty strings.
 - **Added** `TestAllowedEdits` (3 tests): boundary values for each length tier.
-- **Extended** `TestLocalCheck` (11 tests): монгуст regression, 4-char zero-tolerance, transposition catch, long-word 2-edit tolerance.
+- **Extended** `TestLocalCheck` (11 tests): `пеликан` regression, 4-char zero-tolerance, transposition catch, long-word 2-edit tolerance.
 - **Added** `mock_llm` `autouse` fixture to `TestCrocodileGameInMemory`: patches `_race_generate` → cold stub, `cache_judgement` → no-op, `_prefetch_hints` → no-op. All async game tests run fully offline.
 - **Added** `test_history_recorded_on_guess`, `test_judge_unavailable_does_not_count_attempt`, `test_mongust_typo_regression`, `test_krokadil_typo_exact_match`, `test_wrong_guess_counts_attempt`.
 

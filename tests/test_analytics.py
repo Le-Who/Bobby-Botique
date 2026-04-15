@@ -1,7 +1,6 @@
 import sys
 from unittest.mock import MagicMock
 
-
 # We mock at the top level to allow imports to succeed in isolated test runs,
 # but we shouldn't pollute the global sys.modules permanently if this runs in a suite.
 # However, for this environment, it's a known pattern. We will use a context manager or

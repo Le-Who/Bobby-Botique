@@ -30,7 +30,6 @@ from app.games.word_bank import (
     validate_custom_word,
 )
 
-
 # ── word_bank ─────────────────────────────────────────────────────────────────
 
 
@@ -559,3 +558,29 @@ class TestMemoryFallbackBounded:
         from app.games.crocodile import _mem_get
 
         assert _mem_get("does-not-exist") is None
+
+
+# ── In-memory getters ────────────────────────────────────────────────────────
+
+
+class TestGameAccessors:
+    """U-05: get_game_hints() / get_game_history()"""
+
+    def test_get_game_hints_returns_empty_by_default(self):
+        from app.games.crocodile import get_game_hints
+        assert get_game_hints("unknown-id") == []
+
+    def test_get_game_hints_returns_list(self):
+        from app.games.crocodile import _mem_hints, get_game_hints
+        _mem_hints["test-id"] = ["Hint 1", "Hint 2"]
+        assert get_game_hints("test-id") == ["Hint 1", "Hint 2"]
+
+    def test_get_game_history_returns_empty_by_default(self):
+        from app.games.crocodile import get_game_history
+        assert get_game_history("unknown-id") == []
+
+    def test_get_game_history_returns_events(self):
+        from app.games.crocodile import _mem_history, get_game_history
+        _mem_history["test-id"] = [{"event": "guess", "guess": "кот"}]
+        assert get_game_history("test-id") == [{"event": "guess", "guess": "кот"}]
+
