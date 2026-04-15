@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.10] - 2026-04-16 - Judge Key Rotation & Full Metrics Coverage
+
+### 🐛 Bug Fixes
+
+- **Judge 429 Key Rotation (`app/games/judge.py`):** `_one_call` now accepts `key_hash` alongside `api_key`. On any exception, `classify_key_error()` categorises the failure (`quota` / `rate_limit` / `transient` / `permanent`) and fires `_suspend_key_safe()` as a background task, writing the offending key into `key_model_status` with the appropriate cooldown (`until midnight PT` for quota exhaustion, `15 s` for transient). Because `resolve_ai_request()` already filters suspended keys at SQL level, the next race round automatically receives a fresh key — no more repeating the same exhausted `gemini-2.5-flash-lite` key on every fallback attempt.
+- **Key Usage Accounting:** Successful judge calls now fire `increment_key_usage(key_hash, model)` so the usage counter remains accurate for all judge traffic.
+- **`_run_race` signature hardened:** Changed `list[str]` (api_key only) → `list[tuple[str, str]]` (api_key, key_hash) so key identity is always available for suspension without carrying the full dict through task closures.
+
+### 📊 Metrics Coverage
+
+- **`app/games/judge.py`:** `record_api_call("gemini_judge", model)` fired in `finally` block of every `_one_call` attempt (success **and** failure). `record_request("judge", elapsed, success)` fired in `judge_guess` for all exit paths (exact match, cache hit, LLM success, LLM unavailable).
+- **`app/handlers/ai_chat.py`:** `record_api_call("gemini_chat", model, user_id)` + `record_request("chat", elapsed, success)` after `stream_and_display` — covers all regular conversational turns.
+- **`app/handlers/msg_voice.py`:** `record_api_call("gemini_transcribe", user_id)` + `record_request("voice", elapsed, success=bool(transcript))` at the end of `_process_voice_pipeline` — covers auto-chat, auto-search, show-and-tell, and confirmation-UI paths alike.
+- **`app/handlers/ai_photo.py`:** `record_api_call("gemini_vision", model, user_id)` + `record_request("photo", elapsed, success=streamed)` inside `_process_ai_vision` — single shared gateway covering single photo, media group, and complex media-group-search flows.
+
+---
+
 ## [2.12.9] - 2026-04-16 - LLM Artifact Filtering & Tolerance Fixes
 
 ### 🐛 Bug Fixes & Resilience
