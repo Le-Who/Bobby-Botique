@@ -201,6 +201,10 @@ class Settings(BaseModel):
     # Base URL of the web server (e.g. https://gemaibotv2-xxxx.northflank.app).
     # Required for Mini App reader links. If empty, system falls back to Telegraph.
     WEBAPP_BASE_URL: str = ""
+    # Short name of the Mini App registered with @BotFather via /newapp.
+    # When set, Crocodile game buttons use t.me deep links (no "Open link?" dialog).
+    # Example: if short name is "game", button URL becomes https://t.me/{bot}/game?startapp={id}
+    MINIAPP_SHORT_NAME: str = ""
 
     # --- LOCAL BOT API SERVER ---
     # If set, the bot routes through a self-hosted Local Bot API Server
@@ -308,6 +312,7 @@ def load_settings() -> Settings:
             "WEBHOOK_MAX_CONNECTIONS": int(os.getenv("WEBHOOK_MAX_CONNECTIONS", "40")),
             "UPDATE_QUEUE_MAXSIZE": int(os.getenv("UPDATE_QUEUE_MAXSIZE", "1000")),
             "WEBAPP_BASE_URL": os.getenv("WEBAPP_BASE_URL", "").rstrip("/"),
+            "MINIAPP_SHORT_NAME": os.getenv("MINIAPP_SHORT_NAME", "").strip(),
             "TELEGRAM_LOCAL_SERVER_URL": os.getenv("TELEGRAM_LOCAL_SERVER_URL", "").rstrip("/"),
             "GEMINI_API_KEYS": _load_and_clean_keys("GEMINI_API_KEYS"),
             "TAVILY_API_KEYS": _load_and_clean_keys("TAVILY_API_KEYS"),

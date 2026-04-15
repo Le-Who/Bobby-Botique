@@ -407,9 +407,12 @@ if (tg) {
   tg.setBackgroundColor?.('#0a0d14');
 }
 
-/* ── Config from URL params ─────────────────────────────────────────── */
+/* ── Config from URL params / Telegram start_param ──────────────────── */
 const params     = new URLSearchParams(location.search);
-const GAME_ID    = params.get('game_id') || '{{ game_id }}';
+const GAME_ID    = params.get('game_id')
+                || (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param)
+                || params.get('tgWebAppStartParam')
+                || '{{ game_id }}';
 const INIT_DATA  = tg?.initData || '';
 
 if (!GAME_ID) {

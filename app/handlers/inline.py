@@ -843,14 +843,21 @@ async def _init_croc_game_async(
         )
 
         # ── Build WebApp URL for the guesser ─────────────────────────────────
-        game_url = f"{webapp_base}/webapp/game?game_id={game.game_id}"
+        # Prefer t.me deep link (no "Open this link?" dialog) when a Mini App
+        # short name is registered with @BotFather.  Falls back to direct URL.
+        miniapp_short = getattr(settings, "MINIAPP_SHORT_NAME", "")
+        bot_username = getattr(bot, "username", "") or ""
+        if miniapp_short and bot_username:
+            game_url = f"https://t.me/{bot_username}/{miniapp_short}?startapp={game.game_id}"
+        else:
+            game_url = f"{webapp_base}/webapp/game?game_id={game.game_id}"
 
         # ── Edit inline message ───────────────────────────────────────────────
         if arg.startswith("="):
             status_text = (
-                f"🐊 <b>Крокодил</b>\n"
-                f"📝 <i>Ты загадал своё слово.</i>\n"
-                f"Поделись этим сообщением с партнёром — он будет отгадывать!"
+                "🐊 <b>Крокодил</b>\n"
+                "📝 <i>Ты загадал своё слово.</i>\n"
+                "Поделись этим сообщением с партнёром — он будет отгадывать!"
             )
         else:
             gen_note = "✨ <i>(тема сгенерирована ИИ)</i>\n" if is_generated else ""

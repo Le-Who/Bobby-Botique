@@ -661,7 +661,12 @@ async def game_page():
     from quart import render_template
     from quart import request as _req
 
-    game_id = _req.args.get("game_id") or _req.args.get("id") or ""
+    game_id = (
+        _req.args.get("game_id")
+        or _req.args.get("tgWebAppStartParam")
+        or _req.args.get("id")
+        or ""
+    )
     return await render_template("crocodile.html", game_id=game_id)
 
 
