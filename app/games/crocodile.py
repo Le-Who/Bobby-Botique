@@ -271,6 +271,10 @@ _mem_hints: dict[str, list[str]] = {}
 # game_id → ordered list of guess result dicts (for chat history restore)
 _mem_history: dict[str, list[dict]] = {}
 
+# game_id → list of asyncio.Queue subscribers (Spectator / God Mode PubSub)
+# Each WebSocket handler that needs live broadcasts registers a Queue here.
+_game_subscribers: dict[str, list[asyncio.Queue]] = {}  # type: ignore[type-arg]
+
 # ── Public accessors ────────────────────────────────────────────────────────────
 
 
@@ -282,6 +286,49 @@ def get_game_hints(game_id: str) -> list[str]:
 def get_game_history(game_id: str) -> list[dict]:
     """Return the full guess history for this game (for WS reconnect restore)."""
     return _mem_history.get(game_id, [])
+
+
+# ── Pub/Sub helpers ──────────────────────────────────────────────────────────
+
+
+def subscribe_game(game_id: str) -> asyncio.Queue:  # type: ignore[type-arg]
+    """Register a new subscriber queue for the given game and return it.
+
+    Each WebSocket handler (guesser or creator/spectator) that wants live
+    broadcasts calls this once at connect time, and passes the returned Queue
+    to its receive loop.
+    """
+    q: asyncio.Queue = asyncio.Queue(maxsize=64)  # type: ignore[type-arg]
+    _game_subscribers.setdefault(game_id, []).append(q)
+    return q
+
+
+def unsubscribe_game(game_id: str, q: asyncio.Queue) -> None:  # type: ignore[type-arg]
+    """Remove a subscriber queue when the WebSocket closes."""
+    subs = _game_subscribers.get(game_id)
+    if subs:
+        try:
+            subs.remove(q)
+        except ValueError:
+            pass
+        if not subs:
+            _game_subscribers.pop(game_id, None)
+
+
+async def broadcast_game_event(game_id: str, payload: dict, exclude: asyncio.Queue | None = None) -> None:  # type: ignore[type-arg]
+    """Fan-out a JSON-serialisable payload to all subscribers except *exclude*.
+
+    Drops the event for any subscriber whose queue is full (back-pressure),
+    so one slow client cannot block the entire broadcast.
+    """
+    subs = _game_subscribers.get(game_id, [])
+    for q in list(subs):  # iterate a snapshot in case unsubscribe runs concurrently
+        if q is exclude:
+            continue
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            logger.warning("broadcast_game_event: queue full for game=%s, dropping event", game_id)
 
 
 # ── In-memory game fallback (Redis-less environments) ───────────────────────

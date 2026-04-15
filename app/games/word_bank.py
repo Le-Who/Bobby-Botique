@@ -212,6 +212,33 @@ def validate_custom_word(word: str) -> str | None:
     return w
 
 
+# ── Reverse word-to-category index ────────────────────────────────────────────
+# Flat dict: lowercase_word → canonical_category_key.
+# Built once at import time so lookup is O(1).
+# Used by find_word_category() to enrich custom-word hint context (Bug-6.4).
+
+_WORD_TO_CATEGORY: dict[str, str] = {
+    word: category
+    for _lang_bank in WORD_BANK.values()
+    for category, words in _lang_bank.items()
+    for word in words
+}
+
+
+def find_word_category(word: str) -> str | None:
+    """Return the canonical category name if the word exists in any built-in list.
+
+    Normalises to lowercase before lookup. Returns None if the word is not
+    in the built-in bank (i.e., it is a genuinely custom player word).
+
+    Example:
+        find_word_category("германия")  # None — not in bank → "слово игрока"
+        find_word_category("крокодил")  # "Животные"
+    """
+    return _WORD_TO_CATEGORY.get(word.strip().lower())
+
+
+
 # ── AI-generated word bank ───────────────────────────────────────────────────
 
 # In-process cache: (lang, canonical_category) → word list

@@ -739,8 +739,14 @@ async def game_ws():
         "target_word": game.target_word if is_creator else None,
     })
 
-    # Restore chat history so reconnecting guessers keep their progress visible
-    from app.games.crocodile import get_game_history
+    # Restore chat history so reconnecting players keep their progress visible
+    from app.games.crocodile import (
+        broadcast_game_event,
+        get_game_hints,
+        get_game_history,
+        subscribe_game,
+        unsubscribe_game,
+    )
     history = get_game_history(game_id)
     if history:
         await websocket.send_json({"event": "history_sync", "items": history})
@@ -750,6 +756,27 @@ async def game_ws():
     if game_id not in _game_locks:
         _game_locks[game_id] = asyncio.Lock()
     lock = _game_locks[game_id]
+
+    # Subscribe this socket to the game's PubSub broadcast queue
+    my_queue = subscribe_game(game_id)
+
+    # ── Drain task: forward broadcast events to this WebSocket connection ──
+    # Runs concurrently with the receive loop so broadcasts are never blocked
+    # by waiting for the next incoming message.
+    drain_task: asyncio.Task | None = None
+
+    async def _drain_broadcasts() -> None:
+        try:
+            while True:
+                payload = await my_queue.get()
+                try:
+                    await websocket.send_json(payload)
+                except Exception:
+                    break  # Socket closed — exit silently
+        except asyncio.CancelledError:
+            pass
+
+    drain_task = asyncio.create_task(_drain_broadcasts())
 
     # ── Main message loop ──────────────────────────────────────────────────
     try:
@@ -767,12 +794,11 @@ async def game_ws():
                 await websocket.send_json({"event": "error", "message": "Invalid JSON"})
                 continue
 
-            msg_type  = msg.get("type")
+            msg_type   = msg.get("type")
             pending_id = str(msg.get("pending_id", ""))
 
             # ── Hint request ──────────────────────────────────────────────
             if msg_type == "hint":
-                from app.games.crocodile import get_game_hints
                 hint_idx = int(msg.get("hint_index", 0))
                 hints    = get_game_hints(game_id)
                 if hint_idx < len(hints):
@@ -788,6 +814,35 @@ async def game_ws():
                         "text":      "⏳ Подсказки ещё готовятся или закончились...",
                         "available": False,
                     })
+                continue
+
+            # ── Creator-only: reaction —————————————————————————————————————
+            # Creators can send emoji reactions which are broadcast to the guesser.
+            if msg_type == "reaction" and is_creator:
+                emoji = str(msg.get("emoji", "")).strip()
+                if emoji:
+                    await broadcast_game_event(game_id, {
+                        "event": "reaction",
+                        "emoji": emoji,
+                    }, exclude=my_queue)
+                continue
+
+            # ── Creator-only: typing indicator from creator side ──────────
+            # (Guesser typing is handled in the guess flow below)
+            if msg_type == "typing_status" and is_creator:
+                await broadcast_game_event(game_id, {
+                    "event":   "creator_typing",
+                    "active":  bool(msg.get("active", False)),
+                }, exclude=my_queue)
+                continue
+
+            # ── Guesser typing indicator (ephemeral, not recorded) ─────────
+            if msg_type == "typing":
+                if not is_creator:
+                    await broadcast_game_event(game_id, {
+                        "event":  "guesser_typing",
+                        "active": bool(msg.get("active", False)),
+                    }, exclude=my_queue)
                 continue
 
             if msg_type != "guess":
@@ -816,6 +871,22 @@ async def game_ws():
 
             await websocket.send_json(event)
 
+            # Broadcast the result to all other subscribers (spectators / creator)
+            broadcast_payload = {
+                "event":  "spectator_result",
+                "word":   word,
+                "status": event.get("status"),
+                "score":  event.get("score"),
+                "hint":   event.get("hint"),
+            }
+            if event.get("event") in ("game_over",):
+                broadcast_payload["event"] = "spectator_game_over"
+                broadcast_payload["word"]  = event.get("word", word)
+            elif event.get("status") == "exact_match":
+                broadcast_payload["event"] = "spectator_win"
+                broadcast_payload["word"]  = event.get("word", word)
+            await broadcast_game_event(game_id, broadcast_payload, exclude=my_queue)
+
             # Finalize if game ended (won / lost)
             if game.status in ("won", "lost"):
                 try:
@@ -831,4 +902,7 @@ async def game_ws():
     except Exception as exc:
         logger.warning("game_ws: unexpected error game=%s: %s", game_id, exc)
     finally:
+        if drain_task and not drain_task.done():
+            drain_task.cancel()
+        unsubscribe_game(game_id, my_queue)
         _game_locks.pop(game_id, None)

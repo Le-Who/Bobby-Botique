@@ -40,6 +40,14 @@
       --b-judge-bdr:  rgba(255,255,255,0.10);
       --b-sys:        rgba(255,189,89,0.07);
       --b-sys-bdr:    rgba(255,189,89,0.20);
+
+      /* God Mode / Spectator palette */
+      --b-spec:       rgba(167,139,250,0.10);
+      --b-spec-bdr:   rgba(167,139,250,0.28);
+      --b-spec-cold:  rgba(100,116,237,0.12);
+      --b-spec-warm:  rgba(255,189,89,0.10);
+      --b-spec-hot:   rgba(0,224,150,0.13);
+      --b-spec-exact: rgba(0,224,150,0.22);
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -322,6 +330,107 @@
       z-index: 30;
     }
     #error-bar.show { transform: translateY(0); }
+
+    /* ── God Mode (Creator / Spectator) styles ───────────────────────────── */
+
+    /* Word banner shown at top for creator */
+    #word-banner {
+      display: none;
+      padding: 10px 16px 8px;
+      background: linear-gradient(135deg, rgba(167,139,250,.15), rgba(0,224,255,.08));
+      border-bottom: 1px solid rgba(167,139,250,.25);
+      flex-shrink: 0;
+    }
+    #word-banner.visible { display: flex; align-items: center; gap: 10px; }
+    #word-banner-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: rgba(167,139,250,.8);
+      flex-shrink: 0;
+    }
+    #word-banner-word {
+      font-size: 19px;
+      font-weight: 800;
+      color: #a78bfa;
+      letter-spacing: -0.5px;
+    }
+    #word-banner-badge {
+      margin-left: auto;
+      padding: 2px 8px;
+      border-radius: 20px;
+      background: rgba(167,139,250,.15);
+      border: 1px solid rgba(167,139,250,.3);
+      font-size: 10px;
+      font-weight: 600;
+      color: rgba(167,139,250,.9);
+      white-space: nowrap;
+    }
+
+    /* Spectator bubbles — guesser's messages appear left-aligned, mirrored */
+    .bubble-row.spectator { justify-content: flex-start; }
+    .bubble.spectator {
+      background: var(--b-spec);
+      border-color: var(--b-spec-bdr);
+      border-bottom-left-radius: 4px;
+    }
+    .bubble.spectator.cold  { background: var(--b-spec-cold); border-color: rgba(100,116,237,.35); }
+    .bubble.spectator.warm  { background: var(--b-spec-warm); border-color: var(--b-warm-bdr); }
+    .bubble.spectator.hot   { background: var(--b-spec-hot);  border-color: var(--b-hot-bdr); }
+    .bubble.spectator.exact_match {
+      background: var(--b-spec-exact);
+      border-color: rgba(0,224,150,.55);
+      box-shadow: 0 0 16px rgba(0,224,150,.15);
+    }
+
+    /* Guesser presence / typing indicator (God Mode) */
+    #guesser-presence {
+      display: none;
+      padding: 5px 16px 4px;
+      font-size: 12px;
+      color: var(--text-dim);
+      flex-shrink: 0;
+      height: 26px;
+      gap: 7px;
+      align-items: center;
+      transition: opacity .25s;
+    }
+    #guesser-presence.visible { display: flex; }
+    #guesser-presence.hidden  { opacity: 0; }
+
+    /* Reaction button strip (God Mode) */
+    #reaction-bar {
+      display: none;
+      padding: 8px 14px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+      background: rgba(10,13,20,.92);
+      backdrop-filter: var(--blur);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      gap: 10px;
+    }
+    #reaction-bar.visible { display: flex; align-items: center; }
+    .react-btn {
+      flex: 1;
+      padding: 9px 4px;
+      font-size: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface-alt);
+      cursor: pointer;
+      transition: transform .15s, background .15s;
+      text-align: center;
+    }
+    .react-btn:hover  { background: rgba(255,255,255,.14); }
+    .react-btn:active { transform: scale(.88); }
+    #reaction-feedback {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-align: center;
+      padding: 0 4px;
+      min-width: 60px;
+    }
   </style>
 </head>
 <body>
@@ -333,17 +442,32 @@
 
 <div id="app">
   <header>
-    <h1>🐊 Крокодил</h1>
+    <h1 id="header-title">🐊 Крокодил</h1>
     <button id="hint-btn" disabled title="Подсказка">💡</button>
     <span id="attempts-badge">0 / 10</span>
   </header>
+
+  <!-- God Mode: target word banner (creator only) -->
+  <div id="word-banner">
+    <span id="word-banner-label">Слово</span>
+    <span id="word-banner-word"></span>
+    <span id="word-banner-badge">👁 Режим бога</span>
+  </div>
+
   <div id="category-pill"></div>
 
   <div id="chat-area"></div>
 
+  <!-- Guesser-side typing indicator (default — judge evaluating) -->
   <div id="typing-row" class="hidden">
     <div class="typing-dots"><span></span><span></span><span></span></div>
     <span>Крокодил оценивает…</span>
+  </div>
+
+  <!-- God Mode: guesser is typing indicator -->
+  <div id="guesser-presence">
+    <div class="typing-dots"><span></span><span></span><span></span></div>
+    <span id="guesser-presence-label">Игрок печатает…</span>
   </div>
 
   <div id="input-zone">
@@ -358,6 +482,16 @@
       maxlength="80"
     />
     <button id="send-btn" aria-label="Отправить">➤</button>
+  </div>
+
+  <!-- God Mode: reaction strip (creator only) -->
+  <div id="reaction-bar">
+    <button class="react-btn" data-emoji="🔥" title="Горячо!">🔥</button>
+    <button class="react-btn" data-emoji="❄️" title="Холодно!">❄️</button>
+    <button class="react-btn" data-emoji="😂" title="Смешно!">😂</button>
+    <button class="react-btn" data-emoji="👏" title="Молодец!">👏</button>
+    <button class="react-btn" data-emoji="🤔" title="Пораскинь мозгами">🤔</button>
+    <span id="reaction-feedback"></span>
   </div>
 </div>
 
@@ -421,14 +555,14 @@ function showError(msg, autoDismiss = true) {
 }
 
 /* ── Win/Loss overlay ───────────────────────────────────────────────────── */
-function showOverlay({ win, word, attempts, maxAttempts, customTitle }) {
+function showOverlay({ win, word, attempts, maxAttempts, customTitle, isSpectator }) {
   $('overlay-icon').textContent = win ? '🎉' : '😔';
   const title = $('overlay-title');
   title.textContent = customTitle || (win ? 'Угадано!' : 'Не угадали.');
   title.className   = win ? '' : 'loss';
   $('overlay-word').textContent = (word || '').toUpperCase();
-  $('overlay-sub').textContent  = customTitle
-    ? 'Наблюдай за догадками!'
+  $('overlay-sub').textContent  = isSpectator
+    ? (win ? `Игрок угадал за ${attempts} попыток! 🎊` : `Попытки исчерпаны после ${maxAttempts} ходов`)
     : win
       ? `За ${attempts} из ${maxAttempts} попыток`
       : `Исчерпано ${maxAttempts} попыток`;
@@ -495,6 +629,40 @@ function appendCompletedBubble(word, { status, hint, score, cached = false }) {
   resolvePendingBubble(pid, { status, hint, score, cached });
 }
 
+/* ── Spectator bubble helpers (God Mode) ────────────────────────────────── */
+function appendSpectatorBubble(word, { status, hint, score, cached = false }) {
+  const row = document.createElement('div');
+  row.className = 'bubble-row spectator';
+  const icon     = STATUS_ICON[status] || '❓';
+  const cls      = status === 'exact_match' ? 'exact_match' : (status || '');
+  const scoreStr = typeof score === 'number'
+    ? `${(score * 100).toFixed(0)}%${cached ? ' ⚡' : ''}`
+    : '';
+  const hintHtml = hint ? `<span class="b-hint">${escHtml(hint)}</span>` : '';
+  row.innerHTML =
+    `<div class="bubble spectator ${cls}">` +
+    `<span class="b-word">${escHtml(word)}</span>` +
+    `<div class="b-meta">` +
+    `<span class="b-icon">${icon}</span>` +
+    (scoreStr ? `<span class="b-score">${escHtml(scoreStr)}</span>` : '') +
+    `</div>` +
+    hintHtml +
+    `</div>`;
+  chatArea.appendChild(row);
+  scrollBottom();
+}
+
+function appendReactionBubble(emoji) {
+  const row = document.createElement('div');
+  row.className = 'bubble-row system';
+  row.innerHTML = `<div class="bubble system">${escHtml(emoji)} Создатель реагирует</div>`;
+  // Fade out after 4s
+  chatArea.appendChild(row);
+  scrollBottom();
+  setTimeout(() => row.remove(), 4000);
+}
+
+
 function appendHintBubble(text) {
   const row = document.createElement('div');
   row.className = 'bubble-row system';
@@ -503,7 +671,28 @@ function appendHintBubble(text) {
   scrollBottom();
 }
 
-/* ── Hint button ────────────────────────────────────────────────────────── */
+/* ── God mode state ─────────────────────────────────────────────────────── */
+let isCreatorMode = false;
+
+function activateGodMode(targetWord) {
+  isCreatorMode = true;
+
+  // Reveal word banner
+  const banner = $('word-banner');
+  banner.classList.add('visible');
+  $('word-banner-word').textContent = targetWord.toUpperCase();
+
+  // Update header title
+  $('header-title').textContent = '👁 Режим наблюдателя';
+
+  // Hide guesser input, show reaction bar + guesser presence indicator
+  $('input-zone').style.display   = 'none';
+  $('hint-btn').style.display     = 'none';
+  $('reaction-bar').classList.add('visible');
+  $('guesser-presence').classList.add('visible');
+  $('guesser-presence').classList.add('hidden'); // start hidden until typing event
+}
+
 let hintIndex          = 0;
 let hintCooldownActive = true;
 let gameOver           = false;
@@ -561,8 +750,10 @@ function connect() {
   ws.onopen = () => {
     reconnectAttempts = 0;
     $('connecting').classList.add('hidden');
-    setInputEnabled(true);
-    startHintCooldown(12000); // 12s before first hint available
+    if (!isCreatorMode) {
+      setInputEnabled(true);
+      startHintCooldown(12000); // 12s before first hint available
+    }
   };
 
   ws.onmessage = ev => {
@@ -595,21 +786,17 @@ function handleMessage(msg) {
       setAttempts(attemptsUsed, maxAttempts);
       if (msg.category) $('category-pill').textContent = `📂 ${msg.category}`;
       if (msg.is_creator) {
-        gameOver = true;
-        setInputEnabled(false);
+        activateGodMode(msg.target_word || '');
+        gameOver = false; // Creator stays active to observe
         updateHintBtn();
-        setTimeout(() => showOverlay({
-          win: true, word: msg.target_word,
-          attempts: 0, maxAttempts,
-          customTitle: 'Твоё слово:',
-        }), 400);
       }
       break;
     }
 
     case 'history_sync': {
       (msg.items || []).forEach(item => {
-        appendCompletedBubble(item.word, {
+        const fn = isCreatorMode ? appendSpectatorBubble : appendCompletedBubble;
+        fn(item.word, {
           status: item.status,
           hint:   item.hint,
           score:  item.score,
@@ -685,6 +872,62 @@ function handleMessage(msg) {
       showError(msg.message || 'Произошла ошибка');
       break;
     }
+
+    // ── Spectator / God Mode events ────────────────────────────────────────
+
+    case 'spectator_result': {
+      // Creator sees a new guess result arrive in real-time
+      attemptsUsed = (attemptsUsed || 0) + 1;
+      setAttempts(attemptsUsed, maxAttempts);
+      appendSpectatorBubble(msg.word || '?', {
+        status: msg.status,
+        hint:   msg.hint,
+        score:  msg.score,
+      });
+      haptic?.impactOccurred('light');
+      break;
+    }
+
+    case 'spectator_win': {
+      gameOver = true;
+      appendSpectatorBubble(msg.word || '?', { status: 'exact_match', score: 1.0, hint: 'Угадано! 🎉' });
+      haptic?.notificationOccurred('success');
+      setTimeout(() => showOverlay({
+        win: true, word: msg.word,
+        attempts: attemptsUsed, maxAttempts,
+        isSpectator: true,
+      }), 600);
+      break;
+    }
+
+    case 'spectator_game_over': {
+      gameOver = true;
+      haptic?.notificationOccurred('error');
+      setTimeout(() => showOverlay({
+        win: false, word: msg.word,
+        attempts: attemptsUsed, maxAttempts,
+        isSpectator: true,
+      }), 200);
+      break;
+    }
+
+    case 'reaction': {
+      // Guesser sees emoji reaction from creator
+      appendReactionBubble(msg.emoji || '👋');
+      haptic?.impactOccurred('soft');
+      break;
+    }
+
+    case 'guesser_typing': {
+      // Creator sees typing indicator when guesser is composing
+      const presence = $('guesser-presence');
+      if (msg.active) {
+        presence.classList.remove('hidden');
+      } else {
+        presence.classList.add('hidden');
+      }
+      break;
+    }
   }
 }
 
@@ -703,6 +946,8 @@ function sendGuess() {
   ws.send(JSON.stringify({ type: 'guess', word, pending_id: pid }));
   input.value = '';
   input.focus();
+  // Stop typing indicator
+  ws.send(JSON.stringify({ type: 'typing', active: false }));
   appendPendingBubble(word, pid);
   haptic?.impactOccurred('medium');
 }
@@ -710,6 +955,32 @@ function sendGuess() {
 $('send-btn').addEventListener('click', sendGuess);
 $('guess-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); sendGuess(); }
+});
+
+/* ── Guesser typing indicator (ephemeral) ───────────────────────────────── */
+let typingTimer = null;
+$('guess-input').addEventListener('input', () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'typing', active: true }));
+  if (typingTimer) clearTimeout(typingTimer);
+  typingTimer = setTimeout(() => {
+    if (ws && ws.readyState === WebSocket.OPEN)
+      ws.send(JSON.stringify({ type: 'typing', active: false }));
+  }, 2500);
+});
+
+/* ── God Mode reaction buttons ──────────────────────────────────────────── */
+document.querySelectorAll('.react-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const emoji = btn.dataset.emoji;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !emoji) return;
+    ws.send(JSON.stringify({ type: 'reaction', emoji }));
+    haptic?.impactOccurred('soft');
+    // Brief feedback text
+    const fb = $('reaction-feedback');
+    fb.textContent = emoji;
+    setTimeout(() => { fb.textContent = ''; }, 1500);
+  });
 });
 
 /* ── Boot ───────────────────────────────────────────────────────────────── */

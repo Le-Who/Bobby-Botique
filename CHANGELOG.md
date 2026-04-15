@@ -3,6 +3,30 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.8] - 2026-04-16 - Crocodile Mini App: Spectator Mode & LLM Hardening
+
+### ✨ Feature — God Mode (Spectator UX)
+
+- **Architecture:** Transitioned from a blindly blocked creator view to a full live "Spectator Mode". Creators who start games using a custom word can now observe the guesser's attempts in real-time.
+- **PubSub Broadcaster:** Implemented an in-memory PubSub system (`asyncio.Queue` based) in `crocodile.py`. WebSocket handlers subscribe to the game's feed upon connection and decouple broadcasts from message loops via independent `asyncio.create_task` drains.
+- **UI Adjustments (`crocodile.html`):** 
+  - Guesser's bubbles are mirrored to the left side (`.bubble-row.spectator`) for the creator.
+  - New "Target Word Banner" at the top of the interface constantly reminds the creator of the mystery word.
+  - Active presence indicators (`Игрок печатает...`) fired by ephemeral WS typing events.
+- **Interactive Spectation:** Expanded creator WS permissions to send live emoji reactions (`🔥`, `❄️`, `😂`, `👏`, `🤔`). These reactions briefly appear as fading system bubbles in the guesser's chat feed, creating a bidirectional, collaborative game feel while maintaining strict game integrity.
+
+### 🧠 Algorithm — Prompt & Context Resilience (Bug-6.3/6.4)
+
+- **Removed Anchoring Bias:** `judge.py` systemic prompts were rewritten to eliminate literal "example anchors" (e.g., repeatedly asserting the exact phrase `"Совсем из другой оперы!"`). Expanded LLM tokens and temperature parameters (token max `100`→`200`, temp `0.1`→`0.5` for judging and `0.3` for hints) to facilitate dynamically descriptive semantic evaluations.
+- **Reverse Category Lookup:** `word_bank.py` now maps `word_to_category` at module scope. If a creator specifies `=крокодил` (a word already inside the built-in bank), the script reverse-resolves it to the `"Животные"` category logic stream, delivering critical context back to the hint-generating LLM.
+- **Context Injection:** Truly unknown custom words no longer default to the opaque literal `"custom"`, which was empirically causing the LLM to hallucinate unrelated semantic links (e.g., mistaking "Germany" for "Italy"). They now present as `"слово игрока (произвольная тема)"`.
+
+### 🛡️ Tests
+
+- `test_game_inline.py` expanded to strictly cover both true custom-word injections and reverse-lookup (bank-hit) category coercions. Full offline parallelization achieves 100% test passing (1770 total).
+
+---
+
 ## [2.12.7] - 2026-04-15 - Crocodile Mini App: UX Hardening & Messenger-Style UI
 
 ### 🎮 UX — Messenger-Style Chat History (`crocodile.html` full rewrite)

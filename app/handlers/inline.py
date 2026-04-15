@@ -791,7 +791,7 @@ async def _init_croc_game_async(
 
     from app.config import settings
     from app.games.crocodile import create_game
-    from app.games.word_bank import pick_random_word, validate_custom_word
+    from app.games.word_bank import find_word_category, pick_random_word, validate_custom_word
 
     try:
         webapp_base = getattr(settings, "WEBAPP_BASE_URL", "").rstrip("/")
@@ -815,6 +815,13 @@ async def _init_croc_game_async(
                 return
             category = "custom"
             lang = "ru" if any("\u0400" <= c <= "\u04ff" for c in word) else "en"
+            # Bug-6.3/6.4: Check if this word is already in the built-in bank;
+            # use the canonical category so the hints LLM has real context.
+            bank_cat = find_word_category(word)
+            # Use canonical category if word is in the bank; otherwise give the LLM
+            # a human-readable context instead of the opaque "custom" string that
+            # caused hallucination (Bug-6.3/6.4).
+            category = bank_cat or "слово игрока (произвольная тема)"
         else:
             category_raw = arg or "разное"
             try:
