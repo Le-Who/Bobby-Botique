@@ -23,6 +23,7 @@ from app.games.judge import (
     _local_check,
 )
 from app.games.word_bank import (
+    _detect_lang,
     list_categories,
     pick_random_word,
     resolve_category,
@@ -432,3 +433,129 @@ class TestCrocodileGameInMemory:
     async def test_game_not_found_returns_none(self):
         result = await load_game("nonexistent-game-id-xyz")
         assert result is None
+
+    async def test_process_guess_on_finished_game_still_works(self):
+        """process_guess on a won game must still return a result (caller owns the break)."""
+        game = await create_game(
+            target_word="слон",
+            category="Животные",
+            lang="ru",
+            inline_message_id="inline_test_9",
+            creator_id=5,
+        )
+        # Win the game first
+        await game.process_guess("слон")
+        assert game.status == "won"
+
+        # Call again — should return error (empty guard) or a valid event;
+        # the critical invariant is: does NOT raise an unhandled exception.
+        event2 = await game.process_guess("слон")
+        # After win, attempts already appended; process_guess returns result event
+        assert "event" in event2
+
+
+# ── _detect_lang ──────────────────────────────────────────────────────────────
+
+
+class TestDetectLang:
+    """_detect_lang heuristic: Cyrillic ratio > 0.3 → ru, else en."""
+
+    def test_pure_cyrillic(self):
+        assert _detect_lang("крокодил") == "ru"
+
+    def test_pure_latin(self):
+        assert _detect_lang("crocodile") == "en"
+
+    def test_empty_string_defaults_ru(self):
+        # Empty → ratio calculation skipped → return "ru"
+        assert _detect_lang("") == "ru"
+
+    def test_mixed_majority_cyrillic(self):
+        # "кот dog" — 3 Cyrillic of 7 chars = 0.43 > 0.3 → ru
+        assert _detect_lang("кот dog") == "ru"
+
+    def test_mixed_majority_latin(self):
+        # "cat кот" — same ratio but test with lower Cyrillic fraction
+        # "ab cde fg" all latin + 2 Cyrillic out of 10 chars = 0.2 ≤ 0.3 → en
+        assert _detect_lang("ab кт fg") == "en"
+
+
+# ── validate_custom_word boundary cases ───────────────────────────────────────
+
+
+class TestValidateCustomWordBoundaries:
+    """Boundary cases not covered by the original 7 tests."""
+
+    def test_exactly_2_chars_valid(self):
+        assert validate_custom_word("яя") == "яя"
+
+    def test_exactly_40_chars_valid(self):
+        assert validate_custom_word("а" * 40) == "а" * 40
+
+    def test_41_chars_rejected(self):
+        assert validate_custom_word("а" * 41) is None
+
+    def test_space_inside_word_allowed(self):
+        # Multi-word phrases like "северное сияние" are in the word bank
+        assert validate_custom_word("северное сияние") == "северное сияние"
+
+
+# ── CrocodileGame serialisation edge cases ─────────────────────────────────────
+
+
+class TestCrocodileGameSerialisationEdgeCases:
+
+    def test_from_json_accepts_bytes(self):
+        """from_json must accept bytes (Redis returns bytes from .get())."""
+        game = CrocodileGame(
+            game_id="bytes-test",
+            target_word="кот",
+            category="Животные",
+            lang="ru",
+            inline_message_id="inl1",
+            creator_id=1,
+            guesser_id=None,
+        )
+        raw_bytes: bytes = game.to_json().encode("utf-8")
+        restored = CrocodileGame.from_json(raw_bytes)
+        assert restored.game_id == "bytes-test"
+        assert restored.target_word == "кот"
+
+    def test_from_json_malformed_raises(self):
+        """Malformed JSON must raise, not silently return garbage."""
+        import pytest
+        with pytest.raises(Exception):
+            CrocodileGame.from_json(b"not-json-at-all")
+
+
+# ── In-memory LRU bounded store ───────────────────────────────────────────────
+
+
+class TestMemoryFallbackBounded:
+    """_mem_put must evict oldest entry when _MEM_MAX is reached."""
+
+    def test_lru_evicts_oldest_at_capacity(self):
+        from app.games.crocodile import _MEM_MAX, _mem_games, _mem_put
+        from tests.factories import make_crocodile_game
+
+        # _mem_games is cleared by the autouse fixture between tests
+        assert len(_mem_games) == 0
+
+        # Fill to capacity
+        for i in range(_MEM_MAX):
+            _mem_put(make_crocodile_game(game_id=f"game-{i:04d}"))
+
+        assert len(_mem_games) == _MEM_MAX
+        first_key = "game-0000"
+        assert first_key in _mem_games
+
+        # One more → evicts oldest (game-0000)
+        _mem_put(make_crocodile_game(game_id="game-overflow"))
+        assert len(_mem_games) == _MEM_MAX
+        assert first_key not in _mem_games
+        assert "game-overflow" in _mem_games
+
+    def test_get_missing_returns_none(self):
+        from app.games.crocodile import _mem_get
+
+        assert _mem_get("does-not-exist") is None

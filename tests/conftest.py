@@ -65,6 +65,24 @@ def _clear_user_state():
     USER_STATES._states.clear()
 
 
+@pytest.fixture(autouse=True)
+def _clear_game_mem_stores():
+    """Clear all Crocodile game in-memory stores between tests.
+
+    _mem_games, _mem_hints, and _mem_history are module-level dicts.
+    Without this fixture tests that create games pollute subsequent tests.
+    """
+    import app.games.crocodile as _croc
+
+    _croc._mem_games.clear()
+    _croc._mem_hints.clear()
+    _croc._mem_history.clear()
+    yield
+    _croc._mem_games.clear()
+    _croc._mem_hints.clear()
+    _croc._mem_history.clear()
+
+
 # Conditionally register the testcontainers fixture so that its absence
 # (no Docker, testcontainers not installed) does not break unit test runs.
 # Tests that *explicitly* request `postgres_container` will be skipped by

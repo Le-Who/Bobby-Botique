@@ -61,12 +61,14 @@ class HintsOutput(BaseModel):
 # ── System prompts ────────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT = (
-    "Судья игры «Крокодил». Загаданное слово: «{W}». Догадка: «{G}».\n"
-    "ВАЖНО: оценивай ТОЛЬКО смысловую близость — буквенное сходство ИГНОРИРУЙ.\n"
-    "Плохой пример: «парашют» и «порошок» — семантически далеки, хотя буквы похожи.\n"
-    "score 0–1 → статус: cold<0.3, warm 0.3–0.7, hot>0.7.\n"
-    "Если догадка — это загаданное слово в другой форме/падеже/числе/уменьш. — score≥0.92.\n"
-    "Дай короткую смешную подсказку ≤10 слов. Не называй загаданное слово прямо."
+    "Ты — строгий и хитрый судья игры «Крокодил». Загаданное слово: «{W}». Догадка: «{G}».\n"
+    "Оценивай ТОЛЬКО смысловую близость. score 0.0–1.0 (cold<0.3, warm 0.3-0.7, hot>0.7).\n"
+    "Если догадка — это загаданное слово в другой форме/числе (или синоним) — score≥0.92.\n"
+    "ИНСТРУКЦИЯ К ПОДСКАЗКЕ (поле hint):\n"
+    "Комментируй ТОЛЬКО саму догадку «{G}» в сравнении с правильным ответом.\n"
+    "КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО называть свойства, форму, цвет или назначение загаданного слова «{W}»!\n"
+    "Например, если загадана «клавиатура», а игрок пишет «камень» — НЕ ПИШИ «это не то, на чем печатают». ПИШИ: «Камень?! Совсем из другой оперы!» или «Слишком примитивно».\n"
+    "Держи интригу. Не используй однокоренные слова. Максимум 10 слов."
 )
 
 _HINTS_PROMPT = (
@@ -287,27 +289,42 @@ async def generate_hints(word: str, category: str) -> list[str]:
         max_output_tokens=250,
     )
 
-    try:
-        api_key = kd["api_key"]
-        client = get_cached_genai_client(api_key)
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model=mdl,
-                contents=prompt,
-                config=config,
-            ),
-            timeout=12.0,  # Background task — can wait longer than guess judge
-        )
-        text = getattr(response, "text", None) or ""
-        if not text:
-            return []
-        data = json.loads(text)
-        validated = HintsOutput.model_validate(data)
-        logger.debug("Hints generated for word=%r: %s", word, validated.hints)
-        return validated.hints
-    except Exception as exc:
-        logger.warning("generate_hints failed word=%r: %s", word, exc)
-        return []
+    async def _try_generate(model: str) -> list[str] | None:
+        kd, mdl, _ = await use_case.resolve_ai_request(model)
+        if not kd or not mdl:
+            return None
+        try:
+            client = get_cached_genai_client(kd["api_key"])
+            response = await asyncio.wait_for(
+                client.aio.models.generate_content(
+                    model=mdl,
+                    contents=prompt,
+                    config=config,
+                ),
+                timeout=12.0,  # Background task — can wait longer than guess judge
+            )
+            text = getattr(response, "text", None) or ""
+            if not text:
+                return None
+            data = json.loads(text)
+            validated = HintsOutput.model_validate(data)
+            logger.debug("Hints generated for word=%r via %s: %s", word, mdl, validated.hints)
+            return validated.hints
+        except Exception as exc:
+            logger.warning("generate_hints failed (model=%s) for word=%r: %s", mdl, word, exc)
+            return None
+
+    hints = await _try_generate(_PRIMARY_MODEL)
+    if hints is not None:
+        return hints
+
+    logger.warning("generate_hints: primary model failed, trying fallback %r", _FALLBACK_MODEL)
+    hints = await _try_generate(_FALLBACK_MODEL)
+    if hints is not None:
+        return hints
+
+    logger.warning("generate_hints: all models failed for word=%r", word)
+    return []
 
 
 # ── Public entry point ────────────────────────────────────────────────────────

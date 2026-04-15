@@ -95,3 +95,54 @@ def make_telegram_context():
     context.user_data = {}
     context.chat_data = {}
     return context
+
+
+def make_crocodile_game(
+    game_id: str = "test-game-1234",
+    target_word: str = "крокодил",
+    category: str = "Животные",
+    lang: str = "ru",
+    inline_message_id: str = "inl_test_msg",
+    creator_id: int = 42,
+    guesser_id: int | None = None,
+    status: str = "active",
+    attempts: list | None = None,
+    max_attempts: int = 10,
+):
+    """Synchronous factory for CrocodileGame — no I/O, no Redis, no LLM."""
+    from app.games.crocodile import CrocodileGame
+
+    return CrocodileGame(
+        game_id=game_id,
+        target_word=target_word,
+        category=category,
+        lang=lang,
+        inline_message_id=inline_message_id,
+        creator_id=creator_id,
+        guesser_id=guesser_id,
+        status=status,  # type: ignore[arg-type]
+        attempts=attempts if attempts is not None else [],
+        max_attempts=max_attempts,
+    )
+
+
+def make_valid_init_data(bot_token: str, user_id: int = 999, username: str = "testuser") -> str:
+    """Generate a valid HMAC-SHA256 signed Telegram initData string.
+
+    Implements the same algorithm as _validate_init_data so tests can produce
+    real tokens without calling the Telegram API.
+    """
+    import hashlib
+    import hmac
+    import json
+    import urllib.parse
+
+    user_payload = json.dumps({"id": user_id, "username": username}, separators=(",", ":"))
+    params = {"user": user_payload, "auth_date": "9999999999"}
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
+
+    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
+    params["hash"] = computed_hash
+    return urllib.parse.urlencode(params)
