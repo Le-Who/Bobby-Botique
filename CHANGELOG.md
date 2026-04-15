@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.4] - 2026-04-15 - UX Link Preview Optimization
+
+### ✨ UX — Global Suppression of Auto-Generated Link Previews
+
+- **Problem**: When the bot included source URLs in its generated answers or inline outputs, Telegram automatically generated massive link preview cards at the bottom of the chat, cluttering the UI and taking focus away from the AI's actual textual response.
+- **Fix** (`app/adapters/ui_adapter.py` & `app/handlers/inline.py`): Injected `LinkPreviewOptions(is_disabled=True)` into all `edit_text`, `reply_text`, `send_message`, and `bot.edit_message_text` calls. This globally suppresses link previews metadata parsing.
+- **Result**: A much cleaner, more professional chat interface where grounding sources are gracefully embedded inside an `<blockquote expandable>` without polluting the view.
+
+---
+
 ## [2.12.3] - 2026-04-14 - Inline Image Pipeline Hardening & Per-Model Placeholder UX
 
 ### 🐛 Fix — Inline Image Swap: `Can't parse inputmedia: media not found` (Critical)
