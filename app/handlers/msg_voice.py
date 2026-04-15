@@ -18,6 +18,7 @@ auth/rate-limit/tracing/lock/heartbeat guards), NOT registered standalone.
 
 import asyncio
 import logging
+import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
@@ -81,6 +82,7 @@ async def _process_voice_pipeline(
     lang: str,
 ) -> None:
     """Core voice pipeline: download → transcribe → show UI / auto-route."""
+    _t0 = time.monotonic()
     # 1. Download OGG bytes from Telegram
     voice_file = await voice.get_file()
     voice_bytes = await get_file_bytes(context.bot, voice_file)
@@ -226,6 +228,16 @@ async def _process_voice_pipeline(
         voice.duration,
         intent,
         bool(attached_image),
+    )
+
+    # ── Metrics ───────────────────────────────────────────────────
+    from app.metrics import metrics_collector as _mc
+
+    asyncio.create_task(  # noqa: RUF006
+        _mc.record_api_call("gemini_transcribe", user_id=user_id)
+    )
+    asyncio.create_task(  # noqa: RUF006
+        _mc.record_request("voice", time.monotonic() - _t0, success=bool(transcript))
     )
 
 

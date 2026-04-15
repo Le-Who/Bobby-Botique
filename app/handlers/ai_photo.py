@@ -5,6 +5,7 @@ concurrent image downloads, and complex media group search.
 
 import asyncio
 import logging
+import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -145,6 +146,7 @@ async def _process_ai_vision(
     """
     _, model_used, _ = await _resolve_ai_request(chat_state.model or settings.DEFAULT_MODEL)
     history = [{"role": "user", "parts": parts}]
+    _vision_t0 = time.monotonic()
 
     response_text, success, stream_last_msg, _tokens, _was_interrupted, _voice_req = await stream_and_display(
         placeholder_message,
@@ -170,6 +172,16 @@ async def _process_ai_vision(
     # Check ошибки от роутера — if handled, return sentinel
     if await handle_ai_response_error(response_text, placeholder_message):
         return _VISION_ERROR_HANDLED, False, None
+
+    # ── Metrics ───────────────────────────────────────────────────
+    from app.metrics import metrics_collector as _mc
+
+    asyncio.create_task(  # noqa: RUF006
+        _mc.record_api_call("gemini_vision", model_used, user_id=user_id)
+    )
+    asyncio.create_task(  # noqa: RUF006
+        _mc.record_request("photo", time.monotonic() - _vision_t0, success=streamed)
+    )
 
     return response_text, streamed, stream_last_msg
 

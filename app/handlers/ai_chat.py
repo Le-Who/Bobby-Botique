@@ -3,6 +3,7 @@ AI Chat handler — regular conversational chat with context management.
 """
 
 import logging
+import time
 from typing import Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -258,6 +259,7 @@ async def _handle_regular_chat(
     new_token_count = 0
     streamed = False
     stream_last_msg = None
+    _stream_t0 = time.monotonic()
 
     # ── Build memory footer if applicable ─────────────────────────────────
     _footer_text: str | None = None
@@ -328,6 +330,18 @@ async def _handle_regular_chat(
     finally:
         # Safety net: stop heartbeat if stream failed completely before yielding
         _stop_placeholder_animation()
+
+    # ── Metrics: record every chat LLM call ────────────────────────────────
+    import asyncio as _asyncio
+
+    from app.metrics import metrics_collector as _mc
+
+    _asyncio.create_task(  # noqa: RUF006
+        _mc.record_api_call("gemini_chat", model_used, user_id=user_id)
+    )
+    _asyncio.create_task(  # noqa: RUF006
+        _mc.record_request("chat", time.monotonic() - _stream_t0, success=bool(success and response_text))
+    )
 
     if success and response_text:
         streamed = True
