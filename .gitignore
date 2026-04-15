@@ -51,3 +51,6 @@ pytest*.log
 implementation_plan.md
 skills-lock.json
 walkthrough.md
+
+# Crocodile game — local judgement cache
+app/games/data/judgement_cache.json
