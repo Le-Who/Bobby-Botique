@@ -35,8 +35,15 @@ class TestTelegramMessageAdapter:
 
     @pytest.mark.asyncio
     async def test_edit_message(self, adapter, mock_message):
+        from telegram import LinkPreviewOptions
+        
         await adapter.edit_message("Hello", "HTML")
-        mock_message.edit_text.assert_called_once_with("Hello", parse_mode="HTML")
+        
+        # Verify call arguments to ensure LinkPreviewOptions is pushed
+        mock_message.edit_text.assert_called_once()
+        kwargs = mock_message.edit_text.call_args.kwargs
+        assert kwargs["parse_mode"] == "HTML"
+        assert kwargs["link_preview_options"].is_disabled is True
 
     @pytest.mark.asyncio
     async def test_edit_message_suppresses_not_modified(self, adapter, mock_message):
@@ -60,9 +67,11 @@ class TestTelegramMessageAdapter:
         mock_message.reply_text.return_value = new_msg
 
         new_adapter = await adapter.reply_new_message("continuation", "HTML")
-        mock_message.reply_text.assert_called_once_with(
-            "continuation", parse_mode="HTML", allow_sending_without_reply=True
-        )
+        mock_message.reply_text.assert_called_once()
+        kwargs = mock_message.reply_text.call_args.kwargs
+        assert kwargs["parse_mode"] == "HTML"
+        assert kwargs["allow_sending_without_reply"] is True
+        assert kwargs["link_preview_options"].is_disabled is True
         assert isinstance(new_adapter, TelegramMessageAdapter)
 
     @pytest.mark.asyncio
@@ -78,7 +87,11 @@ class TestTelegramMessageAdapter:
         new_adapter = await adapter.reply_new_message("fallback", "HTML")
 
         # Should catch the error and fall back to sending a new message
-        mock_bot.send_message.assert_called_once_with(chat_id=123, text="fallback", parse_mode="HTML")
+        mock_bot.send_message.assert_called_once()
+        kwargs = mock_bot.send_message.call_args.kwargs
+        assert kwargs["chat_id"] == 123
+        assert kwargs["parse_mode"] == "HTML"
+        assert kwargs["link_preview_options"].is_disabled is True
 
         assert isinstance(new_adapter, TelegramMessageAdapter)
         assert new_adapter.last_message is fallback_msg

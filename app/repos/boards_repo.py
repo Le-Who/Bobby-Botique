@@ -22,24 +22,26 @@ _TABLE_VERIFIED = False
 
 # ── Schema bootstrap ──────────────────────────────────────────────────────────
 
-_CREATE_DDL = """
-CREATE TABLE IF NOT EXISTS inline_boards (
-    id                          SERIAL PRIMARY KEY,
-    inline_msg_id               TEXT        NOT NULL UNIQUE,
-    chat_id                     BIGINT,
-    message_id                  BIGINT,
-    topic                       TEXT        NOT NULL,
-    creator_id                  BIGINT      NOT NULL,
-    entries                     JSONB       NOT NULL DEFAULT '[]',
-    entries_since_last_synthesis INT         NOT NULL DEFAULT 0,
-    last_summary                TEXT        NOT NULL DEFAULT '',
-    closed                      BOOLEAN     NOT NULL DEFAULT FALSE,
-    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_inline_boards_inline_msg ON inline_boards (inline_msg_id);
-CREATE INDEX IF NOT EXISTS idx_inline_boards_chat_msg   ON inline_boards (chat_id, message_id) WHERE chat_id IS NOT NULL;
-"""
+_CREATE_DDL_STATEMENTS = [
+    """
+    CREATE TABLE IF NOT EXISTS inline_boards (
+        id                          SERIAL PRIMARY KEY,
+        inline_msg_id               TEXT        NOT NULL UNIQUE,
+        chat_id                     BIGINT,
+        message_id                  BIGINT,
+        topic                       TEXT        NOT NULL,
+        creator_id                  BIGINT      NOT NULL,
+        entries                     JSONB       NOT NULL DEFAULT '[]',
+        entries_since_last_synthesis INT         NOT NULL DEFAULT 0,
+        last_summary                TEXT        NOT NULL DEFAULT '',
+        closed                      BOOLEAN     NOT NULL DEFAULT FALSE,
+        created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_inline_boards_inline_msg ON inline_boards (inline_msg_id);",
+    "CREATE INDEX IF NOT EXISTS idx_inline_boards_chat_msg   ON inline_boards (chat_id, message_id) WHERE chat_id IS NOT NULL;"
+]
 
 
 async def _ensure_table() -> None:
@@ -47,7 +49,8 @@ async def _ensure_table() -> None:
     if _TABLE_VERIFIED:
         return
     try:
-        await db.db_query(_CREATE_DDL)
+        for stmt in _CREATE_DDL_STATEMENTS:
+            await db.db_query(stmt)
         _TABLE_VERIFIED = True
     except Exception as exc:
         logger.warning("boards_repo: failed to bootstrap table: %s", exc)
