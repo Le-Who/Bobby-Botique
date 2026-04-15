@@ -53,4 +53,5 @@ skills-lock.json
 walkthrough.md
 
 # Crocodile game — local judgement cache
-app/games/data/judgement_cache.json
+app/games/data/*.json
+
