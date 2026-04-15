@@ -28,18 +28,21 @@ class TelegramMessageAdapter(StreamingUIAdapter):
         self._draft_id = draft_id
 
     async def edit_message(self, text: str, parse_mode: str | None, reply_markup: object | None = None) -> None:
+        from telegram import LinkPreviewOptions
         from telegram.error import TelegramError
 
         try:
             kwargs: dict = {"parse_mode": parse_mode}
             if reply_markup is not None:
                 kwargs["reply_markup"] = reply_markup
+            kwargs["link_preview_options"] = LinkPreviewOptions(is_disabled=True)
             await self._msg.edit_text(text, **kwargs)
         except TelegramError as e:
             if "not modified" not in str(e).lower():
                 raise
 
     async def reply_new_message(self, text: str, parse_mode: str | None) -> "StreamingUIAdapter":
+        from telegram import LinkPreviewOptions
         from telegram.error import TelegramError
 
         # BUG: if original message was deleted, reply_text raises "Message to be replied not found"
@@ -48,6 +51,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
                 text,
                 parse_mode=parse_mode,
                 allow_sending_without_reply=True,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
         except TelegramError as e:
             if "not found" in str(e).lower() and "message to be replied" in str(e).lower():
@@ -57,6 +61,7 @@ class TelegramMessageAdapter(StreamingUIAdapter):
                     chat_id=self._chat_id or self._msg.chat_id,
                     text=text,
                     parse_mode=parse_mode,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
             else:
                 raise

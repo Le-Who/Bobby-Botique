@@ -615,6 +615,12 @@ async def stream_and_display(
             max_key_retries=3,
             enable_web_search=enable_web_search,
         ):
+            # Skip non-str sentinels emitted by the Gemini provider
+            # (e.g. _GroundingMeta for grounding citations).  This layer
+            # has no grounding consumer, so they are safely discarded.
+            if not isinstance(delta, str):
+                continue
+
             # ── [VOICE] tag detection (first chunk only) ─────────────────
             # The LLM emits "[VOICE] ..." when user asks for audio output.
             # We strip the tag on the fly so the user never sees it.

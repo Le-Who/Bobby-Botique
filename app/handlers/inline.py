@@ -915,6 +915,8 @@ async def _generate_and_edit_inline(
     2. Convert Markdown response to Telegram HTML.
     3. Edit the placeholder inline message in-place.
     """
+    from telegram import LinkPreviewOptions
+
     from app.prompt_registry import FORMATTING_RULES_COMPACT
 
     bot_name = bot.first_name or "Bot"
@@ -1063,6 +1065,7 @@ async def _generate_and_edit_inline(
                         text=formatted,
                         parse_mode="HTML",
                         reply_markup=reply_markup,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
                     )
                 except Exception as edit_err:
                     logging.error("Inline tabs: edit failed: %s", edit_err)
@@ -1071,6 +1074,7 @@ async def _generate_and_edit_inline(
                             inline_message_id=inline_message_id,
                             text=strip_formatting(formatted)[:4000] or _FALLBACK_ERROR,
                             reply_markup=reply_markup,
+                            link_preview_options=LinkPreviewOptions(is_disabled=True),
                         )
                 return  # Done — tabs path handled
 
@@ -1128,6 +1132,7 @@ async def _generate_and_edit_inline(
             text=formatted,
             parse_mode="HTML",
             reply_markup=reply_markup_out,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
     except Exception as edit_err:
         logging.error(
@@ -1142,6 +1147,7 @@ async def _generate_and_edit_inline(
                 inline_message_id=inline_message_id,
                 text=plain or _FALLBACK_ERROR,
                 reply_markup=reply_markup_out,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
         except Exception as fallback_err:
             logging.error("Inline: Plain-text fallback also failed: %s", fallback_err)
