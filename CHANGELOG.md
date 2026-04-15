@@ -3,6 +3,84 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.5] - 2026-04-15 - Crocodile (Charades) Game via Inline Mode
+
+### ✨ Feature — 1-on-1 Crocodile Game Mini App
+
+Adds a complete Telegram game — "Крокодил" (Charades) — playable in any 1-on-1 chat via
+inline mode. One player creates a round; the other guesses the hidden word. A 4-tier
+semantic judge evaluates answers in real time via a "Midnight Glass" glassmorphism WebApp.
+
+#### How to Start
+
+In any private chat with another user:
+```
+@<botname> крокодил              → random Russian word from a random category
+@<botname> крокодил:животные    → pick a category (e.g. животные, food, спорт)
+@<botname> крокодил:=свой       → use a custom word (known only to creator)
+```
+
+User A sees the word. User B sends guesses through the Mini App. Bot evaluates each guess
+and updates the shared Telegram message on win/loss.
+
+#### Architecture
+
+| Component | Role |
+|-----------|------|
+| `app/games/crocodile.py` | State machine with Redis persistence (TTL 10 min) + in-memory LRU fallback (64 slots). `asyncio.Lock` per game prevents parallel guess races. |
+| `app/games/judge.py` | 4-tier pipeline: Levenshtein exact match → Redis judgement cache → Race×3 LLM → hardcoded fallback ("not a match"). |
+| `app/games/word_bank.py` | Bilingual (RU/EN) word bank with 8 categories × 15–30 words each, Redis-backed used-set deduplication (1h TTL), and `validate_custom_word()` guard. |
+| `app/games/judgement_cache.py` | Redis-backed LLM evaluation cache (TTL 24h) keyed on `(target, guess)` canonical pair. |
+| `app/bot_instance.py` | Singleton holding the PTB `Bot` reference, enabling WebSocket handlers outside PTB context to call `bot.edit_message_text`. |
+| `app/web_miniapp.py` | `GET /webapp/game` — serves `crocodile.html`; `WS /webapp/game/ws` — authenticated game loop with per-game lock and 5-min idle timeout. |
+| `app/handlers/inline.py` | `@bot крокодил[:{category|=word}]` inline intent: regex prefix match, background `_init_croc_game_async` creates session and edits inline message to show WebApp button. |
+| `app/templates/crocodile.html` | "Midnight Glass" glassmorphism UI: WebSocket game loop, animated feedback cards (✅ correct / 🔥 close / ❌ wrong), attempt progress bar, win/loss overlays with confetti. |
+
+#### Semantic Judge (4-Tier Pipeline)
+
+1. **Levenshtein distance** (Damerau threshold ≤ 1) — sub-millisecond exact/typo match.
+2. **Redis judgement cache** — 24h TTL for previously computed LLM evaluations.
+3. **Race × 3 LLM** — fires `gemini-3.1-flash-lite-preview` (primary) and `gemini-2.5-flash-lite` (fallback) simultaneously; first valid JSON verdict wins. Prompt is single-sentence to minimize latency.
+4. **Hardcoded fallback** — `{"score": 0, "hint": ""}` on all errors (non-blocking).
+
+Verdict fields: `status` (`exact_match` | `close` | `no_match`), `score` (0–100), `hint` (short bilingual phrase), `cached` (bool).
+
+#### Security
+
+WebSocket connections require valid Telegram `initData` HMAC-SHA256 (same mechanism as the MiniApp settings panel). Unauthenticated connections receive `4003 Unauthorized`.
+
+#### Config
+
+No new env vars required. Relies on existing:
+- `REDIS_URL` (optional; falls back to in-memory)
+- `WEBAPP_BASE_URL` or `WEBHOOK_URL` — used to construct the game link
+- `GEMINI_API_KEYS` — used by the semantic judge
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/games/__init__.py` | **[NEW]** Package init |
+| `app/games/crocodile.py` | **[NEW]** State machine + Redis/memory persistence + `finalize()` |
+| `app/games/judge.py` | **[NEW]** 4-tier semantic judge pipeline |
+| `app/games/word_bank.py` | **[NEW]** Bilingual word bank, category aliases, custom word validation |
+| `app/games/judgement_cache.py` | **[NEW]** Redis judgement LRU cache |
+| `app/bot_instance.py` | **[NEW]** PTB Bot singleton for non-PTB access |
+| `app/templates/crocodile.html` | **[NEW]** Midnight Glass game UI |
+| `app/web_miniapp.py` | `GET /webapp/game` route + `WS /webapp/game/ws` handler; `?game_id=` / `?id=` param acceptance |
+| `app/handlers/inline.py` | Crocodile intent regex; `_init_croc_game_async` background task; `import os` added |
+| `bot.py` | Register `bot_instance` singleton after PTB application build |
+
+### ✅ Quality Gates
+
+| Check | Result |
+|-------|--------|
+| `py_compile` (all modified files) | OK ✅ |
+| Inline intent regex | Correct prefix match for `крокодил`, `крокодил:category`, `крокодил:=word` ✅ |
+| WebSocket auth | HMAC-SHA256 `initData` validated; `4003` on failure ✅ |
+
+---
+
 ## [2.12.4] - 2026-04-15 - UX Link Preview Optimization
 
 ### ✨ UX — Global Suppression of Auto-Generated Link Previews

@@ -1,5 +1,5 @@
 # /app/web_miniapp.py
-"""Telegram Mini App backend — LTM Explorer & Settings Editor.
+"""Telegram Mini App backend — LTM Explorer, Settings Editor & Crocodile Game.
 
 Endpoints are authenticated via Telegram WebApp initData (HMAC-SHA256).
 Each user can only access their own data — user_id is extracted from
@@ -634,3 +634,136 @@ async def api_graph_data(user_id: int):
     except Exception as e:
         logger.error("Mini App graph API error: %s", e, exc_info=True)
         return jsonify({"error": "internal_error"}), 500
+
+
+# ── Crocodile Game ────────────────────────────────────────────────────────────
+# Per-game asyncio.Lock prevents parallel guess races from the same connection.
+_game_locks: dict[str, "asyncio.Lock"] = {}
+
+
+@miniapp_blueprint.route("/game")
+async def game_page():
+    """Serve the Crocodile Mini App HTML shell."""
+    from quart import render_template
+    from quart import request as _req
+
+    game_id = _req.args.get("game_id") or _req.args.get("id") or ""
+    return await render_template("crocodile.html", game_id=game_id)
+
+
+@miniapp_blueprint.websocket("/game/ws")
+async def game_ws():
+    """WebSocket endpoint for the Crocodile game.
+
+    Auth: initData passed as query param ``initData`` (HMAC-SHA256).
+    Protocol:
+      Client → {"type": "guess", "word": "..."}
+      Server → {"event": "game_state", ...}
+               {"event": "result", "status": ..., "hint": ..., ...}
+               {"event": "game_over", "word": ..., ...}
+    """
+    import asyncio
+    import json
+
+    from quart import websocket
+
+    from app.games.crocodile import load_game
+
+    # ── Authenticate via initData ──────────────────────────────────────────
+    raw_init_data = websocket.args.get("initData", "")
+    bot_token = settings.TELEGRAM_BOT_TOKEN
+    validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
+
+    if validated is None:
+        await websocket.close(4003, "Unauthorized")
+        return
+
+    user_id = _extract_user_id(validated)
+    if not user_id:
+        await websocket.close(4003, "No user in initData")
+        return
+
+    # ── Resolve game ───────────────────────────────────────────────────────
+    game_id = websocket.args.get("game_id", "")
+    if not game_id:
+        await websocket.close(4400, "Missing game_id")
+        return
+
+    game = await load_game(game_id)
+    if game is None:
+        await websocket.close(4008, "Game expired or not found")
+        return
+
+    if game.status != "active":
+        await websocket.close(4009, "Game already finished")
+        return
+
+    # Register guesser on first connect (not the creator)
+    if game.guesser_id is None and user_id != game.creator_id:
+        game.guesser_id = user_id
+        await game.save()
+
+    # Send initial game state
+    await websocket.send_json({
+        "event": "game_state",
+        "category": game.category,
+        "lang": game.lang,
+        "attempts": len(game.attempts),
+        "max_attempts": game.max_attempts,
+    })
+
+    # Ensure per-game lock
+    if game_id not in _game_locks:
+        _game_locks[game_id] = asyncio.Lock()
+    lock = _game_locks[game_id]
+
+    # ── Main message loop ──────────────────────────────────────────────────
+    try:
+        while True:
+            try:
+                raw = await asyncio.wait_for(websocket.receive(), timeout=300.0)
+            except asyncio.TimeoutError:
+                # Connection idle for 5 minutes — close gracefully
+                await websocket.close(1000, "Idle timeout")
+                break
+
+            try:
+                msg = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                await websocket.send_json({"event": "error", "message": "Invalid JSON"})
+                continue
+
+            if msg.get("type") != "guess":
+                continue
+
+            word = str(msg.get("word", "")).strip()
+            if not word:
+                await websocket.send_json({"event": "error", "message": "Empty guess"})
+                continue
+
+            async with lock:
+                # Reload game state from Redis (another tab may have mutated it)
+                game = await load_game(game_id) or game
+                if game.status != "active":
+                    break
+
+                event = await game.process_guess(word)
+
+            await websocket.send_json(event)
+
+            # Finalize if game ended (won / lost)
+            if game.status in ("won", "lost"):
+                try:
+                    from app.bot_instance import get_bot
+                    bot = get_bot()
+                    if bot:
+                        await game.finalize(bot)
+                except Exception as exc:
+                    logger.warning("game_ws: finalize failed game=%s: %s", game_id, exc)
+                _game_locks.pop(game_id, None)
+                break
+
+    except Exception as exc:
+        logger.warning("game_ws: unexpected error game=%s: %s", game_id, exc)
+    finally:
+        _game_locks.pop(game_id, None)

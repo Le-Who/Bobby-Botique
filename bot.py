@@ -326,6 +326,11 @@ async def run_bot_with_retry():
             logging.info("Using official Telegram cloud API (api.telegram.org)")
 
         application = builder.build()
+
+        # Register bot singleton for non-PTB code (e.g. WS game handler)
+        from app.bot_instance import register_bot
+        register_bot(application.bot)
+
         commands.register(application)
         callbacks.register(application)
         messages.register(application)

@@ -33,6 +33,7 @@ import contextlib
 import html as _html
 import io
 import logging
+import os
 import re
 import time
 import uuid
@@ -123,6 +124,13 @@ _placeholder_file_ids: dict[str, str] = {}
 
 # Board intent prefix — compiled once; shared by query and result handlers.
 _BOARD_PREFIX_RE = re.compile(r"^(?:доска|board|трекер)\s*:\s*", re.IGNORECASE)
+
+# Crocodile intent prefix.
+# Matches: "крокодил:животные", "croc:animals", "крокодил:=пылесос", "croc:=vacuum"
+_CROC_PREFIX_RE = re.compile(
+    r"^(?:крокодил|крок|croc|crocodile) ?:\s*",
+    re.IGNORECASE,
+)
 
 # Model emoji map reused in the generated image caption.
 _MODEL_EMOJI: dict[str, str] = {
@@ -459,6 +467,39 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer(results_board, cache_time=0, is_personal=True)
         return
 
+    # ── Crocodile / Chadrades game intent ────────────────────────────────────────
+    if _CROC_PREFIX_RE.match(user_query):
+        arg = _CROC_PREFIX_RE.sub("", user_query).strip()
+        is_custom = arg.startswith("=")
+        if is_custom:
+            label = f"🐊 Крокодил: своё слово"
+            desc = "Загадаешь своё слово — второй игрок будет отгадывать"
+        else:
+            cat = arg or "разное"
+            label = f"🐊 Крокодил: {cat[:40]}"
+            desc = "Бот загадает слово из категории — второй игрок отгадывает"
+        croc_init_html = (
+            f"🐊 <b>Крокодил</b>\n"
+            f"<i>Игра загружается…</i>"
+        )
+        croc_keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⏳ Загрузка...", callback_data="inline_noop")]]
+        )
+        results_croc = [
+            InlineQueryResultArticle(
+                id="croc",
+                title=label,
+                description=desc,
+                input_message_content=InputTextMessageContent(
+                    message_text=croc_init_html,
+                    parse_mode="HTML",
+                ),
+                reply_markup=croc_keyboard,
+            )
+        ]
+        await query.answer(results_croc, cache_time=0, is_personal=True)
+        return
+
     # ── Default: 3 tone variants ──────────────────────────────────────────────
     results = [
         InlineQueryResultArticle(
@@ -556,6 +597,19 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
                 bot=context.bot,
                 inline_message_id=inline_message_id,
                 topic=topic,
+                creator_id=user_id or 0,
+            )
+        )
+        return
+
+    # ── Crocodile game path ───────────────────────────────────────────────────────────
+    if result_id == "croc":
+        arg = _CROC_PREFIX_RE.sub("", user_query).strip()
+        get_task_manager().submit(
+            _init_croc_game_async(
+                bot=context.bot,
+                inline_message_id=inline_message_id,
+                arg=arg,
                 creator_id=user_id or 0,
             )
         )
@@ -719,6 +773,110 @@ async def _init_board_async(
         )
     except Exception as exc:
         logging.error("Board init failed for inline_msg_id=%s: %s", inline_message_id, exc, exc_info=True)
+
+
+async def _init_croc_game_async(
+    bot,
+    inline_message_id: str,
+    arg: str,
+    creator_id: int,
+) -> None:
+    """Create a Crocodile game session in Redis and update the TG inline message.
+
+    ``arg`` is the part after the colon:
+      - ``=слово``  → custom word mode  (the loader is the word-giver)
+      - everything else → category mode  (bot picks random word)
+    """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from app.config import settings
+    from app.games.crocodile import create_game
+    from app.games.word_bank import pick_random_word, validate_custom_word
+
+    try:
+        webapp_base = getattr(settings, "WEBAPP_BASE_URL", "").rstrip("/")
+        if not webapp_base:
+            # Derive from WEBHOOK_URL env var if WEBAPP_BASE_URL not set
+            webhook_url = os.environ.get("WEBHOOK_URL", "") or ""
+            webapp_base = webhook_url.split("/webhook")[0].rstrip("/")
+
+        # ── Resolve word + mode ───────────────────────────────────────────────
+        if arg.startswith("="):
+            raw_word = arg[1:].strip()
+            word = validate_custom_word(raw_word)
+            if not word:
+                await bot.edit_message_text(
+                    inline_message_id=inline_message_id,
+                    text="🐊 <b>Крокодил</b>\n<i>❌ Недопустимое слово. Используй: =слово (2-40 символов)</i>",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([]),
+                )
+                return
+            category = "custom"
+            lang = "ru" if any("\u0400" <= c <= "\u04ff" for c in word) else "en"
+        else:
+            category_raw = arg or "разное"
+            word, lang, category = await pick_random_word(category_raw)
+
+        # ── Create game session ───────────────────────────────────────────────
+        game = await create_game(
+            target_word=word,
+            category=category,
+            lang=lang,
+            inline_message_id=inline_message_id,
+            creator_id=creator_id,
+        )
+
+        # ── Build WebApp URL for the guesser ─────────────────────────────────
+        game_url = f"{webapp_base}/webapp/game?game_id={game.game_id}"
+
+        # ── Edit inline message ───────────────────────────────────────────────
+        if arg.startswith("="):
+            status_text = (
+                f"🐊 <b>Крокодил</b>\n"
+                f"📝 <i>Ты загадал своё слово.</i>\n"
+                f"Поделись этим сообщением с партнёром — он будет отгадывать!"
+            )
+        else:
+            cat_display = category if lang == "en" else category
+            status_text = (
+                f"🐊 <b>Крокодил</b> · <i>{cat_display}</i>\n"
+                f"🎯 Слово загадано! Открой игру и отгадай его."
+            )
+
+        keyboard = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🎮 Играть", url=game_url)]]
+        )
+        await bot.edit_message_text(
+            inline_message_id=inline_message_id,
+            text=status_text,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+        logging.info(
+            "Croc game created: game_id=%s inline_msg_id=%s category=%s lang=%s",
+            game.game_id,
+            inline_message_id,
+            category,
+            lang,
+        )
+
+    except Exception as exc:
+        logging.error(
+            "Croc init failed inline_msg_id=%s: %s",
+            inline_message_id,
+            exc,
+            exc_info=True,
+        )
+        try:
+            await bot.edit_message_text(
+                inline_message_id=inline_message_id,
+                text="🐊 <b>Крокодил</b>\n<i>❌ Не удалось создать игру. Попробуйте ещё раз.</i>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([]),
+            )
+        except Exception:
+            pass
 
 
 # ── Fast 3-way Race Requests for inline generation ───────────────────────────
