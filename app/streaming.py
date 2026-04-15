@@ -271,6 +271,26 @@ class StreamingWriter:
         self._full_text += delta
         self._pending_chars += len(delta)
 
+        # Clean Google GenAI token execution hallucinations (gemini-3.1-pro/flash bug)
+        if "[tool_code]" in self._buffer or "google_search.search" in self._buffer or "```" in self._buffer:
+            import re
+            old_len = len(self._buffer)
+            # Remove [tool_code] python invocation
+            patt1 = r'\[tool_code\]\s*(?:print\()?(?:google_search\.search|search)\(.*?\)?\)\s*'
+            new_buf = re.sub(patt1, '', self._buffer, flags=re.DOTALL)
+            # Remove markdown python invocation
+            patt2 = r'```(?:python)?\s*(?:import google_search\s*)?(?:(?:print\()?(?:google_search\.search|search)\(.*?\)?\)\s*)+\s*```\s*'
+            new_buf = re.sub(patt2, '', new_buf, flags=re.DOTALL)
+
+            if new_buf != self._buffer:
+                diff = old_len - len(new_buf)
+                self._buffer = new_buf
+                # Keep full_text synchronized
+                new_full = re.sub(patt1, '', self._full_text, flags=re.DOTALL)
+                new_full = re.sub(patt2, '', new_full, flags=re.DOTALL)
+                self._full_text = new_full
+                self._pending_chars = max(0, self._pending_chars - diff)
+
         now = time.monotonic()
         elapsed = now - self._last_edit_time
 

@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.9] - 2026-04-16 - LLM Artifact Filtering & Tolerance Fixes
+
+### 🐛 Bug Fixes & Resilience
+
+- **Gemini Search Hallucination Filter:** Addressed a behavior in the Gemini API (specifically `gemini-3.1-pro/flash`) where the model sometimes leaks internal code execution traces (e.g., `[tool_code] print(google_search.search(...))`) into the chat stream. Implemented a regex filter in `app/streaming.py` (`StreamingWriter.write`) that actively intercepts and strips these artifacts from both the temporary UI buffer and the final persisted text, ensuring a clean user experience.
+- **Crocodile Judge Tolerance:** Increased the `max_length` constraint of the semantic `GuessJudgement` model in `app/games/judge.py` from 80 to 255. This resolves a `503` cascade failure where the primary model (`gemini-3.1-flash-lite-preview`) routinely triggered fallback to `gemini-2.5-flash-lite`, which occasionally generated verbose fallback hints exceeding the old limit, crashing the validator.
+
+---
+
 ## [2.12.8] - 2026-04-16 - Crocodile Mini App: Spectator Mode & LLM Hardening
 
 ### ✨ Feature — God Mode (Spectator UX)

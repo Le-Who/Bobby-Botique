@@ -48,7 +48,7 @@ class GuessJudgement(BaseModel):
 
     status: Literal["cold", "warm", "hot"]
     score: float = Field(ge=0.0, le=1.0)
-    hint: str = Field(max_length=80)
+    hint: str = Field(max_length=255)
     cached: bool = False  # Set by caller; not part of LLM output
 
 
