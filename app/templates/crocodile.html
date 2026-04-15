@@ -442,16 +442,20 @@ function showFeedback({ status, hint, score, cached }) {
   fill.style.width  = `${((score || 0) * 100).toFixed(1)}%`;
 }
 
-function showOverlay({ win, word, attempts, maxAttempts }) {
+function showOverlay({ win, word, attempts, maxAttempts, customTitle }) {
   const overlay = $('overlay');
   $('overlay-icon').textContent  = win ? '🎉' : '😔';
   const title = $('overlay-title');
-  title.textContent = win ? 'Угадано!' : 'Не угадали.';
+  title.textContent = customTitle || (win ? 'Угадано!' : 'Не угадали.');
   title.className   = win ? '' : 'loss';
   $('overlay-word').textContent  = (word || '').toUpperCase();
-  $('overlay-sub').textContent   = win
-    ? `За ${attempts} из ${maxAttempts} попыток`
-    : `Исчерпаны все ${maxAttempts} попытки`;
+  if (customTitle) {
+      $('overlay-sub').textContent = 'Помогай в чате и наблюдай за догадками!';
+  } else {
+      $('overlay-sub').textContent   = win
+        ? `За ${attempts} из ${maxAttempts} попыток`
+        : `Исчерпаны все ${maxAttempts} попытки`;
+  }
   overlay.classList.add('visible');
 }
 
@@ -499,6 +503,15 @@ function connect() {
         setAttempts(attemptsUsed, maxAttempts);
         if (msg.category) {
           $('category-pill').textContent = `📂 ${msg.category}`;
+        }
+        if (msg.is_creator) {
+          gameOver = true;
+          setInputEnabled(false);
+          $('state-label').textContent = 'Ты ведущий!';
+          showFeedback({ status: 'warm', hint: 'Жди, пока твой друг отгадает слово.', score: null });
+          setTimeout(() => showOverlay({
+            win: true, word: msg.target_word, attempts: 0, maxAttempts, customTitle: 'Твое слово:'
+          }), 600);
         }
         break;
 

@@ -844,8 +844,10 @@ async def _init_croc_game_async(
                 f"🎯 Слово загадано! Открой игру и отгадай его."
             )
 
+        from telegram import WebAppInfo
+        
         keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🎮 Играть", url=game_url)]]
+            [[InlineKeyboardButton("🎮 Играть", web_app=WebAppInfo(url=game_url))]]
         )
         await bot.edit_message_text(
             inline_message_id=inline_message_id,

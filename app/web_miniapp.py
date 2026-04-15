@@ -669,19 +669,22 @@ async def game_ws():
 
     from app.games.crocodile import load_game
 
-    # ── Authenticate via initData ──────────────────────────────────────────
     raw_init_data = websocket.args.get("initData", "")
-    bot_token = settings.TELEGRAM_BOT_TOKEN
-    validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
+    if raw_init_data:
+        bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+        validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
 
-    if validated is None:
-        await websocket.close(4003, "Unauthorized")
-        return
+        if validated is None:
+            await websocket.close(4003, "Unauthorized")
+            return
 
-    user_id = _extract_user_id(validated)
-    if not user_id:
-        await websocket.close(4003, "No user in initData")
-        return
+        user_id = _extract_user_id(validated)
+        if not user_id:
+            await websocket.close(4003, "No user in initData")
+            return
+    else:
+        # Fallback for external browsers / missing initData
+        user_id = "anonymous"
 
     # ── Resolve game ───────────────────────────────────────────────────────
     game_id = websocket.args.get("game_id", "")
@@ -710,6 +713,8 @@ async def game_ws():
         "lang": game.lang,
         "attempts": len(game.attempts),
         "max_attempts": game.max_attempts,
+        "is_creator": bool(user_id != "anonymous" and user_id == game.creator_id),
+        "target_word": game.target_word if user_id != "anonymous" and user_id == game.creator_id else None,
     })
 
     # Ensure per-game lock
