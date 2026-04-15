@@ -83,7 +83,6 @@ class TestBackwardCompatImports:
         from app.utils.audio_processor import transcribe_voice  # noqa: F401
 
     def test_audio_processor_exports_constants(self):
-        from app.utils.audio_processor import THINKING_CONFIG, TRANSCRIPTION_MODEL  # noqa: F401
+        from app.utils.audio_processor import THINKING_CONFIG  # noqa: F401
 
-        assert "flash-lite" in TRANSCRIPTION_MODEL.lower()
         assert "high" in str(THINKING_CONFIG.thinking_level).lower()

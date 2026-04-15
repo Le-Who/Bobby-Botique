@@ -2,19 +2,25 @@
 """Semantic judge for the Crocodile game.
 
 Evaluation pipeline (fastest-first):
-  1. Levenshtein exact/typo check  (<1ms, no I/O)
-  2. Judgement Cache lookup          (<5ms, Redis)
-  3. Race×3 LLM structured output   (500-800ms, Gemini flash-lite)
-  4. Timeout/LLM-failure fallback   (<1ms, local heuristic)
+  1. Damerau-Levenshtein typo check  (<1ms, no I/O)
+     Length-dependent tolerance: ≤4 chars → 0 edits, 5-7 → 1 edit, ≥8 → 2 edits.
+  2. Judgement Cache lookup          (<5ms, local file LRU)
+  3. Race×3 LLM structured output   (300-2000ms, Gemini flash-lite)
+  4. judge_unavailable sentinel      (<1ms, no attempt counted by caller)
 
 The race uses *generate_content* (non-streaming) because the response is
 tiny (≤120 tokens) and streaming overhead would add latency, not reduce it.
+
+IMPORTANT: There is intentionally NO string-similarity fallback for warm/cold
+scoring. Using character-level Levenshtein to measure *semantic* distance is
+mathematically wrong ('парашют' ≈ 'порошок' by letters, but worlds apart in
+meaning). If the LLM race fails we return 'judge_unavailable' so the caller
+can decline to count the attempt rather than lie to the user.
 """
 
 from __future__ import annotations
 
 import asyncio
-import difflib
 import json
 import logging
 from typing import Literal
@@ -28,11 +34,13 @@ logger = logging.getLogger(__name__)
 _PRIMARY_MODEL = "gemini-3.1-flash-lite-preview"
 _FALLBACK_MODEL = "gemini-2.5-flash-lite"
 
-# Hard timeout for the entire LLM race (all 3 keys must respond within this)
-_LLM_TIMEOUT_S = 1.5
+# Timeout for entire LLM race. Increased from 1.5s → 3.0s:
+# Gemini Flash-Lite typically responds in 300-800ms; 1.5s occasionally fails
+# on SSL-handshake throttling. 3.0s covers >99.9% of realistic cases.
+_LLM_TIMEOUT_S = 3.0
 
 
-# ── Pydantic schema ───────────────────────────────────────────────────────────
+# ── Pydantic schemas ──────────────────────────────────────────────────────────
 
 
 class GuessJudgement(BaseModel):
@@ -44,31 +52,90 @@ class GuessJudgement(BaseModel):
     cached: bool = False  # Set by caller; not part of LLM output
 
 
-# ── System prompt (~50 tokens) ────────────────────────────────────────────────
+class HintsOutput(BaseModel):
+    """Structured output for progressive game hints (exactly 3 items)."""
+
+    hints: list[str] = Field(min_length=3, max_length=3)
+
+
+# ── System prompts ────────────────────────────────────────────────────────────
 
 _SYSTEM_PROMPT = (
-    "Судья игры «Крокодил». Слово: {W}. Догадка: {G}.\n"
-    "Оцени семантическую близость (score 0–1). "
-    "Статус: cold (<0.3), warm (0.3–0.7), hot (>0.7).\n"
-    "Дай смешную подсказку ≤10 слов. Не называй загаданное слово."
+    "Судья игры «Крокодил». Загаданное слово: «{W}». Догадка: «{G}».\n"
+    "ВАЖНО: оценивай ТОЛЬКО смысловую близость — буквенное сходство ИГНОРИРУЙ.\n"
+    "Плохой пример: «парашют» и «порошок» — семантически далеки, хотя буквы похожи.\n"
+    "score 0–1 → статус: cold<0.3, warm 0.3–0.7, hot>0.7.\n"
+    "Если догадка — это загаданное слово в другой форме/падеже/числе/уменьш. — score≥0.92.\n"
+    "Дай короткую смешную подсказку ≤10 слов. Не называй загаданное слово прямо."
+)
+
+_HINTS_PROMPT = (
+    "Игра «Крокодил».\n"
+    "Загаданное слово: «{W}» (категория: {C}).\n"
+    "Дай РОВНО 3 подсказки на русском языке в JSON {{\"hints\": [\"...\",\"...\",\".\"]}}.\n"
+    "Подсказка 1 (неочевидная): намёк лишь на широкую категорию/область. ≤12 слов.\n"
+    "Подсказка 2 (средняя): ключевое свойство или метафора. ≤12 слов.\n"
+    "Подсказка 3 (почти прямая): описание без однокоренных слов и без самого слова. ≤12 слов.\n"
+    "Не называй слово прямо ни в одной подсказке."
 )
 
 
-# ── Levenshtein exact / near-match ────────────────────────────────────────────
+# ── Damerau-Levenshtein typo check ───────────────────────────────────────────
+
+
+def _damerau_levenshtein(s: str, t: str) -> int:
+    """Restricted Damerau-Levenshtein distance (optimal string alignment).
+
+    Counts insertions, deletions, substitutions and adjacent transpositions.
+    O(m*n) — adequate for words up to ~60 chars.
+    """
+    m, n = len(s), len(t)
+    d = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m + 1):
+        d[i][0] = i
+    for j in range(n + 1):
+        d[0][j] = j
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            cost = 0 if s[i - 1] == t[j - 1] else 1
+            d[i][j] = min(
+                d[i - 1][j] + 1,           # deletion
+                d[i][j - 1] + 1,           # insertion
+                d[i - 1][j - 1] + cost,    # substitution
+            )
+            # Adjacent transposition (Damerau extension)
+            if i > 1 and j > 1 and s[i - 1] == t[j - 2] and s[i - 2] == t[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + cost)
+    return d[m][n]
+
+
+def _allowed_edits(length: int) -> int:
+    """Max edit distance to still consider a guess a correct typo.
+
+    ≤4 chars  → 0 edits  (Кот ≠ Кит — distinct short words)
+    5–7 chars → 1 edit   (Мангуст → Монгуст ✓)
+    ≥8 chars  → 2 edits  (Крокодил → Крокодил ✓, longer words allow more)
+    """
+    if length <= 4:
+        return 0
+    if length <= 7:
+        return 1
+    return 2
 
 
 def _local_check(target: str, guess: str) -> str | None:
-    """Return 'exact_match' if target≈guess, else None.
+    """Return 'exact_match' if guess is target with at most N typos, else None.
 
-    Uses difflib.SequenceMatcher (stdlib) — no extra dependency.
-    Catches typos with ≥90% similarity (e.g. 'крокадил', 'Кроккодил').
+    Uses Damerau-Levenshtein with a length-dependent tolerance window.
+    'Монгуст' matches 'Мангуст' (7 chars, 1 edit allowed).
+    'Кит' does NOT match 'Кот' (3 chars, 0 edits allowed).
     """
     t = target.lower().strip()
     g = guess.lower().strip()
     if t == g:
         return "exact_match"
-    ratio = difflib.SequenceMatcher(None, t, g).ratio()
-    if ratio >= 0.90:
+    dist = _damerau_levenshtein(t, g)
+    if dist <= _allowed_edits(len(t)):
         return "exact_match"
     return None
 
@@ -88,7 +155,6 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     use_case = AgentRequestUseCase()
     failed_keys: set[str] = set()
 
-    # Resolve up to 3 distinct keys
     keys: list[dict] = []
     resolved_model: str | None = None
     for _ in range(3):
@@ -100,7 +166,7 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
             keys.append(kd)
             resolved_model = mdl
         else:
-            break  # No more keys
+            break
 
     if not keys or not resolved_model:
         logger.warning("Judge: no API keys available")
@@ -141,12 +207,11 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
             return None
 
     # Launch all 3 concurrently; return first non-None.
-    # Extract only the api_key strings from the dicts before spawning coroutines
-    # so that raw key material doesn't linger in frame locals if an exception
-    # propagates with exc_info=True in the logging layer (M2 security fix).
+    # Extract api_key strings before spawning so raw key material doesn't
+    # linger in frame locals if an exception propagates with exc_info=True.
     api_keys_for_race = [kd["api_key"] for kd in keys]
-    keys.clear()  # Remove key dicts from this scope
-    coros = [_one_call(api_key, resolved_model) for api_key in api_keys_for_race]
+    keys.clear()
+    coros = [_one_call(ak, resolved_model) for ak in api_keys_for_race]
     tasks = [asyncio.create_task(c) for c in coros]
 
     result: GuessJudgement | None = None
@@ -166,19 +231,60 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     return result
 
 
-# ── Fallback heuristic (no LLM, no external I/O) ─────────────────────────────
+# ── Progressive hint generation ───────────────────────────────────────────────
 
 
-def _fallback_judgement(target: str, guess: str) -> GuessJudgement:
-    """Compute a naive score from string similarity when LLM is unavailable."""
-    ratio = difflib.SequenceMatcher(None, target.lower(), guess.lower()).ratio()
-    if ratio >= 0.7:
-        status, hint = "hot", "Очень близко! Попробуй ещё раз 🔥"
-    elif ratio >= 0.4:
-        status, hint = "warm", "Что-то похожее… Ещё разок 😐"
-    else:
-        status, hint = "cold", "Не то! Подумай с другой стороны ❄️"
-    return GuessJudgement(status=status, score=round(ratio, 2), hint=hint)  # type: ignore[arg-type]
+async def generate_hints(word: str, category: str) -> list[str]:
+    """Generate 3 progressive hints for the given word asynchronously.
+
+    Returns an empty list on any failure; callers must handle gracefully.
+    Called from a background asyncio.Task so latency does not block the user.
+    """
+    from app.agent_use_cases import AgentRequestUseCase
+    from app.providers.base import _build_thinking_config
+    from app.providers.gemini import get_cached_genai_client
+
+    use_case = AgentRequestUseCase()
+    kd, mdl, _ = await use_case.resolve_ai_request(_PRIMARY_MODEL)
+    if not kd or not mdl:
+        logger.warning("generate_hints: no API key for word=%r", word)
+        return []
+
+    prompt = _HINTS_PROMPT.format(W=word, C=category)
+    tc = _build_thinking_config(mdl, "low")
+
+    from google.genai import types as _gtypes
+
+    config = _gtypes.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=HintsOutput.model_json_schema(),
+        temperature=0.7,
+        max_output_tokens=250,
+    )
+    if tc:
+        config.thinking_config = tc
+
+    try:
+        api_key = kd["api_key"]
+        client = get_cached_genai_client(api_key)
+        response = await asyncio.wait_for(
+            client.aio.models.generate_content(
+                model=mdl,
+                contents=prompt,
+                config=config,
+            ),
+            timeout=12.0,  # Background task — can wait longer than guess judge
+        )
+        text = getattr(response, "text", None) or ""
+        if not text:
+            return []
+        data = json.loads(text)
+        validated = HintsOutput.model_validate(data)
+        logger.debug("Hints generated for word=%r: %s", word, validated.hints)
+        return validated.hints
+    except Exception as exc:
+        logger.warning("generate_hints failed word=%r: %s", word, exc)
+        return []
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -188,21 +294,24 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
     """Evaluate a guess against the target word.
 
     Returns:
-        (status_str, judgement) where status_str may be "exact_match",
-        "cold", "warm", or "hot".
+        (status_str, judgement) where status_str is one of:
+          'exact_match'       — correct answer (including typo tolerance)
+          'cold'/'warm'/'hot' — LLM semantic result
+          'judge_unavailable' — all LLM keys timed out or failed.
+                                Caller MUST NOT count this as an attempt.
 
     Pipeline:
-        Levenshtein → Cache → Race×3 LLM → fallback
+        Damerau-Levenshtein → Cache → Race×3 LLM → judge_unavailable
     """
     from app.games.judgement_cache import cache_judgement, get_cached_judgement
 
-    # 1. Local exact / near-match (< 1ms, no I/O)
+    # 1. Local exact / near-match (<1ms, no I/O)
     local = _local_check(target, guess)
     if local:
         j = GuessJudgement(status="hot", score=1.0, hint="Угадано! 🎉")
         return "exact_match", j
 
-    # 2. Judgement cache (< 5ms, Redis)
+    # 2. Judgement cache (<5ms, local file)
     cached = await get_cached_judgement(target, guess)
     if cached is not None:
         cached.cached = True
@@ -211,12 +320,21 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
     # 3. Race×3 LLM
     result = await _race_generate(target, guess)
 
-    # 4. Fallback if LLM unavailable / timed out
+    # 4. LLM unavailable — deliberately NO character-similarity fallback.
+    #    String metrics (Levenshtein, SequenceMatcher) measure orthographic
+    #    distance, not semantic distance. Using them to say "warm" or "cold"
+    #    is factually wrong and unfair to the player.
+    #    Instead: return a sentinel so the caller skips counting the attempt.
     if result is None:
-        logger.info("Judge: LLM unavailable — using fallback heuristic")
-        result = _fallback_judgement(target, guess)
+        logger.info("Judge: LLM unavailable — returning judge_unavailable sentinel")
+        sentinel = GuessJudgement(
+            status="cold",
+            score=0.0,
+            hint="🤔 Крокодил задумался... Попытка не засчитана!",
+        )
+        return "judge_unavailable", sentinel
 
-    # Store in cache (fire-and-forget, non-blocking)
+    # Cache result for future identical guesses (fire-and-forget)
     asyncio.create_task(cache_judgement(target, guess, result))  # noqa: RUF006
 
     return result.status, result

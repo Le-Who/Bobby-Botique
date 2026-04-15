@@ -739,6 +739,12 @@ async def game_ws():
         "target_word": game.target_word if is_creator else None,
     })
 
+    # Restore chat history so reconnecting guessers keep their progress visible
+    from app.games.crocodile import get_game_history
+    history = get_game_history(game_id)
+    if history:
+        await websocket.send_json({"event": "history_sync", "items": history})
+
     # Ensure per-game lock (sweep dict if it exceeds capacity)
     _sweep_game_locks()
     if game_id not in _game_locks:
@@ -761,7 +767,30 @@ async def game_ws():
                 await websocket.send_json({"event": "error", "message": "Invalid JSON"})
                 continue
 
-            if msg.get("type") != "guess":
+            msg_type  = msg.get("type")
+            pending_id = str(msg.get("pending_id", ""))
+
+            # ── Hint request ──────────────────────────────────────────────
+            if msg_type == "hint":
+                from app.games.crocodile import get_game_hints
+                hint_idx = int(msg.get("hint_index", 0))
+                hints    = get_game_hints(game_id)
+                if hint_idx < len(hints):
+                    await websocket.send_json({
+                        "event":      "hint",
+                        "text":       hints[hint_idx],
+                        "hint_index": hint_idx,
+                        "available":  True,
+                    })
+                else:
+                    await websocket.send_json({
+                        "event":     "hint",
+                        "text":      "⏳ Подсказки ещё готовятся или закончились...",
+                        "available": False,
+                    })
+                continue
+
+            if msg_type != "guess":
                 continue
 
             word = str(msg.get("word", "")).strip()
@@ -776,6 +805,10 @@ async def game_ws():
                     break
 
                 event = await game.process_guess(word)
+
+            # Echo pending_id back so the client can resolve its optimistic bubble
+            if pending_id:
+                event["pending_id"] = pending_id
 
             await websocket.send_json(event)
 

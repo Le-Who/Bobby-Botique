@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 # Directory for persistent game data alongside the module itself
 _DATA_DIR = Path(__file__).parent / "data"
 _CACHE_PATH = _DATA_DIR / "judgement_cache.json"
+_HINTS_CACHE_PATH = _DATA_DIR / "hints_cache.json"
 _MAX_ENTRIES = 50_000
+_MAX_HINTS = 5_000
 
 
 # ── In-process LRU store ──────────────────────────────────────────────────────
@@ -114,3 +116,67 @@ async def cache_judgement(target: str, guess: str, result: GuessJudgement) -> No
     _store.move_to_end(key)
 
     _persist()
+
+
+# ── Hints cache ──────────────────────────────────────────────────────────────
+# Caches LLM-generated progressive hints (list[str]) keyed by word+category.
+# Stored separately from judgements — different shape, different eviction rate.
+
+_hints_store: OrderedDict[str, str] = OrderedDict()
+
+
+def _hints_key(word: str, category: str) -> str:
+    return f"{word.lower().strip()}\x00{category.lower().strip()}"
+
+
+def _load_hints_from_disk() -> None:
+    """Load the hints JSON file into _hints_store. Called once at import."""
+    if not _HINTS_CACHE_PATH.exists():
+        return
+    try:
+        raw: dict[str, str] = json.loads(_HINTS_CACHE_PATH.read_text(encoding="utf-8"))
+        _hints_store.update(raw)
+        while len(_hints_store) > _MAX_HINTS:
+            _hints_store.popitem(last=False)
+        logger.debug("Hints cache loaded: %d entries", len(_hints_store))
+    except Exception as exc:
+        logger.warning("Hints cache load failed: %s — starting empty", exc)
+
+
+def _persist_hints() -> None:
+    """Write _hints_store to disk. Silently swallows errors."""
+    try:
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _HINTS_CACHE_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(dict(_hints_store), ensure_ascii=False), encoding="utf-8")
+        tmp.replace(_HINTS_CACHE_PATH)
+    except Exception as exc:
+        logger.debug("Hints cache persist failed: %s", exc)
+
+
+_load_hints_from_disk()
+
+
+async def get_cached_hints(word: str, category: str) -> list[str] | None:
+    """Return cached hints for this word/category pair, or None on miss."""
+    key = _hints_key(word, category)
+    value = _hints_store.get(key)
+    if value is None:
+        return None
+    _hints_store.move_to_end(key)
+    try:
+        return json.loads(value)
+    except Exception as exc:
+        logger.debug("Hints cache deserialise failed (%r): %s", word, exc)
+        _hints_store.pop(key, None)
+        return None
+
+
+async def cache_hints(word: str, category: str, hints: list[str]) -> None:
+    """Store hints in the in-process LRU cache and write through to disk."""
+    key = _hints_key(word, category)
+    if key not in _hints_store and len(_hints_store) >= _MAX_HINTS:
+        _hints_store.popitem(last=False)
+    _hints_store[key] = json.dumps(hints, ensure_ascii=False)
+    _hints_store.move_to_end(key)
+    _persist_hints()

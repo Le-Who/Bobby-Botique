@@ -3,19 +3,25 @@
 
 All tests run fully offline:
   - No Redis required (in-memory fallback is exercised by save/load).
-  - No LLM calls (judge pipeline is tested via the local Levenshtein path).
+  - No LLM calls (judge pipeline is mocked at _race_generate level;
+    the local Levenshtein path is exercised directly).
   - No Telegram Bot API.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.games.crocodile import CrocodileGame, create_game, load_game
-from app.games.judge import _fallback_judgement, _local_check
+from app.games.judge import (
+    GuessJudgement,
+    _allowed_edits,
+    _damerau_levenshtein,
+    _local_check,
+)
 from app.games.word_bank import (
     list_categories,
     pick_random_word,
@@ -99,51 +105,120 @@ class TestValidateCustomWord:
 
 @pytest.mark.asyncio
 class TestPickRandomWord:
+    @pytest.fixture(autouse=True)
+    def mock_word_gen(self):
+        with patch("app.games.word_bank.generate_words_for_category", new_callable=AsyncMock, return_value=["моксЛово", "тестовое"]):
+            yield
+
     async def test_returns_word_from_category(self):
-        word, lang, cat = await pick_random_word("животные")
+        word, lang, cat, is_gen = await pick_random_word("животные")
         assert lang == "ru"
         assert cat == "Животные"
         assert isinstance(word, str)
         assert len(word) > 0
+        assert not is_gen
 
     async def test_unknown_category_returns_something(self):
-        # Unknown category falls back to random — should still return a result
-        word, lang, cat = await pick_random_word("totally_unknown_xyz")
+        word, lang, cat, is_gen = await pick_random_word("totally_unknown_xyz")
         assert isinstance(word, str)
         assert lang in ("ru", "en")
+        assert is_gen
+        assert word in ("моксЛово", "тестовое")
 
     async def test_english_category(self):
-        word, lang, cat = await pick_random_word("animals")
+        word, lang, cat, is_gen = await pick_random_word("animals")
         assert lang == "en"
         assert cat == "Animals"
+        assert not is_gen
 
 
-# ── judge — local checks only (no LLM) ───────────────────────────────────────
+# ── judge — Damerau-Levenshtein algorithm ─────────────────────────────────────
+
+
+class TestDamerauLevenshtein:
+    """Verify the string distance metric covers all four edit operations."""
+
+    def test_equal_strings(self):
+        assert _damerau_levenshtein("кот", "кот") == 0
+
+    def test_substitution(self):
+        assert _damerau_levenshtein("кот", "кит") == 1
+
+    def test_transposition_adjacent(self):
+        # Damerau: adjacent swap counts as 1, not 2
+        assert _damerau_levenshtein("кот", "кто") == 1
+
+    def test_insertion(self):
+        assert _damerau_levenshtein("кот", "крот") == 1
+
+    def test_deletion(self):
+        assert _damerau_levenshtein("крот", "кот") == 1
+
+    def test_multi_edit(self):
+        # completely different words of same length
+        assert _damerau_levenshtein("слон", "кит") >= 3
+
+    def test_empty_strings(self):
+        assert _damerau_levenshtein("", "") == 0
+        assert _damerau_levenshtein("кот", "") == 3
+        assert _damerau_levenshtein("", "кот") == 3
+
+
+class TestAllowedEdits:
+    """Verify tolerance thresholds by word length."""
+
+    def test_very_short_zero_edits(self):
+        assert _allowed_edits(1) == 0
+        assert _allowed_edits(3) == 0
+        assert _allowed_edits(4) == 0
+
+    def test_medium_one_edit(self):
+        assert _allowed_edits(5) == 1
+        assert _allowed_edits(6) == 1
+        assert _allowed_edits(7) == 1
+
+    def test_long_two_edits(self):
+        assert _allowed_edits(8) == 2
+        assert _allowed_edits(12) == 2
+        assert _allowed_edits(20) == 2
 
 
 class TestLocalCheck:
+    """verify _local_check using length-dependent Damerau-Levenshtein."""
+
     def test_exact_match(self):
         assert _local_check("крокодил", "крокодил") == "exact_match"
 
     def test_case_insensitive(self):
         assert _local_check("Крокодил", "крокодил") == "exact_match"
 
-    def test_typo_high_similarity(self):
-        # "крокодилл" (double-l typo) is ≥90% similar to "крокодил"
-        # ratio = 2*8/(8+9) ≈ 0.94 — safely above the 0.90 threshold
-        result = _local_check("крокодил", "крокодилл")
-        assert result == "exact_match", (
-            f"Expected exact_match for near-correct typo, got {result!r}"
-        )
+    def test_mongust_regression(self):
+        """The core regression: монгуст → мангуст (7 chars, 1 edit, allowed=1)."""
+        assert _local_check("мангуст", "монгуст") == "exact_match"
 
-    def test_below_threshold_no_match(self):
-        # "крокадил" has ratio 0.875 < 0.90 — should NOT match via _local_check
-        # (would need the LLM path for a 'hot' judgement)
-        import difflib
-        ratio = difflib.SequenceMatcher(None, "крокодил", "крокадил").ratio()
-        assert ratio < 0.90, f"Ratio changed: {ratio:.3f}"
-        result = _local_check("крокодил", "крокадил")
-        assert result is None  # Requires LLM path for judgement
+    def test_long_word_two_edit_tolerance(self):
+        # "крокодил" (8 chars) → _allowed_edits(8)=2; "крокадил" dist=1 → match
+        assert _local_check("крокодил", "крокадил") == "exact_match"
+
+    def test_long_word_double_typo(self):
+        # "крокодил" → "крокадалл" dist=3 → no match (>2)
+        assert _local_check("крокодил", "крокадалл") is None
+
+    def test_extra_char_long_word(self):
+        # "крокодилл" (insertion, dist=1) on 8-char word → match
+        assert _local_check("крокодил", "крокодилл") == "exact_match"
+
+    def test_short_word_zero_tolerance(self):
+        # "кот" (3 chars) → _allowed_edits(3)=0; "кит" dist=1 → no match
+        assert _local_check("кот", "кит") is None
+
+    def test_4char_zero_tolerance(self):
+        # "слон" (4 chars) → _allowed_edits(4)=0; "слан" dist=1 → no match
+        assert _local_check("слон", "слан") is None
+
+    def test_transposition_caught(self):
+        # "кракодил" ↔ "крокодил": pos 2-3 transposition, dist=1, 8 chars, allowed=2
+        assert _local_check("крокодил", "кракодил") == "exact_match"
 
     def test_different_word_no_match(self):
         assert _local_check("слон", "крокодил") is None
@@ -152,23 +227,11 @@ class TestLocalCheck:
         assert _local_check("elephant", "elephant") == "exact_match"
 
 
-class TestFallbackJudgement:
-    def test_hot_on_high_similarity(self):
-        j = _fallback_judgement("крокодил", "крокодил")
-        assert j.status == "hot"
-        assert j.score >= 0.7
-
-    def test_cold_on_unrelated(self):
-        j = _fallback_judgement("слон", "самолёт")
-        assert j.status in ("cold", "warm")
-
-    def test_score_range(self):
-        for target, guess in [("cat", "dog"), ("cat", "cats"), ("python", "python")]:
-            j = _fallback_judgement(target, guess)
-            assert 0.0 <= j.score <= 1.0
-
-
 # ── CrocodileGame state machine ───────────────────────────────────────────────
+
+# Shared offline judgement stubs
+_COLD = GuessJudgement(status="cold", score=0.1, hint="Попробуй ещё! ❄️")
+_WARM = GuessJudgement(status="warm", score=0.55, hint="Теплее! 🌡️")
 
 
 class TestCrocodileGameSerialisation:
@@ -212,7 +275,24 @@ class TestCrocodileGameSerialisation:
 
 @pytest.mark.asyncio
 class TestCrocodileGameInMemory:
-    """Run the game against the in-memory fallback (no Redis needed)."""
+    """Run the game against the in-memory fallback (no Redis, no LLM)."""
+
+    @pytest.fixture(autouse=True)
+    def mock_llm(self):
+        """Patch _race_generate so all non-local guesses return cold offline.
+
+        This is the minimal mock needed: _local_check still fires first (real
+        implementation), so exact / typo matches never reach _race_generate.
+        Non-matching guesses get the _COLD stub, enabling game_over tests.
+        _prefetch_hints is suppressed to avoid background LLM calls in CI.
+        """
+        with (
+            patch("app.games.judge._race_generate", new_callable=AsyncMock, return_value=_COLD),
+            patch("app.games.judgement_cache.cache_judgement", new_callable=AsyncMock),
+            patch("app.games.judgement_cache.get_cached_judgement", new_callable=AsyncMock, return_value=None),
+            patch("app.games.crocodile._prefetch_hints", new_callable=AsyncMock),
+        ):
+            yield
 
     async def test_create_and_load_roundtrip(self):
         game = await create_game(
@@ -239,32 +319,36 @@ class TestCrocodileGameInMemory:
         assert event["status"] == "exact_match"
         assert game.status == "won"
 
-    async def test_typo_guess_is_scored(self):
-        """In offline tests (no LLM), a typo guess goes through _fallback_judgement.
+    async def test_mongust_typo_regression(self):
+        """'монгуст' must now win against 'мангуст' (7 chars, 1 edit, allowed=1)."""
+        game = await create_game(
+            target_word="мангуст",
+            category="Животные",
+            lang="ru",
+            inline_message_id="inline_test_3a",
+            creator_id=7,
+        )
+        event = await game.process_guess("монгуст")
+        assert event["status"] == "exact_match", (
+            f"Expected exact_match for монгуст→мангуст, got {event['status']!r}"
+        )
+        assert game.status == "won"
 
-        _fallback_judgement uses SequenceMatcher ratio, so "крокадил" (≈94% match)
-        should receive a score ≥ 0.9 and the 'hot' status from the fallback.
-        The full exact_match short-circuit happens inside judge_guess's _local_check
-        step, which fires _before_ the LLM race — so a sufficiently close typo
-        SHOULD return exact_match even in in-memory mode.
-        """
+    async def test_krokadil_typo_exact_match(self):
+        """'крокадил' must match 'крокодил' (8 chars, dist=1, allowed=2)."""
         game = await create_game(
             target_word="крокодил",
             category="Животные",
             lang="ru",
-            inline_message_id="inline_test_3",
+            inline_message_id="inline_test_3b",
             creator_id=7,
         )
         event = await game.process_guess("крокадил")
-        # _local_check fires before the LLM; this guess passes the 90% threshold.
-        # Expected: exact_match (wins game) — verified by ratio test above.
-        assert event["status"] in ("exact_match", "hot"), (
-            f"Unexpected status: {event['status']} (score={event.get('score')})"
-        )
-        # Game should be either won (if _local_check fired) or still active
-        assert game.status in ("won", "active")
+        assert event["status"] == "exact_match"
+        assert game.status == "won"
 
-    async def test_max_attempts_triggers_game_over(self):
+    async def test_wrong_guess_counts_attempt(self):
+        """Non-matching guess → cold result → attempt recorded."""
         game = await create_game(
             target_word="слон",
             category="Животные",
@@ -272,9 +356,22 @@ class TestCrocodileGameInMemory:
             inline_message_id="inline_test_4",
             creator_id=5,
         )
+        event = await game.process_guess("кот")
+        assert event["event"] == "result"
+        assert event["status"] == "cold"
+        assert event["attempts"] == 1
+        assert game.status == "active"
+
+    async def test_max_attempts_triggers_game_over(self):
+        game = await create_game(
+            target_word="слон",
+            category="Животные",
+            lang="ru",
+            inline_message_id="inline_test_5",
+            creator_id=5,
+        )
         game.max_attempts = 2  # Reduce for speed
 
-        # Two wrong guesses
         await game.process_guess("кот")
         event = await game.process_guess("собака")
 
@@ -283,12 +380,50 @@ class TestCrocodileGameInMemory:
         assert game.status == "lost"
         assert event["word"] == "слон"
 
+    async def test_history_recorded_on_guess(self):
+        """Each guess (non-unavailable) must be appended to _mem_history."""
+        from app.games.crocodile import get_game_history
+
+        game = await create_game(
+            target_word="слон",
+            category="Животные",
+            lang="ru",
+            inline_message_id="inline_test_6",
+            creator_id=5,
+        )
+        await game.process_guess("кот")
+        await game.process_guess("собака")
+
+        history = get_game_history(game.game_id)
+        assert len(history) == 2
+        assert history[0]["word"] == "кот"
+        assert history[0]["status"] == "cold"
+
+    async def test_judge_unavailable_does_not_count_attempt(self):
+        """judge_unavailable events must NOT count the attempt."""
+        with patch(
+            "app.games.judge._race_generate",
+            new_callable=AsyncMock,
+            return_value=None,  # simulate total LLM failure
+        ):
+            game = await create_game(
+                target_word="слон",
+                category="Животные",
+                lang="ru",
+                inline_message_id="inline_test_7",
+                creator_id=5,
+            )
+            event = await game.process_guess("кот")
+            assert event["event"] == "judge_unavailable"
+            assert len(game.attempts) == 0  # NOT counted
+            assert game.status == "active"
+
     async def test_empty_guess_returns_error(self):
         game = await create_game(
             target_word="тест",
             category="Разное",
             lang="ru",
-            inline_message_id="inline_test_5",
+            inline_message_id="inline_test_8",
             creator_id=3,
         )
         event = await game.process_guess("   ")

@@ -6,7 +6,9 @@
   <title>🐊 Крокодил</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
-    /* ── Midnight Glass Design System ───────────────────────────────────── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    /* ── Design tokens ───────────────────────────────────────────────────── */
     :root {
       --bg:           #0a0d14;
       --surface:      rgba(255,255,255,0.06);
@@ -18,14 +20,27 @@
       --accent-mid:   #ffbd59;
       --text:         #e8eaf0;
       --text-dim:     rgba(232,234,240,0.55);
-      --shadow:       0 8px 32px rgba(0,0,0,0.45);
+      --blur:         blur(20px);
       --radius:       16px;
       --radius-sm:    10px;
-      --blur:         blur(20px);
       --font:         'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
 
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+      /* Bubble palette */
+      --b-user:       rgba(0,224,255,0.13);
+      --b-user-bdr:   rgba(0,224,255,0.28);
+      --b-cold:       rgba(100,149,237,0.12);
+      --b-cold-bdr:   rgba(100,149,237,0.32);
+      --b-warm:       rgba(255,189,89,0.12);
+      --b-warm-bdr:   rgba(255,189,89,0.35);
+      --b-hot:        rgba(0,224,150,0.14);
+      --b-hot-bdr:    rgba(0,224,150,0.35);
+      --b-exact:      rgba(0,224,150,0.24);
+      --b-exact-bdr:  rgba(0,224,150,0.65);
+      --b-judge:      rgba(255,255,255,0.06);
+      --b-judge-bdr:  rgba(255,255,255,0.10);
+      --b-sys:        rgba(255,189,89,0.07);
+      --b-sys-bdr:    rgba(255,189,89,0.20);
+    }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -39,20 +54,19 @@
       user-select: none;
     }
 
-    /* ── Layout ─────────────────────────────────────────────────────────── */
+    /* ── App shell ───────────────────────────────────────────────────────── */
     #app {
       display: flex;
       flex-direction: column;
-      height: 100vh;
-      padding: env(safe-area-inset-top, 0) 0 env(safe-area-inset-bottom, 0);
+      height: 100dvh;
     }
 
     /* ── Header ──────────────────────────────────────────────────────────── */
     header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      padding: 14px 20px 10px;
+      gap: 8px;
+      padding: 13px 16px 9px;
       background: rgba(10,13,20,0.92);
       backdrop-filter: var(--blur);
       border-bottom: 1px solid var(--border);
@@ -60,25 +74,46 @@
     }
 
     header h1 {
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 700;
       background: linear-gradient(90deg, var(--accent), #a78bfa);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
-      letter-spacing: -0.3px;
+      flex: 1;
     }
 
-    #attempts-badge {
-      font-size: 13px;
+    #hint-btn {
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: var(--surface-alt);
+      color: var(--text-dim);
+      font-size: 12px;
       font-weight: 600;
+      font-family: var(--font);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all .2s;
+    }
+    #hint-btn.ready {
+      color: var(--accent-mid);
+      border-color: rgba(255,189,89,0.35);
+      background: rgba(255,189,89,0.08);
+    }
+    #hint-btn:not(:disabled):active { transform: scale(.93); }
+    #hint-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+    #attempts-badge {
       padding: 4px 10px;
       border-radius: 20px;
       background: var(--surface-alt);
       border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 600;
       color: var(--text-dim);
+      white-space: nowrap;
       transition: color .3s, background .3s;
     }
-
     #attempts-badge.danger {
       color: var(--accent-warm);
       background: rgba(255,107,107,0.15);
@@ -87,141 +122,119 @@
 
     /* ── Category pill ───────────────────────────────────────────────────── */
     #category-pill {
-      text-align: center;
-      padding: 8px 20px 0;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 500;
       color: var(--text-dim);
       letter-spacing: .5px;
       text-transform: uppercase;
+      text-align: center;
+      padding: 5px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      flex-shrink: 0;
+      min-height: 26px;
     }
 
-    /* ── Hint area ───────────────────────────────────────────────────────── */
-    #hint-area {
+    /* ── Chat area ───────────────────────────────────────────────────────── */
+    #chat-area {
       flex: 1;
+      overflow-y: auto;
+      padding: 10px 12px 6px;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 0 24px;
-      gap: 16px;
-      overflow-y: auto;
+      gap: 5px;
+      -webkit-overflow-scrolling: touch;
     }
 
-    /* Crocodile icon area */
-    .croc-icon {
-      font-size: 64px;
-      line-height: 1;
-      animation: float 3s ease-in-out infinite;
-      filter: drop-shadow(0 4px 12px rgba(0,224,255,0.25));
-      transition: transform .3s;
+    /* ── Bubble rows ─────────────────────────────────────────────────────── */
+    .bubble-row {
+      display: flex;
+      animation: b-in .22s cubic-bezier(.34,1.56,.64,1) both;
     }
-
-    @keyframes float {
-      0%, 100% { transform: translateY(0); }
-      50%       { transform: translateY(-8px); }
+    @keyframes b-in {
+      from { opacity:0; transform:scale(.82) translateY(6px); }
+      to   { opacity:1; transform:scale(1)   translateY(0); }
     }
+    .bubble-row.user   { justify-content: flex-end; }
+    .bubble-row.judge  { justify-content: flex-start; }
+    .bubble-row.system { justify-content: center; }
 
-    /* State screen */
-    #state-label {
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--text-dim);
-      letter-spacing: 0.3px;
-    }
-
-    /* Semantic feedback card */
-    #feedback-card {
-      width: 100%;
-      max-width: 340px;
-      padding: 16px 20px;
-      border-radius: var(--radius);
-      background: var(--surface);
-      backdrop-filter: var(--blur);
+    /* ── Bubbles ─────────────────────────────────────────────────────────── */
+    .bubble {
+      max-width: 80%;
+      padding: 8px 13px;
+      border-radius: 14px;
       border: 1px solid var(--border);
-      text-align: center;
-      transition: all .4s cubic-bezier(.16,1,.3,1);
-      transform: translateY(12px);
-      opacity: 0;
+      background: var(--surface);
+      word-break: break-word;
+      line-height: 1.35;
     }
 
-    #feedback-card.visible {
-      transform: translateY(0);
-      opacity: 1;
-    }
+    /* User bubbles by state */
+    .bubble.user            { background:var(--b-user);  border-color:var(--b-user-bdr);  border-bottom-right-radius:4px; }
+    .bubble.user.cold       { background:var(--b-cold);  border-color:var(--b-cold-bdr);  }
+    .bubble.user.warm       { background:var(--b-warm);  border-color:var(--b-warm-bdr);  }
+    .bubble.user.hot        { background:var(--b-hot);   border-color:var(--b-hot-bdr);   }
+    .bubble.user.exact_match{ background:var(--b-exact); border-color:var(--b-exact-bdr); box-shadow:0 0 18px rgba(0,224,150,.18); }
 
-    #feedback-card.cold {
-      border-color: rgba(100,149,237,0.35);
-      background: rgba(100,149,237,0.08);
-    }
-    #feedback-card.warm {
-      border-color: rgba(255,189,89,0.35);
-      background: rgba(255,189,89,0.08);
-    }
-    #feedback-card.hot {
-      border-color: rgba(0,224,150,0.35);
-      background: rgba(0,224,150,0.08);
-    }
-    #feedback-card.exact {
-      border-color: rgba(0,224,150,0.6);
-      background: rgba(0,224,150,0.15);
-    }
+    /* Pending animation */
+    .bubble.pending { animation: b-in .22s cubic-bezier(.34,1.56,.64,1) both, pulse 1.3s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:.6} 50%{opacity:.9} }
 
-    #feedback-status {
-      font-size: 22px;
-      margin-bottom: 6px;
-    }
+    /* Judge / system bubbles */
+    .bubble.judge  { background:var(--b-judge); border-color:var(--b-judge-bdr); border-bottom-left-radius:4px; color:var(--text-dim); font-size:13px; }
+    .bubble.system { background:var(--b-sys);   border-color:var(--b-sys-bdr);   font-size:12px; color:var(--accent-mid); text-align:center; padding:5px 12px; border-radius:12px; }
 
-    #feedback-hint {
-      font-size: 14px;
-      color: var(--text);
-      line-height: 1.5;
-    }
+    /* Bubble internals */
+    .b-word  { display:block; font-size:15px; font-weight:600; color:var(--text); }
+    .b-meta  { display:flex; align-items:center; gap:5px; margin-top:3px; flex-wrap:wrap; }
+    .b-icon  { font-size:13px; line-height:1; }
+    .b-score { font-size:11px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+    .b-hint  { display:block; font-size:12px; color:var(--text-dim); margin-top:3px; font-style:italic; }
 
-    #feedback-score {
-      font-size: 11px;
+    /* ── Typing indicator ────────────────────────────────────────────────── */
+    #typing-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 3px 13px 5px;
+      font-size: 12px;
       color: var(--text-dim);
-      margin-top: 6px;
-      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+      height: 26px;
+      opacity: 1;
+      transition: opacity .2s;
     }
-
-    /* Score bar */
-    #score-bar-wrap {
-      width: 100%;
-      max-width: 340px;
-      height: 4px;
-      background: var(--surface-alt);
-      border-radius: 4px;
-      overflow: hidden;
-      display: none;
+    #typing-row.hidden { opacity: 0; pointer-events: none; }
+    .typing-dots { display:flex; gap:3px; }
+    .typing-dots span {
+      width: 5px; height: 5px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: dot 1.2s ease-in-out infinite;
     }
-    #score-bar-fill {
-      height: 100%;
-      border-radius: 4px;
-      background: linear-gradient(90deg, #6495ed, #00e096);
-      transition: width .4s cubic-bezier(.16,1,.3,1);
-      width: 0%;
-    }
+    .typing-dots span:nth-child(2) { animation-delay: .15s; }
+    .typing-dots span:nth-child(3) { animation-delay: .30s; }
+    @keyframes dot { 0%,80%,100%{transform:scale(.55);opacity:.35} 40%{transform:scale(1);opacity:1} }
 
     /* ── Input zone ──────────────────────────────────────────────────────── */
     #input-zone {
-      padding: 12px 20px;
-      padding-bottom: max(16px, env(safe-area-inset-bottom, 16px));
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      padding-bottom: max(14px, env(safe-area-inset-bottom, 14px));
       background: rgba(10,13,20,0.92);
       backdrop-filter: var(--blur);
       border-top: 1px solid var(--border);
-      display: flex;
-      gap: 10px;
-      align-items: center;
       flex-shrink: 0;
     }
 
     #guess-input {
       flex: 1;
       background: var(--surface-alt);
-      border: 1px solid var(--border);
+      border: 1.5px solid var(--border);
       border-radius: var(--radius-sm);
-      padding: 12px 16px;
+      padding: 11px 15px;
       font-size: 16px;
       font-family: var(--font);
       color: var(--text);
@@ -230,115 +243,80 @@
       -webkit-appearance: none;
     }
     #guess-input::placeholder { color: var(--text-dim); }
-    #guess-input:focus {
-      border-color: rgba(0,224,255,0.4);
-      background: rgba(255,255,255,0.12);
-    }
-    #guess-input:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
+    #guess-input:focus { border-color: rgba(0,224,255,.5); background: rgba(255,255,255,.12); }
+    #guess-input:disabled { opacity: .35; cursor: not-allowed; }
 
     #send-btn {
-      width: 46px;
-      height: 46px;
+      width: 44px; height: 44px;
       border-radius: 50%;
       border: none;
       background: linear-gradient(135deg, var(--accent), #6d72ff);
       color: #000;
-      font-size: 20px;
+      font-size: 18px;
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: transform .15s, opacity .15s, box-shadow .15s;
-      box-shadow: 0 4px 14px rgba(0,224,255,0.3);
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .15s, opacity .15s;
+      box-shadow: 0 4px 14px rgba(0,224,255,.28);
       flex-shrink: 0;
     }
     #send-btn:hover   { transform: scale(1.08); }
-    #send-btn:active  { transform: scale(.94); box-shadow: none; }
-    #send-btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+    #send-btn:active  { transform: scale(.92); }
+    #send-btn:disabled { opacity: .3; cursor: not-allowed; transform: none; }
 
-    /* ── Overlay screens ─────────────────────────────────────────────────── */
+    /* ── Win / Loss overlay ──────────────────────────────────────────────── */
     #overlay {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 24px;
-      background: rgba(10,13,20,0.95);
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 20px;
+      background: rgba(10,13,20,.96);
       backdrop-filter: var(--blur);
-      padding: 40px 32px;
-      text-align: center;
-      opacity: 0;
-      pointer-events: none;
+      padding: 40px 32px; text-align: center;
+      opacity: 0; pointer-events: none;
       transition: opacity .35s;
       z-index: 10;
     }
-    #overlay.visible {
-      opacity: 1;
-      pointer-events: all;
-    }
-
-    #overlay-icon   { font-size: 72px; line-height: 1; }
-    #overlay-title  {
-      font-size: 26px;
-      font-weight: 700;
-      line-height: 1.2;
+    #overlay.visible { opacity: 1; pointer-events: all; }
+    #overlay-icon  { font-size: 72px; line-height: 1; }
+    #overlay-title {
+      font-size: 26px; font-weight: 700;
       background: linear-gradient(90deg, #00e096, var(--accent));
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
-    #overlay-title.loss {
-      background: linear-gradient(90deg, var(--accent-warm), #ff9f43);
-    }
-    #overlay-word {
-      font-size: 32px;
-      font-weight: 800;
-      letter-spacing: -1px;
-      color: var(--text);
-    }
-    #overlay-sub { font-size: 14px; color: var(--text-dim); line-height: 1.6; }
+    #overlay-title.loss { background: linear-gradient(90deg, var(--accent-warm), #ff9f43); }
+    #overlay-word { font-size: 32px; font-weight: 800; letter-spacing: -1px; }
+    #overlay-sub  { font-size: 14px; color: var(--text-dim); line-height: 1.6; }
 
-    /* ── Connecting state ────────────────────────────────────────────────── */
+    /* ── Connecting splash ───────────────────────────────────────────────── */
     #connecting {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
       gap: 16px;
-      background: var(--bg);
-      z-index: 20;
+      background: var(--bg); z-index: 20;
       transition: opacity .35s;
     }
     #connecting.hidden { opacity: 0; pointer-events: none; }
-
     .spinner {
-      width: 40px; height: 40px;
+      width: 38px; height: 38px;
       border: 3px solid var(--border);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-
     .conn-label { font-size: 14px; color: var(--text-dim); }
 
-    /* ── Error modal ─────────────────────────────────────────────────────── */
+    /* ── Error bar ───────────────────────────────────────────────────────── */
     #error-bar {
-      position: fixed;
-      bottom: 0; left: 0; right: 0;
+      position: fixed; bottom: 0; left: 0; right: 0;
       padding: 12px 20px;
       padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
-      background: rgba(255,107,107,0.15);
-      border-top: 1px solid rgba(255,107,107,0.3);
+      background: rgba(255,107,107,.14);
+      border-top: 1px solid rgba(255,107,107,.3);
       color: var(--accent-warm);
-      font-size: 13px;
-      text-align: center;
+      font-size: 13px; text-align: center;
       transform: translateY(100%);
       transition: transform .3s;
       z-index: 30;
@@ -347,6 +325,7 @@
   </style>
 </head>
 <body>
+
 <div id="connecting">
   <div class="spinner"></div>
   <span class="conn-label">Подключение к игре…</span>
@@ -355,21 +334,16 @@
 <div id="app">
   <header>
     <h1>🐊 Крокодил</h1>
+    <button id="hint-btn" disabled title="Подсказка">💡</button>
     <span id="attempts-badge">0 / 10</span>
   </header>
   <div id="category-pill"></div>
 
-  <div id="hint-area">
-    <div class="croc-icon">🐊</div>
-    <div id="state-label">Угадай слово!</div>
-    <div id="feedback-card">
-      <div id="feedback-status"></div>
-      <div id="feedback-hint"></div>
-      <div id="feedback-score"></div>
-    </div>
-    <div id="score-bar-wrap">
-      <div id="score-bar-fill"></div>
-    </div>
+  <div id="chat-area"></div>
+
+  <div id="typing-row" class="hidden">
+    <div class="typing-dots"><span></span><span></span><span></span></div>
+    <span>Крокодил оценивает…</span>
   </div>
 
   <div id="input-zone">
@@ -387,7 +361,6 @@
   </div>
 </div>
 
-<!-- Win / Loss overlay -->
 <div id="overlay">
   <div id="overlay-icon">🎉</div>
   <div id="overlay-title">Угадано!</div>
@@ -398,7 +371,7 @@
 <div id="error-bar"></div>
 
 <script>
-/* ── Telegram WebApp init ───────────────────────────────────────────── */
+/* ── Telegram WebApp ────────────────────────────────────────────────────── */
 const tg = window.Telegram?.WebApp;
 if (tg) {
   tg.ready();
@@ -406,62 +379,40 @@ if (tg) {
   tg.setHeaderColor?.('#0a0d14');
   tg.setBackgroundColor?.('#0a0d14');
 }
+const haptic = tg?.HapticFeedback;
 
-/* ── Config from URL params / Telegram start_param ──────────────────── */
-const params     = new URLSearchParams(location.search);
-const GAME_ID    = params.get('game_id')
-                || (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param)
-                || params.get('tgWebAppStartParam')
-                || '{{ game_id }}';
-const INIT_DATA  = tg?.initData || '';
+/* ── Config ─────────────────────────────────────────────────────────────── */
+const params    = new URLSearchParams(location.search);
+const GAME_ID   = params.get('game_id')
+               || (tg?.initDataUnsafe?.start_param)
+               || params.get('tgWebAppStartParam')
+               || '{{ game_id }}';
+const INIT_DATA = tg?.initData || '';
 
-if (!GAME_ID) {
-  document.getElementById('connecting').querySelector('.conn-label').textContent =
-    '❌ game_id не указан';
-}
+const STATUS_ICON  = { cold:'❄️', warm:'🌡️', hot:'🔥', exact_match:'✅' };
+const HINTS_TOTAL  = 3;
 
-/* ── Helpers ────────────────────────────────────────────────────────── */
+/* ── DOM helpers ────────────────────────────────────────────────────────── */
 const $ = id => document.getElementById(id);
 
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function uid() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+/* ── Attempts badge ─────────────────────────────────────────────────────── */
 function setAttempts(used, max) {
-  const badge = $('attempts-badge');
-  badge.textContent = `${used} / ${max}`;
-  badge.classList.toggle('danger', used >= max - 2);
+  const b = $('attempts-badge');
+  b.textContent = `${used} / ${max}`;
+  b.classList.toggle('danger', used >= max - 2);
 }
 
-const STATUS_ICON = { cold: '❄️', warm: '🌡️', hot: '🔥', exact_match: '✅' };
-
-function showFeedback({ status, hint, score, cached }) {
-  const card = $('feedback-card');
-  card.className = 'visible ' + (status === 'exact_match' ? 'exact' : (status || ''));
-  $('feedback-status').textContent = STATUS_ICON[status] || '❓';
-  $('feedback-hint').textContent   = hint || '';
-  $('feedback-score').textContent  =
-    typeof score === 'number' ? `${(score * 100).toFixed(0)}% схожесть${cached ? ' · кэш ⚡' : ''}` : '';
-
-  const bar  = $('score-bar-wrap');
-  const fill = $('score-bar-fill');
-  bar.style.display = 'block';
-  fill.style.width  = `${((score || 0) * 100).toFixed(1)}%`;
-}
-
-function showOverlay({ win, word, attempts, maxAttempts, customTitle }) {
-  const overlay = $('overlay');
-  $('overlay-icon').textContent  = win ? '🎉' : '😔';
-  const title = $('overlay-title');
-  title.textContent = customTitle || (win ? 'Угадано!' : 'Не угадали.');
-  title.className   = win ? '' : 'loss';
-  $('overlay-word').textContent  = (word || '').toUpperCase();
-  if (customTitle) {
-      $('overlay-sub').textContent = 'Помогай в чате и наблюдай за догадками!';
-  } else {
-      $('overlay-sub').textContent   = win
-        ? `За ${attempts} из ${maxAttempts} попыток`
-        : `Исчерпаны все ${maxAttempts} попытки`;
-  }
-  overlay.classList.add('visible');
-}
-
+/* ── Error bar ──────────────────────────────────────────────────────────── */
 function showError(msg, autoDismiss = true) {
   const bar = $('error-bar');
   bar.textContent = msg;
@@ -469,18 +420,138 @@ function showError(msg, autoDismiss = true) {
   if (autoDismiss) setTimeout(() => bar.classList.remove('show'), 3500);
 }
 
-/* ── WebSocket ──────────────────────────────────────────────────────── */
-let ws = null;
-let reconnectAttempts = 0;
-let gameOver = false;
-let maxAttempts = 10;
-let attemptsUsed = 0;
+/* ── Win/Loss overlay ───────────────────────────────────────────────────── */
+function showOverlay({ win, word, attempts, maxAttempts, customTitle }) {
+  $('overlay-icon').textContent = win ? '🎉' : '😔';
+  const title = $('overlay-title');
+  title.textContent = customTitle || (win ? 'Угадано!' : 'Не угадали.');
+  title.className   = win ? '' : 'loss';
+  $('overlay-word').textContent = (word || '').toUpperCase();
+  $('overlay-sub').textContent  = customTitle
+    ? 'Наблюдай за догадками!'
+    : win
+      ? `За ${attempts} из ${maxAttempts} попыток`
+      : `Исчерпано ${maxAttempts} попыток`;
+  $('overlay').classList.add('visible');
+}
+
+/* ── Typing indicator ───────────────────────────────────────────────────── */
+const chatArea = $('chat-area');
+
+function updateTyping() {
+  $('typing-row').classList.toggle('hidden', !chatArea.querySelector('.bubble.pending'));
+}
+
+/* ── Chat bubble helpers ────────────────────────────────────────────────── */
+function scrollBottom() {
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function appendPendingBubble(word, pendingId) {
+  const row = document.createElement('div');
+  row.className = 'bubble-row user';
+  row.id = `bubble-${pendingId}`;
+  row.innerHTML =
+    `<div class="bubble user pending">` +
+    `<span class="b-word">${escHtml(word)}</span>` +
+    `<div class="b-meta"><span class="b-icon">⏳</span></div>` +
+    `</div>`;
+  chatArea.appendChild(row);
+  scrollBottom();
+  updateTyping();
+}
+
+function resolvePendingBubble(pendingId, { status, hint, score, cached }) {
+  const row = document.getElementById(`bubble-${pendingId}`);
+  if (!row) return;
+  const word     = row.querySelector('.b-word')?.textContent || '';
+  const icon     = STATUS_ICON[status] || '❓';
+  const cls      = status === 'exact_match' ? 'exact_match' : (status || '');
+  const scoreStr = typeof score === 'number'
+    ? `${(score * 100).toFixed(0)}%${cached ? ' ⚡' : ''}`
+    : '';
+  const hintHtml = hint ? `<span class="b-hint">${escHtml(hint)}</span>` : '';
+  const bubble = row.querySelector('.bubble');
+  bubble.className = `bubble user ${cls}`;
+  bubble.innerHTML =
+    `<span class="b-word">${escHtml(word)}</span>` +
+    `<div class="b-meta">` +
+    `<span class="b-icon">${icon}</span>` +
+    (scoreStr ? `<span class="b-score">${escHtml(scoreStr)}</span>` : '') +
+    `</div>` +
+    hintHtml;
+  updateTyping();
+}
+
+function removePendingBubble(pendingId) {
+  const row = document.getElementById(`bubble-${pendingId}`);
+  if (row) row.remove();
+  updateTyping();
+}
+
+function appendCompletedBubble(word, { status, hint, score, cached = false }) {
+  const pid = uid();
+  appendPendingBubble(word, pid);
+  resolvePendingBubble(pid, { status, hint, score, cached });
+}
+
+function appendHintBubble(text) {
+  const row = document.createElement('div');
+  row.className = 'bubble-row system';
+  row.innerHTML = `<div class="bubble system">💡 ${escHtml(text)}</div>`;
+  chatArea.appendChild(row);
+  scrollBottom();
+}
+
+/* ── Hint button ────────────────────────────────────────────────────────── */
+let hintIndex          = 0;
+let hintCooldownActive = true;
+let gameOver           = false;
+
+function updateHintBtn() {
+  const btn       = $('hint-btn');
+  const remaining = HINTS_TOTAL - hintIndex;
+  if (gameOver || remaining <= 0) {
+    btn.disabled = true;
+    btn.classList.remove('ready');
+    btn.textContent = '💡';
+    return;
+  }
+  if (hintCooldownActive) {
+    btn.disabled = true;
+    btn.classList.remove('ready');
+    btn.textContent = `⏳`;
+    return;
+  }
+  btn.disabled = false;
+  btn.classList.add('ready');
+  btn.textContent = `💡 ${remaining}`;
+}
+
+function startHintCooldown(ms) {
+  hintCooldownActive = true;
+  updateHintBtn();
+  setTimeout(() => { hintCooldownActive = false; updateHintBtn(); }, ms);
+}
+
+$('hint-btn').addEventListener('click', () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN || hintCooldownActive || gameOver) return;
+  haptic?.impactOccurred('soft');
+  ws.send(JSON.stringify({ type: 'hint', hint_index: hintIndex }));
+  hintIndex++;
+  startHintCooldown(9000); // per-hint cooldown between requests
+});
+
+/* ── WebSocket ──────────────────────────────────────────────────────────── */
+let ws               = null;
+let reconnectAttempts= 0;
+let maxAttempts      = 10;
+let attemptsUsed     = 0;
 
 function wsUrl() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const base  = `${proto}://${location.host}`;
   const enc   = encodeURIComponent(INIT_DATA);
-  return `${base}/webapp/game/ws?game_id=${GAME_ID}&initData=${enc}`;
+  return `${proto}://${location.host}/webapp/game/ws?game_id=${GAME_ID}&initData=${enc}`;
 }
 
 function connect() {
@@ -489,64 +560,15 @@ function connect() {
 
   ws.onopen = () => {
     reconnectAttempts = 0;
-    const conn = $('connecting');
-    conn.classList.add('hidden');
-    setTimeout(() => conn.remove?.(), 400);
+    $('connecting').classList.add('hidden');
     setInputEnabled(true);
+    startHintCooldown(12000); // 12s before first hint available
   };
 
   ws.onmessage = ev => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
-
-    switch (msg.event) {
-      case 'game_state':
-        maxAttempts  = msg.max_attempts || 10;
-        attemptsUsed = msg.attempts || 0;
-        setAttempts(attemptsUsed, maxAttempts);
-        if (msg.category) {
-          $('category-pill').textContent = `📂 ${msg.category}`;
-        }
-        if (msg.is_creator) {
-          gameOver = true;
-          setInputEnabled(false);
-          $('state-label').textContent = 'Ты ведущий!';
-          showFeedback({ status: 'warm', hint: 'Жди, пока твой друг отгадает слово.', score: null });
-          setTimeout(() => showOverlay({
-            win: true, word: msg.target_word, attempts: 0, maxAttempts, customTitle: 'Твое слово:'
-          }), 600);
-        }
-        break;
-
-      case 'result':
-        attemptsUsed = msg.attempts;
-        maxAttempts  = msg.max_attempts;
-        setAttempts(attemptsUsed, maxAttempts);
-        showFeedback(msg);
-        if (msg.status === 'exact_match') {
-          gameOver = true;
-          setInputEnabled(false);
-          setTimeout(() => showOverlay({
-            win: true, word: msg.word, attempts: attemptsUsed, maxAttempts,
-          }), 600);
-        }
-        break;
-
-      case 'game_over':
-        gameOver = true;
-        attemptsUsed = msg.attempts;
-        maxAttempts  = msg.max_attempts;
-        setAttempts(attemptsUsed, maxAttempts);
-        setInputEnabled(false);
-        setTimeout(() => showOverlay({
-          win: false, word: msg.word, attempts: attemptsUsed, maxAttempts,
-        }), 200);
-        break;
-
-      case 'error':
-        showError(msg.message || 'Произошла ошибка');
-        break;
-    }
+    handleMessage(msg);
   };
 
   ws.onclose = ev => {
@@ -554,17 +576,119 @@ function connect() {
     setInputEnabled(false);
     if (ev.code === 4003) { showError('❌ Ошибка авторизации', false); return; }
     if (ev.code === 4008) { showError('⌛ Игра истекла', false); return; }
-    if (ev.code === 4009) { showOverlay({ win: false, word: '', attempts: maxAttempts, maxAttempts }); return; }
-    // Exponential backoff reconnect
+    if (ev.code === 4009) { showOverlay({ win:false, word:'', attempts:maxAttempts, maxAttempts }); return; }
     const delay = Math.min(500 * Math.pow(1.8, reconnectAttempts++), 12000);
     setTimeout(connect, delay);
-    showError(`Переподключение через ${(delay / 1000).toFixed(0)}s…`);
+    showError(`Переподключение через ${(delay/1000).toFixed(0)}s…`);
   };
 
-  ws.onerror = () => {}; // onclose handles retry
+  ws.onerror = () => {};
 }
 
-/* ── Input handling ─────────────────────────────────────────────────── */
+/* ── Server message dispatcher ──────────────────────────────────────────── */
+function handleMessage(msg) {
+  switch (msg.event) {
+
+    case 'game_state': {
+      maxAttempts  = msg.max_attempts || 10;
+      attemptsUsed = msg.attempts     || 0;
+      setAttempts(attemptsUsed, maxAttempts);
+      if (msg.category) $('category-pill').textContent = `📂 ${msg.category}`;
+      if (msg.is_creator) {
+        gameOver = true;
+        setInputEnabled(false);
+        updateHintBtn();
+        setTimeout(() => showOverlay({
+          win: true, word: msg.target_word,
+          attempts: 0, maxAttempts,
+          customTitle: 'Твоё слово:',
+        }), 400);
+      }
+      break;
+    }
+
+    case 'history_sync': {
+      (msg.items || []).forEach(item => {
+        appendCompletedBubble(item.word, {
+          status: item.status,
+          hint:   item.hint,
+          score:  item.score,
+        });
+        attemptsUsed++;
+      });
+      setAttempts(attemptsUsed, maxAttempts);
+      break;
+    }
+
+    case 'result': {
+      const pid = msg.pending_id;
+      attemptsUsed = msg.attempts;
+      setAttempts(attemptsUsed, maxAttempts);
+      if (pid) resolvePendingBubble(pid, {
+        status: msg.status, hint: msg.hint,
+        score: msg.score, cached: msg.cached,
+      });
+      // Haptic feedback by temperature
+      if (msg.status === 'exact_match') {
+        haptic?.notificationOccurred('success');
+        gameOver = true;
+        setInputEnabled(false);
+        updateHintBtn();
+        setTimeout(() => showOverlay({
+          win: true, word: msg.word, attempts: attemptsUsed, maxAttempts,
+        }), 600);
+      } else if (msg.status === 'hot') {
+        haptic?.notificationOccurred('success');
+      } else if (msg.status === 'warm') {
+        haptic?.impactOccurred('medium');
+      } else {
+        haptic?.impactOccurred('light');
+      }
+      break;
+    }
+
+    case 'judge_unavailable': {
+      const pid = msg.pending_id;
+      if (pid) removePendingBubble(pid);
+      haptic?.notificationOccurred('warning');
+      showError(msg.message || '🤔 Крокодил задумался. Попытка не засчитана — повтори!');
+      break;
+    }
+
+    case 'game_over': {
+      gameOver = true;
+      attemptsUsed = msg.attempts;
+      setAttempts(attemptsUsed, maxAttempts);
+      setInputEnabled(false);
+      updateHintBtn();
+      haptic?.notificationOccurred('error');
+      setTimeout(() => showOverlay({
+        win: false, word: msg.word, attempts: attemptsUsed, maxAttempts,
+      }), 200);
+      break;
+    }
+
+    case 'hint': {
+      if (msg.available === false) {
+        // Hints not yet ready or exhausted
+        showError(msg.text || '⏳ Подсказки ещё готовятся, подожди немного…');
+        if (hintIndex > 0) hintIndex--; // rollback so user can retry
+      } else {
+        haptic?.impactOccurred('soft');
+        appendHintBubble(msg.text || '');
+      }
+      updateHintBtn();
+      break;
+    }
+
+    case 'error': {
+      showError(msg.message || 'Произошла ошибка');
+      break;
+    }
+  }
+}
+
+/* ── Input handling ─────────────────────────────────────────────────────── */
 function setInputEnabled(on) {
   $('guess-input').disabled = !on;
   $('send-btn').disabled    = !on;
@@ -574,9 +698,13 @@ function sendGuess() {
   const input = $('guess-input');
   const word  = input.value.trim();
   if (!word || !ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'guess', word }));
+
+  const pid = uid();
+  ws.send(JSON.stringify({ type: 'guess', word, pending_id: pid }));
   input.value = '';
   input.focus();
+  appendPendingBubble(word, pid);
+  haptic?.impactOccurred('medium');
 }
 
 $('send-btn').addEventListener('click', sendGuess);
@@ -584,7 +712,8 @@ $('guess-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); sendGuess(); }
 });
 
-/* ── Boot ───────────────────────────────────────────────────────────── */
+/* ── Boot ───────────────────────────────────────────────────────────────── */
+updateHintBtn();
 setInputEnabled(false);
 if (GAME_ID) connect();
 else showError('❌ Игра не найдена', false);

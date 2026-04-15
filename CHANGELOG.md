@@ -3,6 +3,68 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.7] - 2026-04-15 - Crocodile Mini App: UX Hardening & Messenger-Style UI
+
+### 🎮 UX — Messenger-Style Chat History (`crocodile.html` full rewrite)
+
+- **Telegram-style chat bubbles** replace the old single-card feedback: every guess is rendered as a right-aligned bubble with status colour (❄️ cold / 🌡️ warm / 🔥 hot / ✅ exact), similarity %, and judge hint inline.
+- **Optimistic UI** with `pending_id`: the bubble appears immediately (⏳, pulsing) while the server evaluates the guess. On response, the bubble is resolved in-place without a DOM re-render. On `judge_unavailable`, the pending bubble is removed and an error bar appears.
+- **History restore on reconnect** (`history_sync` event): server sends full ordered guess history to reconnecting clients so they don't lose context.
+- **Typing indicator** (`Крокодил оценивает…`): driven by the DOM state of `.bubble.pending` — shows whenever there's an unresolved in-flight guess, hides immediately on resolution.
+- **Haptic feedback** via `Telegram.WebApp.HapticFeedback` on every interaction: send (medium), cold (light), warm (medium), hot/exact (success notification), judge_unavailable (warning), game_over (error).
+- **100dvh layout** with `env(safe-area-inset-bottom)` for safe-area-aware input zone; keyboard appearance handled via `dvh`. Smooth `scroll-behavior` on new bubbles.
+
+### 💡 UX — Progressive Hints System
+
+- **Background LLM generation**: at game creation, `create_game()` fires `asyncio.create_task(_prefetch_hints(game_id, word, category))` — 3 progressively revealing hints are generated via Gemini before the guesser connects.
+- **Hint cache** (`hints_cache.json`): LRU OrderedDict (5 000 entries), same write-through pattern as judgement cache. Repeat games with the same word pay zero LLM tokens.
+- **Hint reveal protocol**: `{type:'hint', hint_index:N}` → server responds `{event:'hint', text, available:true/false}`. `available:false` if prefetch is still running or exhausted.
+- **💡 button UX**: 12s initial cooldown from game start (player should try first), 9s per-hint cooldown between requests. Button shows remaining count (`💡 3` → `💡 2` → disabled). Rollback on `available:false`.
+- **In-memory per-game stores** (`_mem_hints`, `_mem_history`): module-level dicts in `crocodile.py`, not serialised to Redis. Ephemeral by design — regenerated on process restart; capacity bounded by active game lifetime.
+
+### 🧮 Algorithm — Damerau-Levenshtein Typo Tolerance
+
+- **Replaced** `difflib.SequenceMatcher` in `_local_check` with a pure-Python restricted Damerau-Levenshtein distance (counts insertions, deletions, substitutions, **and adjacent transpositions** — catching `монгуст→мангуст` that SequenceMatcher misses).
+- **Length-dependent tolerance**: ≤4 chars → 0 edits (Кот ≠ Кит), 5–7 chars → 1 edit (мангуст→монгуст ✓), ≥8 chars → 2 edits (крокодил→крокадил ✓).
+
+### 🧠 Algorithm — Semantic-Only Judge (no lexical fallback)
+
+- **Removed `_fallback_judgement`** entirely from `app/games/judge.py`. Character-level string similarity (Levenshtein / SequenceMatcher) cannot measure semantic distance and produced factually wrong warm/cold scores (e.g., `парашют ≈ порошок`).
+- **`judge_unavailable` sentinel**: when the LLM race times out or all keys fail, `judge_guess()` now returns `("judge_unavailable", …)` instead of a misleading score. `process_guess()` does **not** count the attempt, returns `{event:"judge_unavailable"}` to the client.
+- **LLM race timeout raised 1.5s → 3.0s** to cover SSL-handshake throttling tails.
+- **System prompt hardened**: explicit instruction to evaluate *only semantic meaning*, not character similarity. Includes counter-example (`парашют ≠ порошок` despite letter overlap).
+
+### 🔌 Protocol — WebSocket Extensions
+
+- `history_sync`: sent after `game_state` if any guesses were made in the current session.
+- `hint` message type handled in the WS loop (before `guess` type check); index-based delivery from `_mem_hints[game_id]`.
+- `pending_id` echoed back in all `result` / `judge_unavailable` events for optimistic bubble resolution.
+
+### ✅ Tests — `tests/test_games.py` Extended
+
+- **Removed** `TestFallbackJudgement` (function deleted).
+- **Added** `TestDamerauLevenshtein` (8 tests): all four edit operations, transposition, multi-edit, empty strings.
+- **Added** `TestAllowedEdits` (3 tests): boundary values for each length tier.
+- **Extended** `TestLocalCheck` (11 tests): монгуст regression, 4-char zero-tolerance, transposition catch, long-word 2-edit tolerance.
+- **Added** `mock_llm` `autouse` fixture to `TestCrocodileGameInMemory`: patches `_race_generate` → cold stub, `cache_judgement` → no-op, `_prefetch_hints` → no-op. All async game tests run fully offline.
+- **Added** `test_history_recorded_on_guess`, `test_judge_unavailable_does_not_count_attempt`, `test_mongust_typo_regression`, `test_krokadil_typo_exact_match`, `test_wrong_guess_counts_attempt`.
+
+### 🐛 Bugfix — `audio_processor.py` backward-compat re-export
+
+- `app/utils/audio_processor.py` now re-exports `transcribe_voice` from `multimodal_processor`, fixing the `TestBackwardCompatImports` test that previously failed on clean HEAD.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/games/judge.py` | Full rewrite: Damerau-Levenshtein, `generate_hints()`, semantic-only prompt, 3s timeout, `judge_unavailable` sentinel, removed `_fallback_judgement` |
+| `app/games/judgement_cache.py` | Added `_hints_store`, `get_cached_hints()`, `cache_hints()`, `_HINTS_CACHE_PATH` |
+| `app/games/crocodile.py` | Added `asyncio`, `_mem_hints`, `_mem_history`, `get_game_hints()`, `get_game_history()`, `_prefetch_hints()`, `create_game()` background task, `process_guess()` judge_unavailable handling + history recording |
+| `app/web_miniapp.py` | WS: `history_sync` after game_state, `hint` message type handler, `pending_id` echo |
+| `app/templates/crocodile.html` | Full rewrite: messenger chat UI, optimistic bubbles, haptic, 💡 hint button, typing indicator |
+| `app/utils/audio_processor.py` | Added `transcribe_voice` backward-compat re-export |
+| `tests/test_games.py` | Full rewrite: new algorithm tests, `mock_llm` fixture, 12 new test cases |
+
 ## [2.12.6] - 2026-04-15 - Crocodile Game: Security Hardening & Test Coverage
 
 ### 🔐 Security — WebSocket Authentication Enforcement (C3)
