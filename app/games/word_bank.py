@@ -1,17 +1,23 @@
 # /app/games/word_bank.py
 """Bilingual word bank for the Crocodile game (RU + EN).
 
+Unknown categories are handled by calling Gemini to generate words on the fly.
+If Gemini fails or the category is too vague, the caller receives None and should
+notify the user.
+
 Usage:
     from app.games.word_bank import pick_random_word, resolve_category, list_categories
 
-    word = await pick_random_word("животные", lang="ru", used_key="croc:used:123:животные")
-    # → "крокодил"
+    word, lang, cat, is_gen = await pick_random_word("пирожки")
+    # → ("ватрушка", "ru", "пирожки", True)  — AI-generated word list
 
 Words are purposely lowercase and normalised (stripped).
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import random
 import re
@@ -206,6 +212,98 @@ def validate_custom_word(word: str) -> str | None:
     return w
 
 
+# ── AI-generated word bank ───────────────────────────────────────────────────
+
+# In-process cache: (lang, canonical_category) → word list
+# Avoids re-generating the same custom category within a process lifetime.
+_GENERATED_CACHE: dict[str, list[str]] = {}
+
+# Gemini models tried in order for word generation
+_GEN_PRIMARY_MODEL = "gemini-2.0-flash-lite"
+_GEN_FALLBACK_MODEL = "gemini-2.5-flash"
+_GEN_TIMEOUT_S = 8.0
+
+_GEN_PROMPT = (
+    "Ты помощник игры 'Крокодил'. Придумай ровно 10 существительных на тему \"{category}\"."
+    " Слова должны быть:"
+    " конкретные, легко изображаемые жестами; от 2 до 3 слов в словосочетании; на \"{lang_hint}\"."
+    " Ответь ТОЛЬКО JSON-массивом строк, без пояснений. Пример: [\"слово1\",\"слово2\"]"
+)
+
+
+async def generate_words_for_category(
+    category: str,
+    *,
+    lang: str = "ru",
+) -> list[str] | None:
+    """Call Gemini to generate 10 words for an unknown category.
+
+    Returns None if the category is invalid/unintelligible or Gemini times out.
+    Results are cached in-process by (lang, lower(category)) so repeated calls
+    within the same container don't re-invoke the LLM.
+    """
+    cache_key = f"{lang}:{category.lower().strip()}"
+    if cache_key in _GENERATED_CACHE:
+        return _GENERATED_CACHE[cache_key]
+
+    lang_hint = "русском" if lang == "ru" else "English"
+    prompt = _GEN_PROMPT.format(category=category.strip(), lang_hint=lang_hint)
+
+    for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
+        try:
+            from google import genai  # type: ignore[import]
+            from app.config import settings
+
+            keys = list(settings.GEMINI_API_KEYS)
+            if not keys:
+                break
+            api_key = keys[0]
+
+            client = genai.Client(api_key=api_key)
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    lambda: client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config={
+                            "temperature": 0.9,
+                            "max_output_tokens": 256,
+                        },
+                    )
+                ),
+                timeout=_GEN_TIMEOUT_S,
+            )
+            raw = (response.text or "").strip()
+            # Strip markdown code fences if model wraps output
+            raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.IGNORECASE)
+            raw = re.sub(r"\n?```$", "", raw).strip()
+
+            words: list[str] = json.loads(raw)
+            if not isinstance(words, list) or len(words) < 3:
+                logger.warning("Gemini returned bad word list for %r: %r", category, words)
+                return None
+
+            # Sanitise: lowercase, strip, filter blanks & invalid chars
+            clean = [
+                w.strip().lower()
+                for w in words
+                if isinstance(w, str) and 2 <= len(w.strip()) <= 60
+            ]
+            if len(clean) < 3:
+                return None
+
+            _GENERATED_CACHE[cache_key] = clean
+            logger.info("Generated %d words for custom category %r (%s)", len(clean), category, model)
+            return clean
+
+        except (TimeoutError, json.JSONDecodeError) as exc:
+            logger.warning("Word gen failed for %r (model=%s): %s", category, model, exc)
+        except Exception as exc:
+            logger.exception("Word gen unexpected error for %r (model=%s): %s", category, model, exc)
+
+    return None
+
+
 # ── Random word picker ────────────────────────────────────────────────────────
 
 
@@ -213,28 +311,37 @@ async def pick_random_word(
     category_raw: str,
     *,
     redis_used_key: str | None = None,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, bool]:
     """Pick a random word from the bank, avoiding recently used words.
 
+    For unknown categories, calls Gemini to generate a word list on the fly.
+
     Args:
-        category_raw: User-supplied category string (e.g. "животные", "food").
+        category_raw: User-supplied category string (e.g. "животные", "food", "пирожки").
         redis_used_key: Optional Redis key for the used-words set (TTL 1h).
                         If None or redis unavailable, no de-duplication.
 
     Returns:
-        (word, lang, canonical_category) tuple.
+        (word, lang, canonical_category, is_generated)
+        is_generated=True when the word list was AI-generated for an unknown category.
+        Raises ValueError if the category is unintelligible (caller should inform user).
     """
     resolved = resolve_category(category_raw)
+    is_generated = False
+
     if resolved:
         lang, category = resolved
+        words = list(WORD_BANK[lang][category])
     else:
-        # Detect language and pick random category
+        # Unknown category → ask Gemini
         lang = _detect_lang(category_raw)
-        categories = list_categories(lang)
-        category = random.choice(categories)
-        logger.debug("Unknown category %r → random %s/%s", category_raw, lang, category)
-
-    words = list(WORD_BANK[lang][category])  # copy
+        category = category_raw.strip()
+        generated = await generate_words_for_category(category, lang=lang)
+        if not generated:
+            raise ValueError(f"unintelligible_category:{category_raw!r}")
+        words = generated
+        is_generated = True
+        logger.info("Using AI-generated words for category %r (%s)", category, lang)
 
     # De-duplicate via Redis (best-effort; Redis miss is non-fatal)
     used: set[str] = set()
@@ -274,4 +381,4 @@ async def pick_random_word(
         except Exception as exc:
             logger.debug("Redis sadd failed: %s", exc)
 
-    return chosen, lang, category
+    return chosen, lang, category, is_generated

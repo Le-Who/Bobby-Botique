@@ -801,6 +801,7 @@ async def _init_croc_game_async(
             webapp_base = webhook_url.split("/webhook")[0].rstrip("/")
 
         # ── Resolve word + mode ───────────────────────────────────────────────
+        is_generated = False
         if arg.startswith("="):
             raw_word = arg[1:].strip()
             word = validate_custom_word(raw_word)
@@ -816,7 +817,21 @@ async def _init_croc_game_async(
             lang = "ru" if any("\u0400" <= c <= "\u04ff" for c in word) else "en"
         else:
             category_raw = arg or "разное"
-            word, lang, category = await pick_random_word(category_raw)
+            try:
+                word, lang, category, is_generated = await pick_random_word(category_raw)
+            except ValueError:
+                # Gemini couldn't produce words for this category
+                await bot.edit_message_text(
+                    inline_message_id=inline_message_id,
+                    text=(
+                        "🐊 <b>Крокодил</b>\n"
+                        f"❌ Не могу понять тему <i>{category_raw}</i>. "
+                        "попробуй снова или укажи другую тему."
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([]),
+                )
+                return
 
         # ── Create game session ───────────────────────────────────────────────
         game = await create_game(
@@ -838,16 +853,15 @@ async def _init_croc_game_async(
                 f"Поделись этим сообщением с партнёром — он будет отгадывать!"
             )
         else:
-            cat_display = category if lang == "en" else category
+            gen_note = "✨ <i>(тема сгенерирована ИИ)</i>\n" if is_generated else ""
             status_text = (
-                f"🐊 <b>Крокодил</b> · <i>{cat_display}</i>\n"
+                f"🐊 <b>Крокодил</b> · <i>{category}</i>\n"
+                f"{gen_note}"
                 f"🎯 Слово загадано! Открой игру и отгадай его."
             )
 
-        from telegram import WebAppInfo
-        
         keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🎮 Играть", web_app=WebAppInfo(url=game_url))]]
+            [[InlineKeyboardButton("🎮 Играть", url=game_url)]]
         )
         await bot.edit_message_text(
             inline_message_id=inline_message_id,
