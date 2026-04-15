@@ -147,9 +147,12 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     """Fire up to 3 Gemini keys simultaneously; return the first valid result.
 
     Returns None if all attempts fail or timeout.
+
+    NOTE: thinking_config is intentionally NOT set here.
+    Structured JSON output (response_schema) and thinking_config are mutually
+    exclusive in the Gemini API — combining them produces empty responses.
     """
     from app.agent_use_cases import AgentRequestUseCase
-    from app.providers.base import _build_thinking_config
     from app.providers.gemini import get_cached_genai_client
 
     use_case = AgentRequestUseCase()
@@ -173,18 +176,17 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
         return None
 
     prompt = _SYSTEM_PROMPT.format(W=target, G=guess)
-    tc = _build_thinking_config(resolved_model, "low")
 
     from google.genai import types as _gtypes
 
+    # Do NOT add thinking_config: structured output (response_schema) and
+    # thinking are mutually exclusive — Gemini returns empty text when both set.
     config = _gtypes.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=GuessJudgement.model_json_schema(),
         temperature=0.3,
         max_output_tokens=120,
     )
-    if tc:
-        config.thinking_config = tc
 
     async def _one_call(api_key: str, model: str) -> GuessJudgement | None:
         try:
@@ -203,7 +205,7 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
             data = json.loads(text)
             return GuessJudgement.model_validate(data)
         except Exception as exc:
-            logger.debug("Judge race call failed (%s): %s", model, exc)
+            logger.warning("Judge race call failed (model=%s): %s", model, exc)
             return None
 
     # Launch all 3 concurrently; return first non-None.
@@ -239,9 +241,10 @@ async def generate_hints(word: str, category: str) -> list[str]:
 
     Returns an empty list on any failure; callers must handle gracefully.
     Called from a background asyncio.Task so latency does not block the user.
+
+    NOTE: thinking_config not used — incompatible with response_schema.
     """
     from app.agent_use_cases import AgentRequestUseCase
-    from app.providers.base import _build_thinking_config
     from app.providers.gemini import get_cached_genai_client
 
     use_case = AgentRequestUseCase()
@@ -251,18 +254,17 @@ async def generate_hints(word: str, category: str) -> list[str]:
         return []
 
     prompt = _HINTS_PROMPT.format(W=word, C=category)
-    tc = _build_thinking_config(mdl, "low")
 
     from google.genai import types as _gtypes
 
+    # Do NOT add thinking_config: structured output (response_schema) and
+    # thinking are mutually exclusive — Gemini returns empty text when both set.
     config = _gtypes.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=HintsOutput.model_json_schema(),
         temperature=0.7,
         max_output_tokens=250,
     )
-    if tc:
-        config.thinking_config = tc
 
     try:
         api_key = kd["api_key"]
