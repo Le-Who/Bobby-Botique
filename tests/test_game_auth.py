@@ -8,8 +8,6 @@ _extract_user_id, and _sweep_game_locks.
 
 from __future__ import annotations
 
-import pytest
-
 from app.web_miniapp import _extract_user_id, _sweep_game_locks, _validate_init_data
 from tests.factories import make_valid_init_data
 

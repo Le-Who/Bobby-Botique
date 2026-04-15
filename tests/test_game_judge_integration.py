@@ -10,7 +10,7 @@ This lets us test the pipeline logic in isolation without network or disk I/O.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

@@ -35,10 +35,9 @@ class TestTelegramMessageAdapter:
 
     @pytest.mark.asyncio
     async def test_edit_message(self, adapter, mock_message):
-        from telegram import LinkPreviewOptions
-        
+
         await adapter.edit_message("Hello", "HTML")
-        
+
         # Verify call arguments to ensure LinkPreviewOptions is pushed
         mock_message.edit_text.assert_called_once()
         kwargs = mock_message.edit_text.call_args.kwargs

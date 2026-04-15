@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import urllib.parse
 from unittest.mock import AsyncMock, patch
@@ -53,9 +52,9 @@ class TestWebSocketEvents:
         """WS-02: Connect and verify history sync occurs before main loop."""
         init_data = make_valid_init_data(mock_bot_token, user_id=222)
         url = f"/webapp/game/ws?initData={urllib.parse.quote(init_data)}&game_id=game1"
-        
+
         game = make_crocodile_game(game_id="game1", creator_id=111, guesser_id=222)
-        
+
         with (
             patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock,
             patch("app.games.crocodile.get_game_history") as hist_mock
@@ -63,7 +62,7 @@ class TestWebSocketEvents:
             load_mock.return_value = game
             # Make get_game_history return some predefined items
             hist_mock.return_value = [{"event": "guess", "guess": "кот", "result": "cold"}]
-            
+
             async with test_client.websocket(url) as ws:
                 # 1. First event is game_state
                 state_raw = await ws.receive()
@@ -90,7 +89,7 @@ class TestWebSocketEvents:
             patch("app.games.crocodile.get_game_hints", return_value=["Hint #1"])
         ):
             load_mock.return_value = game
-            
+
             async with test_client.websocket(url) as ws:
                 # Initial game_state
                 await ws.receive()
@@ -123,18 +122,18 @@ class TestWebSocketEvents:
             patch("app.games.crocodile.get_game_history", return_value=[])
         ):
             load_mock.return_value = game
-            
+
             async with test_client.websocket(url) as ws:
                 await ws.receive()
 
                 await ws.send(json.dumps({"type": "guess", "word": "кот", "pending_id": "pid-1"}))
                 resp_raw = await ws.receive()
                 resp = json.loads(resp_raw)
-                
+
                 assert resp["event"] == "cold"
                 assert resp["hint"] == "No."
                 assert resp["pending_id"] == "pid-1"
-                
+
                 game.process_guess.assert_awaited_once_with("кот")
 
     async def test_creator_guard(self, test_client, mock_bot_token):
@@ -149,17 +148,17 @@ class TestWebSocketEvents:
             patch("app.games.crocodile.get_game_history", return_value=[])
         ):
             load_mock.return_value = game
-            
+
             async with test_client.websocket(url) as ws:
                 state_raw = await ws.receive()
                 state = json.loads(state_raw)
                 assert state["is_creator"] is True  # Validated as creator
-                
+
                 await ws.send(json.dumps({"type": "guess", "word": "кот"}))
                 resp_raw = await ws.receive()
                 resp = json.loads(resp_raw)
-                
+
                 assert resp["event"] == "error"
                 assert "Создатель игры не может отгадывать" in resp["message"]
-                
+
                 game.process_guess.assert_not_called()
