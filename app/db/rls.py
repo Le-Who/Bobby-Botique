@@ -131,9 +131,9 @@ async def setup_row_level_security(db_query):
             alter_statements.append(f"ALTER TABLE {quoted_table} ENABLE ROW LEVEL SECURITY;")
 
         if alter_statements:
-            combined_query = "\n".join(alter_statements)
             try:
-                await db_query(combined_query)
+                for stmt in alter_statements:
+                    await db_query(stmt)
             except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
                 logging.error("Failed to batch enable RLS: %s", e)
                 # If batch fails, we log it and continue. Policies may fail to create properly.
