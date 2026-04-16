@@ -184,6 +184,16 @@ class Settings(BaseModel):
     # Optional API key. Pollinations also works without a key (rate-limited).
     POLLINATIONS_API_KEY: str = ""
 
+    # --- Vertex AI Express (optional resilience pathway for judge) ---
+    # Provides a stable alternative endpoint for gemini-3.1-flash-lite-preview
+    # when the Gemini API is under high load (503 storms).
+    # Requires a *Google Cloud* API key — NOT a Gemini AI Studio key.
+    # How to get one: GCP Console → APIs & Services → Credentials → Create API Key
+    # (or use Vertex AI Express Mode for a free-tier key).
+    VERTEX_AI_KEY: str = ""           # GCP API key bound to a service account
+    VERTEX_AI_PROJECT: str = ""       # GCP project ID where Vertex AI API is enabled
+    VERTEX_AI_LOCATION: str = "us-central1"  # Vertex AI region
+
     # --- Weather & Currency Direct APIs ---
     # WeatherAPI.com free tier: 1M req/month. https://www.weatherapi.com/
     # If empty, intent_router falls back to Open-Meteo (2 requests instead of 1).
@@ -324,6 +334,10 @@ def load_settings() -> Settings:
             or DEFAULT_POLLINATIONS_IMAGE_MODELS.copy(),
             "POLLINATIONS_DEFAULT_IMAGE_MODEL": os.getenv("DEFAULT_IMAGE_MODEL", DEFAULT_POLLINATIONS_IMAGE_MODEL),
             "POLLINATIONS_API_KEY": os.getenv("POLLINATIONS_API_KEY", ""),
+            # Vertex AI Express (optional resilience for judge)
+            "VERTEX_AI_KEY": os.getenv("VERTEX_AI_KEY", "").strip(),
+            "VERTEX_AI_PROJECT": os.getenv("VERTEX_AI_PROJECT", "").strip(),
+            "VERTEX_AI_LOCATION": os.getenv("VERTEX_AI_LOCATION", "us-central1").strip(),
             "WEATHER_API_KEY": os.getenv("WEATHER_API_KEY", "").strip(),
             "EXCHANGE_RATE_API_KEY": os.getenv("EXCHANGE_RATE_API_KEY", "").strip(),
             # Load models from env or use значения by default

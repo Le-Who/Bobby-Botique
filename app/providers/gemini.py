@@ -48,6 +48,56 @@ def get_cached_genai_client(api_key: str) -> genai.Client:
     return _gemini_clients_cache[api_key]
 
 
+# Vertex AI Express singleton — None if not configured or init failed.
+_vertex_client: "genai.Client | None" = None
+_vertex_client_initialized: bool = False
+
+
+def get_vertex_client() -> "genai.Client | None":
+    """Return a cached Vertex AI client, or None if not configured.
+
+    Vertex AI Express Mode uses the same google-genai SDK but routes requests
+    through GCP infrastructure — empirically more stable under high-demand
+    periods when the Gemini API endpoint issues 503 storms.
+
+    IMPORTANT: Requires a *Google Cloud* API key (from GCP Console), NOT a
+    Gemini AI Studio key (AIzaSy...).  Set env vars:
+        VERTEX_AI_KEY      — GCP API key bound to your service account
+        VERTEX_AI_PROJECT  — GCP project ID with Vertex AI API enabled
+        VERTEX_AI_LOCATION — region, e.g. us-central1 (default)
+    """
+    global _vertex_client, _vertex_client_initialized
+    if _vertex_client_initialized:
+        return _vertex_client
+    _vertex_client_initialized = True
+
+    key = settings.VERTEX_AI_KEY
+    project = settings.VERTEX_AI_PROJECT
+    location = settings.VERTEX_AI_LOCATION or "us-central1"
+
+    if not key or not project:
+        return None  # Not configured — degrade gracefully
+
+    try:
+        http_opts: dict[str, Any] = {"timeout": 90_000}
+        _vertex_client = genai.Client(
+            vertexai=True,
+            api_key=key,
+            project=project,
+            location=location,
+            http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
+        )
+        logging.getLogger(__name__).info(
+            "Vertex AI client initialized (project=%s location=%s)", project, location
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Vertex AI client init failed — Vertex AI pathway disabled: %s", exc
+        )
+        _vertex_client = None
+    return _vertex_client
+
+
 class GeminiProvider(BaseAIProvider):
     """Google Gemini AI provider — self-contained execution logic."""
 

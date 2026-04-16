@@ -40,6 +40,17 @@ _FALLBACK_MODEL = "gemini-2.5-flash-lite"
 # on SSL-handshake throttling. 3.0s covers >99.9% of realistic cases.
 _LLM_TIMEOUT_S = 3.0
 
+# ── Circuit breaker for _PRIMARY_MODEL ────────────────────────────────────────
+# When _PRIMARY_MODEL is experiencing a model-level 503 outage (all keys return
+# UNAVAILABLE), every judge call burns 3 keys × 3s timeout before falling back.
+# The circuit short-circuits that: after any all-fail race, we skip the primary
+# for _PRIMARY_CIRCUIT_COOLDOWN_S and go straight to the fallback model.
+# After the cooldown one probe attempt is made; the circuit closes on success.
+#
+# asyncio is single-threaded — float reassignment is safe without a Lock.
+_primary_circuit_open_until: float = 0.0   # monotonic timestamp; 0.0 = closed
+_PRIMARY_CIRCUIT_COOLDOWN_S: float = 120.0  # 2 min between probes
+
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
 
@@ -275,33 +286,101 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
                 t.cancel()
         return result
 
-    # ── Primary model race ────────────────────────────────────────────────────
-    keys: list[dict] = []
-    resolved_model: str | None = None
-    for _ in range(3):
-        kd, mdl, _ = await use_case.resolve_ai_request(
-            _PRIMARY_MODEL,
-            excluded_key_hashes={k["key_hash"] for k in keys},
+    # ── Circuit-breaker check ─────────────────────────────────────────────────
+    # When _PRIMARY_MODEL is globally 503-ing, the circuit is open and we skip
+    # straight to fallback to save ~9s of guaranteed-fail latency per guess.
+    global _primary_circuit_open_until
+    _now = time.monotonic()
+    _circuit_open = _now < _primary_circuit_open_until
+    if _circuit_open:
+        logger.debug(
+            "Judge: primary model circuit open (%.0fs remaining) — skipping to fallback",
+            _primary_circuit_open_until - _now,
         )
-        if kd and mdl:
-            keys.append(kd)
-            resolved_model = mdl
-        else:
-            break
 
-    if not keys or not resolved_model:
-        logger.warning("Judge: no API keys available for primary model")
-    else:
-        # Extract (api_key, key_hash) pairs and wipe the raw dict list so
-        # sensitive key material doesn't linger in frame locals on exceptions.
+    # ── Primary model race (Gemini API keys + optional Vertex AI) ───────────────
+    if not _circuit_open:
+        from app.providers.gemini import get_vertex_client
+
+        async def _one_vertex_call() -> GuessJudgement | None:
+            """Race _PRIMARY_MODEL on Vertex AI Express — same SDK, different endpoint.
+
+            Vertex AI infrastructure is empirically more stable under high-demand
+            503 storms than the Gemini API endpoint.  Returns None on any error so
+            the race degrades gracefully when Vertex AI is not configured or fails.
+            """
+            vertex_client = get_vertex_client()
+            if vertex_client is None:
+                return None
+            try:
+                resp = await asyncio.wait_for(
+                    vertex_client.aio.models.generate_content(
+                        model=_PRIMARY_MODEL,
+                        contents=prompt,
+                        config=config,
+                    ),
+                    timeout=_LLM_TIMEOUT_S,
+                )
+                resp_text = getattr(resp, "text", None) or ""
+                if not resp_text:
+                    return None
+                return GuessJudgement.model_validate(json.loads(resp_text))
+            except Exception as exc:
+                logger.debug("Judge: Vertex AI attempt failed: %s", exc)
+                return None
+
+        # Resolve up to 3 Gemini API keys
+        keys: list[dict] = []
+        resolved_model: str | None = None
+        for _ in range(3):
+            kd, mdl, _ = await use_case.resolve_ai_request(
+                _PRIMARY_MODEL,
+                excluded_key_hashes={k["key_hash"] for k in keys},
+            )
+            if kd and mdl:
+                keys.append(kd)
+                resolved_model = mdl
+            else:
+                break
+
+        resolved_model = resolved_model or _PRIMARY_MODEL
         primary_pairs = [(kd["api_key"], kd["key_hash"]) for kd in keys]
         keys.clear()
-        result = await _run_race(primary_pairs, resolved_model)
+
+        # Concurrent task list: Gemini API key pool + Vertex AI.
+        # _one_vertex_call() returns None instantly when Vertex AI is not configured.
+        all_tasks: list[asyncio.Task] = [  # type: ignore[type-arg]
+            asyncio.create_task(_one_call(ak, kh, resolved_model))
+            for ak, kh in primary_pairs
+        ]
+        all_tasks.append(asyncio.create_task(_one_vertex_call()))
+
+        result: GuessJudgement | None = None
+        pending = set(all_tasks)
+        try:
+            while pending and result is None:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for finished in done:
+                    r = finished.result()
+                    if r is not None:
+                        result = r
+                        break
+        finally:
+            for t in pending:
+                t.cancel()
+
         if result is not None:
+            if _primary_circuit_open_until > 0.0:
+                logger.info("Judge: primary race recovered — circuit closed")
+                _primary_circuit_open_until = 0.0
             return result
+
+        # All Gemini keys + Vertex AI failed — open circuit
+        _primary_circuit_open_until = time.monotonic() + _PRIMARY_CIRCUIT_COOLDOWN_S
         logger.warning(
-            "Judge: primary model %r race failed — trying fallback %r",
+            "Judge: primary model %r all-fail — circuit opened for %.0fs, routing to %r",
             resolved_model,
+            _PRIMARY_CIRCUIT_COOLDOWN_S,
             _FALLBACK_MODEL,
         )
 
