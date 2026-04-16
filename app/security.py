@@ -468,7 +468,7 @@ class RateLimiter:
         async with self._lock:
             # Periodically clean up old entries
             if current_time - self._last_cleanup > self._cleanup_interval:
-                await self._cleanup_old_entries(current_time)
+                self._cleanup_old_entries(current_time)
                 self._last_cleanup = current_time
 
             # Get user's request list
@@ -492,7 +492,7 @@ class RateLimiter:
             user_requests.append(current_time)
             return True
 
-    async def _cleanup_old_entries(self, current_time: float):
+    def _cleanup_old_entries(self, current_time: float) -> None:
         """Remove stale entries to conserve memory."""
         cutoff_time = current_time - self.window_seconds
         users_to_remove = []

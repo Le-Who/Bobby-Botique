@@ -38,7 +38,7 @@ def _build_jina_headers(api_key: str | None = None) -> dict[str, str]:
     """Build request headers for JINA API calls."""
     headers: dict[str, str] = {
         "Accept": "text/event-stream",  # JINA's streaming markdown format
-        "X-With-URLs-On-Screeen": "true",  # Include source URLs in output
+        "X-With-URLs-On-Screen": "true",  # Include source URLs in output
         "X-No-Cache": "false",  # Allow cache for grounding (often same queries)
     }
     if api_key:

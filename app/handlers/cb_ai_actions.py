@@ -345,35 +345,34 @@ async def continue_stream_callback(update: Update, context: ContextTypes.DEFAULT
     if user_lock.locked():
         return
 
-    chat_state = await get_user_chat(user_id)
-
-    # Inject the partial text as model output so the LLM has context
-    chat_state.history.append({"role": "model", "parts": [clean_partial]})
-
-    from app.metrics import role_conv_metrics
-    from app.utils.background_tasks import submit_task
-
-    submit_task(role_conv_metrics.record_stream_recovery())
-
-    # The continuation prompt — instructs the model to seamlessly pick up
-    continuation_prompt = (
-        "Пожалуйста, продолжи прерванную мысль с того места, где ты остановился, с учётом контекста уже написанного."
-    )
-    chat_state.history.append({"role": "user", "parts": [continuation_prompt]})
-
     # Create placeholder for the continuation response
     placeholder_message = await query.message.reply_text(t("processing.continuing"))
 
     from app.handlers.agent import _handle_regular_chat
 
+    # Captured here so the inner closure can reference them without closure mutation risk
+    _clean_partial = clean_partial
+    _continuation_prompt = (
+        "Пожалуйста, продолжи прерванную мысль с того места, где ты остановился, с учётом контекста уже написанного."
+    )
+
     async def _continue_wrapper() -> None:
         try:
             async with _HEAVY_CALLBACK_SEMAPHORE, user_lock:
+                # Fetch and mutate state under lock to prevent history data race
+                from app.metrics import role_conv_metrics
+                from app.utils.background_tasks import submit_task
+
+                _chat_state = await get_user_chat(user_id)
+                _chat_state.history.append({"role": "model", "parts": [_clean_partial]})
+                _chat_state.history.append({"role": "user", "parts": [_continuation_prompt]})
+                submit_task(role_conv_metrics.record_stream_recovery())
+
                 await _handle_regular_chat(
                     placeholder_message,
                     user_id,
-                    continuation_prompt,
-                    chat_state,
+                    _continuation_prompt,
+                    _chat_state,
                 )
         except Exception as e:
             logging.error("continue_stream_callback failed: %s", e, exc_info=True)
