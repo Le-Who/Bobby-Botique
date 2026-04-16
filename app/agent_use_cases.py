@@ -1,7 +1,9 @@
+import hashlib
 import logging
 from typing import Any
 
-from app.config import get_openrouter_keys, get_use_openrouter, settings
+from app.config import get_opencode_keys, get_openrouter_keys, get_use_openrouter, settings
+from app.providers.base import is_opencode_model
 from app.repos.keys import (
     get_available_gemini_key,
     get_available_openrouter_key,
@@ -19,6 +21,10 @@ class AgentRequestUseCase:
         excluded_key_hashes: set[str] | None = None,
     ) -> tuple[dict[str, Any] | None, str | None, str | None]:
         excluded = excluded_key_hashes or set()
+
+        # Opencode Go models take priority (they also contain '/')
+        if is_opencode_model(preferred_model):
+            return await self._resolve_opencode_request(preferred_model, excluded)
 
         if use_openrouter is None:
             use_openrouter = "/" in preferred_model or get_use_openrouter()
@@ -138,6 +144,30 @@ class AgentRequestUseCase:
             provider_name="OpenRouter",
         )
 
+    async def _resolve_opencode_request(
+        self, preferred_model: str, excluded_key_hashes: set[str] | None = None
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        """Resolve an Opencode Go API key from the in-memory key pool.
+
+        Keys are stored in ``settings.OPENCODE_API_KEYS`` (comma-separated).
+        Exclusion is tracked using the first 16 chars of SHA256(key) to match
+        the pattern used by Gemini and OpenRouter key hashes.
+        """
+        excluded = excluded_key_hashes or set()
+        keys = get_opencode_keys()
+        if not keys:
+            logging.warning("Opencode Go selected but OPENCODE_API_KEYS is empty")
+            return None, None, "no_keys"
+
+        for key in keys:
+            key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
+            if key_hash in excluded:
+                continue
+            return {"api_key": key, "key_hash": key_hash}, preferred_model, None
+
+        logging.error("All Opencode Go API keys are excluded (exhausted for this request).")
+        return None, None, "all_exhausted"
+
     async def get_ai_response(
         self,
         api_key: str,
@@ -181,6 +211,10 @@ class AgentRequestUseCase:
         return response.text, token_count
 
     async def increment_key_usage(self, key_hash: str, model_name: str, use_openrouter: bool | None = None) -> None:
+        # Opencode Go: daily usage tracked via DAILY_LIMITS in the DB key system.
+        # We skip the openrouter/gemini DB increment for opencode models.
+        if is_opencode_model(model_name):
+            return
         if use_openrouter is None:
             use_openrouter = "/" in model_name or get_use_openrouter()
         if use_openrouter:

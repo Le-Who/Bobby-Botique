@@ -266,13 +266,23 @@ class BaseAIProvider(ABC):
 
 
 def is_openrouter_model(model_name: str) -> bool:
-    """Check if model name indicates an OpenRouter model."""
-    return "/" in model_name
+    """Check if model name indicates an OpenRouter model (has '/' but not opencode-go/)."""
+    return "/" in model_name and not model_name.startswith("opencode-go/")
+
+
+def is_opencode_model(model_name: str) -> bool:
+    """Check if model name indicates an Opencode Go model."""
+    return model_name.startswith("opencode-go/")
 
 
 def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
     """
     Factory function to get appropriate provider for a model.
+
+    Dispatch order (important — opencode models also contain '/'):
+    1. ``opencode-go/*``  → ``OpencodeGoProvider``
+    2. ``org/model``      → ``OpenRouterProvider``
+    3. everything else    → ``GeminiProvider``
 
     Args:
         model_name: Model identifier
@@ -282,9 +292,12 @@ def get_provider_for_model(model_name: str, api_key: str) -> BaseAIProvider:
         Appropriate AIProvider instance
     """
     from app.providers.gemini import GeminiProvider
+    from app.providers.opencode import OpencodeGoProvider
     from app.providers.openrouter import OpenRouterProvider
 
-    if is_openrouter_model(model_name):
+    if is_opencode_model(model_name):
+        return OpencodeGoProvider(api_key)
+    elif is_openrouter_model(model_name):
         return OpenRouterProvider(api_key)
     else:
         return GeminiProvider(api_key)

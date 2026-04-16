@@ -32,9 +32,42 @@ async def close_http_clients() -> None:
 
 
 class OpenRouterProvider(BaseAIProvider):
-    """OpenRouter AI provider — self-contained execution logic."""
+    """OpenRouter AI provider — self-contained execution logic.
+
+    Subclasses may override ``_get_url()``, ``_get_headers()``, and
+    ``_strip_model_prefix()`` to adapt this class to other OpenAI-compatible
+    endpoints (e.g. OpencodeGoProvider).
+    """
 
     provider_name = "openrouter"
+
+    # ── Overridable template methods ─────────────────────────────────────────
+
+    def _get_url(self) -> str:
+        """Return the chat completions endpoint URL."""
+        return "https://openrouter.ai/api/v1/chat/completions"
+
+    def _get_headers(self) -> dict[str, str]:
+        """Return request headers for this provider."""
+        headers: dict[str, str] = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://t.me/gemaibotv2",
+            "X-Title": "GeminiBot v2",
+        }
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
+        return headers
+
+    def _strip_model_prefix(self, model_name: str) -> str:
+        """Strip any internal routing prefix before sending to the API.
+
+        OpenRouter uses full slugs (e.g. ``stepfun/step-3.5-flash:free``),
+        so no stripping is needed here.  Overridden by ``OpencodeGoProvider``
+        to remove the ``opencode-go/`` prefix.
+        """
+        return model_name
 
     async def _execute_request(
         self,
@@ -68,19 +101,17 @@ class OpenRouterProvider(BaseAIProvider):
                 )
 
             # Build request
-            url = "https://openrouter.ai/api/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://t.me/gemaibotv2",
-                "X-Title": "GeminiBot v2",
-            }
-            request_id = get_request_id()
-            if request_id:
-                headers["X-Request-ID"] = request_id
-
-            payload = {"model": model_name, "messages": messages}
-            logging.debug("OpenRouter: sending %d messages to %s", len(messages), model_name)
+            url = self._get_url()
+            headers = self._get_headers()
+            api_model = self._strip_model_prefix(model_name)
+            payload = {"model": api_model, "messages": messages}
+            logging.debug(
+                "%s: sending %d messages to %s (api_model=%s)",
+                self.provider_name,
+                len(messages),
+                model_name,
+                api_model,
+            )
 
             # httpx has a 30s read timeout; this is a safety net
             try:
@@ -213,18 +244,10 @@ class OpenRouterProvider(BaseAIProvider):
             yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid messages for OpenRouter")
             return
 
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://t.me/gemaibotv2",
-            "X-Title": "GeminiBot v2",
-        }
-        request_id = get_request_id()
-        if request_id:
-            headers["X-Request-ID"] = request_id
-
-        payload = {"model": model_name, "messages": messages, "stream": True}
+        url = self._get_url()
+        headers = self._get_headers()
+        api_model = self._strip_model_prefix(model_name)
+        payload = {"model": api_model, "messages": messages, "stream": True}
 
         if _openrouter_http_client is None:
             yield tag_error(ErrorCode.GENERIC, "❌ OpenRouter HTTP client not initialized")

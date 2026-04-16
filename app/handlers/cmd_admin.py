@@ -705,3 +705,53 @@ async def set_inline_tabs_command(update: Update, context: ContextTypes.DEFAULT_
         f"🗂️ Вкладки для inline-режима: <b>{state_label}</b>\nИзменение вступит в силу немедленно.",
         parse_mode="HTML",
     )
+
+
+# ── Provider routing ───────────────────────────────────────────────────────────
+
+_VALID_PROVIDERS = frozenset({"opencode", "gemini"})
+
+
+@admin_only
+async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Switch the PRIMARY_PROVIDER at runtime (no restart required).
+
+    Usage: /set_provider <opencode|gemini>
+
+    - ``opencode``: Route all requests through Opencode Go models first,
+      with automatic fallback to Gemini on key exhaustion.
+    - ``gemini``: Revert to Gemini-only mode; Opencode Go models are
+      still accessible via /model if explicitly selected.
+    """
+    args = context.args or []
+    current_raw = await get_global_setting("primary_provider", settings.PRIMARY_PROVIDER)
+
+    if not args or args[0].lower() not in _VALID_PROVIDERS:
+        await update.message.reply_text(
+            f"⚙️ <b>Текущий провайдер:</b> <code>{current_raw}</code>\n\n"
+            "Использование: <code>/set_provider &lt;opencode|gemini&gt;</code>\n\n"
+            "📝 <b>Описание:</b>\n"
+            "• <code>opencode</code> — приоритет Opencode Go (с авто-фоллбэком на Gemini)\n"
+            "• <code>gemini</code>   — только Gemini (классический режим)\n\n"
+            "Смена вступает в силу немедленно без перезапуска.",
+            parse_mode="HTML",
+        )
+        return
+
+    provider = args[0].lower()
+    await set_global_setting("primary_provider", provider)
+
+    # Invalidate the in-process cache in config.py so the next request
+    # picks up the new value without needing a restart.
+    from app.config import _invalidate_primary_provider_cache  # noqa: PLC0415
+
+    _invalidate_primary_provider_cache()
+
+    logging.info("Admin %s switched PRIMARY_PROVIDER → %s", update.effective_user.id, provider)
+
+    label = "🚀 Opencode Go (фоллбэк: Gemini)" if provider == "opencode" else "🔵 Gemini (классический режим)"
+    await update.message.reply_text(
+        f"✅ <b>Провайдер переключён:</b> {label}\n"
+        "Все новые запросы будут маршрутизироваться через выбранный провайдер.",
+        parse_mode="HTML",
+    )

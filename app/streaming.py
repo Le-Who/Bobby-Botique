@@ -22,6 +22,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from google.genai.errors import APIError
 
 from app.metrics import metrics_collector
@@ -745,6 +746,26 @@ async def stream_and_display(
             )
         writer._full_text += "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_"
         writer._buffer += "\n\n⚠️ _(ответ был прерван из-за ошибки сервера)_"
+
+    except httpx.HTTPStatusError as e:
+        _was_interrupted = True
+        logging.error(
+            "Streaming HTTP provider error: status=%d url=%s body=%s",
+            e.response.status_code,
+            e.request.url,
+            e.response.text[:200],
+        )
+        if not writer.text:
+            return (
+                f"❌ Ошибка поставщика (HTTP {e.response.status_code}). Попробуйте ещё раз.",
+                False,
+                placeholder_message,  # type: ignore[return-value]
+                0,
+                False,
+                False,
+            )
+        writer._full_text += "\n\n⚠️ _(ответ был прерван из-за ошибки HTTP)_"
+        writer._buffer += "\n\n⚠️ _(ответ был прерван из-за ошибки HTTP)_"
 
     except Exception as e:
         _was_interrupted = True

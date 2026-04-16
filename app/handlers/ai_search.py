@@ -15,6 +15,7 @@ from app.database import ChatState
 
 _bg_tasks = set()  # Store background tasks to prevent garbage collection (RUF006)
 
+from app.config import get_primary_provider
 from app.errors import _TAG_PREFIX, is_error_message
 from app.handlers.ai_core import (
     _get_ai_response_with_routing,
@@ -22,6 +23,7 @@ from app.handlers.ai_core import (
 )
 from app.metrics import metrics_collector, track_metrics
 from app.prompt_registry import get_registry
+from app.providers.base import is_opencode_model
 from app.repos.chats import get_user_chat, update_user_chat
 from app.utils.heartbeat import stop_heartbeat
 from app.utils.messaging import send_long_message
@@ -40,11 +42,16 @@ async def _handle_qna_search(
     chat_state: ChatState,
     search_query: str | None = None,
 ) -> str | None:
-    """Quick search using Google Search Grounding (single LLM call, no Tavily).
+    """Quick search with web grounding.
 
-    Fallback chain: gemini-3.1-flash-lite-preview → gemini-2.5-flash-lite.
-    If the user has a custom model set in chat_state, it is respected as the
-    primary model (but still gets the web search grounding).
+    Provider dispatch:
+    - Opencode Go (PRIMARY_PROVIDER='opencode'): JINA Search grounding injected
+      into the system prompt; uses ``settings.OPENCODE_QNA_MODEL``.
+    - Gemini (default): Google Search Grounding via ``enable_web_search=True``;
+      uses the existing gemini-2.5-flash-lite fallback chain.
+
+    If user has a custom model set and it's an Opencode Go model, the Opencode
+    path is also used respectively.
     """
     actual_search_query = search_query if search_query else user_message
 
@@ -55,38 +62,52 @@ async def _handle_qna_search(
         await update_stage(placeholder_message, STAGES_SEARCH_QUICK, 0)
     except (BadRequest, NetworkError) as edit_error:
         logging.error("Could not edit placeholder message: %s", edit_error)
-        placeholder_message = await placeholder_message.reply_text("🔎 Ищу быстрый ответ...")
+        placeholder_message = await placeholder_message.reply_text("🖎 Ищу быстрый ответ...")
 
     user_id = placeholder_message.from_user.id if placeholder_message.from_user else None
     chat_id = placeholder_message.chat.id if placeholder_message.chat else None
 
-    # ── Build fallback model chain for QnA ─────────────────────────────
-    # QnA search ALWAYS uses grounding-capable models — user's chat model
-    # preference is ignored because arbitrary models may not support
-    # Google Search Grounding (e.g. gemini-3.x has 0 grounding quota on
-    # free tier).
-    fallback_chain = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
-
-    # ── Build the prompt ───────────────────────────────────────────────
-    # With Google Search Grounding, the LLM searches the web internally.
-    # We inject today's date so the model knows what "now" means, and
-    # instruct it to ALWAYS use Google Search for factual/current queries.
     from datetime import UTC, datetime
 
     today = datetime.now(tz=UTC).strftime("%Y-%m-%d")
-    system_instruction = (
-        f"[system: current_utc_date={today}]\n"
-        "Ты поисковый ассистент. Используй инструмент Google Search для каждого запроса.\n"
-        "Отвечай кратко, по делу, на языке пользователя. Указывай источники, если возможно."
-    )
-    role_prompt = chat_state.system_prompt
-    if role_prompt:
-        system_instruction += f"\n{role_prompt}"
+    role_extra = f"\n{chat_state.system_prompt}" if chat_state.system_prompt else ""
+
+    # ── Provider-aware path selection ──────────────────────────────────────────────
+    use_opencode = get_primary_provider() == "opencode" or is_opencode_model(chat_state.model)
+
+    if use_opencode:
+        # ── Opencode path: fetch JINA context, inject into system prompt ────────
+        from app.search_jina import search_for_grounding
+
+        grounding_context = await search_for_grounding(actual_search_query)
+        system_instruction = (
+            f"[system: current_utc_date={today}]\n"
+            "Ты поисковый ассистент. Отвечай на вопрос пользователя, используя найденный контекст.\n"
+            "Отвечай кратко, по делу, на языке пользователя. Указывай источники, если возможно.\n"
+            f"{role_extra}\n"
+            f"{grounding_context}".strip()
+        )
+        fallback_chain = [settings.OPENCODE_QNA_MODEL, settings.QNA_MODEL]
+        enable_web_search = False  # JINA grounding already in system prompt
+    else:
+        # ── Gemini path: native Google Search Grounding ────────────────────────
+        system_instruction = (
+            f"[system: current_utc_date={today}]\n"
+            "Ты поисковый ассистент. Используй инструмент Google Search для каждого запроса.\n"
+            "Отвечай кратко, по делу, на языке пользователя. Указывай источники, если возможно."
+            f"{role_extra}"
+        )
+        # QnA ALWAYS uses grounding-capable models — user's chat model preference
+        # is ignored since arbitrary models may not support Google Search Grounding
+        # (gemini-3.x has 0 grounding quota on free tier).
+        fallback_chain = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
+        enable_web_search = True
+
     history = [{"role": "user", "parts": [actual_search_query]}]
 
     from app.streaming import stream_and_display
 
-    # ── Try each model in the fallback chain ───────────────────────────
+    # ── Try each model in the fallback chain ─────────────────────────────────
     final_answer: str | None = None
     success = False
     stream_last_msg = None
@@ -110,7 +131,7 @@ async def _handle_qna_search(
                 user_id=user_id,
                 bot=placeholder_message.get_bot(),
                 chat_id=chat_id or 0,
-                enable_web_search=True,
+                enable_web_search=enable_web_search,
             )
 
             # Detect error-tagged responses (e.g., 429 quota error yielded
