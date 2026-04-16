@@ -1,6 +1,6 @@
 # GemAI Bot v2
 
-An advanced, asynchronous Telegram bot designed as a comprehensive AI assistant. It orchestrates multiple AI providers (Google Gemini, OpenRouter), performs web research via native Google Search Grounding and Tavily, maintains long-term contextual memory, and processes multimodal inputs (voice, images, documents).
+An advanced, asynchronous Telegram bot designed as a comprehensive AI assistant. It orchestrates multiple AI providers (Google Gemini, Opencode Go, OpenRouter), performs web research via native Google Search Grounding, JINA AI Search, and Tavily, maintains long-term contextual memory, and processes multimodal inputs (voice, images, documents).
 
 ## What It Does
 
@@ -12,8 +12,10 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 
 ## Features
 
-- **Smart Provider Routing**: Automatic failover and API key rotation across Google Gemini (3.0-flash, 3.1-flash-lite, 2.5-flash, 2.5-flash-lite) and OpenRouter models. Features **Race Requests** (two API keys race in parallel per attempt — first chunk wins, loser is cancelled) with sentinel-based stream completion to guarantee zero truncation, **Model Cascade Fallback** (automatic downgrade to flash-lite on sustained 503 errors), and **Redis-backed Deferred Queue** (background retry + follow-up delivery when all keys are exhausted).
-- **Quick Search (`?` prefix)**: Single-call web search using **native Google Search Grounding** — the LLM queries the web internally, eliminating extra network hops. Uses a resilient model fallback chain (`gemini-3.1-flash-lite-preview` → `gemini-2.5-flash-lite`) for low latency.
+- **Smart Provider Routing (Split-Brain Architecture)**: Three-tier provider system with automatic failover. The **primary tier** is **Opencode Go** (models: `minimax-m2.7`, `minimax-m2.5`, `qwen3.6-plus`, `kimi-k2.5`, `big-pickle`, `qwen3.5-plus`, `mimo-v2-omni`) � a performant LLM inference cluster at `opencode.ai/zen/go/v1` (Bearer auth). When Opencode is exhausted or fails, the system **automatically cross-falls back to Google Gemini** (`gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`). **OpenRouter** is available as a tertiary option. Provider is runtime-switchable via `/set_provider` (admin, no restart needed). Gemini keys always required for embeddings, TTS, and image generation. Features **Race Requests** (two API keys race in parallel � first chunk wins, loser cancelled), **Model Cascade Fallback** (auto-downgrade on sustained 503 errors), and **Redis-backed Deferred Queue** (background retry after total outage).
+  - **Opencode > Gemini Cross-Provider Fallback**: If all Opencode keys are exhausted, the router automatically delegates to the Gemini fallback chain without user-visible interruption. The `_is_fallback=True` flag prevents infinite recursion.
+  - **JINA Search Grounding**: For Opencode-routed `?` quick search, uses **JINA AI Search** (`s.jina.ai`) instead of native Gemini grounding. Returns LLM-ready markdown injected as `<search_context>` XML in the system prompt. Configured via `JINA_API_KEY`.
+- **Quick Search (`?` prefix)**: Single-call web search with dual grounding paths. For **Gemini** models: uses **native Google Search Grounding** (LLM queries the web internally, no extra network hops). For **Opencode** models: uses **JINA AI Search** (`s.jina.ai`) returning LLM-ready markdown injected as `<search_context>` system prompt blocks. Uses a resilient model fallback chain for low latency.
 - **Inline Mode (Cross-Chat Bot Interaction)**: Users invoke the bot from **any Telegram chat** by typing `@gemaibotv2 <query>`. Features an **Advanced Progressive UX**:
   - **Implicit Media Swap**: Prompts starting with `"нарисуй"` immediately push a fast Pollinations.ai image to the inline grid (via static placeholder from `placehold.co`), which is then asynchronously generated and swapped in-place via a **two-step admin-chat file_id minting** pattern: the raw bytes are sent to the admin chat via `bot.send_photo` to obtain a stable `file_id`, the temp message is deleted immediately, and the minted `file_id` is passed to `edit_message_media` — the only reliable method accepted by the Telegram Bot API for inline message media edits in `local_mode=True`.
   - **Tabbed Response UI**: Inline responses are structured using XML tags (`<tldr>`, `<details>`, `<sources>`) extracted by the LLM and rendered dynamically via inline buttons. Users can seamlessly switch tabs without re-triggering generation. Admin-toggleable via `/set_inline_tabs <on|off>`.
@@ -73,7 +75,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 ## Non-Goals / Limitations
 
 - **Voice Processing Limitations**: Voice transcription uses `gemini-3.1-flash-lite` — quality depends on audio clarity and language support of the underlying model. Conversational voice flow requires user confirmation before AI processing.
-- **OpenRouter Limitations**: Multimodal detection (images) strictly forces Gemini; OpenRouter is not utilized for vision tasks.
+- **OpenRouter Limitations**: Multimodal detection (images) strictly forces Gemini; OpenRouter is not utilized for vision tasks. **Exception**: Opencode `mimo-v2-omni` natively supports `image_url` in messages and is exempt from the Gemini-only vision redirect.
 - **Local Rate Limits**: Heavy request limits are rigidly enforced per user to prevent API quota drain (`MAX_CONCURRENT_HEAVY_REQUESTS`).
 - **No ORM**: Raw SQL via asyncpg; no SQLAlchemy or Alembic.
 
@@ -84,7 +86,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 - **Media Cleanup Cron (`tg-media-cleanup`)**: Alpine-based sidecar container that runs a 60s-tick loop: (1) `chmod -R g+rX` on the shared volume to fix permission conflicts between `telegram-bot-api` (UID 101) and the bot container (GID 101), and (2) deletes cached media files older than 7 days every 24 hours to prevent disk exhaustion.
 - **Database (PostgreSQL)**: Source of truth for users, chats, messages, metrics, roles, and pgvector embeddings.
 - **Cache (Redis)**: Optional high-speed layer for caching rate limits and transient states.
-- **Third-Party APIs**: Google Gemini (native SDK), OpenRouter (HTTPX), Tavily (HTTPX).
+- **Third-Party APIs**: Google Gemini (native SDK), Opencode Go (HTTPX), OpenRouter (HTTPX), JINA AI (HTTPX), Tavily (HTTPX).
 
 > **Docker networking:** All three containers share a `tg-net` bridge network. The shared volume `tg-api-data` is mounted at `/var/lib/telegram-bot-api` in both `tg-api` and `tg-bot`. The bot's web server binds to `127.0.0.1:$PORT` on the host (not `0.0.0.0`) — Caddy/Nginx reverse proxy is expected in front.
 
@@ -97,6 +99,7 @@ graph TD;
 
     BotHandler-->ProviderRouter;
     ProviderRouter-->Gemini[Google Gemini];
+    ProviderRouter-->OpencodeGo[Opencode Go];
     ProviderRouter-->OpenRouter[OpenRouter];
 
     BotHandler-->Tavily[Tavily Search];
@@ -249,7 +252,23 @@ When configured, the bot communicates with a self-hosted Local Bot API Server in
 
 ---
 
-### 🔀 OpenRouter Models (Secondary LLM Provider)
+### ?? Opencode Go Models (Primary LLM Provider)
+
+| Variable | Required | Format / Example | Default | Notes |
+|---|---|---|---|---|
+| `OPENCODE_API_KEYS` | ? | `sk-abc,sk-xyz` | `[]` | Comma-separated Opencode Go API keys. When set and `PRIMARY_PROVIDER=opencode`, routes standard chat/search/inline through `opencode.ai/zen/go/v1` using Bearer auth. Key rotation works identically to Gemini keys. |
+| `PRIMARY_PROVIDER` | ? | `opencode` / `gemini` | `opencode` | Runtime LLM provider switch. `opencode` routes through Opencode Go (with Gemini fallback). `gemini` bypasses Opencode entirely. Changed at runtime via `/set_provider` � persisted in `global_settings`, no restart required. |
+| `OPENCODE_DEFAULT_MODEL` | ? | `opencode-go/minimax-m2.7` | `opencode-go/minimax-m2.7` | Flagship chat model. |
+| `OPENCODE_QNA_MODEL` | ? | `opencode-go/qwen3.5-plus` | `opencode-go/qwen3.5-plus` | Model for quick Q&A search synthesis (`?` prefix). |
+| `OPENCODE_RESEARCH_MODEL` | ? | `opencode-go/qwen3.6-plus` | `opencode-go/qwen3.6-plus` | Model for deep research synthesis (`??`). |
+| `OPENCODE_VISION_MODEL` | ? | `opencode-go/mimo-v2-omni` | `opencode-go/mimo-v2-omni` | Vision-capable model � supports `image_url` natively. Exempt from Gemini vision redirect. |
+| `OPENCODE_INLINE_MODEL` | ? | `opencode-go/minimax-m2.5` | `opencode-go/minimax-m2.5` | Lighter model for inline mode generation. |
+| `JINA_API_KEY` | ? | `jina_xxx...` | `""` | API key for [JINA AI Search](https://jina.ai). Used as grounding backend for `?` quick search when Opencode is active. Also used by agentic research engine for page reading via `r.jina.ai`. Without this key, Opencode search queries run without web context. |
+
+> **Canonical Opencode models**: `minimax-m2.7`, `minimax-m2.5`, `qwen3.6-plus`, `kimi-k2.5`, `big-pickle`, `qwen3.5-plus`, `mimo-v2-omni` � all prefixed `opencode-go/`.
+
+---
+### ?? OpenRouter Models (Tertiary LLM Provider)
 
 | Variable | Required | Format / Example | Default | Notes |
 |---|---|---|---|---|
@@ -537,6 +556,7 @@ The application features a heavily engineered test suite (**1680 unit and integr
   - `/updatetavilykeys`, `/checktavilykeys` — Hot-swap and verify search API keys.
   - `/checkgeminikeys` — Async parallel health check of all Gemini API keys against the Google API.
   - `/set_inline_thinking <level>` — Set inline generation `thinking_level` at runtime (stored in `global_settings` DB table, no restart required). Valid: `minimal`, `low`, `medium`, `high`.
+  - `/set_provider <name>` - Switch the primary LLM provider at runtime without restart. Valid: `opencode`, `gemini`, `openrouter`. Stored in `global_settings` and takes effect immediately via in-process cache invalidation. Primary tool for live provider failover.
   - `/models` — Runtime model management wizard. Add, remove, or reset the active Gemini and OpenRouter model lists without container restarts. Changes persist in `global_settings` and sync immediately to all users.
   - `/registergroup` — Authorize the bot for use in a specific Telegram group.
   - `/reloadconfig` — Trigger an immediate hot-reload of the environment configuration.

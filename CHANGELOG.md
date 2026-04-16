@@ -3,6 +3,36 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.13.0] - 2026-04-16 - Opencode Go Migration: Split-Brain Architecture & JINA Grounding
+
+### Major Changes
+
+- **Opencode Go Primary Provider (pp/providers/opencode.py):** New OpencodeGoProvider class (subclassing OpenRouterProvider) routes primary LLM traffic through opencode.ai/zen/go/v1 using Bearer token auth. The opencode-go/ prefix is stripped before sending model names to the API. Canonical model list: minimax-m2.7, minimax-m2.5, qwen3.6-plus, kimi-k2.5, ig-pickle, qwen3.5-plus, mimo-v2-omni.
+- **Split-Brain Fallback Architecture (pp/providers/router.py):** _OPENCODE_GEMINI_FALLBACK maps every Opencode model to its closest-capability Gemini counterpart. When all Opencode keys are exhausted, ProviderRouter automatically retries on Gemini using the mapped model without user-visible interruption. The _is_fallback=True flag prevents infinite recursion.
+- **JINA AI Search Grounding (pp/search_jina.py):** Replaced Gemini-native Google Search with a JINA-based grounding pipeline for Opencode-routed requests. Calls s.jina.ai/?q=<query> and injects the LLM-ready markdown as <search_context> XML in the system prompt. Full error resilience: returns empty string on timeout, HTTP error, or network failure without propagating exceptions.
+- **Runtime Provider Admin Control (pp/handlers/commands.py, pp/config.py):** New /set_provider <name> admin command switches primary_provider in the global_settings DB table at runtime. Changes take effect immediately via _invalidate_primary_provider_cache(). Valid values: opencode, gemini, openrouter.
+
+### Configuration
+
+- **New settings** (pp/config.py): OPENCODE_API_KEYS, OPENCODE_AVAILABLE_MODELS, PRIMARY_PROVIDER, OPENCODE_DEFAULT_MODEL, OPENCODE_QNA_MODEL, OPENCODE_RESEARCH_MODEL, OPENCODE_VISION_MODEL, OPENCODE_INLINE_MODEL.
+- **get_primary_provider()**: DB-backed with in-process string cache. Reads global_settings table on first call, then caches until _invalidate_primary_provider_cache() is called.
+- **get_settings_safe()**: Null-safe settings accessor for modules imported before configuration initialization.
+
+### Hardening & Model List Correctness
+
+- **Canonical model-only enforcement:** Pruned all stale/hallucinated model names (glm-5, glm-5.1, mimo-v2-pro, gemini-2.0-flash, gemini-1.5-flash, gemini-2.5-flash-preview-05-20) from _OPENCODE_GEMINI_FALLBACK, _GEMINI_CASCADE, and _MODEL_TIER. Only models from the approved canonical lists are present.
+- **Gemini cascade** (_pick_transient_fallback_model): Simplified to 3-flash-preview > 2.5-flash-lite, 3.1-flash-lite-preview > 2.5-flash-lite, 2.5-flash > 2.5-flash-lite.
+- **Multimodal guard fix (pp/providers/router.py):** Opencode vision models (mimo-v2-omni) are no longer incorrectly forced through the Gemini path for image requests.
+- **Streaming HTTP error hardening:** httpx.HTTPStatusError is now caught at the streaming layer for clearer provider failure diagnostics.
+- **URL construction fix (pp/search_jina.py):** Replaced broken httpx.URL.copy_with() usage with urllib.parse.quote to prevent InvalidURL exceptions.
+- **.gitignore**: Added .env to prevent accidental secret commits.
+
+### Tests
+
+- **	ests/test_opencode_routing.py** (29 tests): Covers is_opencode_model(), OpencodeGoProvider URL/headers/model stripping, provider factory routing, JINA search happy path and error cases, get_primary_provider() cache invalidation, multimodal guard passthrough, _pick_transient_fallback_model(), model selector skipping for Opencode models.
+- **Canonical model guard tests**: New 	est_fallback_map_only_contains_canonical_opencode_models and 	est_fallback_values_are_canonical_gemini_models assert that no non-canonical model names can silently enter the fallback maps.
+
+---
 ## [2.12.11] - 2026-04-16 - Judge Recovery, Crocodile TTL Activity & Lazy Image Pool
 
 ### 🐛 Reliability Fixes

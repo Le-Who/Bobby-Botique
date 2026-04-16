@@ -33,10 +33,19 @@ class SelectionResult:
 # Order matters: first match wins within _find_model.
 # Models are ranked roughly by capability tier.
 _MODEL_TIER = {
+    # Gemini tiers
     "3-flash-preview": 5,  # flagship
     "3.1-flash-lite": 4,  # excellent performance, better than 2.5
     "2.5-flash": 3,  # standard
     "2.5-flash-lite": 1,  # low latency fallback
+    # Opencode Go tiers (relative to each other) — canonical model list only
+    "minimax-m2.7": 5,    # flagship
+    "kimi-k2.5": 5,       # flagship alternative
+    "minimax-m2.5": 4,    # better performance
+    "qwen3.6-plus": 4,    # research-grade
+    "qwen3.5-plus": 3,    # standard
+    "mimo-v2-omni": 2,    # vision specialist
+    "big-pickle": 2,      # lightweight
 }
 
 
@@ -103,10 +112,11 @@ def select_model(
     if not available:
         return None
 
-    # Skip suggestions for OpenRouter models — different provider, tier logic inapplicable
-    from app.providers import is_openrouter_model
+    # Skip suggestions for OpenRouter / Opencode Go models — different provider,
+    # tier logic is Gemini-specific and inapplicable across providers.
+    from app.providers import is_opencode_model, is_openrouter_model
 
-    if current_model and is_openrouter_model(current_model):
+    if current_model and (is_openrouter_model(current_model) or is_opencode_model(current_model)):
         return None
 
     current_tier = _get_tier(current_model) if current_model else 0

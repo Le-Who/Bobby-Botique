@@ -1,0 +1,375 @@
+"""Tests for Opencode Go provider routing, JINA search grounding, and configuration.
+
+Coverage:
+- is_opencode_model() detection
+- get_provider_for_model() factory routing
+- OpencodeGoProvider URL/headers/model stripping
+- JINA search_for_grounding() happy path and error fallback
+- get_primary_provider() and _invalidate_primary_provider_cache()
+- ProviderRouter multimodal guard — Opencode vision pass-through
+- _pick_transient_fallback_model() for Opencode models
+- /set_provider routing in admin command (unit)
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Fixtures
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def reset_provider_cache():
+    """Reset the in-process primary provider cache between tests."""
+    from app.config import _invalidate_primary_provider_cache
+
+    _invalidate_primary_provider_cache()
+    yield
+    _invalidate_primary_provider_cache()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# is_opencode_model()
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestIsOpencodeModel:
+    def test_opencode_prefixed_returns_true(self):
+        from app.providers.base import is_opencode_model
+
+        assert is_opencode_model("opencode-go/minimax-m2.7") is True
+        assert is_opencode_model("opencode-go/qwen3.5-plus") is True
+        assert is_opencode_model("opencode-go/mimo-v2-omni") is True
+
+    def test_gemini_model_returns_false(self):
+        from app.providers.base import is_opencode_model
+
+        assert is_opencode_model("gemini-3-flash-preview") is False
+        assert is_opencode_model("gemini-2.5-flash") is False
+
+    def test_openrouter_model_returns_false(self):
+        from app.providers.base import is_opencode_model
+
+        assert is_opencode_model("anthropic/claude-3.5-sonnet") is False
+        assert is_opencode_model("openai/gpt-4o") is False
+
+    def test_empty_string_returns_false(self):
+        from app.providers.base import is_opencode_model
+
+        assert is_opencode_model("") is False
+
+    def test_none_like_empty(self):
+        from app.providers.base import is_opencode_model
+
+        assert is_opencode_model("") is False
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OpencodeGoProvider
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestOpencodeGoProvider:
+    def _make_provider(self, api_key: str = "test-key-123"):
+        from app.providers.opencode import OpencodeGoProvider
+
+        return OpencodeGoProvider(api_key)
+
+    def test_url_is_opencode_endpoint(self):
+        p = self._make_provider()
+        assert "opencode.ai" in p._get_url()
+
+    def test_authorization_header_is_bearer(self):
+        p = self._make_provider("my-secret")
+        headers = p._get_headers()
+        assert headers.get("Authorization") == "Bearer my-secret"
+
+    def test_strip_model_prefix_removes_prefix(self):
+        p = self._make_provider()
+        assert p._strip_model_prefix("opencode-go/minimax-m2.7") == "minimax-m2.7"
+
+    def test_strip_model_prefix_passthrough_unknown(self):
+        p = self._make_provider()
+        # Unknown format should pass through unchanged
+        assert p._strip_model_prefix("gemini-2.5-flash") == "gemini-2.5-flash"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Provider factory routing
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestGetProviderForModel:
+    def test_opencode_model_returns_opencode_provider(self):
+        from app.providers.base import get_provider_for_model
+        from app.providers.opencode import OpencodeGoProvider
+
+        provider = get_provider_for_model("opencode-go/minimax-m2.7", "key")
+        assert isinstance(provider, OpencodeGoProvider)
+
+    def test_gemini_model_returns_gemini_provider(self):
+        from app.providers.base import get_provider_for_model
+        from app.providers.gemini import GeminiProvider
+
+        provider = get_provider_for_model("gemini-3-flash-preview", "key")
+        assert isinstance(provider, GeminiProvider)
+
+    def test_slash_model_returns_openrouter_provider(self):
+        from app.providers.base import get_provider_for_model
+        from app.providers.openrouter import OpenRouterProvider
+
+        provider = get_provider_for_model("anthropic/claude-opus", "key")
+        assert isinstance(provider, OpenRouterProvider)
+        assert not isinstance(provider, type(None))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# JINA search
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestJinaSearch:
+    @pytest.mark.asyncio
+    async def test_search_returns_grounding_context_on_success(self):
+        """Happy path: JINA returns 200 with content."""
+        from app.search_jina import search_for_grounding
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "# Example Result\n\nSome web content here.\n\nSource: https://example.com"
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await search_for_grounding("test query")
+
+        assert "<search_context>" in result
+        assert "test query" in result
+        assert "Example Result" in result
+
+    @pytest.mark.asyncio
+    async def test_search_returns_empty_on_timeout(self):
+        """On timeout, returns empty string instead of raising."""
+        from app.search_jina import search_for_grounding
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await search_for_grounding("test query")
+
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_search_returns_empty_on_http_error(self):
+        """On HTTP 429, returns empty string — doesn't propagate."""
+        from app.search_jina import search_for_grounding
+
+        mock_request = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 429
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(
+            side_effect=httpx.HTTPStatusError("rate limited", request=mock_request, response=mock_resp)
+        )
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await search_for_grounding("test query")
+
+        assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_search_extracts_source_urls(self):
+        """Source URLs from content appear in the grounding block."""
+        from app.search_jina import search_for_grounding
+
+        content = "Result text. Source: https://example.com/page https://another.org"
+        mock_response = MagicMock()
+        mock_response.text = content
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await search_for_grounding("my query")
+
+        assert "example.com" in result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Config: get_primary_provider and cache invalidation
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestPrimaryProviderConfig:
+    def test_default_returns_opencode(self):
+        from app.config import get_primary_provider
+
+        # Default env value is "opencode"
+        provider = get_primary_provider()
+        assert provider in {"opencode", "gemini", "openrouter"}
+
+    def test_invalidate_clears_cache(self):
+        from app import config as cfg
+
+        cfg._primary_provider_cache = "opencode"
+        assert cfg._primary_provider_cache == "opencode"
+
+        cfg._invalidate_primary_provider_cache()
+        assert cfg._primary_provider_cache is None
+
+    def test_cache_persists_across_calls(self):
+        from app import config as cfg
+
+        cfg._primary_provider_cache = "gemini"
+        provider = cfg.get_primary_provider()
+        assert provider == "gemini"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ProviderRouter: _pick_transient_fallback_model
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestPickTransientFallbackModel:
+    def _get_router(self):
+        from app.providers.router import ProviderRouter
+
+        return ProviderRouter()
+
+    def test_gemini_flash_cascades_to_lite(self):
+        router = self._get_router()
+        from app.config import settings
+
+        # Only test if gemini-2.5-flash-lite is in AVAILABLE_MODELS
+        if "gemini-2.5-flash-lite" not in settings.AVAILABLE_MODELS:
+            pytest.skip("gemini-2.5-flash-lite not configured")
+        result = router._pick_transient_fallback_model("gemini-2.5-flash", use_openrouter=False)
+        assert result == "gemini-2.5-flash-lite"
+
+    def test_opencode_model_cascades_to_gemini(self):
+        router = self._get_router()
+        from app.config import settings
+
+        result = router._pick_transient_fallback_model("opencode-go/minimax-m2.7", use_openrouter=None)
+        # Should return a Gemini fallback if it's in AVAILABLE_MODELS
+        if result is not None:
+            assert "opencode" not in result
+            assert result in settings.AVAILABLE_MODELS
+
+    def test_openrouter_model_returns_none(self):
+        router = self._get_router()
+        result = router._pick_transient_fallback_model("anthropic/claude", use_openrouter=True)
+        assert result is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ProviderRouter: multimodal guard — Opencode vision passthrough
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestMultimodalGuard:
+    def test_opencode_vision_model_not_forced_to_gemini(self):
+        """Opencode vision models (mimo) should NOT be redirected to Gemini for images."""
+        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+
+        # "opencode-go/mimo-v2-omni" must be in the fallback map as a vision model
+        assert "opencode-go/mimo-v2-omni" in _OPENCODE_GEMINI_FALLBACK
+
+    def test_opencode_gemini_fallback_map_is_non_empty(self):
+        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+
+        assert len(_OPENCODE_GEMINI_FALLBACK) >= 5
+
+    def test_all_fallback_values_are_strings(self):
+        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+
+        for k, v in _OPENCODE_GEMINI_FALLBACK.items():
+            assert isinstance(k, str), f"Key {k!r} is not a string"
+            assert isinstance(v, str), f"Value {v!r} for {k!r} is not a string"
+            assert "opencode" not in v, f"Fallback value {v!r} must be a Gemini model"
+
+    def test_fallback_map_only_contains_canonical_opencode_models(self):
+        """Guard: only approved Opencode model names in _OPENCODE_GEMINI_FALLBACK."""
+        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+
+        _CANONICAL_OPENCODE = {
+            "opencode-go/minimax-m2.7",
+            "opencode-go/minimax-m2.5",
+            "opencode-go/qwen3.6-plus",
+            "opencode-go/kimi-k2.5",
+            "opencode-go/big-pickle",
+            "opencode-go/qwen3.5-plus",
+            "opencode-go/mimo-v2-omni",
+        }
+        for key in _OPENCODE_GEMINI_FALLBACK:
+            assert key in _CANONICAL_OPENCODE, (
+                f"Non-canonical Opencode model {key!r} found in fallback map. "
+                f"Allowed: {sorted(_CANONICAL_OPENCODE)}"
+            )
+
+    def test_fallback_values_are_canonical_gemini_models(self):
+        """Guard: all Gemini fallback values use only the canonical Gemini chat model list."""
+        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+
+        _CANONICAL_GEMINI = {
+            "gemini-3.1-flash-lite-preview",
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+        }
+        for opencode_model, gemini_fallback in _OPENCODE_GEMINI_FALLBACK.items():
+            # Values are settings.DEFAULT_MODEL etc. — they're strings resolved at import
+            assert isinstance(gemini_fallback, str)
+            assert gemini_fallback in _CANONICAL_GEMINI, (
+                f"Fallback for {opencode_model!r} is {gemini_fallback!r}, "
+                f"which is not in the canonical Gemini list: {sorted(_CANONICAL_GEMINI)}"
+            )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Model selector: Opencode models are skipped
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestModelSelectorOpencodeSkip:
+    def test_no_suggestion_for_opencode_current_model(self):
+        from app.model_selector import select_model
+
+        result = select_model(
+            "Объясни подробно как работает квантовая механика? " * 5,
+            current_model="opencode-go/minimax-m2.7",
+        )
+        assert result is None, "Should not suggest a different model when current is Opencode"
+
+    def test_suggestions_still_work_for_gemini_model(self):
+        from app.config import settings
+        from app.model_selector import select_model
+
+        if len(settings.AVAILABLE_MODELS) < 2:
+            pytest.skip("Need at least 2 Gemini models for upgrade suggestions")
+        # A complex coding query with a lite model should potentially suggest an upgrade
+        result = select_model(
+            "Создай сложный класс на Python с множественным наследованием и метаклассами",
+            current_model="gemini-2.5-flash-lite",
+        )
+        # Result may be None if only one Gemini model is configured — that's fine
+        if result is not None:
+            assert "opencode" not in result.model

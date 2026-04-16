@@ -17,7 +17,21 @@ from app.errors import (
     is_key_related_error,
     tag_error,
 )
+from app.providers.base import is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
+
+# ── Opencode Go → Gemini cross-provider fallback map ──────────────────────────
+# When ALL Opencode Go keys are exhausted or fail, silently retry on Gemini.
+# Maps Opencode model → closest-capability Gemini model.
+_OPENCODE_GEMINI_FALLBACK: dict[str, str] = {
+    "opencode-go/minimax-m2.7": settings.DEFAULT_MODEL,
+    "opencode-go/minimax-m2.5": settings.DEFAULT_MODEL,
+    "opencode-go/qwen3.6-plus": settings.RESEARCH_MODEL,
+    "opencode-go/qwen3.5-plus": settings.QNA_MODEL,
+    "opencode-go/kimi-k2.5": settings.RESEARCH_MODEL,
+    "opencode-go/big-pickle": settings.DEFAULT_MODEL,
+    "opencode-go/mimo-v2-omni": "gemini-3-flash-preview",  # vision-capable fallback
+}
 
 
 class ProviderRouter:
@@ -46,6 +60,8 @@ class ProviderRouter:
         max_key_retries: int = 3,
         thinking_level: str | None = None,
         timeout: float | None = None,
+        *,
+        _is_fallback: bool = False,
     ) -> tuple[str, int | None]:
         """
         Get AI response with automatic key rotation and health-aware selection.
@@ -68,8 +84,11 @@ class ProviderRouter:
                 None,
             )
 
-        # Auto-detect multimodal content → force Gemini
-        if use_openrouter is None and _has_multimodal_content(history):
+        # Auto-detect multimodal content.
+        # For Opencode vision models (mimo-v2-omni / mimo-v2-pro), allow multimodal
+        # passthrough — OpencodeGoProvider supports image_url in messages.
+        # For all other models, force Gemini path which has native vision.
+        if use_openrouter is None and _has_multimodal_content(history) and not is_opencode_model(preferred_model):
             use_openrouter = False
 
         use_case = AgentRequestUseCase()
@@ -86,8 +105,28 @@ class ProviderRouter:
 
             if not key_data:
                 if resolution == "all_exhausted":
-                    is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
-                    provider_name = "OpenRouter" if is_or else "Gemini"
+                    # ── Cross-provider fallback: Opencode Go → Gemini ─────────
+                    if is_opencode_model(preferred_model) and not _is_fallback:
+                        gemini_fallback = _OPENCODE_GEMINI_FALLBACK.get(preferred_model, settings.DEFAULT_MODEL)
+                        logging.warning(
+                            "Opencode keys exhausted for %s, falling back to Gemini %s",
+                            preferred_model,
+                            gemini_fallback,
+                        )
+                        return await self.get_response(
+                            gemini_fallback,
+                            history,
+                            system_instruction=system_instruction,
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            use_openrouter=False,
+                            max_key_retries=max_key_retries,
+                            thinking_level=thinking_level,
+                            timeout=timeout,
+                            _is_fallback=True,
+                        )
+                    is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model and not is_opencode_model(preferred_model))
+                    provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
                     return (
                         tag_error(
                             ErrorCode.KEYS_EXHAUSTED,
@@ -249,7 +288,7 @@ class ProviderRouter:
             )
             return
 
-        if use_openrouter is None and _has_multimodal_content(history):
+        if use_openrouter is None and _has_multimodal_content(history) and not is_opencode_model(preferred_model):
             use_openrouter = False
 
         use_case = AgentRequestUseCase()
@@ -276,8 +315,30 @@ class ProviderRouter:
                     break  # No more keys available
 
             if not keys_to_race or not resolved_model:
-                is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
-                provider_name = "OpenRouter" if is_or else "Gemini"
+                # ── Cross-provider fallback: Opencode Go → Gemini (streaming) ─────
+                if is_opencode_model(preferred_model) and not _is_fallback:
+                    gemini_fallback = _OPENCODE_GEMINI_FALLBACK.get(preferred_model, settings.DEFAULT_MODEL)
+                    logging.warning(
+                        "Opencode stream keys unavailable for %s, cascading to Gemini %s",
+                        preferred_model,
+                        gemini_fallback,
+                    )
+                    async for chunk in self.stream_response(
+                        preferred_model=gemini_fallback,
+                        history=history,
+                        system_instruction=system_instruction,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        use_openrouter=False,
+                        max_key_retries=max_key_retries,
+                        thinking_level=thinking_level,
+                        enable_web_search=enable_web_search,
+                        _is_fallback=True,
+                    ):
+                        yield chunk
+                    return
+                is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model and not is_opencode_model(preferred_model))
+                provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
                 yield tag_error(
                     ErrorCode.KEYS_EXHAUSTED,
                     f"🚫 Все ключи {provider_name} недоступны.",
@@ -632,8 +693,8 @@ class ProviderRouter:
             except Exception as e:
                 logging.warning("Deferred queue fallback failed: %s", e)
 
-        is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
-        provider_name = "OpenRouter" if is_or else "Gemini"
+        is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model and not is_opencode_model(preferred_model))
+        provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
         yield tag_error(
             ErrorCode.KEYS_EXHAUSTED,
             f"🚫 Все доступные ключи {provider_name} не сработали ({max_key_retries} попыток). Попробуйте позже.",
@@ -650,15 +711,21 @@ class ProviderRouter:
         Maps heavy models to their lite counterparts. Returns None if
         the failed model is already the lightest available.
         """
-        # Gemini cascade: heavy → lite
+        # Gemini cascade: heavy → lite (canonical model list only)
         _GEMINI_CASCADE = {
-            "gemini-3-flash-preview": "gemini-2.5-flash-lite",  # 3.1-flash-lite-preview omitted: same 503 window
-            "gemini-2.5-flash-preview-05-20": "gemini-3.1-flash-lite-preview",
-            "gemini-2.0-flash": "gemini-2.0-flash-lite",
-            "gemini-1.5-flash": "gemini-1.5-flash-8b",
+            "gemini-3-flash-preview": "gemini-2.5-flash-lite",
+            "gemini-3.1-flash-lite-preview": "gemini-2.5-flash-lite",
+            "gemini-2.5-flash": "gemini-2.5-flash-lite",
         }
 
-        is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model)
+        # Opencode Go: cascade to Gemini via the cross-provider fallback map
+        if is_opencode_model(failed_model):
+            gemini_fallback = _OPENCODE_GEMINI_FALLBACK.get(failed_model, settings.DEFAULT_MODEL)
+            if gemini_fallback in settings.AVAILABLE_MODELS:
+                return gemini_fallback
+            return None
+
+        is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model and not is_opencode_model(failed_model))
         if is_or:
             return None  # OpenRouter handles its own fallbacks
 

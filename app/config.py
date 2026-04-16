@@ -243,8 +243,21 @@ class Settings(BaseModel):
     OPENROUTER_RESEARCH_MODEL: str = "stepfun/step-3.5-flash:free"
     OPENROUTER_URL_SELECTION_MODEL: str = "stepfun/step-3.5-flash:free"
 
+    # --- OPENCODE GO MODELS ---
+    # Support comma-separated key list for rotation (same pattern as GEMINI_API_KEYS).
+    OPENCODE_API_KEYS: list[str] = []  # sk-... keys, rotatable
+    OPENCODE_AVAILABLE_MODELS: list[str] = []  # populated from env OPENCODE_AVAILABLE_MODELS
+    OPENCODE_DEFAULT_MODEL: str = "opencode-go/minimax-m2.7"
+    OPENCODE_QNA_MODEL: str = "opencode-go/qwen3.5-plus"
+    OPENCODE_RESEARCH_MODEL: str = "opencode-go/qwen3.6-plus"
+    OPENCODE_VISION_MODEL: str = "opencode-go/mimo-v2-omni"
+    OPENCODE_INLINE_MODEL: str = "opencode-go/minimax-m2.5"
+
     # --- API PROVIDER SELECTION ---
-    USE_OPENROUTER: bool = False  # По умолчанию use Gemini, можно переkeysть на OpenRouter
+    # "opencode" routes primary chat/search/inline through Opencode Go with Gemini fallback.
+    # "gemini"   bypasses Opencode Go entirely (admin toggle via /set_provider).
+    PRIMARY_PROVIDER: str = "opencode"  # "opencode" | "gemini"
+    USE_OPENROUTER: bool = False  # По умолчанию use Gemini, можно переключить на OpenRouter
 
     # --- LIMITS ---
     TAVILY_MONTHLY_CREDIT_LIMIT: int = 1000
@@ -356,6 +369,15 @@ def load_settings() -> Settings:
             "OPENROUTER_URL_SELECTION_MODEL": _load_single_model(
                 "OPENROUTER_URL_SELECTION_MODEL", "stepfun/step-3.5-flash:free"
             ),
+            # Opencode Go provider
+            "OPENCODE_API_KEYS": _load_and_clean_keys("OPENCODE_API_KEYS", required=False),
+            "OPENCODE_AVAILABLE_MODELS": _load_and_clean_keys("OPENCODE_AVAILABLE_MODELS", required=False),
+            "OPENCODE_DEFAULT_MODEL": _load_single_model("OPENCODE_DEFAULT_MODEL", "opencode-go/minimax-m2.7"),
+            "OPENCODE_QNA_MODEL": _load_single_model("OPENCODE_QNA_MODEL", "opencode-go/qwen3.5-plus"),
+            "OPENCODE_RESEARCH_MODEL": _load_single_model("OPENCODE_RESEARCH_MODEL", "opencode-go/qwen3.6-plus"),
+            "OPENCODE_VISION_MODEL": _load_single_model("OPENCODE_VISION_MODEL", "opencode-go/mimo-v2-omni"),
+            "OPENCODE_INLINE_MODEL": _load_single_model("OPENCODE_INLINE_MODEL", "opencode-go/minimax-m2.5"),
+            "PRIMARY_PROVIDER": os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower(),
             "DAILY_LIMITS": _load_daily_limits(),
             "MAX_CONCURRENT_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_HEAVY_REQUESTS", "4")),
             "MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS": int(os.getenv("MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS", "1")),
@@ -402,6 +424,25 @@ def load_settings() -> Settings:
                 f"OPENROUTER_DEFAULT_MODEL '{settings_obj.OPENROUTER_DEFAULT_MODEL}' not in OPENROUTER_AVAILABLE_MODELS. Adding it."
             )
             settings_obj.OPENROUTER_AVAILABLE_MODELS.append(settings_obj.OPENROUTER_DEFAULT_MODEL)
+
+        # Check Opencode Go models — auto-populate list from role models
+        for role_model in (
+            settings_obj.OPENCODE_DEFAULT_MODEL,
+            settings_obj.OPENCODE_QNA_MODEL,
+            settings_obj.OPENCODE_RESEARCH_MODEL,
+            settings_obj.OPENCODE_VISION_MODEL,
+            settings_obj.OPENCODE_INLINE_MODEL,
+        ):
+            if role_model and role_model not in settings_obj.OPENCODE_AVAILABLE_MODELS:
+                settings_obj.OPENCODE_AVAILABLE_MODELS.append(role_model)
+
+        # Validate PRIMARY_PROVIDER
+        if settings_obj.PRIMARY_PROVIDER not in ("opencode", "gemini", "openrouter"):
+            logging.warning(
+                "Invalid PRIMARY_PROVIDER '%s'. Falling back to 'opencode'.",
+                settings_obj.PRIMARY_PROVIDER,
+            )
+            settings_obj.PRIMARY_PROVIDER = "opencode"
 
         return settings_obj
     except (ValidationError, ValueError) as e:
@@ -599,3 +640,62 @@ def get_openrouter_keys() -> list[str]:
 def get_use_openrouter() -> bool:
     """Returns whether to use OpenRouter instead of Gemini."""
     return config_manager.get_setting("USE_OPENROUTER", False)
+
+
+def get_opencode_keys() -> list[str]:
+    """Returns Opencode Go API keys."""
+    return config_manager.get_setting("OPENCODE_API_KEYS", [])
+
+
+# ── Primary provider: DB-backed runtime toggle ────────────────────────────────
+# The DB global_settings store is the source-of-truth when the admin uses
+# /set_provider.  If the DB is unavailable (e.g. startup), we fall back to
+# the env-derived Settings value.
+
+_primary_provider_cache: str | None = None  # simple in-process cache
+
+
+def _invalidate_primary_provider_cache() -> None:
+    """Clear the in-process primary-provider cache (called after /set_provider)."""
+    global _primary_provider_cache
+    _primary_provider_cache = None
+
+
+def get_primary_provider() -> str:
+    """Returns the currently active primary provider name.
+
+    Reads from (in priority order):
+    1. In-process cache (cleared by ``_invalidate_primary_provider_cache``).
+    2. DB global_settings key ``primary_provider`` (set by ``/set_provider``).
+    3. ``settings.PRIMARY_PROVIDER`` (from env, default ``"opencode"``).
+
+    Returns:
+        ``"opencode"`` | ``"gemini"`` | ``"openrouter"``
+    """
+    global _primary_provider_cache
+    if _primary_provider_cache is not None:
+        return _primary_provider_cache
+
+    # Try DB (async, so we use a fire-and-forget cache fill here)
+    # For synchronous callers the env fallback is used on first call;
+    # the DB value is fetched asynchronously the first time through the
+    # admin command and then cached.
+    env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    return env_value
+
+
+async def get_primary_provider_async() -> str:
+    """Async version: reads DB first, then env fallback, updates in-process cache."""
+    global _primary_provider_cache
+    try:
+        from app.repos.settings_repo import get_global_setting
+
+        db_value = await get_global_setting("primary_provider", "")
+        if db_value:
+            _primary_provider_cache = db_value
+            return db_value
+    except Exception:
+        pass  # DB unavailable — fall through to env
+    env_value: str = config_manager.get_setting("PRIMARY_PROVIDER", "opencode")
+    _primary_provider_cache = env_value
+    return env_value

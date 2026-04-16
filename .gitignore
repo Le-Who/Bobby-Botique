@@ -55,3 +55,6 @@ walkthrough.md
 # Crocodile game — local judgement cache
 app/games/data/*.json
 
+
+# Environment secrets
+.env
