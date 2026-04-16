@@ -35,10 +35,11 @@ logger = logging.getLogger(__name__)
 _PRIMARY_MODEL = "gemini-3.1-flash-lite-preview"
 _FALLBACK_MODEL = "gemini-2.5-flash-lite"
 
-# Timeout for entire LLM race. Increased from 1.5s → 3.0s:
-# Gemini Flash-Lite typically responds in 300-800ms; 1.5s occasionally fails
-# on SSL-handshake throttling. 3.0s covers >99.9% of realistic cases.
-_LLM_TIMEOUT_S = 3.0
+# Primary race: concurrent across up to 3 keys + optional Vertex AI — wall time = timeout of
+# the fastest winner, so 7s is safe even under degraded conditions.
+_LLM_TIMEOUT_S = 7.0
+# Fallback: single key, last resort — give it twice as long; player waits, not retypes.
+_LLM_FALLBACK_TIMEOUT_S = 14.0
 
 # ── Circuit breaker for _PRIMARY_MODEL ────────────────────────────────────────
 # When _PRIMARY_MODEL is experiencing a model-level 503 outage (all keys return
@@ -225,7 +226,7 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
         max_output_tokens=200,
     )
 
-    async def _one_call(api_key: str, key_hash: str, model: str) -> GuessJudgement | None:
+    async def _one_call(api_key: str, key_hash: str, model: str, timeout: float = _LLM_TIMEOUT_S) -> GuessJudgement | None:
         """Single key attempt. On any error: classify → suspend key → return None."""
         try:
             client = get_cached_genai_client(api_key)
@@ -235,7 +236,7 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
                     contents=prompt,
                     config=config,
                 ),
-                timeout=_LLM_TIMEOUT_S,
+                timeout=timeout,
             )
             text = getattr(response, "text", None) or ""
             if not text:
@@ -264,11 +265,11 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
             )
 
     async def _run_race(
-        key_pairs: list[tuple[str, str]], model: str
+        key_pairs: list[tuple[str, str]], model: str, timeout: float = _LLM_TIMEOUT_S
     ) -> GuessJudgement | None:
         """Launch all (api_key, key_hash) pairs concurrently; return first non-None result."""
         tasks = [
-            asyncio.create_task(_one_call(ak, kh, model))
+            asyncio.create_task(_one_call(ak, kh, model, timeout))
             for ak, kh in key_pairs
         ]
         result: GuessJudgement | None = None
@@ -390,7 +391,7 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     fallback_kd, fallback_mdl, _ = await use_case.resolve_ai_request(_FALLBACK_MODEL)
     if fallback_kd and fallback_mdl:
         fallback_pair = [(fallback_kd["api_key"], fallback_kd["key_hash"])]
-        result = await _run_race(fallback_pair, fallback_mdl)
+        result = await _run_race(fallback_pair, fallback_mdl, timeout=_LLM_FALLBACK_TIMEOUT_S)
         if result is not None:
             logger.info("Judge: fallback model %r succeeded", fallback_mdl)
             return result
