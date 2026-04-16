@@ -122,18 +122,22 @@ async def extract_graph_structured(
     for attempt in range(3):
         try:
             client = get_cached_genai_client(api_key)
+            
+            config_kwargs = {
+                "response_mime_type": "application/json",
+                "response_json_schema": GraphExtractionResult.model_json_schema(),
+                "temperature": 0.1,
+                "max_output_tokens": 2048,
+            }
+            if GRAPH_EXTRACTION_THINKING_LEVEL and any(x in GRAPH_EXTRACTION_MODEL.lower() for x in ("pro", "think")):
+                config_kwargs["thinking_config"] = types.ThinkingConfig(
+                    thinking_level=GRAPH_EXTRACTION_THINKING_LEVEL,  # type: ignore[arg-type]
+                )
+
             response = await client.aio.models.generate_content(
                 model=GRAPH_EXTRACTION_MODEL,
                 contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_json_schema=GraphExtractionResult.model_json_schema(),
-                    temperature=0.1,
-                    max_output_tokens=2048,
-                    thinking_config=types.ThinkingConfig(
-                        thinking_level=GRAPH_EXTRACTION_THINKING_LEVEL,  # type: ignore[arg-type]
-                    ),
-                ),
+                config=types.GenerateContentConfig(**config_kwargs),
             )
             response_text = (response.text or "").strip()
             if not response_text:
