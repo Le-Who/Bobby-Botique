@@ -336,8 +336,15 @@ async def _handle_regular_chat(
 
     from app.metrics import metrics_collector as _mc
 
+    from app.providers.base import is_opencode_model, is_openrouter_model
+
+    _chat_provider = (
+        "opencode_chat" if is_opencode_model(model_used or "")
+        else "openrouter_chat" if is_openrouter_model(model_used or "")
+        else "gemini_chat"
+    )
     _asyncio.create_task(  # noqa: RUF006
-        _mc.record_api_call("gemini_chat", model_used, user_id=user_id)
+        _mc.record_api_call(_chat_provider, model_used, user_id=user_id)
     )
     _asyncio.create_task(  # noqa: RUF006
         _mc.record_request("chat", time.monotonic() - _stream_t0, success=bool(success and response_text))

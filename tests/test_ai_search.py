@@ -40,9 +40,8 @@ def make_placeholder(user_id=123):
 
 @pytest.mark.asyncio
 async def test_qna_search_happy_path():
-    """QnA search streams a grounded response via stream_and_display(enable_web_search=True)."""
+    """QnA search streams a grounded response via stream_and_display(enable_web_search=True) on the Gemini path."""
     placeholder = make_placeholder()
-    # Add get_bot() and chat.type to placeholder
     placeholder.get_bot.return_value = MagicMock()
     placeholder.chat.type = "private"
     chat_state = make_chat_state()
@@ -50,6 +49,7 @@ async def test_qna_search_happy_path():
     with (
         patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
         patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
+        patch("app.handlers.ai_search.get_primary_provider", return_value="gemini"),
         patch(
             "app.streaming.stream_and_display",
             new_callable=AsyncMock,
@@ -72,10 +72,56 @@ async def test_qna_search_happy_path():
 
         await _handle_qna_search(placeholder, "What is Python?", chat_state)
 
-    # Verify stream_and_display was called with enable_web_search=True
+    # Verify stream_and_display was called with enable_web_search=True (Gemini path)
     mock_stream.assert_awaited_once()
     call_kwargs = mock_stream.call_args[1] if mock_stream.call_args[1] else {}
-    assert call_kwargs.get("enable_web_search") is True, "stream_and_display must be called with enable_web_search=True"
+    assert call_kwargs.get("enable_web_search") is True, "Gemini path must use enable_web_search=True"
+
+
+@pytest.mark.asyncio
+async def test_qna_search_opencode_path():
+    """QnA search uses JINA grounding (enable_web_search=False) on the Opencode path."""
+    placeholder = make_placeholder()
+    placeholder.get_bot.return_value = MagicMock()
+    placeholder.chat.type = "private"
+    # Gemini model but PRIMARY_PROVIDER=opencode → takes Opencode path
+    chat_state = make_chat_state()
+
+    with (
+        patch("app.handlers.ai_search.metrics_collector") as mock_metrics,
+        patch("app.handlers.ai_search.update_stage", new_callable=AsyncMock),
+        patch("app.handlers.ai_search.get_primary_provider", return_value="opencode"),
+        patch(
+            "app.search_jina.search_for_grounding",
+            new_callable=AsyncMock,
+            return_value="[grounding context]",
+        ),
+        patch(
+            "app.streaming.stream_and_display",
+            new_callable=AsyncMock,
+            return_value=("Opencode JINA answer", True, AsyncMock(), 50, False, False),
+        ) as mock_stream,
+        patch(
+            "app.handlers.ai_search.handle_ai_response_error",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch("app.handlers.ai_search.send_long_message", new_callable=AsyncMock),
+        patch("app.handlers.ai_search.get_registry") as mock_get_registry,
+    ):
+        mock_metrics.record_search_query = AsyncMock()
+        mock_registry = MagicMock()
+        mock_registry.compose_system_prompt.return_value = "sys"
+        mock_get_registry.return_value = mock_registry
+
+        from app.handlers.ai_search import _handle_qna_search
+
+        await _handle_qna_search(placeholder, "What is Python?", chat_state)
+
+    # Opencode path: JINA grounding is injected into prompt, web search disabled
+    mock_stream.assert_awaited_once()
+    call_kwargs = mock_stream.call_args[1] if mock_stream.call_args[1] else {}
+    assert call_kwargs.get("enable_web_search") is False, "Opencode path must NOT use enable_web_search (JINA grounding used)"
 
 
 # ── QnA search — streaming failure triggers fallback ─────────────────────────

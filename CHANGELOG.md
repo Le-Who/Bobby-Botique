@@ -3,6 +3,44 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.13.1] - 2026-04-16 - Opencode Observability Hardening & Hot-Reload Bug Fixes
+
+### 🐛 Critical Bug Fixes
+
+- **Provider-aware streaming metrics (`app/streaming.py`):** `record_api_call` was hardcoded to `"gemini_streaming"` for every provider. All Opencode and OpenRouter streaming traffic was silently mis-attributed to Gemini in the metrics dashboard. Fixed with an `is_opencode_model` / `is_openrouter_model` dispatch: Opencode traffic now records as `"opencode_streaming"`, OpenRouter as `"openrouter_streaming"`, Gemini as `"gemini_streaming"`.
+
+- **Provider-aware chat metrics (`app/handlers/ai_chat.py`):** Same mis-attribution for `record_api_call` in the non-streaming chat path. Now correctly records `"opencode_chat"` / `"openrouter_chat"` / `"gemini_chat"` based on live model routing.
+
+- **Hot-reload migration wiped Opencode users (`app/repos/chats.py` — `model_migration_watcher`):** `OPENCODE_AVAILABLE_MODELS` was excluded from the `all_available` validation set. On every hot-reload (`/reloadconfig`), every user with an Opencode model was falsely classified as using an "invalid" model and silently migrated back to the Gemini default. Fixed by adding `OPENCODE_AVAILABLE_MODELS` to the set and passing `OPENCODE_DEFAULT_MODEL` as the correct Opencode fallback target.
+
+- **Opencode users migrated to OpenRouter default (`app/repos/chats.py` — `migrate_invalid_models`):** `opencode-go/*` model names contain `/`, which matched the OpenRouter branch in the migration router (`"/" in model`). Opencode users were routed to `OPENROUTER_DEFAULT_MODEL` instead of `OPENCODE_DEFAULT_MODEL` during hot-reload migration. Fixed by adding an explicit `opencode-go/` prefix check as a first-priority branch before the generic `/` test.
+
+- **Stale import-time fallback map (`app/providers/router.py`):** `_OPENCODE_GEMINI_FALLBACK` was a module-level dict built once at import time using `settings.DEFAULT_MODEL` etc. After a hot-reload that changed `DEFAULT_MODEL`, the fallback map remained stale and could route Opencode-exhausted requests to the old model. Refactored to `_get_opencode_gemini_fallback()` — a function that reads from live `settings` on every call. All three call sites (non-streaming fallback, streaming race fallback, transient cascade) updated.
+
+### 🧪 Tests
+
+- **`test_qna_search_happy_path`**: Updated to pin `get_primary_provider` to `"gemini"` via mock — the test was written for the Gemini path but was running in an environment where `PRIMARY_PROVIDER=opencode`, causing a spurious failure. The test's assertion (`enable_web_search=True`) is correct for Gemini and remains unchanged.
+
+- **`test_qna_search_opencode_path`** (new): Companion test for the Opencode/JINA branch. Confirms that `get_primary_provider=opencode` causes `stream_and_display` to be called with `enable_web_search=False` (JINA grounding injected into prompt instead).
+
+- **`TestMultimodalGuard`** (5 tests in `test_opencode_routing.py`): Updated all tests importing the removed `_OPENCODE_GEMINI_FALLBACK` dict to call `_get_opencode_gemini_fallback()` instead. Invariants tested are identical.
+
+### ✅ Verification
+
+- Full suite: **1813 passed, 0 failed** (2m 12s, `pytest-xdist -n auto`)
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/streaming.py` | Provider-aware `record_api_call` label in streaming path |
+| `app/handlers/ai_chat.py` | Provider-aware `record_api_call` label in chat path |
+| `app/repos/chats.py` | Hot-reload watcher includes Opencode models; migration correctly routes Opencode users |
+| `app/providers/router.py` | `_OPENCODE_GEMINI_FALLBACK` dict → `_get_opencode_gemini_fallback()` function; 3 call sites updated |
+| `tests/test_ai_search.py` | `test_qna_search_happy_path` pinned to Gemini; `test_qna_search_opencode_path` added |
+| `tests/test_opencode_routing.py` | `TestMultimodalGuard` updated to call `_get_opencode_gemini_fallback()` |
+
+---
 ## [2.13.0] - 2026-04-16 - Opencode Go Migration: Split-Brain Architecture & JINA Grounding
 
 ### Major Changes

@@ -22,16 +22,18 @@ from app.providers.openrouter import _has_multimodal_content
 
 # ── Opencode Go → Gemini cross-provider fallback map ──────────────────────────
 # When ALL Opencode Go keys are exhausted or fail, silently retry on Gemini.
-# Maps Opencode model → closest-capability Gemini model.
-_OPENCODE_GEMINI_FALLBACK: dict[str, str] = {
-    "opencode-go/minimax-m2.7": settings.DEFAULT_MODEL,
-    "opencode-go/minimax-m2.5": settings.DEFAULT_MODEL,
-    "opencode-go/qwen3.6-plus": settings.RESEARCH_MODEL,
-    "opencode-go/qwen3.5-plus": settings.QNA_MODEL,
-    "opencode-go/kimi-k2.5": settings.RESEARCH_MODEL,
-    "opencode-go/big-pickle": settings.DEFAULT_MODEL,
-    "opencode-go/mimo-v2-omni": "gemini-3-flash-preview",  # vision-capable fallback
-}
+# Returns live mapping so hot-reloaded model names are correctly reflected.
+def _get_opencode_gemini_fallback() -> dict[str, str]:
+    """Build the Opencode → Gemini fallback map from current (live) settings."""
+    return {
+        "opencode-go/minimax-m2.7": settings.DEFAULT_MODEL,
+        "opencode-go/minimax-m2.5": settings.DEFAULT_MODEL,
+        "opencode-go/qwen3.6-plus": settings.RESEARCH_MODEL,
+        "opencode-go/qwen3.5-plus": settings.QNA_MODEL,
+        "opencode-go/kimi-k2.5": settings.RESEARCH_MODEL,
+        "opencode-go/big-pickle": settings.DEFAULT_MODEL,
+        "opencode-go/mimo-v2-omni": "gemini-3-flash-preview",  # vision-capable fallback
+    }
 
 
 class ProviderRouter:
@@ -107,7 +109,7 @@ class ProviderRouter:
                 if resolution == "all_exhausted":
                     # ── Cross-provider fallback: Opencode Go → Gemini ─────────
                     if is_opencode_model(preferred_model) and not _is_fallback:
-                        gemini_fallback = _OPENCODE_GEMINI_FALLBACK.get(preferred_model, settings.DEFAULT_MODEL)
+                        gemini_fallback = _get_opencode_gemini_fallback().get(preferred_model, settings.DEFAULT_MODEL)
                         logging.warning(
                             "Opencode keys exhausted for %s, falling back to Gemini %s",
                             preferred_model,
@@ -317,7 +319,7 @@ class ProviderRouter:
             if not keys_to_race or not resolved_model:
                 # ── Cross-provider fallback: Opencode Go → Gemini (streaming) ─────
                 if is_opencode_model(preferred_model) and not _is_fallback:
-                    gemini_fallback = _OPENCODE_GEMINI_FALLBACK.get(preferred_model, settings.DEFAULT_MODEL)
+                    gemini_fallback = _get_opencode_gemini_fallback().get(preferred_model, settings.DEFAULT_MODEL)
                     logging.warning(
                         "Opencode stream keys unavailable for %s, cascading to Gemini %s",
                         preferred_model,
@@ -720,7 +722,7 @@ class ProviderRouter:
 
         # Opencode Go: cascade to Gemini via the cross-provider fallback map
         if is_opencode_model(failed_model):
-            gemini_fallback = _OPENCODE_GEMINI_FALLBACK.get(failed_model, settings.DEFAULT_MODEL)
+            gemini_fallback = _get_opencode_gemini_fallback().get(failed_model, settings.DEFAULT_MODEL)
             if gemini_fallback in settings.AVAILABLE_MODELS:
                 return gemini_fallback
             return None

@@ -248,6 +248,7 @@ async def migrate_invalid_models(
     available_models: set,
     default_gemini_model: str,
     default_openrouter_model: str,
+    default_opencode_model: str = "",
 ) -> int:
     """Migrate users whose active model is no longer in the available set.
 
@@ -270,10 +271,14 @@ async def migrate_invalid_models(
     migrated = 0
     gemini_users = []
     openrouter_users = []
+    opencode_users = []
     for chat in invalid_chats:
         user_id = chat["user_id"]
         old_model = chat["model"]
-        if "/" in old_model:
+        # Detection order matters: opencode-go/* also contains '/', so check it first
+        if old_model.startswith("opencode-go/"):
+            opencode_users.append(user_id)
+        elif "/" in old_model:
             openrouter_users.append(user_id)
         else:
             gemini_users.append(user_id)
@@ -293,6 +298,15 @@ async def migrate_invalid_models(
         )
         migrated += len(openrouter_users)
 
+    if opencode_users:
+        # If no opencode default provided, fall back to gemini default
+        target_model = default_opencode_model or default_gemini_model
+        await db_query(
+            "UPDATE public.chats SET model = $1 WHERE user_id = ANY($2)",
+            (target_model, opencode_users),
+        )
+        migrated += len(opencode_users)
+
     if migrated:
         logging.warning("Migrated %d users to default models after config reload", migrated)
     return migrated
@@ -310,11 +324,15 @@ async def model_migration_watcher(old_settings, new_settings) -> None:
             all_available.update(new_settings.AVAILABLE_MODELS)
         if new_settings.OPENROUTER_AVAILABLE_MODELS:
             all_available.update(new_settings.OPENROUTER_AVAILABLE_MODELS)
+        # Include Opencode models so users with opencode-go/* models survive hot reload
+        if new_settings.OPENCODE_AVAILABLE_MODELS:
+            all_available.update(new_settings.OPENCODE_AVAILABLE_MODELS)
 
         await migrate_invalid_models(
             available_models=all_available,
             default_gemini_model=new_settings.DEFAULT_MODEL,
             default_openrouter_model=new_settings.OPENROUTER_DEFAULT_MODEL,
+            default_opencode_model=new_settings.OPENCODE_DEFAULT_MODEL,
         )
     except Exception as e:
         logging.error("Model migration watcher error: %s", e)

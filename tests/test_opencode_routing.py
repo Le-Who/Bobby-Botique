@@ -288,27 +288,27 @@ class TestPickTransientFallbackModel:
 class TestMultimodalGuard:
     def test_opencode_vision_model_not_forced_to_gemini(self):
         """Opencode vision models (mimo) should NOT be redirected to Gemini for images."""
-        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+        from app.providers.router import _get_opencode_gemini_fallback
 
         # "opencode-go/mimo-v2-omni" must be in the fallback map as a vision model
-        assert "opencode-go/mimo-v2-omni" in _OPENCODE_GEMINI_FALLBACK
+        assert "opencode-go/mimo-v2-omni" in _get_opencode_gemini_fallback()
 
     def test_opencode_gemini_fallback_map_is_non_empty(self):
-        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+        from app.providers.router import _get_opencode_gemini_fallback
 
-        assert len(_OPENCODE_GEMINI_FALLBACK) >= 5
+        assert len(_get_opencode_gemini_fallback()) >= 5
 
     def test_all_fallback_values_are_strings(self):
-        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+        from app.providers.router import _get_opencode_gemini_fallback
 
-        for k, v in _OPENCODE_GEMINI_FALLBACK.items():
+        for k, v in _get_opencode_gemini_fallback().items():
             assert isinstance(k, str), f"Key {k!r} is not a string"
             assert isinstance(v, str), f"Value {v!r} for {k!r} is not a string"
             assert "opencode" not in v, f"Fallback value {v!r} must be a Gemini model"
 
     def test_fallback_map_only_contains_canonical_opencode_models(self):
-        """Guard: only approved Opencode model names in _OPENCODE_GEMINI_FALLBACK."""
-        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+        """Guard: only approved Opencode model names in the fallback map."""
+        from app.providers.router import _get_opencode_gemini_fallback
 
         _CANONICAL_OPENCODE = {
             "opencode-go/minimax-m2.7",
@@ -319,7 +319,7 @@ class TestMultimodalGuard:
             "opencode-go/qwen3.5-plus",
             "opencode-go/mimo-v2-omni",
         }
-        for key in _OPENCODE_GEMINI_FALLBACK:
+        for key in _get_opencode_gemini_fallback():
             assert key in _CANONICAL_OPENCODE, (
                 f"Non-canonical Opencode model {key!r} found in fallback map. "
                 f"Allowed: {sorted(_CANONICAL_OPENCODE)}"
@@ -327,7 +327,7 @@ class TestMultimodalGuard:
 
     def test_fallback_values_are_canonical_gemini_models(self):
         """Guard: all Gemini fallback values use only the canonical Gemini chat model list."""
-        from app.providers.router import _OPENCODE_GEMINI_FALLBACK
+        from app.providers.router import _get_opencode_gemini_fallback
 
         _CANONICAL_GEMINI = {
             "gemini-3.1-flash-lite-preview",
@@ -335,13 +335,14 @@ class TestMultimodalGuard:
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
         }
-        for opencode_model, gemini_fallback in _OPENCODE_GEMINI_FALLBACK.items():
-            # Values are settings.DEFAULT_MODEL etc. — they're strings resolved at import
+        for opencode_model, gemini_fallback in _get_opencode_gemini_fallback().items():
+            # Values are settings.DEFAULT_MODEL etc. — resolved fresh each call
             assert isinstance(gemini_fallback, str)
             assert gemini_fallback in _CANONICAL_GEMINI, (
                 f"Fallback for {opencode_model!r} is {gemini_fallback!r}, "
                 f"which is not in the canonical Gemini list: {sorted(_CANONICAL_GEMINI)}"
             )
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────

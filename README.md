@@ -8,12 +8,12 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 
 ## Current Status
 
-**Production-Ready** (`v2.12.11`). Deployed as a **3-container Docker stack** on a DigitalOcean VPS: Local Telegram Bot API Server (MTProto), Python bot (Quart + Hypercorn + PTB v20+ webhook), and an Alpine-based media cleanup cron. Uses `concurrent_updates(50)` with a Quart webhook handler to decouple update processing from HTTP acknowledgment. Built-in telemetry, circuit breakers, and connection pooling. The testing architecture follows strictly deterministic Arrange-Act-Assert (AAA), achieving a CI-ready 100% pass rate across over 1680 unit and E2E integration tests.
+**Production-Ready** (`v2.13.1`). Deployed as a **3-container Docker stack** on a DigitalOcean VPS: Local Telegram Bot API Server (MTProto), Python bot (Quart + Hypercorn + PTB v20+ webhook), and an Alpine-based media cleanup cron. Uses `concurrent_updates(50)` with a Quart webhook handler to decouple update processing from HTTP acknowledgment. Built-in telemetry, circuit breakers, and connection pooling. The testing architecture follows strictly deterministic Arrange-Act-Assert (AAA), achieving a CI-ready 100% pass rate across over 1813 unit and E2E integration tests.
 
 ## Features
 
 - **Smart Provider Routing (Split-Brain Architecture)**: Three-tier provider system with automatic failover. The **primary tier** is **Opencode Go** (models: `minimax-m2.7`, `minimax-m2.5`, `qwen3.6-plus`, `kimi-k2.5`, `big-pickle`, `qwen3.5-plus`, `mimo-v2-omni`) — a performant LLM inference cluster at `opencode.ai/zen/go/v1` (Bearer auth). When Opencode is exhausted or fails, the system **automatically cross-falls back to Google Gemini** (`gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`). **OpenRouter** is available as a tertiary option. Provider is runtime-switchable via `/set_provider` (admin, no restart needed). Gemini keys always required for embeddings, TTS, and image generation. Features **Race Requests** (two API keys race in parallel — first chunk wins, loser cancelled), **Model Cascade Fallback** (auto-downgrade on sustained 503 errors), and **Redis-backed Deferred Queue** (background retry after total outage).
-  - **Opencode > Gemini Cross-Provider Fallback**: If all Opencode keys are exhausted, the router automatically delegates to the Gemini fallback chain without user-visible interruption. The `_is_fallback=True` flag prevents infinite recursion.
+  - **Opencode → Gemini Cross-Provider Fallback**: If all Opencode keys are exhausted, the router automatically delegates to the Gemini fallback chain without user-visible interruption. The `_is_fallback=True` flag prevents infinite recursion. The fallback map is built dynamically at call time (`_get_opencode_gemini_fallback()`) so hot-reloaded `DEFAULT_MODEL`/`RESEARCH_MODEL`/`QNA_MODEL` values are reflected immediately — no stale state.
   - **JINA Search Grounding**: For Opencode-routed `?` quick search, uses **JINA AI Search** (`s.jina.ai`) instead of native Gemini grounding. Returns LLM-ready markdown injected as `<search_context>` XML in the system prompt. Configured via `JINA_API_KEY`.
 - **Quick Search (`?` prefix)**: Single-call web search with dual grounding paths. For **Gemini** models: uses **native Google Search Grounding** (LLM queries the web internally, no extra network hops). For **Opencode** models: uses **JINA AI Search** (`s.jina.ai`) returning LLM-ready markdown injected as `<search_context>` system prompt blocks. Uses a resilient model fallback chain for low latency.
 - **Inline Mode (Cross-Chat Bot Interaction)**: Users invoke the bot from **any Telegram chat** by typing `@gemaibotv2 <query>`. Features an **Advanced Progressive UX**:
@@ -527,7 +527,7 @@ Relational knowledge is stored as a directed graph in dual tables:
 
 ## Testing
 
-The application features a heavily engineered test suite (**1680 unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
+The application features a heavily engineered test suite (**1813 unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
 
 - **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.

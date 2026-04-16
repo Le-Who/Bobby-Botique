@@ -981,7 +981,14 @@ async def stream_and_display(
         writer.message_count,
         fr,
     )
-    await metrics_collector.record_api_call("gemini_streaming", model_name)
+    from app.providers.base import is_opencode_model, is_openrouter_model
+
+    _stream_provider = (
+        "opencode_streaming" if is_opencode_model(model_name)
+        else "openrouter_streaming" if is_openrouter_model(model_name)
+        else "gemini_streaming"
+    )
+    await metrics_collector.record_api_call(_stream_provider, model_name)
     actual_tokens = _last_token_count.get()
     voice_requested = _voice_requested.get()
     return final_text, True, writer.last_message, actual_tokens, _was_interrupted, voice_requested  # type: ignore[return-value]
