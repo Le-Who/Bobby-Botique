@@ -35,3 +35,21 @@ async def get_user_model_usage_today(user_id: int) -> list[dict[str, Any]]:
         "ORDER BY value::int DESC",
         (user_id,),
     )
+
+async def get_user_activity_summary(user_id: int) -> dict[str, int]:
+    """Returns user's request, document, and conversation counts in one DB call."""
+    query = """
+        SELECT
+            (SELECT COALESCE(request_count, 0) FROM user_metrics WHERE user_id = $1 AND metric_date = CURRENT_DATE LIMIT 1) as request_count,
+            (SELECT COUNT(*) FROM user_documents WHERE user_id = $1) as document_count,
+            (SELECT COUNT(*) FROM public.conversations WHERE user_id = $1) as conversation_count
+    """
+    result = await db.db_query(query, (user_id,))
+    if result:
+        row = result[0]
+        return {
+            "request_count": row["request_count"] or 0,
+            "document_count": row["document_count"] or 0,
+            "conversation_count": row["conversation_count"] or 0,
+        }
+    return {"request_count": 0, "document_count": 0, "conversation_count": 0}
