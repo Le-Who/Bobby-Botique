@@ -1,13 +1,19 @@
 import unittest
+from importlib import reload
 from unittest.mock import patch
 
 from PIL import Image
 
 from app.utils.image import estimate_image_size_in_bytes
+import app.utils.image_utils as image_utils
 from app.utils.image_utils import _image_worker
 
 
 class TestImageUtils(unittest.TestCase):
+    def tearDown(self):
+        image_utils.shutdown_image_pool()
+        image_utils._image_process_pool_failed = False
+
     def test_estimate_image_size_rgb(self):
         width, height = 100, 100
         image = Image.new("RGB", (width, height))
@@ -57,6 +63,33 @@ class TestImageUtils(unittest.TestCase):
         args, kwargs = mock_error.call_args
         self.assertIn("Error in image processing worker: %s", args[0])
         self.assertTrue(kwargs.get("exc_info"))
+
+    def test_import_does_not_create_process_pool(self):
+        with patch("concurrent.futures.ProcessPoolExecutor", side_effect=AssertionError("pool should stay lazy")):
+            reload(image_utils)
+
+    def test_get_image_process_pool_is_lazy_and_singleton(self):
+        sentinel_pool = object()
+        image_utils._image_process_pool = None
+        image_utils._image_process_pool_failed = False
+
+        with patch("concurrent.futures.ProcessPoolExecutor", return_value=sentinel_pool) as mock_ctor:
+            first = image_utils._get_image_process_pool()
+            second = image_utils._get_image_process_pool()
+
+        self.assertIs(first, sentinel_pool)
+        self.assertIs(second, sentinel_pool)
+        mock_ctor.assert_called_once()
+
+    def test_get_image_process_pool_falls_back_gracefully_on_failure(self):
+        image_utils._image_process_pool = None
+        image_utils._image_process_pool_failed = False
+
+        with patch("concurrent.futures.ProcessPoolExecutor", side_effect=PermissionError("denied")):
+            pool = image_utils._get_image_process_pool()
+
+        self.assertIsNone(pool)
+        self.assertTrue(image_utils._image_process_pool_failed)
 
 
 if __name__ == "__main__":

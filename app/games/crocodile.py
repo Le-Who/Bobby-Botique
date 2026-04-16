@@ -49,6 +49,7 @@ class CrocodileGame:
     creator_id: int
     guesser_id: int | None  # Set on first WS connect
     attempts: list[str] = field(default_factory=list)
+    has_activity: bool = False  # True after the first real guess attempt, even if not counted
     max_attempts: int = _MAX_ATTEMPTS
     status: Literal["active", "won", "lost"] = "active"
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -69,6 +70,7 @@ class CrocodileGame:
                 "creator_id": self.creator_id,
                 "guesser_id": self.guesser_id,
                 "attempts": self.attempts,
+                "has_activity": self.has_activity,
                 "max_attempts": self.max_attempts,
                 "status": self.status,
                 "created_at": self.created_at,
@@ -82,7 +84,7 @@ class CrocodileGame:
         # Whitelist known fields to guard against Redis data corruption.
         known = {
             "game_id", "target_word", "category", "lang", "inline_message_id",
-            "creator_id", "guesser_id", "attempts", "max_attempts",
+            "creator_id", "guesser_id", "attempts", "has_activity", "max_attempts",
             "status", "created_at",
         }
         return cls(**{k: v for k, v in d.items() if k in known})
@@ -91,12 +93,12 @@ class CrocodileGame:
         """Persist game to Redis; fall back to in-memory store on failure.
 
         TTL is two-phase:
-          - No attempts yet (idle)  → _GAME_TTL_IDLE  (15 min). Gives enough
+          - No activity yet (idle)  → _GAME_TTL_IDLE  (15 min). Gives enough
             time for the creator to share the link and the guesser to open it.
-          - At least one attempt    → _GAME_TTL_ACTIVE (20 min) sliding window.
-            Resets on every guess so the player can step away and think.
+          - Any real guess activity  → _GAME_TTL_ACTIVE (20 min) sliding window.
+            Resets on every guess attempt so the player can step away and think.
         """
-        ttl = _GAME_TTL_ACTIVE if self.attempts else _GAME_TTL_IDLE
+        ttl = _GAME_TTL_ACTIVE if self.has_activity else _GAME_TTL_IDLE
         try:
             from app.cache import redis_client
 
@@ -139,9 +141,11 @@ class CrocodileGame:
             return {"event": "error", "message": "Empty guess"}
 
         status_str, judgement = await judge_guess(self.target_word, word)
+        self.has_activity = True
 
         # LLM race failed — do NOT record the attempt; let the player retry.
         if status_str == "judge_unavailable":
+            await self.save()
             return {
                 "event": "judge_unavailable",
                 "message": "🤔 Крокодил слишком глубоко задумался... Попытка не засчитана, попробуй ещё раз!",

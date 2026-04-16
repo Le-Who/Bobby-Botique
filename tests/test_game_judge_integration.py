@@ -10,11 +10,12 @@ This lets us test the pipeline logic in isolation without network or disk I/O.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.games.judge import GuessJudgement, judge_guess
+from app.games.judge import GuessJudgement, _race_generate, judge_guess
 
 # ── Shared stubs ──────────────────────────────────────────────────────────────
 
@@ -148,3 +149,35 @@ class TestJudgeGuessPipeline:
             await judge_guess("слон", "лошадь")
 
         mock_cache_write.assert_not_called()
+
+    async def test_race_generate_marks_successful_key_active_again(self):
+        """A successful Gemini judge call must recover key health via record_success."""
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({"status": "hot", "score": 0.95, "hint": "Почти!"})
+
+        mock_client = AsyncMock()
+        mock_client.aio.models.generate_content.return_value = mock_response
+
+        mock_status_mgr = MagicMock()
+        mock_status_mgr.record_success = AsyncMock()
+        mock_use_case = MagicMock()
+        mock_use_case.resolve_ai_request = AsyncMock(
+            side_effect=[
+                ({"api_key": "test_key", "key_hash": "hash1234"}, "gemini-3.1-flash-lite-preview", None),
+                (None, None, None),
+            ]
+        )
+        mock_use_case.increment_key_usage = AsyncMock()
+
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
+            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
+            patch("app.providers.gemini.get_vertex_client", return_value=None),
+            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+            patch("app.metrics.metrics_collector.record_api_call", new_callable=AsyncMock),
+        ):
+            result = await _race_generate("слон", "мамонт")
+
+        assert result is not None
+        assert result.status == "hot"
+        mock_status_mgr.record_success.assert_called_once_with("hash1234", "gemini-3.1-flash-lite-preview")

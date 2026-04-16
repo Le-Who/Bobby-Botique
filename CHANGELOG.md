@@ -3,6 +3,36 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.12.11] - 2026-04-16 - Judge Recovery, Crocodile TTL Activity & Lazy Image Pool
+
+### 🐛 Reliability Fixes
+
+- **Judge key health recovery (`app/games/judge.py`):** successful Gemini judge winners now call `record_success(key_hash, model)` before usage accounting. This clears stale suspension/failure state after transient outages so recovered keys return to the primary active pool instead of remaining permanently deprioritized.
+- **Crocodile activity TTL (`app/games/crocodile.py`):** game persistence now tracks explicit guess activity via `has_activity` instead of inferring activity from counted attempts only. A `judge_unavailable` result still does **not** consume an attempt or mutate history, but it now refreshes Redis persistence using the active-game TTL window so live games do not expire while the judge is temporarily degraded.
+- **Streaming hallucination filter narrowed (`app/streaming.py`):** the `[tool_code]` cleanup now targets only explicit leaked internal tool traces instead of generic fenced snippets. Legitimate examples such as fenced `search("cats")` code blocks or prose mentioning `google_search.search` are preserved.
+- **Lazy image worker pool (`app/utils/image_utils.py`):** `ProcessPoolExecutor` creation moved from import time to a guarded accessor. Importing Gemini / multimodal / backward-compat audio modules no longer opens multiprocessing pipes immediately, and restricted environments now fall back gracefully instead of failing during import.
+
+### 🧪 Tests
+
+- Added a judge regression proving successful race winners restore Gemini key health.
+- Added Redis/fake-Redis Crocodile TTL coverage for:
+  - initial idle TTL on create
+  - active TTL after a normal guess
+  - active TTL refresh on `judge_unavailable` without counting an attempt
+- Added streaming regression tests proving hallucinated `[tool_code]` traces are stripped while legitimate fenced code and `google_search.search` references remain intact.
+- Added lazy image pool tests proving:
+  - importing `image_utils` does not create the process pool
+  - pool creation is lazy and singleton-backed
+  - pool creation failure degrades gracefully
+
+### ✅ Verification
+
+- Targeted verification command:
+  - `python -m pytest -o addopts='' -n 0 --basetemp=.pytest_tmp_codex tests/test_game_judge_integration.py tests/test_game_llm_tasks.py tests/test_games.py tests/test_audio_processor.py tests/test_streaming.py tests/test_streaming_writer.py tests/test_image_utils.py -q`
+- Result: **153 passed**
+
+---
+
 ## [2.12.10] - 2026-04-16 - Judge Key Rotation & Full Metrics Coverage
 
 ### 🐛 Bug Fixes

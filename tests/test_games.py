@@ -234,6 +234,20 @@ _COLD = GuessJudgement(status="cold", score=0.1, hint="Попробуй ещё! 
 _WARM = GuessJudgement(status="warm", score=0.55, hint="Теплее! 🌡️")
 
 
+class _FakeRedis:
+    def __init__(self):
+        self.set_calls: list[tuple[str, int | None]] = []
+
+    async def set(self, key, value, ex=None):
+        self.set_calls.append((key, ex))
+
+    async def get(self, key):
+        return None
+
+    async def delete(self, key):
+        return None
+
+
 class TestCrocodileGameSerialisation:
     def test_round_trip(self):
         game = CrocodileGame(
@@ -418,6 +432,61 @@ class TestCrocodileGameInMemory:
             assert len(game.attempts) == 0  # NOT counted
             assert game.status == "active"
 
+    async def test_create_game_uses_idle_ttl_in_redis(self):
+        fake_redis = _FakeRedis()
+        with patch("app.cache.redis_client", fake_redis):
+            await create_game(
+                target_word="слон",
+                category="Животные",
+                lang="ru",
+                inline_message_id="inline_ttl_idle",
+                creator_id=5,
+            )
+
+        assert fake_redis.set_calls
+        assert fake_redis.set_calls[-1][1] == 900
+
+    async def test_successful_guess_refreshes_active_ttl_in_redis(self):
+        fake_redis = _FakeRedis()
+        with patch("app.cache.redis_client", fake_redis):
+            game = await create_game(
+                target_word="слон",
+                category="Животные",
+                lang="ru",
+                inline_message_id="inline_ttl_active",
+                creator_id=5,
+            )
+            await game.process_guess("кот")
+
+        assert fake_redis.set_calls[0][1] == 900
+        assert fake_redis.set_calls[-1][1] == 1200
+
+    async def test_judge_unavailable_refreshes_active_ttl_without_counting_attempt(self):
+        fake_redis = _FakeRedis()
+        with (
+            patch("app.cache.redis_client", fake_redis),
+            patch(
+                "app.games.judge._race_generate",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            game = await create_game(
+                target_word="слон",
+                category="Животные",
+                lang="ru",
+                inline_message_id="inline_ttl_unavailable",
+                creator_id=5,
+            )
+            event = await game.process_guess("кот")
+
+        assert event["event"] == "judge_unavailable"
+        assert len(game.attempts) == 0
+        assert game.status == "active"
+        assert fake_redis.set_calls[0][1] == 900
+        assert fake_redis.set_calls[-1][1] == 1200
+        assert len(fake_redis.set_calls) == 2
+
     async def test_empty_guess_returns_error(self):
         game = await create_game(
             target_word="тест",
@@ -583,4 +652,3 @@ class TestGameAccessors:
         from app.games.crocodile import _mem_history, get_game_history
         _mem_history["test-id"] = [{"event": "guess", "guess": "кот"}]
         assert get_game_history("test-id") == [{"event": "guess", "guess": "кот"}]
-

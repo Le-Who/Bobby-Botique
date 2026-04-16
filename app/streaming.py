@@ -53,6 +53,13 @@ _voice_requested: contextvars.ContextVar[bool] = contextvars.ContextVar("voice_r
 # Tag emitted by the LLM when the user asks for voice output.
 _VOICE_TAG = "[VOICE]"
 
+_HALLUCINATED_TOOL_INLINE_RE = re.compile(
+    r"\[tool_code\]\s*(?:print\()?(?:google_search\.search)\([^)\n]*\)\)?\s*",
+)
+_HALLUCINATED_TOOL_LINE_RE = re.compile(
+    r"^(?:import google_search|(?:print\()?(?:google_search\.search)\([^)\n]*\)\)?)\s*$",
+)
+
 
 def set_last_finish_reason(reason: str | None) -> None:
     """Pass finish_reason from the provider back to the streaming loop."""
@@ -265,29 +272,51 @@ class StreamingWriter:
         assert sanitized is not None  # guaranteed: input is str, not None
         return sanitized, parse_mode
 
+    @staticmethod
+    def _strip_hallucinated_tool_trace(text: str) -> str:
+        """Remove only clearly hallucinated internal tool-execution traces.
+
+        Preserve normal code samples, fenced blocks, and explanatory mentions.
+        """
+        if "[tool_code]" not in text:
+            return text
+
+        cleaned = StreamingWriter._remove_tool_code_lines(text)
+        return _HALLUCINATED_TOOL_INLINE_RE.sub("", cleaned)
+
+    @staticmethod
+    def _remove_tool_code_lines(text: str) -> str:
+        lines = text.splitlines(keepends=True)
+        kept: list[str] = []
+        skip = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped == "[tool_code]":
+                skip = True
+                continue
+            if skip and (not stripped or _HALLUCINATED_TOOL_LINE_RE.match(stripped)):
+                continue
+            if skip:
+                skip = False
+            kept.append(line)
+        return "".join(kept)
+
     async def write(self, delta: str) -> None:
         """Accumulate a text delta and flush to Telegram if debounce allows."""
         self._buffer += delta
         self._full_text += delta
         self._pending_chars += len(delta)
 
-        # Clean Google GenAI token execution hallucinations (gemini-3.1-pro/flash bug)
-        if "[tool_code]" in self._buffer or "google_search.search" in self._buffer or "```" in self._buffer:
-            import re
+        # Clean clearly hallucinated tool execution traces without stripping legitimate code samples.
+        if "[tool_code]" in self._buffer:
             old_len = len(self._buffer)
-            # Remove [tool_code] python invocation
-            patt1 = r'\[tool_code\]\s*(?:print\()?(?:google_search\.search|search)\(.*?\)?\)\s*'
-            new_buf = re.sub(patt1, '', self._buffer, flags=re.DOTALL)
-            # Remove markdown python invocation
-            patt2 = r'```(?:python)?\s*(?:import google_search\s*)?(?:(?:print\()?(?:google_search\.search|search)\(.*?\)?\)\s*)+\s*```\s*'
-            new_buf = re.sub(patt2, '', new_buf, flags=re.DOTALL)
+            new_buf = self._strip_hallucinated_tool_trace(self._buffer)
 
             if new_buf != self._buffer:
                 diff = old_len - len(new_buf)
                 self._buffer = new_buf
                 # Keep full_text synchronized
-                new_full = re.sub(patt1, '', self._full_text, flags=re.DOTALL)
-                new_full = re.sub(patt2, '', new_full, flags=re.DOTALL)
+                new_full = self._strip_hallucinated_tool_trace(self._full_text)
                 self._full_text = new_full
                 self._pending_chars = max(0, self._pending_chars - diff)
 

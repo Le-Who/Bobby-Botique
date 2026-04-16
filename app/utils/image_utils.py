@@ -33,12 +33,9 @@ class TaggedImage:
 
 
 # Global process pool for image processing outside the GIL.
-# max_tasks_per_child=1 ensures each worker process exits after handling one
-# image, so accumulated PIL/pymalloc memory is returned to the OS immediately.
-_image_process_pool = concurrent.futures.ProcessPoolExecutor(
-    max_workers=2,
-    max_tasks_per_child=1,
-)
+# Lazily initialized to keep module imports safe in restricted environments.
+_image_process_pool: concurrent.futures.ProcessPoolExecutor | None = None
+_image_process_pool_failed = False
 
 # TTL cache for compressed images — avoids reprocessing on retries/follow-ups.
 # Keyed by cache_key (e.g. Telegram file_unique_id). Max 50 entries, 3 min TTL.
@@ -56,6 +53,31 @@ TASK_DIMS: dict[str, int] = {
 
 # Fallback JPEG quality levels when the result exceeds max_size_mb
 _FALLBACK_QUALITIES = (75, 65)
+
+
+def _get_image_process_pool() -> concurrent.futures.ProcessPoolExecutor | None:
+    """Return the shared image process pool, creating it on first use.
+
+    Returns None if process-pool creation is unavailable in the current environment.
+    Callers should gracefully fall back to the loop's default thread executor.
+    """
+    global _image_process_pool, _image_process_pool_failed
+    if _image_process_pool is not None:
+        return _image_process_pool
+    if _image_process_pool_failed:
+        return None
+
+    try:
+        _image_process_pool = concurrent.futures.ProcessPoolExecutor(
+            max_workers=2,
+            max_tasks_per_child=1,
+        )
+    except Exception as e:
+        _image_process_pool_failed = True
+        logging.warning("Image process pool unavailable, falling back to thread executor: %s", e)
+        return None
+
+    return _image_process_pool
 
 
 def _image_worker(
@@ -169,9 +191,10 @@ async def save_image_as_bytes(
         return _compressed_cache[cache_key]
 
     loop = asyncio.get_running_loop()
+    executor = _get_image_process_pool()
     try:
         result = await asyncio.wait_for(
-            loop.run_in_executor(_image_process_pool, _image_worker, image_data, max_size_mb, task_type),
+            loop.run_in_executor(executor, _image_worker, image_data, max_size_mb, task_type),
             timeout=timeout,
         )
         if cache_key and result is not None:
@@ -186,8 +209,10 @@ def shutdown_image_pool() -> None:
     """Shut down the global image process pool (call during bot shutdown)."""
     global _image_process_pool
     try:
-        _image_process_pool.shutdown(wait=False, cancel_futures=True)
-        logging.info("Image process pool shut down")
+        if _image_process_pool is not None:
+            _image_process_pool.shutdown(wait=False, cancel_futures=True)
+            _image_process_pool = None
+            logging.info("Image process pool shut down")
     except Exception as e:
         logging.warning("Error shutting down image process pool: %s", e)
 

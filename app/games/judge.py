@@ -215,8 +215,10 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
     from app.errors import classify_key_error
     from app.metrics import metrics_collector
     from app.providers.gemini import get_cached_genai_client
+    from app.repos.keys import get_key_status_manager
 
     use_case = AgentRequestUseCase()
+    status_mgr = get_key_status_manager()
     prompt = _SYSTEM_PROMPT.format(W=target, G=guess)
 
     config = _gtypes.GenerateContentConfig(
@@ -243,6 +245,9 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
                 return None
             data = json.loads(text)
             result = GuessJudgement.model_validate(data)
+            asyncio.create_task(  # noqa: RUF006
+                status_mgr.record_success(key_hash, model)
+            )
             # Increment usage counter on success (fire-and-forget)
             asyncio.create_task(  # noqa: RUF006
                 use_case.increment_key_usage(key_hash, model, use_openrouter=False)
