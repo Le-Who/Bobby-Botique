@@ -71,18 +71,21 @@ def get_vertex_client() -> "genai.Client | None":
         return _vertex_client
     _vertex_client_initialized = True
 
-    key = settings.VERTEX_AI_KEY
     project = settings.VERTEX_AI_PROJECT
     location = settings.VERTEX_AI_LOCATION or "us-central1"
 
-    if not key or not project:
+    if not project:
         return None  # Not configured — degrade gracefully
 
     try:
         http_opts: dict[str, Any] = {"timeout": 90_000}
+        # NOTE: vertexai=True uses ADC / service-account credentials.
+        # Passing api_key= together with project= raises:
+        #   "Project/location and API key are mutually exclusive"
+        # Set GOOGLE_API_KEY / GOOGLE_APPLICATION_CREDENTIALS in the
+        # environment instead — the SDK picks them up automatically.
         _vertex_client = genai.Client(
             vertexai=True,
-            api_key=key,
             project=project,
             location=location,
             http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
