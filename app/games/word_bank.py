@@ -136,11 +136,19 @@ WORD_BANK: dict[str, dict[str, list[str]]] = {
 _CATEGORY_ALIASES: dict[str, tuple[str, str]] = {
     # Russian aliases → (lang, canonical_key)
     "животные": ("ru", "Животные"),
+    "животное": ("ru", "Животные"),
+    "звери": ("ru", "Животные"),
+    "зверь": ("ru", "Животные"),
     "animal": ("en", "Animals"),
     "animals": ("en", "Animals"),
     "еда": ("ru", "Еда"),
+    "пища": ("ru", "Еда"),
+    "напитки": ("ru", "Еда"),
     "food": ("en", "Food"),
     "профессии": ("ru", "Профессии"),
+    "профессия": ("ru", "Профессии"),
+    "работа": ("ru", "Профессии"),
+    "специальность": ("ru", "Профессии"),
     "professions": ("en", "Professions"),
     "profession": ("en", "Professions"),
     "спорт": ("ru", "Спорт"),
@@ -148,17 +156,25 @@ _CATEGORY_ALIASES: dict[str, tuple[str, str]] = {
     "sports": ("en", "Sports"),
     "фильмы": ("ru", "Фильмы"),
     "кино": ("ru", "Фильмы"),
+    "фильм": ("ru", "Фильмы"),
     "movies": ("en", "Movies"),
     "films": ("en", "Movies"),
     "техника": ("ru", "Техника"),
+    "технологии": ("ru", "Техника"),
+    "гаджеты": ("ru", "Техника"),
     "tech": ("en", "Tech"),
     "technology": ("en", "Tech"),
     "природа": ("ru", "Природа"),
+    "явления": ("ru", "Природа"),
     "nature": ("en", "Nature"),
     "разное": ("ru", "Разное"),
     "random": ("en", "Random"),
     "misc": ("en", "Random"),
     "разн": ("ru", "Разное"),
+    "случайное": ("ru", "Разное"),
+    "вектор": ("ru", "Разное"),
+    "предметы": ("ru", "Разное"),
+    "вещи": ("ru", "Разное"),
 }
 
 
@@ -168,12 +184,14 @@ def resolve_category(raw: str) -> tuple[str, str] | None:
     Returns None if no match found (caller should use a random category).
     """
     key = raw.strip().lower()
+    if not key:
+        return None
     if key in _CATEGORY_ALIASES:
         return _CATEGORY_ALIASES[key]
 
-    # Try prefix match (e.g. "жив" → "Животные")
+    # Try prefix match or root match safely
     for alias, pair in _CATEGORY_ALIASES.items():
-        if alias.startswith(key) and len(key) >= 3:
+        if len(key) >= 3 and (alias.startswith(key) or key.startswith(alias)):
             return pair
 
     return None
@@ -230,13 +248,51 @@ def find_word_category(word: str) -> str | None:
 
     Normalises to lowercase before lookup. Returns None if the word is not
     in the built-in bank (i.e., it is a genuinely custom player word).
-
-    Example:
-        find_word_category("германия")  # None — not in bank → "слово игрока"
-        find_word_category("крокодил")  # "Животные"
     """
     return _WORD_TO_CATEGORY.get(word.strip().lower())
 
+
+async def resolve_custom_word_category(word: str) -> str:
+    """Classify a custom word strictly into a canonical category, or fallback to 'Слово игрока' / 'Разное'."""
+    local_cat = find_word_category(word)
+    if local_cat:
+        return local_cat
+        
+    prompt = (
+        f"К какой категории из списка: [Животные, Еда, Профессии, Спорт, Фильмы, Техника, Природа, Разное] "
+        f"лучше всего относится слово '{word}'?\n"
+        "Ответь ТОЛЬКО названием одной категории. "
+        "Если ни одна категория строго не подходит, ответь 'Разное'."
+    )
+    
+    for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
+        try:
+            from app.agent_use_cases import AgentRequestUseCase
+            from app.providers.router import get_ai_response
+            
+            use_case = AgentRequestUseCase()
+            kd, mdl, _ = await use_case.resolve_ai_request(model)
+            if not kd or not mdl:
+                continue
+
+            response_text, _ = await asyncio.wait_for(
+                get_ai_response(
+                    api_key=kd["api_key"],
+                    history=[{"role": "user", "parts": [prompt]}],
+                    model_name=mdl,
+                    max_retries=1,
+                ),
+                timeout=4.0,
+            )
+            raw = (response_text or "").strip().strip("`'\" \r\n.")
+            for valid_cat in ("Животные", "Еда", "Профессии", "Спорт", "Фильмы", "Техника", "Природа", "Разное"):
+                if valid_cat.lower() in raw.lower():
+                    return valid_cat
+            return "Разное"
+        except Exception as exc:
+            logger.warning("Category resolve failed for %r model=%s: %s", word, model, exc)
+            
+    return "Слово игрока (произвольная тема)"
 
 
 # ── AI-generated word bank ───────────────────────────────────────────────────
@@ -246,14 +302,14 @@ def find_word_category(word: str) -> str | None:
 _GENERATED_CACHE: dict[str, list[str]] = {}
 
 # Gemini models tried in order for word generation
-_GEN_PRIMARY_MODEL = "gemini-2.0-flash-lite"
+_GEN_PRIMARY_MODEL = "opencode-go/mimo-v2-omni"
 _GEN_FALLBACK_MODEL = "gemini-2.5-flash"
-_GEN_TIMEOUT_S = 8.0
+_GEN_TIMEOUT_S = 18.0
 
 _GEN_PROMPT = (
-    "Ты помощник игры 'Крокодил'. Придумай ровно 10 существительных на тему \"{category}\"."
+    "Ты помощник игры 'Крокодил'. Придумай ровно 20 существительных на тему \"{category}\"."
     " Слова должны быть:"
-    " конкретные, легко изображаемые жестами; от 2 до 3 слов в словосочетании; на \"{lang_hint}\"."
+    " конкретные, легко изображаемые жестами; от 1 до 3 слов в словосочетании; на \"{lang_hint}\"."
     " Ответь ТОЛЬКО JSON-массивом строк, без пояснений. Пример: [\"слово1\",\"слово2\"]"
 )
 
@@ -263,9 +319,9 @@ async def generate_words_for_category(
     *,
     lang: str = "ru",
 ) -> list[str] | None:
-    """Call Gemini to generate 10 words for an unknown category.
+    """Call LLM to generate 20 words for an unknown category.
 
-    Returns None if the category is invalid/unintelligible or Gemini times out.
+    Returns None if the category is invalid/unintelligible or LLM times out.
     Results are cached in-process by (lang, lower(category)) so repeated calls
     within the same container don't re-invoke the LLM.
     """
@@ -274,40 +330,35 @@ async def generate_words_for_category(
         return _GENERATED_CACHE[cache_key]
 
     lang_hint = "русском" if lang == "ru" else "English"
+    # Ensure system constraint explicitly for json arrays:
     prompt = _GEN_PROMPT.format(category=category.strip(), lang_hint=lang_hint)
-
+    
     for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
         try:
-            from google import genai  # type: ignore[import]
+            from app.agent_use_cases import AgentRequestUseCase
+            from app.providers.router import get_ai_response
 
-            from app.config import settings
+            use_case = AgentRequestUseCase()
+            kd, mdl, _ = await use_case.resolve_ai_request(model)
+            if not kd or not mdl:
+                continue
 
-            keys = list(settings.GEMINI_API_KEYS)
-            if not keys:
-                break
-            api_key = keys[0]
-
-            client = genai.Client(api_key=api_key)
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    lambda c=client, m=model: c.models.generate_content(  # type: ignore[misc]
-                        model=m,
-                        contents=prompt,
-                        config={
-                            "temperature": 0.9,
-                            "max_output_tokens": 256,
-                        },
-                    )
+            response_text, _ = await asyncio.wait_for(
+                get_ai_response(
+                    api_key=kd["api_key"],
+                    history=[{"role": "user", "parts": [prompt]}],
+                    model_name=mdl,
+                    max_retries=1,
                 ),
                 timeout=_GEN_TIMEOUT_S,
             )
-            raw = (response.text or "").strip()
+            raw = (response_text or "").strip()
             # Strip markdown code fences if model wraps output
             raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.IGNORECASE)
             raw = re.sub(r"\n?```$", "", raw).strip()
 
             words: list[str] = json.loads(raw)
-            if not isinstance(words, list) or len(words) < 3:
+            if not isinstance(words, list) or len(words) < 5:
                 logger.warning("Gemini returned bad word list for %r: %r", category, words)
                 return None
 
@@ -317,7 +368,7 @@ async def generate_words_for_category(
                 for w in words
                 if isinstance(w, str) and 2 <= len(w.strip()) <= 60
             ]
-            if len(clean) < 3:
+            if len(clean) < 5:
                 return None
 
             _GENERATED_CACHE[cache_key] = clean

@@ -813,15 +813,13 @@ async def _init_croc_game_async(
                     reply_markup=InlineKeyboardMarkup([]),
                 )
                 return
-            category = "custom"
             lang = "ru" if any("\u0400" <= c <= "\u04ff" for c in word) else "en"
-            # Bug-6.3/6.4: Check if this word is already in the built-in bank;
-            # use the canonical category so the hints LLM has real context.
-            bank_cat = find_word_category(word)
-            # Use canonical category if word is in the bank; otherwise give the LLM
-            # a human-readable context instead of the opaque "custom" string that
-            # caused hallucination (Bug-6.3/6.4).
-            category = bank_cat or "слово игрока (произвольная тема)"
+            
+            # Use AI or static local matching to determine category strictly 
+            # instead of creating generic "Слово игрока" directly.
+            from app.games.word_bank import resolve_custom_word_category
+            category = await resolve_custom_word_category(word)
+
         else:
             category_raw = arg or "разное"
             try:

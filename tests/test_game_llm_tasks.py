@@ -63,28 +63,33 @@ class TestLLMTasks:
 
     async def test_generate_words_success(self):
         """LLM-03: Successfully runs and parses JSON array format."""
-        mock_response = MagicMock()
-        mock_response.text = '["кот", "собака", "тигр"]'
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase") as AgentRequestUseCase_mock,
+            patch("app.providers.router.get_ai_response", new_callable=AsyncMock) as get_ai_response_mock,
+        ):
+            use_case_inst = AgentRequestUseCase_mock.return_value
+            use_case_inst.resolve_ai_request = AsyncMock(return_value=({"api_key": "test_key"}, "test_model", None))
 
-        mock_client_inst = MagicMock()
-        mock_client_inst.models.generate_content.return_value = mock_response
+            # Must be >= 5 words or validate_words returns None
+            get_ai_response_mock.return_value = ('["кот", "собака", "тигр", "медведь", "лиса"]', 10)
 
-        with patch("google.genai.Client", return_value=mock_client_inst):
-            words = await generate_words_for_category("Животные", lang="ru")
+            words = await generate_words_for_category("зверолов_тест", lang="ru")
 
             assert words is not None
-            assert len(words) == 3
+            assert len(words) == 5
             assert words[0] == "кот"
             assert words[1] == "собака"
 
     async def test_generate_words_value_error_if_empty(self):
         """LLM-04: Returns None if empty array returned."""
-        mock_response = MagicMock()
-        mock_response.text = '[]'
+        with (
+            patch("app.agent_use_cases.AgentRequestUseCase") as AgentRequestUseCase_mock,
+            patch("app.providers.router.get_ai_response", new_callable=AsyncMock) as get_ai_response_mock,
+        ):
+            use_case_inst = AgentRequestUseCase_mock.return_value
+            use_case_inst.resolve_ai_request = AsyncMock(return_value=({"api_key": "test_key"}, "test_model", None))
+            
+            get_ai_response_mock.return_value = ('[]', 5)
 
-        mock_client_inst = MagicMock()
-        mock_client_inst.models.generate_content.return_value = mock_response
-
-        with patch("google.genai.Client", return_value=mock_client_inst):
             words = await generate_words_for_category("asdfasdfasdf", lang="ru")
             assert words is None

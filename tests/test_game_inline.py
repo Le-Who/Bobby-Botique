@@ -116,15 +116,14 @@ class TestInitCrocGameAsync:
     async def test_custom_word_mode(self, mock_bot):
         """'=word' arg bypasses pick_random_word and creates a custom game.
 
-        Bug-6.3 fix: category is now resolved via find_word_category.
-        For words NOT in the built-in bank it becomes 'слово игрока (произвольная тема)'
-        instead of the opaque 'custom' string that caused hint hallucination.
+        Bug-6.3 fix: category is now resolved via resolve_custom_word_category.
         """
         with (
             patch("app.games.word_bank.pick_random_word", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
-            patch("app.games.word_bank.find_word_category", return_value=None) as find_mock,
+            patch("app.games.word_bank.resolve_custom_word_category", new_callable=AsyncMock) as find_mock,
         ):
+            find_mock.return_value = "слово игрока"
             create_mock.return_value = AsyncMock(game_id="game-2")
 
             await _init_croc_game_async(
@@ -135,10 +134,10 @@ class TestInitCrocGameAsync:
             )
 
             pick_mock.assert_not_called()
-            find_mock.assert_called_once_with("секрет")
+            find_mock.assert_awaited_once_with("секрет")
             create_mock.assert_awaited_once_with(
                 target_word="секрет",
-                category="слово игрока (произвольная тема)",
+                category="слово игрока",
                 lang="ru",  # detected via cyrillic check
                 inline_message_id="msg-3",
                 creator_id=42,
@@ -152,8 +151,9 @@ class TestInitCrocGameAsync:
         with (
             patch("app.games.word_bank.pick_random_word", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
-            patch("app.games.word_bank.find_word_category", return_value="Животные") as find_mock,
+            patch("app.games.word_bank.resolve_custom_word_category", new_callable=AsyncMock) as find_mock,
         ):
+            find_mock.return_value = "Животные"
             create_mock.return_value = AsyncMock(game_id="game-bank")
 
             await _init_croc_game_async(
@@ -164,7 +164,7 @@ class TestInitCrocGameAsync:
             )
 
             pick_mock.assert_not_called()
-            find_mock.assert_called_once_with("крокодил")
+            find_mock.assert_awaited_once_with("крокодил")
             # Category should be the canonical bank value, NOT 'слово игрока'
             create_mock.assert_awaited_once_with(
                 target_word="крокодил",
