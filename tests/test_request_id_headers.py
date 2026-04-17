@@ -43,9 +43,9 @@ async def test_openrouter_request_adds_request_id_header():
 
     with (
         patch(
-            "app.providers.openrouter._openrouter_http_client.post",
-            new=AsyncMock(return_value=mock_response),
-        ) as mock_post,
+            "app.providers.openrouter._openrouter_http_client",
+            new=MagicMock(post=AsyncMock(return_value=mock_response)),
+        ) as mock_client,
         patch(
             "app.providers.openrouter.metrics_collector.record_api_call",
             new=AsyncMock(),
@@ -64,7 +64,7 @@ async def test_openrouter_request_adds_request_id_header():
 
     assert resp.text == "ok"
     assert resp.token_count == 7
-    assert mock_post.await_count == 1
-    assert mock_post.await_args.kwargs["headers"]["X-Request-ID"] == "req-openrouter-456"
+    assert mock_client.post.await_count == 1
+    assert mock_client.post.await_args.kwargs["headers"]["X-Request-ID"] == "req-openrouter-456"
 
     clear_request_id()

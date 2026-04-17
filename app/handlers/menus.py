@@ -523,12 +523,15 @@ async def get_metrics_content():
     if metrics.get("model_usage"):
         parts.append("*🤖 Использование моделей:*\n")
         for model, count in metrics["model_usage"].items():
-            # Пропускаем записи, которые содержат имена fileов (это ошибки в логике)
+            # Пропускаем записи, которые содержат имена файлов (ошибки в логике),
+            # но разрешаем модели со слешем (например, opencode-go/)
             if (
                 isinstance(model, str)
                 and isinstance(count, (int, float))
-                and not any(char in model for char in ["/", "\\", ".pdf", ".docx", ".doc"])
+                and not any(model.endswith(ext) for ext in [".pdf", ".docx", ".doc"])
+                and not any(char in model for char in ["\\"])
             ):
+                # Дополнительная проверка: слеш допустим только если это похоже на название модели (без расширений)
                 parts.append(f"• {model}: `{count}`\n")
         parts.append("\n")
 

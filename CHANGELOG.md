@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.13.3] - 2026-04-17 - Miniapp Core Logic & Metrics Filtering
+
+### 🐛 Critical Bug Fixes
+
+- **Miniapp UI Deadlock (`app/templates/miniapp.html`):** Removed a duplicated `loadSettings()` closure that caused a JS `SyntaxError` on initialization. This error prevented the entire script from being parsed, preventing tab state assignment and rendering the bottom UI bar completely unclickable.
+- **Opencode Models Missing in Metrics (`app/handlers/menus.py`):** The model usage aggregator historically stripped any string containing the `/` character, confusing `opencode-go/mimo-v2-omni` style identifiers with invalid file paths. Updated the logic to only trim literal file extensions (`.pdf`, `.docx`) and backslashes, restoring opencode models to the `/metrics` dashboard.
+
+### 🧪 Tests
+
+- **`test_request_id_headers.py`**: Fixed a test suite `AttributeError` caused by dynamically mocking a module-wide `httpx.AsyncClient`'s `.post` method when the client initialization returned `None`. Now mocks the parent client directly.
+
+### ✅ Verification
+
+- Full suite: **1812 passed, 0 failed** (1m 41s, `pytest-xdist -n auto`)
+
 ## [2.13.2] - 2026-04-17 - Test Suite Stabilization & Contamination Fixes
 
 ### 🐛 Critical Bug Fixes

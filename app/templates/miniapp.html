@@ -1117,28 +1117,6 @@ async function loadSettings() {
     
     isDirty = false;
   } catch(e) { showToast('Ошибка загрузки настроек'); }
-}    document.getElementById('s-search').checked = settingsData.search_enabled;
-    
-    // Thinking
-    setThinking(settingsData.thinking_level || 'off', true);
-    
-    // Temp
-    syncTempControls(settingsData.temperature);
-    syncTtsTempControls(settingsData.tts_temperature);
-    
-    // Voices
-    let vHtml = '';
-    (v.voices || []).forEach(voice => {
-      let isActive = settingsData.voice_id === voice.id || (!settingsData.voice_id && voice.name.includes("Charlotte"));
-      vHtml += `<div class="setting-row" onclick="setVoice('${voice.id}')">
-        <div class="setting-label">${esc(voice.name)}</div>
-        <div class="setting-val">${isActive ? '✓' : ''}</div>
-      </div>`;
-    });
-    document.getElementById('settings-voices-list').innerHTML = vHtml;
-    
-    isDirty = false;
-  } catch(e) { showToast('Ошибка загрузки настроек'); }
 }
 
 function renderRoles(activePrompt) {
