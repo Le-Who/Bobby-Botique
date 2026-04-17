@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>🎙️ Live AI</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    :root {
+      --bg:          #0a0d14;
+      --surface:     rgba(255,255,255,0.06);
+      --surface-alt: rgba(255,255,255,0.10);
+      --border:      rgba(255,255,255,0.10);
+      --accent:      #00e0ff;
+      --accent-warm: #ff6b6b;
+      --accent-ok:   #00e096;
+      --text:        #e8eaf0;
+      --text-dim:    rgba(232,234,240,0.55);
+      --blur:        blur(20px);
+      --radius:      16px;
+      --font:        'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100dvh;
+      gap: 24px;
+      padding: 32px 24px;
+    }
+
+    /* ── Status section ─────────────────────────────────────────────── */
+    #status-label {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-dim);
+      text-align: center;
+      min-height: 20px;
+      transition: color .3s;
+    }
+    #status-label.active { color: var(--accent-ok); }
+    #status-label.error  { color: var(--accent-warm); }
+
+    /* ── Waveform visualizer ────────────────────────────────────────── */
+    #visualizer-wrap {
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle, rgba(0,224,255,.08) 0%, transparent 70%);
+      position: relative;
+    }
+
+    #visualizer-wrap.recording {
+      animation: pulse-ring 2s ease-in-out infinite;
+    }
+    @keyframes pulse-ring {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0,224,255,.25); }
+      50%      { box-shadow: 0 0 0 24px rgba(0,224,255,.0); }
+    }
+
+    canvas#visualizer {
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+    }
+
+    /* ── Transcript feed ────────────────────────────────────────────── */
+    #transcript-area {
+      width: 100%;
+      max-width: 400px;
+      max-height: 160px;
+      overflow-y: auto;
+      padding: 12px 16px;
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-dim);
+      text-align: center;
+      -webkit-overflow-scrolling: touch;
+    }
+    #transcript-area:empty::after {
+      content: "Транскрипт появится здесь…";
+      opacity: .5;
+    }
+
+    .t-user { color: var(--accent); font-weight: 500; }
+    .t-ai   { color: var(--text); }
+
+    /* ── Controls ───────────────────────────────────────────────────── */
+    #controls {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .ctrl-btn {
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px;
+      transition: transform .15s, box-shadow .15s;
+      flex-shrink: 0;
+    }
+    .ctrl-btn:active { transform: scale(.88); }
+    .ctrl-btn:disabled { opacity: .3; cursor: not-allowed; transform: none; }
+
+    #mic-btn {
+      background: linear-gradient(135deg, var(--accent), #6d72ff);
+      color: #000;
+      box-shadow: 0 4px 20px rgba(0,224,255,.35);
+    }
+    #mic-btn.recording {
+      background: linear-gradient(135deg, var(--accent-warm), #ff9f43);
+      box-shadow: 0 4px 20px rgba(255,107,107,.35);
+    }
+
+    #end-btn {
+      width: 48px; height: 48px;
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 20px;
+    }
+
+    /* ── Error bar ──────────────────────────────────────────────────── */
+    #error-bar {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      padding: 12px 20px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+      background: rgba(255,107,107,.14);
+      border-top: 1px solid rgba(255,107,107,.3);
+      color: var(--accent-warm);
+      font-size: 13px; text-align: center;
+      transform: translateY(100%);
+      transition: transform .3s;
+      z-index: 30;
+    }
+    #error-bar.show { transform: translateY(0); }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <div id="status-label">Нажмите 🎙️ чтобы начать</div>
+
+  <div id="visualizer-wrap">
+    <canvas id="visualizer" width="180" height="180"></canvas>
+  </div>
+
+  <div id="transcript-area"></div>
+
+  <div id="controls">
+    <button id="end-btn" class="ctrl-btn" title="Завершить" disabled>✕</button>
+    <button id="mic-btn" class="ctrl-btn" title="Начать запись" id="mic-btn">🎙️</button>
+  </div>
+</div>
+
+<div id="error-bar"></div>
+
+<script>
+/* ── Telegram WebApp ────────────────────────────────────────────────── */
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+  tg.setHeaderColor?.('#0a0d14');
+  tg.setBackgroundColor?.('#0a0d14');
+}
+const haptic = tg?.HapticFeedback;
+const INIT_DATA = tg?.initData || '';
+
+/* ── DOM refs ───────────────────────────────────────────────────────── */
+const $ = id => document.getElementById(id);
+const statusEl    = $('status-label');
+const micBtn      = $('mic-btn');
+const endBtn      = $('end-btn');
+const vizWrap     = $('visualizer-wrap');
+const canvas      = $('visualizer');
+const ctx         = canvas.getContext('2d');
+const transcriptEl = $('transcript-area');
+const errorBar    = $('error-bar');
+
+/* ── State ──────────────────────────────────────────────────────────── */
+let ws = null;
+let recording = false;
+let audioCtx = null;
+let workletNode = null;
+let micStream = null;
+let playbackCtx = null;
+let playbackQueue = [];
+let isPlaying = false;
+
+/* ── Error bar ──────────────────────────────────────────────────────── */
+function showError(msg) {
+  errorBar.textContent = msg;
+  errorBar.classList.add('show');
+  setTimeout(() => errorBar.classList.remove('show'), 4000);
+}
+
+function setStatus(text, cls = '') {
+  statusEl.textContent = text;
+  statusEl.className = cls;
+}
+
+/* ── Visualizer ─────────────────────────────────────────────────────── */
+let vizAnimId = null;
+let vizAnalyser = null;
+
+function startViz(analyser) {
+  vizAnalyser = analyser;
+  const bufLen = analyser.frequencyBinCount;
+  const dataArr = new Uint8Array(bufLen);
+
+  function draw() {
+    vizAnimId = requestAnimationFrame(draw);
+    analyser.getByteFrequencyData(dataArr);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+    const bars = 48;
+    const maxR = 80;
+    const minR = 30;
+
+    for (let i = 0; i < bars; i++) {
+      const idx = Math.floor(i * bufLen / bars);
+      const v = dataArr[idx] / 255;
+      const angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
+      const r0 = minR;
+      const r1 = minR + v * (maxR - minR);
+
+      ctx.beginPath();
+      ctx.moveTo(cx + r0 * Math.cos(angle), cy + r0 * Math.sin(angle));
+      ctx.lineTo(cx + r1 * Math.cos(angle), cy + r1 * Math.sin(angle));
+      ctx.strokeStyle = `hsl(${180 + v * 60}, 100%, ${50 + v * 30}%)`;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+  }
+  draw();
+}
+
+function stopViz() {
+  if (vizAnimId) cancelAnimationFrame(vizAnimId);
+  vizAnimId = null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+/* ── Playback (PCM 24kHz from Gemini → AudioContext) ────────────────── */
+function initPlayback() {
+  if (!playbackCtx) {
+    playbackCtx = new AudioContext({ sampleRate: 24000 });
+  }
+}
+
+function enqueueAudio(base64Pcm) {
+  // Decode base64 → ArrayBuffer → Int16 → Float32
+  const raw = atob(base64Pcm);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  const int16 = new Int16Array(bytes.buffer);
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) {
+    float32[i] = int16[i] / 32768;
+  }
+
+  const buf = playbackCtx.createBuffer(1, float32.length, 24000);
+  buf.getChannelData(0).set(float32);
+  playbackQueue.push(buf);
+
+  if (!isPlaying) drainPlayback();
+}
+
+function drainPlayback() {
+  if (playbackQueue.length === 0) { isPlaying = false; return; }
+  isPlaying = true;
+  const buf = playbackQueue.shift();
+  const src = playbackCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(playbackCtx.destination);
+  src.onended = drainPlayback;
+  src.start();
+}
+
+function flushPlayback() {
+  playbackQueue = [];
+  isPlaying = false;
+  // Interrupt currently playing audio by suspending & resuming context
+  if (playbackCtx && playbackCtx.state === 'running') {
+    playbackCtx.suspend().then(() => playbackCtx.resume());
+  }
+}
+
+/* ── WebSocket to Quart proxy ───────────────────────────────────────── */
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const enc = encodeURIComponent(INIT_DATA);
+  const url = `${proto}://${location.host}/webapp/live/ws?initData=${enc}`;
+
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    setStatus('Подключено к AI. Говорите!', 'active');
+    endBtn.disabled = false;
+  };
+
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+
+    switch (msg.type) {
+      case 'audio':
+        initPlayback();
+        enqueueAudio(msg.data);
+        break;
+
+      case 'interrupt':
+        flushPlayback();
+        break;
+
+      case 'input_transcript':
+        appendTranscript('Вы', msg.text, 't-user');
+        break;
+
+      case 'output_transcript':
+        appendTranscript('AI', msg.text, 't-ai');
+        break;
+
+      case 'error':
+        showError(msg.message || 'Ошибка сервера');
+        break;
+
+      case 'session_resumed':
+        setStatus('Сессия восстановлена', 'active');
+        break;
+    }
+  };
+
+  ws.onclose = (ev) => {
+    setStatus('Отключено', 'error');
+    if (recording) stopRecording();
+  };
+
+  ws.onerror = () => {};
+}
+
+/* ── Transcript ─────────────────────────────────────────────────────── */
+function appendTranscript(who, text, cls) {
+  if (!text) return;
+  const p = document.createElement('p');
+  p.className = cls;
+  p.textContent = `${who}: ${text}`;
+  transcriptEl.appendChild(p);
+  transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
+/* ── Mic capture via AudioWorklet ───────────────────────────────────── */
+async function startRecording() {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, sampleRate: 16000 }
+    });
+  } catch (err) {
+    showError('Нет доступа к микрофону');
+    return;
+  }
+
+  audioCtx = new AudioContext({ sampleRate: 48000 });
+  const source = audioCtx.createMediaStreamSource(micStream);
+
+  // Analyser for visualizer
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 256;
+  source.connect(analyser);
+
+  // AudioWorklet
+  try {
+    await audioCtx.audioWorklet.addModule('/static/js/audio-processor.js');
+    workletNode = new AudioWorkletNode(audioCtx, 'mic-processor');
+    workletNode.port.onmessage = (ev) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // ev.data is an ArrayBuffer of Int16 PCM
+      const b64 = arrayBufferToBase64(ev.data);
+      ws.send(JSON.stringify({
+        type: 'realtime_input',
+        mime_type: 'audio/pcm;rate=16000',
+        data: b64
+      }));
+    };
+    source.connect(workletNode);
+    workletNode.connect(audioCtx.destination); // needed for worklet to run
+  } catch (err) {
+    showError('AudioWorklet не поддерживается в этом браузере');
+    return;
+  }
+
+  recording = true;
+  micBtn.classList.add('recording');
+  micBtn.textContent = '⏸️';
+  vizWrap.classList.add('recording');
+  startViz(analyser);
+  setStatus('Слушаю…', 'active');
+  haptic?.impactOccurred('medium');
+
+  // Connect WebSocket after mic is ready
+  connectWS();
+}
+
+function stopRecording() {
+  recording = false;
+  micBtn.classList.remove('recording');
+  micBtn.textContent = '🎙️';
+  vizWrap.classList.remove('recording');
+  stopViz();
+
+  // Signal end of audio stream
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'audio_stream_end' }));
+  }
+
+  // Cleanup mic
+  if (workletNode) { workletNode.disconnect(); workletNode = null; }
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+
+  setStatus('Микрофон выключен');
+}
+
+function endSession() {
+  if (recording) stopRecording();
+  if (ws) { ws.close(); ws = null; }
+  flushPlayback();
+  setStatus('Сессия завершена');
+  endBtn.disabled = true;
+  haptic?.notificationOccurred('success');
+}
+
+/* ── Utility ────────────────────────────────────────────────────────── */
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/* ── Event Listeners ────────────────────────────────────────────────── */
+micBtn.addEventListener('click', () => {
+  if (!recording) {
+    startRecording();
+  } else {
+    stopRecording();
+  }
+});
+
+endBtn.addEventListener('click', endSession);
+</script>
+</body>
+</html>

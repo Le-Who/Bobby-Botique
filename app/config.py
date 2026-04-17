@@ -27,6 +27,9 @@ IMAGEN_MODEL_BASE: str = "imagen-4.0-generate-001"
 IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
 IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
 
+# --- Gemini Live API (real-time bidirectional audio) ---
+GEMINI_LIVE_MODEL: str = "gemini-3.1-flash-live-preview"
+
 # --- Pollinations.ai image models ---
 # Overridable via env: IMAGE_MODELS="flux,zimage,gptimage,..."
 # The list determines which buttons appear in the /draw Canvas keyboard AND
@@ -190,8 +193,8 @@ class Settings(BaseModel):
     # Requires a *Google Cloud* API key — NOT a Gemini AI Studio key.
     # How to get one: GCP Console → APIs & Services → Credentials → Create API Key
     # (or use Vertex AI Express Mode for a free-tier key).
-    VERTEX_AI_KEY: str = ""           # GCP API key bound to a service account
-    VERTEX_AI_PROJECT: str = ""       # GCP project ID where Vertex AI API is enabled
+    VERTEX_AI_KEY: str = ""  # GCP API key bound to a service account
+    VERTEX_AI_PROJECT: str = ""  # GCP project ID where Vertex AI API is enabled
     VERTEX_AI_LOCATION: str = "us-central1"  # Vertex AI region
 
     # --- Weather & Currency Direct APIs ---
@@ -252,7 +255,7 @@ class Settings(BaseModel):
     OPENCODE_RESEARCH_MODEL: str = "opencode-go/glm-5.1"  # Or keep qwen3.6-plus
     OPENCODE_URL_SELECTION_MODEL: str = "opencode-go/big-pickle"
     OPENCODE_VISION_MODEL: str = "opencode-go/mimo-v2-omni"
-    OPENCODE_INLINE_MODEL: str = "opencode-go/minimax-m2.5" # Fast but pleasant
+    OPENCODE_INLINE_MODEL: str = "opencode-go/minimax-m2.5"  # Fast but pleasant
 
     # --- API PROVIDER SELECTION ---
     # "opencode" routes primary chat/search/inline through Opencode Go with Gemini fallback.
@@ -329,7 +332,7 @@ def load_settings() -> Settings:
             "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
             "ADMIN_SECRET": os.getenv("ADMIN_SECRET"),
             "DATABASE_URL": os.getenv("DATABASE_URL"),
-            "ADMIN_ID": _load_int_env("ADMIN_ID"),
+            "ADMIN_ID": _load_int_env("ADMIN_ID", required=False) or 0,
             "PORT": os.getenv("PORT", "10000"),  # Provide a default for PORT
             "ENABLE_WEB_SERVER": os.getenv("ENABLE_WEB_SERVER", "true").lower() == "true",
             "WEBHOOK_SECRET_TOKEN": os.getenv("WEBHOOK_SECRET_TOKEN", "").strip(),
@@ -376,7 +379,9 @@ def load_settings() -> Settings:
             "OPENCODE_DEFAULT_MODEL": _load_single_model("OPENCODE_DEFAULT_MODEL", "opencode-go/qwen3.5-plus"),
             "OPENCODE_QNA_MODEL": _load_single_model("OPENCODE_QNA_MODEL", "opencode-go/qwen3.6-plus"),
             "OPENCODE_RESEARCH_MODEL": _load_single_model("OPENCODE_RESEARCH_MODEL", "opencode-go/glm-5.1"),
-            "OPENCODE_URL_SELECTION_MODEL": _load_single_model("OPENCODE_URL_SELECTION_MODEL", "opencode-go/big-pickle"),
+            "OPENCODE_URL_SELECTION_MODEL": _load_single_model(
+                "OPENCODE_URL_SELECTION_MODEL", "opencode-go/big-pickle"
+            ),
             "OPENCODE_VISION_MODEL": _load_single_model("OPENCODE_VISION_MODEL", "opencode-go/mimo-v2-omni"),
             "OPENCODE_INLINE_MODEL": _load_single_model("OPENCODE_INLINE_MODEL", "opencode-go/minimax-m2.5"),
             "PRIMARY_PROVIDER": os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower(),

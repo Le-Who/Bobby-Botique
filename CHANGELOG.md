@@ -3,6 +3,27 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.0] - 2026-04-18 - Live Audio Voice Chat (Gemini Live API)
+
+### 🚀 New Feature
+
+- **Live Audio Mini App (`app/templates/live_audio.html`, `app/static/js/audio-processor.js`):** Real-time bidirectional voice conversation with AI via a Telegram Mini App. Uses `gemini-3.1-flash-live-preview` for sub-second latency duplex audio streaming over WebSocket.
+  - **AudioWorklet Frontend:** Browser captures mic audio via an `AudioWorklet` processor that resamples to 16kHz mono PCM16 in 100ms chunks, fully offloading DSP from the main thread. Sends base64-encoded frames over WebSocket.
+  - **WebSocket Proxy (`app/web_miniapp.py` → `/webapp/live/ws`):** Quart WebSocket handler bridges the browser and Gemini Live API session (`client.aio.live.connect`). Concurrent `asyncio.create_task` producer/consumer loops handle full-duplex streaming with `try-finally` cleanup. Audio, text, and `audioStreamEnd` signals are forwarded to Gemini; audio chunks, transcripts, and interruption events are relayed back.
+  - **Playback Pipeline:** Gemini responds with PCM 24kHz audio relayed as base64 JSON. The frontend decodes and queues buffers through Web Audio API `AudioContext` for gapless sequential playback. Queue is flushed instantly on `interrupted` signal.
+  - **Waveform Visualizer:** Circular frequency-reactive bar visualizer using `AnalyserNode` with animated pulse ring during active recording.
+  - **Transcription Overlay:** Real-time input (user) and output (AI) transcripts are displayed in a scrolling glassmorphic transcript area.
+  - **Session Resilience:** Tracks `sessionResumptionUpdate` tokens for future reconnect support. 10-minute idle timeout. Telegram `initData` HMAC-SHA256 authentication (same as Crocodile).
+
+### 🔧 Infrastructure
+
+- **`GEMINI_LIVE_MODEL` Constant (`app/config.py`):** Added `gemini-3.1-flash-live-preview` as the canonical Live API model identifier, co-located with existing Imagen model constants.
+- **Static Page Route (`/webapp/live`):** New Quart route serving the Live Audio Mini App HTML shell.
+
+### ✅ Testing
+
+- **7 new tests (`tests/test_live_audio.py`):** Covers WebSocket auth (missing/invalid initData), static page serving (200 OK), audio forwarding (realtime_input → Gemini), interrupt relay, and input/output transcript streaming. All tests use fully mocked Gemini sessions — zero API calls.
+
 ## [2.14.1] - 2026-04-17 - Migration Hardening & Stability
 
 ### 🛡️ Deployment & Schema Reliability
