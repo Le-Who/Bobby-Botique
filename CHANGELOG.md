@@ -12,6 +12,11 @@ Format is optimized for agent-parseable context.
 - **Strict Migration Evaluation (`app/db/migrations.py`):** Rearchitected `run_migrations()` to implement hard-stop, fail-fast behavior. On encountering the first failure, dependent migrations immediately abort (Alembic-style). Modified the function to return a structured `MigrationResult` object instead of silently absorbing errors, and elevated critical schema failures to `CRITICAL` log severity.
 - **Schema Drift Observability (`app/database.py` & `app/admin_alerts.py`):** The application now analyzes runtime migration results. If schema drift or active failures are detected during bootstrap, it triggers a deferred webhook `_send_migration_alert()`. This leverages a newly created `alert_admin_raw()` utility to securely bypass PTB Application dependency loading and DM the administrator instantly, providing live observability without crashing the boot sequence.
 
+### 🐛 Bug Fixes & UX
+
+- **Routing Layer Key Exhaustion Logs (`app/agent_use_cases.py`):** Reduced the log level of `all_exhausted` events from `ERROR` to `DEBUG` inside `_resolve_opencode_request`. During expected parallel 'Race Request' deployments, normal fallback key rotations were triggering spurious production errors. The high-level provider router now exclusively handles UX-facing error reporting.
+- **Suggestion Cache Miss Handling (`app/handlers/cb_smart_actions.py`):** Added a safeguard in `suggestion_callback` to gracefully handle expired suggestion buttons (e.g., after a bot restart or multi-worker miss). Instead of sending the raw 10-character MD5 hash fragment back to the AI (which previously confused the model into responding "я получил от тебя буквы-цифры"), the bot now intercepts cache misses and triggers a native Telegram popup (`Подсказка устарела. Пожалуйста, напишите запрос вручную.`).
+
 ## [2.14.0] - 2026-04-17 - Crocodile Game: UX Hardening & Stability
 
 ### 🚀 UX Improvements

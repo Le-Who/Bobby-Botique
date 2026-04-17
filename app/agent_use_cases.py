@@ -111,7 +111,7 @@ class AgentRequestUseCase:
                 logging.info("Found available fallback key for model %s.", fallback_model)
                 return key, fallback_model, "confirm_fallback"
 
-        logging.error("All %s API keys for all models are exhausted or excluded.", provider_name)
+        logging.debug("All %s API keys for all models are exhausted or excluded.", provider_name)
         return None, None, "all_exhausted"
 
     async def _resolve_gemini_request(
@@ -195,7 +195,7 @@ class AgentRequestUseCase:
         for h in expired:
             del _opencode_key_health[h]
 
-        logging.error("All Opencode Go API keys are excluded (exhausted for this request).")
+        logging.debug("All Opencode Go API keys are excluded (exhausted for this request).")
         return None, None, "all_exhausted"
 
     async def get_ai_response(

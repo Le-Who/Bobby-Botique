@@ -34,7 +34,17 @@ async def suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     from app.utils.response_tags import SUGGESTION_CACHE
 
     # Try to look up the full text from the cache using the hash ID
-    suggestion_text = SUGGESTION_CACHE.get(suggestion_id_or_text, suggestion_id_or_text)
+    suggestion_text = SUGGESTION_CACHE.get(suggestion_id_or_text)
+    if not suggestion_text:
+        # If it's a cache miss and looks like an MD5 hash fragment, it's expired
+        if len(suggestion_id_or_text) <= 10 and all(c in "0123456789abcdefABCDEF" for c in suggestion_id_or_text):
+            try:
+                await query.answer("❌ Подсказка устарела. Пожалуйста, напишите запрос вручную.", show_alert=True)
+            except Exception:
+                pass
+            return
+        # Fallback for legacy buttons that might have full text in callback_data
+        suggestion_text = suggestion_id_or_text
 
     user = update.effective_user
     chat = update.effective_chat
