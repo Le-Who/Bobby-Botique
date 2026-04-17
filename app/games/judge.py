@@ -95,7 +95,7 @@ _SYSTEM_PROMPT = (
 
 _HINTS_PROMPT = (
     "Игра «Крокодил».\n"
-    "Загаданное слово: «{W}» (категория: {C}).\n"
+    "Загаданное слово: «{W}»{C_STR}.\n"
     "\n"
     "Дай РОВНО 3 подсказки на русском языке в JSON {{\"hints\": [\"...\",\"...\",\"...\"]}}.\n"
     "Подсказка 1 (неочевидная): намёк лишь на широкую область/тип. ≤12 слов.\n"
@@ -427,7 +427,8 @@ async def generate_hints(word: str, category: str) -> list[str]:
         logger.warning("generate_hints: no API key for word=%r", word)
         return []
 
-    prompt = _HINTS_PROMPT.format(W=word, C=category)
+    c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
+    prompt = _HINTS_PROMPT.format(W=word, C_STR=c_str)
 
     from google.genai import types as _gtypes
 
@@ -512,6 +513,12 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
     cached = await get_cached_judgement(target, guess)
     if cached is not None:
         cached.cached = True
+        
+        # Retroactive fix for already cached hot synonyms:
+        if cached.score >= 0.92:
+            asyncio.create_task(metrics_collector.record_request("judge", time.monotonic() - t0, success=True)) # noqa: RUF006
+            return "exact_match", cached
+            
         asyncio.create_task(  # noqa: RUF006
             metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         )
@@ -539,10 +546,17 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
         )
         return "judge_unavailable", sentinel
 
+    status_str = result.status
+    if result.score >= 0.92:
+        status_str = "exact_match"
+        result.status = "hot"
+        result.score = 1.0
+        result.hint = "Угадано! 🎉"
+
     # Cache result for future identical guesses (fire-and-forget)
     asyncio.create_task(cache_judgement(target, guess, result))  # noqa: RUF006
 
     asyncio.create_task(  # noqa: RUF006
         metrics_collector.record_request("judge", elapsed, success=True)
     )
-    return result.status, result
+    return status_str, result
