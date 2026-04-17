@@ -452,7 +452,7 @@ async def generate_hints(word: str, category: str) -> list[str]:
                     contents=prompt,
                     config=config,
                 ),
-                timeout=12.0,  # Background task — can wait longer than guess judge
+                timeout=25.0,  # Background task — increased timeout (hints only show UI after 10s)
             )
             text = getattr(response, "text", None) or ""
             if not text:
