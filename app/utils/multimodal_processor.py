@@ -295,7 +295,7 @@ async def _classify_intent_with_fallback(
                 # ── Opencode path ─────────────────────────────────────────
                 from app.handlers.ai_core import _resolve_ai_request
 
-                key_data, model_used, resolution = await _resolve_ai_request(
+                key_data, model_used, _ = await _resolve_ai_request(
                     model, use_openrouter=False
                 )
                 if not key_data:

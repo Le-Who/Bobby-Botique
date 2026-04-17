@@ -70,6 +70,26 @@ WORD_BANK: dict[str, dict[str, list[str]]] = {
             "цунами", "мангровый лес", "большой барьерный риф", "гейзер",
             "каньон", "болото", "пещера", "ледник", "атолл", "плато",
         ],
+        "Транспорт": [
+            "вертолёт", "подводная лодка", "дирижабль", "паром", "трактор",
+            "мотоцикл", "трамвай", "канатная дорога", "катамаран", "квадроцикл",
+            "ракета", "дрезина", "рикша", "аэросани", "самокат",
+        ],
+        "Одежда": [
+            "кимоно", "бушлат", "пончо", "сарафан", "тюрбан",
+            "смокинг", "гетры", "кираса", "фартук", "бриджи",
+            "пижама", "кепка", "рукавицы", "жилет", "мантия",
+        ],
+        "Музыка": [
+            "виолончель", "балалайка", "маракасы", "контрабас", "аккордеон",
+            "банджо", "диджериду", "волынка", "арфа", "кастаньеты",
+            "ситар", "гобой", "фагот", "там-там", "укулеле",
+        ],
+        "Космос": [
+            "астероид", "туманность", "гравитация", "орбита", "солнечный ветер",
+            "чёрная дыра", "нейтронная звезда", "космическая станция", "кратер",
+            "метеорит", "галактика", "сверхнова", "пульсар", "атмосфера", "зонд",
+        ],
         "Разное": [
             "бумеранг", "зонтик", "кальян", "будильник", "телескоп",
             "перископ", "лабиринт", "домино", "маятник", "компас",
@@ -122,6 +142,26 @@ WORD_BANK: dict[str, dict[str, list[str]]] = {
             "tsunami", "mangrove forest", "great barrier reef", "geyser",
             "canyon", "swamp", "cave", "glacier", "atoll", "plateau",
         ],
+        "Transport": [
+            "helicopter", "submarine", "airship", "ferry", "tractor",
+            "motorcycle", "tram", "cable car", "catamaran", "quad bike",
+            "rocket", "handcar", "rickshaw", "snowmobile", "scooter",
+        ],
+        "Clothing": [
+            "kimono", "peacoat", "poncho", "sundress", "turban",
+            "tuxedo", "leg warmers", "breastplate", "apron", "breeches",
+            "pyjamas", "cap", "mittens", "waistcoat", "mantle",
+        ],
+        "Music": [
+            "cello", "balalaika", "maracas", "double bass", "accordion",
+            "banjo", "didgeridoo", "bagpipes", "harp", "castanets",
+            "sitar", "oboe", "bassoon", "tam-tam", "ukulele",
+        ],
+        "Space": [
+            "asteroid", "nebula", "gravity", "orbit", "solar wind",
+            "black hole", "neutron star", "space station", "crater",
+            "meteorite", "galaxy", "supernova", "pulsar", "atmosphere", "probe",
+        ],
         "Random": [
             "boomerang", "umbrella", "hookah", "alarm clock", "telescope",
             "periscope", "labyrinth", "domino", "pendulum", "compass",
@@ -167,6 +207,27 @@ _CATEGORY_ALIASES: dict[str, tuple[str, str]] = {
     "природа": ("ru", "Природа"),
     "явления": ("ru", "Природа"),
     "nature": ("en", "Nature"),
+    # ── New categories ────────────────────────────────────────────────────────
+    "транспорт": ("ru", "Транспорт"),
+    "transport": ("en", "Transport"),
+    "transportation": ("en", "Transport"),
+    "vehicles": ("en", "Transport"),
+    "машины": ("ru", "Транспорт"),
+    "одежда": ("ru", "Одежда"),
+    "clothing": ("en", "Clothing"),
+    "clothes": ("en", "Clothing"),
+    "fashion": ("en", "Clothing"),
+    "наряды": ("ru", "Одежда"),
+    "музыка": ("ru", "Музыка"),
+    "music": ("en", "Music"),
+    "instruments": ("en", "Music"),
+    "инструменты": ("ru", "Музыка"),
+    "космос": ("ru", "Космос"),
+    "space": ("en", "Space"),
+    "astronomy": ("en", "Space"),
+    "астрономия": ("ru", "Космос"),
+    "вселенная": ("ru", "Космос"),
+    # ── Misc ─────────────────────────────────────────────────────────────────
     "разное": ("ru", "Разное"),
     "random": ("en", "Random"),
     "misc": ("en", "Random"),
@@ -257,19 +318,29 @@ async def resolve_custom_word_category(word: str) -> str:
     local_cat = find_word_category(word)
     if local_cat:
         return local_cat
-        
+
+    # Check in-process+disk cache before calling the LLM
+    from app.games.judgement_cache import cache_word_category, get_cached_word_category
+    cached_cat = await get_cached_word_category(word)
+    if cached_cat:
+        return cached_cat
+
+    _ALL_CATS = (
+        "Животные", "Еда", "Профессии", "Спорт", "Фильмы",
+        "Техника", "Природа", "Транспорт", "Одежда", "Музыка", "Космос", "Разное"
+    )
     prompt = (
-        f"К какой категории из списка: [Животные, Еда, Профессии, Спорт, Фильмы, Техника, Природа, Разное] "
+        f"К какой категории из списка: {list(_ALL_CATS)} "
         f"лучше всего относится слово '{word}'?\n"
         "Ответь ТОЛЬКО названием одной категории. "
         "Если ни одна категория строго не подходит, ответь 'Разное'."
     )
-    
+
     for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
         try:
             from app.agent_use_cases import AgentRequestUseCase
             from app.providers.router import get_ai_response
-            
+
             use_case = AgentRequestUseCase()
             kd, mdl, _ = await use_case.resolve_ai_request(model)
             if not kd or not mdl:
@@ -282,16 +353,19 @@ async def resolve_custom_word_category(word: str) -> str:
                     model_name=mdl,
                     max_retries=1,
                 ),
-                timeout=8.0,  # 4 seconds is too short for Opencode latency
+                timeout=8.0,
             )
             raw = (response_text or "").strip().strip("`'\" \r\n.")
-            for valid_cat in ("Животные", "Еда", "Профессии", "Спорт", "Фильмы", "Техника", "Природа", "Разное"):
+            for valid_cat in _ALL_CATS:
                 if valid_cat.lower() in raw.lower():
+                    # Persist to cache so same word never hits LLM again
+                    await cache_word_category(word, valid_cat)
                     return valid_cat
+            await cache_word_category(word, "Разное")
             return "Разное"
         except Exception as exc:
             logger.warning("Category resolve failed for %r model=%s: %r", word, model, exc)
-            
+
     return "Слово игрока (произвольная тема)"
 
 
@@ -468,7 +542,7 @@ async def pick_random_word(
                 words = generated
             else:
                 # Kick off bank generation in the background for future games
-                asyncio.create_task(generate_words_for_category(category, lang=lang))
+                asyncio.create_task(generate_words_for_category(category, lang=lang))  # noqa: RUF006
                 # Skip redis de-duplication since we only have 1 word and want to return fast
                 return fast_word, lang, category, True
                 

@@ -3,6 +3,45 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.14.0] - 2026-04-17 - Crocodile Game: UX Hardening & Stability
+
+### 🚀 UX Improvements
+
+- **Emoji Temperature Prefix (`app/games/judge.py`):** Every LLM comment from the semantic judge now carries an automatic emoji prefix (`🧊`/`🟡`/`🔥`/`🎉`) prepended on the backend before the event hits the WebSocket. The AI's witty text is preserved 100% unchanged — the temperature signal is simply added in front for instant visual parsing at zero latency cost.
+- **ASCII Score Progress Bar (`app/games/judge.py`):** New `score_bar(score, width=10)` utility returns an `[██████░░░░]`-style bar. The result is included in every WebSocket `result` event as `score_bar`, making it trivial for the frontend to render a progress indicator.
+- **Inline Message Thermometer (`app/games/crocodile.py`):** When the guesser achieves a new personal best score, the bot calls `update_inline_thermometer()` to silently `edit_message_text` the original inline button message in the private chat — showing the best-attempt bar (e.g., `🔥 Лучшая попытка: [██████░░░░] 60%`) to both players without them opening the WebApp. Persisted `best_score` field is now serialised to Redis so thermometer survives WebSocket reconnects.
+- **Graceful Surrender (`app/games/crocodile.py`):** New `surrender()` method — when the guesser taps a surrender button, the game transitions to `lost`, `finalize()` edits the inline message with `🏳️ Игрок сдался. Слово было: X`, and a `surrendered` WebSocket event is broadcast to both players. Zero guesses needed, clean loop closure.
+- **Creator "God Mode" Hint (`app/games/crocodile.py`):** Added `broadcast_creator_hint` public helper that accepts arbitrary creator-authored text and fans it out via the existing `asyncio.Queue` Pub/Sub system. The creator's custom message arrives in the guesser's chat as a special hint event — no LLM call required, instant and free.
+- **Improved Surrender Phrasing in `finalize()`:** The loss message now correctly uses `len(self.attempts)` (actual attempts made) instead of `self.max_attempts`. Surrender with zero guesses shows dedicated phrasing.
+
+### 🛡️ Stability / Local Heuristics
+
+- **`ё → е` Normalisation (`app/games/judge.py`):** `_homogenize_pair` now translates the Cyrillic letter `ё` (and `Ё`) to `е` (and `Е`) before any local comparison. A player typing `бобёр` nows matches `бобер` (or vice versa) without an LLM call.
+- **Punctuation Stripping (`app/games/judge.py`):** Trailing/embedded punctuation (`.,!?;:…—–`) is stripped from both the target and guess before Damerau-Levenshtein comparison. A guess of `кот.` now scores `exact_match` locally.
+- **Async Cache I/O (`app/games/judgement_cache.py`):** All three `.json` cache persist operations (`_persist`, `_persist_hints`, `_persist_cat`) were previously synchronous function calls inside async handlers. Each now dispatches to `asyncio.to_thread()`, keeping blocking JSON serialisation + atomic file-swap off the event loop thread.
+- **Word-Category LRU Cache (`app/games/judgement_cache.py`):** New `_cat_store` (10k entries max, JSON-backed, `category_cache.json`) caches resolved custom-word categories. `resolve_custom_word_category` checks `get_cached_word_category()` before calling the LLM. The same LLM result is immediately written back via `cache_word_category()`, so any word seen twice is served in <1ms.
+- **Category-Aware LLM Prompt (`app/games/word_bank.py`):** `resolve_custom_word_category` now passes the full 12-category list (including the 4 new ones) to the LLM instead of the old 8-category list.
+
+### 📚 Word Bank Expansion
+
+- **4 New RU + EN Categories** added to `WORD_BANK`:
+  - 🚁 **Транспорт / Transport** (15 words each): вертолёт, подводная лодка, дирижабль, ракета, рикша…
+  - 👘 **Одежда / Clothing** (15 words each): кимоно, смокинг, пижама, бриджи, кираса…
+  - 🎻 **Музыка / Music** (15 words each): виолончель, балалайка, диджериду, маракасы, арфа…
+  - 🌠 **Космос / Space** (15 words each): астероид, чёрная дыра, нейтронная звезда, метеорит, зонд…
+- **`_CATEGORY_ALIASES` updated** with 17 new aliases (транспорт, одежда, музыка, космос, инструменты, астрономия, вселенная, vehicles, clothing, fashion, space, astronomy…).
+
+### 🔧 Pre-existing Lint Cleanup
+
+- **`app/providers/router.py`:** Renamed unused variable `is_or` → `_is_or` (F841).
+- **`app/repos/memory_extraction.py`:** Used `_` placeholder for unused tuple elements in `_resolve_ai_request` destructuring (RUF059).
+- **`app/utils/multimodal_processor.py`:** Used `_` placeholder for unused `resolution` in destructured tuple (RUF059).
+
+### ✅ Verification
+
+- Full suite: **1813 passed, 0 failed** (2m 22s, `pytest-xdist -n auto`)
+- `ruff check .` → All checks passed
+
 ## [2.13.5] - 2026-04-17 - Production Stability: Time Injection & DB Constraints
 
 ### 🐛 Critical Bug Fixes

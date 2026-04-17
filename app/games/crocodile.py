@@ -53,6 +53,9 @@ class CrocodileGame:
     max_attempts: int = _MAX_ATTEMPTS
     status: Literal["active", "won", "lost"] = "active"
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    # Best semantic score seen so far across all guesses (0.0–1.0).
+    # Persisted to Redis so the inline thermometer survives WS reconnects.
+    best_score: float = 0.0
 
     # ── Redis persistence ─────────────────────────────────────────────────────
 
@@ -74,6 +77,7 @@ class CrocodileGame:
                 "max_attempts": self.max_attempts,
                 "status": self.status,
                 "created_at": self.created_at,
+                "best_score": self.best_score,
             },
             ensure_ascii=False,
         )
@@ -85,7 +89,7 @@ class CrocodileGame:
         known = {
             "game_id", "target_word", "category", "lang", "inline_message_id",
             "creator_id", "guesser_id", "attempts", "has_activity", "max_attempts",
-            "status", "created_at",
+            "status", "created_at", "best_score",
         }
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -134,7 +138,7 @@ class CrocodileGame:
         If status_str is 'judge_unavailable', the attempt is NOT counted and
         the caller must not decrement any client-side counter.
         """
-        from app.games.judge import judge_guess
+        from app.games.judge import judge_guess, score_bar, score_emoji
 
         word = word.strip()
         if not word:
@@ -153,14 +157,26 @@ class CrocodileGame:
 
         self.attempts.append(word)
 
+        # Track the all-time best score for the inline thermometer.
+        # exact_match always forces score=1.0 by the judge.
+        best_score_updated = judgement.score > self.best_score
+        if best_score_updated:
+            self.best_score = judgement.score
+
+        # Emoji prefix for instant color-coded temperature feedback.
+        prefixed_hint = f"{score_emoji(judgement.score)} {judgement.hint}"
+
         event: dict = {
             "event": "result",
             "status": status_str,
             "score": judgement.score,
-            "hint": judgement.hint,
+            "score_bar": score_bar(judgement.score),
+            "hint": prefixed_hint,
             "attempts": len(self.attempts),
             "max_attempts": self.max_attempts,
             "cached": judgement.cached,
+            "best_score": self.best_score,
+            "best_score_updated": best_score_updated,
         }
 
         if status_str == "exact_match":
@@ -176,14 +192,14 @@ class CrocodileGame:
         _mem_history.setdefault(self.game_id, []).append({
             "word": word,
             "status": status_str,
-            "hint": judgement.hint,
+            "hint": prefixed_hint,
             "score": judgement.score,
         })
 
         await self.save()
         return event
 
-    # ── Finalise (update Telegram message) ───────────────────────────────────
+    # ── Finalise (update Telegram message) ───────────────────────────────────────
 
     async def finalize(self, bot) -> None:
         """Edit the inline message in Telegram to reflect the game outcome."""
@@ -194,10 +210,13 @@ class CrocodileGame:
                 f"🎉 <b>Угадано!</b> Слово: <b>{self.target_word.upper()}</b>\n"
                 f"<i>Попыток: {len(self.attempts)} из {self.max_attempts}</i>"
             )
+        elif self.status == "lost" and not self.attempts:
+            # Surrender with zero guesses — distinct phrasing
+            text = f"🏳️ <b>Игрок сдался.</b> Слово было: <b>{self.target_word.upper()}</b>"
         else:
             text = (
                 f"😔 <b>Не угадали.</b> Слово было: <b>{self.target_word.upper()}</b>\n"
-                f"<i>Израсходовано {self.max_attempts} попыток</i>"
+                f"<i>Израсходовано {len(self.attempts)} попыток</i>"
             )
 
         try:
@@ -215,6 +234,49 @@ class CrocodileGame:
             )
 
         await self.delete()
+
+    async def update_inline_thermometer(self, bot) -> None:
+        """Edit the inline PM message to display the current best-guess temperature.
+
+        Called fire-and-forget after every new best_score so the creator and
+        guesser can see progress right in the private chat without opening the
+        WebApp. All Telegram errors are swallowed silently.
+        """
+        from app.games.judge import score_bar, score_emoji
+
+        emoji = score_emoji(self.best_score)
+        bar = score_bar(self.best_score)
+        pct = int(self.best_score * 100)
+        text = (
+            f"🎯 <b>Крокодил</b> — идёт игра\n"
+            f"{emoji} Лучшая попытка: <code>{bar}</code> {pct}%"
+        )
+        try:
+            from telegram.constants import ParseMode
+
+            await bot.edit_message_text(
+                inline_message_id=self.inline_message_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as exc:
+            # 400 "message is not modified" is normal when score did not change
+            logger.debug("update_inline_thermometer failed game=%s: %s", self.game_id, exc)
+
+    async def surrender(self, bot) -> dict:
+        """Игрок сдаётся — раскрывает слово и завершает игру.
+
+        Sets status to 'lost', calls finalize() to update the inline message,
+        and returns a WebSocket event payload the handler can forward to both
+        participants.
+        """
+        self.status = "lost"
+        await self.finalize(bot)
+        return {
+            "event": "surrendered",
+            "word": self.target_word,
+            "attempts": len(self.attempts),
+        }
 
 
 # ── Factory helpers ───────────────────────────────────────────────────────────

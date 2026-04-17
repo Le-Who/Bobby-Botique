@@ -114,11 +114,12 @@ async def extract_graph_structured(
     Returns:
         Pydantic-validated GraphExtractionResult (never raises on API errors).
     """
-    from app.providers.gemini import get_cached_genai_client
-    from app.handlers.ai_core import _resolve_ai_request
-    from app.repos.keys import get_key_status_manager
-    from app.errors import classify_key_error
     import hashlib
+
+    from app.errors import classify_key_error
+    from app.handlers.ai_core import _resolve_ai_request
+    from app.providers.gemini import get_cached_genai_client
+    from app.repos.keys import get_key_status_manager
 
     prompt = _EXTRACTION_PROMPT.format(text=text[:4000])
     empty = GraphExtractionResult()
@@ -130,7 +131,7 @@ async def extract_graph_structured(
         current_api_key = api_key if attempt == 0 else None
         
         if not current_api_key:
-            key_data, model_used, resolution = await _resolve_ai_request(
+            key_data, _, _ = await _resolve_ai_request(
                 GRAPH_EXTRACTION_MODEL,
                 use_openrouter=False,
                 excluded_key_hashes=failed_keys

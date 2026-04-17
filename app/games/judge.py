@@ -120,24 +120,42 @@ _EN_TO_RU_HOMOGLYPHS = {
 _RU_TO_EN_HOMOGLYPHS = {v: k for k, v in _EN_TO_RU_HOMOGLYPHS.items()}
 
 
+_YO_MAP = str.maketrans("ёЁ", "еЕ")
+_STRIP_PUNCT = str.maketrans("", "", ".,!?;:…—–-")
+
+
 def _homogenize_pair(target: str, guess: str) -> tuple[str, str]:
-    """Normalize alphabets to prevent Cyrillic/Latin homoglyph mismatch.
-    (e.g., 'a' typed in English matches 'а' typed in Russian).
+    """Normalize alphabets + Ё/Е + trailing punctuation before any local comparison.
+
+    Handles:
+    * Cyrillic/Latin homoglyphs (e.g. 'a' EN matches 'а' RU).
+    * «Ё» vs «Е» (ёжик == ежик for game purposes).
+    * Trailing punctuation a user might accidentally type ("кот." → "кот").
     """
+    # 1. Lowercase + strip outer whitespace
     t, g = target.lower().strip(), guess.lower().strip()
-    
+
+    # 2. Ё → Е normalisation (Cyrillic-agnostic, applies to both)
+    t = t.translate(_YO_MAP)
+    g = g.translate(_YO_MAP)
+
+    # 3. Strip common punctuation characters that sneak into guesses
+    t = t.translate(_STRIP_PUNCT).strip()
+    g = g.translate(_STRIP_PUNCT).strip()
+
+    # 4. Homoglyph normalization (Cyrillic/Latin)
     t_ru = sum(1 for c in t if '\u0400' <= c <= '\u04ff')
     g_ru = sum(1 for c in g if '\u0400' <= c <= '\u04ff')
-    
+
     if t_ru > 0 or g_ru > 0:
-        # Treat as Cyrillic
+        # Treat as Cyrillic: convert any Latin homoglyphs to Cyrillic
         t_clean = "".join(_EN_TO_RU_HOMOGLYPHS.get(c, c) for c in t)
         g_clean = "".join(_EN_TO_RU_HOMOGLYPHS.get(c, c) for c in g)
     else:
-        # Treat as Latin
+        # Treat as Latin: convert any Cyrillic homoglyphs to Latin
         t_clean = "".join(_RU_TO_EN_HOMOGLYPHS.get(c, c) for c in t)
         g_clean = "".join(_RU_TO_EN_HOMOGLYPHS.get(c, c) for c in g)
-        
+
     return t_clean, g_clean
 
 
@@ -506,6 +524,38 @@ async def generate_hints(word: str, category: str) -> list[str]:
 
     logger.warning("generate_hints: all models failed for word=%r", word)
     return []
+
+
+# ── Score UX helpers ─────────────────────────────────────────────────────────
+
+
+def score_emoji(score: float) -> str:
+    """Return a single emoji representing the semantic temperature of a score.
+
+    Used by callers to prefix the LLM hint text for instant visual feedback
+    without modifying the judge's wit (the prompt stays untouched).
+
+    0.0 – 0.3  → 🧊 (cold)
+    0.3 – 0.7  → 🟡 (warm)
+    0.7 – 0.92 → 🔥 (hot)
+    ≥ 0.92     → 🎉 (exact match / synonym — handled by caller as exact_match)
+    """
+    if score >= 0.92:
+        return "🎉"
+    if score >= 0.7:
+        return "🔥"
+    if score >= 0.3:
+        return "🟡"
+    return "🧊"
+
+
+def score_bar(score: float, width: int = 10) -> str:
+    """Return an ASCII progress bar for the given score (0.0–1.0).
+
+    Example: score_bar(0.6) → "[██████░░░░]"
+    """
+    filled = round(score * width)
+    return "[" + "█" * filled + "░" * (width - filled) + "]"
 
 
 # ── Public entry point ────────────────────────────────────────────────────────

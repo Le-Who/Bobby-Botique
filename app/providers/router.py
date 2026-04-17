@@ -770,8 +770,8 @@ class ProviderRouter:
         """
         from app.errors import is_error_message
 
-        is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model and not is_opencode_model(failed_model))
-        
+        _is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model and not is_opencode_model(failed_model))
+
         # Never use OpenRouter for fallback according to user request.
         # Fallback always uses the reliable production models (Gemini)
         fallback_models = settings.AVAILABLE_MODELS
