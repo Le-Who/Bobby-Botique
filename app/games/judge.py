@@ -112,6 +112,35 @@ _HINTS_PROMPT = (
 # ── Damerau-Levenshtein typo check ───────────────────────────────────────────
 
 
+_EN_TO_RU_HOMOGLYPHS = {
+    'a': 'а', 'c': 'с', 'e': 'е', 'o': 'о', 'p': 'р', 
+    'x': 'х', 'y': 'у', 'k': 'к', 'm': 'м', 't': 'т', 
+    'h': 'н', 'b': 'в'
+}
+_RU_TO_EN_HOMOGLYPHS = {v: k for k, v in _EN_TO_RU_HOMOGLYPHS.items()}
+
+
+def _homogenize_pair(target: str, guess: str) -> tuple[str, str]:
+    """Normalize alphabets to prevent Cyrillic/Latin homoglyph mismatch.
+    (e.g., 'a' typed in English matches 'а' typed in Russian).
+    """
+    t, g = target.lower().strip(), guess.lower().strip()
+    
+    t_ru = sum(1 for c in t if '\u0400' <= c <= '\u04ff')
+    g_ru = sum(1 for c in g if '\u0400' <= c <= '\u04ff')
+    
+    if t_ru > 0 or g_ru > 0:
+        # Treat as Cyrillic
+        t_clean = "".join(_EN_TO_RU_HOMOGLYPHS.get(c, c) for c in t)
+        g_clean = "".join(_EN_TO_RU_HOMOGLYPHS.get(c, c) for c in g)
+    else:
+        # Treat as Latin
+        t_clean = "".join(_RU_TO_EN_HOMOGLYPHS.get(c, c) for c in t)
+        g_clean = "".join(_RU_TO_EN_HOMOGLYPHS.get(c, c) for c in g)
+        
+    return t_clean, g_clean
+
+
 def _damerau_levenshtein(s: str, t: str) -> int:
     """Restricted Damerau-Levenshtein distance (optimal string alignment).
 
@@ -159,8 +188,8 @@ def _local_check(target: str, guess: str) -> str | None:
     'Монгуст' matches 'Мангуст' (7 chars, 1 edit allowed).
     'Кит' does NOT match 'Кот' (3 chars, 0 edits allowed).
     """
-    t = target.lower().strip()
-    g = guess.lower().strip()
+    t, g = _homogenize_pair(target, guess)
+    
     if t == g:
         return "exact_match"
     dist = _damerau_levenshtein(t, g)
