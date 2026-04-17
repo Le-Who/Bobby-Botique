@@ -44,6 +44,7 @@ async def _generate_single_chunk_gemini(
     failed_keys: set[str],
     timeout: float = 50.0,
     tts_temperature: float | None = None,
+    model_name: str = "gemini-3.1-flash-tts-preview",
 ) -> bytes | None:
     """Generate PCM audio for a single text chunk via Gemini TTS — parallel race edition.
 
@@ -70,6 +71,7 @@ async def _generate_single_chunk_gemini(
             voice=voice,
             tts_temperature=tts_temperature,
             timeout=timeout,
+            model_name=model_name,
         )
         if not pcm:
             raise ValueError("TTS provider returned empty audio buffer")
@@ -77,13 +79,13 @@ async def _generate_single_chunk_gemini(
 
     for _pair_attempt in range(2):  # up to 2 pairs of keys = 4 unique keys
         # Pick 2 healthy keys for this race round
-        key_a, model_a, _ = await _resolve_ai_request("gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys)
+        key_a, model_a, _ = await _resolve_ai_request(model_name, excluded_key_hashes=failed_keys)
         if not key_a:
             break  # No keys left
 
         # Try to get a second key for the race
         failed_keys.add(key_a["key_hash"])  # temporarily exclude A so B is different
-        key_b, _, _ = await _resolve_ai_request("gemini-2.5-flash-preview-tts", excluded_key_hashes=failed_keys)
+        key_b, _, _ = await _resolve_ai_request(model_name, excluded_key_hashes=failed_keys)
         failed_keys.discard(key_a["key_hash"])  # restore A — it's not failed yet
 
         keys_to_race = [key_a] + ([key_b] if key_b else [])
@@ -166,6 +168,7 @@ async def _run_gemini_pipeline(
     voice: str,
     adaptive_timeout: float,
     tts_temperature: float | None = None,
+    model_name: str = "gemini-3.1-flash-tts-preview",
 ) -> list[bytes] | None:
     """Run the full Gemini TTS pipeline over all chunks.
 
@@ -179,7 +182,7 @@ async def _run_gemini_pipeline(
 
     for i, chunk in enumerate(chunks):
         pcm = await _generate_single_chunk_gemini(
-            chunk, voice, failed_keys, timeout=adaptive_timeout, tts_temperature=tts_temperature
+            chunk, voice, failed_keys, timeout=adaptive_timeout, tts_temperature=tts_temperature, model_name=model_name
         )
         if pcm:
             pcm_parts.append(trim_trailing_silence(pcm))
@@ -317,8 +320,18 @@ async def _generate_and_send_voice(
 
             gemini_voice = voice if voice and len(voice) <= 10 else "Aoede"
             gemini_pcm_parts = await _run_gemini_pipeline(
-                gemini_chunks, gemini_voice, gemini_timeout, tts_temperature=tts_temperature
+                gemini_chunks, gemini_voice, gemini_timeout, tts_temperature=tts_temperature, model_name="gemini-3.1-flash-tts-preview"
             )
+
+            # Gemini 2.5 Fallback
+            if not gemini_pcm_parts:
+                logging.info(
+                    "Voice reply: Gemini 3.1 TTS unavailable — falling back to Gemini 2.5 TTS (chat_id=%s)",
+                    chat_id,
+                )
+                gemini_pcm_parts = await _run_gemini_pipeline(
+                    gemini_chunks, gemini_voice, gemini_timeout, tts_temperature=tts_temperature, model_name="gemini-2.5-flash-preview-tts"
+                )
 
             if gemini_pcm_parts:
                 pcm_parts = gemini_pcm_parts

@@ -25,12 +25,42 @@ _WEATHER_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+# Colloquial/implicit weather queries — ONLY used when message is ≤12 words.
+# City extraction in _handle_weather acts as a second guard (no city → None → LLM).
+_WEATHER_COLLOQUIAL_RE = re.compile(
+    r"(?:жарко|холодн[оа]?|тепло|морозн[оа]?|дождь|дождит|осадк[иа]|снегопад"
+    r"|облачно|ясно|солнечн|туман"
+    r"|how\s+(?:warm|hot|cold)\s|is\s+it\s+(?:raining|snowing|sunny|cloudy)"
+    r"|будет\s+(?:ли\s+)?дождь|когда\s+(?:будет\s+)?дождь)",
+    re.IGNORECASE,
+)
+_WEATHER_COLLOQUIAL_MAX_WORDS = 12
+
 _CURRENCY_PATTERNS = re.compile(
     r"(?:курс|exchange\s*rate|convert)"
     r"|(?:(?:доллар|евро|рубл|биткоин|bitcoin|ethereum|btc|eth|sol|ton|usd|eur|rub|gbp|jpy|cny)\S*\s+(?:к|в|to|in)\s+)"
     r"|(?:сколько\s+(?:стоит\s+)?(?:доллар|евро|рубл|биткоин|bitcoin|btc|usd|eur|rub))",
     re.IGNORECASE,
 )
+
+# Colloquial/conversational currency queries — gated by ≤12 words.
+# Exchange verbs REQUIRE a currency noun immediately after to avoid
+# false positives like "поменяй язык", "обменяй файлы".
+# _extract_currency_pair acts as second guard: no pair found → None → LLM.
+_CURRENCY_NOUNS = (
+    r"(?:доллар|евро|рубл|тенге|биткоин|bitcoin|btc|eth|sol|ton|usd|eur|rub|gbp|jpy|cny|валют)"
+)
+_CURRENCY_COLLOQUIAL_RE = re.compile(
+    # Exchange verbs + mandatory currency noun
+    r"(?:(?:конвертир(?:уй|овать)?|обменя[йт]|поменя[йт])\s+(?:\d+\s+)?" + _CURRENCY_NOUNS + r")"
+    # "перевод валют" — already specific
+    r"|\bперевод\s+валют"
+    # Conversational "как там доллар?", "что с биткоином?"
+    r"|\bкак\s+(?:там\s+)?(?:доллар|евро|рубл|биткоин)"
+    r"|\bчто\s+(?:там\s+)?(?:с\s+)?(?:доллар|евро|биткоин|рубл)",
+    re.IGNORECASE,
+)
+_CURRENCY_COLLOQUIAL_MAX_WORDS = 12
 
 # Crypto tickers / aliases — if any of these appear, route to CoinGecko
 _CRYPTO_ALIASES: dict[str, str] = {
@@ -162,6 +192,7 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
     doesn't match any known intent or the API call failed.
     """
     text = message_text.strip()
+    word_count = len(text.split())
 
     # Try weather first (more common)
     if _WEATHER_PATTERNS.search(text):
@@ -169,8 +200,21 @@ async def try_direct_intent(message_text: str) -> IntentResult | None:
         if result:
             return result
 
+    # Colloquial weather — only for short messages to avoid false positives
+    # (e.g. "жарко спорить о политике" has 5 words but no city → falls through safely)
+    if word_count <= _WEATHER_COLLOQUIAL_MAX_WORDS and _WEATHER_COLLOQUIAL_RE.search(text):
+        result = await _handle_weather(text)
+        if result:
+            return result
+
     # Then currency / crypto
     if _CURRENCY_PATTERNS.search(text):
+        result = await _handle_currency(text)
+        if result:
+            return result
+
+    # Colloquial currency — only for short messages; currency-pair extraction is the inner guard
+    if word_count <= _CURRENCY_COLLOQUIAL_MAX_WORDS and _CURRENCY_COLLOQUIAL_RE.search(text):
         result = await _handle_currency(text)
         if result:
             return result

@@ -410,23 +410,24 @@ async def generate_words_for_category(
     for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
         try:
             from app.agent_use_cases import AgentRequestUseCase
-            from app.providers.router import get_ai_response
+            from app.errors import is_error_message
+            from app.providers.router import get_provider_router
 
-            use_case = AgentRequestUseCase()
-            kd, mdl, _ = await use_case.resolve_ai_request(model)
-            if not kd or not mdl:
-                continue
-
-            response_text, _ = await asyncio.wait_for(
-                get_ai_response(
-                    api_key=kd["api_key"],
-                    history=[{"role": "user", "parts": [prompt]}],
-                    model_name=mdl,
-                    max_retries=1,
-                ),
+            router = get_provider_router()
+            
+            # Using ProviderRouter handles keys, timeouts, and circuit breaking natively
+            response_text, _ = await router.get_response(
+                preferred_model=model,
+                history=[{"role": "user", "parts": [prompt]}],
+                max_key_retries=1,
                 timeout=_GEN_TIMEOUT_S,
             )
             raw = (response_text or "").strip()
+            
+            if is_error_message(raw):
+                logger.warning("Word gen failed for %r (model=%s): Provider returned error: %s", category, model, raw)
+                continue
+                
             # Strip markdown code fences if model wraps output
             raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.IGNORECASE)
             raw = re.sub(r"\n?```$", "", raw).strip()
@@ -469,22 +470,23 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
     model = settings.OPENCODE_INLINE_MODEL or "gemini-2.5-flash"
     try:
         from app.agent_use_cases import AgentRequestUseCase
-        from app.providers.router import get_ai_response
+        from app.errors import is_error_message
+        from app.providers.router import get_provider_router
 
-        use_case = AgentRequestUseCase()
-        kd, mdl, _ = await use_case.resolve_ai_request(model)
-        if kd and mdl:
-            response_text, _ = await asyncio.wait_for(
-                get_ai_response(
-                    api_key=kd["api_key"],
-                    history=[{"role": "user", "parts": [prompt]}],
-                    model_name=mdl,
-                    max_retries=1,
-                ),
-                timeout=7.0,  # Strict timeout for instantaneous response
-            )
-            raw = (response_text or "").strip().strip("`'\" \r\n.")
-            if 2 <= len(raw) <= 60:
+        router = get_provider_router()
+        response_text, _ = await router.get_response(
+            preferred_model=model,
+            history=[{"role": "user", "parts": [prompt]}],
+            max_key_retries=1,
+            timeout=7.0,  # Strict timeout for instantaneous response
+        )
+        
+        raw = (response_text or "").strip().strip("`'\" \r\n.")
+        if is_error_message(raw):
+            logger.warning("Fast inline word gen failed for %r: Provider returned error: %s", category, raw)
+            return None
+            
+        if 2 <= len(raw) <= 60:
                 logger.info("Fast inline word generated for %r: %r", category, raw)
                 return raw.lower()
     except Exception as exc:

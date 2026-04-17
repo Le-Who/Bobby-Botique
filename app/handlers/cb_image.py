@@ -52,7 +52,7 @@ def _get_draw_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
             "prompt": "",
             "model": default_model,
             "aspect_ratio": "1:1",
-            "enhance_prompt": False,
+            "enhance_prompt": True,
             "awaiting_prompt": False,
             "last_photo_msg": None,
         },
@@ -68,12 +68,9 @@ def _patch_draw_state(context: ContextTypes.DEFAULT_TYPE, **kwargs) -> dict:
 
 
 def _all_valid_models() -> list[str]:
-    from app.config import IMAGEN_MODELS_ORDERED, settings
+    from app.config import settings
 
     models: list[str] = list(settings.POLLINATIONS_IMAGE_MODELS)
-    for m in IMAGEN_MODELS_ORDERED:
-        if m not in models:
-            models.append(m)
     return models
 
 
@@ -220,7 +217,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         _patch_draw_state(context, awaiting_prompt=True)
-        safe_limit = 800
+        safe_limit = 400
         short = current_prompt[:safe_limit].strip() + ("..." if len(current_prompt) > safe_limit else "")
         try:
             await query.edit_message_caption(
@@ -245,7 +242,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         current_prompt = state.get("prompt", "")
         from app.handlers.cmd_image import _escape_md, _model_label
 
-        safe_limit = 800
+        safe_limit = 400
         short = current_prompt[:safe_limit].strip() + ("..." if len(current_prompt) > safe_limit else "")
         model_str = _model_label(state.get("model", ""))
         ar_str = state.get("aspect_ratio", "1:1")
@@ -280,7 +277,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         prompt=current_prompt,
                         model=state.get("model", settings.POLLINATIONS_DEFAULT_IMAGE_MODEL),
                         aspect_ratio=state.get("aspect_ratio", "1:1"),
-                        enhance=state.get("enhance_prompt", False),
+                        enhance=state.get("enhance_prompt", True),
                     )
             finally:
                 user_state.is_processing = False
@@ -317,7 +314,7 @@ async def draw_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         prompt=current_prompt,
                         model=state.get("model", "flux"),
                         aspect_ratio=state.get("aspect_ratio", "1:1"),
-                        enhance=state.get("enhance_prompt", False),
+                        enhance=state.get("enhance_prompt", True),
                     )
             finally:
                 user_state.is_processing = False

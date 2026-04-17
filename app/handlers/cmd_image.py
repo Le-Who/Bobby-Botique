@@ -116,11 +116,14 @@ _DRAW_VERBS = (
     r"(?:"
     r"нарисуй|нарисуйте|рисуй|нарисовать|изобрази|изобразите|изобразить"
     r"|сгенерируй|сгенерируйте|сгенерировать"
-    r"|сделай\s+(?:изображение|картинку|рисунок|фото|картину)"
-    r"|создай\s+(?:изображение|картинку|рисунок|фото|картину)"
+    r"|сделай\s+(?:изображение|картинку|рисунок|фото|картину|арт|аватар|мем|постер|обложку)"
+    r"|создай\s+(?:изображение|картинку|рисунок|фото|картину|арт|аватар|мем|постер|обложку)"
+    r"|создайте\s+(?:изображение|картинку|рисунок|арт|фото|картину)"
     r"|покажи\s+(?:изображение|картинку|рисунок|фото|картину)"
     r"|напиши\s+(?:изображение|картинку)"  # rare but seen in speech
-    r"|draw|generate\s+(?:an?\s+)?image|create\s+(?:an?\s+)?image"
+    r"|draw|generate\s+(?:an?\s+)?(?:image|picture|photo|art|illustration)"
+    r"|create\s+(?:an?\s+)?(?:image|picture|photo|art|illustration)"
+    r"|make\s+(?:an?\s+)?(?:image|picture|photo|art|illustration)"
     r")"
 )
 
@@ -168,7 +171,15 @@ async def check_draw_intent_async(text: str) -> str | None:
 
     # 2. Check if we *might* be asking to draw (keyword heuristic)
     # If there's no draw verb anywhere, bail instantly.
-    _VERB_HEURISTIC = re.compile(r"(?i)\b(?:нарисуй|сгенерируй|изобрази|сделай\s+фото|создай\s+картин|draw)\b")
+    _VERB_HEURISTIC = re.compile(
+        r"(?i)\b(?:"
+        r"нарисуй|нарисуйте|нарисовать|рисуй"
+        r"|изобрази|изобразите|изобразить"
+        r"|сгенерируй|сгенерируйте|сгенерировать"
+        r"|создай|создайте|создать"
+        r"|сделай|draw|generate|create|make"
+        r")\b"
+    )
     if not _VERB_HEURISTIC.search(text):
         return None
 
@@ -234,7 +245,7 @@ def _get_draw_state(context: ContextTypes.DEFAULT_TYPE) -> dict:
             "prompt": "",
             "model": default_model,
             "aspect_ratio": "1:1",
-            "enhance_prompt": False,
+            "enhance_prompt": True,
             "awaiting_prompt": False,
             "last_photo_msg": None,
         },
@@ -438,10 +449,6 @@ def _build_models_menu(state: dict) -> InlineKeyboardMarkup:
     """Sub-menu: choose a model."""
     current = state.get("model", settings.POLLINATIONS_DEFAULT_IMAGE_MODEL)
     all_models = _get_all_models()
-    # Also expose Imagen models so legacy users can still select them
-    for m in IMAGEN_MODELS_ORDERED:
-        if m not in all_models:
-            all_models.append(m)
 
     model_buttons = []
     for m in all_models:
@@ -505,7 +512,7 @@ async def _run_generation(
     prompt: str,
     model: str,
     aspect_ratio: str,
-    enhance: bool = False,
+    enhance: bool = True,
 ) -> None:
     """
     Execute image generation and post the result.
@@ -587,22 +594,17 @@ async def _run_generation(
 
     # ── Success ───────────────────────────────────────────────────────────
     if image_bytes:
-        try:
-            await placeholder.delete()
-        except Exception:
-            pass
-
         model_label = _model_label(model)
         display_prompt = api_prompt if translated else prompt
 
         # Safe truncation avoiding Telegram's 1024-char limit for media captions.
         # Leave ~200 chars for layout and translated text string if needed.
-        safe_limit = 800
+        safe_limit = 400
         short = display_prompt[:safe_limit].strip() + ("..." if len(display_prompt) > safe_limit else "")
 
         caption = f"🎨 *{_escape_md(short)}*\n_{model_label} · {aspect_ratio}_"
         if translated:
-            original_short = prompt[:600].strip() + ("…" if len(prompt) > 600 else "")
+            original_short = prompt[:400].strip() + ("…" if len(prompt) > 400 else "")
             caption += f"\n_🌐 Переведено: {_escape_md(original_short)}_"
 
         try:
@@ -615,6 +617,12 @@ async def _run_generation(
                 reply_markup=keyboard,
                 message_effect_id=EFFECT_FIRE,
             )
+            
+            try:
+                await placeholder.delete()
+            except Exception:
+                pass
+                
             _set_draw_state(context, last_photo_msg=sent.message_id)
             logger.info(
                 "Image generated: user=%s model=%s ar=%s translate=%s",
@@ -625,7 +633,10 @@ async def _run_generation(
             )
         except Exception as send_err:
             logger.error("Failed to send generated image: %s", send_err)
-            await placeholder.edit_text("❌ Изображение создано, но не удалось отправить. Попробуйте снова.")
+            try:
+                await placeholder.edit_text("❌ Изображение создано, но не удалось отправить (возможно, слишком длинный текст). Попробуйте снова.")
+            except Exception:
+                pass
         return
 
     # ── Error ─────────────────────────────────────────────────────────────
@@ -722,7 +733,7 @@ async def handle_draw_prompt_input(update: Update, context: ContextTypes.DEFAULT
         pass
 
     if last_photo_id:
-        safe_limit = 800
+        safe_limit = 400
         short = new_prompt[:safe_limit].strip() + ("..." if len(new_prompt) > safe_limit else "")
         caption = f"🎨 *{_escape_md(short)}*\n_{_model_label(state['model'])} · {state['aspect_ratio']}_"
         try:
@@ -804,5 +815,5 @@ async def draw_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         prompt=prompt,
         model=state["model"],
         aspect_ratio=state["aspect_ratio"],
-        enhance=state.get("enhance_prompt", False),
+        enhance=state.get("enhance_prompt", True),
     )

@@ -63,15 +63,9 @@ class TestLLMTasks:
 
     async def test_generate_words_success(self):
         """LLM-03: Successfully runs and parses JSON array format."""
-        with (
-            patch("app.agent_use_cases.AgentRequestUseCase") as AgentRequestUseCase_mock,
-            patch("app.providers.router.get_ai_response", new_callable=AsyncMock) as get_ai_response_mock,
-        ):
-            use_case_inst = AgentRequestUseCase_mock.return_value
-            use_case_inst.resolve_ai_request = AsyncMock(return_value=({"api_key": "test_key"}, "test_model", None))
-
+        with patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response:
             # Must be >= 5 words or validate_words returns None
-            get_ai_response_mock.return_value = ('["кот", "собака", "тигр", "медведь", "лиса"]', 10)
+            mock_get_response.return_value = ('["кот", "собака", "тигр", "медведь", "лиса"]', 10)
 
             words = await generate_words_for_category("зверолов_тест", lang="ru")
 
@@ -82,14 +76,8 @@ class TestLLMTasks:
 
     async def test_generate_words_value_error_if_empty(self):
         """LLM-04: Returns None if empty array returned."""
-        with (
-            patch("app.agent_use_cases.AgentRequestUseCase") as AgentRequestUseCase_mock,
-            patch("app.providers.router.get_ai_response", new_callable=AsyncMock) as get_ai_response_mock,
-        ):
-            use_case_inst = AgentRequestUseCase_mock.return_value
-            use_case_inst.resolve_ai_request = AsyncMock(return_value=({"api_key": "test_key"}, "test_model", None))
-            
-            get_ai_response_mock.return_value = ('[]', 5)
+        with patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response:
+            mock_get_response.return_value = ('[]', 5)
 
             words = await generate_words_for_category("asdfasdfasdf", lang="ru")
             assert words is None

@@ -444,7 +444,7 @@ class TestCrocodileGameInMemory:
             )
 
         assert fake_redis.set_calls
-        assert fake_redis.set_calls[-1][1] == 900
+        assert fake_redis.set_calls[-1][1] == 1209600
 
     async def test_successful_guess_refreshes_active_ttl_in_redis(self):
         fake_redis = _FakeRedis()
@@ -456,10 +456,11 @@ class TestCrocodileGameInMemory:
                 inline_message_id="inline_ttl_active",
                 creator_id=5,
             )
+            game.guesser_id = 123  # Simulate guesser joining via WebSocket
             await game.process_guess("кот")
 
-        assert fake_redis.set_calls[0][1] == 900
-        assert fake_redis.set_calls[-1][1] == 1200
+        assert fake_redis.set_calls[0][1] == 1209600
+        assert fake_redis.set_calls[-1][1] == 172800
 
     async def test_judge_unavailable_refreshes_active_ttl_without_counting_attempt(self):
         fake_redis = _FakeRedis()
@@ -478,13 +479,14 @@ class TestCrocodileGameInMemory:
                 inline_message_id="inline_ttl_unavailable",
                 creator_id=5,
             )
+            game.guesser_id = 123  # Simulate guesser joining via WebSocket
             event = await game.process_guess("кот")
 
         assert event["event"] == "judge_unavailable"
         assert len(game.attempts) == 0
         assert game.status == "active"
-        assert fake_redis.set_calls[0][1] == 900
-        assert fake_redis.set_calls[-1][1] == 1200
+        assert fake_redis.set_calls[0][1] == 1209600
+        assert fake_redis.set_calls[-1][1] == 172800
         assert len(fake_redis.set_calls) == 2
 
     async def test_empty_guess_returns_error(self):

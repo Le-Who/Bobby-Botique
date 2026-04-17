@@ -33,7 +33,15 @@ _HIGH_COMPARISON = re.compile(
     re.IGNORECASE,
 )
 _HIGH_ARCHITECTURE = re.compile(
-    r"(?:архитектур|design.?pattern|refactor|оптимиз|масштабир|scalab)",
+    r"(?:архитектур|design.?pattern|refactor|оптимиз|масштабир|scalab"
+    r"|алгоритм|сложност"
+    r"|безопасност|security|vulnerab|шифрован|encrypt|хакер|exploit"
+    r"|best.?practi"
+    r"|стратег|roadmap|план.{1,30}проект|план.{1,30}задач)",
+    re.IGNORECASE,
+)
+_HIGH_LEGAL = re.compile(
+    r"(?:договор|контракт|юридич|legal\s|legislation|liability|compliance|terms\s+of|права\s+потребител|нарушени)",
     re.IGNORECASE,
 )
 _HIGH_DEBUG = re.compile(
@@ -127,6 +135,10 @@ def classify_thinking_level(
 
     if _HIGH_DEBUG.search(message):
         logger.debug("Thinking classifier: HIGH (debugging)")
+        return "high"
+
+    if _HIGH_LEGAL.search(message):
+        logger.debug("Thinking classifier: HIGH (legal/contract)")
         return "high"
 
     # ── LOW signals (ALL must match) ──

@@ -68,9 +68,32 @@ _GEN_TIMEOUT_S = 55.0
 _GEN_PROGRESS_AFTER_S = 20.0
 
 # ── Image intent detection ────────────────────────────────────────────────────
-# Matches: "нарисуй", "draw", "сгенерируй картинку", "imagine", "изобрази", etc.
+# Matches a broad set of image-generation intents in both Russian and English.
+# Russian: нарисуй, нарисуй арт/картину, изобрази, сгенерируй (standalone),
+#          создай изображение/арт/аватар, сделай картинку, покажи рисунок.
+# English: draw, generate image, create image, make an image, imagine, portrait.
 _IMAGE_INTENT_RE = re.compile(
-    r"(?:наруй|нарисуй|draw|draws|изобрази|imagine|сгенерируй\s*(?:картинку|изображение|фото|image)|portrait|generate\s*image)",
+    r"(?:"
+    # Russian — draw / illustrate
+    r"нарисуй|нарисуйте|нарисовать|рисуй"
+    r"|изобрази|изобразите|изобразить"
+    # generate (standalone — no noun required; prompt follows)
+    r"|сгенерируй|сгенерируйте|сгенерировать"
+    # create — only when followed by an image noun to avoid false-positives
+    # on "создай список", "создай напоминание", etc.
+    r"|создай\s+(?:изображение|картинку|рисунок|арт|фото|картину|аватар|постер|обложку|мем)"
+    r"|создайте\s+(?:изображение|картинку|рисунок|арт|фото|картину)"
+    r"|создать\s+(?:изображение|картинку|рисунок|арт|фото|картину)"
+    # make / show
+    r"|сделай\s+(?:изображение|картинку|рисунок|арт|фото|картину|аватар|мем)"
+    r"|покажи\s+(?:изображение|картинку|рисунок)"
+    # English
+    r"|draw|draws|drawing"
+    r"|generate\s*(?:an?\s+)?(?:image|picture|photo|art|illustration|avatar|meme)"
+    r"|create\s*(?:an?\s+)?(?:image|picture|photo|art|illustration|avatar|meme)"
+    r"|make\s*(?:an?\s+)?(?:image|picture|photo|art|illustration|avatar|meme)"
+    r"|imagine|portrait"
+    r")",
     re.IGNORECASE,
 )
 
@@ -78,10 +101,29 @@ _IMAGE_INTENT_RE = re.compile(
 # Quoted text in prompt → wan-image (renders text accurately on images)
 _QUOTED_TEXT_RE = re.compile(r'["\u00ab\u00bb\u201c\u201d].+?["\u00ab\u00bb\u201c\u201d]|\'.+?\'', re.DOTALL)
 
-# Image editing intent → klein (FLUX.2 Klein 4B, edit/inpaint capable)
+# Image editing intent → klein (FLUX.2 Klein 4B, edit/inpaint capable).
+# INVARIANT: every branch MUST contain an image noun (фото/картинку/изображение/photo/image).
 _IMAGE_EDIT_INTENT_RE = re.compile(
-    r"(?:измени|отредактируй|добавь|убери|замени|перекраси|edit|change|add|remove|replace|modify|inpaint)"
-    r"\s+(?:фото|фотку|картинку|изображение|image|photo|picture)",
+    r"(?:"
+    # Branch A: Russian standard edit verbs + image noun directly after
+    r"(?:измени|отредактируй|добавь|убери|замени|перекраси"
+    r"|улучши|подправь|подтяни|ретушируй|обрежь|вырежи|удали)"
+    r"\s+(?:фото|фотку|картинку|изображение)"
+    r"|"
+    # Branch B: Russian background removal — verb + фон/задний план + image noun
+    # Natural order: "удали фон с фото", "сотри фон картинки"
+    r"(?:удал[ий]|сотри|убери|вырежи)\s+(?:фон|задний\s+план)"
+    r"\s+(?:(?:с|на|у|из|со)\s+)?(?:фото|фотки|картинки|картинку|изображени[яе])"
+    r"|"
+    # Branch C: English standard edit verbs + image noun
+    r"(?:edit|change|add|remove|replace|modify|inpaint"
+    r"|enhance|retouch|touch.?up|crop|upscale)"
+    r"\s+(?:фото|фотку|картинку|изображение|image|photo|picture|the\s+image|the\s+photo)"
+    r"|"
+    # Branch D: English background removal + required image noun
+    r"(?:remove|erase)\s+(?:the\s+)?background"
+    r"\s+(?:from\s+)?(?:фото|фотки|картинки|image|photo|picture|the\s+image|the\s+photo)"
+    r")",
     re.IGNORECASE,
 )
 

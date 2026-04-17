@@ -2,15 +2,15 @@
 """CrocodileGame — state machine for a single game session.
 
 Lifecycle:
-  CREATE  → game stored in Redis with TTL 15 min (idle — waiting for guesser)
+  CREATE  → game stored in Redis with no TTL (idle — waiting for guesser)
   ACTIVE  → guesses arrive via WebSocket; each guess resets TTL to 20 min
   WON     → exact_match registered; inline message updated; Redis cleaned
   LOST    → max_attempts reached; inline message updated; Redis cleaned
 
 Redis keys:
   croc:game:<game_id>   — JSON blob with game state
-    Idle TTL  = 900 s  (15 min, before first guess — link shared but not yet played)
-    Active TTL = 1200 s (20 min, sliding window — resets on every guess attempt)
+    Idle TTL  = 14 days (expiration before first guesser joins)
+    Active TTL = 2 days (sliding window — resets on every guess attempt)
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
 
 _GAME_KEY_PREFIX = "croc:game:"
 # Two-phase TTL for better UX:
-#   IDLE   — game created, waiting for a guesser to open the link (15 min)
-#   ACTIVE — guesser is playing; reset on every guess so they can think (20 min)
-_GAME_TTL_IDLE = 900     # 15 min
-_GAME_TTL_ACTIVE = 1200  # 20 min
+#   IDLE   — game created, waiting for a guesser to open the link (14 days)
+#   ACTIVE — guesser is playing; reset on every guess so they can think (2 days)
+_GAME_TTL_IDLE = 14 * 24 * 60 * 60  # 14 days
+_GAME_TTL_ACTIVE = 2 * 24 * 60 * 60  # 2 days
 _MAX_ATTEMPTS = 10
 
 
@@ -97,17 +97,17 @@ class CrocodileGame:
         """Persist game to Redis; fall back to in-memory store on failure.
 
         TTL is two-phase:
-          - No activity yet (idle)  → _GAME_TTL_IDLE  (15 min). Gives enough
+          - No guesser yet (idle)  → 14 days. Gives unlimited practical
             time for the creator to share the link and the guesser to open it.
-          - Any real guess activity  → _GAME_TTL_ACTIVE (20 min) sliding window.
+          - Guesser joined & playing → _GAME_TTL_ACTIVE (2 days) sliding window.
             Resets on every guess attempt so the player can step away and think.
         """
-        ttl = _GAME_TTL_ACTIVE if self.has_activity else _GAME_TTL_IDLE
+        ttl_kwargs = {"ex": _GAME_TTL_ACTIVE if self.guesser_id is not None else _GAME_TTL_IDLE}
         try:
             from app.cache import redis_client
 
             if redis_client:
-                await redis_client.set(self._redis_key(), self.to_json().encode(), ex=ttl)  # type: ignore[misc]
+                await redis_client.set(self._redis_key(), self.to_json().encode(), **ttl_kwargs)  # type: ignore[misc]
                 return True
         except Exception as exc:
             logger.warning("CrocodileGame.save failed game=%s: %s", self.game_id, exc)

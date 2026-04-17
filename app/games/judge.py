@@ -625,7 +625,7 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
         )
         return "judge_unavailable", sentinel
 
-    status_str = result.status
+    status_str: str = result.status
     if result.score >= 0.92:
         status_str = "exact_match"
         result.status = "hot"

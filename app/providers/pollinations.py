@@ -45,12 +45,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _KNOWN_LABELS: dict[str, str] = {
-    "flux": "✨ Flux",
-    "zimage": "⚡ Z-Image",
-    "gptimage": "🤖 GPT Image",
+    "flux": "✨ Flux (Универсальная)",
+    "zimage": "⚡ Z-Image (Быстрая)",
+    "gptimage": "🤖 DALL-E 3 (Точная)",
     "gptimage-large": "💎 GPT Image HD",
     "kontext": "🖋️ Kontext",
-    "klein": "🔷 Klein",
+    "klein": "🎨 Klein (Креативная)",
     "seedream5": "🌱 Seedream 5",
     "grok-imagine": "🚀 Grok",
     "grok-imagine-pro": "💠 Grok Pro",
@@ -58,7 +58,8 @@ _KNOWN_LABELS: dict[str, str] = {
     "nova-canvas": "☁️ Nova Canvas",
     "nanobanana": "🍌 NanoBanana",
     "nanobanana-2": "🍌² NanoBanana 2",
-    "qwen-image": "🌏 Qwen Image",
+    "qwen-image": "🌏 Qwen (Аниме/Арт)",
+    "wan-image": "🌟 Wan (Реализм)",
 }
 
 
@@ -212,11 +213,23 @@ class PollinationsProvider:
                 resp = await client.post(url, data=data, files=files)
                 
             if 200 <= resp.status_code < 300:
-                try:
-                    js = resp.json()
-                    return js.get("text", resp.text).strip()
-                except Exception:
-                    return resp.text.strip()
+                content_type = resp.headers.get("content-type", "").lower()
+                if "application/json" in content_type:
+                    try:
+                        js = resp.json()
+                        if "choices" in js and isinstance(js["choices"], list):
+                            logger.error("Pollinations whisper hallucinated a chat response.")
+                            return None
+                        return js.get("text", "").strip() or None
+                    except Exception as e:
+                        logger.warning("Pollinations whisper JSON parse error: %s", e)
+                        return None
+                else:
+                    text_res = resp.text.strip()
+                    if not text_res or text_res.startswith(('{"id":', '{"choices":')):
+                        logger.error("Pollinations whisper returned stringified JSON payload instead of text.")
+                        return None
+                    return text_res
             else:
                 logger.warning("Pollinations whisper error: %d - %s", resp.status_code, resp.text[:200])
                 return None

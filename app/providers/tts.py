@@ -20,7 +20,8 @@ from google.genai import types
 
 from app.providers.gemini import get_cached_genai_client
 
-TTS_MODEL = "gemini-2.5-flash-preview-tts"
+TTS_MODEL = "gemini-3.1-flash-tts-preview"
+TTS_FALLBACK_MODEL = "gemini-2.5-flash-preview-tts"
 
 # Available voices and their personalities:
 #   Aoede  — Breezy, natural (smooth conversational narration)
@@ -211,6 +212,7 @@ async def generate_speech(
     voice: str = DEFAULT_VOICE,
     tts_temperature: float | None = None,
     timeout: float = 50.0,
+    model_name: str = TTS_MODEL,
 ) -> bytes | None:
     """Generate speech audio from text using Gemini TTS REST API.
 
@@ -272,7 +274,7 @@ async def generate_speech(
     try:
         response = await asyncio.wait_for(
             client.aio.models.generate_content(
-                model=TTS_MODEL,
+                model=model_name,
                 contents=prompt,
                 config=config,
             ),
