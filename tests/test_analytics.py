@@ -1,19 +1,46 @@
 import sys
 from unittest.mock import MagicMock
 
-# We mock at the top level to allow imports to succeed in isolated test runs,
-# but we shouldn't pollute the global sys.modules permanently if this runs in a suite.
-# However, for this environment, it's a known pattern. We will use a context manager or
-# just keep the mock localized to this test file. Wait, if it's imported at the top level
-# of analytics.py we have to mock it before importing analytics.py.
-# A cleaner way is using `unittest.mock.patch.dict` or just leaving it since it's common
-# in this codebase's restricted env, but to be perfectly clean:
-if "asyncpg" not in sys.modules:
-    sys.modules["asyncpg"] = MagicMock()
-if "app.database" not in sys.modules:
-    sys.modules["app.database"] = MagicMock()
+import pytest
 
-from app.repos.analytics import generate_auto_title
+# Isolate in dedicated xdist worker — this file mutates sys.modules in setup_module.
+pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
+
+_MOCK_KEYS = ["asyncpg", "app.database"]
+_original_modules: dict = {}
+
+# Populated by setup_module after mocks are installed. All tests use this reference.
+generate_auto_title = None
+
+
+def setup_module(module):
+    global _original_modules, generate_auto_title
+    _original_modules["__app_keys_before__"] = {
+        k for k in sys.modules if k.startswith("app.")
+    }
+    for k in _MOCK_KEYS:
+        if k in sys.modules:
+            _original_modules[k] = sys.modules[k]
+        sys.modules[k] = MagicMock()
+
+    # Force-reimport analytics with mocked deps so it resolves cleanly.
+    # Remove any cached import from collection time first.
+    sys.modules.pop("app.repos.analytics", None)
+    from app.repos.analytics import generate_auto_title as _fn
+
+    generate_auto_title = _fn
+
+
+def teardown_module(module):
+    app_keys_before = _original_modules.pop("__app_keys_before__", set())
+    for k in _MOCK_KEYS:
+        if k in sys.modules:
+            del sys.modules[k]
+    sys.modules.update(_original_modules)
+    for k in list(sys.modules):
+        if k.startswith("app.") and k not in app_keys_before:
+            del sys.modules[k]
+
 
 
 def test_generate_auto_title_simple_content():

@@ -284,10 +284,10 @@ class AgenticSearch:
         self.api_key = api_key
         # Reuse cached genai.Client to avoid per-request TLS/TCP setup
         self.client = get_cached_genai_client(api_key)
-        self.max_iterations = settings.AGENTIC_MAX_ITERATIONS
-        self.max_pages = settings.AGENTIC_MAX_PAGES
-        self.max_tokens = settings.AGENTIC_MAX_TOKENS
-        self.timeout_seconds = settings.AGENTIC_TIMEOUT_SECONDS
+        self.max_iterations = int(settings.AGENTIC_MAX_ITERATIONS)
+        self.max_pages = int(settings.AGENTIC_MAX_PAGES)
+        self.max_tokens = int(settings.AGENTIC_MAX_TOKENS)
+        self.timeout_seconds = float(settings.AGENTIC_TIMEOUT_SECONDS)
         # Called after every generate_content call so the handler can
         # increment key usage (+1 per LLM invocation).
         self._on_key_used = on_key_used
@@ -434,7 +434,7 @@ class AgenticSearch:
                 content = await read_url(url, timeout=12.0)
 
                 # Truncate content to limit token usage
-                limit = settings.AGENTIC_PAGE_CONTENT_LIMIT
+                limit = int(settings.AGENTIC_PAGE_CONTENT_LIMIT)
                 if len(content) > limit:
                     content = content[:limit] + f"\n\n[...truncated at {limit} chars. Full content at {url}]"
                     logger.debug("Truncated page content from %s to %d chars", url[:60], limit)

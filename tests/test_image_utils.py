@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from app.utils.image import estimate_image_size_in_bytes
 import app.utils.image_utils as image_utils
+from app.utils.image import estimate_image_size_in_bytes
 from app.utils.image_utils import _image_worker
 
 

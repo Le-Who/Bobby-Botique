@@ -90,7 +90,7 @@ MODEL_HINTS = {
 }
 
 
-def _generate_model_buttons(models, current_model, start_index, is_openrouter=False):
+def _generate_model_buttons(models, current_model, start_index, provider="gemini"):
     """
     Генерирует list кнопок for выбора models.
 
@@ -98,7 +98,7 @@ def _generate_model_buttons(models, current_model, start_index, is_openrouter=Fa
         models (list): Список моделей.
         current_model (str): Текущая выбранная model.
         start_index (int): Начальный индекс for callback_data.
-        is_openrouter (bool): Флаг, указывающий на использование OpenRouter.
+        provider (str): Провайдер ("gemini", "openrouter", "opencode").
 
     Returns:
         tuple: (list строк кнопок, следующий индекс)
@@ -111,11 +111,14 @@ def _generate_model_buttons(models, current_model, start_index, is_openrouter=Fa
         is_selected = m == current_model
         selected_mark = "✅ " if is_selected else ""
 
-        # Определяем отображение
-        if is_openrouter:
+        # Определяем отображение по провайдеру
+        if provider == "openrouter":
             display_name = m.split("/")[-1] if "/" in m else m
             icon = "🌐"
-        else:
+        elif provider == "opencode":
+            display_name = m.replace("opencode-go/", "").replace("-", " ").title()
+            icon = "⚡"
+        else:  # gemini
             display_name = m
             icon = "🤖"
 
@@ -140,6 +143,8 @@ def get_model_menu_content(chat_state, context):
     all_models = []
     if settings.AVAILABLE_MODELS:
         all_models.extend(settings.AVAILABLE_MODELS)
+    if settings.OPENCODE_AVAILABLE_MODELS:
+        all_models.extend(settings.OPENCODE_AVAILABLE_MODELS)
     if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
         all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
 
@@ -165,27 +170,39 @@ def get_model_menu_content(chat_state, context):
     # Add models Gemini
     if settings.AVAILABLE_MODELS:
         buttons, model_index = _generate_model_buttons(
-            settings.AVAILABLE_MODELS, current_model, model_index, is_openrouter=False
+            settings.AVAILABLE_MODELS, current_model, model_index, provider="gemini"
         )
         keyboard.extend(buttons)
 
-    # Add разделитель, if есть оба провайдера
-    if settings.AVAILABLE_MODELS and openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
-        keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
+    # Add models Opencode
+    if settings.OPENCODE_AVAILABLE_MODELS:
+        if settings.AVAILABLE_MODELS:
+            keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
+        buttons, model_index = _generate_model_buttons(
+            settings.OPENCODE_AVAILABLE_MODELS, current_model, model_index, provider="opencode"
+        )
+        keyboard.extend(buttons)
 
     # Add models OpenRouter, if доступны
     if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
+        if settings.AVAILABLE_MODELS or settings.OPENCODE_AVAILABLE_MODELS:
+            keyboard.append([InlineKeyboardButton("─────────────", callback_data="model_none")])
         buttons, model_index = _generate_model_buttons(
             settings.OPENROUTER_AVAILABLE_MODELS,
             current_model,
             model_index,
-            is_openrouter=True,
+            provider="openrouter",
         )
         keyboard.extend(buttons)
 
     # Build text with model hint for decision support
-    is_current_openrouter = "/" in current_model if current_model else False
-    provider_name = "OpenRouter" if is_current_openrouter else "Google Gemini"
+    from app.providers.base import is_opencode_model, is_openrouter_model
+    if current_model and is_opencode_model(current_model):
+        provider_name = "Opencode Go"
+    elif current_model and is_openrouter_model(current_model):
+        provider_name = "OpenRouter"
+    else:
+        provider_name = "Google Gemini"
 
     text = "🧠 **Выбор модели**\n\n"
     text += f"Текущая: `{current_model}`\n"

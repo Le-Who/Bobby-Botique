@@ -20,6 +20,7 @@ from app.errors import (
 from app.providers.base import is_opencode_model
 from app.providers.openrouter import _has_multimodal_content
 
+
 # ── Opencode Go → Gemini cross-provider fallback map ──────────────────────────
 # When ALL Opencode Go keys are exhausted or fail, silently retry on Gemini.
 # Returns live mapping so hot-reloaded model names are correctly reflected.
@@ -459,7 +460,7 @@ class ProviderRouter:
                 async def _race_stream(
                     idx: int,
                     kd: dict,
-                    mod: str = model_used,
+                    mod: str = str(model_used),
                     q: asyncio.Queue = winner_queue,
                 ) -> None:
                     """Race participant: stream from one key, push chunks + sentinel to queue."""

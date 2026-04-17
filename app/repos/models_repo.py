@@ -67,6 +67,7 @@ async def sync_models_from_db() -> None:
     for provider, attr in (
         ("gemini", "AVAILABLE_MODELS"),
         ("openrouter", "OPENROUTER_AVAILABLE_MODELS"),
+        ("opencode", "OPENCODE_AVAILABLE_MODELS"),
     ):
         raw = await get_global_setting(_db_key(provider), default="")
         if raw:
@@ -100,7 +101,12 @@ async def get_models(provider: str) -> list[str]:
     """Return the active model list for *provider* ('gemini' | 'openrouter')."""
     from app.config import settings
 
-    attr = "AVAILABLE_MODELS" if provider == "gemini" else "OPENROUTER_AVAILABLE_MODELS"
+    if provider == "gemini":
+        attr = "AVAILABLE_MODELS"
+    elif provider == "openrouter":
+        attr = "OPENROUTER_AVAILABLE_MODELS"
+    else:
+        attr = "OPENCODE_AVAILABLE_MODELS"
     return list(getattr(settings, attr, []) or [])
 
 
@@ -111,7 +117,12 @@ async def add_model(provider: str, model_name: str) -> bool:
     """
     from app.config import settings
 
-    attr = "AVAILABLE_MODELS" if provider == "gemini" else "OPENROUTER_AVAILABLE_MODELS"
+    if provider == "gemini":
+        attr = "AVAILABLE_MODELS"
+    elif provider == "openrouter":
+        attr = "OPENROUTER_AVAILABLE_MODELS"
+    else:
+        attr = "OPENCODE_AVAILABLE_MODELS"
     current: list[str] = list(getattr(settings, attr, []) or [])
 
     clean = model_name.strip()
@@ -134,7 +145,12 @@ async def remove_model(provider: str, model_name: str) -> bool:
     """
     from app.config import settings
 
-    attr = "AVAILABLE_MODELS" if provider == "gemini" else "OPENROUTER_AVAILABLE_MODELS"
+    if provider == "gemini":
+        attr = "AVAILABLE_MODELS"
+    elif provider == "openrouter":
+        attr = "OPENROUTER_AVAILABLE_MODELS"
+    else:
+        attr = "OPENCODE_AVAILABLE_MODELS"
     current: list[str] = list(getattr(settings, attr, []) or [])
 
     clean = model_name.strip()
@@ -168,7 +184,7 @@ async def reset_models_to_env(provider: str) -> list[str]:
         await set_global_setting(_db_key(provider), _encode(env_list))
         logger.info("models_repo: reset gemini list to env (%d models)", len(env_list))
         return env_list
-    else:
+    elif provider == "openrouter":
         try:
             from app.config import _load_and_clean_keys  # type: ignore[attr-defined]
 
@@ -179,3 +195,15 @@ async def reset_models_to_env(provider: str) -> list[str]:
         await set_global_setting(_db_key(provider), _encode(env_list))
         logger.info("models_repo: reset openrouter list to env (%d models)", len(env_list))
         return env_list
+    else:  # opencode
+        try:
+            from app.config import _load_and_clean_keys  # type: ignore[attr-defined]
+
+            env_list = _load_and_clean_keys("OPENCODE_AVAILABLE_MODELS", required=False) or []
+        except Exception:
+            env_list = []
+        settings.OPENCODE_AVAILABLE_MODELS = env_list
+        await set_global_setting(_db_key(provider), _encode(env_list))
+        logger.info("models_repo: reset opencode list to env (%d models)", len(env_list))
+        return env_list
+

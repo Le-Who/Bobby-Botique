@@ -25,8 +25,8 @@ def test_heavy_callback_semaphore_present_and_used():
 def test_heavy_message_semaphore_present_and_used():
     # Multi-tier semaphore: both tiers exported from concurrency.py
     concurrency_source = Path("app/adapters/concurrency.py").read_text(encoding="utf-8")
-    assert "heavy_request_semaphore = GlobalLLMSemaphore" in concurrency_source
-    assert "ultra_heavy_semaphore = GlobalLLMSemaphore" in concurrency_source
+    assert "heavy_request_semaphore = _LazyGlobalLLMSemaphore" in concurrency_source
+    assert "ultra_heavy_semaphore = _LazyGlobalLLMSemaphore" in concurrency_source
 
     # Semaphores are acquired inside agent.py's process_long_request
     agent_source = Path("app/handlers/agent.py").read_text(encoding="utf-8")

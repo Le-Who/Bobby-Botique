@@ -290,7 +290,7 @@ async def generate_words_for_category(
             client = genai.Client(api_key=api_key)
             response = await asyncio.wait_for(
                 asyncio.to_thread(
-                    lambda c=client, m=model: c.models.generate_content(
+                    lambda c=client, m=model: c.models.generate_content(  # type: ignore[misc]
                         model=m,
                         contents=prompt,
                         config={

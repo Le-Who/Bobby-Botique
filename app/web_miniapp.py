@@ -191,10 +191,20 @@ async def api_get_settings(user_id: int):
         if not chat_state:
             return jsonify({"error": "no_chat"}), 404
 
-        # Build available models list (same as /model command)
-        all_models = list(settings.AVAILABLE_MODELS or [])
-        if settings.OPENROUTER_AVAILABLE_MODELS:
-            all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+        # Build available models list grouped by provider
+        gemini_models = list(settings.AVAILABLE_MODELS or [])
+        openrouter_models = list(settings.OPENROUTER_AVAILABLE_MODELS or [])
+        opencode_models = list(settings.OPENCODE_AVAILABLE_MODELS or [])
+        all_models = gemini_models + openrouter_models + opencode_models
+
+        # Build grouped structure for the frontend picker
+        grouped_models = []
+        if gemini_models:
+            grouped_models.append({"provider": "Google Gemini", "icon": "🤖", "models": gemini_models})
+        if opencode_models:
+            grouped_models.append({"provider": "Opencode Go", "icon": "⚡", "models": opencode_models})
+        if openrouter_models:
+            grouped_models.append({"provider": "OpenRouter", "icon": "🌐", "models": openrouter_models})
 
         user_roles = await get_user_custom_roles(user_id)
 
@@ -211,6 +221,7 @@ async def api_get_settings(user_id: int):
                     "tts_temperature": chat_state.tts_temperature,
                 },
                 "available_models": all_models,
+                "grouped_models": grouped_models,
                 "thinking_levels": ["off", "low", "medium", "high"],
                 "custom_roles": user_roles,
             }
@@ -241,12 +252,14 @@ async def api_update_settings(user_id: int):
                 chat_state.system_prompt = prompt.strip() or None
                 changed = True
 
-        # Model
+        # Model — validate against all three providers
         if "model" in body:
             model = body["model"]
-            all_models = list(settings.AVAILABLE_MODELS or [])
-            if settings.OPENROUTER_AVAILABLE_MODELS:
-                all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
+            all_models = (
+                list(settings.AVAILABLE_MODELS or [])
+                + list(settings.OPENROUTER_AVAILABLE_MODELS or [])
+                + list(settings.OPENCODE_AVAILABLE_MODELS or [])
+            )
             if model in all_models:
                 chat_state.model = model
                 changed = True

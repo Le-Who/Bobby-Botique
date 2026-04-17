@@ -4,7 +4,9 @@ Settings object for tests that import the production modules directly.
 """
 
 import asyncio
+import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from dotenv import load_dotenv
@@ -33,13 +35,82 @@ def _quiet_exception_handler(loop, context):
 def pytest_configure(config):
     """Suppress cosmetic warnings from asyncio/asyncpg cleanup."""
     config.addinivalue_line("filterwarnings", "ignore::RuntimeWarning:asyncio")
-    # Install quiet exception handler on the default event loop policy
-    # This suppresses asyncpg "Future exception was never retrieved" noise
     try:
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(_quiet_exception_handler)
     except RuntimeError:
         pass  # No running event loop yet — will be set by pytest-asyncio
+
+
+# ---------------------------------------------------------------------------
+# Runtime decontamination: repair stale MagicMock bindings between modules
+# ---------------------------------------------------------------------------
+
+# Capture the ONE TRUE settings object right after .env is loaded —
+# before any test can mutate os.environ or replace app.config.settings.
+try:
+    from app.config import settings as _canonical_settings
+except Exception:
+    _canonical_settings = None  # type: ignore[assignment]
+
+
+def _propagate_real_settings():
+    """Ensure every loaded ``app.*`` module uses the canonical Settings object.
+
+    Handles two contamination modes:
+    1. MagicMock bindings left by setup_module/teardown_module sys.modules mutations
+    2. Duplicate Settings instances created when app.config is purged from
+       sys.modules and reimported with mutated os.environ
+    """
+    if _canonical_settings is None:
+        return
+
+    repaired = []
+
+    # Also restore app.config.settings itself if it drifted
+    config_mod = sys.modules.get("app.config")
+    if config_mod is not None and not isinstance(config_mod, MagicMock):
+        current = getattr(config_mod, "settings", None)
+        if current is not _canonical_settings:
+            setattr(config_mod, "settings", _canonical_settings)
+            repaired.append("app.config")
+
+    for mod_name in list(sys.modules):
+        if not mod_name.startswith("app."):
+            continue
+        mod = sys.modules.get(mod_name)
+        if mod is None or isinstance(mod, MagicMock):
+            continue
+        current_settings = getattr(mod, "settings", _SENTINEL)
+        if current_settings is _SENTINEL:
+            continue  # module doesn't have a 'settings' attribute
+        if current_settings is not _canonical_settings:
+            setattr(mod, "settings", _canonical_settings)
+            repaired.append(mod_name)
+
+    if repaired:
+        import logging
+        logging.getLogger(__name__).debug(
+            "Decontaminated settings in %d modules: %s",
+            len(repaired),
+            repaired,
+        )
+
+
+_SENTINEL = object()
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _decontaminate_settings():
+    """Auto-heal stale MagicMock settings bindings between test modules.
+
+    Runs BEFORE the first test in each module and AFTER the last test,
+    ensuring that any setup_module/teardown_module sys.modules mutations
+    don't leak MagicMock references into subsequent test modules.
+    """
+    _propagate_real_settings()
+    yield
+    _propagate_real_settings()
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -53,6 +124,7 @@ def _cancel_db_background_tasks():
             task = getattr(db_manager, attr, None)
             if task and not task.done():
                 task.cancel()
+        
     except Exception:
         pass
 

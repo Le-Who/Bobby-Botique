@@ -137,7 +137,7 @@ async def extract_graph_structured(
             response = await client.aio.models.generate_content(
                 model=GRAPH_EXTRACTION_MODEL,
                 contents=prompt,
-                config=types.GenerateContentConfig(**config_kwargs),
+                config=types.GenerateContentConfig(**config_kwargs),  # type: ignore[arg-type]
             )
             response_text = (response.text or "").strip()
             if not response_text:

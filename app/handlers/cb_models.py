@@ -45,6 +45,8 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
             all_models: list[str] = []
             if settings.AVAILABLE_MODELS:
                 all_models.extend(settings.AVAILABLE_MODELS)
+            if settings.OPENCODE_AVAILABLE_MODELS:
+                all_models.extend(settings.OPENCODE_AVAILABLE_MODELS)
             openrouter_available = bool(get_openrouter_keys())
             if openrouter_available and settings.OPENROUTER_AVAILABLE_MODELS:
                 all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
@@ -100,8 +102,12 @@ async def model_button_callback(update: Update, context: ContextTypes.DEFAULT_TY
     formatted_text, parse_mode, reply_markup = menus.get_model_menu_content(chat_state, context)
 
     # Определяем имя for тоста
-    is_openrouter = "/" in model_name
-    display_name = model_name.split("/")[-1] if is_openrouter else model_name
+    if model_name.startswith("opencode-go/"):
+        display_name = model_name.replace("opencode-go/", "").replace("-", " ").title()
+    elif "/" in model_name:
+        display_name = model_name.split("/")[-1]
+    else:
+        display_name = model_name
 
     try:
         await query.edit_message_text(formatted_text, parse_mode=parse_mode, reply_markup=reply_markup)
@@ -130,6 +136,8 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Verify model is available
     all_models = list(settings.AVAILABLE_MODELS or [])
+    if settings.OPENCODE_AVAILABLE_MODELS:
+        all_models.extend(settings.OPENCODE_AVAILABLE_MODELS)
     if settings.OPENROUTER_AVAILABLE_MODELS:
         all_models.extend(settings.OPENROUTER_AVAILABLE_MODELS)
 
@@ -141,5 +149,11 @@ async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat_state.model = model_name
     await update_user_chat(user_id, chat_state)
 
-    display_name = model_name.split("/")[-1] if "/" in model_name else model_name
+    if model_name.startswith("opencode-go/"):
+        display_name = model_name.replace("opencode-go/", "").replace("-", " ").title()
+    elif "/" in model_name:
+        display_name = model_name.split("/")[-1]
+    else:
+        display_name = model_name
+
     await query.edit_message_text(f"✅ Модель переключена на **{display_name}**")

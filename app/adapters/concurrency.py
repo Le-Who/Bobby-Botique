@@ -102,8 +102,35 @@ class GlobalLLMSemaphore:
             await self._local_semaphore.__aexit__(exc_type, exc_val, exc_tb)
 
 
-_HEAVY_REQUEST_LIMIT = max(1, settings.MAX_CONCURRENT_HEAVY_REQUESTS)
-heavy_request_semaphore = GlobalLLMSemaphore(_HEAVY_REQUEST_LIMIT, redis_key="llm_req_semaphore")
+class _LazyGlobalLLMSemaphore:
+    """Proxy that defers semaphore creation until first use.
 
-_ULTRA_HEAVY_LIMIT = max(1, settings.MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS)
-ultra_heavy_semaphore = GlobalLLMSemaphore(_ULTRA_HEAVY_LIMIT, redis_key="llm_ultra_heavy_semaphore")
+    This prevents import-time access to ``settings.*``, which would fail in
+    test workers that have ``app.config`` mocked as a ``MagicMock``.
+    """
+
+    def __init__(self, settings_attr: str, redis_key: str) -> None:
+        self._settings_attr = settings_attr
+        self._redis_key = redis_key
+        self._inner: GlobalLLMSemaphore | None = None
+
+    def _ensure(self) -> GlobalLLMSemaphore:
+        if self._inner is None:
+            limit = max(1, int(getattr(settings, self._settings_attr)))
+            self._inner = GlobalLLMSemaphore(limit, redis_key=self._redis_key)
+        return self._inner
+
+    async def __aenter__(self) -> "GlobalLLMSemaphore":
+        return await self._ensure().__aenter__()
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        if self._inner is not None:
+            await self._inner.__aexit__(exc_type, exc_val, exc_tb)
+
+
+heavy_request_semaphore = _LazyGlobalLLMSemaphore(
+    "MAX_CONCURRENT_HEAVY_REQUESTS", redis_key="llm_req_semaphore"
+)
+ultra_heavy_semaphore = _LazyGlobalLLMSemaphore(
+    "MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS", redis_key="llm_ultra_heavy_semaphore"
+)

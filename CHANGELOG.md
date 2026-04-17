@@ -3,8 +3,19 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
-## [2.13.1] - 2026-04-16 - Opencode Observability Hardening & Hot-Reload Bug Fixes
+## [2.13.2] - 2026-04-17 - Test Suite Stabilization & Contamination Fixes
 
+### 🐛 Critical Bug Fixes
+
+- **Collection-Time Contamination:** Fixed an architectural instability in the test suite where module-level setup logic across various files (e.g., `test_analytics.py`, `test_document_security.py`) would mutate `sys.modules` and `os.environ` during test collection, bleeding state into the global namespace.
+- **Settings Drift Resolution:** Implemented a core `_decontaminate_settings` runtime fixture in `conftest.py`. The suite now captures a `_canonical_settings` singleton before execution and aggressively propagates it to all imported `app.*` submodules via `setattr` prior to each test module. This eliminates "Settings Drift" where application functions were binding to stale or duplicated settings objects (or `MagicMock` remnants) purged and recreated during testing.
+- **Database MagicMock Failures:** Migrated tests relying on module-level environment mocks to use targeted `setup_module`/`teardown_module` and proper fixture injection architectures, resolving random `TypeError: '>' not supported between instances of 'MagicMock' and 'int'` failures in the Database manager pool initialization.
+
+### ✅ Verification
+
+- Full suite: **1803 passed, 0 failed** (1m 54s)
+
+## [2.13.1] - 2026-04-16 - Opencode Observability Hardening & Hot-Reload Bug Fixes
 ### 🐛 Critical Bug Fixes
 
 - **Provider-aware streaming metrics (`app/streaming.py`):** `record_api_call` was hardcoded to `"gemini_streaming"` for every provider. All Opencode and OpenRouter streaming traffic was silently mis-attributed to Gemini in the metrics dashboard. Fixed with an `is_opencode_model` / `is_openrouter_model` dispatch: Opencode traffic now records as `"opencode_streaming"`, OpenRouter as `"openrouter_streaming"`, Gemini as `"gemini_streaming"`.

@@ -181,8 +181,8 @@ async def _suspend_key_safe(
     add latency to the race itself.
     """
     try:
-        from app.repos.keys import KeyHealthRepository
-        await KeyHealthRepository().suspend_key(key_hash, model, category, error_text)
+        from app.repos.keys import get_key_status_manager
+        await get_key_status_manager().suspend_key(key_hash, model, category, error_text)
     except Exception as exc:  # noqa: BLE001
         logger.debug("Judge: key suspension task failed for %s: %s", key_hash[:8], exc)
 

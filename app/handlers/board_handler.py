@@ -312,7 +312,7 @@ async def _run_synthesis(topic: str, entries: list[dict]) -> str:
             ),
             timeout=30.0,
         )
-        return (result or "").strip()[:3000]
+        return (result[0] or "").strip()[:3000] if result else ""
     except Exception as exc:
         logger.error("Board synthesis failed: %s", exc, exc_info=True)
         # Fallback: plain list without AI structuring

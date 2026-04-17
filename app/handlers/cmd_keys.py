@@ -114,7 +114,8 @@ async def keys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     if data.startswith("keys:edit:"):
         provider = data.split(":", 2)[2]
-        context.user_data["keys_editing_provider"] = provider
+        if context.user_data is not None:
+            context.user_data["keys_editing_provider"] = provider
         label = _PROVIDERS.get(provider, provider)
         await query.edit_message_text(
             f"✏️ Отправьте новый API-ключ для **{label}**.\n\n"
@@ -228,7 +229,7 @@ async def _show_all_statuses(query) -> int:
 
 async def receive_key_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the user's new API key message — store + delete the message."""
-    provider = context.user_data.pop("keys_editing_provider", None)
+    provider = context.user_data.pop("keys_editing_provider", None) if context.user_data is not None else None
     if not provider:
         return ConversationHandler.END
 

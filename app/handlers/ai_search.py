@@ -197,7 +197,7 @@ async def _handle_qna_search(
 
     # ── Handle response ────────────────────────────────────────────────
     if await handle_ai_response_error(final_answer or "", placeholder_message):
-        return
+        return None
 
     if final_answer:
         buttons = [

@@ -33,7 +33,8 @@ AWAITING_MODEL_NAME = 100  # distinct from AWAITING_KEY = 0 in cmd_keys
 
 _PROVIDERS = {
     "gemini": "🤖 Gemini",
-    "openrouter": "⚡ OpenRouter",
+    "opencode": "⚡ Opencode Go",
+    "openrouter": "🌐 OpenRouter",
 }
 
 
@@ -79,7 +80,8 @@ async def models_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("models:add:"):
         provider = data.split(":", 2)[2]
-        context.user_data["models_editing_provider"] = provider
+        if context.user_data is not None:
+            context.user_data["models_editing_provider"] = provider
         label = _PROVIDERS.get(provider, provider)
         await query.edit_message_text(
             f"➕ Введите точное название модели для **{label}**.\n\n"
@@ -182,7 +184,7 @@ async def _handle_reset(query, provider: str) -> int:
 
 async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Store the new model name sent by the admin."""
-    provider = context.user_data.pop("models_editing_provider", None)
+    provider = context.user_data.pop("models_editing_provider", None) if context.user_data is not None else None
     if not provider:
         return ConversationHandler.END
 

@@ -479,7 +479,7 @@ async def search_memories_with_graph(
     try:
         query_embedding = await _get_embedding(expanded_query, api_key, task_type="RETRIEVAL_QUERY")
         if query_embedding is None:
-            return memories, graph_triples
+            return memories, graph_triples, {}
 
         embedding_str = f"[{','.join(str(v) for v in query_embedding)}]"
 

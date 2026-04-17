@@ -106,7 +106,7 @@ async def _generate_single_chunk_gemini(
             t.add_done_callback(_suppress)
 
         winner_pcm: bytes | None = None
-        race_errors: dict[str, Exception] = {}
+        race_errors: dict[str, BaseException] = {}
 
         pending = set(tasks)
         while pending:
@@ -133,7 +133,7 @@ async def _generate_single_chunk_gemini(
                     pass
                 else:
                     # This key failed — record and continue waiting
-                    if not isinstance(exc, asyncio.CancelledError):
+                    if exc is not None and not isinstance(exc, asyncio.CancelledError):
                         race_errors[kd["key_hash"]] = exc
                         logging.warning(
                             "TTS key %s… failed: %s",

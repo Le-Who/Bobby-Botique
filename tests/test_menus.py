@@ -6,6 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+# Isolate this module in its own xdist worker to prevent sys.modules contamination
+# of other test workers. setup_module() installs heavy module-level mocks.
+pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
+
 # ==============================================================================
 # PYTEST MARKERS - для разделения типов тестов
 # ==============================================================================
@@ -31,6 +35,7 @@ def setup_mocks():
     mock_config = MagicMock()
     mock_settings = MagicMock()
     mock_settings.AVAILABLE_MODELS = ["gemini-pro", "gemini-flash"]
+    mock_settings.OPENCODE_AVAILABLE_MODELS = []
     mock_settings.OPENROUTER_AVAILABLE_MODELS = []
     mock_settings.DEFAULT_MODEL = "gemini-pro"
     mock_config.settings = mock_settings
@@ -88,6 +93,7 @@ def setup_mocks():
 
     # Mock google.genai and redis
     sys.modules["google.genai"] = MagicMock()
+    sys.modules["google.genai.errors"] = MagicMock()
     sys.modules["redis"] = MagicMock()
 
     # Mock other needed parts, but do not override app.handlers package
@@ -105,6 +111,7 @@ _mocked_module_keys = [
     "telegram.ext",
     "pydantic",
     "google.genai",
+    "google.genai.errors",
     "redis",
 ]
 
@@ -115,6 +122,9 @@ def setup_module(module):
     import importlib
 
     _original_modules = {}
+    _original_modules["__app_keys_before__"] = {
+        k for k in sys.modules if k.startswith("app.")
+    }
     for k in _mocked_module_keys:
         if k in sys.modules:
             _original_modules[k] = sys.modules[k]
@@ -127,14 +137,17 @@ def setup_module(module):
 
 def teardown_module(module):
     """Restore sys.modules to prevent test pollution."""
+    app_keys_before = _original_modules.pop("__app_keys_before__", set())
     for k in _mocked_module_keys:
         if k in sys.modules:
             del sys.modules[k]
     sys.modules.update(_original_modules)
 
-    # Remove the poisoned module so subsequent tests import cleanly
-    if "app.handlers.menus" in sys.modules:
-        del sys.modules["app.handlers.menus"]
+    # Purge ALL app.* modules imported during the mocked period.
+    # They hold stale MagicMock bindings that persist even after sys.modules restore.
+    for k in list(sys.modules):
+        if k.startswith("app.") and k not in app_keys_before:
+            del sys.modules[k]
 
 
 # ==============================================================================
@@ -308,7 +321,7 @@ async def test_start_menu_content_search_on_prompt_set():
 @pytest.mark.asyncio
 async def test_start_menu_content_search_off_prompt_unset():
     """Test start menu content when search is disabled and system prompt is not set."""
-    chat_state = ChatState(model="gpt-4", search_enabled=False, system_prompt=None)
+    chat_state = ChatState(model="gemini-pro", search_enabled=False, system_prompt=None)
 
     get_start_menu_content, _ = get_menu_methods()
     response = await get_start_menu_content(chat_state)
@@ -317,7 +330,7 @@ async def test_start_menu_content_search_off_prompt_unset():
 
     # Verify text content
     assert "🔴" in text, "Search disabled status missing"
-    assert "gpt-4" in text, "Model name not displayed"
+    assert "gemini-pro" in text, "Model name not displayed"
 
     # Verify search button
     keyboard = reply_markup.inline_keyboard
@@ -372,6 +385,7 @@ async def test_start_menu_buttons_structure():
 def test_get_model_menu_content_gemini_only(mock_get_keys, mock_settings_obj, mock_context):
     """Test model menu with only Gemini models available."""
     mock_settings_obj.AVAILABLE_MODELS = ["gemini-pro", "gemini-flash"]
+    mock_settings_obj.OPENCODE_AVAILABLE_MODELS = []
     mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
     mock_get_keys.return_value = []
 
@@ -636,6 +650,7 @@ def test_integration_real_telegram_buttons():
             patch.object(menus, "get_openrouter_keys", return_value=[]),
         ):
             mock_settings_obj.AVAILABLE_MODELS = ["gemini-flash-latest", "gemini-pro"]
+            mock_settings_obj.OPENCODE_AVAILABLE_MODELS = []
             mock_settings_obj.OPENROUTER_AVAILABLE_MODELS = []
 
             cs = ChatState(model="gemini-flash-latest")

@@ -229,9 +229,36 @@ body {
 .bottom-sheet { position: absolute; bottom: 0; left: 0; right: 0; background: var(--bg); border-top-left-radius: 20px; border-top-right-radius: 20px; transform: translateY(100%); transition: transform .3s cubic-bezier(0.2, 0.8, 0.2, 1); max-height: 80vh; overflow-y: auto; }
 .bottom-sheet-overlay.show .bottom-sheet { transform: translateY(0); }
 .sheet-header { position: sticky; top: 0; background: var(--bg); padding: 16px; font-size: 18px; font-weight: 600; text-align: center; border-bottom: 1px solid var(--secondary-bg); z-index: 2; }
-.sheet-row { padding: 16px; font-size: 16px; border-bottom: 1px solid var(--secondary-bg); display: flex; justify-content: space-between; cursor: pointer; }
+.sheet-row { padding: 14px 16px; font-size: 15px; border-bottom: .5px solid var(--secondary-bg); display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: background .15s; }
+.sheet-row:last-child { border-bottom: none; }
+.sheet-row:active { background: var(--secondary-bg); }
 .sheet-row.active { color: var(--link); font-weight: 600; }
 .sheet-row.active::after { content: "✓"; }
+/* Provider group header in model picker */
+.sheet-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+  color: var(--section-header);
+  background: var(--secondary-bg);
+  cursor: pointer;
+  user-select: none;
+  border-bottom: .5px solid var(--secondary-bg);
+  position: sticky;
+  top: 56px; /* below .sheet-header */
+  z-index: 1;
+}
+.sheet-provider-header .ph-chevron { font-size: 13px; transition: transform .2s; }
+.sheet-provider-group.collapsed .ph-chevron { transform: rotate(-90deg); }
+.sheet-provider-group.collapsed .sheet-provider-rows { display: none; }
+/* Model display name and sub-label */
+.model-name { font-size: 15px; }
+.model-sub { font-size: 12px; color: var(--hint); margin-top: 1px; }
 
 /* Toast */
 .toast-wrap { position: fixed; bottom: 84px; left: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 200; pointer-events: none; }
@@ -530,10 +557,6 @@ body {
     <span class="tab-btn-icon">⚙️</span>
     <span>Настройки</span>
   </div>
-  <div class="tab-btn" id="tab-graph" onclick="switchTab('graph')">
-    <span class="tab-btn-icon">🕸️</span>
-    <span>Граф</span>
-  </div>
   <div class="tab-btn active" id="tab-memories" onclick="switchTab('memories')">
     <span class="tab-btn-icon">🧠</span>
     <span>Память</span>
@@ -592,9 +615,32 @@ let observer = null;
 let settingsData = null;
 let isDirty = false;
 let availableModels = [];
+let groupedModels = [];
 let thinkingMap = { "off": "Выкл", "low": "Низкий", "medium": "Средний", "high": "Высокий" };
 let currentTargetSheet = null;
-let roleDataCache = []; // Cache to prevent missing titles/prompts
+let roleDataCache = [];
+
+// Human-readable display names for models (auto-populated from API, enriched with known aliases)
+const MODEL_DISPLAY_NAMES = {
+  // Google Gemini
+  'gemini-3-flash-preview':          { name: 'Gemini 3 Flash', sub: '💥 Флагман — максимальный интеллект' },
+  'gemini-3.1-flash-lite-preview':   { name: 'Gemini 3.1 Flash Lite', sub: '🍱 Лёгкая версия — быстро и отзывчиво' },
+  'gemini-2.5-flash':                { name: 'Gemini 2.5 Flash', sub: '⚡ Баланс скорости и качества' },
+  'gemini-2.5-flash-lite':           { name: 'Gemini 2.5 Flash Lite', sub: '💫 Мгновенные ответы' },
+  'gemini-2.5-pro':                  { name: 'Gemini 2.5 Pro', sub: '🔬 Глубокий анализ и код' },
+  // Opencode Go
+  'opencode-go/minimax-m2.7':        { name: 'MiniMax M2.7', sub: '🥇 Флагман Opencode — длинный контекст' },
+  'opencode-go/minimax-m2.5':        { name: 'MiniMax M2.5', sub: '⚡ Быстрый Opencode' },
+  'opencode-go/kimi-k2.5':           { name: 'Kimi K2.5', sub: '🚀 Рассуждения и STEM ' },
+  'opencode-go/qwen3.5-plus':        { name: 'Qwen 3.5+', sub: '💬 Диалог и вопросы-ответы' },
+  'opencode-go/qwen3.6-plus':        { name: 'Qwen 3.6+', sub: '🔬 Исследования и анализ' },
+  'opencode-go/mimo-v2-omni':        { name: 'MiMo V2 Omni', sub: '👁️ Мультимодальный (vision)' },
+  'opencode-go/deepseek-v3.5':       { name: 'DeepSeek V3.5', sub: '🧠 Код и логика' },
+  'opencode-go/deepseek-r1':         { name: 'DeepSeek R1', sub: '🔍 Глубокие рассуждения' },
+  // OpenRouter
+  'stepfun/step-3.5-flash:free':     { name: 'Step 3.5 Flash', sub: '🌐 OpenRouter — бесплатный' },
+  'stepfun/step-3-mini:free':        { name: 'Step 3 Mini', sub: '🌐 OpenRouter' },
+};
 
 let pendingDeletions = {};
 
@@ -978,18 +1024,67 @@ tg.onEvent('viewportChanged', ({ isStateStable }) => {
 window.addEventListener('beforeunload', () => flushPendingDeletions());
 
 // ── Settings Subsystem ──
+
+// Helper: get display name for a model id
+function modelDisplayName(modelId) {
+  const info = MODEL_DISPLAY_NAMES[modelId];
+  if (info) return info.name;
+  // Fallback: strip provider prefix and prettify
+  const short = modelId.replace(/^[^/]+\//, '').replace(/-/g, ' ');
+  return short.charAt(0).toUpperCase() + short.slice(1);
+}
+function modelSubLabel(modelId) {
+  const info = MODEL_DISPLAY_NAMES[modelId];
+  return info ? info.sub : '';
+}
+
+function buildModelSheet() {
+  if (!groupedModels.length) {
+    // Flat fallback if no grouped_models
+    document.getElementById('sheet-models-list').innerHTML = availableModels.map(m => {
+      const active = m === settingsData.model;
+      return `<div class="sheet-row ${active ? 'active' : ''}" onclick="setModel('${esc(m)}')">${esc(modelDisplayName(m))}</div>`;
+    }).join('');
+    return;
+  }
+
+  let html = '';
+  groupedModels.forEach((group, gi) => {
+    const groupId = 'pg-' + gi;
+    html += `<div class="sheet-provider-group" id="${groupId}">`;
+    html += `<div class="sheet-provider-header" onclick="toggleProviderGroup('${groupId}')">`;
+    html += `<span>${esc(group.icon)} ${esc(group.provider)}</span>`;
+    html += `<span class="ph-chevron">&#8250;</span>`;
+    html += `</div><div class="sheet-provider-rows">`;
+    group.models.forEach(m => {
+      const active = m === settingsData.model;
+      const dname = esc(modelDisplayName(m));
+      const sub = esc(modelSubLabel(m));
+      html += `<div class="sheet-row ${active ? 'active' : ''}" onclick="setModel('${esc(m)}')">`;
+      html += `<div><div class="model-name">${dname}</div>${sub ? `<div class="model-sub">${sub}</div>` : ''}</div>`;
+      html += `</div>`;
+    });
+    html += `</div></div>`;
+  });
+  document.getElementById('sheet-models-list').innerHTML = html;
+}
+
+function toggleProviderGroup(groupId) {
+  if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  document.getElementById(groupId).classList.toggle('collapsed');
+}
+
 async function loadSettings() {
   try {
     const [d, r, v] = await Promise.all([ api('/settings'), api('/roles'), api('/voices') ]);
     settingsData = d.settings;
     availableModels = d.available_models || [];
+    groupedModels = d.grouped_models || [];
     roleDataCache = r.roles || [];
     
     // Populate model sheet
-    document.getElementById('sheet-models-list').innerHTML = availableModels.map(m => 
-      `<div class="sheet-row ${m === settingsData.model ? 'active':''}" onclick="setModel('${esc(m)}')">${esc(m)}</div>`
-    ).join('');
-    document.getElementById('val-model').textContent = `${settingsData.model} ❭`;
+    buildModelSheet();
+    document.getElementById('val-model').textContent = `${modelDisplayName(settingsData.model)} ❭`;
     
     renderRoles(settingsData.system_prompt);
     
@@ -1001,6 +1096,28 @@ async function loadSettings() {
     // Toggles
     document.getElementById('s-ltm').checked = settingsData.ltm_enabled;
     document.getElementById('s-search').checked = settingsData.search_enabled;
+    
+    // Thinking
+    setThinking(settingsData.thinking_level || 'off', true);
+    
+    // Temp
+    syncTempControls(settingsData.temperature);
+    syncTtsTempControls(settingsData.tts_temperature);
+    
+    // Voices
+    let vHtml = '';
+    (v.voices || []).forEach(voice => {
+      let isActive = settingsData.voice_id === voice.id || (!settingsData.voice_id && voice.name.includes("Charlotte"));
+      vHtml += `<div class="setting-row" onclick="setVoice('${voice.id}')">
+        <div class="setting-label">${esc(voice.name)}</div>
+        <div class="setting-val">${isActive ? '✓' : ''}</div>
+      </div>`;
+    });
+    document.getElementById('settings-voices-list').innerHTML = vHtml;
+    
+    isDirty = false;
+  } catch(e) { showToast('Ошибка загрузки настроек'); }
+}    document.getElementById('s-search').checked = settingsData.search_enabled;
     
     // Thinking
     setThinking(settingsData.thinking_level || 'off', true);
@@ -1100,7 +1217,8 @@ function closeSheet() { document.getElementById('sheet-overlay').classList.remov
 function setModel(model) {
   if (tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
   settingsData.model = model;
-  document.getElementById('val-model').textContent = `${model} ❭`;
+  document.getElementById('val-model').textContent = `${modelDisplayName(model)} ❭`;
+  // Update active state in sheet
   document.querySelectorAll('#sheet-models .sheet-row').forEach(row => row.classList.remove('active'));
   event.currentTarget.classList.add('active');
   closeSheet();
@@ -1347,13 +1465,15 @@ document.getElementById('s-prompt-area').addEventListener('input', e => {
 function esc(s) { const d = document.createElement('div'); d.textContent = s||''; return d.innerHTML; }
 
 // Init
+// Init
 const params = new URLSearchParams(window.location.search);
-pushPage('page-memories');
 const tabParam = params.get('tab');
-if (tabParam === 'settings') {
+if (tabParam === 'memories' || tabParam === 'graph') {
+  // graph is now accessed via the кнопка in memories header; redirect to memories
+  switchTab('memories');
+} else {
+  // Default: open Settings tab on launch
   switchTab('settings');
-} else if (tabParam === 'graph') {
-  switchTab('graph');
 }
 initObserver();
 

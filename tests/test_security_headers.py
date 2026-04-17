@@ -23,6 +23,9 @@ _original_modules = {}
 
 def setup_module(module):
     global _original_modules
+    _original_modules["__app_keys_before__"] = {
+        k for k in sys.modules if k.startswith("app.")
+    }
     for k in _mock_keys:
         if k in sys.modules:
             _original_modules[k] = sys.modules[k]
@@ -34,10 +37,16 @@ def setup_module(module):
 
 
 def teardown_module(module):
+    app_keys_before = _original_modules.pop("__app_keys_before__", set())
     for k in _mock_keys:
         if k in sys.modules:
             del sys.modules[k]
     sys.modules.update(_original_modules)
+    # Purge any app.* modules imported DURING the mocked period
+    for k in list(sys.modules):
+        if k.startswith("app.") and k not in app_keys_before:
+            del sys.modules[k]
+
 
 
 @pytest.fixture

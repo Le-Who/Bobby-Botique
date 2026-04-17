@@ -5,20 +5,36 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Patching environment variables and sys.modules at module level
-os.environ["TELEGRAM_BOT_TOKEN"] = "123:test"
-os.environ["ADMIN_ID"] = "123456"
-os.environ["DATABASE_URL"] = "postgresql://user:pass@localhost/db"
-os.environ["GEMINI_API_KEYS"] = "key1"
-os.environ["TAVILY_API_KEYS"] = "key1"
-os.environ["PORT"] = "10000"
+# Isolate in dedicated xdist worker — mutates sys.modules and os.environ in setup_module.
+pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
 
 _mock_keys = ["app.database"]
 _original_modules = {}
+_original_env = {}
+
+# Environment variables this test module requires
+_ENV_OVERRIDES = {
+    "TELEGRAM_BOT_TOKEN": "123:test",
+    "ADMIN_ID": "123456",
+    "DATABASE_URL": "postgresql://user:pass@localhost/db",
+    "GEMINI_API_KEYS": "key1",
+    "TAVILY_API_KEYS": "key1",
+    "PORT": "10000",
+}
 
 
 def setup_module(module):
-    global _original_modules
+    global _original_modules, _original_env
+
+    # Save and override environment variables
+    _original_env.clear()
+    for k, v in _ENV_OVERRIDES.items():
+        _original_env[k] = os.environ.get(k)
+        os.environ[k] = v
+
+    _original_modules["__app_keys_before__"] = {
+        k for k in sys.modules if k.startswith("app.")
+    }
     for k in _mock_keys:
         if k in sys.modules:
             _original_modules[k] = sys.modules[k]
@@ -26,10 +42,22 @@ def setup_module(module):
 
 
 def teardown_module(module):
+    # Restore environment variables
+    for k, orig in _original_env.items():
+        if orig is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = orig
+
+    app_keys_before = _original_modules.pop("__app_keys_before__", set())
     for k in _mock_keys:
         if k in sys.modules:
             del sys.modules[k]
     sys.modules.update(_original_modules)
+    for k in list(sys.modules):
+        if k.startswith("app.") and k not in app_keys_before:
+            del sys.modules[k]
+
 
 
 @pytest.mark.asyncio
