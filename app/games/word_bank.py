@@ -302,7 +302,7 @@ async def resolve_custom_word_category(word: str) -> str:
 _GENERATED_CACHE: dict[str, list[str]] = {}
 
 # Gemini models tried in order for word generation
-_GEN_PRIMARY_MODEL = "opencode-go/mimo-v2-omni"
+_GEN_PRIMARY_MODEL = "opencode-go/minimax-m2.7"
 _GEN_FALLBACK_MODEL = "gemini-2.5-flash"
 _GEN_TIMEOUT_S = 18.0
 
