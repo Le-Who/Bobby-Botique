@@ -210,10 +210,13 @@ class ProviderRouter:
             # Success — update health and increment usage
             if response_text and not is_error_message(response_text):
                 try:
-                    await status_mgr.record_success(
-                        key_data["key_hash"],
-                        model_used,  # type: ignore[arg-type]  # asserted above
-                    )
+                    # Opencode keys are in-memory only — skip DB key_model_status writes
+                    # (the trigger check_key_hash_exists() only knows api_keys/openrouter_api_keys)
+                    if not is_opencode_model(model_used):  # type: ignore[arg-type]
+                        await status_mgr.record_success(
+                            key_data["key_hash"],
+                            model_used,  # type: ignore[arg-type]  # asserted above
+                        )
                 except Exception as e:
                     logging.debug("Non-critical: record_success failed: %s", e)
 
@@ -384,7 +387,9 @@ class ProviderRouter:
                         if not stream_started:
                             stream_started = True
                             try:
-                                await status_mgr.record_success(key_data["key_hash"], model_used)
+                                # Opencode keys are in-memory only — skip DB writes
+                                if not is_opencode_model(model_used):
+                                    await status_mgr.record_success(key_data["key_hash"], model_used)
                                 await use_case.increment_key_usage(key_data["key_hash"], model_used, use_openrouter)
                             except Exception as e:
                                 logging.debug("Non-critical stats update failed: %s", e)
@@ -419,12 +424,14 @@ class ProviderRouter:
                         error_msg[:120],
                     )
                     try:
-                        await status_mgr.suspend_key(
-                            key_data["key_hash"],
-                            model_used,
-                            error_category,
-                            error_msg[:200],
-                        )
+                        # Opencode keys are in-memory only — skip DB suspension writes
+                        if not is_opencode_model(model_used):
+                            await status_mgr.suspend_key(
+                                key_data["key_hash"],
+                                model_used,
+                                error_category,
+                                error_msg[:200],
+                            )
                     except Exception as db_e:
                         logging.warning("Failed to suspend key: %s", db_e)
                     continue  # Next retry attempt — no sleep!
@@ -560,7 +567,7 @@ class ProviderRouter:
                                 err_category,
                                 raw_err[:120],
                             )
-                            await status_mgr.suspend_key(kd["key_hash"], model_used, err_category, raw_err[:200])
+                            await status_mgr.suspend_key(kd["key_hash"], model_used, err_category, raw_err[:200]) if not is_opencode_model(model_used) else None
                         except Exception:
                             pass
                         # Update outer flags regardless of whether suspend_key succeeded
@@ -575,9 +582,10 @@ class ProviderRouter:
                 tasks[loser_idx].cancel()
                 winner_key = keys_to_race[winner_idx]
 
-                # Record success for the winner
+                # Record success for the winner (Opencode keys skip DB writes)
                 try:
-                    await status_mgr.record_success(winner_key["key_hash"], model_used)
+                    if not is_opencode_model(model_used):
+                        await status_mgr.record_success(winner_key["key_hash"], model_used)
                     await use_case.increment_key_usage(winner_key["key_hash"], model_used, use_openrouter)
                 except Exception as e:
                     logging.debug("Non-critical stats update failed: %s", e)

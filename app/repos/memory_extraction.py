@@ -115,13 +115,35 @@ async def extract_graph_structured(
         Pydantic-validated GraphExtractionResult (never raises on API errors).
     """
     from app.providers.gemini import get_cached_genai_client
+    from app.handlers.ai_core import _resolve_ai_request
+    from app.repos.keys import get_key_status_manager
+    from app.errors import classify_key_error
+    import hashlib
 
     prompt = _EXTRACTION_PROMPT.format(text=text[:4000])
     empty = GraphExtractionResult()
+    status_mgr = get_key_status_manager()
+    failed_keys: set[str] = set()
 
     for attempt in range(3):
+        # Allow initial explicitly passed key to be used on attempt 0
+        current_api_key = api_key if attempt == 0 else None
+        
+        if not current_api_key:
+            key_data, model_used, resolution = await _resolve_ai_request(
+                GRAPH_EXTRACTION_MODEL,
+                use_openrouter=False,
+                excluded_key_hashes=failed_keys
+            )
+            if not key_data:
+                logging.warning("Graph extraction exhausted available keys on attempt %d", attempt + 1)
+                break
+            current_api_key = key_data["api_key"]
+
+        current_key_hash = hashlib.sha256(current_api_key.encode()).hexdigest()[:8]
+
         try:
-            client = get_cached_genai_client(api_key)
+            client = get_cached_genai_client(current_api_key)
             
             config_kwargs = {
                 "response_mime_type": "application/json",
@@ -146,6 +168,12 @@ async def extract_graph_structured(
 
             result = GraphExtractionResult.model_validate_json(response_text)
 
+            # Success: update health
+            try:
+                await status_mgr.record_success(current_key_hash, GRAPH_EXTRACTION_MODEL)
+            except Exception:
+                pass
+
             logging.info(
                 "Graph extraction: %d entities, %d relations",
                 len(result.entities),
@@ -154,19 +182,29 @@ async def extract_graph_structured(
             return result
 
         except Exception as e:
+            failed_keys.add(current_key_hash)
             error_str = str(e).lower()
-            is_transient = any(p in error_str for p in ("503", "unavailable", "overloaded", "rate limit", "timeout"))
+            error_category = classify_key_error(error_str)
+            is_transient = error_category == "transient" or any(p in error_str for p in ("503", "unavailable", "overloaded", "rate limit", "timeout"))
+            
+            try:
+                if error_category != "permanent" or "api_key" in error_str or "400" in error_str:
+                    await status_mgr.suspend_key(current_key_hash, GRAPH_EXTRACTION_MODEL, error_category, str(e))
+            except Exception:
+                pass
+
             if is_transient and attempt < 2:
                 import asyncio
 
                 wait = (attempt + 1) * 2.0
                 logging.warning(
-                    "Graph extraction transient error (attempt %d, retrying in %.0fs): %s", attempt + 1, wait, e
+                    "Graph extraction transient error (key %s…, attempt %d, retrying in %.0fs): %s", 
+                    current_key_hash, attempt + 1, wait, e
                 )
                 await asyncio.sleep(wait)
                 continue
-            logging.error("Graph extraction failed permanently: %s", e, exc_info=True)
-            return empty
+            logging.error("Graph extraction failed permanently with key %s…: %s", current_key_hash, e)
+            continue # Try next key for permanent failures as well
 
     return empty
 

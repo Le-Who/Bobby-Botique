@@ -4,7 +4,9 @@ AI Chat handler — regular conversational chat with context management.
 
 import logging
 import time
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -151,8 +153,15 @@ async def _handle_regular_chat(
     # Use persisted summary from chat state (survives restarts)
     existing_summary = chat_state.context_summary
 
-    # Compose system instruction first (needed for budget calculation)
+    # Compose system instruction first (needed for budget calculation).
+    # Append current Moscow time so the model never hallucinates {{CURRENT_TIME}}.
     system_instruction = get_registry().compose_system_prompt(role_prompt=chat_state.system_prompt)
+    _now_msk = datetime.now(ZoneInfo("Europe/Moscow"))
+    system_instruction += (
+        f"\n\n# ТЕКУЩЕЕ ВРЕМЯ\n"
+        f"Сейчас {_now_msk.strftime('%H:%M')} по московскому времени "
+        f"({_now_msk.strftime('%d.%m.%Y, %A')})."
+    )
 
     if is_forward_batch:
         fwd_override = (

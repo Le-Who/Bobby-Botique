@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.13.5] - 2026-04-17 - Production Stability: Time Injection & DB Constraints
+
+### 🐛 Critical Bug Fixes
+
+- **`{{CURRENT_TIME}}` LLM Hallucination (`app/handlers/ai_chat.py`):** Fixed an issue where the LLM would hallucinate a template string `{{CURRENT_TIME}}` when asked for the current time. True Moscow time is now dynamically injected into the system prompt at call-time (bypassing the base prompt LRU cache) so the model is always temporally aware.
+- **Opencode 10s Latency Spikes (`app/providers/router.py` & DB Migrations):** Resolved severe performance degradation when querying Opencode models. 
+  - *Root Cause:* The `check_key_hash_exists` trigger on the `key_model_status` DB table expected all `key_hash` entries to exist in either the `api_keys` or `openrouter_api_keys` tables. Opencode keys are stored exclusively in-memory, causing every `record_success` and `suspend_key` call to fail with a Postgres `ForeignKeyViolationError` and burning 4 retry attempts (~10s overhead) per request.
+  - *Fix:* Added `if not is_opencode_model(model)` guards around all `status_mgr` writes in `router.py` (standard, stream-fallback, and race-path). 
+  - *Defense-in-depth:* Applied migration `038_relax_key_model_status_trigger.sql` which downgrades the hard `RAISE EXCEPTION` to a non-blocking `RAISE WARNING` for unknown provider hashes.
+- **Cyrillic Tag Hallucinations (`app/utils/response_tags.py`):** Fixed a visual bug where the tag `[СUGGESTIONS: ...]` would sometimes display directly to end-users. The LLM occasionally substituted the ASCII 'S' with the visually identical Cyrillic 'С' (U+0421). The stripping regex `_SUGGESTIONS_RE` has been hardened with a Unicode character class (`[SC\u0421]`) to catch mixed-encoding tags.
+
 ## [2.13.4] - 2026-04-17 - Crocodile Game: Asynchronous Word Gen & Static Categorization
 
 ### 🚀 Performance & UX Improvements

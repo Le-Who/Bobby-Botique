@@ -50,8 +50,9 @@ def extract_intent(text: str) -> tuple[str, str | None]:
 
 # ── Smart Suggestions ─────────────────────────────────────────────────────────
 # Matches [SUGGESTIONS: подсказка1 | подсказка2 | подсказка3] anywhere in text.
+# Also catches Cyrillic С lookalike: [СUGGESTIONS: ...] (U+0421 С instead of ASCII S).
 _SUGGESTIONS_RE = re.compile(
-    r"\[SUGGESTIONS:\s*(.+?)\]",
+    r"\[[SC\u0421]UGGESTIONS:\s*(.+?)\]",
     re.IGNORECASE,
 )
 

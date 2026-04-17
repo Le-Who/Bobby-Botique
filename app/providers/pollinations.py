@@ -20,6 +20,7 @@ Additional models (paid or with key):
 Usage:
     provider = get_pollinations_provider()
     result   = await provider.generate("a cat in space", model="flux")
+    transcript = await provider.transcribe_audio(audio_bytes)
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from __future__ import annotations
 import logging
 import urllib.parse
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -177,6 +178,54 @@ class PollinationsProvider:
             get_result.warning = "used GET fallback"
 
         return get_result
+
+    async def transcribe_audio(
+        self,
+        audio_bytes: bytes,
+        model: str = "whisper",
+        timeout: float = 60.0,
+    ) -> str | None:
+        """
+        Transcribe audio using Pollinations OpenAI-compatible endpoint.
+
+        Args:
+            audio_bytes: Raw audio bytes (OGG, MP3, WAV).
+            model: "whisper" or "whisper-large".
+            timeout: Request timeout.
+
+        Returns:
+            Transcribed text or None on failure.
+        """
+        url = "https://text.pollinations.ai/openai/audio/transcriptions"
+        
+        # httpx expects files in format: {'file': ('filename', b'content', 'mime_type')}
+        files: dict[str, tuple[str, bytes, str]] = {
+            "file": ("audio.ogg", audio_bytes, "audio/ogg")
+        }
+        data: dict[str, str] = {
+            "model": model,
+            "response_format": "text"
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(url, data=data, files=files)
+                
+            if 200 <= resp.status_code < 300:
+                try:
+                    js = resp.json()
+                    return js.get("text", resp.text).strip()
+                except Exception:
+                    return resp.text.strip()
+            else:
+                logger.warning("Pollinations whisper error: %d - %s", resp.status_code, resp.text[:200])
+                return None
+        except httpx.TimeoutException:
+            logger.warning("Pollinations whisper request timed out after %s s", timeout)
+            return None
+        except Exception as exc:
+            logger.error("Pollinations whisper request failed: %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     # Private: POST path

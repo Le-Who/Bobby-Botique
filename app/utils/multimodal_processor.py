@@ -263,6 +263,85 @@ async def _generate_with_resilience(
     return None
 
 
+# ── Intent classification model chain ───────────────────────────────────────
+# Tried in order until one succeeds. gemini-3.1-flash-lite is first (cheapest)
+# but is often offline; gemini-3-flash-preview is the reliable last-stand;
+# opencode-go/big-pickle is used as final insurance (different infra pool).
+_INTENT_MODEL_CHAIN = [
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-flash-preview",
+    "opencode-go/big-pickle",
+]
+
+
+async def _classify_intent_with_fallback(
+    prompt_parts: list[types.Part],
+    api_key: str | None = None,
+) -> str | None:
+    """Run a text-only intent classification through a multi-provider fallback chain.
+
+    Tries each model in ``_INTENT_MODEL_CHAIN`` in order.  For each Gemini model,
+    uses ``_generate_with_resilience`` which itself does up to 3-key rotation.
+    For Opencode models, resolves an Opencode key via ``_resolve_ai_request`` and
+    posts a single-turn chat completion directly.
+
+    Returns the first non-empty response, or None if all models fail.
+    """
+    from app.providers.base import get_provider_for_model, is_opencode_model
+
+    for model in _INTENT_MODEL_CHAIN:
+        try:
+            if is_opencode_model(model):
+                # ── Opencode path ─────────────────────────────────────────
+                from app.handlers.ai_core import _resolve_ai_request
+
+                key_data, model_used, resolution = await _resolve_ai_request(
+                    model, use_openrouter=False
+                )
+                if not key_data:
+                    logging.debug("Intent fallback: no key for %s, skipping", model)
+                    continue
+
+                # Build minimal OpenAI-style history from the single text part
+                text = "".join(
+                    p.text for p in prompt_parts if hasattr(p, "text") and p.text
+                )
+                if not text:
+                    continue
+
+                provider = get_provider_for_model(model_used or model, key_data["api_key"])
+                resp = await provider.get_response(
+                    history=[{"role": "user", "parts": [text]}],
+                    model_name=model_used or model,
+                    max_retries=2,
+                    timeout=30.0,
+                )
+                if resp.success and resp.text and resp.text.strip():
+                    logging.debug("Intent classified via Opencode %s", model)
+                    return resp.text.strip()
+                logging.debug("Intent Opencode %s returned empty/error, trying next", model)
+
+            else:
+                # ── Gemini path (with key rotation) ──────────────────────
+                result = await _generate_with_resilience(
+                    parts=prompt_parts,
+                    model=model,
+                    system_prompt="",
+                    thinking_config=None,  # Disabled: Intent extraction is trivial, avoid CoT overhead
+                    api_key=api_key,
+                )
+                if result:
+                    logging.debug("Intent classified via Gemini %s", model)
+                    return result
+                logging.debug("Intent Gemini %s returned empty, trying next model", model)
+
+        except Exception as exc:
+            logging.debug("Intent model %s failed: %s, trying next", model, exc)
+
+    logging.warning("All intent classification models failed")
+    return None
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  PUBLIC API
 # ═══════════════════════════════════════════════════════════════════════════
@@ -293,17 +372,55 @@ async def transcribe_voice(
         logging.warning("transcribe_voice called with empty audio_bytes")
         return None, "conversational", None
 
+    from app.providers.pollinations import get_pollinations_provider
+    pollinations_provider = get_pollinations_provider()
+
+    # Try Pollinations Whisper first (no Gemini quota consumed)
+    raw_text = await pollinations_provider.transcribe_audio(audio_bytes, model="whisper")
+
+    if raw_text:
+        # Whisper gives a clean transcript but no INTENT:/DRAW_PROMPT: tags.
+        # Run a cheap text-only call through the multi-provider intent chain
+        # (gemini-3.1-flash-lite → gemini-3-flash-preview → opencode-go/big-pickle).
+        # This avoids re-uploading the audio while preserving DRAW/SEARCH routing.
+        intent_prompt = (
+            f"{_VOICE_SYSTEM_PROMPT}\n\n"
+            f"[Pre-transcribed audio — do NOT re-transcribe. "
+            f"Apply ONLY the INTENT and DRAW_PROMPT rules to this text:]\n{raw_text}"
+        )
+        tagged = await _classify_intent_with_fallback(
+            prompt_parts=[types.Part.from_text(text=intent_prompt)],
+            api_key=api_key,
+        )
+        if tagged:
+            return _parse_voice_intent(tagged)
+        # All intent models failed — return clean transcript with safe default
+        logging.warning("All intent models failed after Whisper ASR, defaulting to conversational")
+        return raw_text.strip(), "conversational", None
+
+    # Whisper failed — fall back to full Gemini ASR (transcription + intent in one call)
+    logging.info("Pollinations Whisper unavailable, falling back to Gemini ASR")
     audio_part = types.Part(
         inline_data=types.Blob(mime_type=mime_type, data=audio_bytes),
     )
 
-    raw_text = await _generate_with_resilience(
-        parts=[audio_part],
-        model=model,
-        system_prompt=_VOICE_SYSTEM_PROMPT,
-        thinking_config=THINKING_CONFIG_HIGH,
-        api_key=api_key,
-    )
+    # Try Gemini ASR through the model chain (lite-preview → 3-flash-preview).
+    # Opencode models cannot handle audio blobs so they are excluded here.
+    # Deduplicate in case `model` arg is already gemini-3-flash-preview.
+    _seen: set[str] = set()
+    _GEMINI_ASR_MODELS = [m for m in [model, "gemini-3-flash-preview"] if not (m in _seen or _seen.add(m))]  # type: ignore[func-returns-value]
+    raw_text = None
+    for _model in _GEMINI_ASR_MODELS:
+        raw_text = await _generate_with_resilience(
+            parts=[audio_part],
+            model=_model,
+            system_prompt=_VOICE_SYSTEM_PROMPT,
+            thinking_config=THINKING_CONFIG_HIGH,
+            api_key=api_key,
+        )
+        if raw_text:
+            break
+        logging.info("Gemini ASR failed on %s, trying next model", _model)
 
     if raw_text is None:
         return None, "conversational", None

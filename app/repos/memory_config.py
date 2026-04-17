@@ -31,10 +31,12 @@ MIN_PERSONA_FACTS = 5
 CONSOLIDATION_MODEL = "gemini-3.1-flash-lite-preview"
 
 # ── Real-Time Graph Extraction ───────────────────────────────────────────────
-# Model for real-time entity/relation extraction from user messages
-GRAPH_EXTRACTION_MODEL = "gemini-2.5-flash"
-# ThinkingConfig level — at least "medium" for reliable extraction
-GRAPH_EXTRACTION_THINKING_LEVEL = "medium"
+# Model for real-time entity/relation extraction from user messages.
+# gemini-3-flash-preview: reliable last-stand. flash-lite is often offline.
+# Key rotation in extract_graph_structured() handles per-key 503s automatically.
+GRAPH_EXTRACTION_MODEL = "gemini-3-flash-preview"
+# ThinkingConfig level — disabled (only applies to pro/think variants)
+GRAPH_EXTRACTION_THINKING_LEVEL = ""
 # Minimum user message length to qualify for graph extraction
 MIN_EXTRACTION_LENGTH = 30
 
