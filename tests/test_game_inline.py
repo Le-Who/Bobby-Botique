@@ -114,16 +114,15 @@ class TestInitCrocGameAsync:
             assert "Не могу понять тему" in call_kwargs["text"]
 
     async def test_custom_word_mode(self, mock_bot):
-        """'=word' arg bypasses pick_random_word and creates a custom game.
+        """'=word' arg bypasses pick_random_word and creates a custom game with static category.
 
-        Bug-6.3 fix: category is now resolved via resolve_custom_word_category.
+        Bug-6.3 fix: category is set to a static label — no extra LLM call,
+        so the player is not waiting for category resolution.
         """
         with (
             patch("app.games.word_bank.pick_random_word", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
-            patch("app.games.word_bank.resolve_custom_word_category", new_callable=AsyncMock) as find_mock,
         ):
-            find_mock.return_value = "слово игрока"
             create_mock.return_value = AsyncMock(game_id="game-2")
 
             await _init_croc_game_async(
@@ -134,26 +133,24 @@ class TestInitCrocGameAsync:
             )
 
             pick_mock.assert_not_called()
-            find_mock.assert_awaited_once_with("секрет")
+            # Category is a static label — no LLM call needed
             create_mock.assert_awaited_once_with(
                 target_word="секрет",
-                category="слово игрока",
+                category="Слово игрока (особое)",
                 lang="ru",  # detected via cyrillic check
                 inline_message_id="msg-3",
                 creator_id=42,
             )
 
     async def test_custom_word_mode_bank_hit(self, mock_bot):
-        """If a custom word is already in the built-in bank, uses its canonical category.
+        """Custom word always gets a static category — no LLM delay, no bank lookup.
 
-        Bug-6.4: reverse word-to-category lookup so the hints LLM gets real context.
+        Bug-6.4 redesign: category classification moved to background, not blocking.
         """
         with (
             patch("app.games.word_bank.pick_random_word", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
-            patch("app.games.word_bank.resolve_custom_word_category", new_callable=AsyncMock) as find_mock,
         ):
-            find_mock.return_value = "Животные"
             create_mock.return_value = AsyncMock(game_id="game-bank")
 
             await _init_croc_game_async(
@@ -164,11 +161,10 @@ class TestInitCrocGameAsync:
             )
 
             pick_mock.assert_not_called()
-            find_mock.assert_awaited_once_with("крокодил")
-            # Category should be the canonical bank value, NOT 'слово игрока'
+            # Category is always static — no waiting, game starts instantly
             create_mock.assert_awaited_once_with(
                 target_word="крокодил",
-                category="Животные",
+                category="Слово игрока (особое)",
                 lang="ru",
                 inline_message_id="msg-bank",
                 creator_id=99,

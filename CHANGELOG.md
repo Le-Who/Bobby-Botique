@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.13.4] - 2026-04-17 - Crocodile Game: Asynchronous Word Gen & Static Categorization
+
+### 🚀 Performance & UX Improvements
+
+- **Instant Game Start (`app/handlers/inline.py`, `app/games/word_bank.py`):** Removed the blocking 15-second `resolve_custom_word_category` LLM call when users pass a custom word (`=Слово`). Instead, the category defaults statically to `"Слово игрока (особое)"`, letting players start immediately without LLM classification friction.
+- **Fast Word Generation (`app/games/word_bank.py`):** Eliminated the long initial wait when selecting an uncached random category. `pick_random_word` now calls `_generate_single_word_fast()` using the lighter `settings.OPENCODE_INLINE_MODEL` with a strict 7s timeout to generate exactly *one word*, returning to the player instantly. The full 20-word bank for the category is generated asynchronously via a background `asyncio.create_task`.
+- **Config-Driven Models (`app/games/word_bank.py`):** Word bank LLM tasks no longer hardcode `opencode-go/minimax-m2.7`. They now dynamically route to `settings.OPENCODE_QNA_MODEL`. The execution timeout limit was increased from 18s to 25s for full-bank processing to tolerate Opencode's longer latency.
+
+### 🧪 Tests
+- **`test_game_inline.py`**: Refactored `test_custom_word_mode` and `test_custom_word_mode_bank_hit` to check against the new optimized behavior (static `"Слово игрока (особое)"` assignment and no mock checks on the removed `resolve_custom_word_category` function).
+
 ## [2.13.3] - 2026-04-17 - Miniapp Core Logic & Metrics Filtering
 
 ### 🐛 Critical Bug Fixes

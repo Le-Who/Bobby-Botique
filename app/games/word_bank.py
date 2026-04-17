@@ -282,7 +282,7 @@ async def resolve_custom_word_category(word: str) -> str:
                     model_name=mdl,
                     max_retries=1,
                 ),
-                timeout=4.0,
+                timeout=8.0,  # 4 seconds is too short for Opencode latency
             )
             raw = (response_text or "").strip().strip("`'\" \r\n.")
             for valid_cat in ("Животные", "Еда", "Профессии", "Спорт", "Фильмы", "Техника", "Природа", "Разное"):
@@ -290,7 +290,7 @@ async def resolve_custom_word_category(word: str) -> str:
                     return valid_cat
             return "Разное"
         except Exception as exc:
-            logger.warning("Category resolve failed for %r model=%s: %s", word, model, exc)
+            logger.warning("Category resolve failed for %r model=%s: %r", word, model, exc)
             
     return "Слово игрока (произвольная тема)"
 
@@ -376,10 +376,46 @@ async def generate_words_for_category(
             return clean
 
         except (TimeoutError, json.JSONDecodeError) as exc:
-            logger.warning("Word gen failed for %r (model=%s): %s", category, model, exc)
+            logger.warning("Word gen failed for %r (model=%s): %r", category, model, exc)
         except Exception as exc:
-            logger.exception("Word gen unexpected error for %r (model=%s): %s", category, model, exc)
+            logger.exception("Word gen unexpected error for %r (model=%s): %r", category, model, exc)
 
+    return None
+
+async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | None:
+    """Fast inline request for exactly ONE word to immediately start a game."""
+    from app.config import settings
+    lang_hint = "русском" if lang == "ru" else "English"
+    prompt = (
+        f"Ты помощник игры 'Крокодил'. Придумай ровно 1 существительное на тему \"{category}\". "
+        f"Язык: {lang_hint}. Ответь ТОЛЬКО одним словом/фразой (1-3 слова), без пояснений, без кавычек."
+    )
+    
+    # We rely on the fastest inline model available
+    model = settings.OPENCODE_INLINE_MODEL or "gemini-2.5-flash"
+    try:
+        from app.agent_use_cases import AgentRequestUseCase
+        from app.providers.router import get_ai_response
+
+        use_case = AgentRequestUseCase()
+        kd, mdl, _ = await use_case.resolve_ai_request(model)
+        if kd and mdl:
+            response_text, _ = await asyncio.wait_for(
+                get_ai_response(
+                    api_key=kd["api_key"],
+                    history=[{"role": "user", "parts": [prompt]}],
+                    model_name=mdl,
+                    max_retries=1,
+                ),
+                timeout=7.0,  # Strict timeout for instantaneous response
+            )
+            raw = (response_text or "").strip().strip("`'\" \r\n.")
+            if 2 <= len(raw) <= 60:
+                logger.info("Fast inline word generated for %r: %r", category, raw)
+                return raw.lower()
+    except Exception as exc:
+        logger.warning("Fast inline word gen failed for %r: %r", category, exc)
+    
     return None
 
 
@@ -412,15 +448,32 @@ async def pick_random_word(
         lang, category = resolved
         words = list(WORD_BANK[lang][category])
     else:
-        # Unknown category → ask Gemini
+        # Unknown category → check memory cache first
         lang = _detect_lang(category_raw)
         category = category_raw.strip()
-        generated = await generate_words_for_category(category, lang=lang)
-        if not generated:
-            raise ValueError(f"unintelligible_category:{category_raw!r}")
-        words = generated
-        is_generated = True
-        logger.info("Using AI-generated words for category %r (%s)", category, lang)
+        cache_key = f"{lang}:{category.lower()}"
+        
+        if cache_key in _GENERATED_CACHE and len(_GENERATED_CACHE[cache_key]) > 0:
+            words = _GENERATED_CACHE[cache_key]
+            is_generated = True
+        else:
+            # We don't want to block the player for 15+ seconds.
+            # 1) Get ONE word fast
+            fast_word = await _generate_single_word_fast(category, lang)
+            if not fast_word:
+                # If even fast word fails, fallback to full wait
+                generated = await generate_words_for_category(category, lang=lang)
+                if not generated:
+                    raise ValueError(f"unintelligible_category:{category_raw!r}")
+                words = generated
+            else:
+                # Kick off bank generation in the background for future games
+                asyncio.create_task(generate_words_for_category(category, lang=lang))
+                # Skip redis de-duplication since we only have 1 word and want to return fast
+                return fast_word, lang, category, True
+                
+            is_generated = True
+            logger.info("Using AI-generated words for category %r (%s)", category, lang)
 
     # De-duplicate via Redis (best-effort; Redis miss is non-fatal)
     used: set[str] = set()

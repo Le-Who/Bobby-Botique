@@ -815,10 +815,7 @@ async def _init_croc_game_async(
                 return
             lang = "ru" if any("\u0400" <= c <= "\u04ff" for c in word) else "en"
             
-            # Use AI or static local matching to determine category strictly 
-            # instead of creating generic "Слово игрока" directly.
-            from app.games.word_bank import resolve_custom_word_category
-            category = await resolve_custom_word_category(word)
+            category = "Слово игрока (особое)"
 
         else:
             category_raw = arg or "разное"
