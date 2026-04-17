@@ -8,7 +8,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 
 ## Current Status
 
-**Production-Ready** (`v2.14.0`). Deployed as a **3-container Docker stack** on a DigitalOcean VPS: Local Telegram Bot API Server (MTProto), Python bot (Quart + Hypercorn + PTB v20+ webhook), and an Alpine-based media cleanup cron. Uses `concurrent_updates(50)` with a Quart webhook handler to decouple update processing from HTTP acknowledgment. Built-in telemetry, circuit breakers, and connection pooling. The testing architecture follows strictly deterministic Arrange-Act-Assert (AAA), achieving a CI-ready 100% pass rate across over 1813 unit and E2E integration tests.
+**Production-Ready** (`v2.14.1`). Deployed as a **3-container Docker stack** on a DigitalOcean VPS: Local Telegram Bot API Server (MTProto), Python bot (Quart + Hypercorn + PTB v20+ webhook), and an Alpine-based media cleanup cron. Uses `concurrent_updates(50)` with a Quart webhook handler to decouple update processing from HTTP acknowledgment. Built-in telemetry, circuit breakers, and connection pooling. The testing architecture follows strictly deterministic Arrange-Act-Assert (AAA), achieving a CI-ready 100% pass rate across over 1813 unit and E2E integration tests.
 
 ## Features
 
@@ -452,12 +452,15 @@ All database DDL is managed via **numbered SQL migration files** in `scripts/mig
 | `scripts/migrations/033_add_role_diaries.sql` | Adds `role_diaries JSONB DEFAULT '{}'` to `user_state` for MemPalace persistent role diaries |
 | `scripts/migrations/034_global_settings.sql` | Creates `global_settings` key-value table for runtime configuration; seeds `inline_thinking_level` default |
 | `scripts/migrations/018_add_missing_table_definitions.sql` | Backfill migration for databases that applied `000` without all tables |
-| `app/db/migrations.py` | Migration runner â” applies SQL files with per-file independent transactions and version tracking (`schema_migrations` table). Each file runs in its own transaction; failures are logged and skipped without blocking subsequent migrations. |
+| `scripts/migrate.py` | Standalone CLI runner. Runs explicitly during deployment to guarantee schema safety. |
+| `app/db/migrations.py` | Internal migration framework. Implements fail-fast behavior: logs a CRITICAL error and aborts on any failure. |
 | `app/db/schema.py` | Startup validation â” verifies all expected tables exist after migrations |
 | `app/db/rls.py` | Row Level Security policy management |
 | `app/db/seed.py` | Initial data seeding (admin user, API keys, indexes) |
 
-**Workflow:** On startup, `init_db()` â’ `create_tables()` (validation) â’ `setup_row_level_security()` â’ `run_migrations()` â’ `insert_initial_data()`.
+**Workflow:**
+- **Deploy-time:** `scripts/migrate.py` runs in an ephemeral container. If any migration fails, deployment aborts.
+- **Startup-time:** `init_db()` -> `create_tables()` -> `setup_row_level_security()` -> `run_migrations()`. If `run_migrations()` detects drift or failure, it alerts admin via Telegram.
 
 **Adding new tables:** Create a new numbered `.sql` file in `scripts/migrations/`, add the table name to `EXPECTED_TABLES` in `app/db/schema.py`, and add RLS configuration to `app/db/rls.py` if needed.
 

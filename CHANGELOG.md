@@ -3,6 +3,15 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.14.1] - 2026-04-17 - Migration Hardening & Stability
+
+### 🛡️ Deployment & Schema Reliability
+
+- **Standalone Migration Runner (`scripts/migrate.py`):** Created a dedicated, standalone CLI tool for executing, verifying (`--check`), and reporting (`--status`) on database migrations independently of the bot's runtime lifecycle.
+- **Fail-Fast Deployment Gate (`.github/workflows/deploy.yml`):** Injected an explicit migration execution step into the CI/CD pipeline prior to launching the main bot container. This runs `scripts/migrate.py` in an ephemeral container, ensuring deployments hard-stop if schema updates fail, preventing the bot from spinning up with an incompatible database state.
+- **Strict Migration Evaluation (`app/db/migrations.py`):** Rearchitected `run_migrations()` to implement hard-stop, fail-fast behavior. On encountering the first failure, dependent migrations immediately abort (Alembic-style). Modified the function to return a structured `MigrationResult` object instead of silently absorbing errors, and elevated critical schema failures to `CRITICAL` log severity.
+- **Schema Drift Observability (`app/database.py` & `app/admin_alerts.py`):** The application now analyzes runtime migration results. If schema drift or active failures are detected during bootstrap, it triggers a deferred webhook `_send_migration_alert()`. This leverages a newly created `alert_admin_raw()` utility to securely bypass PTB Application dependency loading and DM the administrator instantly, providing live observability without crashing the boot sequence.
+
 ## [2.14.0] - 2026-04-17 - Crocodile Game: UX Hardening & Stability
 
 ### 🚀 UX Improvements
