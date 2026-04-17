@@ -245,8 +245,8 @@ class ProviderRouter:
             if fallback_result is not None:
                 return fallback_result
 
-        is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model)
-        provider_name = "OpenRouter" if is_or else "Gemini"
+        is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model and not is_opencode_model(preferred_model))
+        provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
         return (
             tag_error(
                 ErrorCode.KEYS_EXHAUSTED,
@@ -770,8 +770,11 @@ class ProviderRouter:
         """
         from app.errors import is_error_message
 
-        is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model)
-        fallback_models = settings.OPENROUTER_AVAILABLE_MODELS if is_or else settings.AVAILABLE_MODELS
+        is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model and not is_opencode_model(failed_model))
+        
+        # Never use OpenRouter for fallback according to user request.
+        # Fallback always uses the reliable production models (Gemini)
+        fallback_models = settings.AVAILABLE_MODELS
 
         for fallback_model in fallback_models:
             if fallback_model == failed_model:
