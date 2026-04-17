@@ -247,11 +247,12 @@ class Settings(BaseModel):
     # Support comma-separated key list for rotation (same pattern as GEMINI_API_KEYS).
     OPENCODE_API_KEYS: list[str] = []  # sk-... keys, rotatable
     OPENCODE_AVAILABLE_MODELS: list[str] = []  # populated from env OPENCODE_AVAILABLE_MODELS
-    OPENCODE_DEFAULT_MODEL: str = "opencode-go/minimax-m2.7"
-    OPENCODE_QNA_MODEL: str = "opencode-go/qwen3.5-plus"
-    OPENCODE_RESEARCH_MODEL: str = "opencode-go/qwen3.6-plus"
+    OPENCODE_DEFAULT_MODEL: str = "opencode-go/qwen3.5-plus"
+    OPENCODE_QNA_MODEL: str = "opencode-go/qwen3.6-plus"  # High quality dialog
+    OPENCODE_RESEARCH_MODEL: str = "opencode-go/glm-5.1"  # Or keep qwen3.6-plus
+    OPENCODE_URL_SELECTION_MODEL: str = "opencode-go/big-pickle"
     OPENCODE_VISION_MODEL: str = "opencode-go/mimo-v2-omni"
-    OPENCODE_INLINE_MODEL: str = "opencode-go/minimax-m2.5"
+    OPENCODE_INLINE_MODEL: str = "opencode-go/minimax-m2.5" # Fast but pleasant
 
     # --- API PROVIDER SELECTION ---
     # "opencode" routes primary chat/search/inline through Opencode Go with Gemini fallback.
@@ -372,9 +373,10 @@ def load_settings() -> Settings:
             # Opencode Go provider
             "OPENCODE_API_KEYS": _load_and_clean_keys("OPENCODE_API_KEYS", required=False),
             "OPENCODE_AVAILABLE_MODELS": _load_and_clean_keys("OPENCODE_AVAILABLE_MODELS", required=False),
-            "OPENCODE_DEFAULT_MODEL": _load_single_model("OPENCODE_DEFAULT_MODEL", "opencode-go/minimax-m2.7"),
-            "OPENCODE_QNA_MODEL": _load_single_model("OPENCODE_QNA_MODEL", "opencode-go/qwen3.5-plus"),
-            "OPENCODE_RESEARCH_MODEL": _load_single_model("OPENCODE_RESEARCH_MODEL", "opencode-go/qwen3.6-plus"),
+            "OPENCODE_DEFAULT_MODEL": _load_single_model("OPENCODE_DEFAULT_MODEL", "opencode-go/qwen3.5-plus"),
+            "OPENCODE_QNA_MODEL": _load_single_model("OPENCODE_QNA_MODEL", "opencode-go/qwen3.6-plus"),
+            "OPENCODE_RESEARCH_MODEL": _load_single_model("OPENCODE_RESEARCH_MODEL", "opencode-go/glm-5.1"),
+            "OPENCODE_URL_SELECTION_MODEL": _load_single_model("OPENCODE_URL_SELECTION_MODEL", "opencode-go/big-pickle"),
             "OPENCODE_VISION_MODEL": _load_single_model("OPENCODE_VISION_MODEL", "opencode-go/mimo-v2-omni"),
             "OPENCODE_INLINE_MODEL": _load_single_model("OPENCODE_INLINE_MODEL", "opencode-go/minimax-m2.5"),
             "PRIMARY_PROVIDER": os.getenv("PRIMARY_PROVIDER", "opencode").strip().lower(),
