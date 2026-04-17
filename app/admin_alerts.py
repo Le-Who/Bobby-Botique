@@ -160,3 +160,47 @@ async def alert_admin_startup(app: Application) -> None:
         )
     except Exception:
         pass  # Best-effort on startup
+
+
+async def alert_admin_raw(
+    message: str,
+    severity: AlertSeverity = AlertSeverity.WARNING,
+) -> None:
+    """Send an alert using the bot singleton — no Application instance needed.
+
+    Useful for alerts emitted before or after the PTB Application lifecycle
+    (e.g. migration drift detected in database.py during init_db()).
+    Falls back to logging if the bot singleton is not yet registered.
+    """
+    if _is_rate_limited():
+        logger.debug("Admin alert rate-limited, dropping: %s", message)
+        return
+
+    from app.config import settings
+
+    admin_id = settings.ADMIN_ID
+    if not admin_id:
+        return
+
+    parts = [f"{severity.value} *{severity.name}*", "", message]
+    text = "\n".join(parts)
+    if len(text) > 4000:
+        text = text[:3990] + "\n…"
+
+    try:
+        from app.bot_instance import get_bot
+
+        bot = get_bot()
+        if bot is None:
+            logger.warning("alert_admin_raw: bot not yet registered — logging only: %s", message)
+            return
+
+        from app.utils.formatting import TelegramFormatter
+
+        fmt_text, fmt_pm = TelegramFormatter.format_text(text)
+        await bot.send_message(chat_id=admin_id, text=fmt_text, parse_mode=fmt_pm)
+        _record_alert()
+        logger.info("Admin alert (raw) sent: %s", message[:80])
+    except Exception as send_err:
+        logger.warning("Failed to send raw admin alert: %s", send_err)
+

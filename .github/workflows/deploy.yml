@@ -201,6 +201,20 @@ jobs:
             # with 700. The bot container runs as 'app' (GID 101) and needs group-read.
             docker exec tg-api chmod -R g+rX /var/lib/telegram-bot-api/ 2>/dev/null || true
 
+            # ── Database Migrations ───────────────────────────────────────
+            # Run BEFORE starting the bot container so the schema is always
+            # up-to-date at the moment the app starts processing traffic.
+            # Uses the same image as the bot (same code, same dependencies).
+            # Exits deploy with a non-zero code on migration failure.
+            echo ">>> Running database migrations..."
+            docker run --rm \
+              --name tg-migrate \
+              --network tg-net \
+              -e DATABASE_URL="$DATABASE_URL" \
+              $REGISTRY/$REPO:latest \
+              python /app/scripts/migrate.py
+            echo ">>> Migrations complete."
+
             # ── Bot Container ─────────────────────────────────────────────
             docker stop tg-bot || true
             docker rm tg-bot || true

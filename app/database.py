@@ -380,8 +380,43 @@ async def _init_schema():
 
     await create_tables(db_query)
     await setup_row_level_security()  # uses the wrapper defined below
-    await run_migrations(db_query, db_manager)
+    migration_result = await run_migrations(db_query, db_manager)
     await insert_initial_data(db_query, db_execute_many, settings)
+
+    # Emit startup telemetry for migration drift — deferred so admin bot is ready.
+    # This fires in background; startup never blocks on it.
+    if migration_result.pending_at_start > 0 or not migration_result.success:
+        import asyncio
+
+        async def _send_migration_alert():
+            import asyncio as _asyncio
+
+            # Wait for the bot to fully initialize before sending the alert
+            await _asyncio.sleep(15)
+            try:
+                from app.admin_alerts import AlertSeverity, alert_admin_raw
+
+                if not migration_result.success:
+                    failed_versions = ", ".join(v for v, _ in migration_result.failed)
+                    msg = (
+                        f"🔴 *Migration failure at startup*\n"
+                        f"Failed: `{failed_versions}`\n"
+                        f"Applied this boot: `{', '.join(migration_result.applied) or 'none'}`\n"
+                        f"Schema may be inconsistent — redeploy required."
+                    )
+                    severity = AlertSeverity.CRITICAL
+                else:
+                    msg = (
+                        f"🟡 *Schema drift auto-resolved at startup*\n"
+                        f"Pending at boot: {migration_result.pending_at_start}\n"
+                        f"Applied: `{', '.join(migration_result.applied)}`"
+                    )
+                    severity = AlertSeverity.WARNING
+                await alert_admin_raw(msg, severity=severity)
+            except Exception as _alert_err:
+                logging.warning("Migration alert failed (non-critical): %s", _alert_err)
+
+        asyncio.ensure_future(_send_migration_alert())
 
 
 # --- RLS re-exports (backward compatibility) ---

@@ -1,5 +1,6 @@
 import hashlib
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.config import get_opencode_keys, get_openrouter_keys, get_use_openrouter, settings
@@ -11,6 +12,22 @@ from app.repos.keys import (
     increment_openrouter_key_usage,
     invalidate_key_cache,
 )
+
+# In-memory health state for Opencode keys (dict: key_hash → suspended_until UTC).
+# Not persisted to DB — keys self-recover after cooldown or on bot restart.
+# 30s default cooldown matches the transient error penalty in KeyStatusManager.
+_opencode_key_health: dict[str, datetime] = {}
+_OPENCODE_COOLDOWN = timedelta(seconds=30)
+
+
+def suspend_opencode_key(key_hash: str, cooldown: timedelta | None = None) -> None:
+    """Mark an Opencode key as temporarily unavailable (in-memory only)."""
+    _opencode_key_health[key_hash] = datetime.now(UTC) + (cooldown or _OPENCODE_COOLDOWN)
+    logging.warning(
+        "Opencode key %s… suspended for %.0fs (in-memory)",
+        key_hash[:8],
+        (cooldown or _OPENCODE_COOLDOWN).total_seconds(),
+    )
 
 
 class AgentRequestUseCase:
@@ -152,6 +169,9 @@ class AgentRequestUseCase:
         Keys are stored in ``settings.OPENCODE_API_KEYS`` (comma-separated).
         Exclusion is tracked using the first 16 chars of SHA256(key) to match
         the pattern used by Gemini and OpenRouter key hashes.
+
+        In-memory health: keys that failed during this session are suspended
+        for a short cooldown (self-recovering at restart or after 30s).
         """
         excluded = excluded_key_hashes or set()
         keys = get_opencode_keys()
@@ -159,11 +179,21 @@ class AgentRequestUseCase:
             logging.warning("Opencode Go selected but OPENCODE_API_KEYS is empty")
             return None, None, "no_keys"
 
+        now = datetime.now(UTC)
         for key in keys:
             key_hash = hashlib.sha256(key.encode()).hexdigest()[:16]
             if key_hash in excluded:
                 continue
+            # Check in-memory suspension (resets on restart — intentional for short cooldowns)
+            suspended_until = _opencode_key_health.get(key_hash)
+            if suspended_until and now < suspended_until:
+                continue
             return {"api_key": key, "key_hash": key_hash}, preferred_model, None
+
+        # All keys excluded or suspended — clean up expired suspensions and report
+        expired = [h for h, until in list(_opencode_key_health.items()) if now >= until]
+        for h in expired:
+            del _opencode_key_health[h]
 
         logging.error("All Opencode Go API keys are excluded (exhausted for this request).")
         return None, None, "all_exhausted"

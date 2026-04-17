@@ -133,32 +133,63 @@ async def _get_embedding(
       - RETRIEVAL_QUERY when searching for similar content
 
     Returns None on failure (non-critical — memory just won't be stored).
+    On 400 INVALID_ARGUMENT (revoked/invalid key), attempts one key rotation.
     """
-    try:
-        client = get_cached_genai_client(api_key)  # Reuse cached client (HTTP/2 multiplexing)
+    import hashlib
 
-        # Apply truncation for long text context up to ~30,000 chars (model supports 8192 tokens)
-        payload = content[:30000] if isinstance(content, str) else content
+    # Apply truncation for long text context up to ~30,000 chars (model supports 8192 tokens)
+    payload = content[:30000] if isinstance(content, str) else content
 
-        result = await client.aio.models.embed_content(
-            model=EMBEDDING_MODEL,
-            contents=payload,
-            config=types.EmbedContentConfig(
-                task_type=task_type,
-                output_dimensionality=EMBEDDING_DIMENSION,
-            ),
-        )
-        if result and result.embeddings:
-            return result.embeddings[0].values
-    except Exception as e:
-        logging.warning("Embedding generation failed: %s", e)
-        # Emit metric for observability (Change 2: LTM failure tracking)
+    current_key = api_key
+    failed_hashes: set[str] = set()
+
+    for _attempt in range(2):  # One retry with a rotated key on 400
         try:
-            from app.metrics import metrics_collector
+            client = get_cached_genai_client(current_key)  # Reuse cached client (HTTP/2 multiplexing)
+            result = await client.aio.models.embed_content(
+                model=EMBEDDING_MODEL,
+                contents=payload,
+                config=types.EmbedContentConfig(
+                    task_type=task_type,
+                    output_dimensionality=EMBEDDING_DIMENSION,
+                ),
+            )
+            if result and result.embeddings:
+                return result.embeddings[0].values
+        except Exception as e:
+            error_str = str(e)
+            is_invalid_key = "400" in error_str and (
+                "invalid" in error_str.lower() or "api_key" in error_str.lower()
+            )
+            logging.warning("Embedding generation failed (attempt %d): %s", _attempt + 1, e)
 
-            await metrics_collector.record_error("ltm_embedding_fail", str(e))
-        except Exception:
-            pass  # Metrics emission must not block
+            if is_invalid_key and _attempt == 0:
+                # Key is revoked/invalid — track hash and rotate to a fresh one
+                key_hash = hashlib.sha256(current_key.encode()).hexdigest()[:16]
+                failed_hashes.add(key_hash)
+                try:
+                    from app.handlers.ai_core import _resolve_ai_request
+
+                    key_data, _, _ = await _resolve_ai_request(
+                        EMBEDDING_MODEL,
+                        use_openrouter=False,
+                        excluded_key_hashes=failed_hashes,
+                    )
+                    if key_data:
+                        current_key = key_data["api_key"]
+                        continue  # Retry with the fresh key
+                except Exception as resolve_exc:
+                    logging.debug("Embedding key rotation failed (non-critical): %s", resolve_exc)
+
+            # Emit metric for observability
+            try:
+                from app.metrics import metrics_collector
+
+                await metrics_collector.record_error("ltm_embedding_fail", error_str)
+            except Exception:
+                pass  # Metrics emission must not block
+            break
+
     return None
 
 

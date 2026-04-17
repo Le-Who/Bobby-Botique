@@ -97,6 +97,7 @@ Rules:
 - room: Subcategory within the wing (e.g., "bio", "prefs", "active", "family").
 - Write names and predicates in the same language as the source text.
 - Be concise. No speculation — only explicitly stated facts.
+- Keep descriptions SHORT (max 12 words each) to fit within the token budget.
 
 User message:
 {text}"""
@@ -145,8 +146,8 @@ async def extract_graph_structured(
 
         try:
             client = get_cached_genai_client(current_api_key)
-            
-            config_kwargs = {
+
+            config_kwargs: dict = {
                 "response_mime_type": "application/json",
                 "response_json_schema": GraphExtractionResult.model_json_schema(),
                 "temperature": 0.1,
@@ -186,26 +187,48 @@ async def extract_graph_structured(
             failed_keys.add(current_key_hash)
             error_str = str(e).lower()
             error_category = classify_key_error(error_str)
-            is_transient = error_category == "transient" or any(p in error_str for p in ("503", "unavailable", "overloaded", "rate limit", "timeout"))
-            
-            try:
-                if error_category != "permanent" or "api_key" in error_str or "400" in error_str:
-                    await status_mgr.suspend_key(current_key_hash, GRAPH_EXTRACTION_MODEL, error_category, str(e))
-            except Exception:
-                pass
+
+            # JSON truncation: Gemini cut the response mid-object due to max_output_tokens.
+            # Treat as transient and retry with doubled token limit (no server-side wait needed).
+            is_truncation = any(
+                p in error_str for p in ("eof while parsing", "json_invalid", "unexpected end of")
+            )
+            is_transient = (
+                error_category == "transient"
+                or is_truncation
+                or any(p in error_str for p in ("503", "unavailable", "overloaded", "rate limit", "timeout"))
+            )
+
+            if not is_truncation:  # Don't suspend for truncation — key is fine
+                try:
+                    if error_category != "permanent" or "api_key" in error_str or "400" in error_str:
+                        await status_mgr.suspend_key(current_key_hash, GRAPH_EXTRACTION_MODEL, error_category, str(e))
+                except Exception:
+                    pass
 
             if is_transient and attempt < 2:
                 import asyncio
 
-                wait = (attempt + 1) * 2.0
-                logging.warning(
-                    "Graph extraction transient error (key %s…, attempt %d, retrying in %.0fs): %s", 
-                    current_key_hash, attempt + 1, wait, e
-                )
-                await asyncio.sleep(wait)
+                if is_truncation:
+                    # Adaptive token budget: double the limit and retry immediately (same key is fine)
+                    current_tokens = config_kwargs.get("max_output_tokens", 2048)
+                    config_kwargs["max_output_tokens"] = min(current_tokens * 2, 8192)
+                    wait = 0.0
+                    logging.warning(
+                        "Graph extraction JSON truncated (key %s…, attempt %d) — retrying with %d tokens",
+                        current_key_hash, attempt + 1, config_kwargs["max_output_tokens"],
+                    )
+                else:
+                    wait = (attempt + 1) * 2.0
+                    logging.warning(
+                        "Graph extraction transient error (key %s…, attempt %d, retrying in %.0fs): %s",
+                        current_key_hash, attempt + 1, wait, e,
+                    )
+                if wait > 0:
+                    await asyncio.sleep(wait)
                 continue
             logging.error("Graph extraction failed permanently with key %s…: %s", current_key_hash, e)
-            continue # Try next key for permanent failures as well
+            continue  # Try next key for permanent failures as well
 
     return empty
 
