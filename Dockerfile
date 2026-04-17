@@ -1,4 +1,4 @@
-# Production Dockerfile for Northflank.com
+# Production Dockerfile
 FROM python:3.14-slim
 
 # Install minimal system dependencies

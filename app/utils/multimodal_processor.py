@@ -295,17 +295,13 @@ async def _classify_intent_with_fallback(
                 # ── Opencode path ─────────────────────────────────────────
                 from app.handlers.ai_core import _resolve_ai_request
 
-                key_data, model_used, _ = await _resolve_ai_request(
-                    model, use_openrouter=False
-                )
+                key_data, model_used, _ = await _resolve_ai_request(model, use_openrouter=False)
                 if not key_data:
                     logging.debug("Intent fallback: no key for %s, skipping", model)
                     continue
 
                 # Build minimal OpenAI-style history from the single text part
-                text = "".join(
-                    p.text for p in prompt_parts if hasattr(p, "text") and p.text
-                )
+                text = "".join(p.text for p in prompt_parts if hasattr(p, "text") and p.text)
                 if not text:
                     continue
 
@@ -373,6 +369,7 @@ async def transcribe_voice(
         return None, "conversational", None
 
     from app.providers.pollinations import get_pollinations_provider
+
     pollinations_provider = get_pollinations_provider()
 
     # Try Pollinations Whisper first (no Gemini quota consumed)

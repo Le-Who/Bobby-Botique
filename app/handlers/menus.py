@@ -197,6 +197,7 @@ def get_model_menu_content(chat_state, context):
 
     # Build text with model hint for decision support
     from app.providers.base import is_opencode_model, is_openrouter_model
+
     if current_model and is_opencode_model(current_model):
         provider_name = "Opencode Go"
     elif current_model and is_openrouter_model(current_model):

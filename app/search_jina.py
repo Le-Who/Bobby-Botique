@@ -150,10 +150,4 @@ async def search_for_grounding(
     if result.source_urls:
         sources = "\nSources: " + " | ".join(result.source_urls[:5])
 
-    return (
-        f"<search_context>\n"
-        f"Search query: {result.query}\n\n"
-        f"{result.content}"
-        f"{sources}\n"
-        f"</search_context>"
-    )
+    return f"<search_context>\nSearch query: {result.query}\n\n{result.content}{sources}\n</search_context>"

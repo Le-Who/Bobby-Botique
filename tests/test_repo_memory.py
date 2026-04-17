@@ -1,7 +1,6 @@
 """Tests for app.repos.memory — constants and configuration validation."""
 
 
-
 class TestMemoryConstants:
     """Verify memory repo configuration constants are sane."""
 

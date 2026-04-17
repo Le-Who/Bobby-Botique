@@ -211,7 +211,7 @@ class Settings(BaseModel):
     WEBHOOK_SECRET_TOKEN: str = ""
     WEBHOOK_MAX_CONNECTIONS: int = 40
     UPDATE_QUEUE_MAXSIZE: int = 1000
-    # Base URL of the web server (e.g. https://gemaibotv2-xxxx.northflank.app).
+    # Base URL of the web server (e.g. https://bot.example.com).
     # Required for Mini App reader links. If empty, system falls back to Telegraph.
     WEBAPP_BASE_URL: str = ""
     # Short name of the Mini App registered with @BotFather via /newapp.
@@ -322,8 +322,10 @@ def load_settings() -> Settings:
         default_gemini_models = DEFAULT_GEMINI_MODELS.copy()
         default_openrouter_models: list[str] = []
 
-        inline_thinking = os.getenv("INLINE_THINKING_LEVEL", "low").lower()
-        if inline_thinking not in ("minimal", "low", "medium", "high"):
+        inline_thinking = os.getenv("INLINE_THINKING_LEVEL", "").strip().lower()
+        if not inline_thinking:
+            inline_thinking = "low"
+        elif inline_thinking not in ("minimal", "low", "medium", "high"):
             logging.warning("Invalid INLINE_THINKING_LEVEL '%s', falling back to 'low'", inline_thinking)
             inline_thinking = "low"
 

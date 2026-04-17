@@ -39,13 +39,13 @@ _MODEL_TIER = {
     "2.5-flash": 3,  # standard
     "2.5-flash-lite": 1,  # low latency fallback
     # Opencode Go tiers (relative to each other) — canonical model list only
-    "minimax-m2.7": 5,    # flagship
-    "kimi-k2.5": 5,       # flagship alternative
-    "minimax-m2.5": 4,    # better performance
-    "qwen3.6-plus": 4,    # research-grade
-    "qwen3.5-plus": 3,    # standard
-    "mimo-v2-omni": 2,    # vision specialist
-    "big-pickle": 2,      # lightweight
+    "minimax-m2.7": 5,  # flagship
+    "kimi-k2.5": 5,  # flagship alternative
+    "minimax-m2.5": 4,  # better performance
+    "qwen3.6-plus": 4,  # research-grade
+    "qwen3.5-plus": 3,  # standard
+    "mimo-v2-omni": 2,  # vision specialist
+    "big-pickle": 2,  # lightweight
 }
 
 

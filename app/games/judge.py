@@ -49,7 +49,7 @@ _LLM_FALLBACK_TIMEOUT_S = 14.0
 # After the cooldown one probe attempt is made; the circuit closes on success.
 #
 # asyncio is single-threaded — float reassignment is safe without a Lock.
-_primary_circuit_open_until: float = 0.0   # monotonic timestamp; 0.0 = closed
+_primary_circuit_open_until: float = 0.0  # monotonic timestamp; 0.0 = closed
 _PRIMARY_CIRCUIT_COOLDOWN_S: float = 120.0  # 2 min between probes
 
 
@@ -97,7 +97,7 @@ _HINTS_PROMPT = (
     "Игра «Крокодил».\n"
     "Загаданное слово: «{W}»{C_STR}.\n"
     "\n"
-    "Дай РОВНО 3 подсказки на русском языке в JSON {{\"hints\": [\"...\",\"...\",\"...\"]}}.\n"
+    'Дай РОВНО 3 подсказки на русском языке в JSON {{"hints": ["...","...","..."]}}.\n'
     "Подсказка 1 (неочевидная): намёк лишь на широкую область/тип. ≤12 слов.\n"
     "Подсказка 2 (средняя): ключевое свойство, метафора или ассоциация. ≤12 слов.\n"
     "Подсказка 3 (почти прямая): детальное описание без однокоренных слов и без самого слова. ≤12 слов.\n"
@@ -113,9 +113,18 @@ _HINTS_PROMPT = (
 
 
 _EN_TO_RU_HOMOGLYPHS = {
-    'a': 'а', 'c': 'с', 'e': 'е', 'o': 'о', 'p': 'р', 
-    'x': 'х', 'y': 'у', 'k': 'к', 'm': 'м', 't': 'т', 
-    'h': 'н', 'b': 'в'
+    "a": "а",
+    "c": "с",
+    "e": "е",
+    "o": "о",
+    "p": "р",
+    "x": "х",
+    "y": "у",
+    "k": "к",
+    "m": "м",
+    "t": "т",
+    "h": "н",
+    "b": "в",
 }
 _RU_TO_EN_HOMOGLYPHS = {v: k for k, v in _EN_TO_RU_HOMOGLYPHS.items()}
 
@@ -144,8 +153,8 @@ def _homogenize_pair(target: str, guess: str) -> tuple[str, str]:
     g = g.translate(_STRIP_PUNCT).strip()
 
     # 4. Homoglyph normalization (Cyrillic/Latin)
-    t_ru = sum(1 for c in t if '\u0400' <= c <= '\u04ff')
-    g_ru = sum(1 for c in g if '\u0400' <= c <= '\u04ff')
+    t_ru = sum(1 for c in t if "\u0400" <= c <= "\u04ff")
+    g_ru = sum(1 for c in g if "\u0400" <= c <= "\u04ff")
 
     if t_ru > 0 or g_ru > 0:
         # Treat as Cyrillic: convert any Latin homoglyphs to Cyrillic
@@ -175,9 +184,9 @@ def _damerau_levenshtein(s: str, t: str) -> int:
         for j in range(1, n + 1):
             cost = 0 if s[i - 1] == t[j - 1] else 1
             d[i][j] = min(
-                d[i - 1][j] + 1,           # deletion
-                d[i][j - 1] + 1,           # insertion
-                d[i - 1][j - 1] + cost,    # substitution
+                d[i - 1][j] + 1,  # deletion
+                d[i][j - 1] + 1,  # insertion
+                d[i - 1][j - 1] + cost,  # substitution
             )
             # Adjacent transposition (Damerau extension)
             if i > 1 and j > 1 and s[i - 1] == t[j - 2] and s[i - 2] == t[j - 1]:
@@ -207,7 +216,7 @@ def _local_check(target: str, guess: str) -> str | None:
     'Кит' does NOT match 'Кот' (3 chars, 0 edits allowed).
     """
     t, g = _homogenize_pair(target, guess)
-    
+
     if t == g:
         return "exact_match"
     dist = _damerau_levenshtein(t, g)
@@ -219,9 +228,7 @@ def _local_check(target: str, guess: str) -> str | None:
 # ── Key suspension helper ────────────────────────────────────────────────────
 
 
-async def _suspend_key_safe(
-    key_hash: str, model: str, category: str, error_text: str
-) -> None:
+async def _suspend_key_safe(key_hash: str, model: str, category: str, error_text: str) -> None:
     """Suspend a key in the background; swallows exceptions so the caller never crashes.
 
     Called as a fire-and-forget asyncio.Task from _one_call so it doesn't
@@ -229,6 +236,7 @@ async def _suspend_key_safe(
     """
     try:
         from app.repos.keys import get_key_status_manager
+
         await get_key_status_manager().suspend_key(key_hash, model, category, error_text)
     except Exception as exc:  # noqa: BLE001
         logger.debug("Judge: key suspension task failed for %s: %s", key_hash[:8], exc)
@@ -275,7 +283,9 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
         max_output_tokens=200,
     )
 
-    async def _one_call(api_key: str, key_hash: str, model: str, timeout: float = _LLM_TIMEOUT_S) -> GuessJudgement | None:
+    async def _one_call(
+        api_key: str, key_hash: str, model: str, timeout: float = _LLM_TIMEOUT_S
+    ) -> GuessJudgement | None:
         """Single key attempt. On any error: classify → suspend key → return None."""
         try:
             client = get_cached_genai_client(api_key)
@@ -320,10 +330,7 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
         key_pairs: list[tuple[str, str]], model: str, timeout: float = _LLM_TIMEOUT_S
     ) -> GuessJudgement | None:
         """Launch all (api_key, key_hash) pairs concurrently; return first non-None result."""
-        tasks = [
-            asyncio.create_task(_one_call(ak, kh, model, timeout))
-            for ak, kh in key_pairs
-        ]
+        tasks = [asyncio.create_task(_one_call(ak, kh, model, timeout)) for ak, kh in key_pairs]
         result: GuessJudgement | None = None
         pending = set(tasks)
         try:
@@ -403,8 +410,7 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
         # Concurrent task list: Gemini API key pool + Vertex AI.
         # _one_vertex_call() returns None instantly when Vertex AI is not configured.
         all_tasks: list[asyncio.Task] = [  # type: ignore[type-arg]
-            asyncio.create_task(_one_call(ak, kh, resolved_model))
-            for ak, kh in primary_pairs
+            asyncio.create_task(_one_call(ak, kh, resolved_model)) for ak, kh in primary_pairs
         ]
         all_tasks.append(asyncio.create_task(_one_vertex_call()))
 
@@ -484,7 +490,7 @@ async def generate_hints(word: str, category: str) -> list[str]:
     config = _gtypes.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=HintsOutput.model_json_schema(),
-        temperature=0.3,   # Factual task — low temp prevents hallucination of wrong word
+        temperature=0.3,  # Factual task — low temp prevents hallucination of wrong word
         max_output_tokens=300,  # Extra tokens to allow self-check reasoning before JSON
     )
 
@@ -592,12 +598,12 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
     cached = await get_cached_judgement(target, guess)
     if cached is not None:
         cached.cached = True
-        
+
         # Retroactive fix for already cached hot synonyms:
         if cached.score >= 0.92:
-            asyncio.create_task(metrics_collector.record_request("judge", time.monotonic() - t0, success=True)) # noqa: RUF006
+            asyncio.create_task(metrics_collector.record_request("judge", time.monotonic() - t0, success=True))  # noqa: RUF006
             return "exact_match", cached
-            
+
         asyncio.create_task(  # noqa: RUF006
             metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         )

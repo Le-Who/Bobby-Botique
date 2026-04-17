@@ -320,7 +320,11 @@ async def _generate_and_send_voice(
 
             gemini_voice = voice if voice and len(voice) <= 10 else "Aoede"
             gemini_pcm_parts = await _run_gemini_pipeline(
-                gemini_chunks, gemini_voice, gemini_timeout, tts_temperature=tts_temperature, model_name="gemini-3.1-flash-tts-preview"
+                gemini_chunks,
+                gemini_voice,
+                gemini_timeout,
+                tts_temperature=tts_temperature,
+                model_name="gemini-3.1-flash-tts-preview",
             )
 
             # Gemini 2.5 Fallback
@@ -330,7 +334,11 @@ async def _generate_and_send_voice(
                     chat_id,
                 )
                 gemini_pcm_parts = await _run_gemini_pipeline(
-                    gemini_chunks, gemini_voice, gemini_timeout, tts_temperature=tts_temperature, model_name="gemini-2.5-flash-preview-tts"
+                    gemini_chunks,
+                    gemini_voice,
+                    gemini_timeout,
+                    tts_temperature=tts_temperature,
+                    model_name="gemini-2.5-flash-preview-tts",
                 )
 
             if gemini_pcm_parts:

@@ -90,13 +90,9 @@ def get_vertex_client() -> "genai.Client | None":
             location=location,
             http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
         )
-        logging.getLogger(__name__).info(
-            "Vertex AI client initialized (project=%s location=%s)", project, location
-        )
+        logging.getLogger(__name__).info("Vertex AI client initialized (project=%s location=%s)", project, location)
     except Exception as exc:
-        logging.getLogger(__name__).warning(
-            "Vertex AI client init failed — Vertex AI pathway disabled: %s", exc
-        )
+        logging.getLogger(__name__).warning("Vertex AI client init failed — Vertex AI pathway disabled: %s", exc)
         _vertex_client = None
     return _vertex_client
 

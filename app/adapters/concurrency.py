@@ -128,9 +128,7 @@ class _LazyGlobalLLMSemaphore:
             await self._inner.__aexit__(exc_type, exc_val, exc_tb)
 
 
-heavy_request_semaphore = _LazyGlobalLLMSemaphore(
-    "MAX_CONCURRENT_HEAVY_REQUESTS", redis_key="llm_req_semaphore"
-)
+heavy_request_semaphore = _LazyGlobalLLMSemaphore("MAX_CONCURRENT_HEAVY_REQUESTS", redis_key="llm_req_semaphore")
 ultra_heavy_semaphore = _LazyGlobalLLMSemaphore(
     "MAX_CONCURRENT_ULTRA_HEAVY_REQUESTS", redis_key="llm_ultra_heavy_semaphore"
 )

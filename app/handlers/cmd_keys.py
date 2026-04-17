@@ -82,10 +82,7 @@ def _build_provider_grid() -> InlineKeyboardMarkup:
     items = list(_PROVIDERS.items())
     rows = []
     for i in range(0, len(items), 2):
-        row = [
-            InlineKeyboardButton(label, callback_data=f"keys:show:{name}")
-            for name, label in items[i : i + 2]
-        ]
+        row = [InlineKeyboardButton(label, callback_data=f"keys:show:{name}") for name, label in items[i : i + 2]]
         rows.append(row)
     rows.append([InlineKeyboardButton("🔄 Общий статус", callback_data="keys:status_all")])
     return InlineKeyboardMarkup(rows)
@@ -145,11 +142,7 @@ async def _show_provider_status(query, provider: str) -> int:
     source_emoji = {"db": "💾 БД", "env": "📦 .env", "missing": "⚠️ Отсутствует"}
     source_text = source_emoji.get(status["source"], status["source"])
 
-    text = (
-        f"🔑 **{label}**\n\n"
-        f"📍 Источник: {source_text}\n"
-        f"🔐 Ключ: `{status['preview']}`"
-    )
+    text = f"🔑 **{label}**\n\n📍 Источник: {source_text}\n🔐 Ключ: `{status['preview']}`"
     fmt, pm = TelegramFormatter.format_text(text)
 
     keyboard = InlineKeyboardMarkup(
@@ -181,9 +174,7 @@ async def _check_provider_health_cb(query, provider: str) -> int:
         text = f"⚠️ **{label}** — проверка недоступна (нет тестового эндпоинта)"
 
     fmt, pm = TelegramFormatter.format_text(text)
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("◀️ Назад", callback_data=f"keys:show:{provider}")]]
-    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"keys:show:{provider}")]])
     await query.edit_message_text(fmt, parse_mode=pm, reply_markup=keyboard)
     return ConversationHandler.END
 
@@ -195,9 +186,7 @@ async def _clear_provider_key_cb(query, provider: str) -> int:
 
     text = f"🗑 **{label}** — ключ из БД удалён.\nБот будет использовать значение из .env (если задано)."
     fmt, pm = TelegramFormatter.format_text(text)
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("◀️ Назад", callback_data=f"keys:show:{provider}")]]
-    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data=f"keys:show:{provider}")]])
     await query.edit_message_text(fmt, parse_mode=pm, reply_markup=keyboard)
     return ConversationHandler.END
 
@@ -217,9 +206,7 @@ async def _show_all_statuses(query) -> int:
 
     text = "\n".join(lines)
     fmt, pm = TelegramFormatter.format_text(text)
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("◀️ Назад", callback_data="keys:back")]]
-    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="keys:back")]])
     await query.edit_message_text(fmt, parse_mode=pm, reply_markup=keyboard)
     return ConversationHandler.END
 
@@ -250,9 +237,7 @@ async def receive_key_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     label = _PROVIDERS.get(provider, provider)
     text = f"✅ Ключ для **{label}** обновлён.\n_Сообщение с ключом удалено для безопасности._"
     fmt, pm = TelegramFormatter.format_text(text)
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("◀️ К провайдерам", callback_data="keys:back")]]
-    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ К провайдерам", callback_data="keys:back")]])
     await update.message.chat.send_message(fmt, parse_mode=pm, reply_markup=keyboard)
     return ConversationHandler.END
 
@@ -308,9 +293,7 @@ async def run_all_health_checks(context: ContextTypes.DEFAULT_TYPE) -> None:
                 failures.append(_PROVIDERS.get(provider, provider))
 
     if failures and context.bot:
-        text = "⚠️ **Provider Health Alert**\n\n" + "\n".join(
-            f"❌ {name}" for name in failures
-        )
+        text = "⚠️ **Provider Health Alert**\n\n" + "\n".join(f"❌ {name}" for name in failures)
         try:
             await context.bot.send_message(admin_id, text, parse_mode="Markdown")
         except Exception as send_err:

@@ -128,8 +128,14 @@ class ProviderRouter:
                             timeout=timeout,
                             _is_fallback=True,
                         )
-                    is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model and not is_opencode_model(preferred_model))
-                    provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+                    is_or = (
+                        use_openrouter
+                        if use_openrouter is not None
+                        else ("/" in preferred_model and not is_opencode_model(preferred_model))
+                    )
+                    provider_name = (
+                        "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+                    )
                     return (
                         tag_error(
                             ErrorCode.KEYS_EXHAUSTED,
@@ -245,7 +251,11 @@ class ProviderRouter:
             if fallback_result is not None:
                 return fallback_result
 
-        is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model and not is_opencode_model(preferred_model))
+        is_or = (
+            use_openrouter
+            if use_openrouter is not None
+            else ("/" in preferred_model and not is_opencode_model(preferred_model))
+        )
         provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
         return (
             tag_error(
@@ -343,8 +353,14 @@ class ProviderRouter:
                     ):
                         yield chunk
                     return
-                is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model and not is_opencode_model(preferred_model))
-                provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+                is_or = (
+                    use_openrouter
+                    if use_openrouter is not None
+                    else ("/" in preferred_model and not is_opencode_model(preferred_model))
+                )
+                provider_name = (
+                    "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
+                )
                 yield tag_error(
                     ErrorCode.KEYS_EXHAUSTED,
                     f"🚫 Все ключи {provider_name} недоступны.",
@@ -408,7 +424,7 @@ class ProviderRouter:
                     # category rather than always hard-coding "transient".
                     # e.g. RATE_LIMIT → "rate_limit" (15 s cooldown),
                     #      QUOTA_EXCEEDED → "quota" (until midnight PT).
-                    inner_tag = error_msg[error_msg.find("\u200b["):] if "\u200b[" in error_msg else error_msg
+                    inner_tag = error_msg[error_msg.find("\u200b[") :] if "\u200b[" in error_msg else error_msg
                     error_category = classify_key_error(inner_tag)
                     if error_category == "transient":
                         had_transient = True
@@ -559,7 +575,7 @@ class ProviderRouter:
                             # Derive penalty category from the error tag embedded in the
                             # message (e.g. RATE_LIMIT, QUOTA_EXCEEDED) rather than always
                             # defaulting to "transient", so cooldown durations are accurate.
-                            inner_tag = raw_err[raw_err.find("\u200b["):] if "\u200b[" in raw_err else raw_err
+                            inner_tag = raw_err[raw_err.find("\u200b[") :] if "\u200b[" in raw_err else raw_err
                             err_category = classify_key_error(inner_tag)
                             logging.warning(
                                 "Race key=%s… failed (category=%s): %s",
@@ -567,7 +583,9 @@ class ProviderRouter:
                                 err_category,
                                 raw_err[:120],
                             )
-                            await status_mgr.suspend_key(kd["key_hash"], model_used, err_category, raw_err[:200]) if not is_opencode_model(model_used) else None
+                            await status_mgr.suspend_key(
+                                kd["key_hash"], model_used, err_category, raw_err[:200]
+                            ) if not is_opencode_model(model_used) else None
                         except Exception:
                             pass
                         # Update outer flags regardless of whether suspend_key succeeded
@@ -704,7 +722,11 @@ class ProviderRouter:
             except Exception as e:
                 logging.warning("Deferred queue fallback failed: %s", e)
 
-        is_or = use_openrouter if use_openrouter is not None else ("/" in preferred_model and not is_opencode_model(preferred_model))
+        is_or = (
+            use_openrouter
+            if use_openrouter is not None
+            else ("/" in preferred_model and not is_opencode_model(preferred_model))
+        )
         provider_name = "Opencode Go" if is_opencode_model(preferred_model) else ("OpenRouter" if is_or else "Gemini")
         yield tag_error(
             ErrorCode.KEYS_EXHAUSTED,
@@ -736,7 +758,11 @@ class ProviderRouter:
                 return gemini_fallback
             return None
 
-        is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model and not is_opencode_model(failed_model))
+        is_or = (
+            use_openrouter
+            if use_openrouter is not None
+            else ("/" in failed_model and not is_opencode_model(failed_model))
+        )
         if is_or:
             return None  # OpenRouter handles its own fallbacks
 
@@ -770,7 +796,11 @@ class ProviderRouter:
         """
         from app.errors import is_error_message
 
-        _is_or = use_openrouter if use_openrouter is not None else ("/" in failed_model and not is_opencode_model(failed_model))
+        _is_or = (
+            use_openrouter
+            if use_openrouter is not None
+            else ("/" in failed_model and not is_opencode_model(failed_model))
+        )
 
         # Never use OpenRouter for fallback according to user request.
         # Fallback always uses the reliable production models (Gemini)

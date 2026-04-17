@@ -28,7 +28,7 @@ from app.games.judgement_cache import (
 
 _COLD = GuessJudgement(status="cold", score=0.1, hint="Попробуй ещё")
 _WARM = GuessJudgement(status="warm", score=0.5, hint="Теплее!")
-_HOT = GuessJudgement(status="hot",  score=0.9, hint="Горячо!")
+_HOT = GuessJudgement(status="hot", score=0.9, hint="Горячо!")
 
 _no_persist = patch("app.games.judgement_cache._persist", return_value=None)
 _no_persist_hints = patch("app.games.judgement_cache._persist_hints", return_value=None)
@@ -79,7 +79,6 @@ class TestHintsKey:
 
 @pytest.mark.asyncio
 class TestJudgementCacheRoundTrip:
-
     async def test_store_and_retrieve(self):
         with _no_persist:
             await cache_judgement("крокодил", "аллигатор", _WARM)
@@ -143,7 +142,6 @@ class TestJudgementCacheRoundTrip:
 
 @pytest.mark.asyncio
 class TestHintsCacheRoundTrip:
-
     async def test_store_and_retrieve(self):
         hints = ["Подсказка 1", "Подсказка 2", "Подсказка 3"]
         with _no_persist_hints:

@@ -90,6 +90,7 @@ def _propagate_real_settings():
 
     if repaired:
         import logging
+
         logging.getLogger(__name__).debug(
             "Decontaminated settings in %d modules: %s",
             len(repaired),
@@ -124,7 +125,7 @@ def _cancel_db_background_tasks():
             task = getattr(db_manager, attr, None)
             if task and not task.done():
                 task.cancel()
-        
+
     except Exception:
         pass
 

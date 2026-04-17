@@ -130,12 +130,10 @@ async def extract_graph_structured(
     for attempt in range(3):
         # Allow initial explicitly passed key to be used on attempt 0
         current_api_key = api_key if attempt == 0 else None
-        
+
         if not current_api_key:
             key_data, _, _ = await _resolve_ai_request(
-                GRAPH_EXTRACTION_MODEL,
-                use_openrouter=False,
-                excluded_key_hashes=failed_keys
+                GRAPH_EXTRACTION_MODEL, use_openrouter=False, excluded_key_hashes=failed_keys
             )
             if not key_data:
                 logging.warning("Graph extraction exhausted available keys on attempt %d", attempt + 1)
@@ -190,9 +188,7 @@ async def extract_graph_structured(
 
             # JSON truncation: Gemini cut the response mid-object due to max_output_tokens.
             # Treat as transient and retry with doubled token limit (no server-side wait needed).
-            is_truncation = any(
-                p in error_str for p in ("eof while parsing", "json_invalid", "unexpected end of")
-            )
+            is_truncation = any(p in error_str for p in ("eof while parsing", "json_invalid", "unexpected end of"))
             is_transient = (
                 error_category == "transient"
                 or is_truncation
@@ -216,13 +212,18 @@ async def extract_graph_structured(
                     wait = 0.0
                     logging.warning(
                         "Graph extraction JSON truncated (key %s…, attempt %d) — retrying with %d tokens",
-                        current_key_hash, attempt + 1, config_kwargs["max_output_tokens"],
+                        current_key_hash,
+                        attempt + 1,
+                        config_kwargs["max_output_tokens"],
                     )
                 else:
                     wait = (attempt + 1) * 2.0
                     logging.warning(
                         "Graph extraction transient error (key %s…, attempt %d, retrying in %.0fs): %s",
-                        current_key_hash, attempt + 1, wait, e,
+                        current_key_hash,
+                        attempt + 1,
+                        wait,
+                        e,
                     )
                 if wait > 0:
                     await asyncio.sleep(wait)

@@ -329,6 +329,7 @@ async def run_bot_with_retry():
 
         # Register bot singleton for non-PTB code (e.g. WS game handler)
         from app.bot_instance import register_bot
+
         register_bot(application.bot)
 
         commands.register(application)

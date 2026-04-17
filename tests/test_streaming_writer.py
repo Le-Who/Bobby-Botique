@@ -117,7 +117,7 @@ async def test_tool_code_trace_is_removed_but_tail_is_preserved():
     """Internal [tool_code] traces must be stripped without removing the real answer."""
     writer, _ = make_writer()
 
-    await writer.write("[tool_code]\nimport google_search\ngoogle_search.search(\"cats\")\nreal tail")
+    await writer.write('[tool_code]\nimport google_search\ngoogle_search.search("cats")\nreal tail')
     full_text = await writer.finalize()
 
     assert full_text == "real tail"
@@ -127,7 +127,7 @@ async def test_tool_code_trace_is_removed_but_tail_is_preserved():
 async def test_legitimate_fenced_search_code_is_preserved():
     """Normal fenced code with search() must remain visible to the user."""
     writer, _ = make_writer()
-    sample = "```python\nsearch(\"cats\")\n```\nreal tail"
+    sample = '```python\nsearch("cats")\n```\nreal tail'
 
     await writer.write(sample)
     full_text = await writer.finalize()
@@ -139,7 +139,7 @@ async def test_legitimate_fenced_search_code_is_preserved():
 async def test_legitimate_google_search_reference_is_preserved():
     """Mentions of google_search.search in prose or code must not be stripped."""
     writer, _ = make_writer()
-    sample = "Use `google_search.search(\"cats\")` as an example."
+    sample = 'Use `google_search.search("cats")` as an example.'
 
     await writer.write(sample)
     full_text = await writer.finalize()

@@ -198,20 +198,15 @@ class PollinationsProvider:
             Transcribed text or None on failure.
         """
         url = "https://text.pollinations.ai/openai/audio/transcriptions"
-        
+
         # httpx expects files in format: {'file': ('filename', b'content', 'mime_type')}
-        files: dict[str, tuple[str, bytes, str]] = {
-            "file": ("audio.ogg", audio_bytes, "audio/ogg")
-        }
-        data: dict[str, str] = {
-            "model": model,
-            "response_format": "text"
-        }
-        
+        files: dict[str, tuple[str, bytes, str]] = {"file": ("audio.ogg", audio_bytes, "audio/ogg")}
+        data: dict[str, str] = {"model": model, "response_format": "text"}
+
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.post(url, data=data, files=files)
-                
+
             if 200 <= resp.status_code < 300:
                 content_type = resp.headers.get("content-type", "").lower()
                 if "application/json" in content_type:

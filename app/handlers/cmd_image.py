@@ -617,12 +617,12 @@ async def _run_generation(
                 reply_markup=keyboard,
                 message_effect_id=EFFECT_FIRE,
             )
-            
+
             try:
                 await placeholder.delete()
             except Exception:
                 pass
-                
+
             _set_draw_state(context, last_photo_msg=sent.message_id)
             logger.info(
                 "Image generated: user=%s model=%s ar=%s translate=%s",
@@ -634,7 +634,9 @@ async def _run_generation(
         except Exception as send_err:
             logger.error("Failed to send generated image: %s", send_err)
             try:
-                await placeholder.edit_text("❌ Изображение создано, но не удалось отправить (возможно, слишком длинный текст). Попробуйте снова.")
+                await placeholder.edit_text(
+                    "❌ Изображение создано, но не удалось отправить (возможно, слишком длинный текст). Попробуйте снова."
+                )
             except Exception:
                 pass
         return

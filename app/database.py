@@ -15,6 +15,8 @@ from app.errors import (
     DatabaseRateLimitError,
 )
 
+_background_tasks = set()
+
 
 @dataclass
 class ChatState:
@@ -416,7 +418,9 @@ async def _init_schema():
             except Exception as _alert_err:
                 logging.warning("Migration alert failed (non-critical): %s", _alert_err)
 
-        asyncio.ensure_future(_send_migration_alert())
+        _task = asyncio.create_task(_send_migration_alert())
+        _background_tasks.add(_task)
+        _task.add_done_callback(_background_tasks.discard)
 
 
 # --- RLS re-exports (backward compatibility) ---

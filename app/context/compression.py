@@ -268,9 +268,7 @@ async def inject_memory_layers(
                     # Strip core/hop labels to match the triple key
                     _bare = triple.replace(" ★", "").replace(" (indirect)", "")
                     if _bare in source_passages:
-                        graph_parts.append(
-                            f"    <source_passage>{source_passages[_bare]}</source_passage>"
-                        )
+                        graph_parts.append(f"    <source_passage>{source_passages[_bare]}</source_passage>")
 
                 if temporal:
                     graph_parts.append("\n  <temporal_context>")

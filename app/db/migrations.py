@@ -16,7 +16,6 @@ import pathlib
 
 import asyncpg
 
-
 # ── Result container ──────────────────────────────────────────────────────────
 
 
@@ -34,8 +33,7 @@ class MigrationResult:
 
     def __repr__(self) -> str:
         return (
-            f"MigrationResult(applied={self.applied}, failed={self.failed}, "
-            f"pending_at_start={self.pending_at_start})"
+            f"MigrationResult(applied={self.applied}, failed={self.failed}, pending_at_start={self.pending_at_start})"
         )
 
 
@@ -130,8 +128,7 @@ async def run_migrations(db_query, db_manager) -> MigrationResult:
                 # This matches the behaviour of dedicated tools (Flyway, Alembic) and
                 # prevents a half-applied schema from masking the root failure.
                 logging.critical(
-                    "Aborting further migrations after %s failure. "
-                    "Fix the migration and redeploy.",
+                    "Aborting further migrations after %s failure. Fix the migration and redeploy.",
                     version,
                 )
                 break
@@ -185,9 +182,7 @@ async def _run_legacy_migrations(db_query):
         if cols_to_add:
             await db_query(f"ALTER TABLE user_documents {', '.join(cols_to_add)};")
 
-        users_columns = await db_query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='users'"
-        )
+        users_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='users'")
         user_col_names = {c["column_name"] for c in users_columns}
 
         if "is_deep_dive" not in user_col_names:
@@ -197,9 +192,7 @@ async def _run_legacy_migrations(db_query):
             await db_query("ALTER TABLE users ADD COLUMN deep_dive_thread_id TEXT;")
 
         # Ensure chats table has ltm_enabled column
-        chats_columns = await db_query(
-            "SELECT column_name FROM information_schema.columns WHERE table_name='chats'"
-        )
+        chats_columns = await db_query("SELECT column_name FROM information_schema.columns WHERE table_name='chats'")
         chats_col_names = {c["column_name"] for c in chats_columns}
         if "ltm_enabled" not in chats_col_names:
             await db_query("ALTER TABLE chats ADD COLUMN ltm_enabled BOOLEAN DEFAULT TRUE;")

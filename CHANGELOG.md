@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.1] - 2026-04-18 - Northflank Legacy Cleanup & Test Stabilisation
+
+### 🧹 Cleanup (Tech Debt)
+- **Northflank Legacy Removal**: Removed all mentions of the legacy "Northflank" provider in code comments, configuration references (`app/config.py`, `app/utils/logging_config.py`, `app/web.py`), and documentation (`docs/ARCHITECTURE.md`, `README.md`), as the production stack fully relies on the dedicated VPS deployment architecture.
+- **Docker Artifacts**: Deleted the legacy `northflank.yaml`. Renamed `Dockerfile.northflank` to `Dockerfile` and `docker-compose.northflank.yml` to `docker-compose.yml`.
+
+### 🛡️ Test Stabilisation & Architecture
+- **Async Task Leakage Fix (`app/database.py`)**: Secured background DB tasks by registering `_task` creation explicitly within a global module-level `_background_tasks` set, addressing `RUF006` errors and ensuring `asyncio` garbage collection doesn't cull migration alerts early.
+- **CLI Lint Suppressions**: Ignored native `print` statements in CLI scripts (`scripts/migrate.py`) via top-level `noqa: T201` definition.
+- **Architecture Documentation**: Documented the current state of the 3-container production deployment stack and updated test suite totals (`1800+`).
+
 ## [2.15.0] - 2026-04-18 - Live Audio Voice Chat (Gemini Live API)
 
 ### 🚀 New Feature

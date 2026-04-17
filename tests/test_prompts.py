@@ -1,6 +1,5 @@
 """Tests for app.prompts — system instruction composition, custom role cache, JSON extraction."""
 
-
 from app.prompts import (
     DEFAULT_ROLES,
     cache_custom_role,

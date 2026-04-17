@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: T201
 """Standalone migration runner for CI/CD and manual use.
 
 Usage:
@@ -14,6 +15,7 @@ Usage:
 Environment:
     DATABASE_URL — required, Postgres connection string.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,7 +29,6 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import asyncpg
-
 
 MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent / "migrations"
 logging.basicConfig(

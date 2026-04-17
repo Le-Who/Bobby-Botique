@@ -15,9 +15,7 @@ generate_auto_title = None
 
 def setup_module(module):
     global _original_modules, generate_auto_title
-    _original_modules["__app_keys_before__"] = {
-        k for k in sys.modules if k.startswith("app.")
-    }
+    _original_modules["__app_keys_before__"] = {k for k in sys.modules if k.startswith("app.")}
     for k in _MOCK_KEYS:
         if k in sys.modules:
             _original_modules[k] = sys.modules[k]
@@ -40,7 +38,6 @@ def teardown_module(module):
     for k in list(sys.modules):
         if k.startswith("app.") and k not in app_keys_before:
             del sys.modules[k]
-
 
 
 def test_generate_auto_title_simple_content():

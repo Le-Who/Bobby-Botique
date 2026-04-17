@@ -7,8 +7,6 @@ that at least one real test catches the mutation.
 """
 
 
-
-
 def _run_test_expecting_failure(test_func, *args, **kwargs):
     """Run a test function and return True if it raised AssertionError."""
     try:

@@ -29,144 +29,506 @@ logger = logging.getLogger(__name__)
 WORD_BANK: dict[str, dict[str, list[str]]] = {
     "ru": {
         "Животные": [
-            "крокодил", "жираф", "пингвин", "хамелеон", "дельфин", "кенгуру",
-            "коала", "осьминог", "броненосец", "утконос", "перепел", "бобёр",
-            "носорог", "зебра", "горилла", "ягуар", "обезьяна", "медуза",
-            "кальмар", "морж", "козёл", "антилопа", "гепард", "страус",
-            "попугай", "пеликан", "хомяк", "мангуст", "кабан", "варан",
+            "крокодил",
+            "жираф",
+            "пингвин",
+            "хамелеон",
+            "дельфин",
+            "кенгуру",
+            "коала",
+            "осьминог",
+            "броненосец",
+            "утконос",
+            "перепел",
+            "бобёр",
+            "носорог",
+            "зебра",
+            "горилла",
+            "ягуар",
+            "обезьяна",
+            "медуза",
+            "кальмар",
+            "морж",
+            "козёл",
+            "антилопа",
+            "гепард",
+            "страус",
+            "попугай",
+            "пеликан",
+            "хомяк",
+            "мангуст",
+            "кабан",
+            "варан",
         ],
         "Еда": [
-            "пицца", "суши", "борщ", "шаурма", "тирамису", "оливье", "хинкали",
-            "блин", "чизбургер", "рамэн", "карри", "гаспачо", "паэлья",
-            "ризотто", "круассан", "эклер", "кимчи", "авокадо", "гуакамоле",
-            "стейк", "лазанья", "чизкейк", "макаруны", "вафля", "пельмени",
-            "щи", "котлета", "шашлык", "буррито", "тако",
+            "пицца",
+            "суши",
+            "борщ",
+            "шаурма",
+            "тирамису",
+            "оливье",
+            "хинкали",
+            "блин",
+            "чизбургер",
+            "рамэн",
+            "карри",
+            "гаспачо",
+            "паэлья",
+            "ризотто",
+            "круассан",
+            "эклер",
+            "кимчи",
+            "авокадо",
+            "гуакамоле",
+            "стейк",
+            "лазанья",
+            "чизкейк",
+            "макаруны",
+            "вафля",
+            "пельмени",
+            "щи",
+            "котлета",
+            "шашлык",
+            "буррито",
+            "тако",
         ],
         "Профессии": [
-            "программист", "врач", "пилот", "архитектор", "фотограф",
-            "дирижёр", "скульптор", "хирург", "детектив", "астронавт",
-            "дипломат", "сомелье", "ветеринар", "маляр", "шахтёр",
-            "водолаз", "режиссёр", "кондитер", "логопед", "геолог",
-            "акушер", "ювелир", "таксидермист", "пожарный", "переводчик",
+            "программист",
+            "врач",
+            "пилот",
+            "архитектор",
+            "фотограф",
+            "дирижёр",
+            "скульптор",
+            "хирург",
+            "детектив",
+            "астронавт",
+            "дипломат",
+            "сомелье",
+            "ветеринар",
+            "маляр",
+            "шахтёр",
+            "водолаз",
+            "режиссёр",
+            "кондитер",
+            "логопед",
+            "геолог",
+            "акушер",
+            "ювелир",
+            "таксидермист",
+            "пожарный",
+            "переводчик",
         ],
         "Спорт": [
-            "бокс", "фехтование", "сёрфинг", "кёрлинг", "синхронное плавание",
-            "триатлон", "скалолазание", "стрельба из лука", "регби", "гольф",
-            "бадминтон", "санный спорт", "ватерполо", "крикет", "черлидинг",
-            "пятиборье", "прыжки с шестом", "армрестлинг", "скейтбординг",
+            "бокс",
+            "фехтование",
+            "сёрфинг",
+            "кёрлинг",
+            "синхронное плавание",
+            "триатлон",
+            "скалолазание",
+            "стрельба из лука",
+            "регби",
+            "гольф",
+            "бадминтон",
+            "санный спорт",
+            "ватерполо",
+            "крикет",
+            "черлидинг",
+            "пятиборье",
+            "прыжки с шестом",
+            "армрестлинг",
+            "скейтбординг",
         ],
         "Фильмы": [
-            "матрица", "интерстеллар", "аватар", "начало", "паразиты",
-            "форрест гамп", "гладиатор", "шоу шоушенк", "до свидания ленин",
-            "амели", "леон", "джокер", "властелин колец", "король лев",
+            "матрица",
+            "интерстеллар",
+            "аватар",
+            "начало",
+            "паразиты",
+            "форрест гамп",
+            "гладиатор",
+            "шоу шоушенк",
+            "до свидания ленин",
+            "амели",
+            "леон",
+            "джокер",
+            "властелин колец",
+            "король лев",
         ],
         "Техника": [
-            "пылесос", "микроволновка", "3д принтер", "дрон", "видеокарта",
-            "планшет", "умные часы", "проектор", "сканер", "термостат",
-            "спутник", "перфоратор", "блендер", "холодильник", "синтезатор",
+            "пылесос",
+            "микроволновка",
+            "3д принтер",
+            "дрон",
+            "видеокарта",
+            "планшет",
+            "умные часы",
+            "проектор",
+            "сканер",
+            "термостат",
+            "спутник",
+            "перфоратор",
+            "блендер",
+            "холодильник",
+            "синтезатор",
         ],
         "Природа": [
-            "вулкан", "айсберг", "торнадо", "северное сияние", "оазис",
-            "цунами", "мангровый лес", "большой барьерный риф", "гейзер",
-            "каньон", "болото", "пещера", "ледник", "атолл", "плато",
+            "вулкан",
+            "айсберг",
+            "торнадо",
+            "северное сияние",
+            "оазис",
+            "цунами",
+            "мангровый лес",
+            "большой барьерный риф",
+            "гейзер",
+            "каньон",
+            "болото",
+            "пещера",
+            "ледник",
+            "атолл",
+            "плато",
         ],
         "Транспорт": [
-            "вертолёт", "подводная лодка", "дирижабль", "паром", "трактор",
-            "мотоцикл", "трамвай", "канатная дорога", "катамаран", "квадроцикл",
-            "ракета", "дрезина", "рикша", "аэросани", "самокат",
+            "вертолёт",
+            "подводная лодка",
+            "дирижабль",
+            "паром",
+            "трактор",
+            "мотоцикл",
+            "трамвай",
+            "канатная дорога",
+            "катамаран",
+            "квадроцикл",
+            "ракета",
+            "дрезина",
+            "рикша",
+            "аэросани",
+            "самокат",
         ],
         "Одежда": [
-            "кимоно", "бушлат", "пончо", "сарафан", "тюрбан",
-            "смокинг", "гетры", "кираса", "фартук", "бриджи",
-            "пижама", "кепка", "рукавицы", "жилет", "мантия",
+            "кимоно",
+            "бушлат",
+            "пончо",
+            "сарафан",
+            "тюрбан",
+            "смокинг",
+            "гетры",
+            "кираса",
+            "фартук",
+            "бриджи",
+            "пижама",
+            "кепка",
+            "рукавицы",
+            "жилет",
+            "мантия",
         ],
         "Музыка": [
-            "виолончель", "балалайка", "маракасы", "контрабас", "аккордеон",
-            "банджо", "диджериду", "волынка", "арфа", "кастаньеты",
-            "ситар", "гобой", "фагот", "там-там", "укулеле",
+            "виолончель",
+            "балалайка",
+            "маракасы",
+            "контрабас",
+            "аккордеон",
+            "банджо",
+            "диджериду",
+            "волынка",
+            "арфа",
+            "кастаньеты",
+            "ситар",
+            "гобой",
+            "фагот",
+            "там-там",
+            "укулеле",
         ],
         "Космос": [
-            "астероид", "туманность", "гравитация", "орбита", "солнечный ветер",
-            "чёрная дыра", "нейтронная звезда", "космическая станция", "кратер",
-            "метеорит", "галактика", "сверхнова", "пульсар", "атмосфера", "зонд",
+            "астероид",
+            "туманность",
+            "гравитация",
+            "орбита",
+            "солнечный ветер",
+            "чёрная дыра",
+            "нейтронная звезда",
+            "космическая станция",
+            "кратер",
+            "метеорит",
+            "галактика",
+            "сверхнова",
+            "пульсар",
+            "атмосфера",
+            "зонд",
         ],
         "Разное": [
-            "бумеранг", "зонтик", "кальян", "будильник", "телескоп",
-            "перископ", "лабиринт", "домино", "маятник", "компас",
-            "фонарик", "рогатка", "паяльник", "калейдоскоп", "водоворот",
-            "жетон", "фейерверк", "парашют", "кресло-качалка", "метроном",
+            "бумеранг",
+            "зонтик",
+            "кальян",
+            "будильник",
+            "телескоп",
+            "перископ",
+            "лабиринт",
+            "домино",
+            "маятник",
+            "компас",
+            "фонарик",
+            "рогатка",
+            "паяльник",
+            "калейдоскоп",
+            "водоворот",
+            "жетон",
+            "фейерверк",
+            "парашют",
+            "кресло-качалка",
+            "метроном",
         ],
     },
     "en": {
         "Animals": [
-            "crocodile", "giraffe", "penguin", "chameleon", "dolphin",
-            "kangaroo", "koala", "octopus", "armadillo", "platypus",
-            "quail", "beaver", "rhinoceros", "zebra", "gorilla",
-            "jaguar", "monkey", "jellyfish", "squid", "walrus",
-            "antelope", "cheetah", "ostrich", "parrot", "pelican",
-            "hamster", "mongoose", "boar", "monitor lizard", "flamingo",
+            "crocodile",
+            "giraffe",
+            "penguin",
+            "chameleon",
+            "dolphin",
+            "kangaroo",
+            "koala",
+            "octopus",
+            "armadillo",
+            "platypus",
+            "quail",
+            "beaver",
+            "rhinoceros",
+            "zebra",
+            "gorilla",
+            "jaguar",
+            "monkey",
+            "jellyfish",
+            "squid",
+            "walrus",
+            "antelope",
+            "cheetah",
+            "ostrich",
+            "parrot",
+            "pelican",
+            "hamster",
+            "mongoose",
+            "boar",
+            "monitor lizard",
+            "flamingo",
         ],
         "Food": [
-            "pizza", "sushi", "borsch", "shawarma", "tiramisu",
-            "cookie", "cheeseburger", "ramen", "curry", "gazpacho",
-            "paella", "risotto", "croissant", "éclair", "kimchi",
-            "avocado", "guacamole", "steak", "lasagna", "cheesecake",
-            "macarons", "waffle", "burrito", "taco", "nachos",
-            "dumplings", "hotdog", "pancake", "bagel", "pretzel",
+            "pizza",
+            "sushi",
+            "borsch",
+            "shawarma",
+            "tiramisu",
+            "cookie",
+            "cheeseburger",
+            "ramen",
+            "curry",
+            "gazpacho",
+            "paella",
+            "risotto",
+            "croissant",
+            "éclair",
+            "kimchi",
+            "avocado",
+            "guacamole",
+            "steak",
+            "lasagna",
+            "cheesecake",
+            "macarons",
+            "waffle",
+            "burrito",
+            "taco",
+            "nachos",
+            "dumplings",
+            "hotdog",
+            "pancake",
+            "bagel",
+            "pretzel",
         ],
         "Professions": [
-            "programmer", "doctor", "pilot", "architect", "photographer",
-            "conductor", "sculptor", "surgeon", "detective", "astronaut",
-            "diplomat", "sommelier", "veterinarian", "diver", "director",
-            "confectioner", "geologist", "obstetrician", "jeweller",
-            "taxidermist", "firefighter", "translator", "ufologist",
+            "programmer",
+            "doctor",
+            "pilot",
+            "architect",
+            "photographer",
+            "conductor",
+            "sculptor",
+            "surgeon",
+            "detective",
+            "astronaut",
+            "diplomat",
+            "sommelier",
+            "veterinarian",
+            "diver",
+            "director",
+            "confectioner",
+            "geologist",
+            "obstetrician",
+            "jeweller",
+            "taxidermist",
+            "firefighter",
+            "translator",
+            "ufologist",
         ],
         "Sports": [
-            "boxing", "fencing", "surfing", "curling", "synchronised swimming",
-            "triathlon", "rock climbing", "archery", "rugby", "golf",
-            "badminton", "luge", "water polo", "cricket", "cheerleading",
-            "modern pentathlon", "pole vault", "arm wrestling", "skateboarding",
+            "boxing",
+            "fencing",
+            "surfing",
+            "curling",
+            "synchronised swimming",
+            "triathlon",
+            "rock climbing",
+            "archery",
+            "rugby",
+            "golf",
+            "badminton",
+            "luge",
+            "water polo",
+            "cricket",
+            "cheerleading",
+            "modern pentathlon",
+            "pole vault",
+            "arm wrestling",
+            "skateboarding",
         ],
         "Movies": [
-            "the matrix", "interstellar", "avatar", "inception", "parasite",
-            "forrest gump", "gladiator", "the shawshank redemption", "amelie",
-            "leon", "joker", "the lord of the rings", "the lion king",
+            "the matrix",
+            "interstellar",
+            "avatar",
+            "inception",
+            "parasite",
+            "forrest gump",
+            "gladiator",
+            "the shawshank redemption",
+            "amelie",
+            "leon",
+            "joker",
+            "the lord of the rings",
+            "the lion king",
         ],
         "Tech": [
-            "vacuum cleaner", "microwave", "3d printer", "drone", "graphics card",
-            "tablet", "smartwatch", "projector", "scanner", "thermostat",
-            "satellite", "jackhammer", "blender", "refrigerator", "synthesizer",
+            "vacuum cleaner",
+            "microwave",
+            "3d printer",
+            "drone",
+            "graphics card",
+            "tablet",
+            "smartwatch",
+            "projector",
+            "scanner",
+            "thermostat",
+            "satellite",
+            "jackhammer",
+            "blender",
+            "refrigerator",
+            "synthesizer",
         ],
         "Nature": [
-            "volcano", "iceberg", "tornado", "aurora borealis", "oasis",
-            "tsunami", "mangrove forest", "great barrier reef", "geyser",
-            "canyon", "swamp", "cave", "glacier", "atoll", "plateau",
+            "volcano",
+            "iceberg",
+            "tornado",
+            "aurora borealis",
+            "oasis",
+            "tsunami",
+            "mangrove forest",
+            "great barrier reef",
+            "geyser",
+            "canyon",
+            "swamp",
+            "cave",
+            "glacier",
+            "atoll",
+            "plateau",
         ],
         "Transport": [
-            "helicopter", "submarine", "airship", "ferry", "tractor",
-            "motorcycle", "tram", "cable car", "catamaran", "quad bike",
-            "rocket", "handcar", "rickshaw", "snowmobile", "scooter",
+            "helicopter",
+            "submarine",
+            "airship",
+            "ferry",
+            "tractor",
+            "motorcycle",
+            "tram",
+            "cable car",
+            "catamaran",
+            "quad bike",
+            "rocket",
+            "handcar",
+            "rickshaw",
+            "snowmobile",
+            "scooter",
         ],
         "Clothing": [
-            "kimono", "peacoat", "poncho", "sundress", "turban",
-            "tuxedo", "leg warmers", "breastplate", "apron", "breeches",
-            "pyjamas", "cap", "mittens", "waistcoat", "mantle",
+            "kimono",
+            "peacoat",
+            "poncho",
+            "sundress",
+            "turban",
+            "tuxedo",
+            "leg warmers",
+            "breastplate",
+            "apron",
+            "breeches",
+            "pyjamas",
+            "cap",
+            "mittens",
+            "waistcoat",
+            "mantle",
         ],
         "Music": [
-            "cello", "balalaika", "maracas", "double bass", "accordion",
-            "banjo", "didgeridoo", "bagpipes", "harp", "castanets",
-            "sitar", "oboe", "bassoon", "tam-tam", "ukulele",
+            "cello",
+            "balalaika",
+            "maracas",
+            "double bass",
+            "accordion",
+            "banjo",
+            "didgeridoo",
+            "bagpipes",
+            "harp",
+            "castanets",
+            "sitar",
+            "oboe",
+            "bassoon",
+            "tam-tam",
+            "ukulele",
         ],
         "Space": [
-            "asteroid", "nebula", "gravity", "orbit", "solar wind",
-            "black hole", "neutron star", "space station", "crater",
-            "meteorite", "galaxy", "supernova", "pulsar", "atmosphere", "probe",
+            "asteroid",
+            "nebula",
+            "gravity",
+            "orbit",
+            "solar wind",
+            "black hole",
+            "neutron star",
+            "space station",
+            "crater",
+            "meteorite",
+            "galaxy",
+            "supernova",
+            "pulsar",
+            "atmosphere",
+            "probe",
         ],
         "Random": [
-            "boomerang", "umbrella", "hookah", "alarm clock", "telescope",
-            "periscope", "labyrinth", "domino", "pendulum", "compass",
-            "flashlight", "slingshot", "soldering iron", "kaleidoscope",
-            "whirlpool", "fireworks", "parachute", "rocking chair", "metronome",
+            "boomerang",
+            "umbrella",
+            "hookah",
+            "alarm clock",
+            "telescope",
+            "periscope",
+            "labyrinth",
+            "domino",
+            "pendulum",
+            "compass",
+            "flashlight",
+            "slingshot",
+            "soldering iron",
+            "kaleidoscope",
+            "whirlpool",
+            "fireworks",
+            "parachute",
+            "rocking chair",
+            "metronome",
         ],
     },
 }
@@ -297,10 +659,7 @@ def validate_custom_word(word: str) -> str | None:
 # Used by find_word_category() to enrich custom-word hint context (Bug-6.4).
 
 _WORD_TO_CATEGORY: dict[str, str] = {
-    word: category
-    for _lang_bank in WORD_BANK.values()
-    for category, words in _lang_bank.items()
-    for word in words
+    word: category for _lang_bank in WORD_BANK.values() for category, words in _lang_bank.items() for word in words
 }
 
 
@@ -321,13 +680,24 @@ async def resolve_custom_word_category(word: str) -> str:
 
     # Check in-process+disk cache before calling the LLM
     from app.games.judgement_cache import cache_word_category, get_cached_word_category
+
     cached_cat = await get_cached_word_category(word)
     if cached_cat:
         return cached_cat
 
     _ALL_CATS = (
-        "Животные", "Еда", "Профессии", "Спорт", "Фильмы",
-        "Техника", "Природа", "Транспорт", "Одежда", "Музыка", "Космос", "Разное"
+        "Животные",
+        "Еда",
+        "Профессии",
+        "Спорт",
+        "Фильмы",
+        "Техника",
+        "Природа",
+        "Транспорт",
+        "Одежда",
+        "Музыка",
+        "Космос",
+        "Разное",
     )
     prompt = (
         f"К какой категории из списка: {list(_ALL_CATS)} "
@@ -383,8 +753,8 @@ _GEN_TIMEOUT_S = 18.0
 _GEN_PROMPT = (
     "Ты помощник игры 'Крокодил'. Придумай ровно 20 существительных на тему \"{category}\"."
     " Слова должны быть:"
-    " конкретные, легко изображаемые жестами; от 1 до 3 слов в словосочетании; на \"{lang_hint}\"."
-    " Ответь ТОЛЬКО JSON-массивом строк, без пояснений. Пример: [\"слово1\",\"слово2\"]"
+    ' конкретные, легко изображаемые жестами; от 1 до 3 слов в словосочетании; на "{lang_hint}".'
+    ' Ответь ТОЛЬКО JSON-массивом строк, без пояснений. Пример: ["слово1","слово2"]'
 )
 
 
@@ -406,7 +776,7 @@ async def generate_words_for_category(
     lang_hint = "русском" if lang == "ru" else "English"
     # Ensure system constraint explicitly for json arrays:
     prompt = _GEN_PROMPT.format(category=category.strip(), lang_hint=lang_hint)
-    
+
     for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
         try:
             from app.agent_use_cases import AgentRequestUseCase
@@ -414,7 +784,7 @@ async def generate_words_for_category(
             from app.providers.router import get_provider_router
 
             router = get_provider_router()
-            
+
             # Using ProviderRouter handles keys, timeouts, and circuit breaking natively
             response_text, _ = await router.get_response(
                 preferred_model=model,
@@ -423,11 +793,11 @@ async def generate_words_for_category(
                 timeout=_GEN_TIMEOUT_S,
             )
             raw = (response_text or "").strip()
-            
+
             if is_error_message(raw):
                 logger.warning("Word gen failed for %r (model=%s): Provider returned error: %s", category, model, raw)
                 continue
-                
+
             # Strip markdown code fences if model wraps output
             raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.IGNORECASE)
             raw = re.sub(r"\n?```$", "", raw).strip()
@@ -438,11 +808,7 @@ async def generate_words_for_category(
                 return None
 
             # Sanitise: lowercase, strip, filter blanks & invalid chars
-            clean = [
-                w.strip().lower()
-                for w in words
-                if isinstance(w, str) and 2 <= len(w.strip()) <= 60
-            ]
+            clean = [w.strip().lower() for w in words if isinstance(w, str) and 2 <= len(w.strip()) <= 60]
             if len(clean) < 5:
                 return None
 
@@ -457,15 +823,17 @@ async def generate_words_for_category(
 
     return None
 
+
 async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | None:
     """Fast inline request for exactly ONE word to immediately start a game."""
     from app.config import settings
+
     lang_hint = "русском" if lang == "ru" else "English"
     prompt = (
         f"Ты помощник игры 'Крокодил'. Придумай ровно 1 существительное на тему \"{category}\". "
         f"Язык: {lang_hint}. Ответь ТОЛЬКО одним словом/фразой (1-3 слова), без пояснений, без кавычек."
     )
-    
+
     # We rely on the fastest inline model available
     model = settings.OPENCODE_INLINE_MODEL or "gemini-2.5-flash"
     try:
@@ -480,18 +848,18 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
             max_key_retries=1,
             timeout=7.0,  # Strict timeout for instantaneous response
         )
-        
+
         raw = (response_text or "").strip().strip("`'\" \r\n.")
         if is_error_message(raw):
             logger.warning("Fast inline word gen failed for %r: Provider returned error: %s", category, raw)
             return None
-            
+
         if 2 <= len(raw) <= 60:
-                logger.info("Fast inline word generated for %r: %r", category, raw)
-                return raw.lower()
+            logger.info("Fast inline word generated for %r: %r", category, raw)
+            return raw.lower()
     except Exception as exc:
         logger.warning("Fast inline word gen failed for %r: %r", category, exc)
-    
+
     return None
 
 
@@ -528,7 +896,7 @@ async def pick_random_word(
         lang = _detect_lang(category_raw)
         category = category_raw.strip()
         cache_key = f"{lang}:{category.lower()}"
-        
+
         if cache_key in _GENERATED_CACHE and len(_GENERATED_CACHE[cache_key]) > 0:
             words = _GENERATED_CACHE[cache_key]
             is_generated = True
@@ -547,7 +915,7 @@ async def pick_random_word(
                 asyncio.create_task(generate_words_for_category(category, lang=lang))  # noqa: RUF006
                 # Skip redis de-duplication since we only have 1 word and want to return fast
                 return fast_word, lang, category, True
-                
+
             is_generated = True
             logger.info("Using AI-generated words for category %r (%s)", category, lang)
 

@@ -40,7 +40,7 @@ _CREATE_DDL_STATEMENTS = [
     );
     """,
     "CREATE INDEX IF NOT EXISTS idx_inline_boards_inline_msg ON inline_boards (inline_msg_id);",
-    "CREATE INDEX IF NOT EXISTS idx_inline_boards_chat_msg   ON inline_boards (chat_id, message_id) WHERE chat_id IS NOT NULL;"
+    "CREATE INDEX IF NOT EXISTS idx_inline_boards_chat_msg   ON inline_boards (chat_id, message_id) WHERE chat_id IS NOT NULL;",
 ]
 
 

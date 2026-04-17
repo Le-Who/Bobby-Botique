@@ -137,14 +137,14 @@ _IMAGE_EDIT_INTENT_RE = re.compile(
 #   🔷 Изменить — FLUX.2 Klein 4B, auto-routed only (hidden from menu)
 # Format: (result_id, display_title, pollinations_model)
 _IMAGE_MODELS: list[tuple[str, str, str]] = [
-    ("img_turbo", "⚡ Турбо — быстро и красиво",     "zimage"),
-    ("img_smart", "🤖 Умный — бот улучшит промпт",   "gptimage"),
-    ("img_art",   "🎨 Арт / Аватарка — стилизация", "qwen-image"),
-    ("img_meme",  "🅰️ Мем / Текст — точный текст",  "wan-image"),
+    ("img_turbo", "⚡ Турбо — быстро и красиво", "zimage"),
+    ("img_smart", "🤖 Умный — бот улучшит промпт", "gptimage"),
+    ("img_art", "🎨 Арт / Аватарка — стилизация", "qwen-image"),
+    ("img_meme", "🅰️ Мем / Текст — точный текст", "wan-image"),
 ]
 # Klein is NOT shown in the inline menu — it is auto-routed when user attaches
 # an image with an edit intent keyword.
-_IMG_KLEIN_ID    = "img_edit"
+_IMG_KLEIN_ID = "img_edit"
 _IMG_KLEIN_MODEL = "klein"
 
 # ── Placeholder images — locally minted file_ids ──────────────────────────────
@@ -153,10 +153,10 @@ _IMG_KLEIN_MODEL = "klein"
 # admin chat to obtain stable Telegram file_ids, then reuse those forever.
 # Mapping: result_id → (bg_rgb, fg_rgb, label)
 _PLACEHOLDER_STYLES: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], str]] = {
-    "img_turbo": ((13, 17, 23),   (88, 166, 255), "⚡ Turbo"),
-    "img_smart": ((13, 43, 13),   (0, 230, 118),  "🤖 Smart"),
-    "img_art":   ((26, 13, 46),   (204, 119, 255), "🎨 Art"),
-    "img_meme":  ((43, 21, 0),    (255, 170, 0),  "🅰️ Meme"),
+    "img_turbo": ((13, 17, 23), (88, 166, 255), "⚡ Turbo"),
+    "img_smart": ((13, 43, 13), (0, 230, 118), "🤖 Smart"),
+    "img_art": ((26, 13, 46), (204, 119, 255), "🎨 Art"),
+    "img_meme": ((43, 21, 0), (255, 170, 0), "🅰️ Meme"),
     _IMG_KLEIN_ID: ((26, 26, 13), (255, 224, 102), "🪄 Edit"),
 }
 
@@ -233,6 +233,7 @@ async def _ensure_placeholders(bot) -> None:
             # Load the largest available built-in font.
             # load_default(size=N) requires Pillow ≥ 10.1; fall back for older builds.
             from PIL import ImageFont
+
             try:
                 font_large = ImageFont.load_default(size=56)
                 font_small = ImageFont.load_default(size=28)
@@ -441,9 +442,7 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if has_edit_intent:
             # Edit/inpaint mode: show only klein
-            routed_models: list[tuple[str, str, str]] = [
-                (_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)
-            ]
+            routed_models: list[tuple[str, str, str]] = [(_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)]
             auto_hint = "✏️ Режим редактирования (Klein)"
         elif has_quoted_text:
             # Meme/text mode: wan-image first for text accuracy
@@ -463,9 +462,7 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
                 id=result_id,
                 photo_file_id=_placeholder_file_ids.get(result_id, ""),
                 title=title,
-                description=(
-                    f"{auto_hint} · {stripped_prompt[:70]}" if auto_hint else stripped_prompt[:100]
-                ),
+                description=(f"{auto_hint} · {stripped_prompt[:70]}" if auto_hint else stripped_prompt[:100]),
                 caption=(
                     f"🎨 <b>Запрос:</b> {_html.escape(stripped_prompt[:200])}"
                     + (f"\n<i>{_html.escape(auto_hint)}</i>" if auto_hint else "")
@@ -520,13 +517,8 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             cat = arg or "разное"
             label = f"🐊 Крокодил: {cat[:40]}"
             desc = "Бот загадает слово из категории — второй игрок отгадывает"
-        croc_init_html = (
-            "🐊 <b>Крокодил</b>\n"
-            "<i>Игра загружается…</i>"
-        )
-        croc_keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("⏳ Загрузка...", callback_data="inline_noop")]]
-        )
+        croc_init_html = "🐊 <b>Крокодил</b>\n<i>Игра загружается…</i>"
+        croc_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⏳ Загрузка...", callback_data="inline_noop")]])
         results_croc = [
             InlineQueryResultArticle(
                 id="croc",
@@ -608,9 +600,7 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
     # ── Image generation path ─────────────────────────────────────────────────
     if result_id.startswith("img_"):
         # Include klein (auto-routed, hidden from menu) in model lookup
-        all_known_models = _IMAGE_MODELS + [
-            (_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)
-        ]
+        all_known_models = _IMAGE_MODELS + [(_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)]
         prov_model = next(
             (entry[2] for entry in all_known_models if entry[0] == result_id),
             "zimage",  # fallback to Турбо
@@ -710,10 +700,7 @@ async def _generate_and_swap_media(
 
     if result and result.success and result.images:
         image_bytes = result.images[0]
-        caption = (
-            f"🎨 <b>{_html.escape(prompt[:200])}</b>"
-            f"\n<i>{_get_model_emoji(model)} {model} • {elapsed:.1f}s</i>"
-        )
+        caption = f"🎨 <b>{_html.escape(prompt[:200])}</b>\n<i>{_get_model_emoji(model)} {model} • {elapsed:.1f}s</i>"
 
         # ── Step 1: Mint a file_id by uploading bytes to the admin chat ───
         # edit_message_media with inline_message_id only accepts a file_id
@@ -856,7 +843,7 @@ async def _init_croc_game_async(
                 )
                 return
             lang = "ru" if any("\u0400" <= c <= "\u04ff" for c in word) else "en"
-            
+
             category = "Слово игрока (особое)"
 
         else:
@@ -906,14 +893,10 @@ async def _init_croc_game_async(
         else:
             gen_note = "✨ <i>(тема сгенерирована ИИ)</i>\n" if is_generated else ""
             status_text = (
-                f"🐊 <b>Крокодил</b> · <i>{category}</i>\n"
-                f"{gen_note}"
-                f"🎯 Слово загадано! Открой игру и отгадай его."
+                f"🐊 <b>Крокодил</b> · <i>{category}</i>\n{gen_note}🎯 Слово загадано! Открой игру и отгадай его."
             )
 
-        keyboard = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🎮 Играть", url=game_url)]]
-        )
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎮 Играть", url=game_url)]])
         await bot.edit_message_text(
             inline_message_id=inline_message_id,
             text=status_text,

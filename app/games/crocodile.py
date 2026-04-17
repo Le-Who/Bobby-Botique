@@ -87,9 +87,19 @@ class CrocodileGame:
         d = json.loads(data)
         # Whitelist known fields to guard against Redis data corruption.
         known = {
-            "game_id", "target_word", "category", "lang", "inline_message_id",
-            "creator_id", "guesser_id", "attempts", "has_activity", "max_attempts",
-            "status", "created_at", "best_score",
+            "game_id",
+            "target_word",
+            "category",
+            "lang",
+            "inline_message_id",
+            "creator_id",
+            "guesser_id",
+            "attempts",
+            "has_activity",
+            "max_attempts",
+            "status",
+            "created_at",
+            "best_score",
         }
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -189,12 +199,14 @@ class CrocodileGame:
             event["word"] = self.target_word
 
         # Record in per-game in-memory history (not in Redis)
-        _mem_history.setdefault(self.game_id, []).append({
-            "word": word,
-            "status": status_str,
-            "hint": prefixed_hint,
-            "score": judgement.score,
-        })
+        _mem_history.setdefault(self.game_id, []).append(
+            {
+                "word": word,
+                "status": status_str,
+                "hint": prefixed_hint,
+                "score": judgement.score,
+            }
+        )
 
         await self.save()
         return event
@@ -247,10 +259,7 @@ class CrocodileGame:
         emoji = score_emoji(self.best_score)
         bar = score_bar(self.best_score)
         pct = int(self.best_score * 100)
-        text = (
-            f"🎯 <b>Крокодил</b> — идёт игра\n"
-            f"{emoji} Лучшая попытка: <code>{bar}</code> {pct}%"
-        )
+        text = f"🎯 <b>Крокодил</b> — идёт игра\n{emoji} Лучшая попытка: <code>{bar}</code> {pct}%"
         try:
             from telegram.constants import ParseMode
 

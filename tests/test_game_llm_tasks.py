@@ -77,7 +77,7 @@ class TestLLMTasks:
     async def test_generate_words_value_error_if_empty(self):
         """LLM-04: Returns None if empty array returned."""
         with patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response:
-            mock_get_response.return_value = ('[]', 5)
+            mock_get_response.return_value = ("[]", 5)
 
             words = await generate_words_for_category("asdfasdfasdf", lang="ru")
             assert words is None

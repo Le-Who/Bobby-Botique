@@ -321,8 +321,7 @@ class TestMultimodalGuard:
         }
         for key in _get_opencode_gemini_fallback():
             assert key in _CANONICAL_OPENCODE, (
-                f"Non-canonical Opencode model {key!r} found in fallback map. "
-                f"Allowed: {sorted(_CANONICAL_OPENCODE)}"
+                f"Non-canonical Opencode model {key!r} found in fallback map. Allowed: {sorted(_CANONICAL_OPENCODE)}"
             )
 
     def test_fallback_values_are_canonical_gemini_models(self):
@@ -342,7 +341,6 @@ class TestMultimodalGuard:
                 f"Fallback for {opencode_model!r} is {gemini_fallback!r}, "
                 f"which is not in the canonical Gemini list: {sorted(_CANONICAL_GEMINI)}"
             )
-
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -121,7 +121,9 @@ async def test_qna_search_opencode_path():
     # Opencode path: JINA grounding is injected into prompt, web search disabled
     mock_stream.assert_awaited_once()
     call_kwargs = mock_stream.call_args[1] if mock_stream.call_args[1] else {}
-    assert call_kwargs.get("enable_web_search") is False, "Opencode path must NOT use enable_web_search (JINA grounding used)"
+    assert call_kwargs.get("enable_web_search") is False, (
+        "Opencode path must NOT use enable_web_search (JINA grounding used)"
+    )
 
 
 # ── QnA search — streaming failure triggers fallback ─────────────────────────

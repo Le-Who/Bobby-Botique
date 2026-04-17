@@ -21,7 +21,7 @@ from app.games.judge import GuessJudgement, _race_generate, judge_guess
 
 _COLD = GuessJudgement(status="cold", score=0.1, hint="Холодно ❄️")
 _WARM = GuessJudgement(status="warm", score=0.55, hint="Теплее 🌡️")
-_HOT  = GuessJudgement(status="hot",  score=0.85, hint="Горячо 🔥")
+_HOT = GuessJudgement(status="hot", score=0.85, hint="Горячо 🔥")
 
 
 # ── judge_guess pipeline ──────────────────────────────────────────────────────
@@ -29,7 +29,6 @@ _HOT  = GuessJudgement(status="hot",  score=0.85, hint="Горячо 🔥")
 
 @pytest.mark.asyncio
 class TestJudgeGuessPipeline:
-
     @pytest.fixture(autouse=True)
     def _patch_cache(self):
         """Default: cache always misses; cache_judgement is a no-op.
@@ -50,9 +49,7 @@ class TestJudgeGuessPipeline:
 
     async def test_exact_match_skips_cache_and_llm(self):
         """DL exact_match must short-circuit before cache or LLM are touched."""
-        with patch(
-            "app.games.judge._race_generate", new_callable=AsyncMock
-        ) as mock_race:
+        with patch("app.games.judge._race_generate", new_callable=AsyncMock) as mock_race:
             status, judgement = await judge_guess("крокодил", "крокодил")
 
         assert status == "exact_match"
@@ -61,9 +58,7 @@ class TestJudgeGuessPipeline:
 
     async def test_typo_exact_match_skips_llm(self):
         """Typo-matched guess (DL within tolerance) must also bypass LLM."""
-        with patch(
-            "app.games.judge._race_generate", new_callable=AsyncMock
-        ) as mock_race:
+        with patch("app.games.judge._race_generate", new_callable=AsyncMock) as mock_race:
             # "монгуст" vs "мангуст" — 7 chars, dist=1, allowed=1
             status, judgement = await judge_guess("мангуст", "монгуст")
 
@@ -80,9 +75,7 @@ class TestJudgeGuessPipeline:
                 new_callable=AsyncMock,
                 return_value=cached_j,
             ),
-            patch(
-                "app.games.judge._race_generate", new_callable=AsyncMock
-            ) as mock_race,
+            patch("app.games.judge._race_generate", new_callable=AsyncMock) as mock_race,
         ):
             status, judgement = await judge_guess("слон", "носорог")
 

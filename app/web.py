@@ -5,7 +5,7 @@ Provides:
 - Cookie-session login (browser-friendly)
 - Comprehensive metrics dashboard
 - JSON API endpoints for operational data
-- Health check (unauthenticated) for Northflank
+- Health check (unauthenticated) for Docker
 
 Uses Quart (ASGI-native Flask-compatible framework) served directly by
 Hypercorn — no sync↔async bridge needed.
@@ -251,13 +251,13 @@ async def dashboard():
 
 
 # =============================================================================
-# HEALTH CHECK (UNAUTHENTICATED — for Northflank)
+# HEALTH CHECK (UNAUTHENTICATED — for Docker)
 # =============================================================================
 
 
 @quart_app.route("/health")
 async def health_check_endpoint():
-    """Health check endpoint for Northflank monitoring."""
+    """Health check endpoint for Docker monitoring."""
     try:
         db_ok = database.is_database_connected()
         overall = "healthy" if db_ok else "unhealthy"

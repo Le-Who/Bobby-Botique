@@ -287,7 +287,7 @@ def _is_production_environment() -> bool:
     indicators = ("DYNO", "RENDER", "RAILWAY_ENVIRONMENT", "FLY_APP_NAME")
     if any(os.environ.get(k) for k in indicators):
         return True
-    # Northflank / generic Docker: PORT is set and HOSTNAME looks like a container ID
+    # VPS / generic Docker: PORT is set and HOSTNAME looks like a container ID
     hostname = os.environ.get("HOSTNAME", "")
     return bool(os.environ.get("PORT") and len(hostname) >= 12 and hostname.isalnum())
 

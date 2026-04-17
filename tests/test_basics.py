@@ -1,6 +1,5 @@
 """Basic sanity tests — verify core modules import and initialize correctly."""
 
-
 from app.config import get_settings_safe
 
 

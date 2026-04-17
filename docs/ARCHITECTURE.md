@@ -150,8 +150,9 @@ gemaibotv2/
 ├── tests/                        ← 1421+ tests across 140 files (pytest + pytest-xdist)
 ├── docs/                         ← This file + extended documentation
 ├── .github/workflows/ci.yml     ← CI: lint (Ruff) → type-check (Mypy) → unit → integration
-├── Dockerfile.northflank         ← Production container (Python 3.14-slim, non-root)
-├── docker-compose.northflank.yml ← Production compose (resource limits, health checks)
+├── Dockerfile                    ← Production container (Python 3.14-slim, non-root)
+├── docker-compose.yml            ← Local compose (resource limits, health checks, legacy)
+├── .github/workflows/deploy.yml  ← Primary Production 3-container Stack (Bot + API Server + Sidecar)
 ├── requirements.txt              ← Production Python dependencies
 ├── requirements-dev.txt          ← Development/test dependencies
 ├── pyproject.toml                ← Ruff + Mypy configuration
@@ -305,7 +306,7 @@ Push to main/TEST_gemaibotv2 ─→ Lint (Ruff check + format) ─→ Type Check
 | Metric | Value |
 |--------|-------|
 | Test files | 140 |
-| Total tests | 1421+ |
+| Total tests | 1800+ |
 | Line coverage | ~60% |
 | Parallelism | `pytest-xdist` (`-n auto`) |
 | Timeout | 30s per test |

@@ -55,7 +55,6 @@ LICENSE
 # ── Dev/Legacy ───────────────────────────────────────────────
 legacy/
 data/
-scripts/
 northflank.yaml
 docker-compose*.yml
 

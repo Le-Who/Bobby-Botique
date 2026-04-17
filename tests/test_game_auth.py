@@ -92,10 +92,12 @@ class TestSweepGameLocks:
     def setup_method(self):
         """Ensure _game_locks is empty before each test."""
         import app.web_miniapp as _wm
+
         _wm._game_locks.clear()
 
     def teardown_method(self):
         import app.web_miniapp as _wm
+
         _wm._game_locks.clear()
 
     def test_no_op_below_capacity(self):

@@ -107,7 +107,11 @@ class TestValidateCustomWord:
 class TestPickRandomWord:
     @pytest.fixture(autouse=True)
     def mock_word_gen(self):
-        with patch("app.games.word_bank.generate_words_for_category", new_callable=AsyncMock, return_value=["моксЛово", "тестовое"]):
+        with patch(
+            "app.games.word_bank.generate_words_for_category",
+            new_callable=AsyncMock,
+            return_value=["моксЛово", "тестовое"],
+        ):
             yield
 
     async def test_returns_word_from_category(self):
@@ -343,9 +347,7 @@ class TestCrocodileGameInMemory:
             creator_id=7,
         )
         event = await game.process_guess("монгуст")
-        assert event["status"] == "exact_match", (
-            f"Expected exact_match for монгуст→мангуст, got {event['status']!r}"
-        )
+        assert event["status"] == "exact_match", f"Expected exact_match for монгуст→мангуст, got {event['status']!r}"
         assert game.status == "won"
 
     async def test_krokadil_typo_exact_match(self):
@@ -574,7 +576,6 @@ class TestValidateCustomWordBoundaries:
 
 
 class TestCrocodileGameSerialisationEdgeCases:
-
     def test_from_json_accepts_bytes(self):
         """from_json must accept bytes (Redis returns bytes from .get())."""
         game = CrocodileGame(
@@ -594,6 +595,7 @@ class TestCrocodileGameSerialisationEdgeCases:
     def test_from_json_malformed_raises(self):
         """Malformed JSON must raise, not silently return garbage."""
         import pytest
+
         with pytest.raises(Exception):
             CrocodileGame.from_json(b"not-json-at-all")
 
@@ -639,18 +641,22 @@ class TestGameAccessors:
 
     def test_get_game_hints_returns_empty_by_default(self):
         from app.games.crocodile import get_game_hints
+
         assert get_game_hints("unknown-id") == []
 
     def test_get_game_hints_returns_list(self):
         from app.games.crocodile import _mem_hints, get_game_hints
+
         _mem_hints["test-id"] = ["Hint 1", "Hint 2"]
         assert get_game_hints("test-id") == ["Hint 1", "Hint 2"]
 
     def test_get_game_history_returns_empty_by_default(self):
         from app.games.crocodile import get_game_history
+
         assert get_game_history("unknown-id") == []
 
     def test_get_game_history_returns_events(self):
         from app.games.crocodile import _mem_history, get_game_history
+
         _mem_history["test-id"] = [{"event": "guess", "guess": "кот"}]
         assert get_game_history("test-id") == [{"event": "guess", "guess": "кот"}]

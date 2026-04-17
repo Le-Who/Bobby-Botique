@@ -37,7 +37,6 @@ def setup_module(module):
     if "telegram.ext" in sys.modules and isinstance(sys.modules["telegram.ext"], MagicMock):
         del sys.modules["telegram.ext"]
 
-
     if "app.utils.keyboards" in sys.modules:
         reloaded = importlib.reload(sys.modules["app.utils.keyboards"])
         for attr in dir(reloaded):

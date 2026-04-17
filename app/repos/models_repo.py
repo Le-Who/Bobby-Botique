@@ -206,4 +206,3 @@ async def reset_models_to_env(provider: str) -> list[str]:
         await set_global_setting(_db_key(provider), _encode(env_list))
         logger.info("models_repo: reset opencode list to env (%d models)", len(env_list))
         return env_list
-

@@ -8,8 +8,6 @@ These tests verify that all factory functions produce objects with the
 correct structure and attribute types expected by handlers and assertions.
 """
 
-
-
 from tests.factories import (
     make_chat_state,
     make_telegram_chat,

@@ -122,9 +122,7 @@ def setup_module(module):
     import importlib
 
     _original_modules = {}
-    _original_modules["__app_keys_before__"] = {
-        k for k in sys.modules if k.startswith("app.")
-    }
+    _original_modules["__app_keys_before__"] = {k for k in sys.modules if k.startswith("app.")}
     for k in _mocked_module_keys:
         if k in sys.modules:
             _original_modules[k] = sys.modules[k]

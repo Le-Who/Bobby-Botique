@@ -47,9 +47,7 @@ _CURRENCY_PATTERNS = re.compile(
 # Exchange verbs REQUIRE a currency noun immediately after to avoid
 # false positives like "поменяй язык", "обменяй файлы".
 # _extract_currency_pair acts as second guard: no pair found → None → LLM.
-_CURRENCY_NOUNS = (
-    r"(?:доллар|евро|рубл|тенге|биткоин|bitcoin|btc|eth|sol|ton|usd|eur|rub|gbp|jpy|cny|валют)"
-)
+_CURRENCY_NOUNS = r"(?:доллар|евро|рубл|тенге|биткоин|bitcoin|btc|eth|sol|ton|usd|eur|rub|gbp|jpy|cny|валют)"
 _CURRENCY_COLLOQUIAL_RE = re.compile(
     # Exchange verbs + mandatory currency noun
     r"(?:(?:конвертир(?:уй|овать)?|обменя[йт]|поменя[йт])\s+(?:\d+\s+)?" + _CURRENCY_NOUNS + r")"
@@ -137,9 +135,20 @@ _CITY_EXTRACT_PATTERN = re.compile(
 
 _TRAILING_TEMPORAL_WORDS = frozenset(
     {
-        "сейчас", "сегодня", "завтра", "утром", "вечером", "ночью",
-        "today", "tomorrow", "now", "tonight", "morning", "evening",
-        "пожалуйста", "please",
+        "сейчас",
+        "сегодня",
+        "завтра",
+        "утром",
+        "вечером",
+        "ночью",
+        "today",
+        "tomorrow",
+        "now",
+        "tonight",
+        "morning",
+        "evening",
+        "пожалуйста",
+        "please",
     }
 )
 
@@ -574,9 +583,7 @@ async def _fetch_frankfurter(base: str, target: str) -> IntentResult | None:
     date = data.get("date", "")
     rate_fmt = f"{rate:.4f}" if rate < 10 else f"{rate:.2f}"
     response = (
-        f"💱 **Курс {base} → {target}**\n\n"
-        f"1 {base} = **{rate_fmt} {target}**\n\n"
-        f"_Данные: Европейский ЦБ ({date})_"
+        f"💱 **Курс {base} → {target}**\n\n1 {base} = **{rate_fmt} {target}**\n\n_Данные: Европейский ЦБ ({date})_"
     )
     return IntentResult(response)
 

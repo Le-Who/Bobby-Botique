@@ -45,6 +45,7 @@ _MAX_CAT = 10_000
 
 # ── In-process LRU store ──────────────────────────────────────────────────────
 
+
 def _make_key(target: str, guess: str) -> str:
     """Normalised, deterministic cache key for the pair."""
     return f"{target.lower().strip()}:{guess.lower().strip()}"
@@ -55,6 +56,7 @@ _store: OrderedDict[str, str] = OrderedDict()
 
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
+
 
 def _load_from_disk() -> None:
     """Load the JSON cache file into _store. Called once at import time."""

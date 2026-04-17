@@ -122,10 +122,7 @@ async def _show_provider_view(query, provider: str) -> int:
     fmt, pm = TelegramFormatter.format_text(text)
 
     # Build per-model ❌ remove buttons
-    remove_rows = [
-        [InlineKeyboardButton(f"❌ {m}", callback_data=f"models:remove:{provider}:{m}")]
-        for m in models
-    ]
+    remove_rows = [[InlineKeyboardButton(f"❌ {m}", callback_data=f"models:remove:{provider}:{m}")] for m in models]
 
     action_row = [
         InlineKeyboardButton("➕ Добавить", callback_data=f"models:add:{provider}"),
@@ -151,9 +148,7 @@ async def _handle_remove(query, provider: str, model_name: str) -> int:
         text = f"⚠️ **{label}**: модель `{model_name}` не найдена."
 
     fmt, pm = TelegramFormatter.format_text(text)
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]]
-    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]])
     await query.edit_message_text(fmt, parse_mode=pm, reply_markup=keyboard)
     return ConversationHandler.END
 
@@ -172,9 +167,7 @@ async def _handle_reset(query, provider: str) -> int:
         text = f"🔃 **{label}** — .env список пустой, изменений нет."
 
     fmt, pm = TelegramFormatter.format_text(text)
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]]
-    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]])
     await query.edit_message_text(fmt, parse_mode=pm, reply_markup=keyboard)
     return ConversationHandler.END
 
@@ -211,9 +204,7 @@ async def receive_model_name(update: Update, context: ContextTypes.DEFAULT_TYPE)
         text = f"⚠️ Модель `{model_name}` уже есть в списке **{label}**."
 
     fmt, pm = TelegramFormatter.format_text(text)
-    keyboard = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]]
-    )
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ К списку", callback_data=f"models:show:{provider}")]])
     await update.message.chat.send_message(fmt, parse_mode=pm, reply_markup=keyboard)
     return ConversationHandler.END
 

@@ -158,9 +158,7 @@ async def _get_embedding(
                 return result.embeddings[0].values
         except Exception as e:
             error_str = str(e)
-            is_invalid_key = "400" in error_str and (
-                "invalid" in error_str.lower() or "api_key" in error_str.lower()
-            )
+            is_invalid_key = "400" in error_str and ("invalid" in error_str.lower() or "api_key" in error_str.lower())
             logging.warning("Embedding generation failed (attempt %d): %s", _attempt + 1, e)
 
             if is_invalid_key and _attempt == 0:
@@ -631,9 +629,7 @@ async def search_memories_with_graph(
                         _top_edge_source_map[triple_key] = _src_ids
 
                 if _top_edge_source_map:
-                    all_source_ids = list(
-                        {sid for ids in _top_edge_source_map.values() for sid in ids}
-                    )
+                    all_source_ids = list({sid for ids in _top_edge_source_map.values() for sid in ids})
                     try:
                         source_rows = await db_query(
                             """
@@ -644,15 +640,10 @@ async def search_memories_with_graph(
                             conn=conn,
                         )
                         _source_content_map = {
-                            r["id"]: r["content"][:SOURCE_PASSAGE_MAX_CHARS]
-                            for r in (source_rows or [])
+                            r["id"]: r["content"][:SOURCE_PASSAGE_MAX_CHARS] for r in (source_rows or [])
                         }
                         for triple_key, src_ids in _top_edge_source_map.items():
-                            passages = [
-                                _source_content_map[sid]
-                                for sid in src_ids
-                                if sid in _source_content_map
-                            ]
+                            passages = [_source_content_map[sid] for sid in src_ids if sid in _source_content_map]
                             if passages:
                                 source_passages[triple_key] = passages[0]  # best/first source
                     except Exception as src_exc:

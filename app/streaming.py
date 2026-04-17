@@ -984,8 +984,10 @@ async def stream_and_display(
     from app.providers.base import is_opencode_model, is_openrouter_model
 
     _stream_provider = (
-        "opencode_streaming" if is_opencode_model(model_name)
-        else "openrouter_streaming" if is_openrouter_model(model_name)
+        "opencode_streaming"
+        if is_opencode_model(model_name)
+        else "openrouter_streaming"
+        if is_openrouter_model(model_name)
         else "gemini_streaming"
     )
     await metrics_collector.record_api_call(_stream_provider, model_name)

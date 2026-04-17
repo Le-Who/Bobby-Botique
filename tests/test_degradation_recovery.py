@@ -1,6 +1,5 @@
 """Tests for degradation matrix — graceful degradation and recovery scenarios."""
 
-
 from app.degradation import ServiceStatus, SystemHealth, can_process_message
 
 

@@ -57,7 +57,7 @@ class TestWebSocketEvents:
 
         with (
             patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock,
-            patch("app.games.crocodile.get_game_history") as hist_mock
+            patch("app.games.crocodile.get_game_history") as hist_mock,
         ):
             load_mock.return_value = game
             # Make get_game_history return some predefined items
@@ -86,7 +86,7 @@ class TestWebSocketEvents:
         with (
             patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock,
             patch("app.games.crocodile.get_game_history", return_value=[]),
-            patch("app.games.crocodile.get_game_hints", return_value=["Hint #1"])
+            patch("app.games.crocodile.get_game_hints", return_value=["Hint #1"]),
         ):
             load_mock.return_value = game
 
@@ -119,7 +119,7 @@ class TestWebSocketEvents:
 
         with (
             patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock,
-            patch("app.games.crocodile.get_game_history", return_value=[])
+            patch("app.games.crocodile.get_game_history", return_value=[]),
         ):
             load_mock.return_value = game
 
@@ -145,7 +145,7 @@ class TestWebSocketEvents:
 
         with (
             patch("app.games.crocodile.load_game", new_callable=AsyncMock) as load_mock,
-            patch("app.games.crocodile.get_game_history", return_value=[])
+            patch("app.games.crocodile.get_game_history", return_value=[]),
         ):
             load_mock.return_value = game
 

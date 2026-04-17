@@ -347,8 +347,10 @@ async def _handle_regular_chat(
     from app.providers.base import is_opencode_model, is_openrouter_model
 
     _chat_provider = (
-        "opencode_chat" if is_opencode_model(model_used or "")
-        else "openrouter_chat" if is_openrouter_model(model_used or "")
+        "opencode_chat"
+        if is_opencode_model(model_used or "")
+        else "openrouter_chat"
+        if is_openrouter_model(model_used or "")
         else "gemini_chat"
     )
     _asyncio.create_task(  # noqa: RUF006

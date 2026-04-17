@@ -1,4 +1,4 @@
-# Docker Compose для Northflank.com
+# Docker Compose (local legacy)
 # Оптимизирован для production deployment
 
 version: '3.8'
@@ -7,8 +7,8 @@ services:
   telegram-gemini-bot:
     build:
       context: .
-      dockerfile: ./Dockerfile.northflank
-    container_name: gemaibotv2-northflank
+      dockerfile: ./Dockerfile
+    container_name: gemaibotv2-local
     restart: unless-stopped
     env_file:
       - .env
