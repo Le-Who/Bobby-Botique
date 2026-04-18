@@ -28,9 +28,9 @@ IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
 IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
 
 # --- Gemini Live API (real-time bidirectional audio) ---
-# gemini-2.5-flash-native-audio-preview-12-2025: Native audio model with Google Search grounding support.
-# Uses thinkingBudget (int tokens) instead of thinkingLevel. AI Studio key compatible.
-GEMINI_LIVE_MODEL: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+# gemini-3.1-flash-live-preview: Recommended model for Live API.
+# Uses thinking_level instead of thinking_budget.
+GEMINI_LIVE_MODEL: str = "gemini-3.1-flash-live-preview"
 
 # --- Pollinations.ai image models ---
 # Overridable via env: IMAGE_MODELS="flux,zimage,gptimage,..."
@@ -405,7 +405,7 @@ def load_settings() -> Settings:
         }
 
         # Validation: проверяем, что DEFAULT_MODEL и другие константы есть в списках моделей
-        settings_obj = Settings(**raw_settings)
+        settings_obj = Settings(**raw_settings)  # type: ignore[arg-type]
 
         # Check Gemini models
         if settings_obj.DEFAULT_MODEL not in settings_obj.AVAILABLE_MODELS:
@@ -513,7 +513,7 @@ except Exception:
 class ConfigManager:
     """Manages configuration with hot reloading capability."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._settings = get_settings_safe()
         self._last_reload = time.time()
         self._reload_interval = 300  # 5 minutes
@@ -543,6 +543,12 @@ class ConfigManager:
         async with self._lock:
             try:
                 new_settings = load_settings()  # bypass singleton cache — get_settings() returns stale instance
+
+                if self._settings is None:
+                    self._settings = new_settings
+                    self._last_reload = time.time()
+                    logging.info("Configuration loaded initially via reload.")
+                    return
 
                 # Check if any critical settings changed
                 critical_changed = (

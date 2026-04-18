@@ -19,6 +19,7 @@ import logging
 import time
 import urllib.parse
 from functools import wraps
+import typing
 from typing import Any
 
 from quart import Blueprint, jsonify, request
@@ -81,7 +82,7 @@ def _extract_user_id(validated_data: dict[str, Any]) -> int | None:
     return None
 
 
-def require_webapp_auth(f):
+def require_webapp_auth(f: typing.Callable) -> typing.Callable:
     """Decorator: validate Telegram initData and inject user_id."""
 
     @wraps(f)
@@ -956,7 +957,7 @@ async def live_audio_page():
 
 
 @miniapp_blueprint.websocket("/live/ws")
-async def live_audio_ws():
+async def live_audio_ws() -> None:
     """WebSocket proxy: browser ↔ Gemini Live API bidirectional audio stream.
 
     Auth: initData passed as query param ``initData`` (HMAC-SHA256).
@@ -1031,16 +1032,23 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
 
     from app.config import GEMINI_LIVE_MODEL
     from app.providers.gemini import get_cached_genai_client
+    from app.repos.chats import get_user_chat
 
     client = get_cached_genai_client(api_key)
 
     session_resumption_token: str | None = None
+    chat_state = await get_user_chat(user_id)
 
     # Build personalised system instruction from initData user metadata.
-    _sys_parts = [
-        "Ты — дружелюбный AI-ассистент в Telegram боте.",
-        "Отвечай кратко и по делу. Если не уверен — скажи об этом.",
-    ]
+    _sys_parts = []
+    if chat_state and chat_state.system_prompt:
+        _sys_parts.append(chat_state.system_prompt)
+    else:
+        _sys_parts.extend([
+            "Ты — дружелюбный AI-ассистент в Telegram боте.",
+            "Отвечай кратко и по делу. Если не уверен — скажи об этом.",
+        ])
+
     if user_first_name:
         _sys_parts.append(f"Имя пользователя: {user_first_name}.")
     if user_language:
@@ -1064,18 +1072,18 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
             sliding_window=types.SlidingWindow(),
         ),
         # Google Search grounding: model requests real-time web data automatically.
-        # Supported on gemini-2.5-flash-native-audio-preview-12-2025 (AI Studio key).
-        # Use typed SDK constructor — raw dict bypasses protobuf serialization
-        # and causes 1011 Internal error on session setup.
+        # Supported on gemini-3.1-flash-live-preview (AI Studio key).
         "tools": [types.Tool(google_search=types.GoogleSearch())],
-        # Thinking budget: 1024 tokens gives noticeably better reasoning quality
-        # at ~200-500ms extra latency. Use 0 to disable thinking entirely.
-        # NOTE: gemini-2.5 uses thinkingBudget (int), NOT thinkingLevel (str).
-        "thinking_config": types.ThinkingConfig(thinking_budget=1024),
         "system_instruction": types.Content(parts=[types.Part(text=" ".join(_sys_parts))]),
     }
 
-    live_config = types.LiveConnectConfig(**config_kwargs)
+    if chat_state and chat_state.thinking_level:
+        # chat_state.thinking_level is one of: "low", "medium", "high"
+        # The SDK expects uppercase enumerations for AI Studio live models.
+        mapped_level = chat_state.thinking_level.upper()
+        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=mapped_level)
+
+    live_config = types.LiveConnectConfig(**config_kwargs)  # type: ignore[arg-type]
 
     logger.info(
         "live_audio_ws: connecting user=%d model=%s resumption_token=%s",
@@ -1097,21 +1105,10 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                         if time.monotonic() - start_time > 1800:
                             await websocket.close(1008, "Session duration limit reached (30m)")
                             return
-                        # Shorten receive timeout when mic is paused: if no new audio
-                        # arrives for 60s we return cleanly, causing the Gemini
-                        # `async with` block to exit and emit a final
-                        # SessionResumptionUpdate that the consumer can capture.
-                        recv_timeout = 60.0 if _mic_ended else 600.0
                         try:
-                            raw = await asyncio.wait_for(websocket.receive(), timeout=recv_timeout)
+                            raw = await asyncio.wait_for(websocket.receive(), timeout=600.0)
                         except TimeoutError:
-                            if _mic_ended:
-                                logger.info(
-                                    "live_audio_ws: idle timeout after mic pause user=%d — "
-                                    "closing Gemini session for clean resumption",
-                                    user_id,
-                                )
-                                return  # clean exit → consumer gets grace period → token emitted
+                            logger.info("live_audio_ws: websocket idle timeout user=%d", user_id)
                             await websocket.close(1000, "Idle timeout")
                             return
 
@@ -1158,7 +1155,7 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                         content = response.server_content
                         if content:
                             # Audio chunks
-                            if content.model_turn:
+                            if content.model_turn and content.model_turn.parts:
                                 for part in content.model_turn.parts:
                                     if part.inline_data and part.inline_data.data:
                                         audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")

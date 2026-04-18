@@ -117,7 +117,7 @@ class CrocodileGame:
             from app.cache import redis_client
 
             if redis_client:
-                await redis_client.set(self._redis_key(), self.to_json().encode(), **ttl_kwargs)  # type: ignore[misc]
+                await redis_client.set(self._redis_key(), self.to_json().encode(), **ttl_kwargs)  # type: ignore[misc, arg-type]
                 return True
         except Exception as exc:
             logger.warning("CrocodileGame.save failed game=%s: %s", self.game_id, exc)
