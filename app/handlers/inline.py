@@ -393,6 +393,47 @@ def _tone_hint(tone_id: str) -> str:
 # ── Public handlers ───────────────────────────────────────────────────────────
 
 
+def parse_inline_query(query: str) -> dict:
+    """Parse an inline query to determine its intent, stripped prompt, and auto-routed models.
+
+    Returns a dict with:
+      - is_image_intent: bool
+      - stripped_prompt: str
+      - has_edit_intent: bool
+      - has_quoted_text: bool
+    """
+    if not query:
+        return {}
+
+    user_query = query.strip()
+    is_image = bool(_IMAGE_INTENT_RE.search(user_query))
+    has_edit_intent = bool(_IMAGE_EDIT_INTENT_RE.search(user_query))
+
+    if has_edit_intent:
+        is_image = True
+
+    if not is_image:
+        return {
+            "is_image_intent": False,
+            "stripped_prompt": user_query,
+            "has_edit_intent": False,
+            "has_quoted_text": False
+        }
+
+    if _IMAGE_INTENT_RE.search(user_query):
+        stripped_prompt = _IMAGE_INTENT_RE.sub("", user_query, count=1).strip(" ,-.!") or user_query
+    else:
+        stripped_prompt = user_query
+
+    has_quoted_text = bool(_QUOTED_TEXT_RE.search(stripped_prompt))
+
+    return {
+        "is_image_intent": True,
+        "stripped_prompt": stripped_prompt,
+        "has_edit_intent": has_edit_intent,
+        "has_quoted_text": has_quoted_text
+    }
+
 async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Return instant placeholder results for any non-empty query.
 
@@ -432,14 +473,15 @@ async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # ── Image intent ──────────────────────────────────────────────────────────
-    if _IMAGE_INTENT_RE.search(user_query):
-        # Strip the intent verb from the prompt ("нарисуй кота" → "кота")
-        stripped_prompt = _IMAGE_INTENT_RE.sub("", user_query, count=1).strip(" ,-.!") or user_query
+    parsed = parse_inline_query(user_query)
+
+    # ── Image intent ──────────────────────────────────────────────────────────
+    if parsed.get("is_image_intent"):
+        stripped_prompt = parsed["stripped_prompt"]
+        has_quoted_text = parsed["has_quoted_text"]
+        has_edit_intent = parsed["has_edit_intent"]
 
         # ── Smart auto-routing ────────────────────────────────────────────────
-        has_quoted_text = bool(_QUOTED_TEXT_RE.search(stripped_prompt))
-        has_edit_intent = bool(_IMAGE_EDIT_INTENT_RE.search(user_query))
-
         if has_edit_intent:
             # Edit/inpaint mode: show only klein
             routed_models: list[tuple[str, str, str]] = [(_IMG_KLEIN_ID, "🪄 Изменить фото", _IMG_KLEIN_MODEL)]
@@ -606,7 +648,8 @@ async def handle_chosen_inline_result(update: Update, context: ContextTypes.DEFA
             "zimage",  # fallback to Турбо
         )
         # Extract clean prompt: remove intent verb prefix
-        prompt = _IMAGE_INTENT_RE.sub("", user_query, count=1).strip(" ,-.!") or user_query
+        parsed = parse_inline_query(user_query)
+        prompt = parsed.get("stripped_prompt", user_query)
         # gptimage (Умный mode) supports prompt enhancement from Pollinations
         enhance_prompt = result_id == "img_smart"
         get_task_manager().submit(
