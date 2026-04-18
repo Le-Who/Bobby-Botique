@@ -1012,11 +1012,10 @@ async def live_audio_ws():
         "response_modalities": [types.Modality.AUDIO],
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
-        # Always enable session resumption (transparent mode).
+        # Always enable session resumption.
         # handle=None starts a new resumable session; handle=<token> resumes.
         "session_resumption": types.SessionResumptionConfig(
             handle=resumption_token or None,
-            transparent=True,
         ),
         # Context window compression — allows unlimited session duration.
         # Without it, audio-only sessions hard-limit at ~15 min.
