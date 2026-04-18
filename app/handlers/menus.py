@@ -1,7 +1,8 @@
 import logging
+import os
 from datetime import datetime
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from app.config import get_model_hash, get_openrouter_keys, settings
 from app.document_processor import get_user_documents
@@ -77,6 +78,18 @@ async def get_start_menu_content(chat_state, user_id=None):
             InlineKeyboardButton(t("menu.help"), callback_data="help"),
         ],
     ]
+
+    webapp_base = os.environ.get("WEBHOOK_URL", "").strip().rstrip("/")
+    if webapp_base and webapp_base.startswith("https://"):
+        keyboard.insert(
+            0,
+            [
+                InlineKeyboardButton(
+                    "🎙️ Начать Live звонок",
+                    web_app=WebAppInfo(url=f"{webapp_base}/webapp/live"),
+                )
+            ],
+        )
 
     return formatted_text, parse_mode, InlineKeyboardMarkup(keyboard)
 

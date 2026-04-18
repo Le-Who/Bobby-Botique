@@ -541,9 +541,38 @@ async def clearmemory_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(formatted_text, parse_mode=parse_mode)
 
 
+@authorized_only
+@safe_handler("Произошла ошибка при запуске Live Audio")
+async def live_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Launch the Gemini Live Audio Mini App."""
+    webapp_base = os.environ.get("WEBHOOK_URL", "").strip().rstrip("/")
+    if not webapp_base or not webapp_base.startswith("https://"):
+        await update.message.reply_text("❌ Приложение Live Audio недоступно (требуется HTTPS WEBHOOK_URL).")
+        return
+
+    text = "🎙️ **Gemini Live Audio**\n\nНажмите кнопку ниже, чтобы начать голосовое общение в реальном времени."
+    formatted_text, parse_mode = TelegramFormatter.format_text(text)
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "🎙️ Начать Live звонок",
+                web_app=WebAppInfo(url=f"{webapp_base}/webapp/live"),
+            )
+        ]
+    ]
+
+    await update.message.reply_text(
+        formatted_text,
+        parse_mode=parse_mode,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 def register(application: Application) -> None:
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("live", live_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("newchat", new_chat_command))
     application.add_handler(CommandHandler("model", model_command))

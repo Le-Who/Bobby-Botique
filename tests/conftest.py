@@ -101,13 +101,13 @@ def _propagate_real_settings():
 _SENTINEL = object()
 
 
-@pytest.fixture(autouse=True, scope="module")
+@pytest.fixture(autouse=True)
 def _decontaminate_settings():
-    """Auto-heal stale MagicMock settings bindings between test modules.
+    """Auto-heal stale MagicMock settings bindings between test modules and functions.
 
-    Runs BEFORE the first test in each module and AFTER the last test,
-    ensuring that any setup_module/teardown_module sys.modules mutations
-    don't leak MagicMock references into subsequent test modules.
+    Runs BEFORE the first test in each test and AFTER the last test,
+    ensuring that any sys.modules mutations
+    don't leak MagicMock references into subsequent tests.
     """
     _propagate_real_settings()
     yield
@@ -154,6 +154,28 @@ def _clear_game_mem_stores():
     _croc._mem_games.clear()
     _croc._mem_hints.clear()
     _croc._mem_history.clear()
+
+
+@pytest.fixture(autouse=True)
+def _clear_global_caches():
+    """Clear all global caches to prevent state leakage between tests.
+
+    This includes ProviderRouter active model caches and DatabaseManager
+    key/config caches which may hold stale references.
+    """
+    from app.config import _invalidate_primary_provider_cache
+    from app.database import db_manager
+
+    def _clear():
+        _invalidate_primary_provider_cache()
+        if hasattr(db_manager, "_active_keys_cache"):
+            db_manager._active_keys_cache.clear()
+        if hasattr(db_manager, "_model_config_cache"):
+            db_manager._model_config_cache.clear()
+
+    _clear()
+    yield
+    _clear()
 
 
 # Conditionally register the testcontainers fixture so that its absence

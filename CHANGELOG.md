@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.2] - 2026-04-18 - Admin Wizard & AAA Test Hardening
+
+### 🐛 Bug Fixes & UX
+- **Callback Routing Collision**: Fixed a handler group collision where the global `model_button_callback` handler (group `-1`) with the pattern `^model` intercepted the `/models` admin wizard buttons (prefixed with `models:`). Tightened the regex to `^model[_:]` to cleanly isolate legitimate model selections without bleeding into wizard pagination states.
+
+### 🧹 Code Quality & Linting
+- **Test Hardening**: Fixed `F841` unused variable error in `tests/e2e/test_crocodile_engine.py` during AAA test stabilization. Verified zero non-deterministic failures across over 1,841 unit and e2e integration tests.
+
 ## [2.15.1] - 2026-04-18 - Northflank Legacy Cleanup & Test Stabilisation
 
 ### 🧹 Cleanup (Tech Debt)

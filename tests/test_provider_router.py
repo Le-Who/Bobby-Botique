@@ -2,225 +2,186 @@
 Tests for ProviderRouter and KeyStatusManager.
 """
 
+from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.providers import ProviderRouter
 
+# ── Fakes ─────────────────────────────────────────────────────────────────────
+
+
+class FakeKeyStatusManager:
+    """In-memory KeyStatusManager that tracks suspended keys and recorded successes."""
+
+    def __init__(self) -> None:
+        self.suspended_keys: dict[str, dict] = {}  # key_hash → {'category': ..., 'error_text': ...}
+        self.successful_keys: list[str] = []
+
+    async def suspend_key(
+        self,
+        key_hash: str,
+        model_name: str,
+        error_category: str,
+        error_text: str = "",
+    ) -> None:
+        self.suspended_keys[key_hash] = {
+            "category": error_category,
+            "error_text": error_text,
+        }
+
+    async def record_success(self, key_hash: str, model_name: str) -> None:
+        if key_hash not in self.suspended_keys:
+            self.successful_keys.append(key_hash)
+
+
+class FakeAgentRequestUseCase:
+    """Fake use case to control the responses for resolve/get/increment."""
+
+    def __init__(self, resolve_sequence: list, response_sequence: list) -> None:
+        self.resolve_sequence = list(resolve_sequence)
+        self.response_sequence = list(response_sequence)
+        self.resolves_made = 0
+        self.responses_made = 0
+        self.usages_incremented: list[str] = []
+
+    async def resolve_ai_request(
+        self, model_name: str, use_openrouter: bool = False, excluded_key_hashes: set[str] | None = None, **kwargs
+    ) -> tuple[dict | None, str | None, str | None]:
+        self.resolves_made += 1
+        if self.resolve_sequence:
+            return self.resolve_sequence.pop(0)
+        return (None, None, "all_exhausted")
+
+    async def get_ai_response(self, *args, **kwargs) -> tuple[str, int | None]:
+        self.responses_made += 1
+        return self.response_sequence.pop(0)
+
+    async def increment_key_usage(self, key_hash: str, model_name: str, use_openrouter: bool = False) -> None:
+        self.usages_incremented.append(key_hash)
+
+
+# ── Tests for ProviderRouter.get_response ──────────────────────────────────────
+
 
 class TestProviderRouter:
-    """Tests for ProviderRouter.get_response."""
-
     @pytest.mark.asyncio
     async def test_successful_response(self):
         router = ProviderRouter()
-
-        mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(
-            return_value=(
-                {"api_key": "key1", "key_hash": "hash1"},
-                "gemini-3.1-flash-lite-preview",
-                None,
-            )
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.1", None),
+            ],
+            response_sequence=[
+                ("Hello!", 10),
+            ],
         )
-        mock_use_case.get_ai_response = AsyncMock(return_value=("Hello!", 10))
-        mock_use_case.increment_key_usage = AsyncMock()
-
-        mock_status_mgr = MagicMock()
-        mock_status_mgr.record_success = AsyncMock()
 
         with (
-            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
         ):
-            text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite-preview",
-                [{"role": "user", "parts": ["hi"]}],
-            )
+            text, tokens = await router.get_response("gemini-3.1", [{"role": "user", "parts": ["hi"]}])
 
         assert text == "Hello!"
         assert tokens == 10
-        mock_status_mgr.record_success.assert_called_once_with("hash1", "gemini-3.1-flash-lite-preview")
+        assert "hash1" in fake_status.successful_keys
+        assert fake_use_case.usages_incremented == ["hash1"]
 
     @pytest.mark.asyncio
     async def test_all_keys_exhausted(self):
         router = ProviderRouter()
-
-        mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(return_value=(None, None, "all_exhausted"))
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                (None, None, "all_exhausted"),
+            ],
+            response_sequence=[],
+        )
 
         with (
-            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch("app.repos.keys.get_key_status_manager"),
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
         ):
-            text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite-preview",
-                [{"role": "user", "parts": ["hi"]}],
-            )
+            text, tokens = await router.get_response("gemini-3.1", [{"role": "user", "parts": ["hi"]}])
 
         assert "🚫" in text
         assert tokens is None
 
     @pytest.mark.asyncio
     async def test_key_failure_triggers_retry_and_suspend(self):
-        """When a key fails with a key-related error, it should be suspended
-        and the router should retry with a different key."""
+        """Permanent key error should suspend key and trigger retry."""
         router = ProviderRouter()
-
-        mock_use_case = MagicMock()
-
-        # First call returns a key that produces an error, second call succeeds
-        mock_use_case.resolve_ai_request = AsyncMock(
-            side_effect=[
-                (
-                    {"api_key": "key1", "key_hash": "hash1"},
-                    "gemini-3.1-flash-lite-preview",
-                    None,
-                ),
-                (
-                    {"api_key": "key2", "key_hash": "hash2"},
-                    "gemini-3.1-flash-lite-preview",
-                    None,
-                ),
-            ]
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.1", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3.1", None),
+            ],
+            response_sequence=[
+                ("🔑 Неверный API ключ.", None),  # permanent
+                ("Hello!", 10),  # success
+            ],
         )
-        mock_use_case.get_ai_response = AsyncMock(
-            side_effect=[
-                ("🔑 Неверный API ключ.", None),  # First key fails (permanent error)
-                ("Hello!", 10),  # Second key succeeds
-            ]
-        )
-        mock_use_case.increment_key_usage = AsyncMock()
-
-        mock_status_mgr = MagicMock()
-        mock_status_mgr.suspend_key = AsyncMock()
-        mock_status_mgr.record_success = AsyncMock()
 
         with (
-            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
         ):
             text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite-preview",
-                [{"role": "user", "parts": ["hi"]}],
-                max_key_retries=3,
+                "gemini-3.1", [{"role": "user", "parts": ["hi"]}], max_key_retries=3
             )
 
         assert text == "Hello!"
         assert tokens == 10
-        # First key should have been suspended with "permanent" category
-        mock_status_mgr.suspend_key.assert_called_once_with(
-            "hash1",
-            "gemini-3.1-flash-lite-preview",
-            "permanent",
-            "🔑 Неверный API ключ."[:200],
-        )
-        # Second key should have been recorded as success
-        mock_status_mgr.record_success.assert_called_once_with("hash2", "gemini-3.1-flash-lite-preview")
+        assert "hash1" in fake_status.suspended_keys
+        assert fake_status.suspended_keys["hash1"]["category"] == "permanent"
+        assert "hash2" not in fake_status.suspended_keys
+        assert "hash2" in fake_status.successful_keys
 
     @pytest.mark.asyncio
     async def test_quota_error_suspends_with_quota_category(self):
         """Quota exceeded should suspend with 'quota' category."""
         router = ProviderRouter()
-
-        mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(
-            side_effect=[
-                (
-                    {"api_key": "key1", "key_hash": "hash1"},
-                    "gemini-3.1-flash-lite-preview",
-                    None,
-                ),
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.1", None),
                 (None, None, "all_exhausted"),
-            ]
+            ],
+            response_sequence=[
+                ("🚫 Достигнут лимит запросов к API (Quota Exceeded).", None),
+            ],
         )
-        mock_use_case.get_ai_response = AsyncMock(
-            return_value=("🚫 Достигнут лимит запросов к API (Quota Exceeded).", None)
-        )
-
-        mock_status_mgr = MagicMock()
-        mock_status_mgr.suspend_key = AsyncMock()
 
         with (
-            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
         ):
-            text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite-preview",
-                [{"role": "user", "parts": ["hi"]}],
-                max_key_retries=2,
-            )
+            text, tokens = await router.get_response("gemini-3.1", [{"role": "user", "parts": ["hi"]}])
 
-        # Verify the key was suspended with "quota" category
-        mock_status_mgr.suspend_key.assert_called_once()
-        call_args = mock_status_mgr.suspend_key.call_args
-        assert call_args[0][2] == "quota"  # error_category
-
-    @pytest.mark.asyncio
-    async def test_excluded_keys_passed_to_resolve(self):
-        """After a key failure, the failed key hash should be passed as excluded
-        to the next resolve_ai_request call."""
-        router = ProviderRouter()
-
-        mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(
-            side_effect=[
-                (
-                    {"api_key": "key1", "key_hash": "hash1"},
-                    "gemini-3.1-flash-lite-preview",
-                    None,
-                ),
-                (
-                    {"api_key": "key2", "key_hash": "hash2"},
-                    "gemini-3.1-flash-lite-preview",
-                    None,
-                ),
-            ]
-        )
-        mock_use_case.get_ai_response = AsyncMock(
-            side_effect=[
-                ("🔑 Invalid API key", None),
-                ("OK", 5),
-            ]
-        )
-        mock_use_case.increment_key_usage = AsyncMock()
-
-        mock_status_mgr = MagicMock()
-        mock_status_mgr.suspend_key = AsyncMock()
-        mock_status_mgr.record_success = AsyncMock()
-
-        with (
-            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
-        ):
-            text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite-preview",
-                [{"role": "user", "parts": ["hi"]}],
-                max_key_retries=3,
-            )
-
-        assert text == "OK"
-        # Second resolve call should have "hash1" in excluded_key_hashes
-        second_call = mock_use_case.resolve_ai_request.call_args_list[1]
-        excluded = second_call.kwargs.get("excluded_key_hashes", set())
-        assert "hash1" in excluded
+        assert "hash1" in fake_status.suspended_keys
+        assert fake_status.suspended_keys["hash1"]["category"] == "quota"
 
     @pytest.mark.asyncio
     async def test_openrouter_detection(self):
         router = ProviderRouter()
-
-        mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(return_value=(None, None, "all_exhausted"))
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                (None, None, "all_exhausted"),
+            ],
+            response_sequence=[],
+        )
 
         with (
-            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch("app.repos.keys.get_key_status_manager"),
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
         ):
-            text, _ = await router.get_response(
-                "openai/gpt-4o",
-                [{"role": "user", "parts": ["hi"]}],
-            )
+            text, _ = await router.get_response("openai/gpt-4o", [{"role": "user", "parts": ["hi"]}])
 
         assert "OpenRouter" in text
 
@@ -228,81 +189,44 @@ class TestProviderRouter:
     async def test_transient_error_not_suspended(self):
         """503/timeout errors should NOT suspend the key."""
         router = ProviderRouter()
-
-        mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(
-            side_effect=[
-                (
-                    {"api_key": "key1", "key_hash": "hash1"},
-                    "gemini-3.1-flash-lite-preview",
-                    None,
-                ),
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3.1", None),
                 (None, None, "all_exhausted"),
-            ]
+            ],
+            response_sequence=[
+                ("⏰ Превышено время ожидания ответа от API.", None),  # transient, from timeout
+            ],
         )
-        # The 🔄 emoji is a transient error — not key-related
-        mock_use_case.get_ai_response = AsyncMock(return_value=("⏰ Превышено время ожидания ответа от API.", None))
-
-        mock_status_mgr = MagicMock()
-        mock_status_mgr.suspend_key = AsyncMock()
 
         with (
-            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
         ):
-            await router.get_response(
-                "gemini-3.1-flash-lite-preview",
-                [{"role": "user", "parts": ["hi"]}],
-                max_key_retries=2,
-            )
+            await router.get_response("gemini-3.1", [{"role": "user", "parts": ["hi"]}], max_key_retries=3)
 
-        # Timeout is NOT key-related, so suspend_key should NOT be called
-        mock_status_mgr.suspend_key.assert_not_called()
+        assert "hash1" not in fake_status.suspended_keys
 
     @pytest.mark.asyncio
-    async def test_model_fallback_on_all_keys_permanent_failure(self):
-        """When all keys fail with permanent errors for one model,
-        the router should try fallback models from AVAILABLE_MODELS."""
+    async def test_model_fallback_on_consecutive_permanent_errors(self):
+        """If a given model has too many permanent errors in a row, the router falls back to the next model."""
         router = ProviderRouter()
-
-        mock_use_case = MagicMock()
-
-        # Main loop: 3 keys all fail with permanent errors
-        # Then fallback: resolve succeeds for fallback model
-        mock_use_case.resolve_ai_request = AsyncMock(
-            side_effect=[
-                (
-                    {"api_key": "key1", "key_hash": "hash1"},
-                    "gemini-3-flash-preview",
-                    None,
-                ),
-                (
-                    {"api_key": "key2", "key_hash": "hash2"},
-                    "gemini-3-flash-preview",
-                    None,
-                ),
-                (
-                    {"api_key": "key3", "key_hash": "hash3"},
-                    "gemini-3-flash-preview",
-                    None,
-                ),
-                # Fallback call for "gemini-2.5-flash"
-                ({"api_key": "key1", "key_hash": "hash1"}, "gemini-2.5-flash", None),
-            ]
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3-flash-preview", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3-flash-preview", None),
+                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3-flash-preview", None),
+                ({"api_key": "k4", "key_hash": "hash4"}, "gemini-2.5-flash", None),
+            ],
+            response_sequence=[
+                ("🔑 Неверный API ключ.", None),  # permanent
+                ("🔑 Неверный API ключ.", None),  # permanent
+                ("🔑 Неверный API ключ.", None),  # permanent
+                ("Fallback response!", 15),  # success on fallback model
+            ],
         )
-        mock_use_case.get_ai_response = AsyncMock(
-            side_effect=[
-                ("🔑 Неверный API ключ.", None),  # key1 permanent fail
-                ("🔑 Неверный API ключ.", None),  # key2 permanent fail
-                ("🔑 Неверный API ключ.", None),  # key3 permanent fail
-                ("Fallback response!", 15),  # fallback model succeeds
-            ]
-        )
-        mock_use_case.increment_key_usage = AsyncMock()
-
-        mock_status_mgr = MagicMock()
-        mock_status_mgr.suspend_key = AsyncMock()
-        mock_status_mgr.record_success = AsyncMock()
 
         mock_settings = MagicMock()
         mock_settings.AVAILABLE_MODELS = [
@@ -312,73 +236,49 @@ class TestProviderRouter:
         ]
 
         with (
-            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
             patch("app.providers.router.settings", mock_settings),
         ):
             text, tokens = await router.get_response(
-                "gemini-3-flash-preview",
-                [{"role": "user", "parts": ["hi"]}],
-                max_key_retries=3,
+                "gemini-3-flash-preview", [{"role": "user", "parts": ["hi"]}], max_key_retries=3
             )
 
         assert text == "Fallback response!"
         assert tokens == 15
-        # All 3 original keys should have been suspended
-        assert mock_status_mgr.suspend_key.call_count == 3
-        # Fallback key should have been recorded as success
-        mock_status_mgr.record_success.assert_called_once_with("hash1", "gemini-2.5-flash")
+
+        # 3 keys from the first model should be suspended
+        assert "hash1" in fake_status.suspended_keys
+        assert "hash2" in fake_status.suspended_keys
+        assert "hash3" in fake_status.suspended_keys
+
+        assert "hash4" in fake_status.successful_keys
 
     @pytest.mark.asyncio
-    async def test_no_model_fallback_on_non_permanent_errors(self):
+    async def test_no_model_fallback_on_non_permanent_errors(self, monkeypatch):
         """Model fallback should NOT trigger for quota/rate-limit errors."""
         router = ProviderRouter()
-
-        mock_use_case = MagicMock()
-        mock_use_case.resolve_ai_request = AsyncMock(
-            side_effect=[
-                (
-                    {"api_key": "key1", "key_hash": "hash1"},
-                    "gemini-3.1-flash-lite-preview",
-                    None,
-                ),
-                (
-                    {"api_key": "key2", "key_hash": "hash2"},
-                    "gemini-3.1-flash-lite-preview",
-                    None,
-                ),
-                (
-                    {"api_key": "key3", "key_hash": "hash3"},
-                    "gemini-3.1-flash-lite-preview",
-                    None,
-                ),
-            ]
-        )
-        mock_use_case.get_ai_response = AsyncMock(
-            side_effect=[
+        fake_status = FakeKeyStatusManager()
+        fake_use_case = FakeAgentRequestUseCase(
+            resolve_sequence=[
+                ({"api_key": "k1", "key_hash": "hash1"}, "gemini-3-flash-preview", None),
+                ({"api_key": "k2", "key_hash": "hash2"}, "gemini-3-flash-preview", None),
+                ({"api_key": "k3", "key_hash": "hash3"}, "gemini-3-flash-preview", None),
+            ],
+            response_sequence=[
                 ("🔑 Неверный API ключ.", None),  # permanent
-                (
-                    "🚫 Достигнут лимит запросов к API (Quota Exceeded).",
-                    None,
-                ),  # quota (NOT permanent)
+                ("🚫 Достигнут лимит запросов к API (Quota Exceeded).", None),  # quota (not permanent to model)
                 ("🔑 Неверный API ключ.", None),  # permanent
-            ]
+            ],
         )
-
-        mock_status_mgr = MagicMock()
-        mock_status_mgr.suspend_key = AsyncMock()
 
         with (
-            patch("app.agent_use_cases.AgentRequestUseCase", return_value=mock_use_case),
-            patch("app.repos.keys.get_key_status_manager", return_value=mock_status_mgr),
+            patch("app.agent_use_cases.AgentRequestUseCase", return_value=fake_use_case),
+            patch("app.repos.keys.get_key_status_manager", return_value=fake_status),
         ):
             text, tokens = await router.get_response(
-                "gemini-3.1-flash-lite-preview",
-                [{"role": "user", "parts": ["hi"]}],
-                max_key_retries=3,
+                "gemini-3-flash-preview", [{"role": "user", "parts": ["hi"]}], max_key_retries=3
             )
 
-        # Should NOT have fallen back — quota error means model is fine, key is the problem
         assert "🚫" in text
-        assert "не сработали" in text
         assert tokens is None

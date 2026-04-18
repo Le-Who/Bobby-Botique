@@ -90,7 +90,7 @@
       flex: 1;
     }
 
-    #hint-btn {
+    #hint-btn, #live-audio-btn {
       padding: 4px 10px;
       border-radius: 20px;
       border: 1px solid var(--border);
@@ -108,7 +108,7 @@
       border-color: rgba(255,189,89,0.35);
       background: rgba(255,189,89,0.08);
     }
-    #hint-btn:not(:disabled):active { transform: scale(.93); }
+    #hint-btn:not(:disabled):active, #live-audio-btn:active { transform: scale(.93); }
     #hint-btn:disabled { opacity: .35; cursor: not-allowed; }
 
     #attempts-badge {
@@ -443,6 +443,7 @@
 <div id="app">
   <header>
     <h1 id="header-title">🐊 Крокодил</h1>
+    <button id="live-audio-btn" title="Live Звонок" onclick="window.location.href='/webapp/live' + location.search">🎙️</button>
     <button id="hint-btn" disabled title="Подсказка">💡</button>
     <span id="attempts-badge">0 / 10</span>
   </header>

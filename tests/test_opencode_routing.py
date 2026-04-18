@@ -23,16 +23,6 @@ import pytest
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-@pytest.fixture(autouse=True)
-def reset_provider_cache():
-    """Reset the in-process primary provider cache between tests."""
-    from app.config import _invalidate_primary_provider_cache
-
-    _invalidate_primary_provider_cache()
-    yield
-    _invalidate_primary_provider_cache()
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # is_opencode_model()
 # ──────────────────────────────────────────────────────────────────────────────

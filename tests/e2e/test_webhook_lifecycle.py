@@ -21,7 +21,6 @@ from quart import Quart
 from telegram import Bot, Update
 from telegram.ext import Application
 
-from app.config import settings
 from app.web import quart_app
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -38,6 +37,8 @@ def _webhook_test_app():
     Returns (test_app, mock_telegram_application) — the mock is shared across
     module-scoped context; tests reset its call history via mock.reset_mock().
     """
+    from app.config import settings
+
     webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
 
     # A real Bot is required because Update.de_json() calls bot.defaults.tzinfo
@@ -93,6 +94,8 @@ async def test_webhook_valid_payload(webhook_client):
              a correctly-deserialised Update object.
     """
     client, mock_app = webhook_client
+    from app.config import settings
+
     webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
 
     payload = {
@@ -154,6 +157,8 @@ async def test_webhook_malformed_json_returns_400(webhook_client):
              process_update is not called (no Update constructed).
     """
     client, mock_app = webhook_client
+    from app.config import settings
+
     webhook_path = f"/webhook/{settings.TELEGRAM_BOT_TOKEN}"
 
     response = await client.post(
