@@ -468,67 +468,60 @@ async def generate_hints(word: str, category: str) -> list[str]:
 
     Returns an empty list on any failure; callers must handle gracefully.
     Called from a background asyncio.Task so latency does not block the user.
-
-    NOTE: thinking_config not used — incompatible with response_schema.
     """
-    from app.agent_use_cases import AgentRequestUseCase
-    from app.providers.gemini import get_cached_genai_client
+    import json
+    import re
 
-    use_case = AgentRequestUseCase()
-    kd, mdl, _ = await use_case.resolve_ai_request(_PRIMARY_MODEL)
-    if not kd or not mdl:
-        logger.warning("generate_hints: no API key for word=%r", word)
-        return []
+    from app.config import get_primary_provider_async, settings
+    from app.errors import is_error_message
+    from app.providers import get_provider_router
 
     c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
     prompt = _HINTS_PROMPT.format(W=word, C_STR=c_str)
 
-    from google.genai import types as _gtypes
+    # Use the active provider (e.g. Opencode Go) to bypass overloaded Gemini endpoint
+    provider_name = await get_primary_provider_async()
+    if provider_name == "opencode":
+        preferred_model = settings.OPENCODE_QNA_MODEL or settings.OPENCODE_DEFAULT_MODEL
+    elif provider_name == "openrouter":
+        preferred_model = settings.OPENROUTER_QNA_MODEL or settings.OPENROUTER_DEFAULT_MODEL
+    else:
+        preferred_model = settings.QNA_MODEL
 
-    # Do NOT add thinking_config: structured output (response_schema) and
-    # thinking are mutually exclusive — Gemini returns empty text when both set.
-    config = _gtypes.GenerateContentConfig(
-        response_mime_type="application/json",
-        response_schema=HintsOutput.model_json_schema(),
-        temperature=0.3,  # Factual task — low temp prevents hallucination of wrong word
-        max_output_tokens=300,  # Extra tokens to allow self-check reasoning before JSON
+    router = get_provider_router()
+    history = [{"role": "user", "parts": [{"text": prompt}]}]
+
+    # get_response natively handles cross-provider fallbacks and circuit breakers.
+    # By setting max_key_retries=2, we let it race and fail over to other models.
+    response_text, _ = await router.get_response(
+        preferred_model=preferred_model,
+        history=history,
+        system_instruction=None,
+        use_openrouter=(provider_name == "openrouter"),
+        max_key_retries=2,
+        thinking_level="none",
+        timeout=25.0,
     )
 
-    async def _try_generate(model: str) -> list[str] | None:
-        kd, mdl, _ = await use_case.resolve_ai_request(model)
-        if not kd or not mdl:
-            return None
+    if response_text and not is_error_message(response_text):
         try:
-            client = get_cached_genai_client(kd["api_key"])
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=mdl,
-                    contents=prompt,
-                    config=config,
-                ),
-                timeout=25.0,  # Background task — increased timeout (hints only show UI after 10s)
-            )
-            text = getattr(response, "text", None) or ""
-            if not text:
-                return None
-            data = json.loads(text)
-            validated = HintsOutput.model_validate(data)
-            logger.debug("Hints generated for word=%r via %s: %s", word, mdl, validated.hints)
-            return validated.hints
-        except Exception as exc:
-            logger.warning("generate_hints failed (model=%s) for word=%r: %s", mdl, word, exc)
-            return None
+            # Strip markdown code blocks before parsing
+            cleaned_text = response_text.replace("```json", "").replace("```JSON", "").replace("```", "").strip()
+            data = json.loads(cleaned_text)
+            hints = data.get("hints", [])
+            if hints and isinstance(hints, list) and len(hints) >= 3:
+                logger.debug("Hints generated via %s for %r: %s", preferred_model, word, hints)
+                return hints[:3]
+            logger.warning("generate_hints returned invalid hints array from %s: %r", preferred_model, hints)
+        except json.JSONDecodeError as exc:
+            logger.warning("JSON decode failed in generate_hints (model=%s) for %r: %s. Response: %r", preferred_model, word, exc, response_text[:200])
+            # Fallback loose regex extraction if LLM got creative with formatting
+            found = re.findall(r'"([^"]+)"', response_text)
+            hints_extracted = [h for h in found if h.lower() != "hints" and len(h) > 5]
+            if len(hints_extracted) >= 3:
+                return hints_extracted[:3]
 
-    hints = await _try_generate(_PRIMARY_MODEL)
-    if hints is not None:
-        return hints
-
-    logger.warning("generate_hints: primary model failed, trying fallback %r", _FALLBACK_MODEL)
-    hints = await _try_generate(_FALLBACK_MODEL)
-    if hints is not None:
-        return hints
-
-    logger.warning("generate_hints: all models failed for word=%r", word)
+    logger.warning("generate_hints completely failed to return valid hints for word=%r", word)
     return []
 
 
