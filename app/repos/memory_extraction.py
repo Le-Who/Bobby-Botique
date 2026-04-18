@@ -300,16 +300,27 @@ async def _upsert_graph(
                 async with conn.transaction():
                     # ── Upsert entities ────────────────────────────────────
                     node_ids: dict[str, Any] = {}
+
+                    # Batch fetch embeddings for all entities
+                    valid_entities = []
+                    texts_to_embed = []
                     for ent in graph.entities:
                         name = ent.name.strip()
                         if not name:
                             continue
+                        valid_entities.append((name, ent))
+                        texts_to_embed.append(f"{name}: {ent.description}" if ent.description else name)
 
-                        ent_embedding = await _get_embedding(
-                            f"{name}: {ent.description}" if ent.description else name,
-                            api_key,
-                            task_type="RETRIEVAL_DOCUMENT",
-                        )
+                    ent_embeddings = []
+                    if texts_to_embed:
+                        import asyncio
+                        # Concurrently fetch embeddings, bubble up errors to abort transaction
+                        ent_embeddings = await asyncio.gather(*(
+                            _get_embedding(text, api_key, task_type="RETRIEVAL_DOCUMENT")
+                            for text in texts_to_embed
+                        ))
+
+                    for (name, ent), ent_embedding in zip(valid_entities, ent_embeddings, strict=True):
                         ent_emb_str = f"[{','.join(str(v) for v in ent_embedding)}]" if ent_embedding else None
 
                         # Semantic dedup: merge near-identical entity names
@@ -393,17 +404,31 @@ async def _upsert_graph(
                     # ── Upsert relations ───────────────────────────────────
                     source_ids_arr = [source_memory_id] if source_memory_id else []
 
+                    # Batch fetch embeddings for all relations
+                    valid_relations = []
+                    predicates_to_embed = []
                     for rel in graph.relations:
                         src_name = rel.source.strip()
                         tgt_name = rel.target.strip()
                         if src_name not in node_ids or tgt_name not in node_ids:
                             continue
+                        valid_relations.append((rel, node_ids[src_name], node_ids[tgt_name]))
+                        predicates_to_embed.append(rel.predicate)
 
-                        src_id = node_ids[src_name]
-                        tgt_id = node_ids[tgt_name]
+                    pred_embeddings = []
+                    if predicates_to_embed:
+                        import asyncio
+                        # Concurrently fetch embeddings, bubble up errors to abort transaction
+                        pred_embeddings = await asyncio.gather(*(
+                            _get_embedding(pred, api_key, task_type="RETRIEVAL_DOCUMENT")
+                            for pred in predicates_to_embed
+                        ))
+
+                    for (rel, src_id, tgt_id), pred_embedding in zip(valid_relations, pred_embeddings, strict=True):
+                        src_name = rel.source.strip()
+                        tgt_name = rel.target.strip()
 
                         # Embed predicate for semantic dedup
-                        pred_embedding = await _get_embedding(rel.predicate, api_key, task_type="RETRIEVAL_DOCUMENT")
                         pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]" if pred_embedding else None
 
                         # Check for semantically similar existing edge
