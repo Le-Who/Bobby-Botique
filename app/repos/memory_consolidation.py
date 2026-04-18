@@ -361,7 +361,52 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
 
     # Store consolidated facts + graph data in a transaction
     try:
+        import asyncio
+
         from app.repos.memory import _get_embedding
+
+        # Pre-fetch all embeddings concurrently to avoid N+1 queries during transaction
+
+        # Helper to gather with concurrency limit
+        async def bounded_gather(tasks, limit=20):
+            sem = asyncio.Semaphore(limit)
+            async def run_task(task):
+                async with sem:
+                    return await task
+            return await asyncio.gather(*(run_task(t) for t in tasks))
+
+        # Build tasks for facts
+        fact_tasks = [_get_embedding(fact, api_key, task_type="RETRIEVAL_DOCUMENT") for fact in facts]
+
+        # Build tasks for entities
+        valid_entities = [ent for ent in entities if ent.get("name", "").strip()]
+        entity_texts = [
+            f"{ent.get('name', '').strip()}: {ent.get('description', '')}" if ent.get("description", "") else ent.get("name", "").strip()
+            for ent in valid_entities
+        ]
+        entity_tasks = [_get_embedding(text, api_key, task_type="RETRIEVAL_DOCUMENT") for text in entity_texts]
+
+        # Build tasks for relations
+        valid_relations = [
+            rel for rel in relations
+            if rel.get("from", "").strip() and rel.get("to", "").strip()
+        ]
+        relation_tasks = [_get_embedding(rel.get("predicate", "related_to").strip(), api_key, task_type="RETRIEVAL_DOCUMENT") for rel in valid_relations]
+
+        # Gather all embeddings
+        all_embeddings = await bounded_gather(fact_tasks + entity_tasks + relation_tasks)
+
+        # Unpack embeddings
+        fact_embeddings = all_embeddings[:len(fact_tasks)]
+        all_embeddings = all_embeddings[len(fact_tasks):]
+        entity_embeddings = all_embeddings[:len(entity_tasks)]
+        all_embeddings = all_embeddings[len(entity_tasks):]
+        relation_embeddings = all_embeddings
+
+        # Map entity and relation embeddings
+        ent_emb_map = {ent.get("name", "").strip(): emb for ent, emb in zip(valid_entities, entity_embeddings, strict=False)}
+        # Use relation tuple as key
+        rel_emb_map = {(rel.get("from", "").strip(), rel.get("to", "").strip(), rel.get("predicate", "related_to").strip()): emb for rel, emb in zip(valid_relations, relation_embeddings, strict=False)}
 
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)
@@ -376,36 +421,30 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                     )
 
                     # Insert each consolidated fact into long_term_memory
-                    for fact in facts:
-                        embedding = await _get_embedding(fact, api_key, task_type="RETRIEVAL_DOCUMENT")
+                    fact_records = []
+                    for fact, embedding in zip(facts, fact_embeddings, strict=False):
                         if embedding is None:
                             continue
                         embedding_str = f"[{','.join(str(v) for v in embedding)}]"
-                        await conn.execute(
+                        fact_records.append((user_id, fact, embedding_str))
+
+                    if fact_records:
+                        await conn.executemany(
                             """
                             INSERT INTO long_term_memory (user_id, content, embedding, source_type, metadata)
                             VALUES ($1, $2, $3::halfvec, 'consolidated', '{}')
                             """,
-                            user_id,
-                            fact,
-                            embedding_str,
+                            fact_records,
                         )
 
                     # ── Upsert graph entities into memory_nodes ──────────
                     node_ids = {}  # entity_name → UUID
-                    for ent in entities:
+                    for ent in valid_entities:
                         name = ent.get("name", "").strip()
-                        if not name:
-                            continue
                         ent_type = ent.get("type", "concept")
                         description = ent.get("description", "")
 
-                        # Generate embedding for the entity
-                        ent_embedding = await _get_embedding(
-                            f"{name}: {description}" if description else name,
-                            api_key,
-                            task_type="RETRIEVAL_DOCUMENT",
-                        )
+                        ent_embedding = ent_emb_map.get(name)
                         ent_emb_str = f"[{','.join(str(v) for v in ent_embedding)}]" if ent_embedding else None
 
                         # Semantic Deduplication: Check if a highly similar node already exists
@@ -453,7 +492,7 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                     # edge, check if a semantically similar predicate already exists
                     # between the same pair of nodes (cosine distance < 0.25).
                     # If so, update the existing edge's weight rather than adding a dupe.
-                    for rel in relations:
+                    for rel in valid_relations:
                         from_name = rel.get("from", "").strip()
                         to_name = rel.get("to", "").strip()
                         predicate = rel.get("predicate", "related_to").strip()
@@ -470,7 +509,7 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                         # node pair whose predicate vector is close (< 0.25 distance).
                         # We embed the new predicate and compare against all existing
                         # predicates for this src→tgt pair.
-                        pred_embedding = await _get_embedding(predicate, api_key, task_type="RETRIEVAL_DOCUMENT")
+                        pred_embedding = rel_emb_map.get((from_name, to_name, predicate))
                         if pred_embedding:
                             pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]"
                             similar_edge = await conn.fetchrow(
