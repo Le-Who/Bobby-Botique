@@ -15,51 +15,27 @@ class TestLLMTasks:
 
     async def test_generate_hints_success(self):
         """LLM-01: Correctly parses HintsOutput schema from GenAI."""
-        mock_response = MagicMock()
-        mock_response.text = json.dumps({"hints": ["Hint 1", "Hint 2", "Hint 3"]})
-
-        mock_client = AsyncMock()
-        mock_client.aio.models.generate_content.return_value = mock_response
-
-        with (
-            patch("app.agent_use_cases.AgentRequestUseCase") as AgentRequestUseCase_mock,
-            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-        ):
-            use_case_inst = AgentRequestUseCase_mock.return_value
-            # kd, mdl, _
-            use_case_inst.resolve_ai_request = AsyncMock(return_value=({"api_key": "test_key"}, "test_model", None))
+        with patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response:
+            mock_get_response.return_value = (json.dumps({"hints": ["Hint 1", "Hint 2", "Hint 3"]}), 10)
 
             result = await generate_hints("слово", "разное")
 
             assert result == ["Hint 1", "Hint 2", "Hint 3"]
-            mock_client.aio.models.generate_content.assert_awaited_once()
+            mock_get_response.assert_awaited_once()
 
     async def test_generate_hints_fallback(self):
-        """LLM-02: Falls back if primary model throws exception."""
-        # Setup so primary fails, secondary succeeds
-        mock_response = MagicMock()
-        mock_response.text = json.dumps({"hints": ["F_Hint 1", "F_Hint 2", "F_Hint 3"]})
-
-        mock_client = AsyncMock()
-        # Side effect: first call raises an error, second call returns mock_response
-        mock_client.aio.models.generate_content.side_effect = [
-            Exception("503 Service Unavailable"),
-            mock_response,
-        ]
-
-        with (
-            patch("app.agent_use_cases.AgentRequestUseCase") as AgentRequestUseCase_mock,
-            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-        ):
-            use_case_inst = AgentRequestUseCase_mock.return_value
-            # Always return a valid key/model
-            use_case_inst.resolve_ai_request = AsyncMock(return_value=({"api_key": "test_key"}, "test_model", None))
+        """LLM-02: Falls back to regex extraction if JSON decoding fails."""
+        with patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response:
+            # Provide non-JSON format that contains quoted hints to trigger fallback parsing
+            mock_get_response.return_value = (
+                "Here are the hints:\n1. \"F_Hint 1\"\n2. \"F_Hint 2\"\n3. \"F_Hint 3\"", 
+                15
+            )
 
             result = await generate_hints("слово", "разное")
 
             assert result == ["F_Hint 1", "F_Hint 2", "F_Hint 3"]
-            # Awaited twice (primary then fallback)
-            assert mock_client.aio.models.generate_content.await_count == 2
+            mock_get_response.assert_awaited_once()
 
     async def test_generate_words_success(self):
         """LLM-03: Successfully runs and parses JSON array format."""

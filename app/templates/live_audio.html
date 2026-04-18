@@ -72,6 +72,10 @@
     #visualizer-wrap.recording {
       animation: pulse-ring 2s ease-in-out infinite;
     }
+    #visualizer-wrap.connecting {
+      animation: pulse-ring 1s ease-in-out infinite;
+      filter: hue-rotate(45deg);
+    }
     @keyframes pulse-ring {
       0%, 100% { box-shadow: 0 0 0 0 rgba(0,224,255,.25); }
       50%      { box-shadow: 0 0 0 24px rgba(0,224,255,.0); }
@@ -230,14 +234,22 @@ function _backoffDelay() {
 
 /* ── Error bar ──────────────────────────────────────────────────────── */
 function showError(msg) {
+  haptic?.notificationOccurred('error');
   errorBar.textContent = msg;
   errorBar.classList.add('show');
   setTimeout(() => errorBar.classList.remove('show'), 4000);
 }
 
 function setStatus(text, cls = '') {
-  statusEl.textContent = text;
+  let icon = '';
+  if (cls === 'active') icon = '🟢 ';
+  else if (cls === 'error') icon = '🔴 ';
+  else icon = '⏳ ';
+
+  statusEl.textContent = icon + text;
   statusEl.className = cls;
+  if (cls === 'error') haptic?.notificationOccurred('warning');
+  if (cls === 'active') haptic?.notificationOccurred('success');
 }
 
 /* ── Visualizer ─────────────────────────────────────────────────────── */
@@ -354,15 +366,16 @@ function connectWS() {
   setStatus(reconnectAttempt > 0
     ? `Переподключение… (${reconnectAttempt})`
     : 'Подключаюсь к AI…', '');
+  
+  vizWrap.classList.add('connecting');
 
   ws = new WebSocket(url);
 
   ws.onopen = () => {
     reconnectAttempt = 0;       // reset backoff on success
+    vizWrap.classList.remove('connecting');
     setStatus('Подключено к AI. Говорите!', 'active');
     endBtn.disabled = false;
-
-
   };
 
   ws.onmessage = (ev) => {
@@ -424,6 +437,7 @@ function connectWS() {
     }
     
     setStatus('Потеряно соединение. Восстанавливаем...', 'error');
+    vizWrap.classList.add('connecting');
     if (recording) {
       // Visualizer off, but mic stays active — audio buffers locally.
       stopViz();
@@ -515,6 +529,7 @@ function stopRecording() {
   micBtn.classList.remove('recording');
   micBtn.textContent = '🎙️';
   vizWrap.classList.remove('recording');
+  vizWrap.classList.remove('connecting');
   stopViz();
 
   // Signal end of audio stream, but KEEP websocket open!

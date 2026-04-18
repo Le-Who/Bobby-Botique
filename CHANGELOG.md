@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.5] - 2026-04-18 - Gemini Live API Security & UX Hardening
+
+### 🛡️ Security & API Resilience
+- **Strict Single Session Policy (`app/web_miniapp.py`)**: Enforced a `max 1 active session` constraint per `user_id`. Prevents overlapping connection abuse where users could launch duplicate background WebSockets and silently drain API capacity.
+- **API Key Round-Robin (`app/web_miniapp.py`)**: Migrated away from static `api_keys[0]` loading. Connections now resolve tokens globally through a modulo indexing strategy (`api_keys[_KEY_ROTATION_INDEX % len(api_keys)]`). Distributes live-session workload seamlessly across all active credentials, reducing instantaneous rate limits (429s).
+- **Session Duration Cap (`app/web_miniapp.py`)**: Implemented a hard 30-minute duration limit (`time.monotonic() - start_time > 1800`) per Gemini Live socket to prevent infinite silent streaming exhaustion.
+
+### ✨ Frontend UX & Telemetry
+- **Rich Status Feedback (`app/templates/live_audio.html`)**: Adjusted `setStatus` utility to color-code connections and prepend emojis (`🟢`, `🔴`, `⏳`) dynamically, reducing visual ambiguity on disconnects.
+- **Telegram Haptic Integration (`app/templates/live_audio.html`)**: Embedded `Telegram.WebApp.HapticFeedback`. Emits tactile signals on session connect (`success`), errors (`warning`), and critical disconnects, significantly improving native app feel.
+- **Visualizer Interpolation (`app/templates/live_audio.html`)**: Added a distinct, hue-rotated pulse-ring animation for the intermediate `connecting` state, maintaining fluid UX while the underlying Socket resynchronizes.
+
 ## [2.15.4] - 2026-04-18 - Gemini Live Session Resumption
 
 ### 🐛 Bug Fixes & UX

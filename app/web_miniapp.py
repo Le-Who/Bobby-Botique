@@ -11,10 +11,12 @@ Blueprint registered on the main Quart app at prefix ``/webapp``.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
 import logging
+import time
 import urllib.parse
 from functools import wraps
 from typing import Any
@@ -26,6 +28,10 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 miniapp_blueprint = Blueprint("miniapp", __name__, template_folder="templates")
+
+# State tracking for Live Audio sessions
+ACTIVE_LIVE_SESSIONS: set[int] = set()
+_KEY_ROTATION_INDEX: int = 0
 
 
 # ── Telegram initData Validation ─────────────────────────────────────────────
@@ -989,13 +995,35 @@ async def live_audio_ws():
         await websocket.close(4003, "No user in initData")
         return
 
-    # ── Resolve API key ───────────────────────────────────────────────────
+    # Check for active session to prevent overlapping websocket abuse
+    if user_id in ACTIVE_LIVE_SESSIONS:
+        await websocket.close(4009, "User already has an active session")
+        return
+
+    ACTIVE_LIVE_SESSIONS.add(user_id)
+    try:
+        await _handle_live_session(websocket, user_id, validated, resumption_token)
+    finally:
+        ACTIVE_LIVE_SESSIONS.discard(user_id)
+
+
+async def _handle_live_session(websocket, user_id: int, validated: dict, resumption_token: str):
+
+    # Extract display metadata from the already-validated initData user object.
+    # These fields are populated from Telegram's initData, no extra DB call needed.
+    _tg_user: dict = validated.get("user") or {}
+    user_first_name: str = _tg_user.get("first_name", "").strip()
+    user_language: str = _tg_user.get("language_code", "").strip()
+
+    # ── Resolve API key (Round Robin) ─────────────────────────────────────
+    global _KEY_ROTATION_INDEX
     api_keys: list[str] = list(settings.GEMINI_API_KEYS)
     if not api_keys:
         await websocket.close(4500, "No API keys configured")
         return
 
-    api_key = api_keys[0]
+    api_key = api_keys[_KEY_ROTATION_INDEX % len(api_keys)]
+    _KEY_ROTATION_INDEX += 1
 
     # ── Connect to Gemini Live API ────────────────────────────────────────
     from google import genai
@@ -1007,6 +1035,19 @@ async def live_audio_ws():
     client = get_cached_genai_client(api_key)
 
     session_resumption_token: str | None = None
+
+    # Build personalised system instruction from initData user metadata.
+    _sys_parts = [
+        "Ты — дружелюбный AI-ассистент в Telegram боте.",
+        "Отвечай кратко и по делу. Если не уверен — скажи об этом.",
+    ]
+    if user_first_name:
+        _sys_parts.append(f"Имя пользователя: {user_first_name}.")
+    if user_language:
+        _sys_parts.append(
+            f"Предпочтительный язык пользователя: {user_language}. "
+            "Всегда отвечай на том же языке, на котором говорит пользователь."
+        )
 
     config_kwargs = {
         "response_modalities": [types.Modality.AUDIO],
@@ -1022,22 +1063,24 @@ async def live_audio_ws():
         "context_window_compression": types.ContextWindowCompressionConfig(
             sliding_window=types.SlidingWindow(),
         ),
-        "system_instruction": types.Content(
-            parts=[
-                types.Part(
-                    text=(
-                        "Ты — дружелюбный AI-ассистент в Telegram боте. "
-                        "Общайся на языке пользователя, отвечай кратко и по делу. "
-                        "Если не уверен — скажи об этом."
-                    )
-                )
-            ]
-        ),
+        # Google Search grounding: model requests real-time web data automatically.
+        # Supported on gemini-2.5-flash-native-audio-preview-12-2025 (AI Studio key).
+        "tools": [{"google_search": {}}],
+        # Thinking budget: 1024 tokens gives noticeably better reasoning quality
+        # at ~200-500ms extra latency. Use 0 to disable thinking entirely.
+        # NOTE: gemini-2.5 uses thinkingBudget (int), NOT thinkingLevel (str).
+        "thinking_config": types.ThinkingConfig(thinking_budget=1024),
+        "system_instruction": types.Content(parts=[types.Part(text=" ".join(_sys_parts))]),
     }
 
     live_config = types.LiveConnectConfig(**config_kwargs)
 
-    logger.info("live_audio_ws: connecting user=%d model=%s resumption_token=%s", user_id, GEMINI_LIVE_MODEL, bool(resumption_token))
+    logger.info(
+        "live_audio_ws: connecting user=%d model=%s resumption_token=%s",
+        user_id,
+        GEMINI_LIVE_MODEL,
+        bool(resumption_token),
+    )
 
     try:
         async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=live_config) as session:
@@ -1045,8 +1088,12 @@ async def live_audio_ws():
 
             # ── Producer: browser → Gemini ────────────────────────────────
             async def _producer() -> None:
+                start_time = time.monotonic()
                 try:
                     while True:
+                        if time.monotonic() - start_time > 1800:
+                            await websocket.close(1008, "Session duration limit reached (30m)")
+                            return
                         try:
                             raw = await asyncio.wait_for(websocket.receive(), timeout=600.0)
                         except TimeoutError:
@@ -1130,10 +1177,12 @@ async def live_audio_ws():
                             sru = response.session_resumption_update
                             if sru and hasattr(sru, "new_handle") and sru.new_handle:
                                 session_resumption_token = sru.new_handle
-                                await websocket.send_json({
-                                    "type": "resumption_token",
-                                    "token": sru.new_handle,
-                                })
+                                await websocket.send_json(
+                                    {
+                                        "type": "resumption_token",
+                                        "token": sru.new_handle,
+                                    }
+                                )
 
                         # GoAway signal — server will terminate connection soon.
                         # Relay to client so it can proactively reconnect.
@@ -1151,10 +1200,12 @@ async def live_audio_ws():
                                 user_id,
                                 seconds_left,
                             )
-                            await websocket.send_json({
-                                "type": "go_away",
-                                "time_left_seconds": seconds_left,
-                            })
+                            await websocket.send_json(
+                                {
+                                    "type": "go_away",
+                                    "time_left_seconds": seconds_left,
+                                }
+                            )
 
                     logger.info("live_audio_ws: consumer receive loop ended normally user=%d", user_id)
                 except asyncio.CancelledError:

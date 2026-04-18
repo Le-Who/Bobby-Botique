@@ -28,7 +28,9 @@ IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
 IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
 
 # --- Gemini Live API (real-time bidirectional audio) ---
-GEMINI_LIVE_MODEL: str = "gemini-3.1-flash-live-preview"
+# gemini-2.5-flash-native-audio-preview-12-2025: Native audio model with Google Search grounding support.
+# Uses thinkingBudget (int tokens) instead of thinkingLevel. AI Studio key compatible.
+GEMINI_LIVE_MODEL: str = "gemini-2.5-flash-native-audio-preview-12-2025"
 
 # --- Pollinations.ai image models ---
 # Overridable via env: IMAGE_MODELS="flux,zimage,gptimage,..."
