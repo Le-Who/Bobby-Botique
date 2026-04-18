@@ -2,11 +2,9 @@
 
 from app.prompts import (
     DEFAULT_ROLES,
-    cache_custom_role,
     clear_prompt_cache,
     compose_system_instruction,
     extract_json_object,
-    get_cached_custom_role,
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -46,31 +44,6 @@ class TestComposeSystemInstruction:
         a = compose_system_instruction("role A")
         b = compose_system_instruction("role A")
         assert a == b
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Custom role cache
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class TestCustomRoleCache:
-    """Test the bounded TTL cache for custom roles."""
-
-    def test_cache_miss_returns_none(self):
-        result = get_cached_custom_role("nonexistent-prompt-" + str(id(self)))
-        assert result is None
-
-    def test_cache_stores_and_retrieves(self):
-        key = f"test-prompt-{id(self)}"
-        role = {"title": "Test", "prompt": "Be helpful"}
-        cache_custom_role(key, role)
-        assert get_cached_custom_role(key) == role
-
-    def test_cache_overwrites_existing(self):
-        key = f"overwrite-{id(self)}"
-        cache_custom_role(key, {"v": 1})
-        cache_custom_role(key, {"v": 2})
-        assert get_cached_custom_role(key) == {"v": 2}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

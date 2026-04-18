@@ -22,19 +22,3 @@ def clear_prompt_cache():
     registry.compose_system_prompt.cache_clear()
 
 
-# ============================================================================
-# CUSTOM ROLE CACHE — bounded with TTL
-# ============================================================================
-from cachetools import TTLCache  # noqa: E402
-
-_custom_role_cache: TTLCache = TTLCache(maxsize=256, ttl=3600)
-
-
-def get_cached_custom_role(prompt: str) -> dict | None:
-    """Get cached custom role by prompt."""
-    return _custom_role_cache.get(prompt)
-
-
-def cache_custom_role(prompt: str, role: dict):
-    """Cache a custom role (auto-evicts oldest on overflow)."""
-    _custom_role_cache[prompt] = role
