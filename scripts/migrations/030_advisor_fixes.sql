@@ -13,8 +13,6 @@ CREATE INDEX IF NOT EXISTS idx_chats_branch_id
 CREATE INDEX IF NOT EXISTS idx_group_messages_owner_user_id
     ON group_messages (owner_user_id);
 
-CREATE INDEX IF NOT EXISTS idx_memory_edges_source_memory_id_fkey
-    ON memory_edges (source_memory_id);
 
 -- 3. Performance: Fix auth_rls_initplan for memory_nodes and memory_edges
 DO $$ BEGIN
