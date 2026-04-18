@@ -1,3 +1,7 @@
 ## 2024-05-18 - Missing ARIA States on Custom Navigation Tabs
 **Learning:** Found a recurring pattern where custom-built tab navigations (like the one in `dashboard.html`) only toggle visual states (e.g., CSS `.active` classes) without signaling state changes to screen readers via `aria-selected` and `aria-controls` properties, preventing users from tracking active tabs correctly.
 **Action:** When building custom tab components or enhancing existing ones, ensure the parent element has `role="tablist"`, each child button has `role="tab"`, and Javascript click handlers toggle `aria-selected` attributes identically to the visual classes. Add `role="tabpanel"` to the corresponding panel elements.
+
+## 2024-05-18 - Missing ARIA Relationships and Live Regions on Dynamic Elements
+**Learning:** Dynamic badging elements (like the hidden-by-default error counter) are invisible to screen readers unless they have `aria-live` and `aria-atomic` attributes. Furthermore, custom tab structures need `id` and `aria-labelledby` linkages between the tab buttons and panels for complete semantic context.
+**Action:** When building custom tab components or enhancing existing ones, ensure dynamic counters have `aria-live="polite"` and `aria-atomic="true"`. Make sure tab components follow the full WAI-ARIA specification by associating buttons and panels via `id` and `aria-labelledby` in addition to `aria-selected` toggling.
