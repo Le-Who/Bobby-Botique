@@ -15,6 +15,11 @@ import re
 import threading
 from dataclasses import dataclass, field
 
+# ⚡ Perf: pre-compiled regex for placeholder detection in get_task_prompt().
+# Avoids re._cache lookup on every prompt composition call.
+_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
+_SHARED_VARS = frozenset({"formatting_rules", "formatting_rules_compact"})
+
 # ============================================================================
 # DEFAULT ROLES — preset roles for quick start
 # ============================================================================
@@ -743,8 +748,8 @@ class PromptRegistry:
             text = text.replace("{" + key + "}", str(value))
 
         # Post-check: warn about remaining placeholders (excluding false positives)
-        _SHARED_VARS = {"formatting_rules", "formatting_rules_compact"}
-        remaining = [m for m in re.findall(r"\{(\w+)\}", text) if m not in _SHARED_VARS]
+        # ⚡ Perf: _SHARED_VARS and _PLACEHOLDER_RE hoisted to module level
+        remaining = [m for m in _PLACEHOLDER_RE.findall(text) if m not in _SHARED_VARS]
         if remaining:
             logging.warning("Template '%s' has unresolved vars: %s", name, remaining)
 

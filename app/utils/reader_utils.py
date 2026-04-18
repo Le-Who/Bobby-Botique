@@ -13,16 +13,54 @@ import html
 import re
 import urllib.parse
 
-# ── TOC extraction ────────────────────────────────────────────────────────────
+# ── Pre-compiled regex constants ──────────────────────────────────────────────
+# ⚡ Perf: all patterns hoisted to module level to avoid repeated re.compile()
+#    and re._cache lookups inside per-line/per-word render loops.
 
+# TOC extraction
 _HEADING_RE = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
+
+# _slug() helpers
+_SLUG_STRIP_RE = re.compile(r"[^\w\s-]")
+_SLUG_NORM_RE = re.compile(r"[\s_]+")
+
+# extract_toc() inline markdown strippers
+_TOC_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_TOC_ITALIC_RE = re.compile(r"\*(.+?)\*")
+_TOC_CODE_RE = re.compile(r"`(.+?)`")
+_TOC_FENCE_STRIP_RE = re.compile(r"```.*?```", re.DOTALL)
+
+# apply_bionic_reading() tag skippers
+_SKIP_OPEN_RE = re.compile(r"^<(code|pre|b|strong|a)\b", re.IGNORECASE)
+_SKIP_CLOSE_RE = re.compile(r"^</(code|pre|b|strong|a)\b", re.IGNORECASE)
+_SPLIT_TAGS_RE = re.compile(r"(<[^>]+>)")
+
+# _bionic_text() word scanner
+_WORD_RE = re.compile(r"\w+")
+
+# _inline_markup() patterns
+_INLINE_CODE_SUB_RE = re.compile(r"`([^`]+)`")
+_INLINE_BOLD_SUB_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+_INLINE_ITALIC_STAR_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", re.DOTALL)
+_INLINE_ITALIC_UNDER_RE = re.compile(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)", re.DOTALL)
+_INLINE_STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
+_INLINE_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+# markdown_to_reader_html() block-level patterns
+_BLOCK_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
+_BLOCK_HR_RE = re.compile(r"^[-*_]{3,}\s*$")
+_BLOCK_UL_RE = re.compile(r"^[-*+]\s+")
+_BLOCK_OL_RE = re.compile(r"^\d+\.\s+")
+_BLOCK_UL_STRIP_RE = re.compile(r"^[-*+]\s+")
+_BLOCK_OL_STRIP_RE = re.compile(r"^\d+\.\s+")
+_HEADING_MD_STRIP_RE = re.compile(r"\*+|_+|`+")
 
 
 def _slug(text: str) -> str:
     """Convert heading text to a URL-safe anchor slug."""
     text = html.unescape(text).lower()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
+    text = _SLUG_STRIP_RE.sub("", text)
+    text = _SLUG_NORM_RE.sub("-", text)
     return urllib.parse.quote(text.strip("-"), safe="")
 
 
@@ -40,7 +78,7 @@ def extract_toc(markdown: str) -> list[dict[str, str]]:
     """
     # Strip fenced code blocks before scanning for headings so that
     # code examples with ``# comment`` style lines are not captured.
-    stripped = re.sub(r"```.*?```", "", markdown, flags=re.DOTALL)
+    stripped = _TOC_FENCE_STRIP_RE.sub("", markdown)
 
     entries: list[dict[str, str]] = []
     seen_anchors: dict[str, int] = {}
@@ -49,9 +87,9 @@ def extract_toc(markdown: str) -> list[dict[str, str]]:
         level = len(match.group(1))  # 1-3
         text = match.group(2).strip()
         # Strip inline markdown from heading text for display
-        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-        text = re.sub(r"\*(.+?)\*", r"\1", text)
-        text = re.sub(r"`(.+?)`", r"\1", text)
+        text = _TOC_BOLD_RE.sub(r"\1", text)
+        text = _TOC_ITALIC_RE.sub(r"\1", text)
+        text = _TOC_CODE_RE.sub(r"\1", text)
         anchor = _slug(text)
 
         # Deduplicate anchors
@@ -90,18 +128,16 @@ def apply_bionic_reading(html_text: str) -> str:
         HTML string with bionic bold markers applied.
     """
     # Split on tags so we only touch text nodes
-    parts = re.split(r"(<[^>]+>)", html_text)
+    # ⚡ Perf: _SPLIT_TAGS_RE, _SKIP_OPEN_RE, _SKIP_CLOSE_RE hoisted to module level
+    parts = _SPLIT_TAGS_RE.split(html_text)
     in_skip = 0  # depth counter for code/pre/b/strong blocks
-
-    _SKIP_OPEN = re.compile(r"^<(code|pre|b|strong|a)\b", re.IGNORECASE)
-    _SKIP_CLOSE = re.compile(r"^</(code|pre|b|strong|a)\b", re.IGNORECASE)
 
     result: list[str] = []
     for part in parts:
         if part.startswith("<"):
-            if _SKIP_OPEN.match(part):
+            if _SKIP_OPEN_RE.match(part):
                 in_skip += 1
-            elif _SKIP_CLOSE.match(part):
+            elif _SKIP_CLOSE_RE.match(part):
                 in_skip = max(0, in_skip - 1)
             result.append(part)
         elif in_skip > 0:
@@ -136,7 +172,7 @@ def _bionic_text(text: str) -> str:
     # Strategy: split on \w+ tokens, transform tokens, reassemble.
     result_parts: list[str] = []
     last = 0
-    for m in re.finditer(r"\w+", text):
+    for m in _WORD_RE.finditer(text):
         result_parts.append(text[last : m.start()])  # gap (spaces, punctuation)
         result_parts.append(_bold_word(m))
         last = m.end()
@@ -234,14 +270,14 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
         stripped = raw.strip()
 
         # Headings
-        h_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        h_match = _BLOCK_HEADING_RE.match(stripped)
         if h_match:
             _flush_para()
             level = len(h_match.group(1))
             level = min(level, 3)  # clamp to h1–h3 for visual hierarchy
             tag = f"h{level}"
             heading_text = h_match.group(2).strip()
-            heading_text_clean = re.sub(r"\*+|_+|`+", "", heading_text).strip()
+            heading_text_clean = _HEADING_MD_STRIP_RE.sub("", heading_text).strip()
             anchor = _slug(heading_text_clean)
             # Find matching anchor in TOC (deduplicated)
             id_attr = f' id="{html.escape(anchor)}"'
@@ -251,7 +287,7 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
             continue
 
         # Horizontal rule
-        if re.match(r"^[-*_]{3,}\s*$", stripped) and stripped:
+        if _BLOCK_HR_RE.match(stripped) and stripped:
             _flush_para()
             out_lines.append("<hr>")
             i += 1
@@ -272,22 +308,22 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
             continue
 
         # Unordered list
-        if re.match(r"^[-*+]\s+", stripped):
+        if _BLOCK_UL_RE.match(stripped):
             _flush_para()
             items: list[str] = []
-            while i < len(lines) and re.match(r"^[-*+]\s+", lines[i].strip()):
-                item_text = re.sub(r"^[-*+]\s+", "", lines[i].strip())
+            while i < len(lines) and _BLOCK_UL_RE.match(lines[i].strip()):
+                item_text = _BLOCK_UL_STRIP_RE.sub("", lines[i].strip(), count=1)
                 items.append(f"<li>{_inline_markup(html.escape(item_text))}</li>")
                 i += 1
             out_lines.append("<ul>" + "".join(items) + "</ul>")
             continue
 
         # Ordered list
-        if re.match(r"^\d+\.\s+", stripped):
+        if _BLOCK_OL_RE.match(stripped):
             _flush_para()
             items = []
-            while i < len(lines) and re.match(r"^\d+\.\s+", lines[i].strip()):
-                item_text = re.sub(r"^\d+\.\s+", "", lines[i].strip())
+            while i < len(lines) and _BLOCK_OL_RE.match(lines[i].strip()):
+                item_text = _BLOCK_OL_STRIP_RE.sub("", lines[i].strip(), count=1)
                 items.append(f"<li>{_inline_markup(html.escape(item_text))}</li>")
                 i += 1
             out_lines.append("<ol>" + "".join(items) + "</ol>")
@@ -322,19 +358,23 @@ def markdown_to_reader_html(markdown: str, toc: list[dict[str, str]]) -> str:
 
 
 def _inline_markup(text: str) -> str:
-    """Apply inline Markdown markup to an already-HTML-escaped string."""
+    """Apply inline Markdown markup to an already-HTML-escaped string.
+
+    ⚡ Perf: all regex patterns pre-compiled at module level to avoid
+    6× re._cache lookups per call (this fires per paragraph/list item).
+    """
     # Inline code (highest priority — skip further processing inside)
-    text = re.sub(r"`([^`]+)`", lambda m: f"<code>{m.group(1)}</code>", text)
+    text = _INLINE_CODE_SUB_RE.sub(lambda m: f"<code>{m.group(1)}</code>", text)
     # Bold
-    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    text = _INLINE_BOLD_SUB_RE.sub(r"<b>\1</b>", text)
     # Italic (star)
-    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", text)
+    text = _INLINE_ITALIC_STAR_RE.sub(r"<i>\1</i>", text)
     # Italic (underscore)
-    text = re.sub(r"(?<!\w)_(?!_)(.+?)(?<!_)_(?!\w)", r"<i>\1</i>", text)
+    text = _INLINE_ITALIC_UNDER_RE.sub(r"<i>\1</i>", text)
     # Strikethrough
-    text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
+    text = _INLINE_STRIKE_RE.sub(r"<s>\1</s>", text)
     # Links
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2" target="_blank">\1</a>', text)
+    text = _INLINE_LINK_RE.sub(r'<a href="\2" target="_blank">\1</a>', text)
     return text
 
 

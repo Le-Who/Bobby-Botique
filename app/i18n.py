@@ -30,12 +30,25 @@ def detect_language(text: str | None) -> str:
 
     Returns "ru" if ≥20% of alphabetic chars are Cyrillic, else "en".
     Defaults to "ru" if text is empty.
+
+    ⚡ Perf: single-pass loop counts both cyrillic and alpha chars simultaneously,
+    avoiding the two-pass approach (regex findall + generator sum) and the
+    intermediate list allocation from findall.
     """
     if not text or len(text.strip()) < 3:
         return DEFAULT_LANG
 
-    cyrillic_count = len(_CYRILLIC_RE.findall(text))
-    alpha_count = sum(1 for ch in text if ch.isalpha())
+    # Single pass: count cyrillic and total alphabetic chars together.
+    # Avoids: (1) _CYRILLIC_RE.findall() which allocates a list of N strings,
+    #         (2) a second full iteration via sum(1 for ch in text if ch.isalpha()).
+    cyrillic_count = 0
+    alpha_count = 0
+    for ch in text:
+        if ch.isalpha():
+            alpha_count += 1
+            # Cyrillic Basic (U+0400–U+04FF) covers Russian, Ukrainian, etc.
+            if "\u0400" <= ch <= "\u04ff":
+                cyrillic_count += 1
 
     if alpha_count == 0:
         return DEFAULT_LANG
