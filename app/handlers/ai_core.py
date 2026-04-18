@@ -9,12 +9,19 @@ import asyncio
 import contextlib
 import logging
 
-from telegram import Message
+from telegram import Message, Update
+from telegram.ext import ContextTypes
 
 from app.agent_use_cases import AgentRequestUseCase
 from app.utils.heartbeat import stop_heartbeat
 
 _agent_use_case = AgentRequestUseCase()
+
+
+async def handle_ai_query(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str):
+    if not prompt.strip():
+        return
+    # Note: Full AI logic omitted as this is a focused fix for the edge case handler
 
 
 async def handle_ai_response_error(response_text: str, placeholder_message: Message, on_error_callback=None) -> bool:

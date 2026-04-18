@@ -62,8 +62,11 @@ class TelegramMessageAdapter(StreamingUIAdapter):
                 if getattr(self._msg, "reply_to_message", None):
                     reply_to_message_id = self._msg.reply_to_message.message_id
 
+                message_thread_id = getattr(self._msg, "message_thread_id", None)
+
                 new_msg = await bot.send_message(
                     chat_id=self._chat_id or getattr(self._msg, "chat_id", None),
+                    message_thread_id=message_thread_id,
                     text=text,
                     parse_mode=parse_mode,
                     reply_to_message_id=reply_to_message_id,
