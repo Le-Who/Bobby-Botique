@@ -1,6 +1,10 @@
 """Tests for degradation matrix — graceful degradation and recovery scenarios."""
 
-from app.degradation import ServiceStatus, SystemHealth, can_process_message
+from unittest.mock import patch
+
+import pytest
+
+from app.degradation import ServiceStatus, SystemHealth, can_process_message, check_system_health
 
 
 class TestSystemHealthOverall:
@@ -102,6 +106,24 @@ class TestSystemHealthRecovery:
         can, msg = can_process_message(health)
         assert can is False
         assert "AI" in msg
+
+
+class TestCheckSystemHealthExceptions:
+    """Test exception handling within system health checks."""
+
+    def test_database_health_exception_fallback(self):
+        """Test fallback when database health check raises an exception."""
+        import asyncio
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        # The correct robust way to patch inside a function that lazily imports a module
+        # is to mock sys.modules for the lazy imported module
+        with patch.dict(sys.modules, {"app.database": MagicMock()}):
+            with patch("app.database.check_database_health", side_effect=Exception("DB connection timeout")):
+                health = asyncio.run(check_system_health())
+                assert health.database == ServiceStatus.UNAVAILABLE
+                assert health.details.get("database_error") == "DB connection timeout"
 
 
 class TestToDict:
