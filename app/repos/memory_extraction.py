@@ -287,6 +287,8 @@ async def _upsert_graph(
     - Source Provenance: appends source_memory_id to source_memory_ids[].
     - Social Graph: stores chat_id and actor_user_id when in group context.
     """
+    import asyncio
+
     from app.database import db_manager
     from app.repos.db_helpers import clear_user_context, set_user_context
     from app.repos.memory import _get_embedding
@@ -294,6 +296,30 @@ async def _upsert_graph(
     edges_upserted = 0
 
     try:
+        # ── Pre-fetch embeddings concurrently outside of DB transaction ──
+        async def fetch_emb(text: str) -> list[float] | None:
+            return await _get_embedding(text, api_key, task_type="RETRIEVAL_DOCUMENT")
+
+        ent_texts = []
+        for ent in graph.entities:
+            name = ent.name.strip()
+            if not name:
+                ent_texts.append(None)
+            else:
+                ent_texts.append(f"{name}: {ent.description}" if ent.description else name)
+
+        rel_texts = [rel.predicate for rel in graph.relations]
+
+        tasks = []
+        for t in ent_texts:
+            tasks.append(fetch_emb(t) if t else fetch_emb(""))
+        for t in rel_texts:
+            tasks.append(fetch_emb(t))
+
+        all_embeddings = await asyncio.gather(*tasks) if tasks else []
+        ent_embeddings_map = dict(zip((x for x in ent_texts if x), (e for i, e in enumerate(all_embeddings[:len(ent_texts)]) if ent_texts[i]), strict=False))
+        rel_embeddings_map = dict(zip(rel_texts, all_embeddings[len(ent_texts):], strict=False))
+
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)
             try:
@@ -305,11 +331,8 @@ async def _upsert_graph(
                         if not name:
                             continue
 
-                        ent_embedding = await _get_embedding(
-                            f"{name}: {ent.description}" if ent.description else name,
-                            api_key,
-                            task_type="RETRIEVAL_DOCUMENT",
-                        )
+                        ent_text = f"{name}: {ent.description}" if ent.description else name
+                        ent_embedding = ent_embeddings_map.get(ent_text)
                         ent_emb_str = f"[{','.join(str(v) for v in ent_embedding)}]" if ent_embedding else None
 
                         # Semantic dedup: merge near-identical entity names
@@ -403,7 +426,7 @@ async def _upsert_graph(
                         tgt_id = node_ids[tgt_name]
 
                         # Embed predicate for semantic dedup
-                        pred_embedding = await _get_embedding(rel.predicate, api_key, task_type="RETRIEVAL_DOCUMENT")
+                        pred_embedding = rel_embeddings_map.get(rel.predicate)
                         pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]" if pred_embedding else None
 
                         # Check for semantically similar existing edge
