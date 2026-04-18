@@ -1,6 +1,7 @@
 """Google Gemini AI provider — self-contained execution logic."""
 
 import asyncio
+import gc
 import logging
 import time
 from typing import Any
@@ -86,7 +87,8 @@ class GeminiProvider(BaseAIProvider):
 
             client = self._client
 
-            # Convert history → types.Content
+            # Convert history → types.Content. The `contents` list accumulates
+            # SDK-specific proto-plus objects which create deep reference cycles.
             contents = await self._build_contents(history)
             if contents is None:
                 return self._error_response(
@@ -97,75 +99,81 @@ class GeminiProvider(BaseAIProvider):
                     chat_id,
                 )
 
-            config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
-            # Apply thinking config if user requested a specific level
-            tc = _build_thinking_config(model_name, thinking_level)
-            if tc:
-                config.thinking_config = tc
-            if system_instruction:
-                try:
-                    config.system_instruction = str(system_instruction)
-                except (TypeError, ValueError) as e:
-                    logging.warning("Failed to set system_instruction: %s", e)
-
-            # Native async call — properly supports CancelledError
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=config,
-                ),
-                timeout=timeout,
-            )
-
-            # Extract token count from response metadata (free, no extra API call).
-            # Falls back to 0 if usage_metadata is unavailable.
             try:
-                usage = getattr(response, "usage_metadata", None)
-                token_count = getattr(usage, "total_token_count", 0) or getattr(usage, "candidates_token_count", 0) or 0
-            except Exception as e:
-                logging.debug("Token count from usage_metadata failed: %s", e)
-                token_count = 0
+                config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]  # Pydantic coerces dicts→SafetySetting
+                # Apply thinking config if user requested a specific level
+                tc = _build_thinking_config(model_name, thinking_level)
+                if tc:
+                    config.thinking_config = tc
+                if system_instruction:
+                    try:
+                        config.system_instruction = str(system_instruction)
+                    except (TypeError, ValueError) as e:
+                        logging.warning("Failed to set system_instruction: %s", e)
 
-            # Validate response
-            if not response or not hasattr(response, "text"):
-                return self._error_response(
-                    "Gemini API returned invalid response object",
-                    model_name,
-                    start_time,
-                    user_id,
-                    chat_id,
+                # Native async call — properly supports CancelledError
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config,
+                    ),
+                    timeout=timeout,
                 )
 
-            response_text = response.text if response.text else ""
-            if not response_text:
-                # Inspect WHY the response is empty — safety block, prompt block, etc.
-                block_reason = self._diagnose_empty_response(response)
-                return self._error_response(
-                    block_reason,
-                    model_name,
-                    start_time,
-                    user_id,
-                    chat_id,
-                )
+                # Extract token count from response metadata (free, no extra API call).
+                # Falls back to 0 if usage_metadata is unavailable.
+                try:
+                    usage = getattr(response, "usage_metadata", None)
+                    token_count = getattr(usage, "total_token_count", 0) or getattr(usage, "candidates_token_count", 0) or 0
+                except Exception as e:
+                    logging.debug("Token count from usage_metadata failed: %s", e)
+                    token_count = 0
 
-            # Log success
-            if start_time is not None:
-                api_logger.log_response(
-                    "gemini",
-                    start_time,
-                    model=model_name,
-                    response_length=len(response_text),
+                # Validate response
+                if not response or not hasattr(response, "text"):
+                    return self._error_response(
+                        "Gemini API returned invalid response object",
+                        model_name,
+                        start_time,
+                        user_id,
+                        chat_id,
+                    )
+
+                response_text = response.text if response.text else ""
+                if not response_text:
+                    # Inspect WHY the response is empty — safety block, prompt block, etc.
+                    block_reason = self._diagnose_empty_response(response)
+                    return self._error_response(
+                        block_reason,
+                        model_name,
+                        start_time,
+                        user_id,
+                        chat_id,
+                    )
+
+                # Log success
+                if start_time is not None:
+                    api_logger.log_response(
+                        "gemini",
+                        start_time,
+                        model=model_name,
+                        response_length=len(response_text),
+                        token_count=token_count,
+                    )
+
+                return AIResponse(
+                    text=response_text,
                     token_count=token_count,
+                    success=True,
+                    provider=self.provider_name,
+                    model=model_name,
                 )
-
-            return AIResponse(
-                text=response_text,
-                token_count=token_count,
-                success=True,
-                provider=self.provider_name,
-                model=model_name,
-            )
+            finally:
+                # MEMORY LEAK FIX: Clear the internal SDK-specific list and trigger GC.
+                # This clears the newly-created `contents` list, not the input `history`.
+                contents.clear()
+                gc.collect()
 
         except TimeoutError:
             msg = f"Gemini API request timed out for model {model_name}"
@@ -259,59 +267,67 @@ class GeminiProvider(BaseAIProvider):
             self._client_api_key = self.api_key
         client = self._client
 
+        # The `contents` list accumulates SDK-specific proto-plus objects.
         contents = await self._build_contents(history)
         if contents is None:
             yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid content for Gemini")
             return
 
-        config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
-        tc = _build_thinking_config(model_name, thinking_level)
-        if tc:
-            config.thinking_config = tc
-        if system_instruction:
-            config.system_instruction = str(system_instruction)
-
         try:
-            # wait_for to prevent hanging during connect
-            coro = client.aio.models.generate_content_stream(
-                model=model_name,
-                contents=contents,
-                config=config,
-            )
-            response_stream = await asyncio.wait_for(coro, timeout=timeout)
-            async for chunk in response_stream:
-                try:
-                    candidates = getattr(chunk, "candidates", None)
-                    if candidates:
-                        fr = getattr(candidates[0], "finish_reason", None)
-                        if fr and str(fr) != "FINISH_REASON_UNSPECIFIED":
-                            from app.streaming import set_last_finish_reason
+            config = types.GenerateContentConfig(safety_settings=settings.SAFETY_SETTINGS)  # type: ignore[arg-type]
+            tc = _build_thinking_config(model_name, thinking_level)
+            if tc:
+                config.thinking_config = tc
+            if system_instruction:
+                config.system_instruction = str(system_instruction)
 
-                            set_last_finish_reason(str(fr))
-                except Exception as e:
-                    logging.debug("Error extracting stream finish_reason: %s", e)
+            try:
+                # wait_for to prevent hanging during connect
+                coro = client.aio.models.generate_content_stream(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+                response_stream = await asyncio.wait_for(coro, timeout=timeout)
+                async for chunk in response_stream:
+                    try:
+                        candidates = getattr(chunk, "candidates", None)
+                        if candidates:
+                            fr = getattr(candidates[0], "finish_reason", None)
+                            if fr and str(fr) != "FINISH_REASON_UNSPECIFIED":
+                                from app.streaming import set_last_finish_reason
 
-                if chunk.text:
-                    yield chunk.text
-        except TimeoutError:
-            logging.error("Gemini API stream timed out for model %s", model_name)
-            yield tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API.")
-        except APIError as e:
-            logging.error("Gemini API stream error: %s", e)
-            err_lower = str(e).lower()
-            if "quota" in err_lower:
-                yield tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
-            elif "api key" in err_lower or "api_key_invalid" in err_lower:
-                yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
-            elif "invalid" in err_lower or "malformed" in err_lower:
-                yield tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос к API.")
-            elif "rate limit" in err_lower:
-                yield tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов.")
-            else:
-                yield tag_error(ErrorCode.GENERIC, f"❌ Произошла ошибка API: {e}")
-        except Exception as e:
-            logging.error("Gemini streaming error: %s", e)
-            yield tag_error(ErrorCode.GENERIC, f"❌ Ошибка: {e}")
+                                set_last_finish_reason(str(fr))
+                    except Exception as e:
+                        logging.debug("Error extracting stream finish_reason: %s", e)
+
+                    if chunk.text:
+                        yield chunk.text
+            except TimeoutError:
+                logging.error("Gemini API stream timed out for model %s", model_name)
+                yield tag_error(ErrorCode.TIMEOUT, "⏰ Превышено время ожидания ответа от API.")
+            except APIError as e:
+                logging.error("Gemini API stream error: %s", e)
+                err_lower = str(e).lower()
+                if "quota" in err_lower:
+                    yield tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
+                elif "api key" in err_lower or "api_key_invalid" in err_lower:
+                    yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")
+                elif "invalid" in err_lower or "malformed" in err_lower:
+                    yield tag_error(ErrorCode.INVALID_REQUEST, "❌ Некорректный запрос к API.")
+                elif "rate limit" in err_lower:
+                    yield tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов.")
+                else:
+                    yield tag_error(ErrorCode.GENERIC, f"❌ Произошла ошибка API: {e}")
+            except Exception as e:
+                logging.error("Gemini streaming error: %s", e)
+                yield tag_error(ErrorCode.GENERIC, f"❌ Ошибка: {e}")
+        finally:
+            # MEMORY LEAK FIX: Clear the internal SDK-specific list and trigger GC.
+            # This clears the newly-created `contents` list, not the input `history`.
+            if contents:
+                contents.clear()
+            gc.collect()
 
     # ── Gemini helpers ───────────────────────────────────────────────────
 

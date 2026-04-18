@@ -415,5 +415,6 @@ class AgenticSearch:
             # Python's refcount GC cannot collect these immediately when `contents` falls out of scope,
             # resulting in ~250MB RAM bloat after a deep dive until cyclic GC runs.
             # Explicitly clear the container and force cyclic GC collection.
-            contents.clear()
+            if contents:
+                contents.clear()
             gc.collect()
