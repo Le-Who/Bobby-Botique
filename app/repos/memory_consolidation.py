@@ -7,6 +7,7 @@ Uses a cheap LLM call to extract atomic "Persona Facts" from raw memories,
 then replaces the batch with the consolidated facts.
 """
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -363,6 +364,19 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
     try:
         from app.repos.memory import _get_embedding
 
+        # Parallelize embedding generation for facts before starting the transaction
+        fact_embeddings = await asyncio.gather(
+            *[_get_embedding(fact, api_key, task_type="RETRIEVAL_DOCUMENT") for fact in facts]
+        )
+
+        # Prepare valid facts for insertion
+        valid_fact_records = []
+        for fact, embedding in zip(facts, fact_embeddings, strict=False):
+            if embedding is None:
+                continue
+            embedding_str = f"[{','.join(str(v) for v in embedding)}]"
+            valid_fact_records.append((user_id, fact, embedding_str))
+
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)
             try:
@@ -376,19 +390,13 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                     )
 
                     # Insert each consolidated fact into long_term_memory
-                    for fact in facts:
-                        embedding = await _get_embedding(fact, api_key, task_type="RETRIEVAL_DOCUMENT")
-                        if embedding is None:
-                            continue
-                        embedding_str = f"[{','.join(str(v) for v in embedding)}]"
-                        await conn.execute(
+                    if valid_fact_records:
+                        await conn.executemany(
                             """
                             INSERT INTO long_term_memory (user_id, content, embedding, source_type, metadata)
                             VALUES ($1, $2, $3::halfvec, 'consolidated', '{}')
                             """,
-                            user_id,
-                            fact,
-                            embedding_str,
+                            valid_fact_records,
                         )
 
                     # ── Upsert graph entities into memory_nodes ──────────
