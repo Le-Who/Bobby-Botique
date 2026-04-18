@@ -45,6 +45,34 @@ from app.utils.api_logger import api_logger
 from app.utils.heartbeat import register_heartbeat, stop_heartbeat, unregister_heartbeat
 
 
+def chunk_message(text: str, max_length: int = 4096) -> list[str]:
+    """Splits a message into chunks of maximum max_length."""
+    if not text:
+        return []
+    if max_length <= 0:
+        raise ValueError("max_length must be > 0")
+
+    chunks = []
+    while len(text) > max_length:
+        # Try to find a newline to split at
+        split_at = text.rfind("\n", 0, max_length + 1)
+        if split_at == -1 or split_at == 0:
+            # If no newline, find a space
+            split_at = text.rfind(" ", 0, max_length + 1)
+
+        if split_at == -1 or split_at == 0:
+            # If no space, hard break
+            split_at = max_length
+
+        chunks.append(text[:split_at].strip())
+        text = text[split_at:].lstrip("\n ")
+
+    if text:
+        chunks.append(text.strip())
+
+    return [c for c in chunks if c]
+
+
 async def _send_busy_ephemeral(update: Update) -> None:
     """Send localized busy toast that self-destructs after 4s."""
     from app.i18n import detect_language as _dl
