@@ -18,6 +18,7 @@ auth/rate-limit/tracing/lock/heartbeat guards), NOT registered standalone.
 
 import asyncio
 import logging
+import re
 import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
@@ -31,6 +32,10 @@ from app.utils.tg_file import get_file_bytes
 # Overall timeout for the entire voice processing pipeline (download + transcribe + UI).
 # Safety net above the per-call resilience timeouts (30s × 2 retries × 3 keys = 180s max).
 _VOICE_OVERALL_TIMEOUT_S = 90.0
+
+_VOICE_ACTION_PATTERN = re.compile(
+    r"^(?:вот,?\s*)?(сочини|напиши|бот,?|расскажи|сделай|найди|поищи|скажи|подскажи)\s", re.IGNORECASE
+)
 
 
 async def handle_voice_inline(
@@ -251,12 +256,7 @@ def _should_auto_route(transcript: str) -> bool:
 
     # Heuristic 1: Explicit voice commands (> 10 chars to avoid false positives)
     # Give some leeway for ASR padding/filler words at the beginning
-    import re
-
-    action_pattern = re.compile(
-        r"^(?:вот,?\s*)?(сочини|напиши|бот,?|расскажи|сделай|найди|поищи|скажи|подскажи)\s", re.IGNORECASE
-    )
-    if action_pattern.match(text_lower) and len(text_lower) > 8:
+    if _VOICE_ACTION_PATTERN.match(text_lower) and len(text_lower) > 8:
         return True
 
     # Heuristic 2: Low-complexity classifier (greetings, confirmations)

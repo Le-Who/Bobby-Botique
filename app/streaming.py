@@ -61,6 +61,16 @@ _HALLUCINATED_TOOL_LINE_RE = re.compile(
     r"^(?:import google_search|(?:print\()?(?:google_search\.search)\([^)\n]*\)\)?)\s*$",
 )
 
+# ── Markdown detection regexes (used by _detect_open_markdown on every overflow) ──
+# Pre-compiled at module level to avoid repeated re.compile() overhead.
+# PERF: _detect_open_markdown is called on every streaming message split — these
+# 4 patterns were previously re-compiled on each call (2–4 µs per pattern).
+_MD_FENCE_RE = re.compile(r"^```", re.MULTILINE)  # triple-backtick fences
+_MD_LANG_RE = re.compile(r"([a-zA-Z0-9+#._-]{1,20})")  # code-block language hint
+_MD_STRIP_FENCES_RE = re.compile(r"```.*?```", re.DOTALL)  # remove closed code blocks
+_MD_STRIP_INLINE_RE = re.compile(r"`[^`]*`")  # remove inline code spans
+_MD_STRIP_LINKS_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")  # remove markdown links
+
 
 def set_last_finish_reason(reason: str | None) -> None:
     """Pass finish_reason from the provider back to the streaming loop."""
@@ -114,15 +124,15 @@ def _detect_open_markdown(text: str) -> tuple[str, str]:
     # --- 1. Fenced code blocks (``` ... ```) ---------------------------------
     #   Count occurrences of triple-backtick fences *outside* of themselves.
     #   An odd count means we are inside an unclosed code block.
-    fence_re = re.compile(r"^```", re.MULTILINE)
-    fence_count = len(fence_re.findall(text))
+    # Perf: uses module-level _MD_FENCE_RE (pre-compiled once at import)
+    fence_count = len(_MD_FENCE_RE.findall(text))
     if fence_count % 2 == 1:
         # Inside an unclosed code block —
         # close it in the first message, reopen in the second.
         # Try to detect original language specifier for reopening.
         last_fence_idx = text.rfind("```")
         after_fence = text[last_fence_idx + 3 :]
-        lang_match = re.match(r"([a-zA-Z0-9+#._-]{1,20})", after_fence)
+        lang_match = _MD_LANG_RE.match(after_fence)
         lang = lang_match.group(1) if lang_match else ""
         suffix_parts.append("\n```")
         prefix_parts.append(f"```{lang}\n" if lang else "```\n")
@@ -133,7 +143,8 @@ def _detect_open_markdown(text: str) -> tuple[str, str]:
     # Fences are completely closed (fence_count is even).
     # We must remove them before counting `_` or `*` so we don't count formatting
     # characters that are safely nested inside code blocks.
-    stripped_fences = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    # Perf: uses module-level _MD_STRIP_FENCES_RE (pre-compiled once at import)
+    stripped_fences = _MD_STRIP_FENCES_RE.sub("", text)
 
     # --- 3. Inline code (` ... `) outside of fenced blocks --------------------
     backtick_count = stripped_fences.count("`")
@@ -144,11 +155,13 @@ def _detect_open_markdown(text: str) -> tuple[str, str]:
         return "".join(suffix_parts), "".join(prefix_parts)
 
     # Strip inline code before analyzing styling marks
-    stripped_code = re.sub(r"`[^`]*`", "", stripped_fences)
+    # Perf: uses module-level _MD_STRIP_INLINE_RE (pre-compiled once at import)
+    stripped_code = _MD_STRIP_INLINE_RE.sub("", stripped_fences)
 
     # Strip completed markdown links — their content shouldn't affect marker counts
     # [text](url) → text  (preserves link text for marker analysis)
-    stripped_code = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", stripped_code)
+    # Perf: uses module-level _MD_STRIP_LINKS_RE (pre-compiled once at import)
+    stripped_code = _MD_STRIP_LINKS_RE.sub(r"\1", stripped_code)
 
     # --- 4. Bold (**...**) ----------------------------------------------------
     bold_count = stripped_code.count("**")

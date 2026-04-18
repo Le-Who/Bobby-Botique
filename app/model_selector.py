@@ -108,7 +108,9 @@ def select_model(
     Returns None if the current model is already suitable (no change needed).
     Only suggests UPGRADES — never downgrades to a weaker model.
     """
-    available = list(settings.AVAILABLE_MODELS or [])
+    # Performance: read the live list directly — _find_model() only iterates, never
+    # mutates, so there is no need for a defensive list() copy on every call.
+    available = settings.AVAILABLE_MODELS or []
     if not available:
         return None
 
@@ -161,7 +163,7 @@ def select_model(
     return None
 
 
-def _find_model(available: list, preferences: list[str]) -> str | None:
+def _find_model(available: list | tuple, preferences: list[str]) -> str | None:
     """Find the first preferred model that's available.
 
     Uses a list (not set) to preserve ordering.

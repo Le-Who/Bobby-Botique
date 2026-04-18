@@ -27,10 +27,7 @@ class TestLLMTasks:
         """LLM-02: Falls back to regex extraction if JSON decoding fails."""
         with patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response:
             # Provide non-JSON format that contains quoted hints to trigger fallback parsing
-            mock_get_response.return_value = (
-                "Here are the hints:\n1. \"F_Hint 1\"\n2. \"F_Hint 2\"\n3. \"F_Hint 3\"", 
-                15
-            )
+            mock_get_response.return_value = ('Here are the hints:\n1. "F_Hint 1"\n2. "F_Hint 2"\n3. "F_Hint 3"', 15)
 
             result = await generate_hints("слово", "разное")
 

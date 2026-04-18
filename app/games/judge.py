@@ -514,7 +514,9 @@ async def generate_hints(word: str, category: str) -> list[str]:
         if is_error_message(response_text):
             logger.warning(
                 "generate_hints: error response from %s for word=%r: %s",
-                preferred_model, word, response_text[:150],
+                preferred_model,
+                word,
+                response_text[:150],
             )
             return []
 
@@ -530,7 +532,10 @@ async def generate_hints(word: str, category: str) -> list[str]:
         except json.JSONDecodeError as exc:
             logger.warning(
                 "generate_hints: JSON decode failed (model=%s) for %r: %s. Raw: %r",
-                preferred_model, word, exc, response_text[:300],
+                preferred_model,
+                word,
+                exc,
+                response_text[:300],
             )
             # Fallback: loose regex extraction if LLM got creative with formatting
             found = re.findall(r'"([^"]+)"', response_text)
@@ -540,7 +545,8 @@ async def generate_hints(word: str, category: str) -> list[str]:
 
         logger.warning(
             "generate_hints: no valid hints extracted for word=%r. response prefix: %r",
-            word, response_text[:200],
+            word,
+            response_text[:200],
         )
     except Exception:
         logger.exception("generate_hints: unexpected crash for word=%r", word)

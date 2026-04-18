@@ -142,6 +142,16 @@ DRAW_TRIGGER_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+_VERB_HEURISTIC = re.compile(
+    r"(?i)\b(?:"
+    r"нарисуй|нарисуйте|нарисовать|рисуй"
+    r"|изобрази|изобразите|изобразить"
+    r"|сгенерируй|сгенерируйте|сгенерировать"
+    r"|создай|создайте|создать"
+    r"|сделай|draw|generate|create|make"
+    r")\b"
+)
+
 
 def _check_draw_intent_fast(text: str) -> str | None:
     """Return the extracted image prompt if ``text`` is an explicit draw request via regex.
@@ -171,15 +181,6 @@ async def check_draw_intent_async(text: str) -> str | None:
 
     # 2. Check if we *might* be asking to draw (keyword heuristic)
     # If there's no draw verb anywhere, bail instantly.
-    _VERB_HEURISTIC = re.compile(
-        r"(?i)\b(?:"
-        r"нарисуй|нарисуйте|нарисовать|рисуй"
-        r"|изобрази|изобразите|изобразить"
-        r"|сгенерируй|сгенерируйте|сгенерировать"
-        r"|создай|создайте|создать"
-        r"|сделай|draw|generate|create|make"
-        r")\b"
-    )
     if not _VERB_HEURISTIC.search(text):
         return None
 

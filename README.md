@@ -8,7 +8,7 @@ The bot provides intelligent conversational abilities within Telegram, augmentin
 
 ## Current Status
 
-**Production-Ready** (`v2.15.5`). Deployed as a **3-container Docker stack** on a DigitalOcean VPS: Local Telegram Bot API Server (MTProto), Python bot (Quart + Hypercorn + PTB v20+ webhook), and an Alpine-based media cleanup cron. Uses `concurrent_updates(50)` with a Quart webhook handler to decouple update processing from HTTP acknowledgment. Built-in telemetry, circuit breakers (exception type visible in failure logs: `failure #N [ExceptionType]: msg`), and connection pooling. The testing architecture follows strictly deterministic Arrange-Act-Assert (AAA), achieving a CI-ready 100% pass rate across 1,841 unit and E2E integration tests.
+**Production-Ready** (`v2.15.6`). Deployed as a **3-container Docker stack** on a DigitalOcean VPS: Local Telegram Bot API Server (MTProto), Python bot (Quart + Hypercorn + PTB v20+ webhook), and an Alpine-based media cleanup cron. Uses `concurrent_updates(50)` with a Quart webhook handler to decouple update processing from HTTP acknowledgment. Built-in telemetry, circuit breakers (exception type visible in failure logs: `failure #N [ExceptionType]: msg`), and connection pooling. The testing architecture follows strictly deterministic Arrange-Act-Assert (AAA), achieving a CI-ready 100% pass rate across 1,841 unit and E2E integration tests.
 
 ## Features
 
@@ -537,7 +537,7 @@ Relational knowledge is stored as a directed graph in dual tables:
 
 ## Testing
 
-The application features a heavily engineered test suite (**1813 unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
+The application features a heavily engineered test suite (**1,841 unit and integration tests, 100% stable CI-ready**) with **parallel execution** via `pytest-xdist`.
 
 - **Types:** Unit tests (mocked limits/APIs), Integration tests (raw DB connections via `@pytest.mark.integration`), E2E tests.
 - **Dependencies:** `pytest`, `pytest-asyncio`, `pytest-xdist`, `pytest-cov`.
@@ -644,7 +644,7 @@ Key implementation decisions that frequently need re-discovery:
 Telegram messages carry invisible `ErrorCode` tags via zero-width space characters (`\u200b` + enum value). This enables O(1) error classification from user-visible messages without fragile text/emoji parsing. See `tag_error()` and `classify_from_message()` in `app/errors.py`.
 
 ### Streaming Message Overflow
-When a streaming AI response exceeds Telegram's ~4000 char limit, `StreamingWriter` finalizes the current message and creates a new one via `reply_new_message()`. The split preserves markdown continuity: `_detect_open_markdown()` closes unclosed code blocks/bold/italic in the frozen message and reopens them in the continuation.
+When a streaming AI response exceeds Telegram's ~4000 char limit, `StreamingWriter` finalizes the current message and creates a new one via `reply_new_message()`. The split preserves markdown continuity: `_detect_open_markdown()` closes unclosed code blocks/bold/italic in the frozen message and reopens them in the continuation. All regex patterns used by `_detect_open_markdown()` are compiled once at module level (`_MD_FENCE_RE`, `_MD_STRIP_FENCES_RE`, etc.) — not per-call — to avoid redundant C-level compilation overhead at streaming split boundaries.
 
 ### Memory Consolidation Triggers
 Consolidation fires when raw memories exceed ~8,000 tokens OR 7 days since last consolidation. A debounce gate (`should_check_consolidation()`) prevents DB queries on every message — it checks only every 20th message or every 15 minutes.

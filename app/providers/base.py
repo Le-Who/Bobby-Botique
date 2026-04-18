@@ -142,7 +142,7 @@ class BaseAIProvider(ABC):
 
         try:
             from app.resilience_policy import is_retryable_exception
-            
+
             def custom_is_retryable(e: Exception) -> bool:
                 if is_retryable_exception(e):
                     return True

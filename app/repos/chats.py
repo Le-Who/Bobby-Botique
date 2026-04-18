@@ -11,6 +11,9 @@ import logging
 from pydantic import ValidationError
 
 from app.config import settings
+
+# Performance: Import Pydantic models at module level to avoid __import__ lock overhead in hot DB paths
+from app.core.entities import ChatStateRow, UserInfoRow
 from app.database import (
     ChatState,
     clear_user_context,
@@ -53,39 +56,54 @@ async def get_user_chat(user_id: int) -> ChatState | None:
         try:
             query = """
                 SELECT
-                    (SELECT row_to_json(u)::jsonb FROM (SELECT is_deep_dive, deep_dive_thread_id FROM public.users WHERE user_id = $1) u) as user_info,
-                    (SELECT row_to_json(c)::jsonb FROM (SELECT model, token_count, search_enabled, system_prompt, context_summary, thinking_level, ltm_enabled, branch_id, temperature, voice_id, tts_temperature FROM public.chats WHERE user_id = $1) c) as chat_info,
-                    (SELECT COALESCE(jsonb_agg(jsonb_build_object('role', role, 'content', content) ORDER BY id ASC), '[]'::jsonb) FROM public.active_chat_messages WHERE user_id = $1) as messages
+                    u.is_deep_dive,
+                    u.deep_dive_thread_id,
+                    c.model,
+                    c.token_count,
+                    c.search_enabled,
+                    c.system_prompt,
+                    c.context_summary,
+                    c.thinking_level,
+                    c.ltm_enabled,
+                    c.branch_id,
+                    c.temperature,
+                    c.voice_id,
+                    c.tts_temperature,
+                    COALESCE(
+                        (SELECT jsonb_agg(jsonb_build_object('role', role, 'content', content) ORDER BY id ASC) 
+                         FROM public.active_chat_messages 
+                         WHERE user_id = u.user_id), 
+                        '[]'::jsonb
+                    ) as messages
+                FROM public.users u
+                LEFT JOIN public.chats c ON u.user_id = c.user_id
+                WHERE u.user_id = $1
             """
             result = await db_query(query, (user_id,), conn=conn)
 
             if not result:
-                # Should normally have 1 full row even if empty, but safety check
+                # User does not exist at all
                 return _default_chat_state()
 
             row = result[0]
-            chat_info = row.get("chat_info")
-            user_info = row.get("user_info")
-            messages = row.get("messages", [])
+            # asyncpg.Record supports mapping interface, cast to dict for safe handling
+            row_dict = dict(row)
 
+            messages = row_dict.get("messages", [])
             # Defensive decode in case asyncpg misses jsonb codec mapping
-            if isinstance(chat_info, str):
-                chat_info = json.loads(chat_info)
-            if isinstance(user_info, str):
-                user_info = json.loads(user_info)
             if isinstance(messages, str):
                 messages = json.loads(messages)
 
-            if not chat_info:
+            history = [{"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])]
+
+            # If c.token_count is None, the LEFT JOIN to public.chats found no row
+            has_chat = row_dict.get("token_count") is not None
+
+            if not has_chat:
                 chat_state = _default_chat_state()
             else:
                 try:
-                    from app.core.entities import ChatStateRow
-
-                    validated = ChatStateRow.model_validate(chat_info)
-                    history = [
-                        {"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])
-                    ]
+                    validated = ChatStateRow.model_validate(row_dict)
                     chat_state = ChatState(
                         history=history,
                         model=validated.model or _default_model(),
@@ -106,34 +124,28 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                         user_id,
                         ve,
                     )
-                    history = [
-                        {"role": m.get("role", "user"), "parts": [m.get("content", "")]} for m in (messages or [])
-                    ]
                     chat_state = ChatState(
                         history=history,
-                        model=chat_info.get("model"),
-                        token_count=chat_info.get("token_count", 0),
-                        search_enabled=chat_info.get("search_enabled", False),
-                        system_prompt=chat_info.get("system_prompt"),
-                        context_summary=chat_info.get("context_summary"),
-                        thinking_level=chat_info.get("thinking_level"),
-                        ltm_enabled=chat_info.get("ltm_enabled", True),
-                        branch_id=chat_info.get("branch_id"),
-                        temperature=chat_info.get("temperature"),
-                        voice_id=chat_info.get("voice_id"),
-                        tts_temperature=chat_info.get("tts_temperature"),
+                        model=row_dict.get("model") or _default_model(),
+                        token_count=row_dict.get("token_count", 0),
+                        search_enabled=row_dict.get("search_enabled", False),
+                        system_prompt=row_dict.get("system_prompt"),
+                        context_summary=row_dict.get("context_summary"),
+                        thinking_level=row_dict.get("thinking_level"),
+                        ltm_enabled=row_dict.get("ltm_enabled", True),
+                        branch_id=row_dict.get("branch_id"),
+                        temperature=row_dict.get("temperature"),
+                        voice_id=row_dict.get("voice_id"),
+                        tts_temperature=row_dict.get("tts_temperature"),
                     )
 
-            if user_info:
-                try:
-                    from app.core.entities import UserInfoRow
-
-                    u = UserInfoRow.model_validate(user_info)
-                    chat_state.is_deep_dive = u.is_deep_dive
-                    chat_state.deep_dive_thread_id = u.deep_dive_thread_id
-                except ValidationError:
-                    chat_state.is_deep_dive = bool(user_info.get("is_deep_dive", False))
-                    chat_state.deep_dive_thread_id = user_info.get("deep_dive_thread_id")
+            try:
+                u = UserInfoRow.model_validate(row_dict)
+                chat_state.is_deep_dive = u.is_deep_dive
+                chat_state.deep_dive_thread_id = u.deep_dive_thread_id
+            except ValidationError:
+                chat_state.is_deep_dive = bool(row_dict.get("is_deep_dive", False))
+                chat_state.deep_dive_thread_id = row_dict.get("deep_dive_thread_id")
 
             chat_state._original_length = len(chat_state.history)
 

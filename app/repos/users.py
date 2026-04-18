@@ -12,6 +12,9 @@ from typing import Any
 import asyncpg
 
 from app.config import settings
+
+# Performance: Import Pydantic models at module level to avoid __import__ lock overhead in hot DB paths
+from app.core.entities import UserStateRow
 from app.database import (
     clear_user_context,
     db_manager,
@@ -78,8 +81,6 @@ async def load_user_state(user_id: int) -> dict[str, Any] | None:
         if result:
             row = result[0]
             try:
-                from app.core.entities import UserStateRow
-
                 validated = UserStateRow.model_validate(row)
                 return validated.model_dump()
             except Exception as ve:

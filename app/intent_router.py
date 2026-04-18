@@ -75,6 +75,15 @@ _CRYPTO_ALIASES: dict[str, str] = {
     "ton": "the-open-network",
 }
 
+# Performance: human-readable names for CoinGecko IDs — hoisted to module level
+# so the dict is never re-constructed on every _handle_crypto() call.
+_COIN_NAMES: dict[str, str] = {
+    "bitcoin": "Bitcoin",
+    "ethereum": "Ethereum",
+    "solana": "Solana",
+    "the-open-network": "TON",
+}
+
 # CoinGecko vs_currencies we support
 _COINGECKO_FIAT_MAP: dict[str, str] = {
     "USD": "usd",
@@ -121,6 +130,13 @@ _CURRENCY_CODES = {
     "try": "TRY",
     "chf": "CHF",
 }
+
+# Performance: pre-sort aliases longest-first once at module load.
+# _extract_currency_pair() previously called sorted(..., key=len, reverse=True)
+# on every fiat query. With ~22 keys that's O(n log n) redundant work per call.
+_SORTED_CURRENCY_ALIASES: list[tuple[str, str]] = sorted(
+    _CURRENCY_CODES.items(), key=lambda kv: len(kv[0]), reverse=True
+)
 
 # Pattern to extract a city candidate from weather queries.
 _CITY_EXTRACT_PATTERN = re.compile(
@@ -480,13 +496,7 @@ async def _handle_crypto(coingecko_id: str, text: str) -> IntentResult | None:
     rub_price: float = coin_data.get("rub", 0)
     change_24h: float = coin_data.get("usd_24h_change", 0)
 
-    # Human-readable coin name
-    _COIN_NAMES = {
-        "bitcoin": "Bitcoin",
-        "ethereum": "Ethereum",
-        "solana": "Solana",
-        "the-open-network": "TON",
-    }
+    # Performance: _COIN_NAMES is a module-level constant — no dict allocation here.
     coin_name = _COIN_NAMES.get(coingecko_id, coingecko_id.title())
 
     change_sign = "+" if change_24h >= 0 else ""
@@ -593,10 +603,11 @@ def _extract_currency_pair(text: str) -> tuple[str | None, str | None]:
     lower = text.lower()
     found: list[str] = []
 
-    # Find all currency mentions in order
-    for alias in sorted(_CURRENCY_CODES.keys(), key=len, reverse=True):
+    # Find all currency mentions in order.
+    # Performance: iterate pre-sorted (alias, code) pairs from module-level
+    # _SORTED_CURRENCY_ALIASES — avoids O(n log n) sorted() on every call.
+    for alias, code in _SORTED_CURRENCY_ALIASES:
         if alias in lower:
-            code = _CURRENCY_CODES[alias]
             if code not in found:
                 found.append(code)
             if len(found) >= 2:

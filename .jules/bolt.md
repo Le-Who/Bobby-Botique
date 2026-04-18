@@ -1,7 +1,14 @@
-## 2024-03-22 - Rejected micro-optimization
-**Learning:** Avoid logging generic Python performance tips (like `+=` vs `"".join()`) in the journal, as they violate the rule against generic learnings. Also, replacing `+=` with `"".join()` for small strings in I/O bound handlers is a micro-optimization with negligible real-world impact. Focus on true bottlenecks like DB N+1 queries or massive data processing where this optimization would actually matter.
-**Action:** Be more critical of whether an optimization is a genuine codebase bottleneck or just a generic language micro-optimization before implementing it.
+## 2026-04-18 - Inline regex patterns in hot-path intent detectors and formatters (cmd_image.py, msg_voice.py, text_format.py)
 
-## 2024-05-15 - Unsafe RLS with CTEs
-**Learning:** You cannot use `set_config` inside a Common Table Expression (CTE) to safely set Row Level Security (RLS) context for the main query. PostgreSQL does not guarantee that the CTE will be evaluated before the RLS policies on the main query's table scan, leading to unpredictable failures or bypassed security.
-**Action:** When optimizing database roundtrips involving RLS context (e.g., `set_user_context`), avoid CTEs. Look for opportunities to reduce sequential queries inside the transaction instead (e.g., using `LEFT JOIN`s or combining `UPDATE` statements).
+**Learning:** `check_draw_intent_async` in `cmd_image.py` compiled `_VERB_HEURISTIC`, `_should_auto_route` in `msg_voice.py` compiled `action_pattern`, and `sanitize_html_tags` in `text_format.py` compiled `_TAG_RE` inline. All of these functions execute extremely frequently (per intent check, per voice message, or per formatted output block). Inline `re.compile` forces the `re._cache` lookup, bypassing true zero-overhead evaluation and risking cache eviction under high concurrency.
+**Action:** Relocated all static regex patterns (`_VERB_HEURISTIC`, `_VOICE_ACTION_PATTERN`, `_TAG_RE`, `_EMPTY_TAG_RE`) to module level constants to guarantee maximum performance per message. Pattern established: any `re.compile()` within an event handler or utility function triggered per-message must be ruthlessly extracted to module scope.
+
+## 2026-04-18 - Constant Allocation Inside Hot Pre-Filter (intent_router.py)
+
+**Learning:** `_handle_crypto()` rebuilt a 4-entry `_COIN_NAMES` dict on every call. `_extract_currency_pair()` called `sorted(_CURRENCY_CODES.keys(), key=len, reverse=True)` on every fiat query — both produce the same result on every invocation and ran on the path that fires for every user message matching the currency intent.
+**Action:** Any `dict` literal, `sorted()`, or other collection construction that produces the same result every time belongs at module level. Always scan hot-path functions (called per user request) for local constant definitions that are candidates for module-level hoisting.
+
+## 2026-04-18 - re.compile() Inside Overflow Handler Function (streaming.py)
+
+**Learning:** `_detect_open_markdown()` called `re.compile(r"^```", re.MULTILINE)` plus three anonymous `re.sub()`/`re.match()` calls — totalling 4 regex compilations — on every invocation. This function fires on every streaming message split (when a response overflows 4000 chars), not once per session. The `re` module caches compiled patterns internally (`re._cache`, 512 slots) but the cache lookup itself has overhead and can evict under load. More importantly, `re.compile()` inside a function body is a clear code smell that signals unintentional repetition.
+**Action:** Any regex that is not parameterised (pattern string is a literal) belongs at module level as a compiled constant (`_MD_FENCE_RE`, etc.). The pattern: look for `re.compile(...)` or `re.sub(r"..."` literals inside any function that is called more than once — especially in event-driven or per-message async handlers.

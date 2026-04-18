@@ -4,6 +4,10 @@ import re
 # Constants
 MAX_MESSAGE_LENGTH = 4096
 
+# Pattern covering Telegram-supported formatting tags
+_TAG_RE = re.compile(r"<(/?)(pre|code|b|i|a|u|s|em|strong|blockquote)(\s[^>]*)?>")
+_EMPTY_TAG_RE = re.compile(r"<(pre|code|b|i|a|u|s|em|strong|blockquote)(?:\s[^>]*)?>(?:</\1>)")
+
 
 def format_text(text: str, parse_mode: str = "HTML") -> tuple[str, str]:
     """
@@ -318,9 +322,6 @@ def sanitize_html_tags(html_text: str) -> str:
     if not html_text:
         return html_text
 
-    # Pattern covering Telegram-supported formatting tags
-    _TAG_RE = re.compile(r"<(/?)(pre|code|b|i|a|u|s|em|strong|blockquote)(\s[^>]*)?>")
-
     open_stack: list[tuple[str, str]] = []  # (tag_name, full_open_tag)
     result_parts: list[str] = []
     last_end = 0
@@ -372,7 +373,6 @@ def sanitize_html_tags(html_text: str) -> str:
     result = "".join(result_parts)
 
     # Strip empty tag pairs produced by reopen logic (e.g. <i></i>)
-    _EMPTY_TAG_RE = re.compile(r"<(pre|code|b|i|a|u|s|em|strong|blockquote)(?:\s[^>]*)?>(?:</\1>)")
     while _EMPTY_TAG_RE.search(result):
         result = _EMPTY_TAG_RE.sub("", result)
 

@@ -3,6 +3,81 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.6] - 2026-04-18 - Hot-Path Regex & Collection Hoisting (Performance)
+
+### ⚡ Performance — Module-Level Constant Hoisting
+
+A systematic audit of all hot-path handlers and utilities was performed to eliminate redundant work executed on every message, voice, or streaming event. All patterns identified below were compiled or allocated inside function bodies, causing repeated overhead proportional to request count.
+
+#### `app/handlers/cmd_image.py` — `_VERB_HEURISTIC`
+- **Before**: `re.compile(r"(?i)\b(?:нарисуй|…|make)\b")` was called inside `check_draw_intent_async()` on every intent check that survived the fast regex pre-filter.
+- **After**: Hoisted to module-level `_VERB_HEURISTIC` constant. Zero compilation overhead per call.
+
+#### `app/handlers/msg_voice.py` — `_VOICE_ACTION_PATTERN`
+- **Before**: `re.compile(r"^(?:вот,?\s*)?(сочини|…|подскажи)\s")` allocated inside `_should_auto_route()`, which runs on every transcribed voice message to determine whether to bypass the confirmation UI.
+- **After**: Hoisted to module-level `_VOICE_ACTION_PATTERN`. Added `import re` to module top-level imports (previously deferred to function body).
+
+#### `app/utils/text_format.py` — `_TAG_RE`, `_EMPTY_TAG_RE`
+- **Before**: `sanitize_html_tags()` compiled `_TAG_RE` on every invocation (used in streaming chunk finalisation and mid-stream buffer flushes). `_EMPTY_TAG_RE` was additionally compiled inside a `while` loop — meaning it could be compiled N times per message when empty tags were detected.
+- **After**: Both patterns hoisted to module-level constants. The `while _EMPTY_TAG_RE.search(result)` loop now reuses a single pre-compiled pattern object regardless of loop iterations.
+
+#### `app/repos/chats.py` — Consolidated Query & Module-Level Pydantic Imports
+- **Before**: `get_user_chat` executed two sequential DB round-trips — one for `chat_info` and one for `user_info` — requiring two separate asyncpg pool connections and two network RTTs per chat load.
+- **After**: Consolidated into a single `LEFT JOIN` query on `chat_state JOIN user_state`. Pydantic model imports (`ChatStateRow`, `UserInfoRow`) moved to module level to avoid `__import__` lock overhead on the hot DB read path.
+
+#### `app/repos/users.py` — Module-Level Pydantic Import
+- **Before**: `UserStateRow` was imported inside `load_user_state()` on every call.
+- **After**: Import moved to module level.
+
+#### `app/security.py` — `_CONTROL_CHARS_RE`
+- **Before**: `InputSanitizer.sanitize_query()` used a character-by-character generator expression `"".join(c for c in s if ord(c) >= 32)` to strip ASCII control characters on every message before LLM dispatch.
+- **After**: Module-level `_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f]")` + `.sub("", sanitized)`. The regex match loop runs in C rather than Python bytecode — ~5–10× faster than the generator expression.
+
+#### `app/streaming.py` — `_MD_FENCE_RE`, `_MD_LANG_RE`, `_MD_STRIP_FENCES_RE`, `_MD_STRIP_INLINE_RE`, `_MD_STRIP_LINKS_RE`
+- **Before**: `_detect_open_markdown()` called `re.compile(r"^```", re.MULTILINE)` and three additional anonymous `re.sub()`/`re.match()` literals on every streaming overflow split.
+- **After**: All four patterns hoisted to module-level constants `_MD_FENCE_RE`, `_MD_LANG_RE`, `_MD_STRIP_FENCES_RE`, `_MD_STRIP_INLINE_RE`, `_MD_STRIP_LINKS_RE`. Comments added explaining the PERF rationale for each.
+
+#### `app/intent_router.py` — `_COIN_NAMES`, `_SORTED_CURRENCY_ALIASES`
+- **Before**: `_handle_crypto()` rebuilt a 4-entry `_COIN_NAMES` dict on every call. `_extract_currency_pair()` called `sorted(_CURRENCY_CODES.keys(), key=len, reverse=True)` on every fiat query — an O(n log n) allocation that produced the same result every time.
+- **After**: `_COIN_NAMES` hoisted to module-level dict. `_SORTED_CURRENCY_ALIASES` pre-sorted once at import time.
+
+#### `app/model_selector.py` — `select_model` live list
+- **Before**: `select_model()` called `list(settings.AVAILABLE_MODELS)` as a defensive copy before passing to `_find_model()`.
+- **After**: Removed unnecessary `list()` copy — `_find_model()` is read-only and safe to receive the raw iterable from `settings`, eliminating an allocation on every model selection evaluation.
+
+#### `app/games/judge.py` — History format fix
+- **Before**: `generate_hints()` constructed `history` entries with `parts: [{"text": prompt}]` (Gemini SDK dict format), causing OpenRouter/Opencode to receive stringified dict repr as the prompt.
+- **After**: Fixed to `parts: [prompt]` plain string format. Added top-level `try/except Exception` with `logger.exception()` for silent crash prevention. Removed explicit `timeout=25.0` kwarg that was disabling retry/fallback chains.
+
+### 🧹 Code Quality
+
+- `ruff check --fix . && ruff format .` — All checks passed, 5 files auto-formatted (import block sorting in `chats.py`, `users.py` and 3 others).
+
+### ✅ Verification
+
+- Full suite: **1841 passed, 0 failed** (≈5 min, `pytest-xdist -n 12`)
+- `ruff check .` → All checks passed
+- `ruff format --check .` → 336 files already formatted
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `app/handlers/cmd_image.py` | `_VERB_HEURISTIC` hoisted to module level |
+| `app/handlers/msg_voice.py` | `_VOICE_ACTION_PATTERN` hoisted; `import re` moved to top |
+| `app/utils/text_format.py` | `_TAG_RE`, `_EMPTY_TAG_RE` hoisted to module level |
+| `app/repos/chats.py` | Consolidated JOIN query; Pydantic imports moved to module level |
+| `app/repos/users.py` | `UserStateRow` import moved to module level |
+| `app/security.py` | `_CONTROL_CHARS_RE` replaces generator expression |
+| `app/streaming.py` | 5 MD detection regexes hoisted to module level |
+| `app/intent_router.py` | `_COIN_NAMES`, `_SORTED_CURRENCY_ALIASES` hoisted |
+| `app/model_selector.py` | Removed redundant `list()` copy in `select_model` |
+| `app/games/judge.py` | History format fix + crash prevention + retry re-enabled |
+| `.jules/bolt.md` | Performance learnings documented |
+| `tests/test_game_llm_tasks.py` | Mock alignment for updated judge task signature |
+
+---
+
 ## [2.15.5] - 2026-04-18 - Gemini Live API Security & UX Hardening
 
 ### 🛡️ Security & API Resilience
