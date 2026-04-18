@@ -141,11 +141,18 @@ class BaseAIProvider(ABC):
             )
 
         try:
+            from app.resilience_policy import is_retryable_exception
+            
+            def custom_is_retryable(e: Exception) -> bool:
+                if is_retryable_exception(e):
+                    return True
+                return self._is_transient_error(str(e))
+
             response, _ = await run_with_resilience(
                 _operation,
                 policy,
                 circuit_name=f"ai_provider:{self.provider_name}",
-                is_retryable=lambda e: self._is_transient_error(str(e)),
+                is_retryable=custom_is_retryable,
             )
             return response
         except Exception as e:
