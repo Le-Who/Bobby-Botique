@@ -1020,8 +1020,7 @@ async def live_audio_ws():
         # Context window compression — allows unlimited session duration.
         # Without it, audio-only sessions hard-limit at ~15 min.
         "context_window_compression": types.ContextWindowCompressionConfig(
-            trigger_tokens=100_000,
-            sliding_window=types.SlidingWindow(target_tokens=4_000),
+            sliding_window=types.SlidingWindow(),
         ),
         "system_instruction": types.Content(
             parts=[
@@ -1126,22 +1125,15 @@ async def live_audio_ws():
                             if content.interrupted is True:
                                 await websocket.send_json({"type": "interrupt"})
 
-                        # Session resumption update (transparent mode)
+                        # Session resumption update
                         if hasattr(response, "session_resumption_update"):
                             sru = response.session_resumption_update
-                            if sru:
-                                msg_payload: dict = {"type": "resumption_token"}
-                                if hasattr(sru, "new_handle") and sru.new_handle:
-                                    session_resumption_token = sru.new_handle
-                                    msg_payload["token"] = sru.new_handle
-                                # Relay last_consumed_client_message_index for
-                                # client-side audio buffer pruning (transparent mode).
-                                if hasattr(sru, "last_consumed_client_message_index"):
-                                    idx = sru.last_consumed_client_message_index
-                                    if idx is not None:
-                                        msg_payload["last_consumed_index"] = idx
-                                if "token" in msg_payload or "last_consumed_index" in msg_payload:
-                                    await websocket.send_json(msg_payload)
+                            if sru and hasattr(sru, "new_handle") and sru.new_handle:
+                                session_resumption_token = sru.new_handle
+                                await websocket.send_json({
+                                    "type": "resumption_token",
+                                    "token": sru.new_handle,
+                                })
 
                         # GoAway signal — server will terminate connection soon.
                         # Relay to client so it can proactively reconnect.
@@ -1164,12 +1156,14 @@ async def live_audio_ws():
                                 "time_left_seconds": seconds_left,
                             })
 
+                    logger.info("live_audio_ws: consumer receive loop ended normally user=%d", user_id)
                 except asyncio.CancelledError:
-                    pass
+                    logger.debug("live_audio_ws: consumer cancelled user=%d", user_id)
                 except Exception as exc:
                     logger.warning(
-                        "live_audio_ws consumer error user=%d: %s",
+                        "live_audio_ws consumer error user=%d: %s: %s",
                         user_id,
+                        type(exc).__name__,
                         exc,
                     )
                     try:

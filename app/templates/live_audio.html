@@ -226,18 +226,7 @@ function _backoffDelay() {
   return base + Math.random() * 500;  // jitter
 }
 
-/* ── Audio send buffer (transparent session resumption) ─────────────── */
-// Each entry: { index: int, data: base64, mime_type: string }
-// Pruned when server acks via last_consumed_client_message_index.
-let audioSendBuffer = [];
-let clientMessageIndex = 0;
-let lastAckedIndex = -1;
 
-function _pruneBuffer(ackedIndex) {
-  if (ackedIndex <= lastAckedIndex) return;
-  lastAckedIndex = ackedIndex;
-  audioSendBuffer = audioSendBuffer.filter(m => m.index > ackedIndex);
-}
 
 /* ── Error bar ──────────────────────────────────────────────────────── */
 function showError(msg) {
@@ -373,19 +362,7 @@ function connectWS() {
     setStatus('Подключено к AI. Говорите!', 'active');
     endBtn.disabled = false;
 
-    // Replay unacknowledged audio chunks from the buffer.
-    // This makes the reconnect transparent — server sees continuity.
-    if (audioSendBuffer.length > 0) {
-      const toReplay = audioSendBuffer.length;
-      for (const entry of audioSendBuffer) {
-        ws.send(JSON.stringify({
-          type: 'realtime_input',
-          mime_type: entry.mime_type,
-          data: entry.data,
-        }));
-      }
-      console.log(`[live] replayed ${toReplay} buffered audio chunks`);
-    }
+
   };
 
   ws.onmessage = (ev) => {
@@ -411,13 +388,8 @@ function connectWS() {
         break;
 
       case 'resumption_token':
-        // Always update the token (transparent mode sends frequent updates).
         if (msg.token) {
           resumptionToken = msg.token;
-        }
-        // Prune acknowledged audio chunks from the send buffer.
-        if (msg.last_consumed_index !== undefined) {
-          _pruneBuffer(msg.last_consumed_index);
         }
         break;
 
@@ -512,27 +484,13 @@ async function startRecording() {
     await audioCtx.audioWorklet.addModule('/static/js/audio-processor.js');
     workletNode = new AudioWorkletNode(audioCtx, 'mic-processor');
     workletNode.port.onmessage = (ev) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const b64 = arrayBufferToBase64(ev.data);
-      const mime_type = 'audio/pcm;rate=16000';
-
-      // Always buffer — even when WS is closed. Buffer survives reconnects.
-      const entry = { index: clientMessageIndex++, data: b64, mime_type };
-      audioSendBuffer.push(entry);
-
-      // Cap the buffer at ~30 seconds of audio (~469 chunks at 64ms each)
-      const MAX_BUFFER_SIZE = 500;
-      if (audioSendBuffer.length > MAX_BUFFER_SIZE) {
-        audioSendBuffer = audioSendBuffer.slice(-MAX_BUFFER_SIZE);
-      }
-
-      // Send if connected
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'realtime_input',
-          mime_type,
-          data: b64
-        }));
-      }
+      ws.send(JSON.stringify({
+        type: 'realtime_input',
+        mime_type: 'audio/pcm;rate=16000',
+        data: b64
+      }));
     };
     source.connect(workletNode);
     workletNode.connect(audioCtx.destination);
@@ -577,9 +535,6 @@ function endSession() {
   clearTimeout(reconnectTimer);
   resumptionToken = "";
   reconnectAttempt = 0;
-  audioSendBuffer = [];
-  clientMessageIndex = 0;
-  lastAckedIndex = -1;
   
   if (recording) stopRecording();
   if (ws) { ws.close(); ws = null; }
