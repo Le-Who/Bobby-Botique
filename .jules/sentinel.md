@@ -22,3 +22,7 @@
 **Vulnerability:** The `/health` endpoint exposed internal system identifiers (`container_id`, `process_id`) without authentication, potentially aiding fingerprinting or targeting.
 **Learning:** Publicly accessible monitoring endpoints often inadvertently expose sensitive internal state. Even "harmless" IDs can be used in chained attacks.
 **Prevention:** Sanitize health check responses to include only necessary status information (e.g., "healthy", "unhealthy") and remove any identifiers or stack traces. Use authentication for detailed metrics.
+## 2025-05-24 - [Weak Hashing Algorithm] Use of MD5 for Identification
+**Vulnerability:** The application used `hashlib.md5()` in `app/middleware/dedup.py` and `app/utils/response_tags.py` to generate short identifiers for request deduplication and suggestion buttons. While not used for password hashing, MD5 is cryptographically weak and prone to collisions.
+**Learning:** Even for non-security critical operations like generating IDs or deduplication keys, using broken cryptographic algorithms like MD5 triggers security scanners and sets a poor precedent. Modern systems should default to robust hashing functions unless there's an overwhelming performance constraint.
+**Prevention:** Always default to modern cryptographic hashes like `hashlib.sha256()`, even when the output is truncated or used for non-sensitive data deduplication. If speed is absolutely critical and cryptographic security is irrelevant, explicitly use non-cryptographic hashes like `xxhash` or `murmurhash`, but never MD5.
