@@ -216,7 +216,7 @@ let micStream = null;
 let playbackCtx = null;
 let scheduledSources = [];
 let nextPlaybackTime = 0;
-let resumptionToken = "";
+let resumptionToken = sessionStorage.getItem('liveResumptionToken') || '';
 let sessionEndedIntentionally = false;
 let reconnectTimer = null;
 
@@ -403,6 +403,7 @@ function connectWS() {
       case 'resumption_token':
         if (msg.token) {
           resumptionToken = msg.token;
+          sessionStorage.setItem('liveResumptionToken', resumptionToken);
         }
         break;
 
@@ -548,7 +549,8 @@ function stopRecording() {
 function endSession() {
   sessionEndedIntentionally = true;
   clearTimeout(reconnectTimer);
-  resumptionToken = "";
+  resumptionToken = '';
+  sessionStorage.removeItem('liveResumptionToken');
   reconnectAttempt = 0;
   
   if (recording) stopRecording();

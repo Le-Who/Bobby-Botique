@@ -1065,7 +1065,9 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
         ),
         # Google Search grounding: model requests real-time web data automatically.
         # Supported on gemini-2.5-flash-native-audio-preview-12-2025 (AI Studio key).
-        "tools": [{"google_search": {}}],
+        # Use typed SDK constructor — raw dict bypasses protobuf serialization
+        # and causes 1011 Internal error on session setup.
+        "tools": [types.Tool(google_search=types.GoogleSearch())],
         # Thinking budget: 1024 tokens gives noticeably better reasoning quality
         # at ~200-500ms extra latency. Use 0 to disable thinking entirely.
         # NOTE: gemini-2.5 uses thinkingBudget (int), NOT thinkingLevel (str).
@@ -1089,14 +1091,27 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
             # ── Producer: browser → Gemini ────────────────────────────────
             async def _producer() -> None:
                 start_time = time.monotonic()
+                _mic_ended = False  # True after audio_stream_end; resets on new audio
                 try:
                     while True:
                         if time.monotonic() - start_time > 1800:
                             await websocket.close(1008, "Session duration limit reached (30m)")
                             return
+                        # Shorten receive timeout when mic is paused: if no new audio
+                        # arrives for 60s we return cleanly, causing the Gemini
+                        # `async with` block to exit and emit a final
+                        # SessionResumptionUpdate that the consumer can capture.
+                        recv_timeout = 60.0 if _mic_ended else 600.0
                         try:
-                            raw = await asyncio.wait_for(websocket.receive(), timeout=600.0)
+                            raw = await asyncio.wait_for(websocket.receive(), timeout=recv_timeout)
                         except TimeoutError:
+                            if _mic_ended:
+                                logger.info(
+                                    "live_audio_ws: idle timeout after mic pause user=%d — "
+                                    "closing Gemini session for clean resumption",
+                                    user_id,
+                                )
+                                return  # clean exit → consumer gets grace period → token emitted
                             await websocket.close(1000, "Idle timeout")
                             return
 
@@ -1115,9 +1130,11 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                                 await session.send_realtime_input(
                                     audio=types.Blob(data=audio_bytes, mime_type=mime_type)
                                 )
+                            _mic_ended = False  # New audio — mic is active again
 
                         elif msg_type == "audio_stream_end":
                             await session.send_realtime_input(audio_stream_end=True)
+                            _mic_ended = True  # Start idle countdown
 
                         elif msg_type == "text":
                             text = msg.get("text", "")
@@ -1231,6 +1248,15 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                     {producer_task, consumer_task},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
+                # Grace period: if the producer exited first (client disconnect or
+                # idle-mic watchdog), give the consumer up to 5s to drain its
+                # remaining Gemini messages — most importantly the final
+                # SessionResumptionUpdate — before we cancel it.
+                if producer_task in _done and not consumer_task.done():
+                    try:
+                        await asyncio.wait_for(asyncio.shield(consumer_task), timeout=5.0)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        pass
             finally:
                 for task in (producer_task, consumer_task):
                     if not task.done():
