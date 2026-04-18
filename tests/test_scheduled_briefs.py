@@ -12,6 +12,40 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 
+class TestParseBriefSchedule:
+    """Test the schedule string parsing logic."""
+
+    def test_parse_valid_formats(self):
+        from app.handlers.scheduled_briefs import parse_brief_schedule
+
+        assert parse_brief_schedule("8") == 8
+        assert parse_brief_schedule("08:00") == 8
+        assert parse_brief_schedule("23:59") == 23
+        assert parse_brief_schedule(" 0:00 ") == 0
+        assert parse_brief_schedule("12") == 12
+
+    def test_parse_invalid_formats(self):
+        from app.handlers.scheduled_briefs import parse_brief_schedule
+
+        with pytest.raises(ValueError, match="Time string cannot be empty"):
+            parse_brief_schedule("")
+
+        with pytest.raises(ValueError, match="Time string cannot be empty"):
+            parse_brief_schedule("   ")
+
+        with pytest.raises(ValueError, match="Invalid time format: abc"):
+            parse_brief_schedule("abc")
+
+        with pytest.raises(ValueError, match="Hour must be between 0 and 23, got 24"):
+            parse_brief_schedule("24:00")
+
+        with pytest.raises(ValueError, match="Hour must be between 0 and 23, got -1"):
+            parse_brief_schedule("-1")
+
+        with pytest.raises(ValueError, match="Hour must be between 0 and 23, got 25"):
+            parse_brief_schedule("25")
+
+
 class TestSubscriptionCRUD:
     """Test subscription database operations."""
 

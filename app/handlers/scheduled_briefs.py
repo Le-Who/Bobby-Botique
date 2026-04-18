@@ -30,6 +30,32 @@ from app.utils.ux_improvements import tg_time_tag, wrap_in_expandable_blockquote
 logger = logging.getLogger(__name__)
 
 
+def parse_brief_schedule(time_str: str) -> int:
+    """Parse a time string (e.g. '08:00', '8') into a valid hour integer (0-23)."""
+    time_str = time_str.strip()
+    if not time_str:
+        raise ValueError("Time string cannot be empty")
+
+    try:
+        # Handle formats like "08:00" or "8:00"
+        if ":" in time_str:
+            hour_str = time_str.split(":")[0]
+            hour = int(hour_str)
+        # Handle plain numbers like "8"
+        else:
+            hour = int(time_str)
+
+        if not (0 <= hour <= 23):
+            raise ValueError(f"Hour must be between 0 and 23, got {hour}")
+
+        return hour
+    except ValueError as e:
+        # Re-raise with our custom message or the inner value error if it's ours
+        if "must be between" in str(e) or "cannot be empty" in str(e):
+            raise
+        raise ValueError(f"Invalid time format: {time_str}")
+
+
 # ── Database operations ──────────────────────────────────────────────────
 
 
@@ -328,7 +354,14 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     user_id = update.effective_user.id
     args = context.args or []
     sub_type = args[0] if args else "morning_brief"
-    preferred_hour = int(args[1]) if len(args) > 1 and args[1].isdigit() else 7
+
+    preferred_hour = 7
+    if len(args) > 1:
+        try:
+            preferred_hour = parse_brief_schedule(args[1])
+        except ValueError as e:
+            await update.message.reply_text(str(e))
+            return
 
     success = await upsert_subscription(
         user_id=user_id,
