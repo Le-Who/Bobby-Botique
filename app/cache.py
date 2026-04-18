@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import json
 import logging
 import os
 from typing import Any
@@ -10,6 +9,7 @@ from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
 from app.errors import RedisConnectionError
 from app.metrics import metrics_collector
+from app.utils.json_compat import json
 
 # Initialize Redis client with Upstash.com optimized configuration
 redis_url = os.getenv("REDIS_URL")
@@ -85,14 +85,12 @@ def _safe_decode_redis_response(
         return None
 
     try:
-        if isinstance(data, bytes):
-            return json.loads(data.decode("utf-8"))
-        elif isinstance(data, str):
+        if isinstance(data, (bytes, str)):
             return json.loads(data)
         else:
             logging.warning("Unexpected Redis response type: %s", type(data))  # type: ignore[unreachable]  # defensive
             return None
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
         logging.error("Failed to decode Redis response: %s", e, exc_info=True)
         return None
 
@@ -265,7 +263,7 @@ class MultiLayerCache:
         if redis_client:
             try:
                 redis_key = f"{search_type}:{key}"
-                json_data = json.dumps(value, ensure_ascii=False)
+                json_data = json.dumps(value)
 
                 # Use retry logic for Redis operations
                 await _redis_operation_with_retry(redis_client.setex, redis_key, ttl, json_data)

@@ -11,13 +11,13 @@ Provides:
 """
 
 import functools
-import json
 import logging
 import os
 import sys
 import time
 
 from app.request_context import get_chat_id, get_request_id, get_user_id
+from app.utils.json_compat import json
 
 # Try importing Rich for pretty dev output (optional dependency)
 try:

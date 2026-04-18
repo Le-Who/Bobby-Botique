@@ -176,12 +176,8 @@ async def _process_ai_vision(
     # ── Metrics ───────────────────────────────────────────────────
     from app.metrics import metrics_collector as _mc
 
-    asyncio.create_task(  # noqa: RUF006
-        _mc.record_api_call("gemini_vision", model_used, user_id=user_id)
-    )
-    asyncio.create_task(  # noqa: RUF006
-        _mc.record_request("photo", time.monotonic() - _vision_t0, success=streamed)
-    )
+    await _mc.record_api_call("gemini_vision", model_used, user_id=user_id)
+    await _mc.record_request("photo", time.monotonic() - _vision_t0, success=streamed)
 
     return response_text, streamed, stream_last_msg
 
@@ -362,12 +358,14 @@ async def _download_images_concurrently(
                 await placeholder.edit_text(f"📸 Загружено {progress['done']}/{total}...")
             except Exception:
                 pass  # Telegram rate-limit or message already edited
-
-    progress_task = asyncio.create_task(_update_progress())
-    try:
-        tasks = [download_one(i, msg) for i, msg in enumerate(messages)]
+    async with asyncio.TaskGroup() as tg:
+        progress_task = tg.create_task(_update_progress())
+        tasks = [tg.create_task(download_one(i, msg)) for i, msg in enumerate(messages)]
+        
+        # Await all downloads inside the block
         results = await asyncio.gather(*tasks)
-    finally:
+        
+        # Cancel the progress task so we don't wait for its sleep to finish
         progress_task.cancel()
 
     if progress["failed"]:

@@ -16,6 +16,7 @@ from app.providers.base import AIResponse, BaseAIProvider
 from app.request_context import get_request_id
 from app.utils.api_logger import api_logger
 from app.utils.image_utils import TaggedImage, save_image_as_bytes
+from app.utils.json_compat import json
 from app.utils.network import NetworkErrorHandler
 
 # Module-level httpx client for OpenRouter
@@ -237,7 +238,7 @@ class OpenRouterProvider(BaseAIProvider):
         Stream response from OpenRouter API using Server-Sent Events (SSE).
         Yields text chunks.
         """
-        import json
+
 
         messages = await self._build_messages(history, system_instruction)
         if not messages:

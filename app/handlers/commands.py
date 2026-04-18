@@ -17,6 +17,7 @@ from app.repos.chats import get_user_chat, update_user_chat
 from app.repos.conversations import get_conversation_count
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
+from app.utils.json_compat import json
 
 
 @authorized_only
@@ -424,7 +425,6 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def mydata_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Export all user data as a JSON document (GDPR Article 20)."""
     import io
-    import json
 
     user_id = update.effective_user.id
     chat_state = await get_user_chat(user_id)

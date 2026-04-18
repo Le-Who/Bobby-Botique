@@ -15,6 +15,7 @@ from telegram.ext import ContextTypes
 
 from app import state
 from app.i18n import t
+from app.utils.background_tasks import submit_task
 
 # ── Shared state for media group accumulation ────────────────────────────────
 MEDIA_GROUPS: dict = {}
@@ -130,7 +131,7 @@ async def process_media_group_update(update, context: ContextTypes.DEFAULT_TYPE,
                 }
                 MEDIA_GROUPS_TTL[media_group_id] = current_time
                 if _cleanup_task is None or _cleanup_task.done():
-                    asyncio.create_task(start_media_groups_cleanup())  # noqa: RUF006
+                    submit_task(start_media_groups_cleanup())
 
             MEDIA_GROUPS[media_group_id]["messages"].append(update.message)
             is_first = len(MEDIA_GROUPS[media_group_id]["messages"]) == 1

@@ -16,12 +16,14 @@ Redis keys:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
+
+from app.utils.background_tasks import submit_task
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
@@ -319,7 +321,7 @@ async def create_game(
     )
     # Pre-generate 3 progressive hints in background so they are ready when
     # the guesser connects. Non-blocking — failure is silently swallowed.
-    asyncio.create_task(  # noqa: RUF006
+    submit_task(
         _prefetch_hints(game.game_id, target_word, category)
     )
     return game

@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import json
 import logging
 import os
 import time
@@ -10,6 +9,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ValidationError
+
+from app.utils.json_compat import json
 
 # Single source of truth for default Gemini models.
 # Referenced by Settings.AVAILABLE_MODELS, Settings.DAILY_LIMITS, and load_settings().

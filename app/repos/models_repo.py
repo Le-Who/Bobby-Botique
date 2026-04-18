@@ -16,10 +16,10 @@ Terminology:
   - "db override"   = admin-written list that supersedes the env baseline.
 """
 
-import json
 import logging
 
 from app.repos.settings_repo import get_global_setting, set_global_setting
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 

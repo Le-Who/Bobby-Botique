@@ -1,6 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from app.handlers.ai_core import handle_ai_query
+
 
 @pytest.mark.asyncio
 async def test_handle_ai_query_empty_prompt():

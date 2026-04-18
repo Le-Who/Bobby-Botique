@@ -20,11 +20,12 @@ word pairs are naturally evicted when the cap is hit.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from app.utils.json_compat import json
 
 if TYPE_CHECKING:
     from app.games.judge import GuessJudgement

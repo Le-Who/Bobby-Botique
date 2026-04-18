@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import uuid
 from collections.abc import Callable, Coroutine
@@ -9,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 from app import database as db
+from app.utils.json_compat import json
 
 
 class TaskStatus(Enum):

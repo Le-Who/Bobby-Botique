@@ -1,5 +1,7 @@
 import pytest
+
 from app.handlers.inline import parse_inline_query
+
 
 def test_parse_inline_query_empty():
     assert parse_inline_query("") == {}

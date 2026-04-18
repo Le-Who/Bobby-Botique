@@ -1,5 +1,7 @@
 import pytest
+
 from app.handlers.messages import chunk_message
+
 
 def test_chunk_message_empty():
     assert chunk_message("") == []

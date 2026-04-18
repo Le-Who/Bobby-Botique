@@ -7,13 +7,13 @@ via the bot when ``trigger_at`` has passed.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime
 from typing import Any
 
 from app.config import UTC_TZ
 from app.database import db_query
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 

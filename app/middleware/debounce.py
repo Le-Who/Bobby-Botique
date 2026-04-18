@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from telegram import Message
 
+from app.utils.background_tasks import submit_task
 from app.utils.tg_file import get_file_bytes
 
 logger = logging.getLogger(__name__)
@@ -411,12 +412,12 @@ async def _build_entry(message: Message, *, bot=None) -> _MessageEntry:
     stt_future: asyncio.Future[str] | None = None
     if is_forwarded and message.voice:
         stt_future = asyncio.get_event_loop().create_future()
-        asyncio.create_task(_transcribe_forwarded_voice(message, stt_future))  # noqa: RUF006
+        submit_task(_transcribe_forwarded_voice(message, stt_future))
 
     # ── Reaction feedback ────────────────────────────────────────────────────
     # Put 👀 on the message to confirm the bot received it into the debounce slot
     if bot is not None:
-        asyncio.create_task(_set_absorbed_reaction(message, bot))  # noqa: RUF006
+        submit_task(_set_absorbed_reaction(message, bot))
 
     return _MessageEntry(
         message=message,

@@ -98,16 +98,17 @@ class DatabaseManager:
 
             async def _init_connection(conn):
                 """Apply session-level settings to every new connection."""
-                import json
+                from app.utils.json_compat import json as _json
 
                 await conn.execute("SET statement_timeout = '60s'")
                 await conn.execute("SET idle_in_transaction_session_timeout = '30s'")
                 await conn.execute("SET lock_timeout = '30s'")
                 # Register JSONB codec: auto-convert JSONB ↔ Python dict
+                # Uses orjson-backed json_compat for 2-6× faster round-trips
                 await conn.set_type_codec(
                     "jsonb",
-                    encoder=json.dumps,
-                    decoder=json.loads,
+                    encoder=_json.dumps,
+                    decoder=_json.loads,
                     schema="pg_catalog",
                 )
 

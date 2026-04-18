@@ -21,12 +21,14 @@ can decline to count the attempt rather than lie to the user.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from app.utils.background_tasks import submit_task
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
@@ -302,11 +304,11 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
                 return None
             data = json.loads(text)
             result = GuessJudgement.model_validate(data)
-            asyncio.create_task(  # noqa: RUF006
+            submit_task(
                 status_mgr.record_success(key_hash, model)
             )
             # Increment usage counter on success (fire-and-forget)
-            asyncio.create_task(  # noqa: RUF006
+            submit_task(
                 use_case.increment_key_usage(key_hash, model, use_openrouter=False)
             )
             return result
@@ -316,15 +318,13 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
             # Classify error and suspend key — prevents the same exhausted key
             # from being re-used in subsequent resolve_ai_request() calls.
             category = classify_key_error(err_text)
-            asyncio.create_task(  # noqa: RUF006
+            submit_task(
                 _suspend_key_safe(key_hash, model, category, err_text[:500])
             )
             return None
         finally:
             # Record every LLM call attempt in metrics (success OR failure)
-            asyncio.create_task(  # noqa: RUF006
-                metrics_collector.record_api_call("gemini_judge", model=model)
-            )
+            await metrics_collector.record_api_call("gemini_judge", model=model)
 
     async def _run_race(
         key_pairs: list[tuple[str, str]], model: str, timeout: float = _LLM_TIMEOUT_S
@@ -469,7 +469,6 @@ async def generate_hints(word: str, category: str) -> list[str]:
     Returns an empty list on any failure; callers must handle gracefully.
     Called from a background asyncio.Task so latency does not block the user.
     """
-    import json
     import re
 
     try:
@@ -610,9 +609,7 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
     local = _local_check(target, guess)
     if local:
         j = GuessJudgement(status="hot", score=1.0, hint="Угадано! 🎉")
-        asyncio.create_task(  # noqa: RUF006
-            metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
-        )
+        await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         return "exact_match", j
 
     # 2. Judgement cache (<5ms, local file)
@@ -622,12 +619,10 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
 
         # Retroactive fix for already cached hot synonyms:
         if cached.score >= 0.92:
-            asyncio.create_task(metrics_collector.record_request("judge", time.monotonic() - t0, success=True))  # noqa: RUF006
+            await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
             return "exact_match", cached
 
-        asyncio.create_task(  # noqa: RUF006
-            metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
-        )
+        await metrics_collector.record_request("judge", time.monotonic() - t0, success=True)
         return cached.status, cached
 
     # 3. Race×3 LLM
@@ -647,9 +642,7 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
             score=0.0,
             hint="🤔 Крокодил задумался... Попытка не засчитана!",
         )
-        asyncio.create_task(  # noqa: RUF006
-            metrics_collector.record_request("judge", elapsed, success=False)
-        )
+        await metrics_collector.record_request("judge", elapsed, success=False)
         return "judge_unavailable", sentinel
 
     status_str: str = result.status
@@ -660,9 +653,7 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
         result.hint = "Угадано! 🎉"
 
     # Cache result for future identical guesses (fire-and-forget)
-    asyncio.create_task(cache_judgement(target, guess, result))  # noqa: RUF006
+    submit_task(cache_judgement(target, guess, result))
 
-    asyncio.create_task(  # noqa: RUF006
-        metrics_collector.record_request("judge", elapsed, success=True)
-    )
+    await metrics_collector.record_request("judge", elapsed, success=True)
     return status_str, result

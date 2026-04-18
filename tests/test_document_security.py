@@ -10,7 +10,7 @@ pytestmark = pytest.mark.xdist_group("sys_modules_isolation")
 
 _mock_keys = ["app.database"]
 _original_modules = {}
-_original_env = {}
+_original_env: dict[str, str | None] = {}
 
 # Environment variables this test module requires
 _ENV_OVERRIDES = {

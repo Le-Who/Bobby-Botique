@@ -31,3 +31,7 @@ rich>=13.0.0,<15.0.0
 
 # Performance (Linux/Docker only — 2-4× event loop throughput)
 uvloop>=0.19.0,<1.0.0; sys_platform != "win32"
+
+# Serialization (Rust-backed, 2-6× faster JSON)
+orjson>=3.10.0,<4.0.0
+msgspec>=0.18.0,<1.0.0

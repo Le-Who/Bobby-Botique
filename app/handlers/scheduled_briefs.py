@@ -25,6 +25,7 @@ from telegram.ext import ContextTypes
 
 from app import database as db
 from app.i18n import t
+from app.utils.json_compat import json
 from app.utils.ux_improvements import tg_time_tag, wrap_in_expandable_blockquote
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ def parse_brief_schedule(time_str: str) -> int:
         # Re-raise with our custom message or the inner value error if it's ours
         if "must be between" in str(e) or "cannot be empty" in str(e):
             raise
-        raise ValueError(f"Invalid time format: {time_str}")
+        raise ValueError(f"Invalid time format: {time_str}") from e
 
 
 # ── Database operations ──────────────────────────────────────────────────
@@ -243,7 +244,7 @@ async def _generate_brief_summary(topics: list[str], articles: list[dict[str, st
         return {}
 
     try:
-        import json
+
 
         from google.genai import types
 

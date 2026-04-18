@@ -238,12 +238,8 @@ async def _process_voice_pipeline(
     # ── Metrics ───────────────────────────────────────────────────
     from app.metrics import metrics_collector as _mc
 
-    asyncio.create_task(  # noqa: RUF006
-        _mc.record_api_call("gemini_transcribe", user_id=user_id)
-    )
-    asyncio.create_task(  # noqa: RUF006
-        _mc.record_request("voice", time.monotonic() - _t0, success=bool(transcript))
-    )
+    await _mc.record_api_call("gemini_transcribe", user_id=user_id)
+    await _mc.record_request("voice", time.monotonic() - _t0, success=bool(transcript))
 
 
 def _should_auto_route(transcript: str) -> bool:

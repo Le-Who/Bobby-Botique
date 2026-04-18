@@ -129,7 +129,7 @@ async def _generate_with_resilience(
     parts: list[types.Part],
     model: str,
     system_prompt: str,
-    thinking_config: types.ThinkingConfig,
+    thinking_config: types.ThinkingConfig | None,
     api_key: str | None = None,
 ) -> str | None:
     """Send content to Gemini with retry + key-rotation + circuit-breaker resilience.

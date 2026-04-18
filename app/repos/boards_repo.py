@@ -9,12 +9,12 @@ inline so the feature degrades gracefully rather than crashing the bot.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any
 
 from app import database as db
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 

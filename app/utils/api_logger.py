@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import time
@@ -7,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from app.request_context import get_chat_id, get_request_id, get_user_id
+from app.utils.json_compat import json
 
 # Emoji lookup for log prefixes
 _EMOJI_REQUEST = {

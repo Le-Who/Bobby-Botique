@@ -115,7 +115,7 @@ class TestCheckSystemHealthExceptions:
         """Test fallback when database health check raises an exception."""
         import asyncio
         import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         # The correct robust way to patch inside a function that lazily imports a module
         # is to mock sys.modules for the lazy imported module

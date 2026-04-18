@@ -8,11 +8,11 @@ thread. Under the hood, this snapshots ``chat_state.history`` into the
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
 from app.database import db_query
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 

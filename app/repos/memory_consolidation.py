@@ -30,6 +30,7 @@ from app.repos.memory_config import (
     MAX_PERSONA_FACTS,
     MIN_PERSONA_FACTS,
 )
+from app.utils.json_compat import json
 
 # ── Debounce gate constants ─────────────────────────────────────────────
 _MSG_GATE = 20  # check should_consolidate every Nth message
@@ -231,7 +232,7 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
     Returns dict with 'facts', 'entities', 'relations' keys.
     Falls back to empty graph on failure.
     """
-    import json
+
 
     from google.genai import types
 

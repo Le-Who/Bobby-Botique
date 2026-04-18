@@ -65,11 +65,11 @@ def postgres_container():
         # asyncio.run() creates and destroys its own loop without touching the
         # global event loop that pytest-asyncio manages.
         async def _init_schema() -> None:
-            from app.database import db_manager  # noqa: PLC0415
+            from app.database import init_db  # noqa: PLC0415
 
-            # initialize() calls create_pool() which reads DATABASE_URL from env,
+            # init_db() calls create_pool() which reads DATABASE_URL from env,
             # then calls _init_schema() → create_tables → RLS → run_migrations → seed.
-            await db_manager.initialize()
+            await init_db()
 
         try:
             asyncio.run(_init_schema())

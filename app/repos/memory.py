@@ -28,6 +28,7 @@ from app.repos.memory_config import (
     MAX_MEMORIES_PER_USER,
     QUERY_EXPANSION_MODEL,
 )
+from app.utils.json_compat import json
 
 __all__ = [
     "EMBEDDING_MODEL",
@@ -267,7 +268,7 @@ async def store_memory(
                     db_text_content,
                     f"[{','.join(str(v) for v in embedding)}]",
                     source_type,
-                    __import__("json").dumps(metadata or {}),
+                    json.dumps(metadata or {}),
                     expires_at,
                 ]
 
@@ -726,7 +727,7 @@ async def search_memories_with_llm_judge(
     Returns at most `limit` memories tagged with {'llm_judged': True}.
     Returns [] silently on any error — this is strictly non-blocking.
     """
-    import json
+
 
     # Step 1: Over-fetch low-confidence candidates
     candidates = await search_memories(

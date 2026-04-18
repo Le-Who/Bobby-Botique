@@ -300,7 +300,7 @@ async def _upsert_graph(
         async def fetch_emb(text: str) -> list[float] | None:
             return await _get_embedding(text, api_key, task_type="RETRIEVAL_DOCUMENT")
 
-        ent_texts = []
+        ent_texts: list[str | None] = []
         for ent in graph.entities:
             name = ent.name.strip()
             if not name:

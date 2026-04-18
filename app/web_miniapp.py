@@ -14,17 +14,17 @@ import asyncio
 import base64
 import hashlib
 import hmac
-import json
 import logging
 import time
+import typing
 import urllib.parse
 from functools import wraps
-import typing
 from typing import Any
 
 from quart import Blueprint, jsonify, request
 
 from app.config import settings
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
@@ -428,7 +428,6 @@ async def reader_page():
         4. Inject pre-rendered HTML + TOC JSON into the Jinja2 template so the
            client renders instantly without a second fetch round-trip.
     """
-    import json
     import re as _re
 
     from quart import render_template
@@ -697,7 +696,6 @@ async def game_ws():
                {"event": "game_over", "word": ..., ...}
     """
     import asyncio
-    import json
 
     from quart import websocket
 
@@ -973,7 +971,6 @@ async def live_audio_ws() -> None:
     """
     import asyncio
     import base64
-    import json
 
     from quart import websocket
 
@@ -1252,7 +1249,7 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                 if producer_task in _done and not consumer_task.done():
                     try:
                         await asyncio.wait_for(asyncio.shield(consumer_task), timeout=5.0)
-                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                    except (TimeoutError, asyncio.CancelledError):
                         pass
             finally:
                 for task in (producer_task, consumer_task):

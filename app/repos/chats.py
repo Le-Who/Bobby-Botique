@@ -42,7 +42,7 @@ def _extract_message_content(msg: dict) -> str:
     return ""
 
 
-import json
+from app.utils.json_compat import json
 
 
 @timed_operation("get_user_chat")

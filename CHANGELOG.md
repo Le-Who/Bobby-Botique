@@ -3,6 +3,24 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.7] - 2026-04-19 - Structured Concurrency & Linter Hardening
+
+### 🔄 Architecture — Phase 2 Structured Concurrency
+- **Eliminated Rogue `create_task` Patterns:** Systematically audited and refactored fire-and-forget background tasks across `app/games/crocodile.py`, `app/games/word_bank.py`, and `app/handlers/msg_media.py`. Ad-hoc asynchronous executions are now correctly routed through the centralized `TaskManager.submit_task` boundary. This guarantees structured lifecycle management, prevents premature garbage collection of pending tasks, and enables graceful drain during application shutdown.
+- **Safe Concurrent Scoping via `TaskGroup`:** Upgraded the legacy pattern of `asyncio.gather` intertwined with raw `create_task` in `app/handlers/ai_photo.py` to leverage native `asyncio.TaskGroup`.
+- **Cancellation Latency Elimination:** Repositioned the progress-indicator cancellation sequence directly inside the `TaskGroup` context manager in `ai_photo.py`. This fixed a multi-second UI latency lag when cleaning up the Telegram download loading signals perfectly resolving unresponsive state hanging.
+
+### 🧹 Code Quality & Safety
+- **Zero-Defect Base (`ruff` & `mypy`):**
+  - Remediated the `SIM101` rule globally (e.g. `isinstance(X, bytes) or isinstance(X, str)` merged seamlessly).
+  - Fixed an improper exception override in `scheduled_briefs.py` where a custom exception failed to propagate its `__cause__`, raising a strict `B904` exception chaining warning. Now chained properly as `raise ... from e`.
+  - Reached 0 type errors from `mypy` across 329 source files. Corrected types such as `types.ThinkingConfig | None` inside `multimodal_processor.py`, `list[str | None]` inside `memory_extraction.py`, and `dict[str, str | None]` dict mapping annotations in standard test environments. 
+
+### ✅ Verification
+- Full suite executed post-refactor: **1858 passed, 0 failed** (`pytest-xdist -n auto`)
+
+---
+
 ## [2.15.6] - 2026-04-18 - Hot-Path Regex & Collection Hoisting (Performance)
 
 ### ⚡ Performance — Module-Level Constant Hoisting

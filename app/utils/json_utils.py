@@ -1,6 +1,6 @@
 """JSON extraction utilities."""
 
-import json
+from app.utils.json_compat import json
 
 
 def extract_json_object(text: str) -> dict | None:

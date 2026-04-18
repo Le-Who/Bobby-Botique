@@ -12,7 +12,6 @@ Each layer is independently cacheable and compressed to minimize token waste
 while maximizing information density in the LLM's context window.
 """
 
-import json
 import logging
 from typing import Any
 
@@ -21,6 +20,7 @@ from app.repos.memory_config import (
     L0_MAX_TOKENS,
     L1_MAX_TOKENS,
 )
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 

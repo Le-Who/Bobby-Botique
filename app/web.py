@@ -40,6 +40,7 @@ from app.repos.metrics_repo import (
     get_supabase_metrics,
     get_tavily_key_usage_stats,
 )
+from app.utils.json_compat import json
 
 # --- QUART APP SETUP ---
 quart_app = Quart(__name__)  # kept as `quart_app` for backward compat with bot.py
@@ -717,7 +718,7 @@ async def api_events():
     Emits a JSON payload every 5 seconds with key operational metrics.
     Client connects via `new EventSource('/api/events')`.
     """
-    import json as json_mod
+
 
     import psutil
 
@@ -759,7 +760,7 @@ async def api_events():
                 except Exception:
                     pass
 
-                yield f"data: {json_mod.dumps(payload)}\n\n"
+                yield f"data: {json.dumps(payload)}\n\n"
             except Exception as e:
                 logging.warning("SSE event generation error: %s", e)
                 yield f'data: {{"error": "{e}"}}\n\n'

@@ -17,10 +17,12 @@ Words are purposely lowercase and normalised (stripped).
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import random
 import re
+
+from app.utils.background_tasks import submit_task
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
@@ -912,7 +914,7 @@ async def pick_random_word(
                 words = generated
             else:
                 # Kick off bank generation in the background for future games
-                asyncio.create_task(generate_words_for_category(category, lang=lang))  # noqa: RUF006
+                submit_task(generate_words_for_category(category, lang=lang))
                 # Skip redis de-duplication since we only have 1 word and want to return fast
                 return fast_word, lang, category, True
 

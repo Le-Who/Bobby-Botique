@@ -11,7 +11,6 @@ reminder fires — delivering the full AI response directly in TG chat.
 """
 
 import asyncio
-import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -29,6 +28,7 @@ from app.repos.reminders import (
 )
 from app.utils.decorators import authorized_only, safe_handler
 from app.utils.formatting import TelegramFormatter
+from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
 
