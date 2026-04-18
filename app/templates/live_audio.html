@@ -212,6 +212,9 @@ let micStream = null;
 let playbackCtx = null;
 let scheduledSources = [];
 let nextPlaybackTime = 0;
+let resumptionToken = "";
+let sessionEndedIntentionally = false;
+let reconnectTimer = null;
 
 /* ── Error bar ──────────────────────────────────────────────────────── */
 function showError(msg) {
@@ -325,9 +328,18 @@ function flushPlayback() {
 
 /* ── WebSocket to Quart proxy ───────────────────────────────────────── */
 function connectWS() {
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+    return; // Already connecting or open
+  }
+
+  clearTimeout(reconnectTimer);
+
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const enc = encodeURIComponent(INIT_DATA);
-  const url = `${proto}://${location.host}/webapp/live/ws?initData=${enc}`;
+  let url = `${proto}://${location.host}/webapp/live/ws?initData=${enc}`;
+  if (resumptionToken) {
+    url += `&resumptionToken=${encodeURIComponent(resumptionToken)}`;
+  }
 
   ws = new WebSocket(url);
   ws.onopen = () => {
@@ -357,19 +369,37 @@ function connectWS() {
         appendTranscript('AI', msg.text, 't-ai');
         break;
 
-      case 'error':
-        showError(msg.message || 'Ошибка сервера');
+      case 'resumption_token':
+        resumptionToken = msg.token;
         break;
 
       case 'session_resumed':
-        setStatus('Сессия восстановлена', 'active');
+        // Optional signal, logic handled automatically
+        break;
+
+      case 'error':
+        showError(msg.message || 'Ошибка сервера');
         break;
     }
   };
 
   ws.onclose = (ev) => {
-    setStatus('Отключено', 'error');
-    if (recording) stopRecording();
+    if (sessionEndedIntentionally) {
+      setStatus('Сессия завершена', 'error');
+      return;
+    }
+    
+    setStatus('Потеряно соединение. Восстанавливаем...', 'error');
+    if (recording) {
+        // Pause worklet silently until reconnected
+        stopViz();
+    }
+    
+    reconnectTimer = setTimeout(() => {
+      if (!sessionEndedIntentionally) {
+        connectWS();
+      }
+    }, 2000);
   };
 
   ws.onerror = () => {};
@@ -392,6 +422,8 @@ function appendTranscript(who, text, cls) {
 
 /* ── Mic capture via AudioWorklet ───────────────────────────────────── */
 async function startRecording() {
+  sessionEndedIntentionally = false;
+
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, sampleRate: 16000 }
@@ -438,7 +470,7 @@ async function startRecording() {
   setStatus('Слушаю…', 'active');
   haptic?.impactOccurred('medium');
 
-  // Connect WebSocket after mic is ready
+  // Connect WebSocket if it's not already connected
   connectWS();
 }
 
@@ -449,22 +481,27 @@ function stopRecording() {
   vizWrap.classList.remove('recording');
   stopViz();
 
-  // Signal end of audio stream
+  // Signal end of audio stream, but KEEP websocket open!
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'audio_stream_end' }));
   }
 
-  // Cleanup mic
+  // Cleanup mic only
   if (workletNode) { workletNode.disconnect(); workletNode = null; }
   if (audioCtx) { audioCtx.close(); audioCtx = null; }
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
 
-  setStatus('Микрофон выключен');
+  setStatus('Микрофон на паузе. Подключение активно.', 'active');
 }
 
 function endSession() {
+  sessionEndedIntentionally = true;
+  clearTimeout(reconnectTimer);
+  resumptionToken = "";
+  
   if (recording) stopRecording();
   if (ws) { ws.close(); ws = null; }
+  
   flushPlayback();
   setStatus('Сессия завершена');
   endBtn.disabled = true;

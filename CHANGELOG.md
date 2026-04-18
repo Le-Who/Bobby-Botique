@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.4] - 2026-04-18 - Gemini Live Session Resumption
+
+### 🐛 Bug Fixes & UX
+
+- **Gemini Live Context Loss (`app/web_miniapp.py`, `app/templates/live_audio.html`):** Resolved an issue where pausing the microphone (or experiencing a brief network drop) permanently destroyed the live session context.
+  - Toggling the microphone now isolates WebAudio API capture control without terminating the underlying WebSocket to the Quart backend. The server is correctly signaled with `audio_stream_end` to yield model generation, maintaining a continuous context window.
+  - Implemented Gemini Live API `SessionResumptionUpdate` mechanics. The server captures `new_handle` tokens and pushes them to the frontend payload. On accidental disconnects, the frontend auto-reconnects and passes the `resumptionToken` query parameter, ensuring `LiveConnectConfig` cleanly binds to the prior distributed context state.
+  
 ## [2.15.3] - 2026-04-18 - Hint Generation Fixes & Circuit Breaker Diagnostics
 
 ### 🐛 Bug Fixes

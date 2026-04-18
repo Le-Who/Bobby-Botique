@@ -976,6 +976,8 @@ async def live_audio_ws():
         await websocket.close(4003, "initData required")
         return
 
+    resumption_token = websocket.args.get("resumptionToken", "")
+
     bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
     validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
     if validated is None:
@@ -1004,13 +1006,13 @@ async def live_audio_ws():
 
     client = get_cached_genai_client(api_key)
 
-    session_resumption_token: bytes | None = None
+    session_resumption_token: str | None = None
 
-    live_config = types.LiveConnectConfig(
-        response_modalities=[types.Modality.AUDIO],
-        input_audio_transcription=types.AudioTranscriptionConfig(),
-        output_audio_transcription=types.AudioTranscriptionConfig(),
-        system_instruction=types.Content(
+    config_kwargs = {
+        "response_modalities": [types.Modality.AUDIO],
+        "input_audio_transcription": types.AudioTranscriptionConfig(),
+        "output_audio_transcription": types.AudioTranscriptionConfig(),
+        "system_instruction": types.Content(
             parts=[
                 types.Part(
                     text=(
@@ -1021,9 +1023,14 @@ async def live_audio_ws():
                 )
             ]
         ),
-    )
+    }
 
-    logger.info("live_audio_ws: connecting user=%d model=%s", user_id, GEMINI_LIVE_MODEL)
+    if resumption_token:
+        config_kwargs["session_resumption"] = types.SessionResumptionConfig(handle=resumption_token)
+
+    live_config = types.LiveConnectConfig(**config_kwargs)
+
+    logger.info("live_audio_ws: connecting user=%d model=%s resumption_token=%s", user_id, GEMINI_LIVE_MODEL, bool(resumption_token))
 
     try:
         async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=live_config) as session:
@@ -1116,7 +1123,10 @@ async def live_audio_ws():
                             sru = response.session_resumption_update
                             if sru and hasattr(sru, "new_handle") and sru.new_handle:
                                 session_resumption_token = sru.new_handle
-                                await websocket.send_json({"type": "session_resumed"})
+                                await websocket.send_json({
+                                    "type": "resumption_token",
+                                    "token": sru.new_handle
+                                })
 
                 except asyncio.CancelledError:
                     pass
