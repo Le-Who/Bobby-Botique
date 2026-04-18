@@ -1,3 +1,5 @@
+import asyncio
+
 # /app/repos/memory_consolidation.py
 """Just-In-Time Memory Consolidation (Change 5).
 
@@ -12,8 +14,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.database import db_manager
-from app.repos.db_helpers import clear_user_context, db_query, set_user_context
+from app.database import clear_user_context, db_manager, db_query, set_user_context
 from app.repos.memory_config import (
     CHARS_PER_TOKEN as _CHARS_PER_TOKEN,
 )
@@ -363,6 +364,13 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
     try:
         from app.repos.memory import _get_embedding
 
+        # Pre-fetch predicate embeddings in parallel to avoid N+1 network requests
+        unique_predicates = list({rel.get("predicate", "related_to").strip() for rel in relations})
+        predicate_embeddings_list = await asyncio.gather(
+            *[_get_embedding(pred, api_key, task_type="RETRIEVAL_DOCUMENT") for pred in unique_predicates]
+        )
+        predicate_embeddings = dict(zip(unique_predicates, predicate_embeddings_list, strict=True))
+
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)
             try:
@@ -449,71 +457,141 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                             node_ids[name] = row["id"]
 
                     # ── Upsert graph relations into memory_edges ─────────
-                    # Semantic Edge Deduplication (Change 4): before inserting each
-                    # edge, check if a semantically similar predicate already exists
-                    # between the same pair of nodes (cosine distance < 0.25).
-                    # If so, update the existing edge's weight rather than adding a dupe.
+                    # Step 1: Gather valid relations and map node pairs
+                    valid_relations = []
+                    node_pairs_to_fetch = []
                     for rel in relations:
                         from_name = rel.get("from", "").strip()
                         to_name = rel.get("to", "").strip()
-                        predicate = rel.get("predicate", "related_to").strip()
-                        weight = float(rel.get("weight", 1.0))
-                        is_core = bool(rel.get("is_core", False))  # Core Persona (Change 5)
-
                         if from_name not in node_ids or to_name not in node_ids:
-                            continue  # Skip relations with missing entities
-
+                            continue
                         src_id = node_ids[from_name]
                         tgt_id = node_ids[to_name]
+                        valid_relations.append({
+                            "src_id": src_id,
+                            "tgt_id": tgt_id,
+                            "predicate": rel.get("predicate", "related_to").strip(),
+                            "weight": float(rel.get("weight", 1.0)),
+                            "is_core": bool(rel.get("is_core", False)),
+                        })
+                        if (src_id, tgt_id) not in node_pairs_to_fetch:
+                            node_pairs_to_fetch.append((src_id, tgt_id))
 
-                        # Semantic dedup: look for an existing edge between the same
-                        # node pair whose predicate vector is close (< 0.25 distance).
-                        # We embed the new predicate and compare against all existing
-                        # predicates for this src→tgt pair.
-                        pred_embedding = await _get_embedding(predicate, api_key, task_type="RETRIEVAL_DOCUMENT")
+                    # Step 2: Batch-fetch existing edges for these node pairs
+                    # To avoid N+1, fetch all matching edges if there are any valid relations
+                    existing_edges_by_pair = {}
+                    if valid_relations:
+                        # Extract IDs to arrays for unnesting
+                        src_arr = [pair[0] for pair in node_pairs_to_fetch]
+                        tgt_arr = [pair[1] for pair in node_pairs_to_fetch]
+                        existing_rows = await conn.fetch(
+                            """
+                            SELECT id, source_node, target_node, predicate,
+                                   predicate_embedding::text
+                            FROM memory_edges
+                            WHERE user_id = $1
+                              AND (source_node, target_node) IN (
+                                  SELECT * FROM unnest($2::uuid[], $3::uuid[])
+                              )
+                            """,
+                            user_id,
+                            src_arr,
+                            tgt_arr,
+                        )
+                        for row in existing_rows:
+                            pair = (row["source_node"], row["target_node"])
+                            if pair not in existing_edges_by_pair:
+                                existing_edges_by_pair[pair] = []
+                            # parse pgvector text representation back to float list
+                            emb_text = row["predicate_embedding"]
+                            emb = None
+                            if emb_text:
+                                try:
+                                    emb = [float(x) for x in emb_text.strip("[]").split(",")]
+                                except ValueError:
+                                    pass
+                            existing_edges_by_pair[pair].append({
+                                "id": row["id"],
+                                "predicate": row["predicate"],
+                                "embedding": emb
+                            })
+
+                    import math
+                    def cosine_distance(vec1, vec2):
+                        if not vec1 or not vec2:
+                            return 1.0
+                        dot = sum(a * b for a, b in zip(vec1, vec2, strict=False))
+                        norm1 = math.sqrt(sum(a * a for a in vec1))
+                        norm2 = math.sqrt(sum(b * b for b in vec2))
+                        if norm1 == 0 or norm2 == 0:
+                            return 1.0
+                        return 1.0 - (dot / (norm1 * norm2))
+
+                    edges_to_update = []
+                    edges_to_insert = []
+
+                    for rel in valid_relations:
+                        src_id = rel["src_id"]
+                        tgt_id = rel["tgt_id"]
+                        predicate = rel["predicate"]
+                        weight = rel["weight"]
+                        is_core = rel["is_core"]
+
+                        pred_embedding = predicate_embeddings.get(predicate)
+                        pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]" if pred_embedding else None
+
+                        similar_edge_id = None
+                        similar_edge_predicate = None
+                        min_dist = float('inf')
+
+                        # Semantic dedup: look for an existing edge between the same node pair
                         if pred_embedding:
-                            pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]"
-                            similar_edge = await conn.fetchrow(
-                                """
-                                SELECT id, predicate
-                                FROM memory_edges
-                                WHERE user_id = $1
-                                  AND source_node = $2
-                                  AND target_node = $3
-                                  AND predicate_embedding IS NOT NULL
-                                  AND predicate_embedding <=> $4::halfvec < 0.25
-                                ORDER BY predicate_embedding <=> $4::halfvec ASC
-                                LIMIT 1
-                                """,
+                            existing_edges = existing_edges_by_pair.get((src_id, tgt_id), [])
+                            for edge in existing_edges:
+                                if edge["embedding"]:
+                                    dist = cosine_distance(pred_embedding, edge["embedding"])
+                                    if dist < 0.25 and dist < min_dist:
+                                        min_dist = dist
+                                        similar_edge_id = edge["id"]
+                                        similar_edge_predicate = edge["predicate"]
+
+                        if similar_edge_id:
+                            edges_to_update.append((
+                                weight,
+                                is_core,
+                                similar_edge_id
+                            ))
+                            logging.debug(
+                                "Semantic edge dedup: merged predicate '%s' into '%s'",
+                                predicate,
+                                similar_edge_predicate,
+                            )
+                        else:
+                            edges_to_insert.append((
                                 user_id,
                                 src_id,
                                 tgt_id,
+                                predicate,
                                 pred_emb_str,
-                            )
-                            if similar_edge:
-                                # Merge into existing edge — update weight & is_core
-                                await conn.execute(
-                                    """
-                                    UPDATE memory_edges
-                                    SET weight = $1,
-                                        is_core = is_core OR $2,
-                                        updated_at = now()
-                                    WHERE id = $3
-                                    """,
-                                    weight,
-                                    is_core,
-                                    similar_edge["id"],
-                                )
-                                logging.debug(
-                                    "Semantic edge dedup: merged predicate '%s' into '%s'",
-                                    predicate,
-                                    similar_edge["predicate"],
-                                )
-                                continue
-                        else:
-                            pred_emb_str = None
+                                weight,
+                                is_core
+                            ))
 
-                        await conn.execute(
+                    # Step 3: Execute batched updates and inserts
+                    if edges_to_update:
+                        await conn.executemany(
+                            """
+                            UPDATE memory_edges
+                            SET weight = $1,
+                                is_core = is_core OR $2,
+                                updated_at = now()
+                            WHERE id = $3
+                            """,
+                            edges_to_update
+                        )
+
+                    if edges_to_insert:
+                        await conn.executemany(
                             """
                             INSERT INTO memory_edges
                                 (user_id, source_node, target_node, predicate,
@@ -526,13 +604,7 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                                 predicate_embedding = COALESCE(EXCLUDED.predicate_embedding, memory_edges.predicate_embedding),
                                 updated_at = now()
                             """,
-                            user_id,
-                            src_id,
-                            tgt_id,
-                            predicate,
-                            pred_emb_str,
-                            weight,
-                            is_core,
+                            edges_to_insert
                         )
 
                     logging.info(
