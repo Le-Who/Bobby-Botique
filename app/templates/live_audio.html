@@ -216,6 +216,29 @@ let resumptionToken = "";
 let sessionEndedIntentionally = false;
 let reconnectTimer = null;
 
+/* ── Reconnect: exponential backoff ────────────────────────────────── */
+const BACKOFF_BASE_MS = 500;
+const BACKOFF_MAX_MS  = 8000;
+let reconnectAttempt = 0;
+
+function _backoffDelay() {
+  const base = Math.min(BACKOFF_BASE_MS * Math.pow(2, reconnectAttempt), BACKOFF_MAX_MS);
+  return base + Math.random() * 500;  // jitter
+}
+
+/* ── Audio send buffer (transparent session resumption) ─────────────── */
+// Each entry: { index: int, data: base64, mime_type: string }
+// Pruned when server acks via last_consumed_client_message_index.
+let audioSendBuffer = [];
+let clientMessageIndex = 0;
+let lastAckedIndex = -1;
+
+function _pruneBuffer(ackedIndex) {
+  if (ackedIndex <= lastAckedIndex) return;
+  lastAckedIndex = ackedIndex;
+  audioSendBuffer = audioSendBuffer.filter(m => m.index > ackedIndex);
+}
+
 /* ── Error bar ──────────────────────────────────────────────────────── */
 function showError(msg) {
   errorBar.textContent = msg;
@@ -281,7 +304,6 @@ function initPlayback() {
 }
 
 function enqueueAudio(base64Pcm) {
-  // Decode base64 → ArrayBuffer → Int16 → Float32
   const raw = atob(base64Pcm);
   const bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
@@ -308,7 +330,6 @@ function enqueueAudio(base64Pcm) {
   src.connect(playbackCtx.destination);
   src.start(nextPlaybackTime);
   
-  // Advance scheduling time
   nextPlaybackTime += buf.duration;
   
   scheduledSources.push(src);
@@ -329,7 +350,7 @@ function flushPlayback() {
 /* ── WebSocket to Quart proxy ───────────────────────────────────────── */
 function connectWS() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
-    return; // Already connecting or open
+    return;
   }
 
   clearTimeout(reconnectTimer);
@@ -341,10 +362,30 @@ function connectWS() {
     url += `&resumptionToken=${encodeURIComponent(resumptionToken)}`;
   }
 
+  setStatus(reconnectAttempt > 0
+    ? `Переподключение… (${reconnectAttempt})`
+    : 'Подключаюсь к AI…', '');
+
   ws = new WebSocket(url);
+
   ws.onopen = () => {
+    reconnectAttempt = 0;       // reset backoff on success
     setStatus('Подключено к AI. Говорите!', 'active');
     endBtn.disabled = false;
+
+    // Replay unacknowledged audio chunks from the buffer.
+    // This makes the reconnect transparent — server sees continuity.
+    if (audioSendBuffer.length > 0) {
+      const toReplay = audioSendBuffer.length;
+      for (const entry of audioSendBuffer) {
+        ws.send(JSON.stringify({
+          type: 'realtime_input',
+          mime_type: entry.mime_type,
+          data: entry.data,
+        }));
+      }
+      console.log(`[live] replayed ${toReplay} buffered audio chunks`);
+    }
   };
 
   ws.onmessage = (ev) => {
@@ -370,11 +411,32 @@ function connectWS() {
         break;
 
       case 'resumption_token':
-        resumptionToken = msg.token;
+        // Always update the token (transparent mode sends frequent updates).
+        if (msg.token) {
+          resumptionToken = msg.token;
+        }
+        // Prune acknowledged audio chunks from the send buffer.
+        if (msg.last_consumed_index !== undefined) {
+          _pruneBuffer(msg.last_consumed_index);
+        }
         break;
 
+      case 'go_away': {
+        // Server will disconnect soon — proactively reconnect.
+        const leadMs = Math.max((msg.time_left_seconds || 60) - 5, 1) * 1000;
+        console.log(`[live] GoAway: reconnecting proactively in ${leadMs}ms`);
+        clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => {
+          if (!sessionEndedIntentionally && ws) {
+            ws.close(1000, 'proactive-goaway');
+            ws = null;
+            connectWS();
+          }
+        }, leadMs);
+        break;
+      }
+
       case 'session_resumed':
-        // Optional signal, logic handled automatically
         break;
 
       case 'error':
@@ -391,15 +453,19 @@ function connectWS() {
     
     setStatus('Потеряно соединение. Восстанавливаем...', 'error');
     if (recording) {
-        // Pause worklet silently until reconnected
-        stopViz();
+      // Visualizer off, but mic stays active — audio buffers locally.
+      stopViz();
     }
     
+    // Exponential backoff reconnect
+    const delay = _backoffDelay();
+    reconnectAttempt++;
+    console.log(`[live] reconnecting in ${Math.round(delay)}ms (attempt ${reconnectAttempt})`);
     reconnectTimer = setTimeout(() => {
       if (!sessionEndedIntentionally) {
         connectWS();
       }
-    }, 2000);
+    }, delay);
   };
 
   ws.onerror = () => {};
@@ -446,17 +512,30 @@ async function startRecording() {
     await audioCtx.audioWorklet.addModule('/static/js/audio-processor.js');
     workletNode = new AudioWorkletNode(audioCtx, 'mic-processor');
     workletNode.port.onmessage = (ev) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      // ev.data is an ArrayBuffer of Int16 PCM
       const b64 = arrayBufferToBase64(ev.data);
-      ws.send(JSON.stringify({
-        type: 'realtime_input',
-        mime_type: 'audio/pcm;rate=16000',
-        data: b64
-      }));
+      const mime_type = 'audio/pcm;rate=16000';
+
+      // Always buffer — even when WS is closed. Buffer survives reconnects.
+      const entry = { index: clientMessageIndex++, data: b64, mime_type };
+      audioSendBuffer.push(entry);
+
+      // Cap the buffer at ~30 seconds of audio (~469 chunks at 64ms each)
+      const MAX_BUFFER_SIZE = 500;
+      if (audioSendBuffer.length > MAX_BUFFER_SIZE) {
+        audioSendBuffer = audioSendBuffer.slice(-MAX_BUFFER_SIZE);
+      }
+
+      // Send if connected
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'realtime_input',
+          mime_type,
+          data: b64
+        }));
+      }
     };
     source.connect(workletNode);
-    workletNode.connect(audioCtx.destination); // needed for worklet to run
+    workletNode.connect(audioCtx.destination);
   } catch (err) {
     showError('AudioWorklet не поддерживается в этом браузере');
     return;
@@ -470,7 +549,6 @@ async function startRecording() {
   setStatus('Слушаю…', 'active');
   haptic?.impactOccurred('medium');
 
-  // Connect WebSocket if it's not already connected
   connectWS();
 }
 
@@ -498,6 +576,10 @@ function endSession() {
   sessionEndedIntentionally = true;
   clearTimeout(reconnectTimer);
   resumptionToken = "";
+  reconnectAttempt = 0;
+  audioSendBuffer = [];
+  clientMessageIndex = 0;
+  lastAckedIndex = -1;
   
   if (recording) stopRecording();
   if (ws) { ws.close(); ws = null; }

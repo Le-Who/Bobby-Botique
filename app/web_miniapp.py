@@ -1012,6 +1012,18 @@ async def live_audio_ws():
         "response_modalities": [types.Modality.AUDIO],
         "input_audio_transcription": types.AudioTranscriptionConfig(),
         "output_audio_transcription": types.AudioTranscriptionConfig(),
+        # Always enable session resumption (transparent mode).
+        # handle=None starts a new resumable session; handle=<token> resumes.
+        "session_resumption": types.SessionResumptionConfig(
+            handle=resumption_token or None,
+            transparent=True,
+        ),
+        # Context window compression — allows unlimited session duration.
+        # Without it, audio-only sessions hard-limit at ~15 min.
+        "context_window_compression": types.ContextWindowCompressionConfig(
+            trigger_tokens=100_000,
+            sliding_window=types.SlidingWindow(target_tokens=4_000),
+        ),
         "system_instruction": types.Content(
             parts=[
                 types.Part(
@@ -1024,9 +1036,6 @@ async def live_audio_ws():
             ]
         ),
     }
-
-    if resumption_token:
-        config_kwargs["session_resumption"] = types.SessionResumptionConfig(handle=resumption_token)
 
     live_config = types.LiveConnectConfig(**config_kwargs)
 
@@ -1118,15 +1127,43 @@ async def live_audio_ws():
                             if content.interrupted is True:
                                 await websocket.send_json({"type": "interrupt"})
 
-                        # Session resumption update
+                        # Session resumption update (transparent mode)
                         if hasattr(response, "session_resumption_update"):
                             sru = response.session_resumption_update
-                            if sru and hasattr(sru, "new_handle") and sru.new_handle:
-                                session_resumption_token = sru.new_handle
-                                await websocket.send_json({
-                                    "type": "resumption_token",
-                                    "token": sru.new_handle
-                                })
+                            if sru:
+                                msg_payload: dict = {"type": "resumption_token"}
+                                if hasattr(sru, "new_handle") and sru.new_handle:
+                                    session_resumption_token = sru.new_handle
+                                    msg_payload["token"] = sru.new_handle
+                                # Relay last_consumed_client_message_index for
+                                # client-side audio buffer pruning (transparent mode).
+                                if hasattr(sru, "last_consumed_client_message_index"):
+                                    idx = sru.last_consumed_client_message_index
+                                    if idx is not None:
+                                        msg_payload["last_consumed_index"] = idx
+                                if "token" in msg_payload or "last_consumed_index" in msg_payload:
+                                    await websocket.send_json(msg_payload)
+
+                        # GoAway signal — server will terminate connection soon.
+                        # Relay to client so it can proactively reconnect.
+                        if hasattr(response, "go_away") and response.go_away is not None:
+                            time_left = response.go_away.time_left
+                            seconds_left = 60.0
+                            if time_left is not None:
+                                seconds_left = (
+                                    time_left.total_seconds()
+                                    if hasattr(time_left, "total_seconds")
+                                    else float(time_left)
+                                )
+                            logger.info(
+                                "live_audio_ws: GoAway received user=%d time_left=%.1fs",
+                                user_id,
+                                seconds_left,
+                            )
+                            await websocket.send_json({
+                                "type": "go_away",
+                                "time_left_seconds": seconds_left,
+                            })
 
                 except asyncio.CancelledError:
                     pass
