@@ -365,6 +365,7 @@ async def _show_confirmation_ui(
 
     # Store pending voice data for callback handler
     if context.user_data is not None:
+        transcript_lower = transcript.lower()
         pending = {
             "transcript": transcript,
             "voice_bytes": voice_bytes,
@@ -373,9 +374,11 @@ async def _show_confirmation_ui(
             "file_unique_id": voice.file_unique_id,
             "placeholder_id": placeholder.message_id,
             "intent": intent,
-            "reply_with_voice": "озвучь ответ" in transcript.lower()
-            or "ответь голосом" in transcript.lower()
-            or "прочитай вслух" in transcript.lower(),
+            "reply_with_voice": (
+                "озвучь ответ" in transcript_lower
+                or "ответь голосом" in transcript_lower
+                or "прочитай вслух" in transcript_lower
+            ),
         }
         # Attach "Show & Tell" image if present
         if attached_image:
@@ -476,10 +479,11 @@ async def _auto_route_to_chat(
     from app.handlers.ai_chat import _handle_regular_chat
 
     # Dynamically resolve if the user requested voice readout
+    transcript_lower = transcript.lower()
     reply_with_voice = (
-        "озвучь ответ" in transcript.lower()
-        or "ответь голосом" in transcript.lower()
-        or "прочитай вслух" in transcript.lower()
+        "озвучь ответ" in transcript_lower
+        or "ответь голосом" in transcript_lower
+        or "прочитай вслух" in transcript_lower
     )
     await _handle_regular_chat(new_placeholder, user_id, transcript, chat_state, reply_with_voice=reply_with_voice)
 
