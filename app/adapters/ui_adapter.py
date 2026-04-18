@@ -57,10 +57,17 @@ class TelegramMessageAdapter(StreamingUIAdapter):
             if "not found" in str(e).lower() and "message to be replied" in str(e).lower():
                 # Fallback: original message deleted, just send a new message to the chat
                 bot = self._bot or self._msg.get_bot()
+
+                reply_to_message_id = None
+                if getattr(self._msg, "reply_to_message", None):
+                    reply_to_message_id = self._msg.reply_to_message.message_id
+
                 new_msg = await bot.send_message(
-                    chat_id=self._chat_id or self._msg.chat_id,
+                    chat_id=self._chat_id or getattr(self._msg, "chat_id", None),
                     text=text,
                     parse_mode=parse_mode,
+                    reply_to_message_id=reply_to_message_id,
+                    allow_sending_without_reply=True,
                     link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
             else:
