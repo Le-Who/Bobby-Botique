@@ -79,6 +79,8 @@ class TestTelegramMessageAdapter:
 
         # Simulate original message being deleted
         mock_message.reply_text.side_effect = TelegramError("Message to be replied not found")
+        mock_message.reply_to_message = AsyncMock()
+        mock_message.reply_to_message.message_id = 999
 
         fallback_msg = AsyncMock()
         mock_bot.send_message.return_value = fallback_msg
@@ -90,6 +92,8 @@ class TestTelegramMessageAdapter:
         kwargs = mock_bot.send_message.call_args.kwargs
         assert kwargs["chat_id"] == 123
         assert kwargs["parse_mode"] == "HTML"
+        assert kwargs["reply_to_message_id"] == 999
+        assert kwargs["allow_sending_without_reply"] is True
         assert kwargs["link_preview_options"].is_disabled is True
 
         assert isinstance(new_adapter, TelegramMessageAdapter)
