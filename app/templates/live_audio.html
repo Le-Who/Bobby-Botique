@@ -210,8 +210,8 @@ let audioCtx = null;
 let workletNode = null;
 let micStream = null;
 let playbackCtx = null;
-let playbackQueue = [];
-let isPlaying = false;
+let scheduledSources = [];
+let nextPlaybackTime = 0;
 
 /* ── Error bar ──────────────────────────────────────────────────────── */
 function showError(msg) {
@@ -290,29 +290,37 @@ function enqueueAudio(base64Pcm) {
 
   const buf = playbackCtx.createBuffer(1, float32.length, 24000);
   buf.getChannelData(0).set(float32);
-  playbackQueue.push(buf);
+  
+  if (playbackCtx.state !== 'running') {
+    playbackCtx.resume();
+  }
 
-  if (!isPlaying) drainPlayback();
-}
+  const now = playbackCtx.currentTime;
+  if (nextPlaybackTime < now) {
+    nextPlaybackTime = now;
+  }
 
-function drainPlayback() {
-  if (playbackQueue.length === 0) { isPlaying = false; return; }
-  isPlaying = true;
-  const buf = playbackQueue.shift();
   const src = playbackCtx.createBufferSource();
   src.buffer = buf;
   src.connect(playbackCtx.destination);
-  src.onended = drainPlayback;
-  src.start();
+  src.start(nextPlaybackTime);
+  
+  // Advance scheduling time
+  nextPlaybackTime += buf.duration;
+  
+  scheduledSources.push(src);
+  src.onended = () => {
+    const idx = scheduledSources.indexOf(src);
+    if (idx > -1) scheduledSources.splice(idx, 1);
+  };
 }
 
 function flushPlayback() {
-  playbackQueue = [];
-  isPlaying = false;
-  // Interrupt currently playing audio by suspending & resuming context
-  if (playbackCtx && playbackCtx.state === 'running') {
-    playbackCtx.suspend().then(() => playbackCtx.resume());
-  }
+  scheduledSources.forEach(src => {
+    try { src.stop(); } catch (e) {}
+  });
+  scheduledSources = [];
+  nextPlaybackTime = 0;
 }
 
 /* ── WebSocket to Quart proxy ───────────────────────────────────────── */
@@ -370,10 +378,15 @@ function connectWS() {
 /* ── Transcript ─────────────────────────────────────────────────────── */
 function appendTranscript(who, text, cls) {
   if (!text) return;
-  const p = document.createElement('p');
-  p.className = cls;
-  p.textContent = `${who}: ${text}`;
-  transcriptEl.appendChild(p);
+  const lastP = transcriptEl.lastElementChild;
+  if (lastP && lastP.className === cls) {
+    lastP.textContent += text;
+  } else {
+    const p = document.createElement('p');
+    p.className = cls;
+    p.textContent = `${who}: ${text}`;
+    transcriptEl.appendChild(p);
+  }
   transcriptEl.scrollTop = transcriptEl.scrollHeight;
 }
 
