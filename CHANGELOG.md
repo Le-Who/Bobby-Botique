@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.3] - 2026-04-18 - Hint Generation Fixes & Circuit Breaker Diagnostics
+
+### 🐛 Bug Fixes
+
+- **`generate_hints` History Format (`app/games/judge.py`):** Fixed a silent data corruption bug where `history` was constructed with `parts: [{"text": prompt}]` (Gemini SDK dict format) instead of `parts: [prompt]` (plain strings). `OpenRouterProvider._build_messages` calls `str(part)` on each element in `parts`, so Opencode / OpenRouter received the Python dict repr `"{'text': 'Придумай...'}"` as the prompt text instead of the actual prompt. Hints were either generated from garbage input or silently rejected by the API.
+- **`generate_hints` Silent Crash Prevention (`app/games/judge.py`):** Added a top-level `try/except Exception` with `logger.exception()` around the entire function body. Before this fix, any unhandled exception in the background hint prefetch task was silently swallowed by asyncio — `_mem_hints` would be left empty with no diagnostic trace in logs.
+- **`generate_hints` Retry Suppression (`app/games/judge.py`):** Removed the explicit `timeout=25.0` kwarg passed to `AgentRequestUseCase.get_ai_response`. In the router, any non-`None` `timeout` argument forcibly sets `max_retries=1`, disabling the standard retry/fallback chain. Hint generation was therefore permanently failing on transient Opencode errors instead of recovering with the Gemini fallback.
+
+### 📊 Observability
+
+- **Circuit Breaker Exception Type (`app/circuit_breaker.py`):** Added `type(exception).__name__` to the failure log format string. The log now reads `Circuit Breaker 'ai_provider:opencode' failure #1 [TimeoutError]: ` instead of `failure #1: `. This is critical because `str(asyncio.TimeoutError())` in Python 3.11+ is always `""` — the type name is the only diagnostic signal in such cases.
+
+### ✅ Verification
+
+- `ruff check app/` → All checks passed
+- `py_compile app/games/judge.py app/circuit_breaker.py` → OK
+
 ## [2.15.2] - 2026-04-18 - Admin Wizard & AAA Test Hardening
 
 ### 🐛 Bug Fixes & UX

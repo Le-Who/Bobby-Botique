@@ -148,9 +148,10 @@ class CircuitBreaker:
         self._last_failure_time = time.time()
 
         logging.warning(
-            "Circuit Breaker '%s' failure #%d: %s",
+            "Circuit Breaker '%s' failure #%d [%s]: %s",
             self.name,
             self._failure_count,
+            type(exception).__name__,
             exception,
         )
 

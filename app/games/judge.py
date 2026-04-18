@@ -472,56 +472,78 @@ async def generate_hints(word: str, category: str) -> list[str]:
     import json
     import re
 
-    from app.config import get_primary_provider_async, settings
-    from app.errors import is_error_message
-    from app.providers import get_provider_router
+    try:
+        from app.config import get_primary_provider_async, settings
+        from app.errors import is_error_message
+        from app.providers import get_provider_router
 
-    c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
-    prompt = _HINTS_PROMPT.format(W=word, C_STR=c_str)
+        c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
+        prompt = _HINTS_PROMPT.format(W=word, C_STR=c_str)
 
-    # Use the active provider (e.g. Opencode Go) to bypass overloaded Gemini endpoint
-    provider_name = await get_primary_provider_async()
-    if provider_name == "opencode":
-        preferred_model = settings.OPENCODE_QNA_MODEL or settings.OPENCODE_DEFAULT_MODEL
-    elif provider_name == "openrouter":
-        preferred_model = settings.OPENROUTER_QNA_MODEL or settings.OPENROUTER_DEFAULT_MODEL
-    else:
-        preferred_model = settings.QNA_MODEL
+        # Use the active provider (e.g. Opencode Go) to bypass overloaded Gemini endpoint
+        provider_name = await get_primary_provider_async()
+        if provider_name == "opencode":
+            preferred_model = settings.OPENCODE_QNA_MODEL or settings.OPENCODE_DEFAULT_MODEL
+        elif provider_name == "openrouter":
+            preferred_model = settings.OPENROUTER_QNA_MODEL or settings.OPENROUTER_DEFAULT_MODEL
+        else:
+            preferred_model = settings.QNA_MODEL
 
-    router = get_provider_router()
-    history = [{"role": "user", "parts": [{"text": prompt}]}]
+        logger.info("generate_hints: word=%r provider=%s model=%s", word, provider_name, preferred_model)
 
-    # get_response natively handles cross-provider fallbacks and circuit breakers.
-    # By setting max_key_retries=2, we let it race and fail over to other models.
-    response_text, _ = await router.get_response(
-        preferred_model=preferred_model,
-        history=history,
-        system_instruction=None,
-        use_openrouter=(provider_name == "openrouter"),
-        max_key_retries=2,
-        thinking_level="none",
-        timeout=25.0,
-    )
+        router = get_provider_router()
+        # Parts must be plain strings — NOT {"text": ...} dicts.
+        # _build_messages (OpenRouter/Opencode) calls str(part) on each element;
+        # a dict part becomes "{'text': '...'}" — garbled Python repr.
+        history = [{"role": "user", "parts": [prompt]}]
 
-    if response_text and not is_error_message(response_text):
+        # get_response natively handles cross-provider fallbacks and circuit breakers.
+        response_text, _ = await router.get_response(
+            preferred_model=preferred_model,
+            history=history,
+            system_instruction=None,
+            use_openrouter=(provider_name == "openrouter"),
+            max_key_retries=2,
+            thinking_level="off",
+        )
+
+        if not response_text:
+            logger.warning("generate_hints: empty response from %s for word=%r", preferred_model, word)
+            return []
+
+        if is_error_message(response_text):
+            logger.warning(
+                "generate_hints: error response from %s for word=%r: %s",
+                preferred_model, word, response_text[:150],
+            )
+            return []
+
+        # Try strict JSON parse first
         try:
-            # Strip markdown code blocks before parsing
             cleaned_text = response_text.replace("```json", "").replace("```JSON", "").replace("```", "").strip()
             data = json.loads(cleaned_text)
             hints = data.get("hints", [])
             if hints and isinstance(hints, list) and len(hints) >= 3:
                 logger.debug("Hints generated via %s for %r: %s", preferred_model, word, hints)
                 return hints[:3]
-            logger.warning("generate_hints returned invalid hints array from %s: %r", preferred_model, hints)
+            logger.warning("generate_hints: invalid hints array from %s: %r", preferred_model, hints)
         except json.JSONDecodeError as exc:
-            logger.warning("JSON decode failed in generate_hints (model=%s) for %r: %s. Response: %r", preferred_model, word, exc, response_text[:200])
-            # Fallback loose regex extraction if LLM got creative with formatting
+            logger.warning(
+                "generate_hints: JSON decode failed (model=%s) for %r: %s. Raw: %r",
+                preferred_model, word, exc, response_text[:300],
+            )
+            # Fallback: loose regex extraction if LLM got creative with formatting
             found = re.findall(r'"([^"]+)"', response_text)
             hints_extracted = [h for h in found if h.lower() != "hints" and len(h) > 5]
             if len(hints_extracted) >= 3:
                 return hints_extracted[:3]
 
-    logger.warning("generate_hints completely failed to return valid hints for word=%r", word)
+        logger.warning(
+            "generate_hints: no valid hints extracted for word=%r. response prefix: %r",
+            word, response_text[:200],
+        )
+    except Exception:
+        logger.exception("generate_hints: unexpected crash for word=%r", word)
     return []
 
 
