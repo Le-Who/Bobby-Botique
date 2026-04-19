@@ -1049,8 +1049,10 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     # Called fresh on every retry attempt to inject the latest resumption
     # token. Building once outside the loop would freeze the handle and cause
     # Gemini to start a new session on key-rotation reconnects, discarding all
-    # prior context. transparent=True asks Gemini to track unacknowledged
-    # client messages and replay them on reconnection (SDK feature, Apr 2026).
+    # prior context.
+    # NOTE: transparent=True is a Vertex AI-only feature and is NOT supported
+    # by the AI Studio API key endpoint (ai.google.dev). It is intentionally
+    # omitted here. Standard handle-based resumption works for both backends.
     def _build_live_config(handle: str | None) -> "types.LiveConnectConfig":
         _kw: dict = {
             "response_modalities": [types.Modality.AUDIO],
@@ -1058,7 +1060,7 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
             "output_audio_transcription": types.AudioTranscriptionConfig(),
             "session_resumption": types.SessionResumptionConfig(
                 handle=handle or None,
-                transparent=True,
+                # transparent=True is Vertex AI only — not used here (AI Studio key).
             ),
             "context_window_compression": types.ContextWindowCompressionConfig(
                 sliding_window=types.SlidingWindow(),
@@ -1067,8 +1069,12 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
             "system_instruction": types.Content(parts=[types.Part(text=" ".join(_sys_parts))]),
         }
         if chat_state and chat_state.thinking_level:
-            mapped = chat_state.thinking_level.upper()
-            _kw["thinking_config"] = types.ThinkingConfig(thinking_level=mapped)
+            # AI Studio Live API (gemini-3.1-flash-live-preview) expects lowercase
+            # thinking_level values: 'low', 'medium', 'high', 'minimal'.
+            # Do NOT uppercase — it causes an INVALID_ARGUMENT error.
+            _kw["thinking_config"] = types.ThinkingConfig(
+                thinking_level=chat_state.thinking_level.lower()
+            )
         return types.LiveConnectConfig(**_kw)  # type: ignore[arg-type]
 
     MAX_RETRIES = 3
