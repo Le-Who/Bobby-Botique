@@ -252,3 +252,21 @@ async def test_error_leakage_prevented(client):
 
         response_text = (await response.get_data()).decode()
         assert secret_message not in response_text
+
+@pytest.mark.asyncio
+async def test_generate_csp_nonce_integration(client):
+    """Test that generate_csp_nonce runs during a request and injects a unique nonce into CSP."""
+    response1 = await client.get("/health")
+    csp1 = response1.headers.get("Content-Security-Policy", "")
+    m1 = re.search(r"'nonce-([A-Za-z0-9_-]+)'", csp1)
+    assert m1 is not None, "Nonce not found in CSP header"
+    nonce1 = m1.group(1)
+    assert len(nonce1) == 22
+
+    response2 = await client.get("/health")
+    csp2 = response2.headers.get("Content-Security-Policy", "")
+    m2 = re.search(r"'nonce-([A-Za-z0-9_-]+)'", csp2)
+    assert m2 is not None, "Nonce not found in CSP header"
+    nonce2 = m2.group(1)
+
+    assert nonce1 != nonce2, "Nonce should be unique per request"
