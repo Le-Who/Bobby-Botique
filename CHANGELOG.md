@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.10] - 2026-04-19 - Async Cache Performance Optimization
+
+### ⚡ Performance — Async Lock Removal
+- **Synchronous Cache Lookups:** Conducted a performance audit across repository layers (`keys.py`, `users.py`, `metrics_repo.py`) and stripped completely redundant `asyncio.Lock` wrappers from synchronous `TTLCache` lookups. Since `asyncio` is single-threaded under the GIL and yields only at `await` points, these locks provided zero thread-safety benefits while silently accumulating event-loop scheduling overhead (`__aenter__`/`__aexit__`) on the application's hottest paths.
+- **Architecture Cleanup:** Extracted and eliminated the `_cache_lock` property from the globally shared `DatabaseManager` singleton (`app/database.py`).
+- **Thundering-Herd Logic Preservation:** Verified and documented the check-then-act pattern in `suspend_key` (`app/repos/keys.py`) to ensure atomic concurrency correctness in `asyncio`'s cooperative model without the need for explicit locking.
+- **Test Scaffolding Pruned:** Stripped obsolete `_cache_lock` mock implementations from unit and integration fixtures (`tests/test_repos_users.py`, `tests/test_repos_keys.py`, `tests/test_database_tavily.py`, `tests/test_integration_flows.py`).
 ## [2.15.9] - 2026-04-19 - Live Audio Stability & Key Rotation
 
 ### 🔄 Gemini Live Infrastructure

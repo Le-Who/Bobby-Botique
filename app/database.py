@@ -65,16 +65,7 @@ class DatabaseManager:
         self._user_auth_cache = TTLCache(maxsize=1000, ttl=300)
         self._model_config_cache = TTLCache(maxsize=50, ttl=3600)
 
-        # Lock lazily created via property to avoid asyncio.Lock() before event loop
-        self._cache_lock_instance: asyncio.Lock | None = None
         self._monitor_task = None
-
-    @property
-    def _cache_lock(self) -> asyncio.Lock:
-        """Lazily create asyncio.Lock on first access (avoids Python 3.12+ DeprecationWarning)."""
-        if self._cache_lock_instance is None:
-            self._cache_lock_instance = asyncio.Lock()
-        return self._cache_lock_instance
 
     def _is_pool_closed(self) -> bool:
         """Check if the connection pool is closed, wrapping asyncpg internals."""

@@ -160,9 +160,8 @@ async def get_gemini_key_usage_stats(
 
 async def get_active_key_info(model_name: str) -> dict[str, Any] | None:
     cached_key = None
-    async with db_manager._cache_lock:
-        if model_name in db_manager._active_keys_cache:
-            cached_key = db_manager._active_keys_cache[model_name]
+    if model_name in db_manager._active_keys_cache:
+        cached_key = db_manager._active_keys_cache[model_name]
 
     if not cached_key:
         return None

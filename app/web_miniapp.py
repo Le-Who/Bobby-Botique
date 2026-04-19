@@ -1053,7 +1053,7 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     # NOTE: transparent=True is a Vertex AI-only feature and is NOT supported
     # by the AI Studio API key endpoint (ai.google.dev). It is intentionally
     # omitted here. Standard handle-based resumption works for both backends.
-    def _build_live_config(handle: str | None) -> "types.LiveConnectConfig":
+    def _build_live_config(handle: str | None) -> types.LiveConnectConfig:
         _kw: dict = {
             "response_modalities": [types.Modality.AUDIO],
             "input_audio_transcription": types.AudioTranscriptionConfig(),

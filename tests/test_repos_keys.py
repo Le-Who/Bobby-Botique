@@ -20,10 +20,6 @@ def mock_deps():
     """Patch db deps for keys module."""
     from app.repos import keys
 
-    mock_lock = AsyncMock()
-    mock_lock.__aenter__.return_value = None
-    mock_lock.__aexit__.return_value = None
-
     with (
         patch.object(keys, "db_query", new_callable=AsyncMock) as m_query,
         patch.object(keys, "db_execute_many", new_callable=AsyncMock) as m_exec,
@@ -33,7 +29,6 @@ def mock_deps():
         patch.object(keys, "clear_user_context", new_callable=AsyncMock),
         patch.object(keys, "settings", _MockSettings()),
     ):
-        m_mgr._cache_lock = mock_lock
         m_mgr._active_keys_cache = {}
         m_mgr._model_config_cache = {}
         m_mgr.is_connected = True

@@ -7,7 +7,6 @@ and daily/monthly limit enforcement.
 Extracted from app/database.py to isolate key-management domain logic.
 """
 
-import asyncio
 import hashlib
 import logging
 import re
@@ -201,9 +200,8 @@ _openrouter_km = DailyKeyManager("openrouter_api_keys", "openrouter_key_usage")
 
 
 async def get_model_daily_limit(model_name: str) -> int | None:
-    async with db_manager._cache_lock:
-        if hasattr(db_manager, "_model_config_cache") and model_name in db_manager._model_config_cache:
-            return db_manager._model_config_cache[model_name]
+    if model_name in db_manager._model_config_cache:
+        return db_manager._model_config_cache[model_name]
 
     try:
         res = await db_query(
@@ -216,9 +214,7 @@ async def get_model_daily_limit(model_name: str) -> int | None:
         if limit is None:
             limit = settings.DAILY_LIMITS.get(model_name)
 
-        async with db_manager._cache_lock:
-            if hasattr(db_manager, "_model_config_cache"):
-                db_manager._model_config_cache[model_name] = limit
+        db_manager._model_config_cache[model_name] = limit
         return limit
     except (asyncpg.PostgresError, asyncpg.InterfaceError) as e:
         logging.warning("Failed to fetch limit for %s: %s", model_name, e)
@@ -246,12 +242,11 @@ async def _get_fresh_available_key(
 
 
 async def invalidate_key_cache(model_name: str | None = None) -> None:
-    async with db_manager._cache_lock:
-        if model_name:
-            if model_name in db_manager._active_keys_cache:
-                del db_manager._active_keys_cache[model_name]
-        else:
-            db_manager._active_keys_cache.clear()
+    if model_name:
+        if model_name in db_manager._active_keys_cache:
+            del db_manager._active_keys_cache[model_name]
+    else:
+        db_manager._active_keys_cache.clear()
 
 
 async def get_available_gemini_key(
@@ -261,9 +256,8 @@ async def get_available_gemini_key(
     # When exclusions are requested, skip cache (caller wants a *different* key)
     if not excluded_hashes:
         cached_key = None
-        async with db_manager._cache_lock:
-            if model_name in db_manager._active_keys_cache:
-                cached_key = db_manager._active_keys_cache[model_name]
+        if model_name in db_manager._active_keys_cache:
+            cached_key = db_manager._active_keys_cache[model_name]
         if cached_key:
             return cached_key
 
@@ -280,8 +274,7 @@ async def get_available_gemini_key(
             )
 
             if new_key and not excluded_hashes:
-                async with db_manager._cache_lock:
-                    db_manager._active_keys_cache[model_name] = new_key
+                db_manager._active_keys_cache[model_name] = new_key
 
             return new_key
         finally:
@@ -377,7 +370,6 @@ class KeyStatusManager:
 
     def __init__(self):
         self._suspension_cache: dict[str, datetime] = {}
-        self._cache_lock = asyncio.Lock()
 
     async def suspend_key(
         self,
@@ -390,14 +382,16 @@ class KeyStatusManager:
         cache_key = f"{key_hash}:{model_name}"
         now_utc = datetime.now(UTC_TZ)
 
-        async with self._cache_lock:
-            # Drop duplicate suspension requests within 5 seconds for the same key.
-            # Prevents a "thundering herd" of concurrent DB writes when many Live
-            # WS sessions hit the same quota-exhausted key simultaneously.
-            cached_at = self._suspension_cache.get(cache_key)
-            if cached_at is not None and (now_utc - cached_at).total_seconds() < 5:
-                return
-            self._suspension_cache[cache_key] = now_utc
+        # Drop duplicate suspension requests within 5 seconds for the same key.
+        # Prevents a "thundering herd" of concurrent DB writes when many Live
+        # WS sessions hit the same quota-exhausted key simultaneously.
+        # NOTE: No asyncio.Lock is needed here. The check + write below has no
+        # `await` between them, so asyncio's cooperative scheduler cannot switch
+        # coroutines mid-way. The entire block executes atomically.
+        cached_at = self._suspension_cache.get(cache_key)
+        if cached_at is not None and (now_utc - cached_at).total_seconds() < 5:
+            return
+        self._suspension_cache[cache_key] = now_utc
 
         # Read current failure_count to compute backoff
         rows = await db_query(
@@ -605,8 +599,7 @@ async def force_update_tavily_keys() -> bool:
                 keys_data,
             )
         await db_query("DELETE FROM tavily_key_usage")
-        async with db_manager._cache_lock:
-            db_manager._active_keys_cache.clear()
+        db_manager._active_keys_cache.clear()
         return True
     except (asyncpg.PostgresError, asyncpg.InterfaceError):
         return False

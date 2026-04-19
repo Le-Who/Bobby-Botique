@@ -1,6 +1,9 @@
 import asyncio
+
 import pytest
+
 from app.repos.keys import get_key_status_manager
+
 
 @pytest.mark.asyncio
 async def test_thundering_herd_suspension(monkeypatch):

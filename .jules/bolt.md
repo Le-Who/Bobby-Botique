@@ -27,3 +27,9 @@
 
 **Learning:** `get_task_prompt()` rebuilt `_SHARED_VARS = {"formatting_rules", "formatting_rules_compact"}` as a new `set` on every call, and used `re.findall(r"\{(\w+)\}", text)` without pre-compilation. While not the hottest path, this function composes every task-specific prompt (QnA, synthesis, URL selection, image analysis) — dozens of calls per research session.
 **Action:** Hoisted `_PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")` and `_SHARED_VARS = frozenset({...})` to module level. Using `frozenset` is also faster for membership tests (`in`) than a `set` literal since it is hashable and interned. Verified: 68/68 tests pass.
+
+
+## 2026-04-19 - asyncio.Lock Overhead on Synchronous Caches
+
+**Learning:** This codebase previously wrapped standard TTLCache in-memory dictionary accesses with sync with db_manager._cache_lock: (an syncio.Lock). Because Python syncio is single-threaded and co-routines only yield at wait points, a purely synchronous cache dictionary lookup is fundamentally atomic under the GIL. Using syncio.Lock for these lookups provides zero concurrency protection, but adds significant event-loop scheduling CPU overhead (firing __aenter__ and __aexit__) to the database repository hot-path across users.py, metrics_repo.py, and keys.py.
+**Action:** Removed _cache_lock property and all usages wrapping simple synchronous cache lookups across all apps repo files to eliminate the event-loop overhead. Next time, never use syncio.Lock for purely synchronous dictionary/cache mutations in syncio code unless spanning an wait.

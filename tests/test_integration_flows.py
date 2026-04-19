@@ -226,9 +226,6 @@ class TestConversationLifecycle:
             patch("app.repos.conversations.db_manager") as mock_mgr,
         ):
             mock_mgr.is_connected = True
-            mock_mgr._cache_lock = MagicMock()
-            mock_mgr._cache_lock.__aenter__ = AsyncMock(return_value=None)
-            mock_mgr._cache_lock.__aexit__ = AsyncMock(return_value=None)
             # Mock pool.acquire() → conn with conn.transaction() support
             mock_conn = MagicMock()
             mock_txn = MagicMock()
@@ -348,9 +345,6 @@ class TestUserAuthChain:
         ):
             mock_mgr.is_connected = True
             mock_mgr._user_auth_cache = {}
-            mock_mgr._cache_lock = MagicMock()
-            mock_mgr._cache_lock.__aenter__ = AsyncMock(return_value=None)
-            mock_mgr._cache_lock.__aexit__ = AsyncMock(return_value=None)
             # Mock the pool.acquire context manager
             mock_conn = AsyncMock()
             mock_mgr.pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)

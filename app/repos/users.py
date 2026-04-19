@@ -33,9 +33,8 @@ async def is_authorized(user_id: int) -> bool:
         return True
 
     # Check cache
-    async with db_manager._cache_lock:
-        if user_id in db_manager._user_auth_cache:
-            return db_manager._user_auth_cache[user_id]
+    if user_id in db_manager._user_auth_cache:
+        return db_manager._user_auth_cache[user_id]
 
     if not db_manager.is_connected:
         await reconnect_database()
@@ -51,8 +50,7 @@ async def is_authorized(user_id: int) -> bool:
             is_auth = result and result[0]["is_authorized"] == 1
 
             # Update cache
-            async with db_manager._cache_lock:
-                db_manager._user_auth_cache[user_id] = is_auth
+            db_manager._user_auth_cache[user_id] = is_auth
 
             return is_auth
         finally:
@@ -60,9 +58,8 @@ async def is_authorized(user_id: int) -> bool:
 
 
 async def invalidate_user_auth_cache(user_id: int) -> None:
-    async with db_manager._cache_lock:
-        if user_id in db_manager._user_auth_cache:
-            del db_manager._user_auth_cache[user_id]
+    if user_id in db_manager._user_auth_cache:
+        del db_manager._user_auth_cache[user_id]
 
 
 async def load_user_state(user_id: int) -> dict[str, Any] | None:
