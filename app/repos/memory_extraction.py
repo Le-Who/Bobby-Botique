@@ -145,11 +145,15 @@ async def extract_graph_structured(
         try:
             client = get_cached_genai_client(current_api_key)
 
+            current_max_tokens = 2048
+            if attempt > 0:
+                current_max_tokens = 4096
+
             config_kwargs: dict = {
                 "response_mime_type": "application/json",
                 "response_json_schema": GraphExtractionResult.model_json_schema(),
                 "temperature": 0.1,
-                "max_output_tokens": 2048,
+                "max_output_tokens": current_max_tokens,
             }
             if GRAPH_EXTRACTION_THINKING_LEVEL and any(x in GRAPH_EXTRACTION_MODEL.lower() for x in ("pro", "think")):
                 config_kwargs["thinking_config"] = types.ThinkingConfig(
@@ -206,15 +210,12 @@ async def extract_graph_structured(
                 import asyncio
 
                 if is_truncation:
-                    # Adaptive token budget: double the limit and retry immediately (same key is fine)
-                    current_tokens = config_kwargs.get("max_output_tokens", 2048)
-                    config_kwargs["max_output_tokens"] = min(current_tokens * 2, 8192)
+                    # Token budget expands on next attempt logic explicitly (config max_tokens)
                     wait = 0.0
                     logging.warning(
-                        "Graph extraction JSON truncated (key %s…, attempt %d) — retrying with %d tokens",
+                        "Graph extraction JSON truncated (key %s…, attempt %d) — retrying with 4096 tokens",
                         current_key_hash,
                         attempt + 1,
-                        config_kwargs["max_output_tokens"],
                     )
                 else:
                     wait = (attempt + 1) * 2.0

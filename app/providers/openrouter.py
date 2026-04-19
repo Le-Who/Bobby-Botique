@@ -267,7 +267,10 @@ class OpenRouterProvider(BaseAIProvider):
                             break
                         try:
                             data = json.loads(data_str)
-                            choice = data.get("choices", [{}])[0]
+                            choices = data.get("choices", [])
+                            if not choices:
+                                continue
+                            choice = choices[0]
 
                             fr = choice.get("finish_reason")
                             if fr:

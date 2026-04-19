@@ -191,12 +191,13 @@ class ProviderRouter:
 
                 if error_category != "transient":
                     try:
-                        await status_mgr.suspend_key(
-                            key_data["key_hash"],
-                            model_used,  # type: ignore[arg-type]  # asserted above
-                            error_category,
-                            response_text[:200],
-                        )
+                        if not is_opencode_model(model_used):  # type: ignore[arg-type]
+                            await status_mgr.suspend_key(
+                                key_data["key_hash"],
+                                model_used,  # type: ignore[arg-type]  # asserted above
+                                error_category,
+                                response_text[:200],
+                            )
                     except Exception as e:
                         logging.warning(
                             "Non-critical: failed to suspend key: %s",

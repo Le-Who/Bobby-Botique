@@ -1013,16 +1013,6 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     user_first_name: str = _tg_user.get("first_name", "").strip()
     user_language: str = _tg_user.get("language_code", "").strip()
 
-    # ── Resolve API key (Round Robin) ─────────────────────────────────────
-    global _KEY_ROTATION_INDEX
-    api_keys: list[str] = list(settings.GEMINI_API_KEYS)
-    if not api_keys:
-        await websocket.close(4500, "No API keys configured")
-        return
-
-    api_key = api_keys[_KEY_ROTATION_INDEX % len(api_keys)]
-    _KEY_ROTATION_INDEX += 1
-
     # ── Connect to Gemini Live API ────────────────────────────────────────
     from google import genai
     from google.genai import types
@@ -1030,6 +1020,16 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     from app.config import GEMINI_LIVE_MODEL
     from app.providers.gemini import get_cached_genai_client
     from app.repos.chats import get_user_chat
+    from app.handlers.ai_core import _resolve_ai_request
+
+    key_data, _, _ = await _resolve_ai_request(
+        GEMINI_LIVE_MODEL,
+        use_openrouter=False,
+    )
+    if not key_data:
+        await websocket.close(4500, "No API keys configured or available")
+        return
+    api_key = key_data["api_key"]
 
     client = get_cached_genai_client(api_key)
 
@@ -1261,9 +1261,26 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                             pass
 
     except Exception as exc:
-        logger.error("live_audio_ws: session error user=%d: %s", user_id, exc)
+        err_str = str(exc)
+        logger.error("live_audio_ws: session error user=%d: %s", user_id, err_str)
+        if "1011" in err_str or "quota" in err_str.lower():
+            # Broadcast the exhaustion to the global key manager so subsequent connections rotate to a healthy key
+            try:
+                import hashlib
+
+                from app.repos.keys import get_key_status_manager
+                from app.utils.background_tasks import submit_task
+
+                key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:8]
+                submit_task(
+                    get_key_status_manager().suspend_key(
+                        key_hash, "gemini-3.1-flash-live-preview", "rate_limit", err_str
+                    )
+                )
+            except Exception as e_susp:
+                logger.debug("Failed to suspend Live API key: %s", e_susp)
         try:
-            await websocket.send_json({"type": "error", "message": f"Live session failed: {exc}"})
+            await websocket.send_json({"type": "error", "message": f"Live session failed: {err_str}"})
         except Exception:
             pass
 

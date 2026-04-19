@@ -141,10 +141,26 @@ async def _get_embedding(
     # Apply truncation for long text context up to ~30,000 chars (model supports 8192 tokens)
     payload = content[:30000] if isinstance(content, str) else content
 
-    current_key = api_key
+    current_key: str | None = api_key
+    if current_key and (current_key.startswith("sk-") or "opencode" in current_key.lower()):
+        current_key = None  # Force immediate resolution of a native Gemini key
+
     failed_hashes: set[str] = set()
 
     for _attempt in range(2):  # One retry with a rotated key on 400
+        if not current_key:
+            from app.handlers.ai_core import _resolve_ai_request
+            try:
+                key_data, _, _ = await _resolve_ai_request(
+                    EMBEDDING_MODEL, use_openrouter=False, excluded_key_hashes=failed_hashes
+                )
+                if key_data:
+                    current_key = key_data["api_key"]
+            except Exception:
+                pass
+                
+        if not current_key:
+            return None
         try:
             client = get_cached_genai_client(current_key)  # Reuse cached client (HTTP/2 multiplexing)
             result = await client.aio.models.embed_content(
