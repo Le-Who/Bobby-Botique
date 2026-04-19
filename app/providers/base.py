@@ -11,6 +11,7 @@ Provides:
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from google.genai import types
@@ -261,7 +262,7 @@ class BaseAIProvider(ABC):
         thinking_level: str | None = None,
         timeout: float = 120.0,
         enable_web_search: bool = False,
-    ):
+    ) -> None:  # type: ignore[override]  # subclasses yield — AsyncGenerator[Any, None]
         """
         Stream response from AI provider. Must be implemented by subclasses.
         Yields chunks of text as they arrive.

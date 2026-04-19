@@ -57,14 +57,10 @@ def get_vertex_client() -> "genai.Client | None":
     """Return a cached Vertex AI client, or None if not configured.
 
     Vertex AI Express Mode uses the same google-genai SDK but routes requests
-    through GCP infrastructure — empirically more stable under high-demand
-    periods when the Gemini API endpoint issues 503 storms.
+    through GCP infrastructure.
 
-    IMPORTANT: Requires a *Google Cloud* API key (from GCP Console), NOT a
-    Gemini AI Studio key (AIzaSy...).  Set env vars:
-        VERTEX_AI_KEY      — GCP API key bound to your service account
-        VERTEX_AI_PROJECT  — GCP project ID with Vertex AI API enabled
-        VERTEX_AI_LOCATION — region, e.g. us-central1 (default)
+    If VERTEX_AI_KEY is provided, it uses Express Mode (API key auth).
+    Otherwise, it attempts to use ADC / service-account credentials.
     """
     global _vertex_client, _vertex_client_initialized
     if _vertex_client_initialized:
@@ -73,29 +69,42 @@ def get_vertex_client() -> "genai.Client | None":
 
     project = settings.VERTEX_AI_PROJECT
     location = settings.VERTEX_AI_LOCATION or "us-central1"
+    api_key = settings.VERTEX_AI_KEY
 
-    if not project:
+    if not api_key and not project:
         return None  # Not configured — degrade gracefully
 
+    log = logging.getLogger(__name__)
     try:
         http_opts: dict[str, Any] = {"timeout": 90_000}
-        # NOTE: vertexai=True uses ADC / service-account credentials.
-        # Passing api_key= together with project= raises:
-        #   "Project/location and API key are mutually exclusive"
-        # Set GOOGLE_API_KEY / GOOGLE_APPLICATION_CREDENTIALS in the
-        # environment instead — the SDK picks them up automatically.
-        _vertex_client = genai.Client(
-            vertexai=True,
-            project=project,
-            location=location,
-            http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
-        )
-        logging.getLogger(__name__).info("Vertex AI client initialized (project=%s location=%s)", project, location)
+        if api_key:
+            # Express Mode: the API key already carries project/location metadata.
+            # Passing project= or location= alongside api_key= causes the SDK to
+            # switch to ADC mode and then fail with "credentials not found".
+            _vertex_client = genai.Client(
+                vertexai=True,
+                api_key=api_key,
+                http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
+            )
+            log.info("Vertex AI client initialized (Express Mode / API key)")
+        else:
+            # ADC / Service Account mode: relies on ambient credentials
+            # (GOOGLE_APPLICATION_CREDENTIALS or GCP metadata server).
+            _vertex_client = genai.Client(
+                vertexai=True,
+                project=project,
+                location=location,
+                http_options=types.HttpOptions(**http_opts),  # type: ignore[arg-type]
+            )
+            log.info(
+                "Vertex AI client initialized (ADC mode, project=%s location=%s)",
+                project,
+                location,
+            )
     except Exception as exc:
-        logging.getLogger(__name__).warning("Vertex AI client init failed — Vertex AI pathway disabled: %s", exc)
+        log.warning("Vertex AI client init failed — Vertex AI pathway disabled: %s", exc)
         _vertex_client = None
     return _vertex_client
-
 
 class GeminiProvider(BaseAIProvider):
     """Google Gemini AI provider — self-contained execution logic."""
@@ -306,7 +315,7 @@ class GeminiProvider(BaseAIProvider):
                 model=model_name,
             )
 
-    async def stream_response(
+    async def stream_response(  # type: ignore[override]  # async generator: pyright can't reconcile abstract+yield
         self,
         history: list[dict[str, Any]],
         model_name: str,
@@ -487,7 +496,7 @@ class GeminiProvider(BaseAIProvider):
                         else:
                             logging.warning("Skipping TaggedImage part due to processing error")
                     elif isinstance(part, (bytes, bytearray, Image.Image)):
-                        img_bytes_raw: bytes | None = await save_image_as_bytes(part)
+                        img_bytes_raw: bytes | None = await save_image_as_bytes(bytes(part) if isinstance(part, bytearray) else part)
                         if img_bytes_raw:
                             try:
                                 processed.append(

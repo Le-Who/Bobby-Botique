@@ -983,12 +983,11 @@ async def _stream_inline_fast(
     max_rounds: int = 4,
     enable_web_search: bool = False,
 ) -> tuple[str | None, list[tuple[str, str]]]:
-    """3-way Race Requests accumulator optimised for inline speed.
+    """2+1 Race Requests accumulator optimised for inline speed.
 
-    Fires 3 keys simultaneously per round. The first to yield a real chunk
-    wins; the other two are cancelled instantly. Zero sleep between rounds.
-    With 15+ keys and generous gemini-3.1-flash-lite RPD limits, burning
-    3 simultaneous slots per round is essentially free operationally.
+    Fires 2 AI Studio keys + 1 Vertex AI Express slot simultaneously per round.
+    The first to yield a real chunk wins; the other two are cancelled instantly.
+    Zero sleep between rounds.
 
     Returns:
         (accumulated_text, sources) where sources is a list of (url, title)
@@ -1013,10 +1012,11 @@ async def _stream_inline_fast(
             self.key_hash = kh
 
     for _round in range(max_rounds):
-        # ── Resolve up to 3 distinct keys for this round ────────────────────
+        # ── Resolve up to 2 distinct AI Studio keys for this round ─────────────
+        # (Vertex AI Express adds a 3rd parallel racer — total concurrency = 3)
         keys: list[dict] = []
         resolved_model: str | None = None
-        for _ in range(3):
+        for _ in range(2):
             kd, mdl, _ = await use_case.resolve_ai_request(
                 preferred_model,
                 excluded_key_hashes=failed_keys | {k["key_hash"] for k in keys},
@@ -1060,14 +1060,93 @@ async def _stream_inline_fast(
                 return
             await _q.put((kh, _End(kh), None))
 
+        # ── Vertex AI Express slot ─────────────────────────────────────────────
+        # gemini-3.1-flash-lite-preview on Vertex supports Search Grounding and
+        # races alongside the 3 AI Studio keys. Uses a pseudo-key-hash so the
+        # shared queue logic treats it uniformly.
+        _VERTEX_KH = "__vertex_ai__"
+        _INLINE_VERTEX_MODEL = "gemini-3.1-flash-lite-preview"
+        _vertex_grounding_holder: list[list[tuple[str, str]]] = [[]]  # mutable closure slot
+
+        async def _vertex_race(_q: asyncio.Queue = q) -> None:
+            from app.providers.gemini import _GroundingMeta as _GMeta
+            from app.providers.gemini import get_vertex_client
+            from google.genai import types as _gtypes
+
+            vertex_client = get_vertex_client()
+            if vertex_client is None:
+                return  # Vertex not configured — skip silently (no sentinel → race ignores slot)
+            try:
+                _search_tool = _gtypes.Tool(google_search=_gtypes.GoogleSearch())
+                _vcfg = _gtypes.GenerateContentConfig(
+                    tools=[_search_tool],
+                    system_instruction=system_instruction,
+                    temperature=0.7,
+                )
+                # Build Vertex-compatible contents from history
+                _vcontents = [
+                    _gtypes.Content(
+                        role=h.get("role", "user"),
+                        parts=[_gtypes.Part(text=str(p)) for p in (h.get("parts") or []) if p],
+                    )
+                    for h in history
+                ]
+                resp = await asyncio.wait_for(
+                    vertex_client.aio.models.generate_content(
+                        model=_INLINE_VERTEX_MODEL,
+                        contents=_vcontents,  # type: ignore[arg-type]
+                        config=_vcfg,
+                    ),
+                    timeout=45.0,
+                )
+                text = getattr(resp, "text", None) or ""
+                if not text:
+                    await _q.put((_VERTEX_KH, None, RuntimeError("empty vertex response")))
+                    return
+                # Extract grounding sources into holder before putting text chunk
+                sources: list[tuple[str, str]] = []
+                try:
+                    for cand in resp.candidates or []:
+                        gm = getattr(cand, "grounding_metadata", None)
+                        for gc in getattr(gm, "grounding_chunks", None) or []:
+                            web = getattr(gc, "web", None)
+                            if web:
+                                uri = getattr(web, "uri", "") or ""
+                                title = getattr(web, "title", "") or ""
+                                if uri:
+                                    sources.append((uri, title))
+                except Exception:
+                    pass
+                if sources:
+                    _vertex_grounding_holder[0] = sources
+                    await _q.put((_VERTEX_KH, _GMeta(sources=sources), None))
+                await _q.put((_VERTEX_KH, text, None))
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                await _q.put((_VERTEX_KH, None, exc))
+                return
+            await _q.put((_VERTEX_KH, _End(_VERTEX_KH), None))
+
         tasks: dict[str, asyncio.Task] = {kd["key_hash"]: asyncio.create_task(_race(kd)) for kd in keys}
+        # Add Vertex racer only if client is available (checked lazily inside the task)
+        _vertex_client_available = True  # Task self-skips if None; count slot regardless
+        try:
+            from app.providers.gemini import get_vertex_client as _gvc
+            _vertex_client_available = _gvc() is not None
+        except Exception:
+            _vertex_client_available = False
+        if _vertex_client_available:
+            tasks[_VERTEX_KH] = asyncio.create_task(_vertex_race())
+        total_racers = len(tasks)
+
         winner_kh: str | None = None
         chunks: list[str] = []
         errors: dict[str, Exception] = {}
 
         # ── Phase 1: find the first key to yield a real chunk ────────────────
         try:
-            while winner_kh is None and len(errors) < len(keys):
+            while winner_kh is None and len(errors) < total_racers:
                 try:
                     kh, chunk, exc = await asyncio.wait_for(q.get(), timeout=50.0)
                 except TimeoutError:
@@ -1101,12 +1180,13 @@ async def _stream_inline_fast(
                     t.cancel()
             continue  # Next round with fresh keys
 
-        # Record winner health (non-critical)
-        try:
-            await status_mgr.record_success(winner_kh, resolved_model)
-            await use_case.increment_key_usage(winner_kh, resolved_model, False)
-        except Exception:
-            pass
+        # Record winner health (non-critical) — skip for Vertex pseudo-key
+        if winner_kh != _VERTEX_KH:
+            try:
+                await status_mgr.record_success(winner_kh, resolved_model)
+                await use_case.increment_key_usage(winner_kh, resolved_model, False)
+            except Exception:
+                pass
 
         # ── Phase 2: drain remaining chunks from winner ──────────────────────
         try:
@@ -1136,6 +1216,10 @@ async def _stream_inline_fast(
 
         result = "".join(chunks)
         if result.strip() and not is_error_message(result):
+            # If Vertex won, its grounding was stored in the holder (Phase 1 consumed
+            # the sentinel before text); supplement _winner_sources from holder.
+            if winner_kh == _VERTEX_KH and _vertex_grounding_holder[0] and not _winner_sources:
+                _winner_sources = _vertex_grounding_holder[0]
             return result, _winner_sources
 
         # Winner produced error-tagged text — mark all keys failed and retry
