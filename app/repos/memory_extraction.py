@@ -423,7 +423,14 @@ async def _upsert_graph(
                     # ── Upsert relations ───────────────────────────────────
                     source_ids_arr = [source_memory_id] if source_memory_id else []
 
-                    for rel in graph.relations:
+                    # Pre-fetch similar edges in a single batched query to avoid N+1 queries
+                    batch_src_ids = []
+                    batch_tgt_ids = []
+                    batch_embs = []
+                    batch_indices = []
+
+                    valid_relations = []
+                    for i, rel in enumerate(graph.relations):
                         src_name = rel.source.strip()
                         tgt_name = rel.target.strip()
                         if src_name not in node_ids or tgt_name not in node_ids:
@@ -431,49 +438,71 @@ async def _upsert_graph(
 
                         src_id = node_ids[src_name]
                         tgt_id = node_ids[tgt_name]
+                        valid_relations.append((i, rel, src_id, tgt_id))
 
-                        # Embed predicate for semantic dedup
+                        pred_embedding = rel_embeddings_map.get(rel.predicate)
+                        if pred_embedding:
+                            pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]"
+                            batch_src_ids.append(src_id)
+                            batch_tgt_ids.append(tgt_id)
+                            batch_embs.append(pred_emb_str)
+                            batch_indices.append(i)
+
+                    similar_edges_map = {}
+                    if batch_indices:
+                        batched_query = """
+                            SELECT batch.rel_idx, e.id, e.predicate, e.weight
+                            FROM unnest($1::bigint[], $2::bigint[], $3::text[], $4::int[])
+                                 WITH ORDINALITY AS batch(src_id, tgt_id, emb_text, rel_idx, ord)
+                            LEFT JOIN LATERAL (
+                                SELECT id, predicate, weight
+                                FROM memory_edges
+                                WHERE user_id = $5
+                                  AND source_node = batch.src_id
+                                  AND target_node = batch.tgt_id
+                                  AND predicate_embedding IS NOT NULL
+                                  AND predicate_embedding <=> batch.emb_text::halfvec < 0.25
+                                  AND valid_to IS NULL
+                                ORDER BY predicate_embedding <=> batch.emb_text::halfvec ASC
+                                LIMIT 1
+                            ) e ON true
+                            WHERE e.id IS NOT NULL
+                        """
+                        results = await conn.fetch(
+                            batched_query,
+                            batch_src_ids,
+                            batch_tgt_ids,
+                            batch_embs,
+                            batch_indices,
+                            user_id
+                        )
+                        for row in results:
+                            similar_edges_map[row["rel_idx"]] = row
+
+                    for i, rel, src_id, tgt_id in valid_relations:
                         pred_embedding = rel_embeddings_map.get(rel.predicate)
                         pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]" if pred_embedding else None
 
-                        # Check for semantically similar existing edge
-                        if pred_emb_str:
-                            similar_edge = await conn.fetchrow(
+                        similar_edge = similar_edges_map.get(i)
+
+                        if similar_edge:
+                            # Merge: update weight, keep is_core sticky, append source_memory_id
+                            await conn.execute(
                                 """
-                                SELECT id, predicate, weight
-                                FROM memory_edges
-                                WHERE user_id = $1
-                                  AND source_node = $2
-                                  AND target_node = $3
-                                  AND predicate_embedding IS NOT NULL
-                                  AND predicate_embedding <=> $4::halfvec < 0.25
-                                  AND (valid_to IS NULL)
-                                ORDER BY predicate_embedding <=> $4::halfvec ASC
-                                LIMIT 1
+                                UPDATE memory_edges
+                                SET weight = $1,
+                                    is_core = is_core OR $2,
+                                    updated_at = now(),
+                                    source_memory_ids = source_memory_ids || $3::bigint[]
+                                WHERE id = $4
                                 """,
-                                user_id,
-                                src_id,
-                                tgt_id,
-                                pred_emb_str,
+                                max(rel.weight, similar_edge["weight"]),
+                                rel.is_core,
+                                source_ids_arr,
+                                similar_edge["id"],
                             )
-                            if similar_edge:
-                                # Merge: update weight, keep is_core sticky, append source_memory_id
-                                await conn.execute(
-                                    """
-                                    UPDATE memory_edges
-                                    SET weight = $1,
-                                        is_core = is_core OR $2,
-                                        updated_at = now(),
-                                        source_memory_ids = source_memory_ids || $3::bigint[]
-                                    WHERE id = $4
-                                    """,
-                                    max(rel.weight, similar_edge["weight"]),
-                                    rel.is_core,
-                                    source_ids_arr,
-                                    similar_edge["id"],
-                                )
-                                edges_upserted += 1
-                                continue
+                            edges_upserted += 1
+                            continue
 
                         # ── Temporal conflict: 2-stage gate (MemPalace) ────────
                         # Stage 1: Embedding distance triage
