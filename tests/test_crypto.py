@@ -163,6 +163,18 @@ class TestErrorCases:
         with pytest.raises(ValueError):
             decrypt_api_key("not-a-valid-fernet-token")
 
+    def test_encrypt_api_key_none_raises_error(self, _mock_settings):
+        from app.crypto import encrypt_api_key
+
+        with pytest.raises(AttributeError):
+            encrypt_api_key(None)  # type: ignore
+
+    def test_encrypt_api_key_int_raises_error(self, _mock_settings):
+        from app.crypto import encrypt_api_key
+
+        with pytest.raises(AttributeError):
+            encrypt_api_key(12345)  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # reset_fernet
