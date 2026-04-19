@@ -252,3 +252,40 @@ async def test_error_leakage_prevented(client):
 
         response_text = (await response.get_data()).decode()
         assert secret_message not in response_text
+
+@pytest.mark.asyncio
+async def test_logout_without_login(client):
+    """Test that logout works even if the user is not logged in."""
+    response = await client.get("/logout", follow_redirects=False)
+    assert response.status_code == 302
+    assert "/login" in response.headers.get("Location", "")
+
+@pytest.mark.asyncio
+async def test_logout_removes_auth_access(client):
+    """Test that logging out removes access to authenticated routes."""
+    # First GET to obtain CSRF token
+    get_response = await client.get("/login")
+    data = (await get_response.get_data()).decode()
+    m = re.search(r'name="csrf_token" value="([a-f0-9]+)"', data)
+    csrf_token = m.group(1)
+
+    # Login
+    login_response = await client.post("/login", form={"password": "test_token", "csrf_token": csrf_token}, follow_redirects=False)
+    assert login_response.status_code == 302
+
+    # Verify access to protected route
+    protected_response = await client.get("/")
+    assert protected_response.status_code == 200
+
+    # Logout
+    logout_response = await client.get("/logout", follow_redirects=False)
+    assert logout_response.status_code == 302
+
+    # Check Set-Cookie headers for session clearance
+    set_cookie = logout_response.headers.get("Set-Cookie", "")
+    assert "session" in set_cookie.lower()
+
+    # Verify access to protected route is now denied
+    denied_response = await client.get("/", follow_redirects=False)
+    assert denied_response.status_code == 302
+    assert "/login" in denied_response.headers.get("Location", "")
