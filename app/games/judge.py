@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Literal
 
@@ -42,6 +43,7 @@ _FALLBACK_MODEL = "gemini-2.5-flash-lite"
 _LLM_TIMEOUT_S = 7.0
 # Fallback: single key, last resort — give it twice as long; player waits, not retypes.
 _LLM_FALLBACK_TIMEOUT_S = 14.0
+_HINTS_TIMEOUT_S = 18.0
 
 # ── Circuit breaker for _PRIMARY_MODEL ────────────────────────────────────────
 # When _PRIMARY_MODEL is experiencing a model-level 503 outage (all keys return
@@ -460,90 +462,250 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
 async def generate_hints(word: str, category: str) -> list[str]:
     """Generate 3 progressive hints for the given word asynchronously.
 
-    Returns an empty list on any failure; callers must handle gracefully.
+    Always returns 3 hints, falling back to deterministic local hints if all
+    networked models fail.
     Called from a background asyncio.Task so latency does not block the user.
     """
-    import re
+    def _dedupe_nonempty(items: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for item in items:
+            cleaned = re.sub(r"\s+", " ", item).strip().strip("\"'`")
+            if not cleaned:
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(cleaned)
+        return result
+
+    def _extract_hints(response_text: str) -> list[str]:
+        cleaned_text = response_text.replace("```json", "").replace("```JSON", "").replace("```", "").strip()
+
+        def _from_payload(payload: object) -> list[str]:
+            if isinstance(payload, dict):
+                hints = payload.get("hints", [])
+            elif isinstance(payload, list):
+                hints = payload
+            else:
+                hints = []
+            if not isinstance(hints, list):
+                return []
+            return _dedupe_nonempty([str(h).strip() for h in hints if isinstance(h, str | int | float)])
+
+        json_candidates: list[str] = [cleaned_text]
+        first_brace = cleaned_text.find("{")
+        last_brace = cleaned_text.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            json_candidates.append(cleaned_text[first_brace : last_brace + 1])
+        first_bracket = cleaned_text.find("[")
+        last_bracket = cleaned_text.rfind("]")
+        if first_bracket != -1 and last_bracket > first_bracket:
+            json_candidates.append(cleaned_text[first_bracket : last_bracket + 1])
+
+        for candidate in _dedupe_nonempty(json_candidates):
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+            hints = _from_payload(parsed)
+            if len(hints) >= 3:
+                return hints[:3]
+
+        numbered_lines: list[str] = []
+        for line in cleaned_text.splitlines():
+            normalized = re.sub(r"^\s*(?:[-*•]|\d+[.)]|подсказка\s*\d+\s*[:.)-]?)\s*", "", line, flags=re.I).strip()
+            if len(normalized) >= 3 and normalized.lower() != "hints":
+                numbered_lines.append(normalized)
+        numbered_hints = _dedupe_nonempty(numbered_lines)
+        if len(numbered_hints) >= 3:
+            return numbered_hints[:3]
+
+        quoted = re.findall(r'"([^"]+)"', cleaned_text)
+        quoted_hints = _dedupe_nonempty([q for q in quoted if q.lower() != "hints"])
+        if len(quoted_hints) >= 3:
+            return quoted_hints[:3]
+
+        return []
+
+    def _local_fallback_hints(target_word: str, target_category: str) -> list[str]:
+        compact_word = re.sub(r"\s+", " ", target_word).strip()
+        tokens = [token for token in re.split(r"[\s\-]+", compact_word) if token]
+        token_lengths = [sum(1 for ch in token if ch.isalnum()) for token in tokens]
+        alnum_chars = [ch for ch in compact_word if ch.isalnum()]
+        first_char = alnum_chars[0].upper() if alnum_chars else "?"
+        last_char = alnum_chars[-1].upper() if alnum_chars else "?"
+
+        if target_category and "особое" not in target_category.lower():
+            first_hint = f"Это из категории «{target_category}»."
+        else:
+            first_hint = "Слово связано с загаданной темой игры."
+
+        if not token_lengths:
+            second_hint = "Подсказка: ответ очень короткий."
+        elif len(token_lengths) == 1:
+            second_hint = f"Одно слово, {token_lengths[0]} букв."
+        else:
+            lengths = ", ".join(str(length) for length in token_lengths)
+            second_hint = f"{len(token_lengths)} слова; длины: {lengths}."
+
+        if len(token_lengths) <= 1:
+            third_hint = f"Первая буква «{first_char}», последняя — «{last_char}»."
+        else:
+            initials = " ".join(token[0].upper() for token in tokens if token)
+            third_hint = f"Начальные буквы слов: {initials}. Последняя — «{last_char}»."
+
+        return [first_hint, second_hint, third_hint]
+
+    def _build_hint_model_chain(provider_name: str, settings_obj) -> list[str]:
+        opencode_available = set(settings_obj.OPENCODE_AVAILABLE_MODELS or [])
+        openrouter_available = set(settings_obj.OPENROUTER_AVAILABLE_MODELS or [])
+        gemini_available = set(settings_obj.AVAILABLE_MODELS or [])
+
+        def _pick(candidates: list[str], available: set[str] | None = None) -> list[str]:
+            chosen: list[str] = []
+            seen: set[str] = set()
+            for candidate in candidates:
+                if not candidate or candidate in seen:
+                    continue
+                if available and candidate not in available:
+                    continue
+                seen.add(candidate)
+                chosen.append(candidate)
+            return chosen
+
+        if provider_name == "opencode":
+            chain = _pick(
+                [
+                    "opencode-go/glm-5.1",
+                    "opencode-go/qwen3.6-plus",
+                    "opencode-go/glm-5",
+                    "opencode-go/kimi-k2.5",
+                    settings_obj.OPENCODE_QNA_MODEL,
+                    "opencode-go/qwen3.5-plus",
+                ],
+                opencode_available or None,
+            )
+            chain.extend(
+                _pick(
+                    [
+                        settings_obj.QNA_MODEL,
+                        "gemini-2.5-flash-lite",
+                        settings_obj.DEFAULT_MODEL,
+                    ],
+                    gemini_available or None,
+                )
+            )
+            return _dedupe_nonempty(chain)
+
+        if provider_name == "openrouter":
+            chain = _pick(
+                [
+                    settings_obj.OPENROUTER_QNA_MODEL,
+                    settings_obj.OPENROUTER_DEFAULT_MODEL,
+                ],
+                openrouter_available or None,
+            )
+            chain.extend(
+                _pick(
+                    [
+                        settings_obj.QNA_MODEL,
+                        "gemini-2.5-flash-lite",
+                        settings_obj.DEFAULT_MODEL,
+                    ],
+                    gemini_available or None,
+                )
+            )
+            return _dedupe_nonempty(chain)
+
+        return _pick(
+            [
+                settings_obj.QNA_MODEL,
+                "gemini-2.5-flash-lite",
+                settings_obj.DEFAULT_MODEL,
+            ],
+            gemini_available or None,
+        )
 
     try:
         from app.config import get_primary_provider_async, settings
         from app.errors import is_error_message
-        from app.providers import get_provider_router
+        from app.providers import get_provider_router, is_openrouter_model
 
         c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
         prompt = _HINTS_PROMPT.format(W=word, C_STR=c_str)
-
-        # Use the active provider (e.g. Opencode Go) to bypass overloaded Gemini endpoint
         provider_name = await get_primary_provider_async()
-        if provider_name == "opencode":
-            preferred_model = settings.OPENCODE_QNA_MODEL or settings.OPENCODE_DEFAULT_MODEL
-        elif provider_name == "openrouter":
-            preferred_model = settings.OPENROUTER_QNA_MODEL or settings.OPENROUTER_DEFAULT_MODEL
-        else:
-            preferred_model = settings.QNA_MODEL
-
-        logger.info("generate_hints: word=%r provider=%s model=%s", word, provider_name, preferred_model)
-
+        model_chain = _build_hint_model_chain(provider_name, settings)
         router = get_provider_router()
-        # Parts must be plain strings — NOT {"text": ...} dicts.
-        # _build_messages (OpenRouter/Opencode) calls str(part) on each element;
-        # a dict part becomes "{'text': '...'}" — garbled Python repr.
         history = [{"role": "user", "parts": [prompt]}]
+        if not model_chain:
+            logger.warning("generate_hints: empty model chain for provider=%s", provider_name)
+            fallback_hints = _local_fallback_hints(word, category)
+            logger.info("generate_hints: using deterministic fallback for %r", word)
+            return fallback_hints
 
-        # get_response natively handles cross-provider fallbacks and circuit breakers.
-        response_text, _ = await router.get_response(
-            preferred_model=preferred_model,
-            history=history,
-            system_instruction=None,
-            use_openrouter=(provider_name == "openrouter"),
-            max_key_retries=2,
-            thinking_level="off",
-        )
+        logger.info("generate_hints: word=%r provider=%s models=%s", word, provider_name, model_chain)
 
-        if not response_text:
-            logger.warning("generate_hints: empty response from %s for word=%r", preferred_model, word)
-            return []
-
-        if is_error_message(response_text):
-            logger.warning(
-                "generate_hints: error response from %s for word=%r: %s",
-                preferred_model,
-                word,
-                response_text[:150],
+        async def _one_hint_call(model_name: str) -> list[str] | None:
+            use_openrouter = True if is_openrouter_model(model_name) else False
+            response_text, _ = await router.get_response(
+                preferred_model=model_name,
+                history=history,
+                system_instruction=None,
+                use_openrouter=use_openrouter,
+                max_key_retries=2,
+                thinking_level="off",
+                timeout=_HINTS_TIMEOUT_S,
             )
-            return []
 
-        # Try strict JSON parse first
-        try:
-            cleaned_text = response_text.replace("```json", "").replace("```JSON", "").replace("```", "").strip()
-            data = json.loads(cleaned_text)
-            hints = data.get("hints", [])
-            if hints and isinstance(hints, list) and len(hints) >= 3:
-                logger.debug("Hints generated via %s for %r: %s", preferred_model, word, hints)
+            if not response_text:
+                logger.warning("generate_hints: empty response from %s for word=%r", model_name, word)
+                return None
+
+            if is_error_message(response_text):
+                logger.warning(
+                    "generate_hints: error response from %s for word=%r: %s",
+                    model_name,
+                    word,
+                    response_text[:150],
+                )
+                return None
+
+            hints = _extract_hints(response_text)
+            if len(hints) >= 3:
+                logger.info("generate_hints: model %s produced valid hints for %r", model_name, word)
                 return hints[:3]
-            logger.warning("generate_hints: invalid hints array from %s: %r", preferred_model, hints)
-        except json.JSONDecodeError as exc:
-            logger.warning(
-                "generate_hints: JSON decode failed (model=%s) for %r: %s. Raw: %r",
-                preferred_model,
-                word,
-                exc,
-                response_text[:300],
-            )
-            # Fallback: loose regex extraction if LLM got creative with formatting
-            found = re.findall(r'"([^"]+)"', response_text)
-            hints_extracted = [h for h in found if h.lower() != "hints" and len(h) > 5]
-            if len(hints_extracted) >= 3:
-                return hints_extracted[:3]
 
-        logger.warning(
-            "generate_hints: no valid hints extracted for word=%r. response prefix: %r",
-            word,
-            response_text[:200],
-        )
+            logger.warning(
+                "generate_hints: no valid hints extracted from %s for word=%r. response prefix: %r",
+                model_name,
+                word,
+                response_text[:200],
+            )
+            return None
+
+        tasks = {asyncio.create_task(_one_hint_call(model)): model for model in model_chain}
+        pending = set(tasks)
+        try:
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    hints = task.result()
+                    if hints:
+                        for other in pending:
+                            other.cancel()
+                        return hints
+        finally:
+            for task in pending:
+                task.cancel()
+
     except Exception:
         logger.exception("generate_hints: unexpected crash for word=%r", word)
-    return []
+
+    fallback_hints = _local_fallback_hints(word, category)
+    logger.info("generate_hints: using deterministic fallback for %r", word)
+    return fallback_hints
 
 
 # ── Score UX helpers ─────────────────────────────────────────────────────────
