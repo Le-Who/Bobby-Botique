@@ -11,10 +11,11 @@ _original_modules: dict = {}
 
 # Populated by setup_module after mocks are installed. All tests use this reference.
 generate_auto_title = None
+streak_badge = None
 
 
 def setup_module(module):
-    global _original_modules, generate_auto_title
+    global _original_modules, generate_auto_title, streak_badge
     _original_modules["__app_keys_before__"] = {k for k in sys.modules if k.startswith("app.")}
     for k in _MOCK_KEYS:
         if k in sys.modules:
@@ -24,9 +25,11 @@ def setup_module(module):
     # Force-reimport analytics with mocked deps so it resolves cleanly.
     # Remove any cached import from collection time first.
     sys.modules.pop("app.repos.analytics", None)
-    from app.repos.analytics import generate_auto_title as _fn
+    from app.repos.analytics import generate_auto_title as _fn1
+    from app.repos.analytics import streak_badge as _fn2
 
-    generate_auto_title = _fn
+    generate_auto_title = _fn1
+    streak_badge = _fn2
 
 
 def teardown_module(module):
@@ -156,3 +159,19 @@ def test_generate_auto_title_empty_messages_list():
     title = generate_auto_title([])
     assert title.startswith("Беседа от ")
     assert len(title) == len("Беседа от 25.10.2023 14:30")
+
+
+def test_streak_badge():
+    """Test streak badge thresholds and returns."""
+    assert streak_badge(0) == ""
+    assert streak_badge(1) == "💚"
+    assert streak_badge(2) == "💚"
+    assert streak_badge(3) == "✨"
+    assert streak_badge(6) == "✨"
+    assert streak_badge(7) == "🔥"
+    assert streak_badge(13) == "🔥"
+    assert streak_badge(14) == "⭐"
+    assert streak_badge(29) == "⭐"
+    assert streak_badge(30) == "💎"
+    assert streak_badge(100) == "💎"
+    assert streak_badge(-1) == ""
