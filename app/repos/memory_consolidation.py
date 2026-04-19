@@ -447,141 +447,222 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
                         )
 
                     # ── Upsert graph entities into memory_nodes ──────────
-                    node_ids = {}  # entity_name → UUID
+                    # Batch semantic deduplication for nodes
+                    # First, gather unique entity names to avoid redundant DB lookups
+                    unique_entity_names = {ent.get("name", "").strip() for ent in valid_entities if ent.get("name", "").strip()}
+
+                    entities_with_emb = [
+                        (name, f"[{','.join(str(v) for v in ent_emb_map[name])}]")
+                        for name in unique_entity_names
+                        if ent_emb_map.get(name) is not None
+                    ]
+
+                    name_mapping = {name: name for name in unique_entity_names}
+                    if entities_with_emb:
+                        input_names = [e[0] for e in entities_with_emb]
+                        input_embs = [e[1] for e in entities_with_emb]
+                        similar_nodes = await conn.fetch(
+                            """
+                            SELECT t.input_name, m.entity_name
+                            FROM unnest($2::text[], $3::halfvec[]) AS t(input_name, emb)
+                            LEFT JOIN LATERAL (
+                                SELECT entity_name
+                                FROM memory_nodes
+                                WHERE user_id = $1
+                                  AND embedding <=> t.emb < 0.12
+                                ORDER BY embedding <=> t.emb ASC
+                                LIMIT 1
+                            ) m ON true
+                            WHERE m.entity_name IS NOT NULL
+                            """,
+                            user_id,
+                            input_names,
+                            input_embs,
+                        )
+                        for row in similar_nodes:
+                            name_mapping[row["input_name"]] = row["entity_name"]
+
+                    # Prepare and deduplicate node upserts
+                    final_node_upserts = {}  # name -> (type, desc, emb_str)
                     for ent in valid_entities:
-                        name = ent.get("name", "").strip()
+                        orig_name = ent.get("name", "").strip()
+                        canonical_name = name_mapping.get(orig_name, orig_name)
                         ent_type = ent.get("type", "concept")
                         description = ent.get("description", "")
+                        ent_embedding = ent_emb_map.get(orig_name)
+                        ent_emb_str = (
+                            f"[{','.join(str(v) for v in ent_embedding)}]" if ent_embedding is not None else None
+                        )
 
-                        ent_embedding = ent_emb_map.get(name)
-                        ent_emb_str = f"[{','.join(str(v) for v in ent_embedding)}]" if ent_embedding else None
+                        # In case multiple extractions map to same canonical name, last one wins
+                        final_node_upserts[canonical_name] = (ent_type, description, ent_emb_str)
 
-                        # Semantic Deduplication: Check if a highly similar node already exists
-                        if ent_emb_str:
-                            similar_node = await conn.fetchrow(
-                                """
-                                SELECT id, entity_name 
-                                FROM memory_nodes 
-                                WHERE user_id = $1 
-                                  AND embedding <=> $2::halfvec < 0.12
-                                ORDER BY embedding <=> $2::halfvec ASC
-                                LIMIT 1
-                                """,
-                                user_id,
-                                ent_emb_str,
-                            )
-                            if similar_node:
-                                # A semantically identical node exists. Use its canonical name.
-                                # This merges variations like "Tony Stark" and "Тони Старк" without duplicating.
-                                name = similar_node["entity_name"]
+                    node_ids = {}  # entity_name → UUID
+                    if final_node_upserts:
+                        names = list(final_node_upserts.keys())
+                        types = [v[0] for v in final_node_upserts.values()]
+                        descs = [v[1] for v in final_node_upserts.values()]
+                        embs = [v[2] for v in final_node_upserts.values()]
 
-                        row = await conn.fetchrow(
+                        node_rows = await conn.fetch(
                             """
                             INSERT INTO memory_nodes (user_id, entity_name, entity_type, description, embedding)
-                            VALUES ($1, $2, $3, $4, $5::halfvec)
+                            SELECT $1, * FROM unnest($2::text[], $3::text[], $4::text[], $5::halfvec[])
                             ON CONFLICT (user_id, entity_name)
                             DO UPDATE SET
                                 description = EXCLUDED.description,
                                 entity_type = EXCLUDED.entity_type,
-                                embedding = COALESCE(EXCLUDED.embedding, memory_nodes.embedding),
-                                updated_at = now()
-                            RETURNING id
+                                embedding = COALESCE(EXCLUDED.embedding, memory_nodes.embedding)
+                            RETURNING id, entity_name
                             """,
                             user_id,
-                            name,
-                            ent_type,
-                            description,
-                            ent_emb_str,
+                            names,
+                            types,
+                            descs,
+                            embs,
                         )
-                        if row:
-                            node_ids[name] = row["id"]
+                        temp_node_ids = {r["entity_name"]: r["id"] for r in node_rows}
+                        for orig, canon in name_mapping.items():
+                            if canon in temp_node_ids:
+                                node_ids[orig] = temp_node_ids[canon]
 
                     # ── Upsert graph relations into memory_edges ─────────
-                    # Semantic Edge Deduplication (Change 4): before inserting each
-                    # edge, check if a semantically similar predicate already exists
-                    # between the same pair of nodes (cosine distance < 0.25).
-                    # If so, update the existing edge's weight rather than adding a dupe.
+                    # Semantic Edge Deduplication (Change 4): Batch version
+                    # Filter relations that have both nodes resolved
+                    edge_candidates = []
                     for rel in valid_relations:
                         from_name = rel.get("from", "").strip()
                         to_name = rel.get("to", "").strip()
                         predicate = rel.get("predicate", "related_to").strip()
                         weight = float(rel.get("weight", 1.0))
-                        is_core = bool(rel.get("is_core", False))  # Core Persona (Change 5)
+                        is_core = bool(rel.get("is_core", False))
 
-                        if from_name not in node_ids or to_name not in node_ids:
-                            continue  # Skip relations with missing entities
+                        if from_name in node_ids and to_name in node_ids:
+                            pred_embedding = rel_emb_map.get((from_name, to_name, predicate))
+                            pred_emb_str = (
+                                f"[{','.join(str(v) for v in pred_embedding)}]" if pred_embedding is not None else None
+                            )
+                            edge_candidates.append(
+                                {
+                                    "src_id": node_ids[from_name],
+                                    "tgt_id": node_ids[to_name],
+                                    "predicate": predicate,
+                                    "weight": weight,
+                                    "is_core": is_core,
+                                    "emb": pred_emb_str,
+                                }
+                            )
 
-                        src_id = node_ids[from_name]
-                        tgt_id = node_ids[to_name]
+                    if edge_candidates:
+                        # Deduplicate candidates to avoid redundant DB work
+                        # (src_id, tgt_id, predicate) is the unique constraint.
+                        # We merge weight (max) and is_core (OR) to avoid data loss.
+                        merged_edge_cands = {}
+                        for cand in edge_candidates:
+                            key = (cand["src_id"], cand["tgt_id"], cand["predicate"])
+                            if key not in merged_edge_cands:
+                                merged_edge_cands[key] = cand
+                            else:
+                                existing = merged_edge_cands[key]
+                                existing["weight"] = max(existing["weight"], cand["weight"])
+                                existing["is_core"] = existing["is_core"] or cand["is_core"]
+                        edge_candidates = list(merged_edge_cands.values())
 
-                        # Semantic dedup: look for an existing edge between the same
-                        # node pair whose predicate vector is close (< 0.25 distance).
-                        # We embed the new predicate and compare against all existing
-                        # predicates for this src→tgt pair.
-                        pred_embedding = rel_emb_map.get((from_name, to_name, predicate))
-                        if pred_embedding:
-                            pred_emb_str = f"[{','.join(str(v) for v in pred_embedding)}]"
-                            similar_edge = await conn.fetchrow(
+                        # Batch find similar edges
+                        # We use unnest and LATERAL to find similar edges for all candidates in one query
+                        src_ids = [c["src_id"] for c in edge_candidates]
+                        tgt_ids = [c["tgt_id"] for c in edge_candidates]
+                        embs = [c["emb"] for c in edge_candidates]
+
+                        # Only those with embeddings can be semantically deduped
+                        can_dedup = [i for i, emb in enumerate(embs) if emb is not None]
+                        similar_edges_map = {}  # index -> similar_edge_id
+
+                        if can_dedup:
+                            dedup_src = [src_ids[i] for i in can_dedup]
+                            dedup_tgt = [tgt_ids[i] for i in can_dedup]
+                            dedup_emb = [embs[i] for i in can_dedup]
+
+                            # This query finds the single most similar edge for each input triple
+                            rows = await conn.fetch(
                                 """
-                                SELECT id, predicate
-                                FROM memory_edges
-                                WHERE user_id = $1
-                                  AND source_node = $2
-                                  AND target_node = $3
-                                  AND predicate_embedding IS NOT NULL
-                                  AND predicate_embedding <=> $4::halfvec < 0.25
-                                ORDER BY predicate_embedding <=> $4::halfvec ASC
-                                LIMIT 1
+                                SELECT t.idx, m.id, m.predicate
+                                FROM unnest($2::int[], $3::bigint[], $4::bigint[], $5::halfvec[]) AS t(idx, src, tgt, emb)
+                                LEFT JOIN LATERAL (
+                                    SELECT id, predicate
+                                    FROM memory_edges
+                                    WHERE user_id = $1
+                                      AND source_node = t.src
+                                      AND target_node = t.tgt
+                                      AND predicate_embedding IS NOT NULL
+                                      AND predicate_embedding <=> t.emb < 0.25
+                                    ORDER BY predicate_embedding <=> t.emb ASC
+                                    LIMIT 1
+                                ) m ON true
+                                WHERE m.id IS NOT NULL
                                 """,
                                 user_id,
-                                src_id,
-                                tgt_id,
-                                pred_emb_str,
+                                can_dedup,
+                                dedup_src,
+                                dedup_tgt,
+                                dedup_emb,
                             )
-                            if similar_edge:
-                                # Merge into existing edge — update weight & is_core
-                                await conn.execute(
-                                    """
-                                    UPDATE memory_edges
-                                    SET weight = $1,
-                                        is_core = is_core OR $2,
-                                        updated_at = now()
-                                    WHERE id = $3
-                                    """,
-                                    weight,
-                                    is_core,
-                                    similar_edge["id"],
-                                )
+                            for r in rows:
+                                similar_edges_map[r["idx"]] = (r["id"], r["predicate"])
+
+                        # Batch updates (merges)
+                        merges = []
+                        new_inserts = []
+                        for i, cand in enumerate(edge_candidates):
+                            if i in similar_edges_map:
+                                edge_id, old_pred = similar_edges_map[i]
+                                merges.append((cand["weight"], cand["is_core"], edge_id))
                                 logging.debug(
                                     "Semantic edge dedup: merged predicate '%s' into '%s'",
-                                    predicate,
-                                    similar_edge["predicate"],
+                                    cand["predicate"],
+                                    old_pred,
                                 )
-                                continue
-                        else:
-                            pred_emb_str = None
+                            else:
+                                new_inserts.append(
+                                    (
+                                        user_id,
+                                        cand["src_id"],
+                                        cand["tgt_id"],
+                                        cand["predicate"],
+                                        cand["emb"],
+                                        cand["weight"],
+                                        cand["is_core"],
+                                    )
+                                )
 
-                        await conn.execute(
-                            """
-                            INSERT INTO memory_edges
-                                (user_id, source_node, target_node, predicate,
-                                 predicate_embedding, weight, is_core)
-                            VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7)
-                            ON CONFLICT (user_id, source_node, target_node, predicate)
-                            DO UPDATE SET
-                                weight = EXCLUDED.weight,
-                                is_core = memory_edges.is_core OR EXCLUDED.is_core,
-                                predicate_embedding = COALESCE(EXCLUDED.predicate_embedding, memory_edges.predicate_embedding),
-                                updated_at = now()
-                            """,
-                            user_id,
-                            src_id,
-                            tgt_id,
-                            predicate,
-                            pred_emb_str,
-                            weight,
-                            is_core,
-                        )
+                        if merges:
+                            await conn.executemany(
+                                """
+                                UPDATE memory_edges
+                                SET weight = $1,
+                                    is_core = is_core OR $2,
+                                    updated_at = now()
+                                WHERE id = $3
+                                """,
+                                merges,
+                            )
+
+                        if new_inserts:
+                            await conn.executemany(
+                                """
+                                INSERT INTO memory_edges
+                                    (user_id, source_node, target_node, predicate,
+                                     predicate_embedding, weight, is_core)
+                                VALUES ($1, $2, $3, $4, $5::halfvec, $6, $7)
+                                ON CONFLICT (user_id, source_node, target_node, predicate)
+                                DO UPDATE SET
+                                    weight = EXCLUDED.weight,
+                                    is_core = memory_edges.is_core OR EXCLUDED.is_core,
+                                    predicate_embedding = COALESCE(EXCLUDED.predicate_embedding, memory_edges.predicate_embedding),
+                                    updated_at = now()
+                                """,
+                                new_inserts,
+                            )
 
                     logging.info(
                         "Consolidation complete for user %d: deleted %d raw, inserted %d facts, %d nodes, %d edges",
