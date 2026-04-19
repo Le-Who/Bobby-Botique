@@ -143,7 +143,7 @@ class OpenRouterProvider(BaseAIProvider):
                     model=model_name,
                 )
             except (APIError, httpx.HTTPError) as e:
-                msg = f"OpenRouter API error: {e}"
+                msg = f"OpenRouter API error: {e!r}"
                 logging.error(msg)
                 await metrics_collector.record_error("openrouter_api", msg)
                 self._log_failure(start_time, model_name, msg, user_id, chat_id)
