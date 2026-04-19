@@ -1022,17 +1022,6 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     from app.providers.gemini import get_cached_genai_client
     from app.repos.chats import get_user_chat
 
-    key_data, _, _ = await _resolve_ai_request(
-        GEMINI_LIVE_MODEL,
-        use_openrouter=False,
-    )
-    if not key_data:
-        await websocket.close(4500, "No API keys configured or available")
-        return
-    api_key = key_data["api_key"]
-
-    client = get_cached_genai_client(api_key)
-
     session_resumption_token: str | None = None
     chat_state = await get_user_chat(user_id)
 
@@ -1084,206 +1073,237 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
 
     live_config = types.LiveConnectConfig(**config_kwargs)  # type: ignore[arg-type]
 
-    logger.info(
-        "live_audio_ws: connecting user=%d model=%s resumption_token=%s",
-        user_id,
-        GEMINI_LIVE_MODEL,
-        bool(resumption_token),
-    )
+    MAX_RETRIES = 3
+    for attempt in range(MAX_RETRIES):
+        key_data, _, _ = await _resolve_ai_request(
+            GEMINI_LIVE_MODEL,
+            use_openrouter=False,
+        )
+        if not key_data:
+            await websocket.close(4500, "No API keys configured or available")
+            return
+        api_key = key_data["api_key"]
 
-    try:
-        async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=live_config) as session:
-            await websocket.send_json({"type": "connected"})
+        client = get_cached_genai_client(api_key)
 
-            # ── Producer: browser → Gemini ────────────────────────────────
-            async def _producer() -> None:
-                start_time = time.monotonic()
-                _mic_ended = False  # True after audio_stream_end; resets on new audio
+        if not key_data:
+            if attempt == 0:
+                await websocket.close(4500, "No API keys configured or available")
+            else:
                 try:
-                    while True:
-                        if time.monotonic() - start_time > 1800:
-                            await websocket.close(1008, "Session duration limit reached (30m)")
-                            return
-                        try:
-                            raw = await asyncio.wait_for(websocket.receive(), timeout=600.0)
-                        except TimeoutError:
-                            logger.info("live_audio_ws: websocket idle timeout user=%d", user_id)
-                            await websocket.close(1000, "Idle timeout")
-                            return
-
-                        try:
-                            msg = json.loads(raw)
-                        except (json.JSONDecodeError, TypeError):
-                            continue
-
-                        msg_type = msg.get("type")
-
-                        if msg_type == "realtime_input":
-                            audio_b64 = msg.get("data", "")
-                            mime_type = msg.get("mime_type", "audio/pcm;rate=16000")
-                            if audio_b64:
-                                audio_bytes = base64.b64decode(audio_b64)
-                                await session.send_realtime_input(
-                                    audio=types.Blob(data=audio_bytes, mime_type=mime_type)
-                                )
-                            _mic_ended = False  # New audio — mic is active again
-
-                        elif msg_type == "audio_stream_end":
-                            await session.send_realtime_input(audio_stream_end=True)
-                            _mic_ended = True  # Start idle countdown
-
-                        elif msg_type == "text":
-                            text = msg.get("text", "")
-                            if text:
-                                await session.send_realtime_input(text=text)
-
-                except asyncio.CancelledError:
+                    await websocket.send_json({"type": "error", "message": "All available keys exhausted."})
+                except Exception:
                     pass
-                except Exception as exc:
-                    logger.warning(
-                        "live_audio_ws producer error user=%d: %s",
-                        user_id,
-                        exc,
-                    )
+            return
+        logger.info(
+            "live_audio_ws: connecting user=%d model=%s resumption_token=%s attempt=%d",
+            user_id,
+            GEMINI_LIVE_MODEL,
+            bool(resumption_token),
+            attempt + 1,
+        )
+        try:
+            async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=live_config) as session:
+                await websocket.send_json({"type": "connected"})
 
-            # ── Consumer: Gemini → browser ────────────────────────────────
-            async def _consumer() -> None:
-                nonlocal session_resumption_token
-                try:
-                    async for response in session.receive():
-                        content = response.server_content
-                        if content:
-                            # Audio chunks
-                            if content.model_turn and content.model_turn.parts:
-                                for part in content.model_turn.parts:
-                                    if part.inline_data and part.inline_data.data:
-                                        audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
-                                        await websocket.send_json(
-                                            {
-                                                "type": "audio",
-                                                "data": audio_b64,
-                                            }
-                                        )
-
-                            # Transcriptions
-                            if content.input_transcription:
-                                await websocket.send_json(
-                                    {
-                                        "type": "input_transcript",
-                                        "text": content.input_transcription.text,
-                                    }
-                                )
-                            if content.output_transcription:
-                                await websocket.send_json(
-                                    {
-                                        "type": "output_transcript",
-                                        "text": content.output_transcription.text,
-                                    }
-                                )
-
-                            # Interruption
-                            if content.interrupted is True:
-                                await websocket.send_json({"type": "interrupt"})
-
-                        # Session resumption update
-                        if hasattr(response, "session_resumption_update"):
-                            sru = response.session_resumption_update
-                            if sru and hasattr(sru, "new_handle") and sru.new_handle:
-                                session_resumption_token = sru.new_handle
-                                await websocket.send_json(
-                                    {
-                                        "type": "resumption_token",
-                                        "token": sru.new_handle,
-                                    }
-                                )
-
-                        # GoAway signal — server will terminate connection soon.
-                        # Relay to client so it can proactively reconnect.
-                        if hasattr(response, "go_away") and response.go_away is not None:
-                            time_left = response.go_away.time_left
-                            seconds_left = 60.0
-                            if time_left is not None:
-                                seconds_left = (
-                                    time_left.total_seconds()
-                                    if hasattr(time_left, "total_seconds")
-                                    else float(time_left)
-                                )
-                            logger.info(
-                                "live_audio_ws: GoAway received user=%d time_left=%.1fs",
-                                user_id,
-                                seconds_left,
-                            )
-                            await websocket.send_json(
-                                {
-                                    "type": "go_away",
-                                    "time_left_seconds": seconds_left,
-                                }
-                            )
-
-                    logger.info("live_audio_ws: consumer receive loop ended normally user=%d", user_id)
-                except asyncio.CancelledError:
-                    logger.debug("live_audio_ws: consumer cancelled user=%d", user_id)
-                except Exception as exc:
-                    logger.warning(
-                        "live_audio_ws consumer error user=%d: %s: %s",
-                        user_id,
-                        type(exc).__name__,
-                        exc,
-                    )
+                # ── Producer: browser → Gemini ────────────────────────────────
+                async def _producer() -> None:
+                    start_time = time.monotonic()
+                    _mic_ended = False  # True after audio_stream_end; resets on new audio
                     try:
-                        await websocket.send_json({"type": "error", "message": str(exc)})
-                    except Exception:
+                        while True:
+                            if time.monotonic() - start_time > 1800:
+                                await websocket.close(1008, "Session duration limit reached (30m)")
+                                return
+                            try:
+                                raw = await asyncio.wait_for(websocket.receive(), timeout=600.0)
+                            except TimeoutError:
+                                logger.info("live_audio_ws: websocket idle timeout user=%d", user_id)
+                                await websocket.close(1000, "Idle timeout")
+                                return
+
+                            try:
+                                msg = json.loads(raw)
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+
+                            msg_type = msg.get("type")
+
+                            if msg_type == "realtime_input":
+                                audio_b64 = msg.get("data", "")
+                                mime_type = msg.get("mime_type", "audio/pcm;rate=16000")
+                                if audio_b64:
+                                    audio_bytes = base64.b64decode(audio_b64)
+                                    await session.send_realtime_input(
+                                        audio=types.Blob(data=audio_bytes, mime_type=mime_type)
+                                    )
+                                _mic_ended = False  # New audio — mic is active again
+
+                            elif msg_type == "audio_stream_end":
+                                await session.send_realtime_input(audio_stream_end=True)
+                                _mic_ended = True  # Start idle countdown
+
+                            elif msg_type == "text":
+                                text = msg.get("text", "")
+                                if text:
+                                    await session.send_realtime_input(text=text)
+
+                    except asyncio.CancelledError:
                         pass
+                    except Exception as exc:
+                        logger.warning(
+                            "live_audio_ws producer error user=%d: %s",
+                            user_id,
+                            exc,
+                        )
 
-            # ── Run both loops concurrently ───────────────────────────────
-            producer_task = asyncio.create_task(_producer())
-            consumer_task = asyncio.create_task(_consumer())
-
-            try:
-                _done, _pending = await asyncio.wait(
-                    {producer_task, consumer_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                # Grace period: if the producer exited first (client disconnect or
-                # idle-mic watchdog), give the consumer up to 5s to drain its
-                # remaining Gemini messages — most importantly the final
-                # SessionResumptionUpdate — before we cancel it.
-                if producer_task in _done and not consumer_task.done():
+                # ── Consumer: Gemini → browser ────────────────────────────────
+                async def _consumer() -> None:
+                    nonlocal session_resumption_token
                     try:
-                        await asyncio.wait_for(asyncio.shield(consumer_task), timeout=5.0)
-                    except (TimeoutError, asyncio.CancelledError):
-                        pass
-            finally:
-                for task in (producer_task, consumer_task):
-                    if not task.done():
-                        task.cancel()
+                        async for response in session.receive():
+                            content = response.server_content
+                            if content:
+                                # Audio chunks
+                                if content.model_turn and content.model_turn.parts:
+                                    for part in content.model_turn.parts:
+                                        if part.inline_data and part.inline_data.data:
+                                            audio_b64 = base64.b64encode(part.inline_data.data).decode("ascii")
+                                            await websocket.send_json(
+                                                {
+                                                    "type": "audio",
+                                                    "data": audio_b64,
+                                                }
+                                            )
+
+                                # Transcriptions
+                                if content.input_transcription:
+                                    await websocket.send_json(
+                                        {
+                                            "type": "input_transcript",
+                                            "text": content.input_transcription.text,
+                                        }
+                                    )
+                                if content.output_transcription:
+                                    await websocket.send_json(
+                                        {
+                                            "type": "output_transcript",
+                                            "text": content.output_transcription.text,
+                                        }
+                                    )
+
+                                # Interruption
+                                if content.interrupted is True:
+                                    await websocket.send_json({"type": "interrupt"})
+
+                            # Session resumption update
+                            if hasattr(response, "session_resumption_update"):
+                                sru = response.session_resumption_update
+                                if sru and hasattr(sru, "new_handle") and sru.new_handle:
+                                    session_resumption_token = sru.new_handle
+                                    await websocket.send_json(
+                                        {
+                                            "type": "resumption_token",
+                                            "token": sru.new_handle,
+                                        }
+                                    )
+
+                            # GoAway signal — server will terminate connection soon.
+                            # Relay to client so it can proactively reconnect.
+                            if hasattr(response, "go_away") and response.go_away is not None:
+                                time_left = response.go_away.time_left
+                                seconds_left = 60.0
+                                if time_left is not None:
+                                    seconds_left = (
+                                        time_left.total_seconds()
+                                        if hasattr(time_left, "total_seconds")
+                                        else float(time_left)
+                                    )
+                                logger.info(
+                                    "live_audio_ws: GoAway received user=%d time_left=%.1fs",
+                                    user_id,
+                                    seconds_left,
+                                )
+                                await websocket.send_json(
+                                    {
+                                        "type": "go_away",
+                                        "time_left_seconds": seconds_left,
+                                    }
+                                )
+
+                        logger.info("live_audio_ws: consumer receive loop ended normally user=%d", user_id)
+                    except asyncio.CancelledError:
+                        logger.debug("live_audio_ws: consumer cancelled user=%d", user_id)
+                    except Exception as exc:
+                        logger.warning(
+                            "live_audio_ws consumer error user=%d: %s: %s",
+                            user_id,
+                            type(exc).__name__,
+                            exc,
+                        )
                         try:
-                            await task
-                        except asyncio.CancelledError:
+                            await websocket.send_json({"type": "error", "message": str(exc)})
+                        except Exception:
                             pass
 
-    except Exception as exc:
-        err_str = str(exc)
-        logger.error("live_audio_ws: session error user=%d: %s", user_id, err_str)
-        if "1011" in err_str or "quota" in err_str.lower():
-            # Broadcast the exhaustion to the global key manager so subsequent connections rotate to a healthy key
-            try:
-                import hashlib
+                # ── Run both loops concurrently ───────────────────────────────
+                producer_task = asyncio.create_task(_producer())
+                consumer_task = asyncio.create_task(_consumer())
 
-                from app.repos.keys import get_key_status_manager
-                from app.utils.background_tasks import submit_task
-
-                key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:8]
-                submit_task(
-                    get_key_status_manager().suspend_key(
-                        key_hash, "gemini-3.1-flash-live-preview", "rate_limit", err_str
+                try:
+                    _done, _pending = await asyncio.wait(
+                        {producer_task, consumer_task},
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
-                )
-            except Exception as e_susp:
-                logger.debug("Failed to suspend Live API key: %s", e_susp)
-        try:
-            await websocket.send_json({"type": "error", "message": f"Live session failed: {err_str}"})
-        except Exception:
-            pass
+                    # Grace period: if the producer exited first (client disconnect or
+                    # idle-mic watchdog), give the consumer up to 5s to drain its
+                    # remaining Gemini messages — most importantly the final
+                    # SessionResumptionUpdate — before we cancel it.
+                    if producer_task in _done and not consumer_task.done():
+                        try:
+                            await asyncio.wait_for(asyncio.shield(consumer_task), timeout=5.0)
+                        except (TimeoutError, asyncio.CancelledError):
+                            pass
+                finally:
+                    for task in (producer_task, consumer_task):
+                        if not task.done():
+                            task.cancel()
+                            try:
+                                await task
+                            except asyncio.CancelledError:
+                                pass
+
+            break  # Success, so break the retry loop
+
+        except Exception as exc:
+            err_str = str(exc)
+            if "1011" in err_str or "quota" in err_str.lower():
+                logger.warning("live_audio_ws: session error user=%d attempt=%d: %s", user_id, attempt + 1, err_str)
+                # Broadcast the exhaustion to the global key manager so subsequent connections rotate to a healthy key
+                try:
+                    import hashlib
+
+                    from app.repos.keys import get_key_status_manager
+                    from app.utils.background_tasks import submit_task
+
+                    key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:8]
+                    penalty_type = "quota" if "quota" in err_str.lower() else "rate_limit"
+                    submit_task(
+                        get_key_status_manager().suspend_key(
+                            key_hash, "gemini-3.1-flash-live-preview", penalty_type, err_str
+                        )
+                    )
+                except Exception as e_susp:
+                    logger.debug("Failed to suspend Live API key: %s", e_susp)
+
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(0.5)
+                    continue
+            logger.error("live_audio_ws: session fatal error user=%d: %s", user_id, err_str)
+            try:
+                await websocket.send_json({"type": "error", "message": f"Live session failed: {err_str}"})
+            except Exception:
+                pass
+            break
 
     logger.info("live_audio_ws: disconnected user=%d", user_id)

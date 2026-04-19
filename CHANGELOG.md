@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.9] - 2026-04-19 - Live Audio Stability & Key Rotation
+
+### 🔄 Gemini Live Infrastructure
+- **Automatic Key Rotation:** Addressed persistent 429 and 1011 (quota) errors during high load in the Gemini Live Audio Mini App. The `live_audio_ws` handler now seamlessly rotates to the next available API key in the pool via a built-in retry loop (up to 3 attempts) without dropping the user's active WebSocket connection.
+- **Accurate Penalty Classification:** Overhauled key suspension logic to correctly distinguish between transient rate limits and hard quota limits, ensuring exhausted AI Studio keys receive a 24-hour suspension instead of a 15-second cooldown.
+- **Robust Exception Handling:** Transitioned `_handle_live_session` from a fail-fast approach to a resilient-retry model, preserving session context and audio flow across connection resets.
+
 ## [2.15.8] - 2026-04-19 - Test Suite Stabilization & Isolation
 
 ### 🧪 Testing & Configuration
