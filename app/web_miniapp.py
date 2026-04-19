@@ -1045,33 +1045,31 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
             "Всегда отвечай на том же языке, на котором говорит пользователь."
         )
 
-    config_kwargs = {
-        "response_modalities": [types.Modality.AUDIO],
-        "input_audio_transcription": types.AudioTranscriptionConfig(),
-        "output_audio_transcription": types.AudioTranscriptionConfig(),
-        # Always enable session resumption.
-        # handle=None starts a new resumable session; handle=<token> resumes.
-        "session_resumption": types.SessionResumptionConfig(
-            handle=resumption_token or None,
-        ),
-        # Context window compression — allows unlimited session duration.
-        # Without it, audio-only sessions hard-limit at ~15 min.
-        "context_window_compression": types.ContextWindowCompressionConfig(
-            sliding_window=types.SlidingWindow(),
-        ),
-        # Google Search grounding: model requests real-time web data automatically.
-        # Supported on gemini-3.1-flash-live-preview (AI Studio key).
-        "tools": [types.Tool(google_search=types.GoogleSearch())],
-        "system_instruction": types.Content(parts=[types.Part(text=" ".join(_sys_parts))]),
-    }
-
-    if chat_state and chat_state.thinking_level:
-        # chat_state.thinking_level is one of: "low", "medium", "high"
-        # The SDK expects uppercase enumerations for AI Studio live models.
-        mapped_level = chat_state.thinking_level.upper()
-        config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_level=mapped_level)
-
-    live_config = types.LiveConnectConfig(**config_kwargs)  # type: ignore[arg-type]
+    # ── Config factory ────────────────────────────────────────────────────
+    # Called fresh on every retry attempt to inject the latest resumption
+    # token. Building once outside the loop would freeze the handle and cause
+    # Gemini to start a new session on key-rotation reconnects, discarding all
+    # prior context. transparent=True asks Gemini to track unacknowledged
+    # client messages and replay them on reconnection (SDK feature, Apr 2026).
+    def _build_live_config(handle: str | None) -> "types.LiveConnectConfig":
+        _kw: dict = {
+            "response_modalities": [types.Modality.AUDIO],
+            "input_audio_transcription": types.AudioTranscriptionConfig(),
+            "output_audio_transcription": types.AudioTranscriptionConfig(),
+            "session_resumption": types.SessionResumptionConfig(
+                handle=handle or None,
+                transparent=True,
+            ),
+            "context_window_compression": types.ContextWindowCompressionConfig(
+                sliding_window=types.SlidingWindow(),
+            ),
+            "tools": [types.Tool(google_search=types.GoogleSearch())],
+            "system_instruction": types.Content(parts=[types.Part(text=" ".join(_sys_parts))]),
+        }
+        if chat_state and chat_state.thinking_level:
+            mapped = chat_state.thinking_level.upper()
+            _kw["thinking_config"] = types.ThinkingConfig(thinking_level=mapped)
+        return types.LiveConnectConfig(**_kw)  # type: ignore[arg-type]
 
     MAX_RETRIES = 3
     for attempt in range(MAX_RETRIES):
@@ -1086,22 +1084,26 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
 
         client = get_cached_genai_client(api_key)
 
-        if not key_data:
-            if attempt == 0:
-                await websocket.close(4500, "No API keys configured or available")
-            else:
-                try:
-                    await websocket.send_json({"type": "error", "message": "All available keys exhausted."})
-                except Exception:
-                    pass
-            return
+        # Signal the frontend that we are (re)connecting so it can render a
+        # reconnecting indicator instead of leaving the UI in an ambiguous state.
+        if attempt > 0:
+            try:
+                await websocket.send_json({"type": "ui_event", "state": "reconnecting"})
+            except Exception:
+                pass
+
         logger.info(
             "live_audio_ws: connecting user=%d model=%s resumption_token=%s attempt=%d",
             user_id,
             GEMINI_LIVE_MODEL,
-            bool(resumption_token),
+            bool(session_resumption_token or resumption_token),
             attempt + 1,
         )
+        # Build a fresh config injecting the most recent resumption handle.
+        # On attempt 0 this is the caller-supplied token (or None for a new
+        # session). On retries this picks up the dynamically-received handle
+        # so that context is preserved across key-rotation reconnects.
+        live_config = _build_live_config(session_resumption_token or resumption_token)
         try:
             async with client.aio.live.connect(model=GEMINI_LIVE_MODEL, config=live_config) as session:
                 await websocket.send_json({"type": "connected"})
@@ -1255,10 +1257,12 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                         {producer_task, consumer_task},
                         return_when=asyncio.FIRST_COMPLETED,
                     )
-                    # Grace period: if the producer exited first (client disconnect or
-                    # idle-mic watchdog), give the consumer up to 5s to drain its
-                    # remaining Gemini messages — most importantly the final
-                    # SessionResumptionUpdate — before we cancel it.
+                    # Grace period only applies to the clean producer-exit path
+                    # (e.g. client navigated away or idle-mic watchdog fired).
+                    # We give the consumer up to 5 s to drain the final
+                    # SessionResumptionUpdate from Gemini before cancelling.
+                    # On error paths (key rotation) we skip the grace and cancel
+                    # immediately to minimise reconnection latency.
                     if producer_task in _done and not consumer_task.done():
                         try:
                             await asyncio.wait_for(asyncio.shield(consumer_task), timeout=5.0)
@@ -1269,17 +1273,19 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                         if not task.done():
                             task.cancel()
                             try:
-                                await task
-                            except asyncio.CancelledError:
+                                await asyncio.wait_for(task, timeout=0.25)
+                            except (asyncio.CancelledError, TimeoutError):
                                 pass
 
-            break  # Success, so break the retry loop
+            break  # Clean session end — exit the retry loop
 
         except Exception as exc:
             err_str = str(exc)
-            if "1011" in err_str or "quota" in err_str.lower():
+            is_quota_error = "1011" in err_str or "quota" in err_str.lower()
+            if is_quota_error:
                 logger.warning("live_audio_ws: session error user=%d attempt=%d: %s", user_id, attempt + 1, err_str)
-                # Broadcast the exhaustion to the global key manager so subsequent connections rotate to a healthy key
+                # Broadcast key exhaustion to the global health manager so the
+                # next _resolve_ai_request() call skips this key.
                 try:
                     import hashlib
 
@@ -1290,7 +1296,7 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                     penalty_type = "quota" if "quota" in err_str.lower() else "rate_limit"
                     submit_task(
                         get_key_status_manager().suspend_key(
-                            key_hash, "gemini-3.1-flash-live-preview", penalty_type, err_str
+                            key_hash, GEMINI_LIVE_MODEL, penalty_type, err_str
                         )
                     )
                 except Exception as e_susp:
@@ -1299,6 +1305,20 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(0.5)
                     continue
+
+                # All retries exhausted — send a rich actionable UI event so the
+                # frontend can gracefully degrade (e.g. suggest switching to text).
+                try:
+                    await websocket.send_json({
+                        "type": "fatal",
+                        "reason": "server_capacity",
+                        "message": "Голосовые каналы временно перегружены. Пожалуйста, напишите запрос текстом.",
+                        "ui_suggestion": "switch_to_chat",
+                    })
+                except Exception:
+                    pass
+                break
+
             logger.error("live_audio_ws: session fatal error user=%d: %s", user_id, err_str)
             try:
                 await websocket.send_json({"type": "error", "message": f"Live session failed: {err_str}"})

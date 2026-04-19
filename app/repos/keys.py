@@ -7,6 +7,7 @@ and daily/monthly limit enforcement.
 Extracted from app/database.py to isolate key-management domain logic.
 """
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -374,6 +375,10 @@ class KeyStatusManager:
     Write-through on status changes; cached reads via _active_keys_cache TTL.
     """
 
+    def __init__(self):
+        self._suspension_cache: dict[str, datetime] = {}
+        self._cache_lock = asyncio.Lock()
+
     async def suspend_key(
         self,
         key_hash: str,
@@ -382,6 +387,18 @@ class KeyStatusManager:
         error_text: str = "",
     ) -> None:
         """Suspend a key for a specific model with category-aware cooldown."""
+        cache_key = f"{key_hash}:{model_name}"
+        now_utc = datetime.now(UTC_TZ)
+
+        async with self._cache_lock:
+            # Drop duplicate suspension requests within 5 seconds for the same key.
+            # Prevents a "thundering herd" of concurrent DB writes when many Live
+            # WS sessions hit the same quota-exhausted key simultaneously.
+            cached_at = self._suspension_cache.get(cache_key)
+            if cached_at is not None and (now_utc - cached_at).total_seconds() < 5:
+                return
+            self._suspension_cache[cache_key] = now_utc
+
         # Read current failure_count to compute backoff
         rows = await db_query(
             "SELECT failure_count FROM key_model_status WHERE key_hash = $1 AND model_name = $2",
