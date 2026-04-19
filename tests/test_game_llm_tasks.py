@@ -36,7 +36,11 @@ class TestLLMTasks:
 
     async def test_generate_words_success(self):
         """LLM-03: Successfully runs and parses JSON array format."""
-        with patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response:
+        with (
+            patch("app.providers.router.ProviderRouter.get_response", new_callable=AsyncMock) as mock_get_response,
+            patch("app.games.judgement_cache.get_cached_generated_words", new_callable=AsyncMock, return_value=None),
+            patch("app.games.judgement_cache.cache_generated_words", new_callable=AsyncMock) as cache_mock,
+        ):
             # Must be >= 5 words or validate_words returns None
             mock_get_response.return_value = ('["кот", "собака", "тигр", "медведь", "лиса"]', 10)
 
@@ -46,6 +50,7 @@ class TestLLMTasks:
             assert len(words) == 5
             assert words[0] == "кот"
             assert words[1] == "собака"
+            cache_mock.assert_awaited_once_with("ru", "зверолов_тест", words)
 
     async def test_generate_words_value_error_if_empty(self):
         """LLM-04: Returns None if empty array returned."""

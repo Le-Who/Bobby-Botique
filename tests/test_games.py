@@ -143,6 +143,33 @@ class TestPickRandomWord:
         assert cat == "Animals"
         assert not is_gen
 
+    async def test_unknown_category_uses_persisted_generated_words_before_llm(self):
+        cached_words = ["венти", "чжун ли", "нахида"]
+        with (
+            patch(
+                "app.games.word_bank._generate_single_word_fast",
+                new_callable=AsyncMock,
+            ) as fast_mock,
+            patch(
+                "app.games.word_bank.generate_words_for_category",
+                new_callable=AsyncMock,
+            ) as generate_mock,
+            patch(
+                "app.games.judgement_cache.get_cached_generated_words",
+                new_callable=AsyncMock,
+                return_value=cached_words,
+            ) as cache_mock,
+        ):
+            word, lang, cat, is_gen = await pick_random_word("персонаж genshin impact")
+
+        assert lang == "ru"
+        assert cat == "персонаж genshin impact"
+        assert is_gen
+        assert word in cached_words
+        cache_mock.assert_awaited_once_with("ru", "персонаж genshin impact")
+        fast_mock.assert_not_awaited()
+        generate_mock.assert_not_awaited()
+
 
 # ── judge — Damerau-Levenshtein algorithm ─────────────────────────────────────
 

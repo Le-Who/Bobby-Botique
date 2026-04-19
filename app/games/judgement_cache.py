@@ -1,5 +1,5 @@
 # /app/games/judgement_cache.py
-"""Local-file judgement cache for Crocodile game guess evaluation.
+"""Local-file Crocodile caches for judgements, hints, and generated words.
 
 Caches LLM judgement results for (target_word, guess_word) pairs so that
 common combinations (e.g. крокодил↔аллигатор) are served in <1ms on
@@ -39,9 +39,11 @@ _DATA_DIR = Path(__file__).parent / "data"
 _CACHE_PATH = _DATA_DIR / "judgement_cache.json"
 _HINTS_CACHE_PATH = _DATA_DIR / "hints_cache.json"
 _CAT_CACHE_PATH = _DATA_DIR / "category_cache.json"
+_GEN_WORDS_CACHE_PATH = _DATA_DIR / "generated_words_cache.json"
 _MAX_ENTRIES = 50_000
 _MAX_HINTS = 5_000
 _MAX_CAT = 10_000
+_MAX_GEN_WORDS = 5_000
 
 
 # ── In-process LRU store ──────────────────────────────────────────────────────
@@ -261,3 +263,81 @@ async def cache_word_category(word: str, category: str) -> None:
     _cat_store[key] = category
     _cat_store.move_to_end(key)
     await _persist_cat()
+
+
+# ── Generated category word-bank cache ────────────────────────────────────────
+# Persists AI-generated word lists for custom categories so the game can reuse
+# them across restarts instead of re-generating the same category every time.
+
+_generated_words_store: OrderedDict[str, str] = OrderedDict()
+
+
+def _generated_words_key(lang: str, category: str) -> str:
+    return f"{lang.lower().strip()}\x00{category.lower().strip()}"
+
+
+def _load_generated_words_from_disk() -> None:
+    if not _GEN_WORDS_CACHE_PATH.exists():
+        return
+    try:
+        raw: dict[str, str] = json.loads(_GEN_WORDS_CACHE_PATH.read_text(encoding="utf-8"))
+        _generated_words_store.update(raw)
+        while len(_generated_words_store) > _MAX_GEN_WORDS:
+            _generated_words_store.popitem(last=False)
+        logger.debug("Generated word-bank cache loaded: %d entries", len(_generated_words_store))
+    except Exception as exc:
+        logger.warning("Generated word-bank cache load failed: %s — starting empty", exc)
+
+
+def _persist_generated_words_sync() -> None:
+    """Write _generated_words_store to disk. Runs inside to_thread."""
+    try:
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = _GEN_WORDS_CACHE_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(dict(_generated_words_store), ensure_ascii=False), encoding="utf-8")
+        tmp.replace(_GEN_WORDS_CACHE_PATH)
+    except Exception as exc:
+        logger.debug("Generated word-bank cache persist failed: %s", exc)
+
+
+async def _persist_generated_words() -> None:
+    await asyncio.to_thread(_persist_generated_words_sync)
+
+
+_load_generated_words_from_disk()
+
+
+async def get_cached_generated_words(lang: str, category: str) -> list[str] | None:
+    """Return cached AI-generated words for this language/category pair, or None on miss."""
+    key = _generated_words_key(lang, category)
+    value = _generated_words_store.get(key)
+    if value is None:
+        return None
+    _generated_words_store.move_to_end(key)
+    try:
+        words = json.loads(value)
+        if not isinstance(words, list):
+            raise TypeError("cached value is not a list")
+        clean = [word for word in words if isinstance(word, str) and word.strip()]
+        if not clean:
+            raise ValueError("cached word list is empty")
+        return clean
+    except Exception as exc:
+        logger.debug(
+            "Generated word-bank cache deserialise failed (%s/%s): %s",
+            lang,
+            category,
+            exc,
+        )
+        _generated_words_store.pop(key, None)
+        return None
+
+
+async def cache_generated_words(lang: str, category: str, words: list[str]) -> None:
+    """Persist the AI-generated word list for a custom category."""
+    key = _generated_words_key(lang, category)
+    if key not in _generated_words_store and len(_generated_words_store) >= _MAX_GEN_WORDS:
+        _generated_words_store.popitem(last=False)
+    _generated_words_store[key] = json.dumps(words, ensure_ascii=False)
+    _generated_words_store.move_to_end(key)
+    await _persist_generated_words()

@@ -746,6 +746,7 @@ async def resolve_custom_word_category(word: str) -> str:
 # In-process cache: (lang, canonical_category) → word list
 # Avoids re-generating the same custom category within a process lifetime.
 _GENERATED_CACHE: dict[str, list[str]] = {}
+_GENERATED_INFLIGHT: dict[str, asyncio.Task[list[str] | None]] = {}
 
 # Gemini models tried in order for word generation
 _GEN_PRIMARY_MODEL = "opencode-go/minimax-m2.7"
@@ -760,6 +761,24 @@ _GEN_PROMPT = (
 )
 
 
+def _generated_cache_key(lang: str, category: str) -> str:
+    return f"{lang.lower().strip()}:{category.lower().strip()}"
+
+
+def _normalise_generated_words(words: list[object]) -> list[str]:
+    clean: list[str] = []
+    seen: set[str] = set()
+    for raw_word in words:
+        if not isinstance(raw_word, str):
+            continue
+        word = re.sub(r"\s+", " ", raw_word.strip().lower())
+        if not (2 <= len(word) <= 60) or word in seen:
+            continue
+        seen.add(word)
+        clean.append(word)
+    return clean
+
+
 async def generate_words_for_category(
     category: str,
     *,
@@ -768,62 +787,83 @@ async def generate_words_for_category(
     """Call LLM to generate 20 words for an unknown category.
 
     Returns None if the category is invalid/unintelligible or LLM times out.
-    Results are cached in-process by (lang, lower(category)) so repeated calls
-    within the same container don't re-invoke the LLM.
+    Results are cached in-process and persisted to the local game cache so
+    repeated calls and restarts don't re-invoke the LLM for the same category.
     """
-    cache_key = f"{lang}:{category.lower().strip()}"
+    from app.games.judgement_cache import cache_generated_words, get_cached_generated_words
+
+    category = category.strip()
+    cache_key = _generated_cache_key(lang, category)
     if cache_key in _GENERATED_CACHE:
         return _GENERATED_CACHE[cache_key]
+
+    cached = await get_cached_generated_words(lang, category)
+    if cached:
+        _GENERATED_CACHE[cache_key] = cached
+        logger.info("Hydrated AI-generated words for category %r (%s) from persistent cache", category, lang)
+        return cached
+
+    inflight = _GENERATED_INFLIGHT.get(cache_key)
+    if inflight is not None:
+        return await asyncio.shield(inflight)
 
     lang_hint = "русском" if lang == "ru" else "English"
     # Ensure system constraint explicitly for json arrays:
     prompt = _GEN_PROMPT.format(category=category.strip(), lang_hint=lang_hint)
 
-    for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
-        try:
-            from app.agent_use_cases import AgentRequestUseCase
-            from app.errors import is_error_message
-            from app.providers.router import get_provider_router
+    async def _do_generate() -> list[str] | None:
+        for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
+            try:
+                from app.errors import is_error_message
+                from app.providers.router import get_provider_router
 
-            router = get_provider_router()
+                router = get_provider_router()
 
-            # Using ProviderRouter handles keys, timeouts, and circuit breaking natively
-            response_text, _ = await router.get_response(
-                preferred_model=model,
-                history=[{"role": "user", "parts": [prompt]}],
-                max_key_retries=1,
-                timeout=_GEN_TIMEOUT_S,
-            )
-            raw = (response_text or "").strip()
+                # Using ProviderRouter handles keys, timeouts, and circuit breaking natively
+                response_text, _ = await router.get_response(
+                    preferred_model=model,
+                    history=[{"role": "user", "parts": [prompt]}],
+                    max_key_retries=1,
+                    timeout=_GEN_TIMEOUT_S,
+                )
+                raw = (response_text or "").strip()
 
-            if is_error_message(raw):
-                logger.warning("Word gen failed for %r (model=%s): Provider returned error: %s", category, model, raw)
-                continue
+                if is_error_message(raw):
+                    logger.warning("Word gen failed for %r (model=%s): Provider returned error: %s", category, model, raw)
+                    continue
 
-            # Strip markdown code fences if model wraps output
-            raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.IGNORECASE)
-            raw = re.sub(r"\n?```$", "", raw).strip()
+                # Strip markdown code fences if model wraps output
+                raw = re.sub(r"^```[a-z]*\n?", "", raw, flags=re.IGNORECASE)
+                raw = re.sub(r"\n?```$", "", raw).strip()
 
-            words: list[str] = json.loads(raw)
-            if not isinstance(words, list) or len(words) < 5:
-                logger.warning("Gemini returned bad word list for %r: %r", category, words)
-                return None
+                words = json.loads(raw)
+                if not isinstance(words, list) or len(words) < 5:
+                    logger.warning("Gemini returned bad word list for %r: %r", category, words)
+                    return None
 
-            # Sanitise: lowercase, strip, filter blanks & invalid chars
-            clean = [w.strip().lower() for w in words if isinstance(w, str) and 2 <= len(w.strip()) <= 60]
-            if len(clean) < 5:
-                return None
+                clean = _normalise_generated_words(words)
+                if len(clean) < 5:
+                    return None
 
-            _GENERATED_CACHE[cache_key] = clean
-            logger.info("Generated %d words for custom category %r (%s)", len(clean), category, model)
-            return clean
+                _GENERATED_CACHE[cache_key] = clean
+                await cache_generated_words(lang, category, clean)
+                logger.info("Generated %d words for custom category %r (%s)", len(clean), category, model)
+                return clean
 
-        except (TimeoutError, json.JSONDecodeError) as exc:
-            logger.warning("Word gen failed for %r (model=%s): %r", category, model, exc)
-        except Exception as exc:
-            logger.exception("Word gen unexpected error for %r (model=%s): %r", category, model, exc)
+            except (TimeoutError, json.JSONDecodeError) as exc:
+                logger.warning("Word gen failed for %r (model=%s): %r", category, model, exc)
+            except Exception as exc:
+                logger.exception("Word gen unexpected error for %r (model=%s): %r", category, model, exc)
 
-    return None
+        return None
+
+    generation_task = asyncio.create_task(_do_generate())
+    _GENERATED_INFLIGHT[cache_key] = generation_task
+    try:
+        return await asyncio.shield(generation_task)
+    finally:
+        if _GENERATED_INFLIGHT.get(cache_key) is generation_task:
+            _GENERATED_INFLIGHT.pop(cache_key, None)
 
 
 async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | None:
@@ -839,7 +879,6 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
     # We rely on the fastest inline model available
     model = settings.OPENCODE_INLINE_MODEL or "gemini-2.5-flash"
     try:
-        from app.agent_use_cases import AgentRequestUseCase
         from app.errors import is_error_message
         from app.providers.router import get_provider_router
 
@@ -894,32 +933,45 @@ async def pick_random_word(
         lang, category = resolved
         words = list(WORD_BANK[lang][category])
     else:
+        from app.games.judgement_cache import get_cached_generated_words
+
         # Unknown category → check memory cache first
         lang = _detect_lang(category_raw)
         category = category_raw.strip()
-        cache_key = f"{lang}:{category.lower()}"
+        cache_key = _generated_cache_key(lang, category)
 
         if cache_key in _GENERATED_CACHE and len(_GENERATED_CACHE[cache_key]) > 0:
             words = _GENERATED_CACHE[cache_key]
             is_generated = True
         else:
-            # We don't want to block the player for 15+ seconds.
-            # 1) Get ONE word fast
-            fast_word = await _generate_single_word_fast(category, lang)
-            if not fast_word:
-                # If even fast word fails, fallback to full wait
-                generated = await generate_words_for_category(category, lang=lang)
-                if not generated:
-                    raise ValueError(f"unintelligible_category:{category_raw!r}")
-                words = generated
+            cached_words = await get_cached_generated_words(lang, category)
+            if cached_words:
+                _GENERATED_CACHE[cache_key] = cached_words
+                words = cached_words
+                is_generated = True
+                logger.info("Using persisted AI-generated words for category %r (%s)", category, lang)
             else:
-                # Kick off bank generation in the background for future games
-                submit_task(generate_words_for_category(category, lang=lang))
-                # Skip redis de-duplication since we only have 1 word and want to return fast
-                return fast_word, lang, category, True
+                # We don't want to block the player for 15+ seconds.
+                # 1) Get ONE word fast
+                fast_word = await _generate_single_word_fast(category, lang)
+                if not fast_word:
+                    # If even fast word fails, fallback to full wait
+                    generated = await generate_words_for_category(category, lang=lang)
+                    if not generated:
+                        raise ValueError(f"unintelligible_category:{category_raw!r}")
+                    words = generated
+                else:
+                    # Seed an in-memory placeholder so repeated requests don't behave
+                    # as if the category has never been seen while the full bank loads.
+                    _GENERATED_CACHE.setdefault(cache_key, [fast_word])
+                    # Kick off bank generation in the background for future games.
+                    # generate_words_for_category() de-duplicates concurrent work.
+                    submit_task(generate_words_for_category(category, lang=lang))
+                    # Skip redis de-duplication since we only have 1 word and want to return fast
+                    return fast_word, lang, category, True
 
-            is_generated = True
-            logger.info("Using AI-generated words for category %r (%s)", category, lang)
+                is_generated = True
+                logger.info("Using AI-generated words for category %r (%s)", category, lang)
 
     # De-duplicate via Redis (best-effort; Redis miss is non-fatal)
     used: set[str] = set()

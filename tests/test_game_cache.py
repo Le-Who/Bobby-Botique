@@ -1,9 +1,9 @@
 # tests/test_game_cache.py
-"""Unit tests for app/games/judgement_cache.py — the local-file LRU cache.
+"""Unit tests for app/games/judgement_cache.py — the local-file LRU caches.
 
-All tests run offline.  We isolate the in-process stores (_store, _hints_store)
-by clearing them in setup/teardown so file I/O is never exercised in CI.
-_persist() and _persist_hints() are patched to no-ops to avoid touching disk.
+All tests run offline.  We isolate the in-process stores by clearing them in
+setup/teardown so file I/O is never exercised in CI. Persist helpers are
+patched to no-ops to avoid touching disk.
 """
 
 from __future__ import annotations
@@ -14,14 +14,21 @@ import pytest
 
 from app.games.judge import GuessJudgement
 from app.games.judgement_cache import (
+    _cat_store,
+    _generated_words_key,
+    _generated_words_store,
     _hints_key,
     _hints_store,
     _make_key,
     _store,
+    cache_generated_words,
     cache_hints,
     cache_judgement,
+    cache_word_category,
+    get_cached_generated_words,
     get_cached_hints,
     get_cached_judgement,
+    get_cached_word_category,
 )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -32,6 +39,8 @@ _HOT = GuessJudgement(status="hot", score=0.9, hint="Горячо!")
 
 _no_persist = patch("app.games.judgement_cache._persist", return_value=None)
 _no_persist_hints = patch("app.games.judgement_cache._persist_hints", return_value=None)
+_no_persist_cat = patch("app.games.judgement_cache._persist_cat", return_value=None)
+_no_persist_generated_words = patch("app.games.judgement_cache._persist_generated_words", return_value=None)
 
 
 @pytest.fixture(autouse=True)
@@ -39,9 +48,13 @@ def _isolated_cache():
     """Clear in-process LRU stores before and after every test."""
     _store.clear()
     _hints_store.clear()
+    _cat_store.clear()
+    _generated_words_store.clear()
     yield
     _store.clear()
     _hints_store.clear()
+    _cat_store.clear()
+    _generated_words_store.clear()
 
 
 # ── _make_key ─────────────────────────────────────────────────────────────────
@@ -169,3 +182,42 @@ class TestHintsCacheRoundTrip:
         result = await get_cached_hints("слон", "Животные")
         assert result is None
         assert key not in _hints_store
+
+
+@pytest.mark.asyncio
+class TestCategoryCacheRoundTrip:
+    async def test_store_and_retrieve(self):
+        with _no_persist_cat:
+            await cache_word_category("Венти", "Персонажи")
+            result = await get_cached_word_category("венти")
+
+        assert result == "Персонажи"
+
+    async def test_miss_returns_none(self):
+        result = await get_cached_word_category("несуществующее-слово")
+        assert result is None
+
+
+@pytest.mark.asyncio
+class TestGeneratedWordsCacheRoundTrip:
+    async def test_store_and_retrieve(self):
+        words = ["венти", "чжун ли", "нахида"]
+        with _no_persist_generated_words:
+            await cache_generated_words("ru", "Персонаж Genshin Impact", words)
+            result = await get_cached_generated_words("ru", "персонаж genshin impact")
+
+        assert result == words
+
+    async def test_key_is_case_insensitive(self):
+        assert _generated_words_key("RU", " Персонаж Genshin Impact ") == _generated_words_key(
+            "ru",
+            "персонаж genshin impact",
+        )
+
+    async def test_corrupt_entry_returns_none(self):
+        key = _generated_words_key("ru", "персонаж genshin impact")
+        _generated_words_store[key] = '{"oops": "not-a-list"}'
+
+        result = await get_cached_generated_words("ru", "Персонаж Genshin Impact")
+        assert result is None
+        assert key not in _generated_words_store

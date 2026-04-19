@@ -157,6 +157,29 @@ def _clear_game_mem_stores():
 
 
 @pytest.fixture(autouse=True)
+def _clear_word_bank_caches():
+    """Clear custom-category word caches between tests."""
+    import app.games.judgement_cache as _game_cache
+    import app.games.word_bank as _word_bank
+
+    for task in list(_word_bank._GENERATED_INFLIGHT.values()):
+        if not task.done():
+            task.cancel()
+    _word_bank._GENERATED_CACHE.clear()
+    _word_bank._GENERATED_INFLIGHT.clear()
+    _game_cache._generated_words_store.clear()
+    _game_cache._cat_store.clear()
+    yield
+    for task in list(_word_bank._GENERATED_INFLIGHT.values()):
+        if not task.done():
+            task.cancel()
+    _word_bank._GENERATED_CACHE.clear()
+    _word_bank._GENERATED_INFLIGHT.clear()
+    _game_cache._generated_words_store.clear()
+    _game_cache._cat_store.clear()
+
+
+@pytest.fixture(autouse=True)
 def _clear_global_caches():
     """Clear all global caches to prevent state leakage between tests.
 
