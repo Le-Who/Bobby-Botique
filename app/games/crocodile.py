@@ -321,9 +321,7 @@ async def create_game(
     )
     # Pre-generate 3 progressive hints in background so they are ready when
     # the guesser connects. Non-blocking — failure is silently swallowed.
-    submit_task(
-        _prefetch_hints(game.game_id, target_word, category)
-    )
+    submit_task(_prefetch_hints(game.game_id, target_word, category))
     return game
 
 

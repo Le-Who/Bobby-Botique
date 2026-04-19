@@ -150,6 +150,7 @@ async def _get_embedding(
     for _attempt in range(2):  # One retry with a rotated key on 400
         if not current_key:
             from app.handlers.ai_core import _resolve_ai_request
+
             try:
                 key_data, _, _ = await _resolve_ai_request(
                     EMBEDDING_MODEL, use_openrouter=False, excluded_key_hashes=failed_hashes
@@ -158,7 +159,7 @@ async def _get_embedding(
                     current_key = key_data["api_key"]
             except Exception:
                 pass
-                
+
         if not current_key:
             return None
         try:
@@ -743,7 +744,6 @@ async def search_memories_with_llm_judge(
     Returns at most `limit` memories tagged with {'llm_judged': True}.
     Returns [] silently on any error — this is strictly non-blocking.
     """
-
 
     # Step 1: Over-fetch low-confidence candidates
     candidates = await search_memories(

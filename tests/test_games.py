@@ -107,12 +107,20 @@ class TestValidateCustomWord:
 class TestPickRandomWord:
     @pytest.fixture(autouse=True)
     def mock_word_gen(self):
-        with patch(
-            "app.games.word_bank.generate_words_for_category",
-            new_callable=AsyncMock,
-            return_value=["моксЛово", "тестовое"],
+        with (
+            patch(
+                "app.games.word_bank._generate_single_word_fast",
+                new_callable=AsyncMock,
+                return_value=None,  # force fallthrough to generate_words_for_category
+            ),
+            patch(
+                "app.games.word_bank.generate_words_for_category",
+                new_callable=AsyncMock,
+                return_value=["моксЛово", "тестовое"],
+            ),
         ):
             yield
+
 
     async def test_returns_word_from_category(self):
         word, lang, cat, is_gen = await pick_random_word("животные")

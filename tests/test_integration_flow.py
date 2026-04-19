@@ -198,8 +198,14 @@ async def test_happy_path_text_message(run_background_sync):
             await handle_request(update, context)
 
             # Ensure the background task was submitted
-            run_background_sync.assert_called_once()
-            captured_coro = run_background_sync.call_args[0][0]
+            assert run_background_sync.call_count >= 1
+            captured_coro = None
+            for call in run_background_sync.call_args_list:
+                coro = call[0][0]
+                if "task_wrapper" in str(coro):
+                    captured_coro = coro
+                    break
+            assert captured_coro is not None
 
             # Explicitly execute the task synchronously to completion
             await captured_coro
@@ -283,8 +289,14 @@ async def test_agent_error_shows_retry_keyboard(run_background_sync):
             # ── Act ──
             await handle_request(update, context)
 
-        run_background_sync.assert_called_once()
-        captured_coro = run_background_sync.call_args[0][0]
+        assert run_background_sync.call_count >= 1
+        captured_coro = None
+        for call in run_background_sync.call_args_list:
+            coro = call[0][0]
+            if "task_wrapper" in str(coro):
+                captured_coro = coro
+                break
+        assert captured_coro is not None
 
         # Explicitly wait for the task to run and handle its own simulated crash
         await captured_coro

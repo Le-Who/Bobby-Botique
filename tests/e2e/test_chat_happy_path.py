@@ -14,8 +14,6 @@ from app.handlers.messages import handle_request
 from tests.factories import make_telegram_context as make_context
 from tests.factories import make_telegram_update as make_update
 
-pytest_plugins = ["tests.integration.conftest"]
-
 
 @pytest.mark.asyncio
 @pytest.mark.integration

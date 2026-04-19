@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.8] - 2026-04-19 - Test Suite Stabilization & Isolation
+
+### 🧪 Testing & Configuration
+- **Resolved Mass Test Skipping:** Identified and fixed a critical configuration leak where the `force_test_db_conn(autouse=True)` fixture in `test_chat_happy_path.py` bled into the global pytest session, causing 1,858 tests to skip when the local integration database was unavailable.
+- **Isolated E2E Fixtures:** Created a dedicated `tests/e2e/conftest.py` with scoped `pytest_collection_modifyitems` logic to gracefully skip only E2E tests when `TEST_DATABASE_URL` is missing, protecting the fast unit test suite.
+- **Mock Robustness in Live Audio:** Fixed unstable tests in `test_live_audio.py` that caused race conditions and side effects across `asyncio` workers in `pytest-xdist`. Correctly mocked `app.repos.chats.get_user_chat` to break the implicit database dependency introduced by recent Mini App chat settings integration.
+- **Game Engine Test Fidelity:** Restored deterministic mock fallthrough behavior in `TestPickRandomWord` by patching the `_generate_single_word_fast` hot path to return `None`, forcing the category fallback logic to trigger correctly under test conditions.
+
 ## [2.15.7] - 2026-04-19 - Structured Concurrency & Linter Hardening
 
 ### 🔄 Architecture — Phase 2 Structured Concurrency

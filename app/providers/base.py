@@ -10,8 +10,8 @@ Provides:
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any
 
 from google.genai import types

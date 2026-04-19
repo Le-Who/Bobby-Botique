@@ -304,13 +304,9 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
                 return None
             data = json.loads(text)
             result = GuessJudgement.model_validate(data)
-            submit_task(
-                status_mgr.record_success(key_hash, model)
-            )
+            submit_task(status_mgr.record_success(key_hash, model))
             # Increment usage counter on success (fire-and-forget)
-            submit_task(
-                use_case.increment_key_usage(key_hash, model, use_openrouter=False)
-            )
+            submit_task(use_case.increment_key_usage(key_hash, model, use_openrouter=False))
             return result
         except Exception as exc:
             err_text = str(exc)
@@ -318,9 +314,7 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
             # Classify error and suspend key — prevents the same exhausted key
             # from being re-used in subsequent resolve_ai_request() calls.
             category = classify_key_error(err_text)
-            submit_task(
-                _suspend_key_safe(key_hash, model, category, err_text[:500])
-            )
+            submit_task(_suspend_key_safe(key_hash, model, category, err_text[:500]))
             return None
         finally:
             # Record every LLM call attempt in metrics (success OR failure)

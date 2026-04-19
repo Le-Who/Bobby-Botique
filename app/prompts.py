@@ -20,5 +20,3 @@ def clear_prompt_cache():
     """Clear composed prompt caches."""
     registry = get_registry()
     registry.compose_system_prompt.cache_clear()
-
-

@@ -318,8 +318,14 @@ async def _upsert_graph(
             tasks.append(fetch_emb(t))
 
         all_embeddings = await asyncio.gather(*tasks) if tasks else []
-        ent_embeddings_map = dict(zip((x for x in ent_texts if x), (e for i, e in enumerate(all_embeddings[:len(ent_texts)]) if ent_texts[i]), strict=False))
-        rel_embeddings_map = dict(zip(rel_texts, all_embeddings[len(ent_texts):], strict=False))
+        ent_embeddings_map = dict(
+            zip(
+                (x for x in ent_texts if x),
+                (e for i, e in enumerate(all_embeddings[: len(ent_texts)]) if ent_texts[i]),
+                strict=False,
+            )
+        )
+        rel_embeddings_map = dict(zip(rel_texts, all_embeddings[len(ent_texts) :], strict=False))
 
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)

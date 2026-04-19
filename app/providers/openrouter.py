@@ -239,7 +239,6 @@ class OpenRouterProvider(BaseAIProvider):
         Yields text chunks.
         """
 
-
         messages = await self._build_messages(history, system_instruction)
         if not messages:
             yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid messages for OpenRouter")

@@ -719,7 +719,6 @@ async def api_events():
     Client connects via `new EventSource('/api/events')`.
     """
 
-
     import psutil
 
     async def generate():

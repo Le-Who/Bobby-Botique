@@ -106,6 +106,7 @@ def get_vertex_client() -> "genai.Client | None":
         _vertex_client = None
     return _vertex_client
 
+
 class GeminiProvider(BaseAIProvider):
     """Google Gemini AI provider — self-contained execution logic."""
 
@@ -496,7 +497,9 @@ class GeminiProvider(BaseAIProvider):
                         else:
                             logging.warning("Skipping TaggedImage part due to processing error")
                     elif isinstance(part, (bytes, bytearray, Image.Image)):
-                        img_bytes_raw: bytes | None = await save_image_as_bytes(bytes(part) if isinstance(part, bytearray) else part)
+                        img_bytes_raw: bytes | None = await save_image_as_bytes(
+                            bytes(part) if isinstance(part, bytearray) else part
+                        )
                         if img_bytes_raw:
                             try:
                                 processed.append(

@@ -56,6 +56,7 @@ def loads(s: str | bytes | bytearray | memoryview) -> Any:
 
 # ── Namespace object for `import json_compat as json` style usage ────────────
 
+
 class _JsonNamespace:
     """Provides ``json.dumps`` / ``json.loads`` compatible namespace."""
 

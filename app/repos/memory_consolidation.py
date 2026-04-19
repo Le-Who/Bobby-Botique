@@ -233,7 +233,6 @@ async def _extract_graph(memories_text: str, api_key: str) -> dict:
     Falls back to empty graph on failure.
     """
 
-
     from google.genai import types
 
     from app.providers.gemini import get_cached_genai_client
@@ -371,9 +370,11 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
         # Helper to gather with concurrency limit
         async def bounded_gather(tasks, limit=20):
             sem = asyncio.Semaphore(limit)
+
             async def run_task(task):
                 async with sem:
                     return await task
+
             return await asyncio.gather(*(run_task(t) for t in tasks))
 
         # Build tasks for facts
@@ -382,32 +383,39 @@ async def consolidate_memories(user_id: int, api_key: str) -> int:
         # Build tasks for entities
         valid_entities = [ent for ent in entities if ent.get("name", "").strip()]
         entity_texts = [
-            f"{ent.get('name', '').strip()}: {ent.get('description', '')}" if ent.get("description", "") else ent.get("name", "").strip()
+            f"{ent.get('name', '').strip()}: {ent.get('description', '')}"
+            if ent.get("description", "")
+            else ent.get("name", "").strip()
             for ent in valid_entities
         ]
         entity_tasks = [_get_embedding(text, api_key, task_type="RETRIEVAL_DOCUMENT") for text in entity_texts]
 
         # Build tasks for relations
-        valid_relations = [
-            rel for rel in relations
-            if rel.get("from", "").strip() and rel.get("to", "").strip()
+        valid_relations = [rel for rel in relations if rel.get("from", "").strip() and rel.get("to", "").strip()]
+        relation_tasks = [
+            _get_embedding(rel.get("predicate", "related_to").strip(), api_key, task_type="RETRIEVAL_DOCUMENT")
+            for rel in valid_relations
         ]
-        relation_tasks = [_get_embedding(rel.get("predicate", "related_to").strip(), api_key, task_type="RETRIEVAL_DOCUMENT") for rel in valid_relations]
 
         # Gather all embeddings
         all_embeddings = await bounded_gather(fact_tasks + entity_tasks + relation_tasks)
 
         # Unpack embeddings
-        fact_embeddings = all_embeddings[:len(fact_tasks)]
-        all_embeddings = all_embeddings[len(fact_tasks):]
-        entity_embeddings = all_embeddings[:len(entity_tasks)]
-        all_embeddings = all_embeddings[len(entity_tasks):]
+        fact_embeddings = all_embeddings[: len(fact_tasks)]
+        all_embeddings = all_embeddings[len(fact_tasks) :]
+        entity_embeddings = all_embeddings[: len(entity_tasks)]
+        all_embeddings = all_embeddings[len(entity_tasks) :]
         relation_embeddings = all_embeddings
 
         # Map entity and relation embeddings
-        ent_emb_map = {ent.get("name", "").strip(): emb for ent, emb in zip(valid_entities, entity_embeddings, strict=False)}
+        ent_emb_map = {
+            ent.get("name", "").strip(): emb for ent, emb in zip(valid_entities, entity_embeddings, strict=False)
+        }
         # Use relation tuple as key
-        rel_emb_map = {(rel.get("from", "").strip(), rel.get("to", "").strip(), rel.get("predicate", "related_to").strip()): emb for rel, emb in zip(valid_relations, relation_embeddings, strict=False)}
+        rel_emb_map = {
+            (rel.get("from", "").strip(), rel.get("to", "").strip(), rel.get("predicate", "related_to").strip()): emb
+            for rel, emb in zip(valid_relations, relation_embeddings, strict=False)
+        }
 
         async with db_manager.pool.acquire() as conn:
             await set_user_context(user_id, False, conn=conn)

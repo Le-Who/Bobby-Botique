@@ -417,7 +417,7 @@ def parse_inline_query(query: str) -> dict:
             "is_image_intent": False,
             "stripped_prompt": user_query,
             "has_edit_intent": False,
-            "has_quoted_text": False
+            "has_quoted_text": False,
         }
 
     if _IMAGE_INTENT_RE.search(user_query):
@@ -431,8 +431,9 @@ def parse_inline_query(query: str) -> dict:
         "is_image_intent": True,
         "stripped_prompt": stripped_prompt,
         "has_edit_intent": has_edit_intent,
-        "has_quoted_text": has_quoted_text
+        "has_quoted_text": has_quoted_text,
     }
+
 
 async def handle_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Return instant placeholder results for any non-empty query.
@@ -1069,9 +1070,10 @@ async def _stream_inline_fast(
         _vertex_grounding_holder: list[list[tuple[str, str]]] = [[]]  # mutable closure slot
 
         async def _vertex_race(_q: asyncio.Queue = q) -> None:
+            from google.genai import types as _gtypes
+
             from app.providers.gemini import _GroundingMeta as _GMeta
             from app.providers.gemini import get_vertex_client
-            from google.genai import types as _gtypes
 
             vertex_client = get_vertex_client()
             if vertex_client is None:
@@ -1093,7 +1095,7 @@ async def _stream_inline_fast(
                 ]
                 resp = await asyncio.wait_for(
                     vertex_client.aio.models.generate_content(
-                        model=_INLINE_VERTEX_MODEL,
+                        model=_INLINE_VERTEX_MODEL,  # noqa: B023
                         contents=_vcontents,  # type: ignore[arg-type]
                         config=_vcfg,
                     ),
@@ -1101,7 +1103,7 @@ async def _stream_inline_fast(
                 )
                 text = getattr(resp, "text", None) or ""
                 if not text:
-                    await _q.put((_VERTEX_KH, None, RuntimeError("empty vertex response")))
+                    await _q.put((_VERTEX_KH, None, RuntimeError("empty vertex response")))  # noqa: B023
                     return
                 # Extract grounding sources into holder before putting text chunk
                 sources: list[tuple[str, str]] = []
@@ -1118,21 +1120,22 @@ async def _stream_inline_fast(
                 except Exception:
                     pass
                 if sources:
-                    _vertex_grounding_holder[0] = sources
-                    await _q.put((_VERTEX_KH, _GMeta(sources=sources), None))
-                await _q.put((_VERTEX_KH, text, None))
+                    _vertex_grounding_holder[0] = sources  # noqa: B023
+                    await _q.put((_VERTEX_KH, _GMeta(sources=sources), None))  # noqa: B023
+                await _q.put((_VERTEX_KH, text, None))  # noqa: B023
             except asyncio.CancelledError:
                 pass
             except Exception as exc:
-                await _q.put((_VERTEX_KH, None, exc))
+                await _q.put((_VERTEX_KH, None, exc))  # noqa: B023
                 return
-            await _q.put((_VERTEX_KH, _End(_VERTEX_KH), None))
+            await _q.put((_VERTEX_KH, _End(_VERTEX_KH), None))  # noqa: B023
 
         tasks: dict[str, asyncio.Task] = {kd["key_hash"]: asyncio.create_task(_race(kd)) for kd in keys}
         # Add Vertex racer only if client is available (checked lazily inside the task)
         _vertex_client_available = True  # Task self-skips if None; count slot regardless
         try:
             from app.providers.gemini import get_vertex_client as _gvc
+
             _vertex_client_available = _gvc() is not None
         except Exception:
             _vertex_client_available = False

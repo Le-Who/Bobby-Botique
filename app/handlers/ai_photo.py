@@ -358,13 +358,14 @@ async def _download_images_concurrently(
                 await placeholder.edit_text(f"📸 Загружено {progress['done']}/{total}...")
             except Exception:
                 pass  # Telegram rate-limit or message already edited
+
     async with asyncio.TaskGroup() as tg:
         progress_task = tg.create_task(_update_progress())
         tasks = [tg.create_task(download_one(i, msg)) for i, msg in enumerate(messages)]
-        
+
         # Await all downloads inside the block
         results = await asyncio.gather(*tasks)
-        
+
         # Cancel the progress task so we don't wait for its sleep to finish
         progress_task.cancel()
 

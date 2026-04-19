@@ -1,6 +1,5 @@
 import pytest
 
-pytestmark = pytest.mark.integration
 """Integration tests — fixtures for real Supabase test database.
 
 Uses TEST_DATABASE_URL from .env to connect to a dedicated empty Supabase project.
@@ -11,11 +10,10 @@ import json
 import os
 
 import asyncpg
-import pytest
 from dotenv import load_dotenv
 
-# Load .env to get TEST_DATABASE_URL
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+# Load .env to get TEST_DATABASE_URL from project root
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 

@@ -1018,9 +1018,9 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     from google.genai import types
 
     from app.config import GEMINI_LIVE_MODEL
+    from app.handlers.ai_core import _resolve_ai_request
     from app.providers.gemini import get_cached_genai_client
     from app.repos.chats import get_user_chat
-    from app.handlers.ai_core import _resolve_ai_request
 
     key_data, _, _ = await _resolve_ai_request(
         GEMINI_LIVE_MODEL,
@@ -1041,10 +1041,12 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     if chat_state and chat_state.system_prompt:
         _sys_parts.append(chat_state.system_prompt)
     else:
-        _sys_parts.extend([
-            "Ты — дружелюбный AI-ассистент в Telegram боте.",
-            "Отвечай кратко и по делу. Если не уверен — скажи об этом.",
-        ])
+        _sys_parts.extend(
+            [
+                "Ты — дружелюбный AI-ассистент в Telegram боте.",
+                "Отвечай кратко и по делу. Если не уверен — скажи об этом.",
+            ]
+        )
 
     if user_first_name:
         _sys_parts.append(f"Имя пользователя: {user_first_name}.")

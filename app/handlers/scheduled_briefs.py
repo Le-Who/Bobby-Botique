@@ -244,8 +244,6 @@ async def _generate_brief_summary(topics: list[str], articles: list[dict[str, st
         return {}
 
     try:
-
-
         from google.genai import types
 
         from app.providers.gemini import get_cached_genai_client

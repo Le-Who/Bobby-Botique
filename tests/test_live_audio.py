@@ -36,6 +36,7 @@ def mock_bot_token(monkeypatch):
 @pytest.fixture
 def mock_api_keys(monkeypatch):
     monkeypatch.setattr("app.config.settings.GEMINI_API_KEYS", ["fake-api-key-123"])
+    monkeypatch.setattr("app.config.settings.AVAILABLE_MODELS", ["gemini-3.1-flash-live-preview"])
 
 
 def _make_response_with_audio(pcm_data: bytes):
@@ -132,9 +133,12 @@ class TestLiveAudioProxy:
         mock_client = MagicMock()
         mock_client.aio.live.connect.return_value = mock_session
 
-        with patch(
-            "app.providers.gemini.get_cached_genai_client",
-            return_value=mock_client,
+        with (
+            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
+            patch("app.agent_use_cases.AgentRequestUseCase.resolve_ai_request", 
+                  new_callable=AsyncMock, 
+                  return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
                 raw = await ws.receive()
@@ -164,9 +168,12 @@ class TestLiveAudioProxy:
         mock_client = MagicMock()
         mock_client.aio.live.connect.return_value = mock_session
 
-        with patch(
-            "app.providers.gemini.get_cached_genai_client",
-            return_value=mock_client,
+        with (
+            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
+            patch("app.agent_use_cases.AgentRequestUseCase.resolve_ai_request", 
+                  new_callable=AsyncMock, 
+                  return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
                 # 1. Receive "connected" event
@@ -212,9 +219,12 @@ class TestLiveAudioProxy:
         mock_client = MagicMock()
         mock_client.aio.live.connect.return_value = mock_session
 
-        with patch(
-            "app.providers.gemini.get_cached_genai_client",
-            return_value=mock_client,
+        with (
+            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
+            patch("app.agent_use_cases.AgentRequestUseCase.resolve_ai_request", 
+                  new_callable=AsyncMock, 
+                  return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
                 connected_raw = await ws.receive()
@@ -248,9 +258,12 @@ class TestLiveAudioProxy:
         mock_client = MagicMock()
         mock_client.aio.live.connect.return_value = mock_session
 
-        with patch(
-            "app.providers.gemini.get_cached_genai_client",
-            return_value=mock_client,
+        with (
+            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
+            patch("app.agent_use_cases.AgentRequestUseCase.resolve_ai_request", 
+                  new_callable=AsyncMock, 
+                  return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
             async with test_client.websocket(url) as ws:
                 connected_raw = await ws.receive()
