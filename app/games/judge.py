@@ -24,7 +24,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,15 @@ logger = logging.getLogger(__name__)
 
 _PRIMARY_MODEL = "gemini-3.1-flash-lite-preview"
 _FALLBACK_MODEL = "gemini-2.5-flash-lite"
+_HINTS_AI_STUDIO_MODEL = "gemini-3-flash-preview"
+_HINTS_VERTEX_MODEL = "gemini-3.1-flash-lite-preview"
+_HINTS_OPENCODE_MODEL_CANDIDATES = (
+    "opencode-go/glm-5.1",
+    "opencode-go/qwen3.6-plus",
+    "opencode-go/glm-5",
+    "opencode-go/kimi-k2.5",
+    "opencode-go/qwen3.5-plus",
+)
 
 # Primary race: concurrent across up to 3 keys + optional Vertex AI — wall time = timeout of
 # the fastest winner, so 7s is safe even under degraded conditions.
@@ -515,7 +524,12 @@ async def generate_hints(word: str, category: str) -> list[str]:
 
         numbered_lines: list[str] = []
         for line in cleaned_text.splitlines():
+            stripped = line.strip()
             normalized = re.sub(r"^\s*(?:[-*•]|\d+[.)]|подсказка\s*\d+\s*[:.)-]?)\s*", "", line, flags=re.I).strip()
+            if not normalized:
+                continue
+            if stripped.lower().endswith(":") and "hint" in stripped.casefold():
+                continue
             if len(normalized) >= 3 and normalized.lower() != "hints":
                 numbered_lines.append(normalized)
         numbered_hints = _dedupe_nonempty(numbered_lines)
@@ -558,114 +572,105 @@ async def generate_hints(word: str, category: str) -> list[str]:
 
         return [first_hint, second_hint, third_hint]
 
-    def _build_hint_model_chain(provider_name: str, settings_obj) -> list[str]:
-        opencode_available = set(settings_obj.OPENCODE_AVAILABLE_MODELS or [])
-        openrouter_available = set(settings_obj.OPENROUTER_AVAILABLE_MODELS or [])
-        gemini_available = set(settings_obj.AVAILABLE_MODELS or [])
+    def _setting(settings_obj: object | None, name: str, default: Any = None) -> Any:
+        if settings_obj is None:
+            return default
+        return getattr(settings_obj, name, default)
 
-        def _pick(candidates: list[str], available: set[str] | None = None) -> list[str]:
-            chosen: list[str] = []
-            seen: set[str] = set()
+    def _pick_ai_studio_model(settings_obj: object | None) -> str:
+        gemini_available = set(_setting(settings_obj, "AVAILABLE_MODELS", []) or [])
+        candidates = [
+            _HINTS_AI_STUDIO_MODEL,
+            _setting(settings_obj, "QNA_MODEL"),
+            "gemini-2.5-flash-lite",
+            _setting(settings_obj, "DEFAULT_MODEL"),
+        ]
+        if gemini_available:
             for candidate in candidates:
-                if not candidate or candidate in seen:
-                    continue
-                if available and candidate not in available:
-                    continue
-                seen.add(candidate)
-                chosen.append(candidate)
-            return chosen
+                if candidate and candidate in gemini_available:
+                    return candidate
+        for candidate in candidates:
+            if candidate:
+                return candidate
+        return _HINTS_AI_STUDIO_MODEL
 
-        if provider_name == "opencode":
-            chain = _pick(
-                [
-                    "opencode-go/glm-5.1",
-                    "opencode-go/qwen3.6-plus",
-                    "opencode-go/glm-5",
-                    "opencode-go/kimi-k2.5",
-                    settings_obj.OPENCODE_QNA_MODEL,
-                    "opencode-go/qwen3.5-plus",
-                ],
-                opencode_available or None,
-            )
-            chain.extend(
-                _pick(
-                    [
-                        settings_obj.QNA_MODEL,
-                        "gemini-2.5-flash-lite",
-                        settings_obj.DEFAULT_MODEL,
-                    ],
-                    gemini_available or None,
-                )
-            )
-            return _dedupe_nonempty(chain)
+    def _pick_opencode_model(settings_obj: object | None) -> str | None:
+        opencode_available = set(_setting(settings_obj, "OPENCODE_AVAILABLE_MODELS", []) or [])
+        configured_models = [
+            _setting(settings_obj, "OPENCODE_QNA_MODEL"),
+            _setting(settings_obj, "OPENCODE_DEFAULT_MODEL"),
+        ]
+        if not opencode_available and not any(configured_models):
+            return None
 
-        if provider_name == "openrouter":
-            chain = _pick(
-                [
-                    settings_obj.OPENROUTER_QNA_MODEL,
-                    settings_obj.OPENROUTER_DEFAULT_MODEL,
-                ],
-                openrouter_available or None,
-            )
-            chain.extend(
-                _pick(
-                    [
-                        settings_obj.QNA_MODEL,
-                        "gemini-2.5-flash-lite",
-                        settings_obj.DEFAULT_MODEL,
-                    ],
-                    gemini_available or None,
-                )
-            )
-            return _dedupe_nonempty(chain)
+        candidates = [
+            _HINTS_OPENCODE_MODEL_CANDIDATES[0],
+            _setting(settings_obj, "OPENCODE_QNA_MODEL"),
+            *_HINTS_OPENCODE_MODEL_CANDIDATES[1:4],
+            _setting(settings_obj, "OPENCODE_DEFAULT_MODEL"),
+            _HINTS_OPENCODE_MODEL_CANDIDATES[4],
+        ]
+        if opencode_available:
+            for candidate in candidates:
+                if candidate and candidate in opencode_available:
+                    return candidate
+            return None
+        for candidate in candidates:
+            if candidate:
+                return candidate
+        return None
 
-        return _pick(
-            [
-                settings_obj.QNA_MODEL,
-                "gemini-2.5-flash-lite",
-                settings_obj.DEFAULT_MODEL,
-            ],
-            gemini_available or None,
-        )
+    def _build_hint_lane_plan(settings_obj: object | None) -> list[tuple[str, str, str]]:
+        lanes: list[tuple[str, str, str]] = [("ai_studio", "router", _pick_ai_studio_model(settings_obj))]
+        if _setting(settings_obj, "VERTEX_AI_KEY") or _setting(settings_obj, "VERTEX_AI_PROJECT"):
+            lanes.append(("vertex_express", "vertex", _HINTS_VERTEX_MODEL))
+        opencode_model = _pick_opencode_model(settings_obj)
+        if opencode_model:
+            lanes.append(("opencode_go", "router", opencode_model))
+
+        deduped: list[tuple[str, str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for lane_name, lane_type, model_name in lanes:
+            key = (lane_type, model_name)
+            if not model_name or key in seen:
+                continue
+            seen.add(key)
+            deduped.append((lane_name, lane_type, model_name))
+        return deduped
 
     try:
-        from app.config import get_primary_provider_async, settings
+        import app.config as config_module
         from app.errors import is_error_message
-        from app.providers import get_provider_router, is_openrouter_model
+        from app.providers import get_provider_router
 
         c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
         prompt = _HINTS_PROMPT.format(W=word, C_STR=c_str)
-        provider_name = await get_primary_provider_async()
-        model_chain = _build_hint_model_chain(provider_name, settings)
+        settings_obj = getattr(config_module, "settings", None)
+        lane_plan = _build_hint_lane_plan(settings_obj)
         router = get_provider_router()
         history = [{"role": "user", "parts": [prompt]}]
-        if not model_chain:
-            logger.warning("generate_hints: empty model chain for provider=%s", provider_name)
+        if not lane_plan:
+            logger.warning("generate_hints: empty lane plan for word=%r", word)
             fallback_hints = _local_fallback_hints(word, category)
             logger.info("generate_hints: using deterministic fallback for %r", word)
             return fallback_hints
 
-        logger.info("generate_hints: word=%r provider=%s models=%s", word, provider_name, model_chain)
+        logger.info("generate_hints: word=%r lanes=%s", word, [f"{name}:{model}" for name, _, model in lane_plan])
 
-        async def _one_hint_call(model_name: str) -> list[str] | None:
-            use_openrouter = True if is_openrouter_model(model_name) else False
-            response_text, _ = await router.get_response(
-                preferred_model=model_name,
-                history=history,
-                system_instruction=None,
-                use_openrouter=use_openrouter,
-                max_key_retries=2,
-                thinking_level="off",
-                timeout=_HINTS_TIMEOUT_S,
-            )
-
+        def _finalize_hints(response_text: str, lane_name: str, model_name: str) -> list[str] | None:
             if not response_text:
-                logger.warning("generate_hints: empty response from %s for word=%r", model_name, word)
+                logger.warning(
+                    "generate_hints: empty response from %s lane (%s) for word=%r",
+                    lane_name,
+                    model_name,
+                    word,
+                )
                 return None
 
             if is_error_message(response_text):
                 logger.warning(
-                    "generate_hints: error response from %s for word=%r: %s",
+                    "generate_hints: error response from %s lane (%s) for word=%r: %s",
+                    lane_name,
                     model_name,
                     word,
                     response_text[:150],
@@ -674,24 +679,121 @@ async def generate_hints(word: str, category: str) -> list[str]:
 
             hints = _extract_hints(response_text)
             if len(hints) >= 3:
-                logger.info("generate_hints: model %s produced valid hints for %r", model_name, word)
+                logger.info(
+                    "generate_hints: lane %s (%s) produced valid hints for %r",
+                    lane_name,
+                    model_name,
+                    word,
+                )
                 return hints[:3]
 
             logger.warning(
-                "generate_hints: no valid hints extracted from %s for word=%r. response prefix: %r",
+                "generate_hints: no valid hints extracted from %s lane (%s) for word=%r. response prefix: %r",
+                lane_name,
                 model_name,
                 word,
                 response_text[:200],
             )
             return None
 
-        tasks = {asyncio.create_task(_one_hint_call(model)): model for model in model_chain}
+        async def _one_router_hint_call(lane_name: str, model_name: str) -> list[str] | None:
+            try:
+                response_text, _ = await router.get_response(
+                    preferred_model=model_name,
+                    history=history,
+                    system_instruction=None,
+                    use_openrouter=False,
+                    max_key_retries=1,
+                    thinking_level="off",
+                    timeout=_HINTS_TIMEOUT_S,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "generate_hints: router lane %s (%s) failed for %r: %s",
+                    lane_name,
+                    model_name,
+                    word,
+                    exc,
+                )
+                return None
+            return _finalize_hints(response_text, lane_name, model_name)
+
+        async def _one_vertex_hint_call(model_name: str) -> list[str] | None:
+            try:
+                from google.genai import types as _gtypes
+
+                from app.providers.gemini import get_vertex_client
+            except Exception as exc:
+                logger.warning("generate_hints: vertex lane bootstrap failed for %r: %s", word, exc)
+                return None
+
+            try:
+                vertex_client = get_vertex_client()
+            except Exception as exc:
+                logger.warning("generate_hints: vertex lane unavailable for %r: %s", word, exc)
+                return None
+
+            if vertex_client is None:
+                return None
+
+            try:
+                response = await asyncio.wait_for(
+                    vertex_client.aio.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=_gtypes.GenerateContentConfig(
+                            response_mime_type="application/json",
+                            response_schema=HintsOutput.model_json_schema(),
+                            temperature=0.6,
+                            max_output_tokens=220,
+                        ),
+                    ),
+                    timeout=_HINTS_TIMEOUT_S,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "generate_hints: vertex lane (%s) failed for %r: %s",
+                    model_name,
+                    word,
+                    exc,
+                )
+                return None
+
+            response_text = getattr(response, "text", None) or ""
+            return _finalize_hints(response_text, "vertex_express", model_name)
+
+        async def _run_lane(lane_name: str, lane_type: str, model_name: str) -> list[str] | None:
+            if lane_type == "vertex":
+                return await _one_vertex_hint_call(model_name)
+            return await _one_router_hint_call(lane_name, model_name)
+
+        tasks = {
+            asyncio.create_task(_run_lane(lane_name, lane_type, model_name)): (lane_name, model_name)
+            for lane_name, lane_type, model_name in lane_plan
+        }
         pending = set(tasks)
         try:
             while pending:
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
-                    hints = task.result()
+                    lane_name, model_name = tasks[task]
+                    try:
+                        hints = task.result()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        logger.warning(
+                            "generate_hints: lane %s (%s) crashed for %r: %s",
+                            lane_name,
+                            model_name,
+                            word,
+                            exc,
+                        )
+                        continue
                     if hints:
                         for other in pending:
                             other.cancel()

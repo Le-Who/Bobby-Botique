@@ -5,6 +5,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import app.config as config
+
+
+@pytest.fixture(autouse=True)
+def document_test_settings(monkeypatch) -> SimpleNamespace:
+    settings = SimpleNamespace(
+        ADMIN_ID=1,
+        AVAILABLE_MODELS=["gemini-3.1-flash-lite-preview"],
+        DAILY_LIMITS={},
+        DEFAULT_MODEL="gemini-3.1-flash-lite-preview",
+        GEMINI_API_KEYS=["fake-api-key-123"],
+        LIMIT_THRESHOLD_PERCENT=0.7,
+        QNA_MODEL="gemini-3.1-flash-lite-preview",
+        RESEARCH_MODEL="gemini-3.1-flash-lite-preview",
+        TAVILY_LIMIT_THRESHOLD_PERCENT=0.8,
+        TAVILY_MONTHLY_CREDIT_LIMIT=1000.0,
+        TELEGRAM_BOT_TOKEN="test-token",
+    )
+    monkeypatch.setattr(config, "settings", settings, raising=False)
+    monkeypatch.setattr(config.config_manager, "_settings", settings, raising=False)
+    return settings
+
 
 def make_placeholder():
     msg = MagicMock()

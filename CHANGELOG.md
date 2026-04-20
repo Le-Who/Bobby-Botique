@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.11] - 2026-04-20 - Hint Race UX Hardening & Config-Free Test Bootstrap
+
+### 🎮 Crocodile Hint Generation
+- **Three-Lane Hint Race (`app/games/judge.py`):** Reworked `generate_hints()` to use an explicit three-lane race tuned for UX instead of provider-global branching. The new order is: **AI Studio** `gemini-3-flash-preview`, **Vertex AI Express** `gemini-3.1-flash-lite-preview` when configured, and a curated **OpenCode Go** lane that prefers `opencode-go/glm-5.1`.
+- **No More First-Failure Abort:** Each hint lane now isolates its own exceptions and returns `None` on failure, so a fast provider error no longer aborts the entire race or forces an early deterministic fallback while another model is still about to return valid hints.
+- **Config-Light Bootstrap:** `generate_hints()` no longer hard-depends on `get_primary_provider_async()` or a fully initialized global `settings` object before touching the router. In degraded unit-test or local-dev environments, it still attempts the AI Studio lane and only falls back to deterministic local hints after all lanes fail.
+- **Live Audio Boundary Preserved:** The new Vertex path is scoped to Crocodile hint generation only. The Gemini Live Audio Mini App continues to use AI Studio API keys and was not migrated to Vertex.
+
+### 🧪 Test Stability
+- **Self-Contained Hint Tests (`tests/test_game_hints.py`):** Replaced direct patching of `config.settings.<attr>` with a local `SimpleNamespace` settings fixture, making the hint-race tests reliable even when `.env` is absent and `app.config.settings` is `None`.
+- **Live Audio Fixture Hardening (`tests/test_live_audio.py`):** Reworked the fixtures to patch a shared synthetic settings object into both `app.config` and `app.web_miniapp`, preventing websocket tests from crashing during fixture setup in a minimal unit-test environment.
+- **Document Handler Bootstrap Guard (`tests/test_ai_document.py`):** Added the same config-light test bootstrap pattern to adjacent document-handler tests so they no longer fail at import time on `settings=None`.
+
+### ✅ Verification
+- `python -m pytest -o addopts='' -q -n 0 tests/test_game_llm_tasks.py tests/test_game_hints.py tests/test_live_audio.py tests/test_ai_document.py` → **21 passed**
+- `ruff check app/games/judge.py tests/test_game_hints.py tests/test_live_audio.py tests/test_ai_document.py tests/test_game_llm_tasks.py` → **All checks passed**
+
 ## [2.15.10] - 2026-04-19 - Async Cache Performance Optimization
 
 ### ⚡ Performance — Async Lock Removal

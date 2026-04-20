@@ -28,15 +28,31 @@ def test_client():
 
 
 @pytest.fixture
-def mock_bot_token(monkeypatch):
-    monkeypatch.setattr("app.config.settings.TELEGRAM_BOT_TOKEN", "test-token")
-    return "test-token"
+def live_settings(monkeypatch) -> SimpleNamespace:
+    settings = SimpleNamespace(
+        ADMIN_ID=1,
+        TELEGRAM_BOT_TOKEN="test-token",
+        GEMINI_API_KEYS=["fake-api-key-123"],
+        AVAILABLE_MODELS=["gemini-3.1-flash-live-preview"],
+        DAILY_LIMITS={},
+        LIMIT_THRESHOLD_PERCENT=0.7,
+        RESEARCH_MODEL="gemini-3.1-flash-live-preview",
+        TAVILY_LIMIT_THRESHOLD_PERCENT=0.8,
+        TAVILY_MONTHLY_CREDIT_LIMIT=1000.0,
+    )
+    monkeypatch.setattr("app.config.settings", settings, raising=False)
+    monkeypatch.setattr("app.web_miniapp.settings", settings, raising=False)
+    return settings
 
 
 @pytest.fixture
-def mock_api_keys(monkeypatch):
-    monkeypatch.setattr("app.config.settings.GEMINI_API_KEYS", ["fake-api-key-123"])
-    monkeypatch.setattr("app.config.settings.AVAILABLE_MODELS", ["gemini-3.1-flash-live-preview"])
+def mock_bot_token(live_settings):
+    return live_settings.TELEGRAM_BOT_TOKEN
+
+
+@pytest.fixture
+def mock_api_keys(live_settings):
+    return live_settings.GEMINI_API_KEYS
 
 
 def _make_response_with_audio(pcm_data: bytes):
@@ -150,8 +166,8 @@ class TestLiveAudioProxy:
 
         with (
             patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-            patch("app.agent_use_cases.AgentRequestUseCase.resolve_ai_request", 
-                  new_callable=AsyncMock, 
+            patch("app.handlers.ai_core._resolve_ai_request",
+                  new_callable=AsyncMock,
                   return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -185,8 +201,8 @@ class TestLiveAudioProxy:
 
         with (
             patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-            patch("app.agent_use_cases.AgentRequestUseCase.resolve_ai_request", 
-                  new_callable=AsyncMock, 
+            patch("app.handlers.ai_core._resolve_ai_request",
+                  new_callable=AsyncMock,
                   return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -236,8 +252,8 @@ class TestLiveAudioProxy:
 
         with (
             patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-            patch("app.agent_use_cases.AgentRequestUseCase.resolve_ai_request", 
-                  new_callable=AsyncMock, 
+            patch("app.handlers.ai_core._resolve_ai_request",
+                  new_callable=AsyncMock,
                   return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -275,8 +291,8 @@ class TestLiveAudioProxy:
 
         with (
             patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
-            patch("app.agent_use_cases.AgentRequestUseCase.resolve_ai_request", 
-                  new_callable=AsyncMock, 
+            patch("app.handlers.ai_core._resolve_ai_request",
+                  new_callable=AsyncMock,
                   return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct")),
             patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
         ):
@@ -317,7 +333,7 @@ class TestLiveAudioProxy:
         with (
             patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
             patch(
-                "app.agent_use_cases.AgentRequestUseCase.resolve_ai_request",
+                "app.handlers.ai_core._resolve_ai_request",
                 new_callable=AsyncMock,
                 return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct"),
             ),
