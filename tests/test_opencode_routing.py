@@ -18,6 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from app.errors import ErrorCode, extract_error_code
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Fixtures
 # ──────────────────────────────────────────────────────────────────────────────
@@ -87,6 +89,33 @@ class TestOpencodeGoProvider:
         p = self._make_provider()
         # Unknown format should pass through unchanged
         assert p._strip_model_prefix("gemini-2.5-flash") == "gemini-2.5-flash"
+
+    def test_model_specific_401_is_not_treated_as_invalid_key(self):
+        p = self._make_provider()
+        tagged = p._build_http_error_tag(
+            401,
+            '{"error":{"message":"model big-pickle is not available for this key"}}',
+            "opencode-go/big-pickle",
+        )
+        assert extract_error_code(tagged) == ErrorCode.INVALID_REQUEST
+
+    def test_explicit_invalid_key_401_still_maps_to_invalid_key(self):
+        p = self._make_provider()
+        tagged = p._build_http_error_tag(
+            401,
+            '{"error":{"message":"invalid api key"}}',
+            "opencode-go/big-pickle",
+        )
+        assert extract_error_code(tagged) == ErrorCode.INVALID_KEY
+
+    def test_ambiguous_401_defaults_to_request_error_for_opencode(self):
+        p = self._make_provider()
+        tagged = p._build_http_error_tag(
+            401,
+            '{"error":{"message":"Unauthorized"}}',
+            "opencode-go/big-pickle",
+        )
+        assert extract_error_code(tagged) == ErrorCode.INVALID_REQUEST
 
 
 # ──────────────────────────────────────────────────────────────────────────────

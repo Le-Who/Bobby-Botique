@@ -70,6 +70,29 @@ class OpenRouterProvider(BaseAIProvider):
         """
         return model_name
 
+    def _build_http_error_tag(
+        self,
+        status: int,
+        response_text: str,
+        model_name: str,
+    ) -> str:
+        """Map provider HTTP errors to tagged user-facing messages."""
+        if status == 429:
+            return tag_error(
+                ErrorCode.RATE_LIMIT,
+                "⏱️ Превышен лимит запросов. Подождите немного.",
+            )
+        if status == 401:
+            return tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ. Проверьте настройки.")
+        if status == 402:
+            return tag_error(ErrorCode.QUOTA_EXCEEDED, "💳 Недостаточно средств на счету OpenRouter.")
+        if status == 503:
+            return tag_error(
+                ErrorCode.OVERLOADED,
+                "🔄 Сервер OpenRouter перегружен. Попробуйте позже.",
+            )
+        return tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {status}")
+
     async def _execute_request(
         self,
         history: list[dict[str, Any]],
@@ -284,20 +307,7 @@ class OpenRouterProvider(BaseAIProvider):
                             continue
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
-            if status == 429:
-                yield tag_error(
-                    ErrorCode.RATE_LIMIT,
-                    "⏱️ Превышен лимит запросов. Подождите немного.",
-                )
-            elif status == 401:
-                yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ. Проверьте настройки.")
-            elif status == 402:
-                yield tag_error(
-                    ErrorCode.QUOTA_EXCEEDED,
-                    "💳 Недостаточно средств на счету OpenRouter.",
-                )
-            else:
-                yield tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {status}")
+            yield self._build_http_error_tag(status, e.response.text, model_name)
         except Exception as e:
             logging.error("OpenRouter streaming error: %s", e)
             yield tag_error(ErrorCode.GENERIC, f"❌ Произошла непредвиденная ошибка API: {e}")
@@ -377,19 +387,7 @@ class OpenRouterProvider(BaseAIProvider):
         self._log_failure(start_time, model, msg, user_id, chat_id)
 
         status = e.response.status_code
-        if status == 429:
-            text = tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов. Подождите немного.")
-        elif status == 401:
-            text = tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ. Проверьте настройки.")
-        elif status == 402:
-            text = tag_error(ErrorCode.QUOTA_EXCEEDED, "💳 Недостаточно средств на счету OpenRouter.")
-        elif status == 503:
-            text = tag_error(
-                ErrorCode.OVERLOADED,
-                "🔄 Сервер OpenRouter перегружен. Попробуйте позже.",
-            )
-        else:
-            text = tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {status}")
+        text = self._build_http_error_tag(status, e.response.text, model)
 
         return AIResponse(
             text=text,
