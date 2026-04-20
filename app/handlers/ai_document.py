@@ -121,19 +121,20 @@ async def _handle_document_question(
 
 Ответь на вопрос пользователя, основываясь на содержимом документа."""
 
-        # Stream via unified ProviderRouter
-        # We need the current model, so we resolve it first to pass to stream_and_display
+        # Stream via unified ProviderRouter using the same resolved model for
+        # both the streaming path and the non-stream fallback.
         from app.handlers.ai_core import _resolve_ai_request
         from app.streaming import stream_and_display
 
         _, model_used, _ = await _resolve_ai_request(settings.DEFAULT_MODEL)
+        stream_model = model_used or chat_state.model or settings.DEFAULT_MODEL
 
         parts = [document_prompt] if document_prompt else []
         history = [{"role": "user", "parts": parts}]
 
         response_text, success, stream_last_msg, _tokens, _was_interrupted, _voice_req = await stream_and_display(
             placeholder_message,
-            model_name=model_used,
+            model_name=stream_model,
             history=history,
             system_instruction=None,
             thinking_level=chat_state.thinking_level,
@@ -146,7 +147,7 @@ async def _handle_document_question(
 
         if not streamed:
             response_text, _ = await _get_ai_response_with_routing(
-                settings.DEFAULT_MODEL,
+                stream_model,
                 history,
                 user_id=user_id,
                 chat_id=(placeholder_message.chat.id if placeholder_message.chat else None),

@@ -182,6 +182,56 @@ async def test_document_question_empty_ai_response():
     assert "не удалось" in text.lower() or "ответ" in text.lower()
 
 
+@pytest.mark.asyncio
+async def test_document_question_fallback_reuses_resolved_stream_model():
+    """Non-stream fallback must reuse the resolved model instead of resetting to DEFAULT_MODEL."""
+    placeholder = make_placeholder()
+    chat_state = make_chat_state()
+
+    with (
+        patch(
+            "app.document_processor.get_user_documents",
+            new_callable=AsyncMock,
+            return_value=[{"id": 1, "filename": "test.txt"}],
+        ),
+        patch(
+            "app.document_processor.get_document_content",
+            new_callable=AsyncMock,
+            return_value="Some document content",
+        ),
+        patch("app.handlers.ai_document.update_stage", new_callable=AsyncMock),
+        patch(
+            "app.streaming.stream_and_display",
+            new_callable=AsyncMock,
+            return_value=("", False, AsyncMock(), 0, False, False),
+        ),
+        patch(
+            "app.handlers.ai_core._resolve_ai_request",
+            new_callable=AsyncMock,
+            return_value=({"key": "val"}, "opencode-go/qwen3.5-plus", None),
+        ),
+        patch(
+            "app.handlers.ai_document._get_ai_response_with_routing",
+            new_callable=AsyncMock,
+            return_value=("Fallback answer", 10),
+        ) as mock_fallback,
+        patch(
+            "app.handlers.ai_document.handle_ai_response_error",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch("app.handlers.ai_document.send_long_message", new_callable=AsyncMock),
+        patch("app.handlers.ai_document.metrics_collector") as mock_metrics,
+    ):
+        mock_metrics.record_api_call = AsyncMock()
+
+        from app.handlers.ai_document import _handle_document_question
+
+        await _handle_document_question(placeholder, 123, "Question", chat_state)
+
+    assert mock_fallback.await_args.args[0] == "opencode-go/qwen3.5-plus"
+
+
 # ── Exception during processing ───────────────────────────────────────────────
 
 
