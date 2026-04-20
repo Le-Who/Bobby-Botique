@@ -15,9 +15,11 @@ import base64
 import hashlib
 import hmac
 import logging
+import re
 import time
 import typing
 import urllib.parse
+from datetime import UTC, datetime, timedelta
 from functools import wraps
 from typing import Any
 
@@ -33,6 +35,77 @@ miniapp_blueprint = Blueprint("miniapp", __name__, template_folder="templates")
 # State tracking for Live Audio sessions
 ACTIVE_LIVE_SESSIONS: set[int] = set()
 _KEY_ROTATION_INDEX: int = 0
+_LIVE_CONNECT_RETRY_AFTER_RE = re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
+_LIVE_MODEL_COOLDOWN_UNTIL: float = 0.0
+_LIVE_MODEL_COOLDOWN_REASON: str = ""
+
+
+def _extract_live_retry_after_seconds(error_text: str) -> int | None:
+    """Parse an upstream Retry-After style hint from Gemini error text."""
+    match = _LIVE_CONNECT_RETRY_AFTER_RE.search(error_text)
+    if not match:
+        return None
+    try:
+        return max(1, int(float(match.group(1)) + 0.999))
+    except ValueError:
+        return None
+
+
+def _is_live_resource_exhausted(error_text: str) -> bool:
+    """Live API surfaces quota/session saturation through RESOURCE_EXHAUSTED text."""
+    err_lower = error_text.lower()
+    return any(
+        marker in err_lower
+        for marker in (
+            "resource_exhausted",
+            "exceeded your current quota",
+            "rate limit",
+            "quota",
+        )
+    )
+
+
+def _get_live_model_cooldown_seconds() -> int:
+    """Return remaining process-local cooldown for the Live model."""
+    return max(0, int(_LIVE_MODEL_COOLDOWN_UNTIL - time.monotonic()))
+
+
+def _mark_live_model_cooldown(seconds: int, reason: str) -> int:
+    """Trip a short model-level breaker to stop reconnect storms."""
+    global _LIVE_MODEL_COOLDOWN_UNTIL, _LIVE_MODEL_COOLDOWN_REASON
+
+    cooldown_seconds = max(15, min(seconds, 300))
+    _LIVE_MODEL_COOLDOWN_UNTIL = max(
+        _LIVE_MODEL_COOLDOWN_UNTIL,
+        time.monotonic() + cooldown_seconds,
+    )
+    _LIVE_MODEL_COOLDOWN_REASON = reason[:500]
+    return _get_live_model_cooldown_seconds()
+
+
+async def _send_live_fatal(
+    websocket,
+    *,
+    reason: str,
+    message: str,
+    retry_after_seconds: int | None = None,
+) -> None:
+    """Emit a structured fatal event for the frontend before closing the socket."""
+    payload: dict[str, Any] = {
+        "type": "fatal",
+        "reason": reason,
+        "message": message,
+        "ui_suggestion": "switch_to_chat",
+    }
+    if retry_after_seconds:
+        payload["retry_after_seconds"] = retry_after_seconds
+        payload["retry_at"] = (
+            datetime.now(UTC) + timedelta(seconds=retry_after_seconds)
+        ).isoformat()
+    try:
+        await websocket.send_json(payload)
+    except Exception:
+        pass
 
 
 # ── Telegram initData Validation ─────────────────────────────────────────────
@@ -1025,6 +1098,26 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     session_resumption_token: str | None = None
     chat_state = await get_user_chat(user_id)
 
+    cooldown_seconds = _get_live_model_cooldown_seconds()
+    if cooldown_seconds > 0:
+        logger.warning(
+            "live_audio_ws: model cooldown active user=%d model=%s retry_after=%ds reason=%s",
+            user_id,
+            GEMINI_LIVE_MODEL,
+            cooldown_seconds,
+            _LIVE_MODEL_COOLDOWN_REASON[:160],
+        )
+        await _send_live_fatal(
+            websocket,
+            reason="server_capacity",
+            message=(
+                "Голосовой режим временно недоступен со стороны Gemini Live API. "
+                "Попробуйте ещё раз чуть позже или продолжите текстом."
+            ),
+            retry_after_seconds=cooldown_seconds,
+        )
+        return
+
     # Build personalised system instruction from initData user metadata.
     _sys_parts = []
     if chat_state and chat_state.system_prompt:
@@ -1287,42 +1380,31 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
 
         except Exception as exc:
             err_str = str(exc)
-            is_quota_error = "1011" in err_str or "quota" in err_str.lower()
-            if is_quota_error:
-                logger.warning("live_audio_ws: session error user=%d attempt=%d: %s", user_id, attempt + 1, err_str)
-                # Broadcast key exhaustion to the global health manager so the
-                # next _resolve_ai_request() call skips this key.
-                try:
-                    import hashlib
-
-                    from app.repos.keys import get_key_status_manager
-                    from app.utils.background_tasks import submit_task
-
-                    key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:8]
-                    penalty_type = "quota" if "quota" in err_str.lower() else "rate_limit"
-                    submit_task(
-                        get_key_status_manager().suspend_key(
-                            key_hash, GEMINI_LIVE_MODEL, penalty_type, err_str
-                        )
-                    )
-                except Exception as e_susp:
-                    logger.debug("Failed to suspend Live API key: %s", e_susp)
-
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(0.5)
-                    continue
-
-                # All retries exhausted — send a rich actionable UI event so the
-                # frontend can gracefully degrade (e.g. suggest switching to text).
-                try:
-                    await websocket.send_json({
-                        "type": "fatal",
-                        "reason": "server_capacity",
-                        "message": "Голосовые каналы временно перегружены. Пожалуйста, напишите запрос текстом.",
-                        "ui_suggestion": "switch_to_chat",
-                    })
-                except Exception:
-                    pass
+            if _is_live_resource_exhausted(err_str):
+                # Gemini API rate limits are applied per project, not per API key.
+                # Rotating/suspending keys from the same AI Studio project only
+                # amplifies reconnect storms and incorrectly marks healthy keys dead.
+                retry_after_seconds = _mark_live_model_cooldown(
+                    _extract_live_retry_after_seconds(err_str) or 60,
+                    err_str,
+                )
+                logger.warning(
+                    "live_audio_ws: resource exhausted user=%d attempt=%d model=%s retry_after=%ds: %s",
+                    user_id,
+                    attempt + 1,
+                    GEMINI_LIVE_MODEL,
+                    retry_after_seconds,
+                    err_str,
+                )
+                await _send_live_fatal(
+                    websocket,
+                    reason="server_capacity",
+                    message=(
+                        "Голосовой режим временно недоступен со стороны Gemini Live API. "
+                        "Попробуйте ещё раз чуть позже или продолжите текстом."
+                    ),
+                    retry_after_seconds=retry_after_seconds,
+                )
                 break
 
             logger.error("live_audio_ws: session fatal error user=%d: %s", user_id, err_str)

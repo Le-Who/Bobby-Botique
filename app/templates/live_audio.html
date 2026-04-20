@@ -219,6 +219,7 @@ let nextPlaybackTime = 0;
 let resumptionToken = sessionStorage.getItem('liveResumptionToken') || '';
 let sessionEndedIntentionally = false;
 let reconnectTimer = null;
+let liveFatalState = null;
 
 /* ── Reconnect: exponential backoff ────────────────────────────────── */
 const BACKOFF_BASE_MS = 500;
@@ -425,6 +426,21 @@ function connectWS() {
       case 'session_resumed':
         break;
 
+      case 'fatal':
+        liveFatalState = msg.reason || 'fatal';
+        clearTimeout(reconnectTimer);
+        if (recording) {
+          stopRecording({ preserveStatus: true });
+        }
+        sessionEndedIntentionally = true;
+        endBtn.disabled = true;
+        setStatus(msg.message || 'Голосовой режим временно недоступен', 'error');
+        showError(msg.message || 'Голосовой режим временно недоступен');
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.close(1000, 'fatal');
+        }
+        break;
+
       case 'error':
         showError(msg.message || 'Ошибка сервера');
         break;
@@ -432,8 +448,12 @@ function connectWS() {
   };
 
   ws.onclose = (ev) => {
-    if (sessionEndedIntentionally) {
-      setStatus('Сессия завершена', 'error');
+  if (sessionEndedIntentionally) {
+      if (liveFatalState) {
+        setStatus('Голосовой режим временно недоступен', 'error');
+      } else {
+        setStatus('Сессия завершена', 'error');
+      }
       return;
     }
     
@@ -476,6 +496,7 @@ function appendTranscript(who, text, cls) {
 /* ── Mic capture via AudioWorklet ───────────────────────────────────── */
 async function startRecording() {
   sessionEndedIntentionally = false;
+  liveFatalState = null;
 
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
@@ -525,7 +546,7 @@ async function startRecording() {
   connectWS();
 }
 
-function stopRecording() {
+function stopRecording({ preserveStatus = false } = {}) {
   recording = false;
   micBtn.classList.remove('recording');
   micBtn.textContent = '🎙️';
@@ -543,7 +564,9 @@ function stopRecording() {
   if (audioCtx) { audioCtx.close(); audioCtx = null; }
   if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
 
-  setStatus('Микрофон на паузе. Подключение активно.', 'active');
+  if (!preserveStatus) {
+    setStatus('Микрофон на паузе. Подключение активно.', 'active');
+  }
 }
 
 function endSession() {

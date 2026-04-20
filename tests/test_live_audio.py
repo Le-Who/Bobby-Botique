@@ -75,6 +75,21 @@ def _make_response_with_transcript(who: str, text: str):
     return SimpleNamespace(server_content=content, session_resumption_update=None)
 
 
+class _RaisingLiveConnect:
+    """Async context manager that fails during Gemini Live connect()."""
+
+    def __init__(self, error: Exception):
+        self.error = error
+        self.calls = 0
+
+    async def __aenter__(self):
+        self.calls += 1
+        raise self.error
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 @pytest.mark.asyncio
 class TestLiveAudioAuth:
     """LA-01: Authentication — reject unauthenticated WebSocket connections."""
@@ -278,3 +293,41 @@ class TestLiveAudioProxy:
                 out_msg = json.loads(out_raw)
                 assert out_msg["type"] == "output_transcript"
                 assert out_msg["text"] == "Здравствуйте!"
+
+    async def test_resource_exhausted_sends_single_fatal_without_retry_storm(
+        self,
+        test_client,
+        mock_bot_token,
+        mock_api_keys,
+        monkeypatch,
+    ):
+        """RESOURCE_EXHAUSTED should trip a model cooldown and stop reconnect retries."""
+        init_data = make_valid_init_data(mock_bot_token, user_id=559)
+        url = f"/webapp/live/ws?initData={urllib.parse.quote(init_data)}"
+
+        failing_connect = _RaisingLiveConnect(
+            Exception("1011 None. You exceeded your current quota, please check your plan and billing details.")
+        )
+        mock_client = MagicMock()
+        mock_client.aio.live.connect.return_value = failing_connect
+
+        monkeypatch.setattr("app.web_miniapp._LIVE_MODEL_COOLDOWN_UNTIL", 0.0)
+        monkeypatch.setattr("app.web_miniapp._LIVE_MODEL_COOLDOWN_REASON", "")
+
+        with (
+            patch("app.providers.gemini.get_cached_genai_client", return_value=mock_client),
+            patch(
+                "app.agent_use_cases.AgentRequestUseCase.resolve_ai_request",
+                new_callable=AsyncMock,
+                return_value=({"api_key": "fake-key"}, "gemini-3.1-flash-live-preview", "direct"),
+            ),
+            patch("app.repos.chats.get_user_chat", new_callable=AsyncMock, return_value=None),
+        ):
+            async with test_client.websocket(url) as ws:
+                fatal_raw = await ws.receive()
+                fatal_msg = json.loads(fatal_raw)
+                assert fatal_msg["type"] == "fatal"
+                assert fatal_msg["reason"] == "server_capacity"
+                assert fatal_msg["retry_after_seconds"] >= 15
+
+        assert failing_connect.calls == 1
