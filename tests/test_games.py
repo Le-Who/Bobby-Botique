@@ -23,9 +23,13 @@ from app.games.judge import (
     _local_check,
 )
 from app.games.word_bank import (
+    _GENERATED_CACHE,
     _detect_lang,
+    _generated_cache_key,
+    generate_words_for_category,
     list_categories,
     pick_random_word,
+    pick_random_word_for_topic,
     resolve_category,
     resolve_topic,
     validate_custom_word,
@@ -193,6 +197,45 @@ class TestPickRandomWord:
         first_word, *_ = await pick_random_word("animals")
         second_word, *_ = await pick_random_word("animals")
         assert first_word != second_word
+
+    async def test_generate_words_ignores_singleton_fast_seed(self):
+        topic = resolve_topic("персонаж валорант")
+        cache_key = _generated_cache_key(topic.lang, topic.category, topic_id=topic.topic_id)
+        _GENERATED_CACHE[cache_key] = ["джетт"]
+
+        router = AsyncMock()
+        router.get_response = AsyncMock(return_value=('["джетт", "сова", "рейна", "вайпер", "сейдж"]', None))
+
+        with (
+            patch("app.providers.router.get_provider_router", return_value=router),
+            patch("app.games.judgement_cache.get_cached_generated_words", new_callable=AsyncMock, return_value=None),
+            patch("app.games.judgement_cache.cache_generated_words", new_callable=AsyncMock) as cache_mock,
+        ):
+            generated = await generate_words_for_category(topic.category, lang=topic.lang, topic_id=topic.topic_id)
+
+        assert generated == ["джетт", "сова", "рейна", "вайпер", "сейдж"]
+        assert router.get_response.await_count == 1
+        cache_mock.assert_awaited_once()
+
+    async def test_provisional_fast_seed_is_upgraded_before_reuse(self):
+        topic = resolve_topic("персонаж валорант")
+        cache_key = _generated_cache_key(topic.lang, topic.category, topic_id=topic.topic_id)
+        _GENERATED_CACHE[cache_key] = ["джетт"]
+        full_bank = ["джетт", "сова", "рейна", "вайпер", "сейдж"]
+
+        with (
+            patch("app.games.word_bank.generate_words_for_category", new_callable=AsyncMock, return_value=full_bank) as gen_mock,
+            patch("app.games.judgement_cache.get_cached_generated_words", new_callable=AsyncMock, return_value=None),
+            patch("app.games.word_bank._pick_rotating_word", return_value="сова") as pick_mock,
+        ):
+            word, lang, cat, is_gen = await pick_random_word_for_topic(topic)
+
+        assert word == "сова"
+        assert lang == "ru"
+        assert cat == "персонаж валорант"
+        assert is_gen
+        gen_mock.assert_awaited_once_with(topic.category, lang=topic.lang, topic_id=topic.topic_id)
+        pick_mock.assert_called_once_with(topic.topic_id, full_bank, used=set())
 
 
 # ── judge — Damerau-Levenshtein algorithm ─────────────────────────────────────

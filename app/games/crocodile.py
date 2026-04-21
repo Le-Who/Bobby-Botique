@@ -20,6 +20,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Literal
 
 from app.utils.background_tasks import submit_task
@@ -34,6 +35,46 @@ _GAME_KEY_PREFIX = "croc:game:"
 _GAME_TTL_IDLE = 14 * 24 * 60 * 60  # 14 days
 _GAME_TTL_ACTIVE = 2 * 24 * 60 * 60  # 2 days
 _MAX_ATTEMPTS = 10
+
+
+class GameStatus(StrEnum):
+    ACTIVE = "active"
+    WON = "won"
+    LOST = "lost"
+
+
+class CrocodileGameRepository:
+    @staticmethod
+    async def save(game: CrocodileGame) -> bool:
+        ttl_kwargs = {"ex": _GAME_TTL_ACTIVE if game.guesser_id is not None else _GAME_TTL_IDLE}
+        try:
+            from app.cache import redis_client
+
+            if redis_client:
+                await redis_client.set(game._redis_key(), game.to_json().encode(), **ttl_kwargs)  # type: ignore[misc, arg-type]
+                return True
+        except Exception as exc:
+            logger.warning("CrocodileGame.save failed game=%s: %s", game.game_id, exc)
+
+        _mem_put(game)
+        return False
+
+    @staticmethod
+    async def delete(game: CrocodileGame) -> None:
+        try:
+            from app.cache import redis_client
+
+            if redis_client:
+                await redis_client.delete(game._redis_key())  # type: ignore[misc]
+        except Exception as exc:
+            logger.debug("CrocodileGame.delete failed game=%s: %s", game.game_id, exc)
+
+        try:
+            from app.games.crocodile_runtime import clear_runtime_state
+
+            await clear_runtime_state(game.game_id)
+        except Exception as exc:
+            logger.debug("Crocodile runtime clear failed game=%s: %s", game.game_id, exc)
 
 
 # ── Game dataclass ────────────────────────────────────────────────────────────
@@ -55,7 +96,7 @@ class CrocodileGame:
     attempts: list[str] = field(default_factory=list)
     has_activity: bool = False  # True after the first real guess attempt, even if not counted
     max_attempts: int = _MAX_ATTEMPTS
-    status: Literal["active", "won", "lost"] = "active"
+    status: GameStatus | Literal["active", "won", "lost"] = GameStatus.ACTIVE
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     # Best semantic score seen so far across all guesses (0.0–1.0).
     # Persisted to Redis so the inline thermometer survives WS reconnects.
@@ -81,7 +122,7 @@ class CrocodileGame:
                 "attempts": self.attempts,
                 "has_activity": self.has_activity,
                 "max_attempts": self.max_attempts,
-                "status": self.status,
+                "status": str(self.status),
                 "created_at": self.created_at,
                 "best_score": self.best_score,
             },
@@ -109,7 +150,13 @@ class CrocodileGame:
             "created_at",
             "best_score",
         }
-        return cls(**{k: v for k, v in d.items() if k in known})
+        payload = {k: v for k, v in d.items() if k in known}
+        status = payload.get("status")
+        if isinstance(status, str) and status in GameStatus._value2member_map_:
+            payload["status"] = GameStatus(status)
+        else:
+            payload["status"] = GameStatus.ACTIVE
+        return cls(**payload)
 
     async def save(self) -> bool:
         """Persist game to Redis; fall back to in-memory store on failure.
@@ -120,29 +167,11 @@ class CrocodileGame:
           - Guesser joined & playing → _GAME_TTL_ACTIVE (2 days) sliding window.
             Resets on every guess attempt so the player can step away and think.
         """
-        ttl_kwargs = {"ex": _GAME_TTL_ACTIVE if self.guesser_id is not None else _GAME_TTL_IDLE}
-        try:
-            from app.cache import redis_client
-
-            if redis_client:
-                await redis_client.set(self._redis_key(), self.to_json().encode(), **ttl_kwargs)  # type: ignore[misc, arg-type]
-                return True
-        except Exception as exc:
-            logger.warning("CrocodileGame.save failed game=%s: %s", self.game_id, exc)
-
-        # Redis unavailable or failed — fall back to bounded in-memory dict.
-        _mem_put(self)
-        return False
+        return await CrocodileGameRepository.save(self)
 
     async def delete(self) -> None:
         """Remove game from Redis on termination."""
-        try:
-            from app.cache import redis_client
-
-            if redis_client:
-                await redis_client.delete(self._redis_key())  # type: ignore[misc]
-        except Exception as exc:
-            logger.debug("CrocodileGame.delete failed game=%s: %s", self.game_id, exc)
+        await CrocodileGameRepository.delete(self)
 
     # ── Guess handling ────────────────────────────────────────────────────────────
 
@@ -204,23 +233,28 @@ class CrocodileGame:
         }
 
         if status_str == "exact_match":
-            self.status = "won"
+            self.status = GameStatus.WON
             event["word"] = self.target_word
         elif len(self.attempts) >= self.max_attempts:
-            self.status = "lost"
+            self.status = GameStatus.LOST
             event["event"] = "game_over"
             event["reason"] = "max_attempts"
             event["word"] = self.target_word
 
         # Record in per-game in-memory history (not in Redis)
-        _mem_history.setdefault(self.game_id, []).append(
-            {
-                "word": word,
-                "status": status_str,
-                "hint": prefixed_hint,
-                "score": judgement.score,
-            }
-        )
+        history_item = {
+            "word": word,
+            "status": status_str,
+            "hint": prefixed_hint,
+            "score": judgement.score,
+        }
+        _mem_history.setdefault(self.game_id, []).append(history_item)
+        try:
+            from app.games.crocodile_runtime import append_runtime_history
+
+            await append_runtime_history(self.game_id, history_item)
+        except Exception as exc:
+            logger.debug("Runtime history append failed game=%s: %s", self.game_id, exc)
 
         await self.save()
         return event
@@ -229,29 +263,10 @@ class CrocodileGame:
 
     async def finalize(self, bot) -> None:
         """Edit the inline message in Telegram to reflect the game outcome."""
-        from telegram import InlineKeyboardMarkup
-
-        if self.status == "won":
-            text = (
-                f"🎉 <b>Угадано!</b> Слово: <b>{self.target_word.upper()}</b>\n"
-                f"<i>Попыток: {len(self.attempts)} из {self.max_attempts}</i>"
-            )
-        elif self.status == "lost" and not self.attempts:
-            # Surrender with zero guesses — distinct phrasing
-            text = f"🏳️ <b>Игрок сдался.</b> Слово было: <b>{self.target_word.upper()}</b>"
-        else:
-            text = (
-                f"😔 <b>Не угадали.</b> Слово было: <b>{self.target_word.upper()}</b>\n"
-                f"<i>Израсходовано {len(self.attempts)} попыток</i>"
-            )
-
         try:
-            await bot.edit_message_text(
-                inline_message_id=self.inline_message_id,
-                text=text,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([]),
-            )
+            from app.games.crocodile_telegram import CrocodileTelegramService
+
+            await CrocodileTelegramService.finalize_game(bot, self)
         except Exception as exc:
             logger.warning(
                 "CrocodileGame.finalize: edit_message_text failed game=%s: %s",
@@ -268,20 +283,10 @@ class CrocodileGame:
         guesser can see progress right in the private chat without opening the
         WebApp. All Telegram errors are swallowed silently.
         """
-        from app.games.judge import score_bar, score_emoji
-
-        emoji = score_emoji(self.best_score)
-        bar = score_bar(self.best_score)
-        pct = int(self.best_score * 100)
-        text = f"🎯 <b>Крокодил</b> — идёт игра\n{emoji} Лучшая попытка: <code>{bar}</code> {pct}%"
         try:
-            from telegram.constants import ParseMode
+            from app.games.crocodile_telegram import CrocodileTelegramService
 
-            await bot.edit_message_text(
-                inline_message_id=self.inline_message_id,
-                text=text,
-                parse_mode=ParseMode.HTML,
-            )
+            await CrocodileTelegramService.send_thermometer_update(bot, self)
         except Exception as exc:
             # 400 "message is not modified" is normal when score did not change
             logger.debug("update_inline_thermometer failed game=%s: %s", self.game_id, exc)
@@ -293,7 +298,7 @@ class CrocodileGame:
         and returns a WebSocket event payload the handler can forward to both
         participants.
         """
-        self.status = "lost"
+        self.status = GameStatus.LOST
         await self.finalize(bot)
         return {
             "event": "surrendered",
@@ -347,18 +352,21 @@ async def _prefetch_hints(game_id: str, word: str, category: str, *, topic_id: s
     Checks hints_cache first so repeat sessions with the same word pay 0 LLM
     tokens. Results are keyed by game_id so they vanish when the game ends.
     """
+    from app.games.crocodile_runtime import set_runtime_hints
     from app.games.judge import generate_hints
     from app.games.judgement_cache import cache_hints, get_cached_hints
 
     cached = await get_cached_hints(word, category, topic_id=topic_id)
     if cached:
         _mem_hints[game_id] = cached
+        await set_runtime_hints(game_id, cached)
         logger.debug("Hints cache hit for word=%r game=%s", word, game_id)
         return
 
     hints = await generate_hints(word, category)
     if hints:
         _mem_hints[game_id] = hints
+        await set_runtime_hints(game_id, hints)
         await cache_hints(word, category, hints, topic_id=topic_id)  # persist for future games
         logger.debug("Hints generated for word=%r game=%s", word, game_id)
     else:

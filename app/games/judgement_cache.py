@@ -25,6 +25,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from app.cache import redis_client
 from app.utils.json_compat import json
 
 if TYPE_CHECKING:
@@ -44,6 +45,7 @@ _MAX_ENTRIES = 50_000
 _MAX_HINTS = 5_000
 _MAX_CAT = 10_000
 _MAX_GEN_WORDS = 5_000
+_REDIS_HASH_PREFIX = "croc:cache:"
 
 
 # ── In-process LRU store ──────────────────────────────────────────────────────
@@ -82,6 +84,47 @@ def _make_key_v2(
 
 # OrderedDict used as LRU: most recently accessed at end, oldest at front.
 _store: OrderedDict[str, str] = OrderedDict()
+
+
+def _redis_hash_name(namespace: str) -> str:
+    return f"{_REDIS_HASH_PREFIX}{namespace}"
+
+
+def _decode_text(value: bytes | str | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    return value
+
+
+async def _redis_hash_get(namespace: str, key: str) -> str | None:
+    if not redis_client:
+        return None
+    try:
+        raw = await redis_client.hget(_redis_hash_name(namespace), key)  # type: ignore[misc]
+    except Exception as exc:
+        logger.debug("Redis %s cache read failed for key=%r: %s", namespace, key, exc)
+        return None
+    return _decode_text(raw)
+
+
+async def _redis_hash_set(namespace: str, key: str, value: str) -> None:
+    if not redis_client:
+        return
+    try:
+        await redis_client.hset(_redis_hash_name(namespace), key, value)  # type: ignore[misc]
+    except Exception as exc:
+        logger.debug("Redis %s cache write failed for key=%r: %s", namespace, key, exc)
+
+
+async def _redis_hash_delete(namespace: str, key: str) -> None:
+    if not redis_client:
+        return
+    try:
+        await redis_client.hdel(_redis_hash_name(namespace), key)  # type: ignore[misc]
+    except Exception as exc:
+        logger.debug("Redis %s cache delete failed for key=%r: %s", namespace, key, exc)
 
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
@@ -152,9 +195,16 @@ async def get_cached_judgement(
         value = _store.get(key_legacy)
         key_used = key_legacy
     if value is None:
+        value = await _redis_hash_get("judgement", key_v2)
+        key_used = key_v2
+    if value is None and not (category or topic_id or sense_context):
+        value = await _redis_hash_get("judgement", key_legacy)
+        key_used = key_legacy
+    if value is None:
         return None
 
     # Move to end (LRU: mark as recently used)
+    _store[key_used] = value
     _store.move_to_end(key_used)
 
     try:
@@ -162,6 +212,7 @@ async def get_cached_judgement(
     except Exception as exc:
         logger.debug("Judgement cache deserialise failed (%s↔%s): %s", target, guess, exc)
         _store.pop(key_used, None)
+        await _redis_hash_delete("judgement", key_used)
         return None
 
 
@@ -187,10 +238,14 @@ async def cache_judgement(
     if key not in _store and len(_store) >= _MAX_ENTRIES:
         _store.popitem(last=False)
 
-    _store[key] = result.model_dump_json()
+    payload = result.model_dump_json()
+    _store[key] = payload
     _store.move_to_end(key)
 
-    await _persist()
+    if redis_client:
+        await _redis_hash_set("judgement", key, payload)
+    else:
+        await _persist()
 
 
 # ── Hints cache ──────────────────────────────────────────────────────────────
@@ -249,13 +304,22 @@ async def get_cached_hints(word: str, category: str, *, topic_id: str | None = "
         value = _hints_store.get(legacy_key)
         key_used = legacy_key
     if value is None:
+        value = await _redis_hash_get("hints", key)
+        key_used = key
+    if value is None and topic_id:
+        legacy_key = _hints_key(word, category, "")
+        value = await _redis_hash_get("hints", legacy_key)
+        key_used = legacy_key
+    if value is None:
         return None
+    _hints_store[key_used] = value
     _hints_store.move_to_end(key_used)
     try:
         return json.loads(value)
     except Exception as exc:
         logger.debug("Hints cache deserialise failed (%r): %s", word, exc)
         _hints_store.pop(key_used, None)
+        await _redis_hash_delete("hints", key_used)
         return None
 
 
@@ -264,9 +328,13 @@ async def cache_hints(word: str, category: str, hints: list[str], *, topic_id: s
     key = _hints_key(word, category, topic_id)
     if key not in _hints_store and len(_hints_store) >= _MAX_HINTS:
         _hints_store.popitem(last=False)
-    _hints_store[key] = json.dumps(hints, ensure_ascii=False)
+    payload = json.dumps(hints, ensure_ascii=False)
+    _hints_store[key] = payload
     _hints_store.move_to_end(key)
-    await _persist_hints()
+    if redis_client:
+        await _redis_hash_set("hints", key, payload)
+    else:
+        await _persist_hints()
 
 
 # ── Word-category resolution cache ────────────────────────────────────────────
@@ -317,7 +385,10 @@ async def get_cached_word_category(word: str) -> str | None:
     key = _cat_key(word)
     value = _cat_store.get(key)
     if value is None:
-        return None
+        value = await _redis_hash_get("category", key)
+        if value is None:
+            return None
+        _cat_store[key] = value
     _cat_store.move_to_end(key)
     return value
 
@@ -329,7 +400,10 @@ async def cache_word_category(word: str, category: str) -> None:
         _cat_store.popitem(last=False)
     _cat_store[key] = category
     _cat_store.move_to_end(key)
-    await _persist_cat()
+    if redis_client:
+        await _redis_hash_set("category", key, category)
+    else:
+        await _persist_cat()
 
 
 # ── Generated category word-bank cache ────────────────────────────────────────
@@ -391,7 +465,15 @@ async def get_cached_generated_words(
         value = _generated_words_store.get(legacy_key)
         key_used = legacy_key
     if value is None:
+        value = await _redis_hash_get("generated_words", key)
+        key_used = key
+    if value is None and topic_id:
+        legacy_key = _generated_words_key(lang, category, "")
+        value = await _redis_hash_get("generated_words", legacy_key)
+        key_used = legacy_key
+    if value is None:
         return None
+    _generated_words_store[key_used] = value
     _generated_words_store.move_to_end(key_used)
     try:
         words = json.loads(value)
@@ -409,6 +491,7 @@ async def get_cached_generated_words(
             exc,
         )
         _generated_words_store.pop(key_used, None)
+        await _redis_hash_delete("generated_words", key_used)
         return None
 
 
@@ -423,6 +506,10 @@ async def cache_generated_words(
     key = _generated_words_key(lang, category, topic_id)
     if key not in _generated_words_store and len(_generated_words_store) >= _MAX_GEN_WORDS:
         _generated_words_store.popitem(last=False)
-    _generated_words_store[key] = json.dumps(words, ensure_ascii=False)
+    payload = json.dumps(words, ensure_ascii=False)
+    _generated_words_store[key] = payload
     _generated_words_store.move_to_end(key)
-    await _persist_generated_words()
+    if redis_client:
+        await _redis_hash_set("generated_words", key, payload)
+    else:
+        await _persist_generated_words()

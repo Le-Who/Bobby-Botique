@@ -901,6 +901,11 @@ def _generated_cache_key(lang: str, category: str, *, topic_id: str | None = Non
     return normalized
 
 
+def _has_full_generated_bank(words: list[str] | None) -> bool:
+    """Return True only for a fully generated topic bank, not a fast-path seed."""
+    return bool(words) and len(words) >= 5
+
+
 def _topic_bank_hash(words: list[str]) -> str:
     payload = "\x1f".join(sorted(words))
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
@@ -974,8 +979,9 @@ async def generate_words_for_category(
     category = category.strip()
     topic_id_norm = (topic_id or "").strip()
     cache_key = _generated_cache_key(lang, category, topic_id=topic_id_norm or None)
-    if cache_key in _GENERATED_CACHE:
-        return _GENERATED_CACHE[cache_key]
+    cached_words = _GENERATED_CACHE.get(cache_key)
+    if _has_full_generated_bank(cached_words):
+        return cached_words
 
     if topic_id_norm:
         cached = await get_cached_generated_words(lang, category, topic_id=topic_id_norm)
@@ -1119,20 +1125,29 @@ async def pick_random_word_for_topic(
         lang = topic.lang
         category = topic.category
         cache_key = _generated_cache_key(lang, category, topic_id=topic.topic_id)
+        cached_words = _GENERATED_CACHE.get(cache_key)
 
-        if cache_key in _GENERATED_CACHE and len(_GENERATED_CACHE[cache_key]) > 0:
-            words = _GENERATED_CACHE[cache_key]
+        if _has_full_generated_bank(cached_words):
+            words = cached_words
             is_generated = True
         else:
-            cached_words = await get_cached_generated_words(lang, category, topic_id=topic.topic_id)
-            if not cached_words:
+            persisted_words = await get_cached_generated_words(lang, category, topic_id=topic.topic_id)
+            if not persisted_words:
                 # Migration fallback for entries created before topic_id support.
-                cached_words = await get_cached_generated_words(lang, category)
-            if cached_words:
-                _GENERATED_CACHE[cache_key] = cached_words
-                words = cached_words
+                persisted_words = await get_cached_generated_words(lang, category)
+            if persisted_words:
+                _GENERATED_CACHE[cache_key] = persisted_words
+                words = persisted_words
                 is_generated = True
                 logger.info("Using persisted AI-generated words for category %r (%s)", category, lang)
+            elif cached_words:
+                generated = await generate_words_for_category(category, lang=lang, topic_id=topic.topic_id)
+                words = generated or cached_words
+                is_generated = True
+                if _has_full_generated_bank(generated):
+                    logger.info("Upgraded provisional word bank for category %r (%s)", category, lang)
+                else:
+                    logger.info("Using provisional fast-word cache for category %r (%s)", category, lang)
             else:
                 # First response path: return one fast word, pre-warm full bank in background.
                 fast_word = await _generate_single_word_fast(category, lang)

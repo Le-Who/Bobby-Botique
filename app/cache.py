@@ -18,15 +18,14 @@ if not redis_url:
     redis_client = None
 else:
     try:
-        # Redis configuration for Upstash.com
-        # Upstash free tier allows 100 concurrent connections.
-        # max_connections=10 allows concurrent handlers (bot uses concurrent_updates=True)
-        # while staying well within Upstash limits.
+        max_connections = int(os.getenv("REDIS_MAX_CONNECTIONS", "64"))
+        # Default is sized for local/VPS Redis plus Mini App websocket usage.
+        # Deployments with stricter limits can override via REDIS_MAX_CONNECTIONS.
         redis_client = Redis.from_url(
             redis_url,
             socket_timeout=5,  # Fast timeout for quick failure detection
             socket_connect_timeout=5,  # Fast connect timeout
-            max_connections=10,  # Match concurrent handler capacity
+            max_connections=max_connections,
             retry_on_timeout=True,  # Only retry on timeout, not all errors
             decode_responses=False,  # Keep as bytes for manual handling
             health_check_interval=0,  # Disable built-in health-check pings

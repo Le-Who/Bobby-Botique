@@ -146,14 +146,20 @@ def _clear_game_mem_stores():
     Without this fixture tests that create games pollute subsequent tests.
     """
     import app.games.crocodile as _croc
+    from app.games.crocodile_runtime import reset_runtime_state_for_tests
+    from app.games.crocodile_telegram import reset_telegram_state_for_tests
 
     _croc._mem_games.clear()
     _croc._mem_hints.clear()
     _croc._mem_history.clear()
+    reset_runtime_state_for_tests()
+    reset_telegram_state_for_tests()
     yield
     _croc._mem_games.clear()
     _croc._mem_hints.clear()
     _croc._mem_history.clear()
+    reset_runtime_state_for_tests()
+    reset_telegram_state_for_tests()
 
 
 @pytest.fixture(autouse=True)

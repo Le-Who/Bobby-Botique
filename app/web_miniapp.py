@@ -729,24 +729,6 @@ async def api_graph_data(user_id: int):
         return jsonify({"error": "internal_error"}), 500
 
 
-# ── Crocodile Game ────────────────────────────────────────────────────────────
-# Per-game asyncio.Lock prevents parallel guess races from the same connection.
-# Bounded: entries are cleaned up on disconnect/game-end and swept when the dict
-# exceeds _GAME_LOCKS_MAX (protects against abandoned connections).
-_game_locks: dict[str, asyncio.Lock] = {}
-_GAME_LOCKS_MAX = 512
-
-
-def _sweep_game_locks() -> None:
-    """Evict the oldest half of _game_locks when the dict exceeds capacity."""
-    if len(_game_locks) < _GAME_LOCKS_MAX:
-        return
-    keys = list(_game_locks.keys())
-    for k in keys[: len(keys) // 2]:
-        _game_locks.pop(k, None)
-    logger.debug("_game_locks swept: %d entries removed", len(keys) // 2)
-
-
 @miniapp_blueprint.route("/game")
 async def game_page():
     """Serve the Crocodile Mini App HTML shell."""
@@ -769,10 +751,18 @@ async def game_ws():
                {"event": "game_over", "word": ..., ...}
     """
     import asyncio
+    import uuid
 
     from quart import websocket
 
-    from app.games.crocodile import load_game
+    from app.games.crocodile import get_game_hints, get_game_history, load_game
+    from app.games.crocodile_runtime import (
+        game_mutation_lock,
+        get_runtime_hints,
+        get_runtime_history,
+        open_game_event_subscription,
+        publish_runtime_event,
+    )
 
     raw_init_data = websocket.args.get("initData", "")
     if not raw_init_data:
@@ -828,26 +818,15 @@ async def game_ws():
     )
 
     # Restore chat history so reconnecting players keep their progress visible
-    from app.games.crocodile import (
-        broadcast_game_event,
-        get_game_hints,
-        get_game_history,
-        subscribe_game,
-        unsubscribe_game,
-    )
-
-    history = get_game_history(game_id)
+    history = await get_runtime_history(game_id)
+    if not history:
+        history = get_game_history(game_id)
     if history:
         await websocket.send_json({"event": "history_sync", "items": history})
 
-    # Ensure per-game lock (sweep dict if it exceeds capacity)
-    _sweep_game_locks()
-    if game_id not in _game_locks:
-        _game_locks[game_id] = asyncio.Lock()
-    lock = _game_locks[game_id]
-
     # Subscribe this socket to the game's PubSub broadcast queue
-    my_queue = subscribe_game(game_id)
+    subscriber_id = uuid.uuid4().hex
+    subscription = await open_game_event_subscription(game_id, subscriber_id)
 
     # ── Drain task: forward broadcast events to this WebSocket connection ──
     # Runs concurrently with the receive loop so broadcasts are never blocked
@@ -857,7 +836,7 @@ async def game_ws():
     async def _drain_broadcasts() -> None:
         try:
             while True:
-                payload = await my_queue.get()
+                payload = await subscription.get()
                 try:
                     await websocket.send_json(payload)
                 except Exception:
@@ -889,7 +868,9 @@ async def game_ws():
             # ── Hint request ──────────────────────────────────────────────
             if msg_type == "hint":
                 hint_idx = int(msg.get("hint_index", 0))
-                hints = get_game_hints(game_id)
+                hints = await get_runtime_hints(game_id)
+                if not hints:
+                    hints = get_game_hints(game_id)
                 if hint_idx < len(hints):
                     await websocket.send_json(
                         {
@@ -914,39 +895,39 @@ async def game_ws():
             if msg_type == "reaction" and is_creator:
                 emoji = str(msg.get("emoji", "")).strip()
                 if emoji:
-                    await broadcast_game_event(
+                    await publish_runtime_event(
                         game_id,
                         {
                             "event": "reaction",
                             "emoji": emoji,
                         },
-                        exclude=my_queue,
+                        exclude_subscriber_id=subscriber_id,
                     )
                 continue
 
             # ── Creator-only: typing indicator from creator side ──────────
             # (Guesser typing is handled in the guess flow below)
             if msg_type == "typing_status" and is_creator:
-                await broadcast_game_event(
+                await publish_runtime_event(
                     game_id,
                     {
                         "event": "creator_typing",
                         "active": bool(msg.get("active", False)),
                     },
-                    exclude=my_queue,
+                    exclude_subscriber_id=subscriber_id,
                 )
                 continue
 
             # ── Guesser typing indicator (ephemeral, not recorded) ─────────
             if msg_type == "typing":
                 if not is_creator:
-                    await broadcast_game_event(
+                    await publish_runtime_event(
                         game_id,
                         {
                             "event": "guesser_typing",
                             "active": bool(msg.get("active", False)),
                         },
-                        exclude=my_queue,
+                        exclude_subscriber_id=subscriber_id,
                     )
                 continue
 
@@ -964,7 +945,7 @@ async def game_ws():
                 )
                 continue
 
-            async with lock:
+            async with game_mutation_lock(game_id):
                 # Reload game state from Redis (another tab may have mutated it)
                 game = await load_game(game_id) or game
                 if game.status != "active":
@@ -992,7 +973,18 @@ async def game_ws():
             elif event.get("status") == "exact_match":
                 broadcast_payload["event"] = "spectator_win"
                 broadcast_payload["word"] = event.get("word", word)
-            await broadcast_game_event(game_id, broadcast_payload, exclude=my_queue)
+            await publish_runtime_event(game_id, broadcast_payload, exclude_subscriber_id=subscriber_id)
+
+            if event.get("best_score_updated") and game.status == "active":
+                try:
+                    from app.bot_instance import get_bot
+                    from app.games.crocodile_telegram import CrocodileTelegramService
+
+                    bot = get_bot()
+                    if bot:
+                        CrocodileTelegramService.queue_thermometer_update(bot, game)
+                except Exception as exc:
+                    logger.debug("game_ws: thermometer queue failed game=%s: %s", game_id, exc)
 
             # Finalize if game ended (won / lost)
             if game.status in ("won", "lost"):
@@ -1004,7 +996,6 @@ async def game_ws():
                         await game.finalize(bot)
                 except Exception as exc:
                     logger.warning("game_ws: finalize failed game=%s: %s", game_id, exc)
-                _game_locks.pop(game_id, None)
                 break
 
     except Exception as exc:
@@ -1012,8 +1003,7 @@ async def game_ws():
     finally:
         if drain_task and not drain_task.done():
             drain_task.cancel()
-        unsubscribe_game(game_id, my_queue)
-        _game_locks.pop(game_id, None)
+        await subscription.close()
 
 
 # ── Live Audio (Gemini Live API WebSocket proxy) ─────────────────────────────

@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.13] - 2026-04-21 - Crocodile Multi-Worker Runtime & Redis Cache Hardening
+
+### 🐊 Crocodile Runtime Reliability
+- **Redis-backed game runtime (`app/games/crocodile_runtime.py`, `app/web_miniapp.py`, `app/games/crocodile.py`):** WebSocket live state is no longer limited to a single worker process. Reconnect history, pre-generated hints, and spectator/creator live events now use a Redis-backed runtime layer with local in-memory fallback for dev or Redis-loss scenarios.
+- **Distributed game mutation lock (`app/web_miniapp.py`, `app/games/crocodile_runtime.py`):** Guess processing now runs behind a per-game Redis lock with automatic fallback to a local `asyncio.Lock`. This removes cross-worker double-submit races where different workers could mutate the same game in parallel.
+- **Debounced inline thermometer updates (`app/games/crocodile_telegram.py`, `app/web_miniapp.py`, `app/games/crocodile.py`):** Best-score inline message edits are now coalesced through a dedicated Telegram service with a 2-second debounce window, preventing edit storms and reducing FloodWait risk while preserving the existing inline contract.
+
+### ⚡ Crocodile Cache Architecture
+- **L1/L2 cache flow (`app/games/judgement_cache.py`):** Judgements, hints, resolved categories, and generated-word banks now use process-local `OrderedDict` L1 caches backed by Redis L2 hashes. Legacy JSON files remain as fallback persistence only when Redis is unavailable, instead of acting as the primary multi-worker store.
+- **Runtime Redis pool sizing (`app/cache.py`):** Added `REDIS_MAX_CONNECTIONS` with a higher local/VPS-friendly default so Crocodile websocket Pub/Sub does not exhaust the shared Redis pool under concurrent Mini App usage.
+- **Provisional generated-word seed upgrade (`app/games/word_bank.py`):** Single fast-path words are no longer treated as full generated banks. If a category only has a provisional seed, the full word bank is refreshed before reuse so custom topics do not get stuck on a one-word pseudo-cache.
+
+### ✅ Verification
+- `python -m ruff check app/cache.py app/games/crocodile.py app/games/crocodile_runtime.py app/games/crocodile_telegram.py app/games/judgement_cache.py app/web_miniapp.py tests/conftest.py tests/test_game_cache.py tests/test_game_hints.py tests/test_game_websocket.py tests/test_games.py tests/test_game_llm_tasks.py tests/test_live_audio.py tests/e2e/test_crocodile_engine.py` -> **All checks passed**
+- `python -m pytest -o addopts='' -q -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_croc_runtime2 tests/test_game_cache.py tests/test_game_hints.py tests/test_game_llm_tasks.py tests/test_game_websocket.py tests/test_games.py tests/test_live_audio.py tests/e2e/test_crocodile_engine.py` -> **124 passed, 16 skipped**
+
 ## [2.15.12] - 2026-04-21 - Crocodile Topic Canonicalization & Judge Context Hardening
 
 ### 🐊 Crocodile Game Correctness
