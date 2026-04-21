@@ -3296,7 +3296,7 @@ Root cause: `gemini-2.5-flash-preview-tts` had no entry in `DAILY_LIMITS`, so ke
 | Change | File | Detail |
 |--------|------|--------|
 | Chunking module | `documents/chunking.py` | [NEW] Three strategies: `recursive_chunk` (paragraph/sentence/word), `hierarchical_chunk` (parent/child), `chunk_for_context` (relevance scoring + budget assembly) |
-| Pipeline integration | `ai_document.py` | Replaced naïve `[:30000]` hard-truncation with `chunk_for_context(text, query=user_message, max_context_tokens=8500)`. Query-aware relevance scoring selects best chunks |
+| Pipeline integration | `ai_document.py` | Replaced na️ve `[:30000]` hard-truncation with `chunk_for_context(text, query=user_message, max_context_tokens=8500)`. Query-aware relevance scoring selects best chunks |
 
 ### 📰 Change 5: Scheduled Intelligence Briefs (P3)
 
