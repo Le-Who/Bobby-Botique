@@ -24,6 +24,8 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+from app.games.ai_budget import acquire_background_slot, acquire_foreground_slot, record_result
+from app.games.hinting import enqueue_bank_hint_prewarm
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
@@ -786,6 +788,58 @@ def validate_custom_word(word: str) -> str | None:
     return w
 
 
+_FAST_WORD_ALLOWED_RE = re.compile(r"^[a-zA-Zа-яА-ЯёЁ0-9][a-zA-Zа-яА-ЯёЁ0-9\s\-']*$", re.UNICODE)
+_FAST_WORD_SERVICE_MARKERS = (
+    "ответ",
+    "слово",
+    "подсказ",
+    "json",
+    "hints",
+    "вот",
+    "sure",
+    "конечно",
+)
+
+
+def _normalise_fast_word_candidate(raw: str | None, lang: str = "ru") -> str | None:
+    """Validate a fast-path candidate before returning/caching it."""
+    if not raw:
+        return None
+
+    cleaned = re.sub(r"^```[a-z]*\n?", "", raw.strip(), flags=re.IGNORECASE)
+    cleaned = re.sub(r"\n?```$", "", cleaned).strip().strip("\"'` \r\n.")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
+    if not cleaned:
+        return None
+    if len(cleaned) < 3 or len(cleaned) > 60:
+        return None
+    if not _FAST_WORD_ALLOWED_RE.match(cleaned):
+        return None
+
+    tokens = [token for token in re.split(r"\s+", cleaned) if token]
+    if not (1 <= len(tokens) <= 3):
+        return None
+    if any(len(token) < 2 for token in tokens):
+        return None
+    if any(marker in cleaned for marker in _FAST_WORD_SERVICE_MARKERS):
+        return None
+
+    alpha_chars = [ch for ch in cleaned if ch.isalpha()]
+    if len(alpha_chars) < 3:
+        return None
+    if len(set(alpha_chars)) == 1:
+        return None
+
+    expected_lang = lang or _detect_lang(cleaned)
+    actual_lang = _detect_lang(cleaned)
+    if expected_lang == "ru" and actual_lang != "ru":
+        return None
+    if expected_lang == "en" and actual_lang != "en":
+        return None
+
+    return cleaned
+
+
 # ── Reverse word-to-category index ────────────────────────────────────────────
 # Flat dict: lowercase_word → canonical_category_key.
 # Built once at import time so lookup is O(1).
@@ -882,7 +936,7 @@ _GENERATED_INFLIGHT: dict[str, asyncio.Task[list[str] | None]] = {}
 _TOPIC_ROTATION: dict[str, tuple[str, list[str], int]] = {}
 
 # Gemini models tried in order for word generation
-_GEN_PRIMARY_MODEL = "opencode-go/minimax-m2.7"
+_GEN_PRIMARY_MODEL = "opencode-go/qwen3.5-plus"
 _GEN_FALLBACK_MODEL = "gemini-2.5-flash"
 _GEN_TIMEOUT_S = 30.0  # Background task: user not waiting, let slow providers finish
 
@@ -966,11 +1020,24 @@ def _normalise_generated_words(words: list[object]) -> list[str]:
     return clean
 
 
+def _coerce_safe_opencode_word_model(model_name: str | None) -> str:
+    """Avoid MiniMax on word-generation paths until /v1/messages transport lands."""
+    normalized = (model_name or "").strip()
+    if normalized in {"opencode-go/minimax-m2.5", "opencode-go/minimax-m2.7"}:
+        logger.info(
+            "Word generation rerouting Opencode model %s to opencode-go/qwen3.5-plus until MiniMax messages transport is supported",
+            normalized,
+        )
+        return "opencode-go/qwen3.5-plus"
+    return normalized or "opencode-go/qwen3.5-plus"
+
+
 async def generate_words_for_category(
     category: str,
     *,
     lang: str = "ru",
     topic_id: str | None = None,
+    background: bool = False,
 ) -> list[str] | None:
     """Call LLM to generate 20 words for an unknown category.
 
@@ -1013,21 +1080,39 @@ async def generate_words_for_category(
     async def _do_generate() -> list[str] | None:
         for model in (_GEN_PRIMARY_MODEL, _GEN_FALLBACK_MODEL):
             try:
-                from app.errors import is_error_message
+                from app.errors import (
+                    classify_key_error,
+                    extract_retry_after_seconds,
+                    is_error_message,
+                    strip_error_tag,
+                )
                 from app.providers.router import get_provider_router
 
                 router = get_provider_router()
+                provider_name = "opencode_go" if model.startswith("opencode-go/") else "ai_studio"
+                acquire = acquire_background_slot if background else acquire_foreground_slot
+                lease = await acquire("word_bank_generation", provider_name, model)
+                if lease is None:
+                    continue
 
                 # Using ProviderRouter handles keys, timeouts, and circuit breaking natively
-                response_text, _ = await router.get_response(
-                    preferred_model=model,
-                    history=[{"role": "user", "parts": [prompt]}],
-                    max_key_retries=1,
-                    timeout=_GEN_TIMEOUT_S,
-                )
+                async with lease:
+                    response_text, _ = await router.get_response(
+                        preferred_model=model,
+                        history=[{"role": "user", "parts": [prompt]}],
+                        max_key_retries=1,
+                        timeout=_GEN_TIMEOUT_S,
+                    )
                 raw = (response_text or "").strip()
 
                 if is_error_message(raw):
+                    await record_result(
+                        provider_name,
+                        model,
+                        classify_key_error(raw),
+                        retry_after_seconds=extract_retry_after_seconds(raw),
+                        reason=strip_error_tag(raw)[:500],
+                    )
                     logger.warning(
                         "Word gen failed for %r (model=%s): Provider returned error: %s", category, model, raw
                     )
@@ -1046,19 +1131,31 @@ async def generate_words_for_category(
                 if len(clean) < 5:
                     return None
 
+                await record_result(provider_name, model, "success")
                 _GENERATED_CACHE[cache_key] = clean
                 if topic_id_norm:
                     await cache_generated_words(lang, category, clean, topic_id=topic_id_norm)
                 else:
                     await cache_generated_words(lang, category, clean)
                 logger.info("Generated %d words for custom category %r (%s)", len(clean), category, model)
-                # Pre-warm hint cache for all generated words in the background
-                submit_task(_prefetch_hints_for_bank(clean, category, topic_id=topic_id_norm or None))
+                enqueue_bank_hint_prewarm(clean, category, topic_id=topic_id_norm)
                 return clean
 
             except (TimeoutError, json.JSONDecodeError) as exc:
+                await record_result(
+                    "opencode_go" if model.startswith("opencode-go/") else "ai_studio",
+                    model,
+                    "transient",
+                    reason=str(exc)[:500],
+                )
                 logger.warning("Word gen failed for %r (model=%s): %r", category, model, exc)
             except Exception as exc:
+                await record_result(
+                    "opencode_go" if model.startswith("opencode-go/") else "ai_studio",
+                    model,
+                    "transient",
+                    reason=str(exc)[:500],
+                )
                 logger.exception("Word gen unexpected error for %r (model=%s): %r", category, model, exc)
 
         return None
@@ -1072,32 +1169,6 @@ async def generate_words_for_category(
             _GENERATED_INFLIGHT.pop(cache_key, None)
 
 
-async def _prefetch_hints_for_bank(
-    words: list[str], category: str, *, topic_id: str | None = None
-) -> None:
-    """Background: pre-generate and cache hints for words in a newly generated bank.
-
-    Called lazily after generate_words_for_category completes so future games
-    on the same topic get instant hints without an extra LLM call.
-    Capped at 10 words to avoid hammering providers on large banks.
-    """
-    from app.games.judge import generate_hints
-    from app.games.judgement_cache import cache_hints, get_cached_hints
-
-    tid = topic_id or ""
-    for word in words[:10]:
-        try:
-            cached = await get_cached_hints(word, category, topic_id=tid)
-            if cached:
-                continue
-            hints = await generate_hints(word, category)
-            if hints:
-                await cache_hints(word, category, hints, topic_id=tid)
-                logger.debug("Pre-cached hints for word=%r category=%r", word, category)
-        except Exception as exc:
-            logger.debug("Hint prefetch failed for word=%r: %s", word, exc)
-
-
 async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | None:
     """Фаст-генерация одного слова — рейтинг Vertex AI Express (приоритет) vs Opencode (резерв).
 
@@ -1109,7 +1180,7 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
     First valid word wins. Outer race timeout: 10 s.
     """
     from app.config import settings
-    from app.errors import is_error_message
+    from app.errors import classify_key_error, extract_retry_after_seconds, is_error_message, strip_error_tag
 
     lang_hint = "русском" if lang == "ru" else "English"
     prompt = (
@@ -1121,13 +1192,16 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
     def _validate(raw: str | None) -> str | None:
         if not raw:
             return None
-        cleaned = raw.strip().strip("`'\" \r\n.")
+        cleaned = raw.strip()
         if is_error_message(cleaned):
             return None
-        return cleaned.lower() if 2 <= len(cleaned) <= 60 else None
+        return _normalise_fast_word_candidate(cleaned, lang=lang)
 
     # ── Slot A: Vertex AI Express + Search Grounding (primary) ────────────────
     async def _vertex_slot() -> str | None:
+        lease = await acquire_foreground_slot("fast_word", "vertex_express", "gemini-3.1-flash-lite-preview")
+        if lease is None:
+            return None
         try:
             from google.genai import types as _gtypes
 
@@ -1136,43 +1210,61 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
             vertex_client = get_vertex_client()
             if vertex_client is None:
                 return None
-            resp = await asyncio.wait_for(
-                vertex_client.aio.models.generate_content(
-                    model="gemini-3.1-flash-lite-preview",
-                    contents=history,
-                    config=_gtypes.GenerateContentConfig(
-                        tools=[_gtypes.Tool(google_search=_gtypes.GoogleSearch())],
-                        temperature=0.7,
-                        max_output_tokens=64,
+            async with lease:
+                resp = await asyncio.wait_for(
+                    vertex_client.aio.models.generate_content(
+                        model="gemini-3.1-flash-lite-preview",
+                        contents=prompt,
+                        config=_gtypes.GenerateContentConfig(
+                            tools=[_gtypes.Tool(google_search=_gtypes.GoogleSearch())],
+                            temperature=0.7,
+                            max_output_tokens=64,
+                        ),
                     ),
-                ),
-                timeout=9.0,
-            )
+                    timeout=9.0,
+                )
             result = _validate(getattr(resp, "text", None))
             if result:
+                await record_result("vertex_express", "gemini-3.1-flash-lite-preview", "success")
                 logger.info("Fast word (Vertex+grounding) for %r: %r", category, result)
             return result
         except Exception as exc:
+            await record_result("vertex_express", "gemini-3.1-flash-lite-preview", "transient", reason=str(exc)[:500])
             logger.warning("Fast word Vertex slot failed for %r: %r", category, exc)
             return None
 
     # ── Slot B: Opencode inline model via ProviderRouter (fallback) ──────────
     async def _opencode_slot() -> str | None:
+        model_name = _coerce_safe_opencode_word_model(settings.OPENCODE_INLINE_MODEL)
+        lease = await acquire_foreground_slot("fast_word", "opencode_go", model_name)
+        if lease is None:
+            return None
         try:
             from app.providers.router import get_provider_router
 
             router = get_provider_router()
-            response_text, _ = await router.get_response(
-                preferred_model=settings.OPENCODE_INLINE_MODEL or "gemini-2.5-flash",
-                history=history,
-                max_key_retries=1,
-                timeout=7.0,
-            )
+            async with lease:
+                response_text, _ = await router.get_response(
+                    preferred_model=model_name,
+                    history=history,
+                    max_key_retries=1,
+                    timeout=7.0,
+                )
+            if is_error_message(response_text):
+                await record_result(
+                    "opencode_go",
+                    model_name,
+                    classify_key_error(response_text),
+                    retry_after_seconds=extract_retry_after_seconds(response_text),
+                    reason=strip_error_tag(response_text)[:500],
+                )
             result = _validate(response_text)
             if result:
+                await record_result("opencode_go", model_name, "success")
                 logger.info("Fast word (Opencode) for %r: %r", category, result)
             return result
         except Exception as exc:
+            await record_result("opencode_go", model_name, "transient", reason=str(exc)[:500])
             logger.warning("Fast word Opencode slot failed for %r: %r", category, exc)
             return None
 
@@ -1263,7 +1355,7 @@ async def pick_random_word_for_topic(
                     words = generated
                 else:
                     _GENERATED_CACHE.setdefault(cache_key, [fast_word])
-                    submit_task(generate_words_for_category(category, lang=lang, topic_id=topic.topic_id))
+                    submit_task(generate_words_for_category(category, lang=lang, topic_id=topic.topic_id, background=True))
                     return fast_word, lang, category, True
 
                 is_generated = True

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import app.config as config
+from app.games.hinting import get_or_generate_cached_hints, reset_hint_runtime_state_for_tests
 from app.games.judge import generate_hints
 
 
@@ -38,6 +39,7 @@ def hint_settings(monkeypatch) -> SimpleNamespace:
         VERTEX_AI_PROJECT=None,
     )
     monkeypatch.setattr(config, "settings", settings)
+    reset_hint_runtime_state_for_tests()
     return settings
 
 
@@ -117,3 +119,47 @@ async def test_generate_hints_returns_deterministic_fallback_when_all_models_fai
     assert hints[0] == "Это из категории «персонаж genshin impact»."
     assert hints[1] == "Одно слово, 6 букв."
     assert hints[2] == "Первая буква «Р», последняя — «Н»."
+
+
+@pytest.mark.asyncio
+async def test_generate_hints_background_mode_skips_ai_studio_lane(hint_settings):
+    router = _RouterStub(
+        {
+            "opencode-go/glm-5.1": (
+                0.0,
+                '{"hints":["широкий намек","средний намек","почти прямой намек"]}',
+            )
+        }
+    )
+    hint_settings.OPENCODE_AVAILABLE_MODELS = ["opencode-go/glm-5.1"]
+    hint_settings.OPENCODE_QNA_MODEL = "opencode-go/glm-5.1"
+    hint_settings.OPENCODE_DEFAULT_MODEL = "opencode-go/glm-5.1"
+
+    with patch("app.providers.get_provider_router", return_value=router):
+        hints = await generate_hints("райден", "персонаж genshin impact", mode="background")
+
+    assert hints == ["широкий намек", "средний намек", "почти прямой намек"]
+    assert "gemini-3-flash-preview" not in router.calls
+    assert router.calls == ["opencode-go/glm-5.1"]
+
+
+@pytest.mark.asyncio
+async def test_get_or_generate_cached_hints_uses_singleflight(hint_settings):
+    async def _slow_generate(*args, **kwargs):
+        await asyncio.sleep(0.01)
+        return ["hint 1", "hint 2", "hint 3"]
+
+    with (
+        patch("app.games.judgement_cache.get_cached_hints", new_callable=AsyncMock, return_value=None),
+        patch("app.games.judgement_cache.cache_hints", new_callable=AsyncMock),
+        patch("app.games.judge.generate_hints", new_callable=AsyncMock) as generate_mock,
+    ):
+        generate_mock.side_effect = _slow_generate
+        first, second = await asyncio.gather(
+            get_or_generate_cached_hints("райден", "персонаж genshin impact", topic_id="custom:1"),
+            get_or_generate_cached_hints("райден", "персонаж genshin impact", topic_id="custom:1"),
+        )
+
+    assert first == ["hint 1", "hint 2", "hint 3"]
+    assert second == first
+    assert generate_mock.await_count == 1

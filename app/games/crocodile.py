@@ -359,21 +359,12 @@ async def _prefetch_hints(game_id: str, word: str, category: str, *, topic_id: s
     tokens. Results are keyed by game_id so they vanish when the game ends.
     """
     from app.games.crocodile_runtime import set_runtime_hints
-    from app.games.judge import generate_hints
-    from app.games.judgement_cache import cache_hints, get_cached_hints
+    from app.games.hinting import get_or_generate_cached_hints
 
-    cached = await get_cached_hints(word, category, topic_id=topic_id)
-    if cached:
-        _mem_hints[game_id] = cached
-        await set_runtime_hints(game_id, cached)
-        logger.debug("Hints cache hit for word=%r game=%s", word, game_id)
-        return
-
-    hints = await generate_hints(word, category)
+    hints = await get_or_generate_cached_hints(word, category, topic_id=topic_id, mode="foreground")
     if hints:
         _mem_hints[game_id] = hints
         await set_runtime_hints(game_id, hints)
-        await cache_hints(word, category, hints, topic_id=topic_id)  # persist for future games
         logger.debug("Hints generated for word=%r game=%s", word, game_id)
     else:
         logger.warning("Hint generation failed for word=%r game=%s", word, game_id)

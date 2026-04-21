@@ -12,7 +12,7 @@ from google.genai.errors import APIError
 from PIL import Image
 
 from app.config import settings
-from app.errors import ErrorCode, tag_error
+from app.errors import ErrorCode, extract_retry_after_seconds, tag_error
 from app.metrics import metrics_collector
 from app.providers.base import AIResponse, BaseAIProvider, _build_thinking_config
 from app.utils.api_logger import api_logger
@@ -265,8 +265,17 @@ class GeminiProvider(BaseAIProvider):
             self._log_failure(start_time, model_name, str(e), user_id, chat_id)
             logging.error("Gemini API Error: %s", e)
             err_lower = str(e).lower()
+            retry_after_seconds = extract_retry_after_seconds(str(e))
 
-            if "quota" in err_lower:
+            if retry_after_seconds is not None:
+                await metrics_collector.record_error("gemini_rate_limit", str(e))
+                wait_text = (
+                    f"⏱️ Временный лимит запросов модели. Подождите около {retry_after_seconds}с."
+                    if retry_after_seconds
+                    else "⏱️ Временный лимит запросов модели. Подождите немного."
+                )
+                text = tag_error(ErrorCode.RATE_LIMIT, wait_text)
+            elif "quota" in err_lower:
                 await metrics_collector.record_error("gemini_quota", str(e))
                 text = tag_error(
                     ErrorCode.QUOTA_EXCEEDED,
@@ -425,8 +434,13 @@ class GeminiProvider(BaseAIProvider):
             raise
         except APIError as e:
             err_lower = str(e).lower()
+            retry_after_seconds = extract_retry_after_seconds(str(e))
             is_retryable = (
-                "503" in str(e) or "unavailable" in err_lower or "overloaded" in err_lower or "rate limit" in err_lower
+                "503" in str(e)
+                or "unavailable" in err_lower
+                or "overloaded" in err_lower
+                or "rate limit" in err_lower
+                or retry_after_seconds is not None
             )
 
             if not _content_yielded:
@@ -441,7 +455,14 @@ class GeminiProvider(BaseAIProvider):
 
                 # Pre-stream non-retryable errors: yield tagged error for the UI
                 logging.error("Gemini API stream error (pre-content): %s", e)
-                if "quota" in err_lower:
+                if retry_after_seconds is not None:
+                    wait_text = (
+                        f"⏱️ Временный лимит запросов модели. Подождите около {retry_after_seconds}с."
+                        if retry_after_seconds
+                        else "⏱️ Временный лимит запросов."
+                    )
+                    yield tag_error(ErrorCode.RATE_LIMIT, wait_text)
+                elif "quota" in err_lower:
                     yield tag_error(ErrorCode.QUOTA_EXCEEDED, "🚫 Достигнут лимит запросов к API.")
                 elif "api key" in err_lower or "api_key_invalid" in err_lower:
                     yield tag_error(ErrorCode.INVALID_KEY, "🔑 Неверный API ключ.")

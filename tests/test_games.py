@@ -15,7 +15,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.games.ai_budget import record_result, reset_budget_state_for_tests
 from app.games.crocodile import CrocodileGame, create_game, load_game
+from app.games.hinting import enqueue_bank_hint_prewarm, reset_hint_runtime_state_for_tests
 from app.games.judge import (
     GuessJudgement,
     _allowed_edits,
@@ -24,8 +26,11 @@ from app.games.judge import (
 )
 from app.games.word_bank import (
     _GENERATED_CACHE,
+    _coerce_safe_opencode_word_model,
     _detect_lang,
+    _generate_single_word_fast,
     _generated_cache_key,
+    _normalise_fast_word_candidate,
     generate_words_for_category,
     list_categories,
     pick_random_word,
@@ -124,10 +129,75 @@ class TestValidateCustomWord:
         assert validate_custom_word("северный-олень") == "северный-олень"
 
 
+class TestFastWordValidation:
+    def test_rejects_short_garbage(self):
+        assert _normalise_fast_word_candidate("оа", lang="ru") is None
+
+    def test_rejects_service_text(self):
+        assert _normalise_fast_word_candidate("Вот слово: шериф", lang="ru") is None
+
+    def test_accepts_valid_phrase(self):
+        assert _normalise_fast_word_candidate("Шериф", lang="ru") == "шериф"
+
+    def test_coerces_minimax_to_safe_opencode_model(self):
+        assert _coerce_safe_opencode_word_model("opencode-go/minimax-m2.5") == "opencode-go/qwen3.5-plus"
+        assert _coerce_safe_opencode_word_model("opencode-go/minimax-m2.7") == "opencode-go/qwen3.5-plus"
+        assert _coerce_safe_opencode_word_model("opencode-go/qwen3.5-plus") == "opencode-go/qwen3.5-plus"
+
+    @pytest.mark.asyncio
+    async def test_vertex_fast_word_uses_plain_prompt_contents(self):
+        reset_budget_state_for_tests()
+
+        class _FakeAioModels:
+            def __init__(self):
+                self.calls: list[dict] = []
+
+            async def generate_content(self, **kwargs):
+                self.calls.append(kwargs)
+                return type("Resp", (), {"text": "шериф"})()
+
+        class _FakeClient:
+            def __init__(self):
+                self.aio = type("Aio", (), {"models": _FakeAioModels()})()
+
+        fake_vertex = _FakeClient()
+
+        with (
+            patch("app.providers.gemini.get_vertex_client", return_value=fake_vertex),
+            patch("app.providers.router.get_provider_router", return_value=AsyncMock()),
+        ):
+            word = await _generate_single_word_fast("персонаж сериала Извне", lang="ru")
+
+        assert word == "шериф"
+        assert fake_vertex.aio.models.calls
+        assert isinstance(fake_vertex.aio.models.calls[0]["contents"], str)
+
+    @pytest.mark.asyncio
+    async def test_fast_word_reroutes_minimax_inline_model(self):
+        reset_budget_state_for_tests()
+
+        async def _fake_get_response(*, preferred_model, history, max_key_retries, timeout):
+            assert preferred_model == "opencode-go/qwen3.5-plus"
+            return "шериф", None
+
+        with (
+            patch("app.config.settings.OPENCODE_INLINE_MODEL", "opencode-go/minimax-m2.5"),
+            patch("app.providers.gemini.get_vertex_client", return_value=None),
+            patch("app.providers.router.get_provider_router") as router_factory,
+        ):
+            router_factory.return_value.get_response = AsyncMock(side_effect=_fake_get_response)
+            word = await _generate_single_word_fast("персонаж сериала Извне", lang="ru")
+
+        assert word == "шериф"
+
+
 @pytest.mark.asyncio
 class TestPickRandomWord:
     @pytest.fixture(autouse=True)
     def mock_word_gen(self):
+        reset_budget_state_for_tests()
+        reset_hint_runtime_state_for_tests()
+        _GENERATED_CACHE.clear()
         with (
             patch(
                 "app.games.word_bank._generate_single_word_fast",
@@ -249,6 +319,28 @@ class TestPickRandomWord:
         assert is_gen
         gen_mock.assert_awaited_once_with(topic.category, lang=topic.lang, topic_id=topic.topic_id)
         pick_mock.assert_called_once_with(topic.topic_id, full_bank, used=set())
+
+    async def test_background_generation_submit_marks_background_flag(self):
+        topic = resolve_topic("персонаж валорант")
+
+        with (
+            patch("app.games.word_bank._generate_single_word_fast", new_callable=AsyncMock, return_value="джетт"),
+            patch("app.games.word_bank.generate_words_for_category", new_callable=AsyncMock) as gen_mock,
+            patch("app.games.word_bank.submit_task") as submit_mock,
+        ):
+            word, _, _, _ = await pick_random_word_for_topic(topic)
+
+        assert word == "джетт"
+        assert submit_mock.called
+        gen_mock.assert_called_once_with(topic.category, lang=topic.lang, topic_id=topic.topic_id, background=True)
+        submit_mock.call_args.args[0].close()
+
+    async def test_enqueue_bank_hint_prewarm_skips_when_gemini_cooldown_active(self):
+        reset_budget_state_for_tests()
+        reset_hint_runtime_state_for_tests()
+
+        await record_result("ai_studio", "gemini-3.1-flash-lite-preview", "rate_limit", retry_after_seconds=60)
+        assert enqueue_bank_hint_prewarm(["шериф", "доктор"], "персонаж сериала Извне", topic_id="custom:1") is False
 
 
 # ── judge — Damerau-Levenshtein algorithm ─────────────────────────────────────

@@ -34,17 +34,17 @@ async def get_daily_hints(puzzle: repo.DailyPuzzle) -> list[str]:
     if puzzle.hints:
         return puzzle.hints
 
-    from app.games.judge import generate_hints
-    from app.games.judgement_cache import cache_hints, get_cached_hints
+    from app.games.hinting import get_or_generate_cached_hints
 
-    cached = await get_cached_hints(puzzle.target_word, puzzle.topic, topic_id=f"daily:{puzzle.puzzle_date}")
-    if cached:
-        await repo.set_puzzle_hints(puzzle.puzzle_date, cached)
-        return cached
-
-    hints = await generate_hints(puzzle.target_word, puzzle.topic)
+    hints = await get_or_generate_cached_hints(
+        puzzle.target_word,
+        puzzle.topic,
+        topic_id=f"daily:{puzzle.puzzle_date}",
+        mode="foreground",
+    )
+    if not hints:
+        hints = []
     await repo.set_puzzle_hints(puzzle.puzzle_date, hints)
-    await cache_hints(puzzle.target_word, puzzle.topic, hints, topic_id=f"daily:{puzzle.puzzle_date}")
     return hints
 
 

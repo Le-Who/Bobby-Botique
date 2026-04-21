@@ -11,6 +11,7 @@ This module provides:
 """
 
 import logging
+import re
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from enum import StrEnum
@@ -420,6 +421,33 @@ _ERROR_CODE_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.GENERIC: GENERIC_ERROR,
 }
 
+_RETRY_AFTER_PATTERNS = (
+    re.compile(r"retry[_ -]?after\s*[=:]?\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
+    re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE),
+    re.compile(r"retrydelay['\"]?\s*[:=]\s*['\"]?([0-9]+(?:\.[0-9]+)?)s?", re.IGNORECASE),
+    re.compile(r"please retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE),
+    re.compile(r"(?:около|about)\s+([0-9]+(?:\.[0-9]+)?)\s*[sс]", re.IGNORECASE),
+)
+
+
+def extract_retry_after_seconds(text: str) -> int | None:
+    """Extract a retry-after hint from provider error text when available."""
+    if not text:
+        return None
+    for pattern in _RETRY_AFTER_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        try:
+            return max(1, int(float(match.group(1)) + 0.999))
+        except ValueError:
+            continue
+    return None
+
+
+def has_retry_after_hint(text: str) -> bool:
+    return extract_retry_after_seconds(text) is not None
+
 
 def classify_error_from_exception(exc: Exception) -> ErrorCode:
     """Classify an exception to an ErrorCode by type (O(1) MRO walk).
@@ -447,6 +475,8 @@ def classify_error_from_exception(exc: Exception) -> ErrorCode:
         return ErrorCode.TIMEOUT
     if "503" in msg or "overloaded" in msg or "unavailable" in msg:
         return ErrorCode.OVERLOADED
+    if has_retry_after_hint(msg):
+        return ErrorCode.RATE_LIMIT
     if "429" in msg or "rate" in msg:
         return ErrorCode.RATE_LIMIT
     if "quota" in msg or "limit" in msg:
@@ -475,6 +505,8 @@ def user_friendly_error(raw_error: Exception | str) -> str:
     low = (text or "").lower()
     if any(x in low for x in ["503", "unavailable", "overloaded"]):
         return OVERLOADED_ERROR
+    if has_retry_after_hint(text):
+        return tag_error(ErrorCode.RATE_LIMIT, "⏱️ Временный лимит запросов. Подождите немного.")
     if "quota" in low or "limit" in low:
         return QUOTA_ERROR
     if "timeout" in low or "timed out" in low:
@@ -502,6 +534,8 @@ def is_retryable_error(text: str) -> bool:
     code = extract_error_code(text)
     if code is not None:
         return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[0]
+    if has_retry_after_hint(text):
+        return True
     # Legacy fallback: text pattern matching
     retryable_patterns = [
         "⏰",
@@ -529,6 +563,8 @@ def is_key_related_error(text: str) -> bool:
     code = extract_error_code(text)
     if code is not None:
         return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[1]
+    if has_retry_after_hint(text):
+        return True
     # Legacy fallback: text pattern matching
     text_lower = text.lower()
     not_key_patterns = [
@@ -576,6 +612,8 @@ def classify_key_error(text: str) -> str:
     code = extract_error_code(text)
     if code is not None:
         return _ERROR_PROPERTIES.get(code, (False, False, "transient"))[2]
+    if has_retry_after_hint(text):
+        return "rate_limit"
     # Legacy fallback: text pattern matching
     text_lower = text.lower()
     transient = [

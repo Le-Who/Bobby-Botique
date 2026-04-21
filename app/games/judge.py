@@ -28,6 +28,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.games.ai_budget import (
+    HintGenerationMode,
+    acquire_background_slot,
+    acquire_foreground_slot,
+    record_result,
+)
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
@@ -64,6 +70,16 @@ _HINTS_TIMEOUT_S = 18.0
 # asyncio is single-threaded — float reassignment is safe without a Lock.
 _primary_circuit_open_until: float = 0.0  # monotonic timestamp; 0.0 = closed
 _PRIMARY_CIRCUIT_COOLDOWN_S: float = 120.0  # 2 min between probes
+
+
+def _budget_provider_for_model(model_name: str, lane_type: str | None = None) -> str:
+    if lane_type == "vertex":
+        return "vertex_express"
+    if model_name.startswith("opencode-go/"):
+        return "opencode_go"
+    if "/" in model_name:
+        return "openrouter"
+    return "ai_studio"
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -292,7 +308,7 @@ async def _race_generate(
     from google.genai import types as _gtypes
 
     from app.agent_use_cases import AgentRequestUseCase
-    from app.errors import classify_key_error
+    from app.errors import classify_key_error, extract_retry_after_seconds
     from app.metrics import metrics_collector
     from app.providers.gemini import get_cached_genai_client
     from app.repos.keys import get_key_status_manager
@@ -318,31 +334,44 @@ async def _race_generate(
         api_key: str, key_hash: str, model: str, timeout: float = _LLM_TIMEOUT_S
     ) -> GuessJudgement | None:
         """Single key attempt. On any error: classify → suspend key → return None."""
+        lease = await acquire_foreground_slot("judge", "ai_studio", model)
+        if lease is None:
+            return None
         try:
-            client = get_cached_genai_client(api_key)
-            response = await asyncio.wait_for(
-                client.aio.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=config,
-                ),
-                timeout=timeout,
-            )
-            text = getattr(response, "text", None) or ""
-            if not text:
-                return None
-            data = json.loads(text)
-            result = GuessJudgement.model_validate(data)
-            submit_task(status_mgr.record_success(key_hash, model))
-            # Increment usage counter on success (fire-and-forget)
-            submit_task(use_case.increment_key_usage(key_hash, model, use_openrouter=False))
-            return result
+            async with lease:
+                client = get_cached_genai_client(api_key)
+                response = await asyncio.wait_for(
+                    client.aio.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config=config,
+                    ),
+                    timeout=timeout,
+                )
+                text = getattr(response, "text", None) or ""
+                if not text:
+                    return None
+                data = json.loads(text)
+                result = GuessJudgement.model_validate(data)
+                submit_task(status_mgr.record_success(key_hash, model))
+                submit_task(use_case.increment_key_usage(key_hash, model, use_openrouter=False))
+                submit_task(record_result("ai_studio", model, "success"))
+                return result
         except Exception as exc:
             err_text = str(exc)
             logger.warning("Judge race call failed (model=%s): %s", model, exc)
             # Classify error and suspend key — prevents the same exhausted key
             # from being re-used in subsequent resolve_ai_request() calls.
             category = classify_key_error(err_text)
+            submit_task(
+                record_result(
+                    "ai_studio",
+                    model,
+                    category,
+                    retry_after_seconds=extract_retry_after_seconds(err_text),
+                    reason=err_text[:500],
+                )
+            )
             submit_task(_suspend_key_safe(key_hash, model, category, err_text[:500]))
             return None
         finally:
@@ -395,21 +424,27 @@ async def _race_generate(
             vertex_client = get_vertex_client()
             if vertex_client is None:
                 return None
+            lease = await acquire_foreground_slot("judge", "vertex_express", _PRIMARY_MODEL)
+            if lease is None:
+                return None
             try:
-                resp = await asyncio.wait_for(
-                    vertex_client.aio.models.generate_content(
-                        model=_PRIMARY_MODEL,
-                        contents=prompt,
-                        config=config,
-                    ),
-                    timeout=_LLM_TIMEOUT_S,
-                )
-                resp_text = getattr(resp, "text", None) or ""
-                if not resp_text:
-                    return None
-                return GuessJudgement.model_validate(json.loads(resp_text))
+                async with lease:
+                    resp = await asyncio.wait_for(
+                        vertex_client.aio.models.generate_content(
+                            model=_PRIMARY_MODEL,
+                            contents=prompt,
+                            config=config,
+                        ),
+                        timeout=_LLM_TIMEOUT_S,
+                    )
+                    resp_text = getattr(resp, "text", None) or ""
+                    if not resp_text:
+                        return None
+                    submit_task(record_result("vertex_express", _PRIMARY_MODEL, "success"))
+                    return GuessJudgement.model_validate(json.loads(resp_text))
             except Exception as exc:
                 logger.debug("Judge: Vertex AI attempt failed: %s", exc)
+                submit_task(record_result("vertex_express", _PRIMARY_MODEL, "transient", reason=str(exc)[:500]))
                 return None
 
         # Resolve up to 3 Gemini API keys
@@ -486,7 +521,7 @@ async def _race_generate(
 # ── Progressive hint generation ───────────────────────────────────────────────
 
 
-async def generate_hints(word: str, category: str) -> list[str]:
+async def generate_hints(word: str, category: str, mode: HintGenerationMode = "foreground") -> list[str]:
     """Generate 3 progressive hints for the given word asynchronously.
 
     Always returns 3 hints, falling back to deterministic local hints if all
@@ -646,7 +681,9 @@ async def generate_hints(word: str, category: str) -> list[str]:
         return None
 
     def _build_hint_lane_plan(settings_obj: object | None) -> list[tuple[str, str, str]]:
-        lanes: list[tuple[str, str, str]] = [("ai_studio", "router", _pick_ai_studio_model(settings_obj))]
+        lanes: list[tuple[str, str, str]] = []
+        if mode == "foreground":
+            lanes.append(("ai_studio", "router", _pick_ai_studio_model(settings_obj)))
         if _setting(settings_obj, "VERTEX_AI_KEY") or _setting(settings_obj, "VERTEX_AI_PROJECT"):
             lanes.append(("vertex_express", "vertex", _HINTS_VERTEX_MODEL))
         opencode_model = _pick_opencode_model(settings_obj)
@@ -665,7 +702,7 @@ async def generate_hints(word: str, category: str) -> list[str]:
 
     try:
         import app.config as config_module
-        from app.errors import is_error_message
+        from app.errors import classify_key_error, extract_retry_after_seconds, is_error_message, strip_error_tag
         from app.providers import get_provider_router
 
         c_str = f" (категория: {category})" if category and "особое" not in category.lower() else ""
@@ -680,7 +717,12 @@ async def generate_hints(word: str, category: str) -> list[str]:
             logger.info("generate_hints: using deterministic fallback for %r", word)
             return fallback_hints
 
-        logger.info("generate_hints: word=%r lanes=%s", word, [f"{name}:{model}" for name, _, model in lane_plan])
+        logger.info(
+            "generate_hints: word=%r mode=%s lanes=%s",
+            word,
+            mode,
+            [f"{name}:{model}" for name, _, model in lane_plan],
+        )
 
         def _finalize_hints(response_text: str, lane_name: str, model_name: str) -> list[str] | None:
             if not response_text:
@@ -722,19 +764,26 @@ async def generate_hints(word: str, category: str) -> list[str]:
             return None
 
         async def _one_router_hint_call(lane_name: str, model_name: str) -> list[str] | None:
+            provider_name = _budget_provider_for_model(model_name)
+            acquire = acquire_background_slot if mode == "background" else acquire_foreground_slot
+            lease = await acquire("hint_generation", provider_name, model_name)
+            if lease is None:
+                return None
             try:
-                response_text, _ = await router.get_response(
-                    preferred_model=model_name,
-                    history=history,
-                    system_instruction=None,
-                    use_openrouter=False,
-                    max_key_retries=1,
-                    thinking_level="off",
-                    timeout=_HINTS_TIMEOUT_S,
-                )
+                async with lease:
+                    response_text, _ = await router.get_response(
+                        preferred_model=model_name,
+                        history=history,
+                        system_instruction=None,
+                        use_openrouter=False,
+                        max_key_retries=1,
+                        thinking_level="off",
+                        timeout=_HINTS_TIMEOUT_S,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                await record_result(provider_name, model_name, "transient", reason=str(exc)[:500])
                 logger.warning(
                     "generate_hints: router lane %s (%s) failed for %r: %s",
                     lane_name,
@@ -743,6 +792,16 @@ async def generate_hints(word: str, category: str) -> list[str]:
                     exc,
                 )
                 return None
+            if is_error_message(response_text):
+                await record_result(
+                    provider_name,
+                    model_name,
+                    classify_key_error(response_text),
+                    retry_after_seconds=extract_retry_after_seconds(response_text),
+                    reason=strip_error_tag(response_text)[:500],
+                )
+            else:
+                await record_result(provider_name, model_name, "success")
             return _finalize_hints(response_text, lane_name, model_name)
 
         async def _one_vertex_hint_call(model_name: str) -> list[str] | None:
@@ -763,23 +822,29 @@ async def generate_hints(word: str, category: str) -> list[str]:
             if vertex_client is None:
                 return None
 
+            acquire = acquire_background_slot if mode == "background" else acquire_foreground_slot
+            lease = await acquire("hint_generation", "vertex_express", model_name)
+            if lease is None:
+                return None
             try:
-                response = await asyncio.wait_for(
-                    vertex_client.aio.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=_gtypes.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            response_schema=HintsOutput.model_json_schema(),
-                            temperature=0.6,
-                            max_output_tokens=220,
+                async with lease:
+                    response = await asyncio.wait_for(
+                        vertex_client.aio.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=_gtypes.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                response_schema=HintsOutput.model_json_schema(),
+                                temperature=0.6,
+                                max_output_tokens=220,
+                            ),
                         ),
-                    ),
-                    timeout=_HINTS_TIMEOUT_S,
-                )
+                        timeout=_HINTS_TIMEOUT_S,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                await record_result("vertex_express", model_name, "transient", reason=str(exc)[:500])
                 logger.warning(
                     "generate_hints: vertex lane (%s) failed for %r: %s",
                     model_name,
@@ -789,6 +854,8 @@ async def generate_hints(word: str, category: str) -> list[str]:
                 return None
 
             response_text = getattr(response, "text", None) or ""
+            if response_text and not is_error_message(response_text):
+                await record_result("vertex_express", model_name, "success")
             return _finalize_hints(response_text, "vertex_express", model_name)
 
         async def _run_lane(lane_name: str, lane_type: str, model_name: str) -> list[str] | None:
@@ -796,36 +863,54 @@ async def generate_hints(word: str, category: str) -> list[str]:
                 return await _one_vertex_hint_call(model_name)
             return await _one_router_hint_call(lane_name, model_name)
 
-        tasks = {
-            asyncio.create_task(_run_lane(lane_name, lane_type, model_name)): (lane_name, model_name)
-            for lane_name, lane_type, model_name in lane_plan
-        }
-        pending = set(tasks)
-        try:
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    lane_name, model_name = tasks[task]
-                    try:
-                        hints = task.result()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        logger.warning(
-                            "generate_hints: lane %s (%s) crashed for %r: %s",
-                            lane_name,
-                            model_name,
-                            word,
-                            exc,
-                        )
-                        continue
-                    if hints:
-                        for other in pending:
-                            other.cancel()
-                        return hints
-        finally:
-            for task in pending:
-                task.cancel()
+        if mode == "background":
+            for lane_name, lane_type, model_name in lane_plan:
+                try:
+                    hints = await _run_lane(lane_name, lane_type, model_name)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning(
+                        "generate_hints: lane %s (%s) crashed for %r: %s",
+                        lane_name,
+                        model_name,
+                        word,
+                        exc,
+                    )
+                    continue
+                if hints:
+                    return hints
+        else:
+            tasks = {
+                asyncio.create_task(_run_lane(lane_name, lane_type, model_name)): (lane_name, model_name)
+                for lane_name, lane_type, model_name in lane_plan
+            }
+            pending = set(tasks)
+            try:
+                while pending:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        lane_name, model_name = tasks[task]
+                        try:
+                            hints = task.result()
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            logger.warning(
+                                "generate_hints: lane %s (%s) crashed for %r: %s",
+                                lane_name,
+                                model_name,
+                                word,
+                                exc,
+                            )
+                            continue
+                        if hints:
+                            for other in pending:
+                                other.cancel()
+                            return hints
+            finally:
+                for task in pending:
+                    task.cancel()
 
     except Exception:
         logger.exception("generate_hints: unexpected crash for word=%r", word)
