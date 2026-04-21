@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import urllib.parse
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
 

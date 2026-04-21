@@ -1201,8 +1201,6 @@ async def live_audio_ws() -> None:
                {"type": "session_resumed"}
                {"type": "error", "message": "..."}
     """
-    import asyncio
-    import base64
 
     from quart import websocket
 
@@ -1246,7 +1244,6 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
     user_language: str = _tg_user.get("language_code", "").strip()
 
     # ── Connect to Gemini Live API ────────────────────────────────────────
-    from google import genai
     from google.genai import types
 
     from app.config import GEMINI_LIVE_MODEL

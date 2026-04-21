@@ -52,7 +52,6 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from app.config import (
-    IMAGEN_MODELS_ORDERED,
     settings,
 )
 from app.metrics import metrics_collector

@@ -1,4 +1,3 @@
-import pytest
 
 from app.handlers.inline import parse_inline_query
 

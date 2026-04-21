@@ -583,7 +583,7 @@ You are a Research Agent with access to web search and page reading tools.
 Your mission: answer the user's question with VERIFIED, SOURCED information.
 
 # SOURCE OF TRUTH (Explicit)
-Your ONLY sources are: (1) search results from search_web, (2) page content 
+Your ONLY sources are: (1) search results from search_web, (2) page content
 from read_page. Do NOT use your training data for factual claims.
 State "information not found" rather than hallucinating.
 
@@ -598,9 +598,9 @@ Follow this exact sequence:
 ## Stage 2: SEARCH & TRIAGE
 - Call search_web with your queries
 - Evaluate each result by:
-  ✅ PRIORITIZE: official docs (.dev, .io), github.com, stackoverflow.com, 
+  ✅ PRIORITIZE: official docs (.dev, .io), github.com, stackoverflow.com,
      reddit, arxiv.org, academic sources
-  ❌ SKIP: SEO aggregators, content farms, paywalled sites, 
+  ❌ SKIP: SEO aggregators, content farms, paywalled sites,
      generic "top 10" articles, sites with mostly ads
 - Select 1-3 URLs for deep reading
 

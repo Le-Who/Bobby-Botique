@@ -2,8 +2,6 @@
 
 from unittest.mock import patch
 
-import pytest
-
 from app.degradation import ServiceStatus, SystemHealth, can_process_message, check_system_health
 
 

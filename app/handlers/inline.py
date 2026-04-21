@@ -60,7 +60,10 @@ from app.utils.text_format import markdown_to_html, strip_formatting
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-_INLINE_MODEL = "gemini-2.5-flash-lite"
+# Primary inline model: Vertex AI Express (more stable, native Search Grounding).
+# AI Studio keys race alongside as fallback slots using _INLINE_FALLBACK_MODEL.
+_INLINE_MODEL = "gemini-3.1-flash-lite-preview"
+_INLINE_FALLBACK_MODEL = "gemini-2.5-flash-lite"
 
 # Outer timeout for the entire generation pipeline.
 _GEN_TIMEOUT_S = 55.0
@@ -911,18 +914,35 @@ async def _init_croc_game_async(
                 )
                 topic_id = topic.topic_id
                 sense_context = topic.category
-            except ValueError:
-                # Gemini couldn't produce words for this category
-                await bot.edit_message_text(
-                    inline_message_id=inline_message_id,
-                    text=(
-                        "🐊 <b>Крокодил</b>\n"
-                        f"❌ Не могу понять тему <i>{category_raw}</i>. "
-                        "попробуй снова или укажи другую тему."
-                    ),
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup([]),
-                )
+            except Exception as _croc_exc:
+                from app.errors import ProviderOverloadError
+
+                if isinstance(_croc_exc, ProviderOverloadError):
+                    # Infrastructure overload — not the user's fault
+                    await bot.edit_message_text(
+                        inline_message_id=inline_message_id,
+                        text=(
+                            "🐊 <b>Крокодил</b>\n"
+                            "⏳ Серверы ИИ временно перегружены.\n"
+                            "Попробуй ещё раз через пару секунд."
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([]),
+                    )
+                elif isinstance(_croc_exc, ValueError):
+                    # Genuinely unintelligible category
+                    await bot.edit_message_text(
+                        inline_message_id=inline_message_id,
+                        text=(
+                            "🐊 <b>Крокодил</b>\n"
+                            f"❌ Не могу понять тему <i>{category_raw}</i>. "
+                            "попробуй снова или укажи другую тему."
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=InlineKeyboardMarkup([]),
+                    )
+                else:
+                    raise _croc_exc
                 return
 
         # ── Create game session ───────────────────────────────────────────────
@@ -1037,9 +1057,12 @@ async def _stream_inline_fast(
         # (Vertex AI Express adds a 3rd parallel racer — total concurrency = 3)
         keys: list[dict] = []
         resolved_model: str | None = None
+        # AI Studio keys race as fallback alongside the primary Vertex slot.
+        # Use _INLINE_FALLBACK_MODEL (gemini-2.5-flash-lite) for AI Studio racers.
+        _ai_studio_model = _INLINE_FALLBACK_MODEL
         for _ in range(2):
             kd, mdl, _ = await use_case.resolve_ai_request(
-                preferred_model,
+                _ai_studio_model,
                 excluded_key_hashes=failed_keys | {k["key_hash"] for k in keys},
             )
             if kd and mdl:
@@ -1316,9 +1339,9 @@ async def _generate_and_edit_inline(
 
     history = [{"role": "user", "parts": [user_query]}]
 
-    # ── Step 2: Generate (3-way Race Requests, up to 4 rounds = 12 key slots) ─
-    # For gemini-2.5-flash-lite with 15+ keys at hundreds RPD each,
-    # burning 3 simultaneous slots is operationally free and minimises TTFR.
+    # ── Step 2: Generate (3-way Race Requests, up to 4 rounds) ──────────────────
+    # Primary: Vertex AI Express (gemini-3.1-flash-lite-preview) with Search Grounding.
+    # Fallback racers: 2x AI Studio keys (gemini-2.5-flash-lite) per round.
     _gen_start = time.monotonic()
     final_answer: str | None = None
     _grounding_sources: list[tuple[str, str]] = []  # Grounding Citations (url, title)

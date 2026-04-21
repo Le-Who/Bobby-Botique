@@ -341,7 +341,6 @@ async def _handle_regular_chat(
         _stop_placeholder_animation()
 
     # ── Metrics: record every chat LLM call ────────────────────────────────
-    import asyncio as _asyncio
 
     from app.metrics import metrics_collector as _mc
     from app.providers.base import is_opencode_model, is_openrouter_model

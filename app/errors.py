@@ -106,6 +106,14 @@ class CircuitBreakerOpenError(NetworkError):
     """Raised when circuit breaker is open."""
 
 
+class ProviderOverloadError(NetworkError):
+    """Raised when all AI providers are overloaded/unavailable.
+
+    Distinct from ValueError (unintelligible category) — this means the
+    infrastructure is temporarily down, not that the user's input is bad.
+    """
+
+
 # --- Validation Exceptions ---
 
 

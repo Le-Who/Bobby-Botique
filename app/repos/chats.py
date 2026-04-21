@@ -70,9 +70,9 @@ async def get_user_chat(user_id: int) -> ChatState | None:
                     c.voice_id,
                     c.tts_temperature,
                     COALESCE(
-                        (SELECT jsonb_agg(jsonb_build_object('role', role, 'content', content) ORDER BY id ASC) 
-                         FROM public.active_chat_messages 
-                         WHERE user_id = u.user_id), 
+                        (SELECT jsonb_agg(jsonb_build_object('role', role, 'content', content) ORDER BY id ASC)
+                         FROM public.active_chat_messages
+                         WHERE user_id = u.user_id),
                         '[]'::jsonb
                     ) as messages
                 FROM public.users u

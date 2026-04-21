@@ -884,7 +884,7 @@ _TOPIC_ROTATION: dict[str, tuple[str, list[str], int]] = {}
 # Gemini models tried in order for word generation
 _GEN_PRIMARY_MODEL = "opencode-go/minimax-m2.7"
 _GEN_FALLBACK_MODEL = "gemini-2.5-flash"
-_GEN_TIMEOUT_S = 18.0
+_GEN_TIMEOUT_S = 30.0  # Background task: user not waiting, let slow providers finish
 
 _GEN_PROMPT = (
     "Ты помощник игры 'Крокодил'. Придумай ровно 20 существительных на тему \"{category}\"."
@@ -1052,6 +1052,8 @@ async def generate_words_for_category(
                 else:
                     await cache_generated_words(lang, category, clean)
                 logger.info("Generated %d words for custom category %r (%s)", len(clean), category, model)
+                # Pre-warm hint cache for all generated words in the background
+                submit_task(_prefetch_hints_for_bank(clean, category, topic_id=topic_id_norm or None))
                 return clean
 
             except (TimeoutError, json.JSONDecodeError) as exc:
@@ -1070,42 +1072,136 @@ async def generate_words_for_category(
             _GENERATED_INFLIGHT.pop(cache_key, None)
 
 
+async def _prefetch_hints_for_bank(
+    words: list[str], category: str, *, topic_id: str | None = None
+) -> None:
+    """Background: pre-generate and cache hints for words in a newly generated bank.
+
+    Called lazily after generate_words_for_category completes so future games
+    on the same topic get instant hints without an extra LLM call.
+    Capped at 10 words to avoid hammering providers on large banks.
+    """
+    from app.games.judge import generate_hints
+    from app.games.judgement_cache import cache_hints, get_cached_hints
+
+    tid = topic_id or ""
+    for word in words[:10]:
+        try:
+            cached = await get_cached_hints(word, category, topic_id=tid)
+            if cached:
+                continue
+            hints = await generate_hints(word, category)
+            if hints:
+                await cache_hints(word, category, hints, topic_id=tid)
+                logger.debug("Pre-cached hints for word=%r category=%r", word, category)
+        except Exception as exc:
+            logger.debug("Hint prefetch failed for word=%r: %s", word, exc)
+
+
 async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | None:
-    """Fast inline request for exactly ONE word to immediately start a game."""
+    """Фаст-генерация одного слова — рейтинг Vertex AI Express (приоритет) vs Opencode (резерв).
+
+    Slot A: gemini-3.1-flash-lite-preview on Vertex AI Express with Search Grounding.
+      Grounding is safe: output constrained to 1 word/phrase; grounding only
+      enriches knowledge for obscure topics (e.g. 'персонаж сериала Извне').
+    Slot B: Opencode inline model via ProviderRouter (fast when healthy).
+
+    First valid word wins. Outer race timeout: 10 s.
+    """
     from app.config import settings
+    from app.errors import is_error_message
 
     lang_hint = "русском" if lang == "ru" else "English"
     prompt = (
         f"Ты помощник игры 'Крокодил'. Придумай ровно 1 существительное на тему \"{category}\". "
         f"Язык: {lang_hint}. Ответь ТОЛЬКО одним словом/фразой (1-3 слова), без пояснений, без кавычек."
     )
+    history = [{"role": "user", "parts": [prompt]}]
 
-    # We rely on the fastest inline model available
-    model = settings.OPENCODE_INLINE_MODEL or "gemini-2.5-flash"
-    try:
-        from app.errors import is_error_message
-        from app.providers.router import get_provider_router
+    def _validate(raw: str | None) -> str | None:
+        if not raw:
+            return None
+        cleaned = raw.strip().strip("`'\" \r\n.")
+        if is_error_message(cleaned):
+            return None
+        return cleaned.lower() if 2 <= len(cleaned) <= 60 else None
 
-        router = get_provider_router()
-        response_text, _ = await router.get_response(
-            preferred_model=model,
-            history=[{"role": "user", "parts": [prompt]}],
-            max_key_retries=1,
-            timeout=7.0,  # Strict timeout for instantaneous response
-        )
+    # ── Slot A: Vertex AI Express + Search Grounding (primary) ────────────────
+    async def _vertex_slot() -> str | None:
+        try:
+            from google.genai import types as _gtypes
 
-        raw = (response_text or "").strip().strip("`'\" \r\n.")
-        if is_error_message(raw):
-            logger.warning("Fast inline word gen failed for %r: Provider returned error: %s", category, raw)
+            from app.providers.gemini import get_vertex_client
+
+            vertex_client = get_vertex_client()
+            if vertex_client is None:
+                return None
+            resp = await asyncio.wait_for(
+                vertex_client.aio.models.generate_content(
+                    model="gemini-3.1-flash-lite-preview",
+                    contents=history,
+                    config=_gtypes.GenerateContentConfig(
+                        tools=[_gtypes.Tool(google_search=_gtypes.GoogleSearch())],
+                        temperature=0.7,
+                        max_output_tokens=64,
+                    ),
+                ),
+                timeout=9.0,
+            )
+            result = _validate(getattr(resp, "text", None))
+            if result:
+                logger.info("Fast word (Vertex+grounding) for %r: %r", category, result)
+            return result
+        except Exception as exc:
+            logger.warning("Fast word Vertex slot failed for %r: %r", category, exc)
             return None
 
-        if 2 <= len(raw) <= 60:
-            logger.info("Fast inline word generated for %r: %r", category, raw)
-            return raw.lower()
-    except Exception as exc:
-        logger.warning("Fast inline word gen failed for %r: %r", category, exc)
+    # ── Slot B: Opencode inline model via ProviderRouter (fallback) ──────────
+    async def _opencode_slot() -> str | None:
+        try:
+            from app.providers.router import get_provider_router
 
-    return None
+            router = get_provider_router()
+            response_text, _ = await router.get_response(
+                preferred_model=settings.OPENCODE_INLINE_MODEL or "gemini-2.5-flash",
+                history=history,
+                max_key_retries=1,
+                timeout=7.0,
+            )
+            result = _validate(response_text)
+            if result:
+                logger.info("Fast word (Opencode) for %r: %r", category, result)
+            return result
+        except Exception as exc:
+            logger.warning("Fast word Opencode slot failed for %r: %r", category, exc)
+            return None
+
+    # ── Race both slots — first valid word wins ──────────────────────────────
+    vertex_task = asyncio.create_task(_vertex_slot())
+    opencode_task = asyncio.create_task(_opencode_slot())
+    word_result: str | None = None
+    pending = {vertex_task, opencode_task}
+    try:
+        while pending and word_result is None:
+            done, pending = await asyncio.wait(
+                pending,
+                timeout=10.0,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:  # outer timeout
+                break
+            for task in done:
+                try:
+                    candidate = task.result()
+                    if candidate and word_result is None:
+                        word_result = candidate
+                except Exception:
+                    pass
+    finally:
+        for t in pending:
+            t.cancel()
+
+    return word_result
 
 
 # ── Random word picker ────────────────────────────────────────────────────────
@@ -1159,7 +1255,11 @@ async def pick_random_word_for_topic(
                 if not fast_word:
                     generated = await generate_words_for_category(category, lang=lang, topic_id=topic.topic_id)
                     if not generated:
-                        raise ValueError(f"unintelligible_category:{topic.raw!r}")
+                        from app.errors import ProviderOverloadError
+
+                        raise ProviderOverloadError(
+                            f"All AI providers failed for category {topic.raw!r}"
+                        )
                     words = generated
                 else:
                     _GENERATED_CACHE.setdefault(cache_key, [fast_word])

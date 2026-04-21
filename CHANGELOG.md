@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.16] - 2026-04-21 - Inline Primary Driver: Vertex AI Express + Race Hardening
+
+### 🚀 Inline Generation Architecture
+- **Vertex AI Express promoted to primary inline driver (`app/handlers/inline.py`):** `_INLINE_MODEL` now points to `gemini-3.1-flash-lite-preview` via Vertex AI Express. AI Studio keys (`gemini-2.5-flash-lite`) are demoted to **fallback racers** tracked by the new `_INLINE_FALLBACK_MODEL` constant. The race architecture and all round limits remain intact — only slot priority is flipped.
+- **Search Grounding on primary slot:** The Vertex AI Express path retains native Google Search Grounding (`enable_web_search=True`). The prompt strictly constrains output to a single noun/phrase so grounding cannot contaminate word-bank results; the 2–60 char validation gate provides an additional safety net.
+- **`ProviderOverloadError` distinction (`app/errors.py`, `app/games/word_bank.py`, `app/handlers/inline.py`):** Infrastructure failures (all providers overloaded / timed out) now raise `ProviderOverloadError` instead of falling through as `ValueError`. The inline Crocodile handler catches this separately and surfaces a user-friendly "⏳ Серверы ИИ временно перегружены. Попробуй ещё раз через пару секунд." message. Genuine unintelligible-topic errors (`ValueError`) still show the existing "❌ Не могу понять тему" prompt.
+
+### 🐊 Crocodile Word Bank
+- **Vertex AI Express in word generation race (`app/games/word_bank.py`):** `_generate_single_word_fast` now races the Vertex AI Express slot (primary, with Search Grounding) against the existing Opencode slot (fallback). The first valid response wins. Opencode timeout raised from 7s to allow more transient-latency tolerance.
+- **Lazy background hint hydration (`app/games/word_bank.py`):** After a new word bank is generated, `_prefetch_hints_for_bank` fires as a background task and pre-warms the hint cache for all words in the bank. Subsequent games on the same topic serve hints instantly without a blocking LLM call on the critical path.
+- **Relaxed background generation timeout:** Background full-bank generation timeout raised to 30s to allow slower, capability-rich models to complete without being cancelled.
+
+### 🧹 Code Quality
+- **Patch scripts removed:** Temporary `_patch_wordbank.py` and `_patch_inline.py` scripts deleted from the repository after successful application.
+- **Auto-fixed lint:** `ruff --fix --unsafe-fixes` applied project-wide; isort import ordering corrected in `tests/test_degradation_recovery.py`; unused `asyncio` import removed from `app/handlers/ai_chat.py`.
+
+### ✅ Verification
+- `python -m ruff check .` → **All checks passed** (exit 0)
+- `python -m pytest tests/ -x -q --timeout=60 -n auto` → **1801 passed, 96 skipped**
+
 ## [2.15.15] - 2026-04-21 - Daily Crocodile Preparation, Idempotent Migrations & Lock Sweep Restore
 
 ### 🐊 Daily Crocodile Delivery Readiness

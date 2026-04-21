@@ -14,7 +14,6 @@ import logging
 from typing import Any
 
 from app.errors import ErrorCode, tag_error
-from app.providers.base import AIResponse
 from app.providers.openrouter import OpenRouterProvider
 from app.request_context import get_request_id
 
