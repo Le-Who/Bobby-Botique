@@ -3,6 +3,28 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [Unreleased] - 2026-04-22 - Crocodile Load-Shedding, Hint Backpressure & OpenCode Go MiniMax Transport
+
+### 🐊 Crocodile Runtime Reliability
+- **Foreground/background AI budgeting (`app/games/ai_budget.py`, `app/games/judge.py`, `app/games/word_bank.py`):** Added a Crocodile-only scheduler with sliding-window local counters, provider concurrency caps, and model-level cooldown awareness. Foreground paths (game start, judge, live hints) now reserve capacity ahead of background warmup, while background requests are denied or paused when Gemini AI Studio enters retry-after cooldown.
+- **Fast-word hardening (`app/games/word_bank.py`):** Fixed the Vertex AI Express fast-word request shape to use a valid `google-genai` `contents` payload, tightened lexical validation so junk outputs like `оа`, fenced markdown, or service text are rejected, and stopped invalid provisional words from seeding `_GENERATED_CACHE`.
+- **Hint singleflight + bounded prewarm queue (`app/games/hinting.py`, `app/games/crocodile.py`, `app/games/crocodile_daily.py`):** Introduced in-process per-topic singleflight for hint generation and replaced eager bank-wide prefetch fanout with a low-priority queue (`1` worker, `2` words max per new bank). Per-game hint prefetch remains immediate, but bank warming now yields to live traffic.
+- **Background hint policy split (`app/games/judge.py`):** Foreground hint generation keeps the existing multi-lane race. Background generation now uses a cheaper ordered fallback chain (Vertex AI Express -> OpenCode Go -> deterministic local hints) and never burns `gemini-3-flash-preview` capacity.
+
+### 🔌 OpenCode Go Transport
+- **MiniMax transport split (`app/providers/opencode.py`):** `OpencodeGoProvider` now chooses transport by model family at request time. MiniMax M2.5/M2.7 use the Anthropic-compatible `https://opencode.ai/zen/go/v1/messages` endpoint with Messages-style payload/stream parsing, while GLM/Kimi/Qwen/MiMo stay on `https://opencode.ai/zen/go/v1/chat/completions`.
+- **Fast-word MiniMax restored (`app/games/word_bank.py`):** Removed the temporary reroute that had forced word generation off MiniMax while the transport was incomplete. `OPENCODE_INLINE_MODEL` can now safely point back to `opencode-go/minimax-m2.5`.
+
+### ⏱️ Quota & Cooldown Semantics
+- **Retry-after aware Gemini throttling (`app/errors.py`, `app/providers/gemini.py`, `app/games/ai_budget.py`):** `429 RESOURCE_EXHAUSTED` responses that include retry timing are now classified as minute-level throttles and converted into model cooldowns. Midnight Pacific key suspension is preserved only for genuine daily-exhaustion cases instead of every quota-shaped error.
+- **Single-instance deployment fit:** The Crocodile budget coordinator remains process-local by design because production currently runs one Python bot container on the VPS. Redis-backed shared budgeting is intentionally deferred until the app is scaled to multiple bot instances.
+
+### ✅ Verification
+- `python -m pytest -o addopts='' tests/test_opencode_routing.py tests/test_games.py tests/test_ai_provider.py tests/test_openrouter_provider.py` -> **151 passed**
+- `python -m pytest -o addopts='' tests/test_ai_budget.py tests/test_game_hints.py tests/test_games.py tests/test_game_llm_tasks.py tests/test_provider_router.py` -> **108 passed**
+- `python -m ruff check app/providers/opencode.py app/games/word_bank.py tests/test_opencode_routing.py tests/test_games.py` -> **All checks passed**
+- `python -m ruff check app/games/ai_budget.py app/games/hinting.py app/games/judge.py app/games/word_bank.py app/games/crocodile.py app/games/crocodile_daily.py app/errors.py app/providers/gemini.py tests/test_ai_budget.py tests/test_game_hints.py tests/test_games.py` -> **All checks passed**
+
 ## [2.15.16] - 2026-04-21 - Inline Primary Driver: Vertex AI Express + Race Hardening
 
 ### 🚀 Inline Generation Architecture

@@ -936,7 +936,7 @@ _GENERATED_INFLIGHT: dict[str, asyncio.Task[list[str] | None]] = {}
 _TOPIC_ROTATION: dict[str, tuple[str, list[str], int]] = {}
 
 # Gemini models tried in order for word generation
-_GEN_PRIMARY_MODEL = "opencode-go/qwen3.5-plus"
+_GEN_PRIMARY_MODEL = "opencode-go/minimax-m2.7"
 _GEN_FALLBACK_MODEL = "gemini-2.5-flash"
 _GEN_TIMEOUT_S = 30.0  # Background task: user not waiting, let slow providers finish
 
@@ -1018,18 +1018,6 @@ def _normalise_generated_words(words: list[object]) -> list[str]:
         seen.add(word)
         clean.append(word)
     return clean
-
-
-def _coerce_safe_opencode_word_model(model_name: str | None) -> str:
-    """Avoid MiniMax on word-generation paths until /v1/messages transport lands."""
-    normalized = (model_name or "").strip()
-    if normalized in {"opencode-go/minimax-m2.5", "opencode-go/minimax-m2.7"}:
-        logger.info(
-            "Word generation rerouting Opencode model %s to opencode-go/qwen3.5-plus until MiniMax messages transport is supported",
-            normalized,
-        )
-        return "opencode-go/qwen3.5-plus"
-    return normalized or "opencode-go/qwen3.5-plus"
 
 
 async def generate_words_for_category(
@@ -1235,7 +1223,7 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
 
     # ── Slot B: Opencode inline model via ProviderRouter (fallback) ──────────
     async def _opencode_slot() -> str | None:
-        model_name = _coerce_safe_opencode_word_model(settings.OPENCODE_INLINE_MODEL)
+        model_name = settings.OPENCODE_INLINE_MODEL or "opencode-go/minimax-m2.5"
         lease = await acquire_foreground_slot("fast_word", "opencode_go", model_name)
         if lease is None:
             return None

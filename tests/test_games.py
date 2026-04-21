@@ -26,7 +26,6 @@ from app.games.judge import (
 )
 from app.games.word_bank import (
     _GENERATED_CACHE,
-    _coerce_safe_opencode_word_model,
     _detect_lang,
     _generate_single_word_fast,
     _generated_cache_key,
@@ -139,11 +138,6 @@ class TestFastWordValidation:
     def test_accepts_valid_phrase(self):
         assert _normalise_fast_word_candidate("Шериф", lang="ru") == "шериф"
 
-    def test_coerces_minimax_to_safe_opencode_model(self):
-        assert _coerce_safe_opencode_word_model("opencode-go/minimax-m2.5") == "opencode-go/qwen3.5-plus"
-        assert _coerce_safe_opencode_word_model("opencode-go/minimax-m2.7") == "opencode-go/qwen3.5-plus"
-        assert _coerce_safe_opencode_word_model("opencode-go/qwen3.5-plus") == "opencode-go/qwen3.5-plus"
-
     @pytest.mark.asyncio
     async def test_vertex_fast_word_uses_plain_prompt_contents(self):
         reset_budget_state_for_tests()
@@ -173,11 +167,11 @@ class TestFastWordValidation:
         assert isinstance(fake_vertex.aio.models.calls[0]["contents"], str)
 
     @pytest.mark.asyncio
-    async def test_fast_word_reroutes_minimax_inline_model(self):
+    async def test_fast_word_uses_configured_opencode_inline_model(self):
         reset_budget_state_for_tests()
 
         async def _fake_get_response(*, preferred_model, history, max_key_retries, timeout):
-            assert preferred_model == "opencode-go/qwen3.5-plus"
+            assert preferred_model == "opencode-go/minimax-m2.5"
             return "шериф", None
 
         with (

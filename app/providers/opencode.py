@@ -1,41 +1,57 @@
-"""Opencode Go AI provider — OpenAI-compatible endpoint at opencode.ai/zen/go/v1.
+"""Opencode Go provider with per-model transport selection.
 
-Subclasses OpenRouterProvider, inheriting:
-- Gemini → OpenAI message format conversion (_build_messages)
-- Multimodal image handling (_build_image_part)
-- SSE streaming loop (stream_response)
-- Error tag handling
+OpenCode Go exposes a mixed transport surface:
+- most models use an OpenAI-compatible ``/chat/completions`` endpoint
+- MiniMax M2.5 / M2.7 use an Anthropic-compatible ``/messages`` endpoint
 
-Only overrides: base URL, request headers, model-name prefix stripping,
-and HTTP error mapping where Opencode semantics differ from OpenRouter.
+The router still selects one provider class for every ``opencode-go/*`` model,
+so this provider must adapt the HTTP shape at request time based on the model.
 """
 
+from __future__ import annotations
+
+import asyncio
+import base64
 import logging
+import time
 from typing import Any
 
+import httpx
+from PIL import Image
+
 from app.errors import ErrorCode, tag_error
+from app.providers import openrouter as openrouter_provider
+from app.providers.base import AIResponse
 from app.providers.openrouter import OpenRouterProvider
 from app.request_context import get_request_id
+from app.utils.image_utils import TaggedImage, save_image_as_bytes
+from app.utils.json_compat import json
 
 
 class OpencodeGoProvider(OpenRouterProvider):
-    """Opencode Go AI provider — OpenAI-compatible endpoint.
+    """Opencode Go AI provider.
 
-    Uses standard Bearer authentication, no OpenRouter-specific headers.
-    Model slugs are sent without the ``opencode-go/`` prefix used internally
-    for routing disambiguation.
+    Uses standard Bearer auth for OpenAI-compatible models and Anthropic-style
+    headers/payloads for MiniMax models routed through ``/v1/messages``.
     """
 
     provider_name = "opencode"
 
-    # Endpoint — Opencode Go OpenAI-compatible chat completions path
-    _BASE_URL = "https://opencode.ai/zen/go/v1/chat/completions"
+    _CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
+    _MESSAGES_URL = "https://opencode.ai/zen/go/v1/messages"
+    _ANTHROPIC_VERSION = "2023-06-01"
+    _MESSAGES_MODELS = frozenset({"minimax-m2.5", "minimax-m2.7"})
+    _MESSAGES_MAX_TOKENS = 8192
 
     def _get_url(self) -> str:
-        return self._BASE_URL
+        """Preserve OpenRouter template expectations for chat-completions models."""
+        return self._CHAT_URL
 
     def _get_headers(self) -> dict[str, str]:
-        """Standard Bearer auth — no OpenRouter-specific headers."""
+        """Preserve OpenRouter template expectations for chat-completions models."""
+        return self._build_chat_headers()
+
+    def _build_chat_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -45,9 +61,33 @@ class OpencodeGoProvider(OpenRouterProvider):
             headers["X-Request-ID"] = request_id
         return headers
 
+    def _build_messages_headers(self) -> dict[str, str]:
+        headers: dict[str, str] = {
+            "x-api-key": self.api_key,
+            "anthropic-version": self._ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+        }
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
+        return headers
+
+    def _get_url_for_model(self, model_name: str) -> str:
+        if self._uses_messages_transport(model_name):
+            return self._MESSAGES_URL
+        return self._CHAT_URL
+
+    def _get_headers_for_model(self, model_name: str) -> dict[str, str]:
+        if self._uses_messages_transport(model_name):
+            return self._build_messages_headers()
+        return self._build_chat_headers()
+
     def _strip_model_prefix(self, model_name: str) -> str:
         """Strip internal ``opencode-go/`` routing prefix before sending to API."""
         return model_name.removeprefix("opencode-go/")
+
+    def _uses_messages_transport(self, model_name: str) -> bool:
+        return self._strip_model_prefix(model_name) in self._MESSAGES_MODELS
 
     def _build_http_error_tag(
         self,
@@ -111,9 +151,385 @@ class OpencodeGoProvider(OpenRouterProvider):
             )
         return super()._build_http_error_tag(status, response_text, model_name)
 
-    # _execute_request and stream_response are inherited from OpenRouterProvider
-    # Both call self._get_url(), self._get_headers(), self._strip_model_prefix()
-    # so all request differences are captured above.
+    async def _execute_request(
+        self,
+        history: list[dict[str, Any]],
+        model_name: str,
+        system_instruction: str | None,
+        user_id: int | None,
+        chat_id: int | None,
+        timeout: float,
+        thinking_level: str | None = None,
+    ) -> AIResponse:
+        if not self._uses_messages_transport(model_name):
+            return await super()._execute_request(
+                history=history,
+                model_name=model_name,
+                system_instruction=system_instruction,
+                user_id=user_id,
+                chat_id=chat_id,
+                timeout=timeout,
+                thinking_level=thinking_level,
+            )
+
+        start_time = None
+        try:
+            await openrouter_provider.metrics_collector.record_api_call("opencode", model_name)
+            start_time = time.time()
+
+            payload = await self._build_messages_payload(history, model_name, system_instruction)
+            if not payload["messages"]:
+                msg = "Failed to create valid messages for Opencode Messages API"
+                logging.error(msg)
+                await openrouter_provider.metrics_collector.record_error("opencode_content_creation", msg)
+                return AIResponse(
+                    text=f"❌ {msg}",
+                    token_count=0,
+                    success=False,
+                    error_message=msg,
+                    provider=self.provider_name,
+                    model=model_name,
+                )
+
+            url = self._get_url_for_model(model_name)
+            headers = self._get_headers_for_model(model_name)
+
+            try:
+                client = openrouter_provider._openrouter_http_client
+                if client is None:
+                    raise RuntimeError("OpenRouter HTTP client not initialized")
+                response = await asyncio.wait_for(
+                    client.post(url, json=payload, headers=headers),
+                    timeout=90.0,
+                )
+                response.raise_for_status()
+                response_data = response.json()
+            except httpx.HTTPStatusError as e:
+                return await self._handle_http_error(e, model_name, start_time, user_id, chat_id)
+            except TimeoutError:
+                msg = f"Opencode Messages API request timed out for model {model_name}"
+                logging.error(msg)
+                await openrouter_provider.metrics_collector.record_error("opencode_timeout", msg)
+                self._log_failure(start_time, model_name, msg, user_id, chat_id)
+                return AIResponse(
+                    text=tag_error(
+                        ErrorCode.TIMEOUT,
+                        "⏰ Превышено время ожидания ответа от API. Попробуйте позже.",
+                    ),
+                    token_count=0,
+                    success=False,
+                    error_message=msg,
+                    provider=self.provider_name,
+                    model=model_name,
+                )
+            except httpx.HTTPError as e:
+                msg = f"Opencode Messages API error: {e!r}"
+                logging.error(msg)
+                await openrouter_provider.metrics_collector.record_error("opencode_api", msg)
+                self._log_failure(start_time, model_name, msg, user_id, chat_id)
+                return AIResponse(
+                    text=tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {msg}"),
+                    token_count=0,
+                    success=False,
+                    error_message=msg,
+                    provider=self.provider_name,
+                    model=model_name,
+                )
+
+            response_text = self._extract_messages_text(response_data)
+            if not response_text:
+                msg = "Opencode Messages API returned empty response"
+                logging.error("%s body=%s", msg, response_data)
+                await openrouter_provider.metrics_collector.record_error("opencode_empty_response", msg)
+                self._log_failure(start_time, model_name, msg, user_id, chat_id)
+                return AIResponse(
+                    text=tag_error(
+                        ErrorCode.EMPTY_RESPONSE,
+                        "❌ API вернул пустой ответ. Попробуйте еще раз.",
+                    ),
+                    token_count=0,
+                    success=False,
+                    error_message=msg,
+                    provider=self.provider_name,
+                    model=model_name,
+                )
+
+            token_count = self._messages_token_count(response_data.get("usage"))
+            if start_time is not None:
+                openrouter_provider.api_logger.log_response(
+                    "opencode",
+                    start_time,
+                    model=model_name,
+                    response_length=len(response_text),
+                    token_count=token_count,
+                )
+
+            return AIResponse(
+                text=response_text,
+                token_count=token_count,
+                success=True,
+                provider=self.provider_name,
+                model=model_name,
+            )
+        except Exception as e:
+            logging.error("Opencode Messages API generic error: %s", e, exc_info=True)
+            await openrouter_provider.metrics_collector.record_error("opencode_api", str(e))
+            self._log_failure(start_time, model_name, str(e), user_id, chat_id)
+            return AIResponse(
+                text=tag_error(ErrorCode.GENERIC, f"❌ Произошла непредвиденная ошибка API: {e}"),
+                token_count=0,
+                success=False,
+                error_message=str(e),
+                provider=self.provider_name,
+                model=model_name,
+            )
+
+    async def stream_response(
+        self,
+        history: list[dict[str, Any]],
+        model_name: str,
+        system_instruction: str | None = None,
+        thinking_level: str | None = None,
+        timeout: float = 120.0,
+        enable_web_search: bool = False,
+    ):
+        if not self._uses_messages_transport(model_name):
+            async for chunk in super().stream_response(
+                history=history,
+                model_name=model_name,
+                system_instruction=system_instruction,
+                thinking_level=thinking_level,
+                timeout=timeout,
+                enable_web_search=enable_web_search,
+            ):
+                yield chunk
+            return
+
+        payload = await self._build_messages_payload(history, model_name, system_instruction)
+        if not payload["messages"]:
+            yield tag_error(ErrorCode.GENERIC, "❌ Failed to create valid messages for Opencode")
+            return
+
+        url = self._get_url_for_model(model_name)
+        headers = self._get_headers_for_model(model_name)
+        payload["stream"] = True
+
+        client = openrouter_provider._openrouter_http_client
+        if client is None:
+            yield tag_error(ErrorCode.GENERIC, "❌ OpenRouter HTTP client not initialized")
+            return
+
+        try:
+            async with client.stream("POST", url, json=payload, headers=headers, timeout=timeout) as response:
+                response.raise_for_status()
+
+                current_event: str | None = None
+                data_lines: list[str] = []
+
+                async for raw_line in response.aiter_lines():
+                    line = raw_line.strip("\r")
+                    if line == "":
+                        should_stop, text_chunk = self._decode_messages_sse_event(current_event, data_lines)
+                        current_event = None
+                        data_lines = []
+                        if text_chunk:
+                            yield text_chunk
+                        if should_stop:
+                            break
+                        continue
+                    if line.startswith("event:"):
+                        current_event = line[6:].strip()
+                        continue
+                    if line.startswith("data:"):
+                        data_lines.append(line[5:].strip())
+
+                if data_lines:
+                    should_stop, text_chunk = self._decode_messages_sse_event(current_event, data_lines)
+                    if text_chunk:
+                        yield text_chunk
+                    if should_stop:
+                        return
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            yield self._build_http_error_tag(status, e.response.text, model_name)
+        except Exception as e:
+            logging.error("Opencode streaming error: %s", e)
+            yield tag_error(ErrorCode.GENERIC, f"❌ Произошла непредвиденная ошибка API: {e}")
+
+    async def _build_messages_payload(
+        self,
+        history: list[dict[str, Any]],
+        model_name: str,
+        system_instruction: str | None,
+    ) -> dict[str, Any]:
+        api_model = self._strip_model_prefix(model_name)
+        messages: list[dict[str, Any]] = []
+        system_segments: list[str] = []
+
+        system_text = str(system_instruction).strip() if system_instruction else ""
+        if system_text:
+            system_segments.append(system_text)
+
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "user") or "user")
+            if role == "model":
+                role = "assistant"
+            parts = item.get("parts", [])
+            if not isinstance(parts, list):
+                parts = [parts] if parts is not None else []
+
+            content = await self._build_anthropic_content(parts)
+            if not content:
+                continue
+
+            if role == "system":
+                if isinstance(content, str):
+                    system_segments.append(content)
+                else:
+                    system_segments.append(self._flatten_text_blocks(content))
+                continue
+
+            if role not in {"user", "assistant"}:
+                role = "user"
+            messages.append({"role": role, "content": content})
+
+        payload: dict[str, Any] = {
+            "model": api_model,
+            "messages": messages,
+            "max_tokens": self._MESSAGES_MAX_TOKENS,
+        }
+        if system_segments:
+            payload["system"] = "\n\n".join(segment for segment in system_segments if segment.strip())
+        return payload
+
+    async def _build_anthropic_content(self, parts: list[Any]) -> str | list[dict[str, Any]] | None:
+        content_blocks: list[dict[str, Any]] = []
+
+        for part in parts:
+            image_block = await self._build_anthropic_image_block(part)
+            if image_block is not None:
+                content_blocks.append(image_block)
+                continue
+
+            text = str(part)
+            if text.strip():
+                content_blocks.append({"type": "text", "text": text})
+
+        if not content_blocks:
+            return None
+        if all(block.get("type") == "text" for block in content_blocks):
+            return "\n".join(str(block.get("text", "")) for block in content_blocks if str(block.get("text", "")).strip())
+        return content_blocks
+
+    async def _build_anthropic_image_block(self, part: Any) -> dict[str, Any] | None:
+        img_bytes: bytes | None = None
+        if isinstance(part, TaggedImage):
+            if part.pre_compressed:
+                img_bytes = part.data
+            else:
+                img_bytes = await save_image_as_bytes(
+                    part.data,
+                    cache_key=part.cache_key,
+                    task_type=part.task_type,
+                )
+        elif isinstance(part, (bytes, bytearray, Image.Image)):
+            img_bytes = await save_image_as_bytes(part)
+
+        if not img_bytes:
+            return None
+
+        img_b64 = await asyncio.to_thread(lambda b=img_bytes: base64.b64encode(b).decode("utf-8"))
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": img_b64,
+            },
+        }
+
+    def _flatten_text_blocks(self, content_blocks: list[dict[str, Any]]) -> str:
+        return "\n".join(
+            str(block.get("text", ""))
+            for block in content_blocks
+            if isinstance(block, dict) and block.get("type") == "text" and str(block.get("text", "")).strip()
+        )
+
+    def _extract_messages_text(self, response_data: dict[str, Any]) -> str:
+        content = response_data.get("content")
+        if not isinstance(content, list):
+            return ""
+        text_parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                text = str(block.get("text", ""))
+                if text:
+                    text_parts.append(text)
+        return "".join(text_parts).strip()
+
+    def _messages_token_count(self, usage: Any) -> int:
+        if not isinstance(usage, dict):
+            return 0
+        total = 0
+        for key, value in usage.items():
+            if key.endswith("_tokens") and isinstance(value, int):
+                total += value
+        return total
+
+    def _decode_messages_sse_event(
+        self,
+        event_name: str | None,
+        data_lines: list[str],
+    ) -> tuple[bool, str | None]:
+        if not data_lines:
+            return False, None
+        data_str = "\n".join(data_lines).strip()
+        if not data_str or data_str == "[DONE]":
+            return data_str == "[DONE]", None
+
+        try:
+            data = json.loads(data_str)
+        except json.JSONDecodeError:
+            return False, None
+
+        event_type = event_name or data.get("type")
+        if event_type == "content_block_delta":
+            delta = data.get("delta", {})
+            if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                text = str(delta.get("text", ""))
+                return False, text or None
+            return False, None
+
+        if event_type == "message_delta":
+            delta = data.get("delta", {})
+            if isinstance(delta, dict):
+                stop_reason = delta.get("stop_reason")
+                if stop_reason:
+                    from app.streaming import set_last_finish_reason
+
+                    set_last_finish_reason(str(stop_reason))
+            return False, None
+
+        if event_type == "error":
+            error = data.get("error", {})
+            if isinstance(error, dict):
+                error_type = str(error.get("type", "")).lower()
+                message = str(error.get("message", "")).strip()
+            else:
+                error_type = ""
+                message = str(error).strip()
+
+            if "overloaded" in error_type or "overloaded" in message.lower():
+                return True, tag_error(ErrorCode.OVERLOADED, "🔄 Сервер Opencode перегружен. Попробуйте позже.")
+            if "rate" in error_type or "limit" in message.lower():
+                return True, tag_error(ErrorCode.RATE_LIMIT, "⏱️ Превышен лимит запросов. Подождите немного.")
+            return True, tag_error(ErrorCode.GENERIC, f"❌ Ошибка API: {message or error_type or 'stream error'}")
+
+        return event_type == "message_stop", None
 
     def _log_failure(
         self,

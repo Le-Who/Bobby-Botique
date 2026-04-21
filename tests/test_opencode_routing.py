@@ -72,6 +72,23 @@ class TestOpencodeGoProvider:
 
         return OpencodeGoProvider(api_key)
 
+    class _FakeStreamResponse:
+        def __init__(self, lines: list[str]):
+            self._lines = lines
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            for line in self._lines:
+                yield line
+
     def test_url_is_opencode_endpoint(self):
         p = self._make_provider()
         assert "opencode.ai" in p._get_url()
@@ -89,6 +106,23 @@ class TestOpencodeGoProvider:
         p = self._make_provider()
         # Unknown format should pass through unchanged
         assert p._strip_model_prefix("gemini-2.5-flash") == "gemini-2.5-flash"
+
+    def test_minimax_uses_messages_transport(self):
+        p = self._make_provider()
+        assert p._uses_messages_transport("opencode-go/minimax-m2.7") is True
+        assert p._get_url_for_model("opencode-go/minimax-m2.7").endswith("/v1/messages")
+
+    def test_qwen_uses_chat_completions_transport(self):
+        p = self._make_provider()
+        assert p._uses_messages_transport("opencode-go/qwen3.5-plus") is False
+        assert p._get_url_for_model("opencode-go/qwen3.5-plus").endswith("/v1/chat/completions")
+
+    def test_messages_headers_use_anthropic_shape(self):
+        p = self._make_provider("anthropic-like-key")
+        headers = p._get_headers_for_model("opencode-go/minimax-m2.5")
+        assert headers.get("x-api-key") == "anthropic-like-key"
+        assert headers.get("anthropic-version") == "2023-06-01"
+        assert "Authorization" not in headers
 
     def test_model_specific_401_is_not_treated_as_invalid_key(self):
         p = self._make_provider()
@@ -116,6 +150,80 @@ class TestOpencodeGoProvider:
             "opencode-go/big-pickle",
         )
         assert extract_error_code(tagged) == ErrorCode.INVALID_REQUEST
+
+    @pytest.mark.asyncio
+    async def test_messages_execute_request_parses_text_blocks(self):
+        p = self._make_provider()
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "content": [{"type": "text", "text": "MiniMax reply"}],
+            "usage": {"input_tokens": 12, "output_tokens": 8},
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_metrics = MagicMock(record_api_call=AsyncMock(), record_error=AsyncMock())
+        mock_logger = MagicMock()
+
+        with (
+            patch("app.providers.openrouter._openrouter_http_client", mock_client),
+            patch("app.providers.openrouter.metrics_collector", mock_metrics),
+            patch("app.providers.openrouter.api_logger", mock_logger),
+        ):
+            response = await p._execute_request(
+                history=[{"role": "user", "parts": ["hello"]}],
+                model_name="opencode-go/minimax-m2.7",
+                system_instruction="be concise",
+                user_id=None,
+                chat_id=None,
+                timeout=30.0,
+            )
+
+        assert response.success is True
+        assert response.text == "MiniMax reply"
+        assert response.token_count == 20
+        sent_payload = mock_client.post.await_args.kwargs["json"]
+        assert sent_payload["model"] == "minimax-m2.7"
+        assert sent_payload["system"] == "be concise"
+        assert sent_payload["messages"] == [{"role": "user", "content": "hello"}]
+
+    @pytest.mark.asyncio
+    async def test_messages_stream_response_parses_text_deltas(self):
+        p = self._make_provider()
+        lines = [
+            "event: message_start",
+            'data: {"type":"message_start","message":{"content":[]}}',
+            "",
+            "event: content_block_start",
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+            "",
+            "event: content_block_delta",
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}',
+            "",
+            "event: content_block_delta",
+            'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}}',
+            "",
+            "event: message_delta",
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}',
+            "",
+            "event: message_stop",
+            'data: {"type":"message_stop"}',
+            "",
+        ]
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=self._FakeStreamResponse(lines))
+
+        with patch("app.providers.openrouter._openrouter_http_client", mock_client):
+            chunks: list[str] = []
+            async for chunk in p.stream_response(
+                history=[{"role": "user", "parts": ["hello"]}],
+                model_name="opencode-go/minimax-m2.7",
+                timeout=30.0,
+            ):
+                chunks.append(chunk)
+
+        assert "".join(chunks) == "Hello!"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
