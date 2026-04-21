@@ -22,12 +22,32 @@ CREATE INDEX IF NOT EXISTS idx_briefs_active
 -- RLS
 ALTER TABLE brief_subscriptions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY brief_subscriptions_user_policy ON brief_subscriptions
-    FOR ALL
-    USING (user_id = current_setting('app.current_user_id', true)::bigint)
-    WITH CHECK (user_id = current_setting('app.current_user_id', true)::bigint);
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'brief_subscriptions'
+          AND policyname = 'brief_subscriptions_user_policy'
+    ) THEN
+        EXECUTE $policy$
+            CREATE POLICY brief_subscriptions_user_policy ON brief_subscriptions
+                FOR ALL
+                USING (user_id = current_setting('app.current_user_id', true)::bigint)
+                WITH CHECK (user_id = current_setting('app.current_user_id', true)::bigint)
+        $policy$;
+    END IF;
 
-CREATE POLICY brief_subscriptions_admin_policy ON brief_subscriptions
-    FOR ALL
-    USING (current_setting('app.is_admin', true)::boolean = true)
-    WITH CHECK (current_setting('app.is_admin', true)::boolean = true);
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'brief_subscriptions'
+          AND policyname = 'brief_subscriptions_admin_policy'
+    ) THEN
+        EXECUTE $policy$
+            CREATE POLICY brief_subscriptions_admin_policy ON brief_subscriptions
+                FOR ALL
+                USING (current_setting('app.is_admin', true)::boolean = true)
+                WITH CHECK (current_setting('app.is_admin', true)::boolean = true)
+        $policy$;
+    END IF;
+END $$;

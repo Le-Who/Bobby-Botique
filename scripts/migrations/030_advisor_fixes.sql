@@ -4,7 +4,17 @@
 
 -- 1. Security: Move pg_trgm to extensions schema
 CREATE SCHEMA IF NOT EXISTS extensions;
-ALTER EXTENSION pg_trgm SET SCHEMA extensions;
+DO $$ BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_extension e
+        JOIN pg_namespace n ON n.oid = e.extnamespace
+        WHERE e.extname = 'pg_trgm'
+          AND n.nspname <> 'extensions'
+    ) THEN
+        ALTER EXTENSION pg_trgm SET SCHEMA extensions;
+    END IF;
+END $$;
 
 -- 2. Performance: Add covering indexes for foreign keys
 CREATE INDEX IF NOT EXISTS idx_chats_branch_id

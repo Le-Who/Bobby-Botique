@@ -35,15 +35,52 @@ CREATE INDEX IF NOT EXISTS idx_user_reminders_user
 ALTER TABLE conversation_branches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_reminders ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY branches_user_policy ON conversation_branches
-    FOR ALL USING (user_id = current_setting('app.current_user_id', true)::BIGINT);
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'conversation_branches'
+          AND policyname = 'branches_user_policy'
+    ) THEN
+        EXECUTE $policy$
+            CREATE POLICY branches_user_policy ON conversation_branches
+                FOR ALL USING (user_id = current_setting('app.current_user_id', true)::BIGINT)
+        $policy$;
+    END IF;
 
-CREATE POLICY reminders_user_policy ON user_reminders
-    FOR ALL USING (user_id = current_setting('app.current_user_id', true)::BIGINT);
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'user_reminders'
+          AND policyname = 'reminders_user_policy'
+    ) THEN
+        EXECUTE $policy$
+            CREATE POLICY reminders_user_policy ON user_reminders
+                FOR ALL USING (user_id = current_setting('app.current_user_id', true)::BIGINT)
+        $policy$;
+    END IF;
 
--- Service role bypass
-CREATE POLICY branches_service_bypass ON conversation_branches
-    FOR ALL USING (current_setting('app.is_admin', true)::BOOLEAN = true);
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'conversation_branches'
+          AND policyname = 'branches_service_bypass'
+    ) THEN
+        EXECUTE $policy$
+            CREATE POLICY branches_service_bypass ON conversation_branches
+                FOR ALL USING (current_setting('app.is_admin', true)::BOOLEAN = true)
+        $policy$;
+    END IF;
 
-CREATE POLICY reminders_service_bypass ON user_reminders
-    FOR ALL USING (current_setting('app.is_admin', true)::BOOLEAN = true);
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'user_reminders'
+          AND policyname = 'reminders_service_bypass'
+    ) THEN
+        EXECUTE $policy$
+            CREATE POLICY reminders_service_bypass ON user_reminders
+                FOR ALL USING (current_setting('app.is_admin', true)::BOOLEAN = true)
+        $policy$;
+    END IF;
+END $$;
