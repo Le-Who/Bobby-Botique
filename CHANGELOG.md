@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.15] - 2026-04-21 - Daily Crocodile Preparation, Idempotent Migrations & Lock Sweep Restore
+
+### 🐊 Daily Crocodile Delivery Readiness
+- **Runtime delivery switch (`app/handlers/cmd_admin.py`, `app/handlers/daily_crocodile.py`):** Added `/set_dailycroc_delivery on|off` so admins can pause or resume outgoing daily Crocodile prompts without disabling the preparation pipeline. Discovery and scheduled sends respect the flag immediately, while puzzle preparation continues in the background.
+- **Prepared puzzle window (`app/games/crocodile_daily.py`, `app/repos/crocodile_daily.py`, `app/web_miniapp.py`):** Daily puzzles are now prepared ahead of send time. The scheduler only delivers a prompt once the current day's puzzle has a reserved word, ready hints, and all required metadata instead of trying to generate assets on the critical path.
+- **No daily word repeats + pre-generated art (`app/games/word_bank.py`, `app/games/crocodile_daily.py`, `app/games/crocodile_daily_telegram.py`, `scripts/migrations/040_daily_crocodile_preparation_assets.sql`):** Daily word selection now excludes already used words from persisted puzzle history, and preparation stores image prompts plus Pollinations `qwen-image` completion art (with prompt enhancement) in advance. Finished daily games can send that pre-generated illustration before the score/rank/streak result message.
+
+### 🛠️ Reliability & Deploy Safety
+- **Idempotent migrations (`scripts/migrations/021_add_brief_subscriptions.sql`, `scripts/migrations/022_add_branches_and_reminders.sql`, `scripts/migrations/030_advisor_fixes.sql`, `scripts/migrations/036_enable_rls_inline_boards_global_settings.sql`):** Wrapped previously one-shot policy and extension operations in existence guards so fresh environments and repeated bootstrap runs no longer fail on already-created objects.
+- **Local lock bound restored (`app/games/crocodile_runtime.py`, `app/web_miniapp.py`):** The multi-worker runtime refactor had dropped the old 512-entry sweep on the local fallback lock registry. Restored the oldest-half sweep in the runtime path itself and re-exported the legacy hooks from `web_miniapp` so the bounded-lock contract and its tests stay aligned.
+
+### ✅ Verification
+- `python -m ruff check .` -> **All checks passed**
+- `python -m pytest -o addopts='' -q -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_full` -> **1801 passed, 96 skipped**
+
 ## [2.15.14] - 2026-04-21 - Daily Crocodile Scores, Opt-In Delivery & Live Leaderboards
 
 ### 🐊 Daily Crocodile

@@ -26,6 +26,7 @@ from typing import Any
 from quart import Blueprint, jsonify, request
 
 from app.config import settings
+from app.games import crocodile_runtime as _croc_runtime
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,14 @@ _KEY_ROTATION_INDEX: int = 0
 _LIVE_CONNECT_RETRY_AFTER_RE = re.compile(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
 _LIVE_MODEL_COOLDOWN_UNTIL: float = 0.0
 _LIVE_MODEL_COOLDOWN_REASON: str = ""
+
+# Backward-compatible test hooks for the classic game lock fallback registry.
+_game_locks = _croc_runtime._game_locks
+_GAME_LOCKS_MAX = _croc_runtime._GAME_LOCKS_MAX
+
+
+def _sweep_game_locks() -> None:
+    _croc_runtime._sweep_game_locks()
 
 
 def _extract_live_retry_after_seconds(error_text: str) -> int | None:

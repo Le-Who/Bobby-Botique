@@ -15,11 +15,13 @@ _EVENTS_CHANNEL_PREFIX = "croc:runtime:events:"
 _HINTS_KEY_PREFIX = "croc:runtime:hints:"
 _HISTORY_KEY_PREFIX = "croc:runtime:history:"
 _LOCK_KEY_PREFIX = "croc:lock:"
+_GAME_LOCKS_MAX = 512
 
 _local_hints: dict[str, list[str]] = {}
 _local_history: dict[str, list[dict]] = {}
 _local_subscribers: dict[str, dict[str, asyncio.Queue]] = defaultdict(dict)  # type: ignore[type-arg]
 _local_locks: dict[str, asyncio.Lock] = {}
+_game_locks = _local_locks
 
 
 def _decode_text(value: bytes | str | None) -> str | None:
@@ -44,6 +46,18 @@ def _events_channel(game_id: str) -> str:
 
 def _lock_key(game_id: str) -> str:
     return f"{_LOCK_KEY_PREFIX}{game_id}"
+
+
+def _sweep_game_locks() -> None:
+    """Bound local fallback lock growth when Redis locking is unavailable."""
+    if len(_local_locks) < _GAME_LOCKS_MAX:
+        return
+
+    keys = list(_local_locks.keys())
+    removed = len(keys) // 2
+    for key in keys[:removed]:
+        _local_locks.pop(key, None)
+    logger.debug("Runtime local locks swept: %d entries removed", removed)
 
 
 async def get_runtime_hints(game_id: str) -> list[str]:
@@ -244,6 +258,7 @@ async def game_mutation_lock(game_id: str):
         except Exception as exc:
             logger.warning("Runtime lock fallback to local game=%s: %s", game_id, exc)
 
+    _sweep_game_locks()
     lock = _local_locks.setdefault(game_id, asyncio.Lock())
     async with lock:
         yield
