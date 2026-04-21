@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.12] - 2026-04-21 - Crocodile Topic Canonicalization & Judge Context Hardening
+
+### 🐊 Crocodile Game Correctness
+- **Canonical Topic Resolution (`app/games/word_bank.py`):** Added `resolve_topic()` and `TopicResolution` to normalize raw topic text into stable `topic_id` values. Introduced semantic unification for special domains (including League of Legends phrasing variants) so equivalent topics no longer produce separate word pools and cache keys.
+- **Topic-Rotation Word Picker (`app/games/word_bank.py`, `app/handlers/inline.py`):** Added `pick_random_word_for_topic()` with per-topic rotation state keyed by the active bank hash. Repeated game starts for the same topic now rotate through words instead of repeatedly returning the same first candidate. Inline flow now resolves the topic once and uses a topic-scoped Redis used-word key (`croc:used:{creator}:{topic_id}`).
+- **Context-Aware Generated Words Cache (`app/games/judgement_cache.py`, `app/games/word_bank.py`):** Extended generated-word cache keying with `topic_id`, preserving backward-compatible fallback reads for legacy entries. This removes collisions between similarly named but semantically different topics.
+- **Topic-Aware Judge Input (`app/games/judge.py`, `app/games/crocodile.py`):** Judge race prompt now receives explicit `category`, `topic_id`, and `sense_context` and enforces in-topic semantic evaluation. `GuessJudgement` schema now carries `interpreted_domain` and `ambiguity_flag` metadata for future UX refinement.
+- **Judgement + Hints Cache Isolation (`app/games/judgement_cache.py`, `app/games/crocodile.py`):** Introduced v2 judgement keys that include topic context, plus topic-aware hints keying. Game state now persists `topic_id` and `sense_context` in Redis serialization so reconnects preserve interpretation boundaries.
+- **Hint Parser Hardening (`app/games/judge.py`):** `generate_hints()` now ignores header-like lines ending with `:` (for example, `Here are the hints:`) to avoid poisoning the 3-hint output set.
+
+### 🧪 Verification
+- `python -m ruff check .` -> passed
+- `python -m mypy app` -> passed
+- `python -m pytest -o addopts='' -n 0 tests --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_full` -> 1786 passed, 96 skipped
+
 ## [2.15.11] - 2026-04-20 - Hint Race UX Hardening & Config-Free Test Bootstrap
 
 ### 🎮 Crocodile Hint Generation
@@ -17,8 +32,8 @@ Format is optimized for agent-parseable context.
 - **Document Handler Bootstrap Guard (`tests/test_ai_document.py`):** Added the same config-light test bootstrap pattern to adjacent document-handler tests so they no longer fail at import time on `settings=None`.
 
 ### ✅ Verification
-- `python -m pytest -o addopts='' -q -n 0 tests/test_game_llm_tasks.py tests/test_game_hints.py tests/test_live_audio.py tests/test_ai_document.py` → **21 passed**
-- `ruff check app/games/judge.py tests/test_game_hints.py tests/test_live_audio.py tests/test_ai_document.py tests/test_game_llm_tasks.py` → **All checks passed**
+- `python -m pytest -o addopts='' -q -n 0 tests/test_game_llm_tasks.py tests/test_game_hints.py tests/test_live_audio.py tests/test_ai_document.py` -> **21 passed**
+- `ruff check app/games/judge.py tests/test_game_hints.py tests/test_live_audio.py tests/test_ai_document.py tests/test_game_llm_tasks.py` -> **All checks passed**
 
 ## [2.15.10] - 2026-04-19 - Async Cache Performance Optimization
 

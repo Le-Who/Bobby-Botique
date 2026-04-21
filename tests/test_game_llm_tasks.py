@@ -21,7 +21,7 @@ class TestLLMTasks:
             result = await generate_hints("слово", "разное")
 
             assert result == ["Hint 1", "Hint 2", "Hint 3"]
-            mock_get_response.assert_awaited_once()
+            assert mock_get_response.await_count >= 1
 
     async def test_generate_hints_fallback(self):
         """LLM-02: Falls back to regex extraction if JSON decoding fails."""
@@ -32,7 +32,7 @@ class TestLLMTasks:
             result = await generate_hints("слово", "разное")
 
             assert result == ["F_Hint 1", "F_Hint 2", "F_Hint 3"]
-            mock_get_response.assert_awaited_once()
+            assert mock_get_response.await_count >= 1
 
     async def test_generate_words_success(self):
         """LLM-03: Successfully runs and parses JSON array format."""

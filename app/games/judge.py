@@ -75,6 +75,8 @@ class GuessJudgement(BaseModel):
     status: Literal["cold", "warm", "hot"]
     score: float = Field(ge=0.0, le=1.0)
     hint: str = Field(max_length=255)
+    interpreted_domain: str | None = None
+    ambiguity_flag: bool = False
     cached: bool = False  # Set by caller; not part of LLM output
 
 
@@ -89,9 +91,12 @@ class HintsOutput(BaseModel):
 _SYSTEM_PROMPT = (
     "Ты — остроумный и непредсказуемый судья игры «Крокодил».\n"
     "Загаданное слово: «{W}». Догадка игрока: «{G}».\n"
+    "Тема игры: «{C}». topic_id: «{T}».\n"
+    "Смысловой контекст: «{S}».\n"
     "\n"
     "ОЦЕНКА: score 0.0–1.0 — ТОЛЬКО смысловая близость (cold<0.3, warm 0.3–0.7, hot>0.7).\n"
     "Если dogadka — прямой синоним или другая форма «{W}» — score≥0.92.\n"
+    "ОБЯЗАТЕЛЬНО: оценивай слово только в рамках темы «{C}». Игнорируй другие значения и омонимы.\n"
     "\n"
     "ПОДСКАЗКА (поле hint) — комментируй «{G}» как судья, держи интригу:\n"
     "• cold (score<0.3): игрок явно промахнулся. Будь иронично-удивлённым или лаконичным. Не повторяй шаблоны.\n"
@@ -258,7 +263,14 @@ async def _suspend_key_safe(key_hash: str, model: str, category: str, error_text
 # ── Race×3 non-streaming generate_content ────────────────────────────────────
 
 
-async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
+async def _race_generate(
+    target: str,
+    guess: str,
+    *,
+    category: str = "",
+    topic_id: str = "",
+    sense_context: str | None = None,
+) -> GuessJudgement | None:
     """Fire up to 3 Gemini keys simultaneously; return the first valid result.
 
     Fallback chain:
@@ -287,7 +299,13 @@ async def _race_generate(target: str, guess: str) -> GuessJudgement | None:
 
     use_case = AgentRequestUseCase()
     status_mgr = get_key_status_manager()
-    prompt = _SYSTEM_PROMPT.format(W=target, G=guess)
+    prompt = _SYSTEM_PROMPT.format(
+        W=target,
+        G=guess,
+        C=(category or "не указана"),
+        T=(topic_id or "-"),
+        S=(sense_context or category or "не указан"),
+    )
 
     config = _gtypes.GenerateContentConfig(
         response_mime_type="application/json",
@@ -475,6 +493,7 @@ async def generate_hints(word: str, category: str) -> list[str]:
     networked models fail.
     Called from a background asyncio.Task so latency does not block the user.
     """
+
     def _dedupe_nonempty(items: list[str]) -> list[str]:
         seen: set[str] = set()
         result: list[str] = []
@@ -528,9 +547,15 @@ async def generate_hints(word: str, category: str) -> list[str]:
             normalized = re.sub(r"^\s*(?:[-*•]|\d+[.)]|подсказка\s*\d+\s*[:.)-]?)\s*", "", line, flags=re.I).strip()
             if not normalized:
                 continue
+            if normalized.lower() == "hints":
+                continue
             if stripped.lower().endswith(":") and "hint" in stripped.casefold():
                 continue
-            if len(normalized) >= 3 and normalized.lower() != "hints":
+            if normalized.endswith(":"):
+                continue
+            if re.match(r"^(here are the hints|подсказки)\s*:?$", normalized, flags=re.I):
+                continue
+            if len(normalized) >= 3:
                 numbered_lines.append(normalized)
         numbered_hints = _dedupe_nonempty(numbered_lines)
         if len(numbered_hints) >= 3:
@@ -845,7 +870,14 @@ def score_bar(score: float, width: int = 10) -> str:
 # ── Public entry point ────────────────────────────────────────────────────────
 
 
-async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
+async def judge_guess(
+    target: str,
+    guess: str,
+    *,
+    category: str = "",
+    topic_id: str = "",
+    sense_context: str | None = None,
+) -> tuple[str, GuessJudgement]:
     """Evaluate a guess against the target word.
 
     Returns:
@@ -871,7 +903,13 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
         return "exact_match", j
 
     # 2. Judgement cache (<5ms, local file)
-    cached = await get_cached_judgement(target, guess)
+    cached = await get_cached_judgement(
+        target,
+        guess,
+        category=category,
+        topic_id=topic_id,
+        sense_context=sense_context,
+    )
     if cached is not None:
         cached.cached = True
 
@@ -884,7 +922,13 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
         return cached.status, cached
 
     # 3. Race×3 LLM
-    result = await _race_generate(target, guess)
+    result = await _race_generate(
+        target,
+        guess,
+        category=category,
+        topic_id=topic_id,
+        sense_context=sense_context,
+    )
 
     elapsed = time.monotonic() - t0
 
@@ -911,7 +955,16 @@ async def judge_guess(target: str, guess: str) -> tuple[str, GuessJudgement]:
         result.hint = "Угадано! 🎉"
 
     # Cache result for future identical guesses (fire-and-forget)
-    submit_task(cache_judgement(target, guess, result))
+    submit_task(
+        cache_judgement(
+            target,
+            guess,
+            result,
+            category=category,
+            topic_id=topic_id,
+            sense_context=sense_context,
+        )
+    )
 
     await metrics_collector.record_request("judge", elapsed, success=True)
     return status_str, result

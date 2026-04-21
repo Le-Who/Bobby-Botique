@@ -50,6 +50,8 @@ class CrocodileGame:
     inline_message_id: str
     creator_id: int
     guesser_id: int | None  # Set on first WS connect
+    topic_id: str = ""
+    sense_context: str | None = None
     attempts: list[str] = field(default_factory=list)
     has_activity: bool = False  # True after the first real guess attempt, even if not counted
     max_attempts: int = _MAX_ATTEMPTS
@@ -74,6 +76,8 @@ class CrocodileGame:
                 "inline_message_id": self.inline_message_id,
                 "creator_id": self.creator_id,
                 "guesser_id": self.guesser_id,
+                "topic_id": self.topic_id,
+                "sense_context": self.sense_context,
                 "attempts": self.attempts,
                 "has_activity": self.has_activity,
                 "max_attempts": self.max_attempts,
@@ -96,6 +100,8 @@ class CrocodileGame:
             "inline_message_id",
             "creator_id",
             "guesser_id",
+            "topic_id",
+            "sense_context",
             "attempts",
             "has_activity",
             "max_attempts",
@@ -156,7 +162,13 @@ class CrocodileGame:
         if not word:
             return {"event": "error", "message": "Empty guess"}
 
-        status_str, judgement = await judge_guess(self.target_word, word)
+        status_str, judgement = await judge_guess(
+            self.target_word,
+            word,
+            category=self.category,
+            topic_id=self.topic_id,
+            sense_context=self.sense_context,
+        )
         self.has_activity = True
 
         # LLM race failed — do NOT record the attempt; let the player retry.
@@ -300,6 +312,8 @@ async def create_game(
     lang: str,
     inline_message_id: str,
     creator_id: int,
+    topic_id: str = "",
+    sense_context: str | None = None,
 ) -> CrocodileGame:
     """Create and persist a new game, then start background hint generation."""
     game = CrocodileGame(
@@ -310,6 +324,8 @@ async def create_game(
         inline_message_id=inline_message_id,
         creator_id=creator_id,
         guesser_id=None,
+        topic_id=topic_id,
+        sense_context=sense_context,
     )
     await game.save()
     logger.info(
@@ -321,11 +337,11 @@ async def create_game(
     )
     # Pre-generate 3 progressive hints in background so they are ready when
     # the guesser connects. Non-blocking — failure is silently swallowed.
-    submit_task(_prefetch_hints(game.game_id, target_word, category))
+    submit_task(_prefetch_hints(game.game_id, target_word, category, topic_id=topic_id))
     return game
 
 
-async def _prefetch_hints(game_id: str, word: str, category: str) -> None:
+async def _prefetch_hints(game_id: str, word: str, category: str, *, topic_id: str = "") -> None:
     """Generate 3 progressive hints and store them in _mem_hints[game_id].
 
     Checks hints_cache first so repeat sessions with the same word pay 0 LLM
@@ -334,7 +350,7 @@ async def _prefetch_hints(game_id: str, word: str, category: str) -> None:
     from app.games.judge import generate_hints
     from app.games.judgement_cache import cache_hints, get_cached_hints
 
-    cached = await get_cached_hints(word, category)
+    cached = await get_cached_hints(word, category, topic_id=topic_id)
     if cached:
         _mem_hints[game_id] = cached
         logger.debug("Hints cache hit for word=%r game=%s", word, game_id)
@@ -343,7 +359,7 @@ async def _prefetch_hints(game_id: str, word: str, category: str) -> None:
     hints = await generate_hints(word, category)
     if hints:
         _mem_hints[game_id] = hints
-        await cache_hints(word, category, hints)  # persist for future games
+        await cache_hints(word, category, hints, topic_id=topic_id)  # persist for future games
         logger.debug("Hints generated for word=%r game=%s", word, game_id)
     else:
         logger.warning("Hint generation failed for word=%r game=%s", word, game_id)

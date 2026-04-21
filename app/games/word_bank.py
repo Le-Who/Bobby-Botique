@@ -17,14 +17,30 @@ Words are purposely lowercase and normalised (stripped).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import random
 import re
+import unicodedata
+from dataclasses import dataclass
 
 from app.utils.background_tasks import submit_task
 from app.utils.json_compat import json
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TopicResolution:
+    """Resolved topic metadata used by word selection and judge context."""
+
+    topic_id: str
+    lang: str
+    category: str
+    raw: str
+    match_key: str
+    is_builtin: bool
+
 
 # ── Word bank ─────────────────────────────────────────────────────────────────
 
@@ -603,12 +619,90 @@ _CATEGORY_ALIASES: dict[str, tuple[str, str]] = {
 }
 
 
+_YO_REPLACE = str.maketrans({"ё": "е", "Ё": "Е"})
+_TOPIC_SEP_RE = re.compile(r"[^0-9a-zA-Zа-яА-Я\s]+", re.UNICODE)
+_TOPIC_SPACE_RE = re.compile(r"\s+")
+
+# Lightweight lexical normalization for high-impact topic variants.
+_TOPIC_TOKEN_NORMALIZATION: dict[str, str] = {
+    "герои": "герой",
+    "героев": "герой",
+    "героя": "герой",
+    "персонажи": "персонаж",
+    "персонажей": "персонаж",
+    "champions": "champion",
+    "characters": "character",
+    "лиги": "лига",
+    "легенд": "легенда",
+}
+
+_LEAGUE_VARIANTS: tuple[str, ...] = (
+    "league of legends",
+    "league legends",
+    "лига легенд",
+    "лиги легенд",
+    "lol",
+)
+
+
+def _normalise_topic_text(raw: str) -> str:
+    """Normalize topic text for alias/similarity matching."""
+    text = unicodedata.normalize("NFKC", raw or "")
+    text = text.translate(_YO_REPLACE)
+    text = text.casefold().strip()
+    text = _TOPIC_SEP_RE.sub(" ", text)
+    text = _TOPIC_SPACE_RE.sub(" ", text).strip()
+    return text
+
+
+def _normalise_topic_tokens(raw: str) -> list[str]:
+    normalized = _normalise_topic_text(raw)
+    if not normalized:
+        return []
+    tokens = normalized.split(" ")
+    return [_TOPIC_TOKEN_NORMALIZATION.get(tok, tok) for tok in tokens if tok]
+
+
+def _build_topic_id(prefix: str, value: str) -> str:
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}:{digest}"
+
+
+def _looks_like_lol_topic(match_key: str, normalized_tokens: list[str]) -> bool:
+    if any(variant in match_key for variant in _LEAGUE_VARIANTS):
+        return True
+    token_set = set(normalized_tokens)
+    return (
+        {"league", "of", "legends"}.issubset(token_set) or {"лига", "легенда"}.issubset(token_set) or "lol" in token_set
+    )
+
+
+def _resolve_special_topic(raw: str, lang: str) -> TopicResolution | None:
+    match_key = _normalise_topic_text(raw)
+    if not match_key:
+        return None
+    tokens = _normalise_topic_tokens(raw)
+    token_set = set(tokens)
+
+    if _looks_like_lol_topic(match_key, tokens) and ({"герой", "персонаж", "champion", "character"} & token_set):
+        display = "Персонажи League of Legends" if lang == "ru" else "League of Legends Champions"
+        return TopicResolution(
+            topic_id="special:lol_champions",
+            lang=lang,
+            category=display,
+            raw=raw,
+            match_key=match_key,
+            is_builtin=False,
+        )
+    return None
+
+
 def resolve_category(raw: str) -> tuple[str, str] | None:
     """Resolve a user-supplied category string to (lang, canonical_key).
 
     Returns None if no match found (caller should use a random category).
     """
-    key = raw.strip().lower()
+    key = _normalise_topic_text(raw)
     if not key:
         return None
     if key in _CATEGORY_ALIASES:
@@ -622,17 +716,54 @@ def resolve_category(raw: str) -> tuple[str, str] | None:
     return None
 
 
+def resolve_topic(raw: str) -> TopicResolution:
+    """Resolve raw user topic into a stable topic_id and display category."""
+    cleaned = (raw or "").strip() or "разное"
+    match_key = _normalise_topic_text(cleaned)
+    lang = _detect_lang(cleaned)
+
+    resolved = resolve_category(cleaned)
+    if resolved:
+        resolved_lang, resolved_category = resolved
+        normalized_builtin = _normalise_topic_text(f"{resolved_lang}:{resolved_category}")
+        return TopicResolution(
+            topic_id=f"builtin:{normalized_builtin}",
+            lang=resolved_lang,
+            category=resolved_category,
+            raw=cleaned,
+            match_key=match_key,
+            is_builtin=True,
+        )
+
+    special = _resolve_special_topic(cleaned, lang=lang)
+    if special:
+        return special
+
+    topic_id = _build_topic_id(f"custom:{lang}", match_key or cleaned.casefold())
+    return TopicResolution(
+        topic_id=topic_id,
+        lang=lang,
+        category=cleaned,
+        raw=cleaned,
+        match_key=match_key,
+        is_builtin=False,
+    )
+
+
 def list_categories(lang: str = "ru") -> list[str]:
     """Return list of canonical category keys for the given lang."""
     return list(WORD_BANK.get(lang, {}).keys())
 
 
 def _detect_lang(text: str) -> str:
-    """Heuristic: count Cyrillic chars vs total."""
+    """Heuristic: count Cyrillic letters against all alphabetic letters."""
     if not text:
         return "ru"
-    cyrillic = sum(1 for c in text if "\u0400" <= c <= "\u04ff")
-    return "ru" if cyrillic / len(text) > 0.3 else "en"
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return "ru"
+    cyrillic = sum(1 for c in letters if "\u0400" <= c <= "\u04ff")
+    return "ru" if cyrillic / len(letters) > 0.3 else "en"
 
 
 # ── Word validation ───────────────────────────────────────────────────────────
@@ -747,6 +878,8 @@ async def resolve_custom_word_category(word: str) -> str:
 # Avoids re-generating the same custom category within a process lifetime.
 _GENERATED_CACHE: dict[str, list[str]] = {}
 _GENERATED_INFLIGHT: dict[str, asyncio.Task[list[str] | None]] = {}
+# In-process rotation state: topic_id -> (bank_hash, order, cursor)
+_TOPIC_ROTATION: dict[str, tuple[str, list[str], int]] = {}
 
 # Gemini models tried in order for word generation
 _GEN_PRIMARY_MODEL = "opencode-go/minimax-m2.7"
@@ -761,8 +894,53 @@ _GEN_PROMPT = (
 )
 
 
-def _generated_cache_key(lang: str, category: str) -> str:
-    return f"{lang.lower().strip()}:{category.lower().strip()}"
+def _generated_cache_key(lang: str, category: str, *, topic_id: str | None = None) -> str:
+    normalized = f"{lang.lower().strip()}:{category.lower().strip()}"
+    if topic_id:
+        return f"{topic_id}|{normalized}"
+    return normalized
+
+
+def _topic_bank_hash(words: list[str]) -> str:
+    payload = "\x1f".join(sorted(words))
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _pick_rotating_word(topic_id: str, words: list[str], used: set[str] | None = None) -> str:
+    """Pick next word from a shuffled per-topic cycle to avoid repeats."""
+    if not words:
+        raise ValueError("word list cannot be empty")
+
+    bank_hash = _topic_bank_hash(words)
+    existing = _TOPIC_ROTATION.get(topic_id)
+    if existing is None or existing[0] != bank_hash:
+        order = list(words)
+        random.shuffle(order)
+        _TOPIC_ROTATION[topic_id] = (bank_hash, order, 0)
+        existing = _TOPIC_ROTATION[topic_id]
+
+    _, order, cursor = existing
+    order_len = len(order)
+    available = set(words)
+    if used:
+        available -= used
+
+    # If all words are currently "used", continue regular cycle.
+    if not available:
+        available = set(words)
+
+    chosen = order[cursor % order_len]
+    if chosen not in available:
+        for step in range(order_len):
+            candidate = order[(cursor + step) % order_len]
+            if candidate in available:
+                chosen = candidate
+                cursor += step
+                break
+
+    next_cursor = (cursor + 1) % order_len
+    _TOPIC_ROTATION[topic_id] = (bank_hash, order, next_cursor)
+    return chosen
 
 
 def _normalise_generated_words(words: list[object]) -> list[str]:
@@ -783,6 +961,7 @@ async def generate_words_for_category(
     category: str,
     *,
     lang: str = "ru",
+    topic_id: str | None = None,
 ) -> list[str] | None:
     """Call LLM to generate 20 words for an unknown category.
 
@@ -793,14 +972,24 @@ async def generate_words_for_category(
     from app.games.judgement_cache import cache_generated_words, get_cached_generated_words
 
     category = category.strip()
-    cache_key = _generated_cache_key(lang, category)
+    topic_id_norm = (topic_id or "").strip()
+    cache_key = _generated_cache_key(lang, category, topic_id=topic_id_norm or None)
     if cache_key in _GENERATED_CACHE:
         return _GENERATED_CACHE[cache_key]
 
-    cached = await get_cached_generated_words(lang, category)
+    if topic_id_norm:
+        cached = await get_cached_generated_words(lang, category, topic_id=topic_id_norm)
+    else:
+        cached = await get_cached_generated_words(lang, category)
+    # Migration fallback: old cache entries were keyed without topic_id.
+    if not cached and topic_id_norm:
+        cached = await get_cached_generated_words(lang, category)
     if cached:
         _GENERATED_CACHE[cache_key] = cached
         logger.info("Hydrated AI-generated words for category %r (%s) from persistent cache", category, lang)
+        if topic_id_norm:
+            # Write-through into topic-aware key so next lookup stays isolated.
+            await cache_generated_words(lang, category, cached, topic_id=topic_id_norm)
         return cached
 
     inflight = _GENERATED_INFLIGHT.get(cache_key)
@@ -829,7 +1018,9 @@ async def generate_words_for_category(
                 raw = (response_text or "").strip()
 
                 if is_error_message(raw):
-                    logger.warning("Word gen failed for %r (model=%s): Provider returned error: %s", category, model, raw)
+                    logger.warning(
+                        "Word gen failed for %r (model=%s): Provider returned error: %s", category, model, raw
+                    )
                     continue
 
                 # Strip markdown code fences if model wraps output
@@ -846,7 +1037,10 @@ async def generate_words_for_category(
                     return None
 
                 _GENERATED_CACHE[cache_key] = clean
-                await cache_generated_words(lang, category, clean)
+                if topic_id_norm:
+                    await cache_generated_words(lang, category, clean, topic_id=topic_id_norm)
+                else:
+                    await cache_generated_words(lang, category, clean)
                 logger.info("Generated %d words for custom category %r (%s)", len(clean), category, model)
                 return clean
 
@@ -907,73 +1101,55 @@ async def _generate_single_word_fast(category: str, lang: str = "ru") -> str | N
 # ── Random word picker ────────────────────────────────────────────────────────
 
 
-async def pick_random_word(
-    category_raw: str,
+async def pick_random_word_for_topic(
+    topic: TopicResolution,
     *,
     redis_used_key: str | None = None,
 ) -> tuple[str, str, str, bool]:
-    """Pick a random word from the bank, avoiding recently used words.
-
-    For unknown categories, calls Gemini to generate a word list on the fly.
-
-    Args:
-        category_raw: User-supplied category string (e.g. "животные", "food", "пирожки").
-        redis_used_key: Optional Redis key for the used-words set (TTL 1h).
-                        If None or redis unavailable, no de-duplication.
-
-    Returns:
-        (word, lang, canonical_category, is_generated)
-        is_generated=True when the word list was AI-generated for an unknown category.
-        Raises ValueError if the category is unintelligible (caller should inform user).
-    """
-    resolved = resolve_category(category_raw)
+    """Pick a random word for an already-resolved topic."""
     is_generated = False
 
-    if resolved:
-        lang, category = resolved
+    if topic.is_builtin:
+        lang = topic.lang
+        category = topic.category
         words = list(WORD_BANK[lang][category])
     else:
         from app.games.judgement_cache import get_cached_generated_words
 
-        # Unknown category → check memory cache first
-        lang = _detect_lang(category_raw)
-        category = category_raw.strip()
-        cache_key = _generated_cache_key(lang, category)
+        lang = topic.lang
+        category = topic.category
+        cache_key = _generated_cache_key(lang, category, topic_id=topic.topic_id)
 
         if cache_key in _GENERATED_CACHE and len(_GENERATED_CACHE[cache_key]) > 0:
             words = _GENERATED_CACHE[cache_key]
             is_generated = True
         else:
-            cached_words = await get_cached_generated_words(lang, category)
+            cached_words = await get_cached_generated_words(lang, category, topic_id=topic.topic_id)
+            if not cached_words:
+                # Migration fallback for entries created before topic_id support.
+                cached_words = await get_cached_generated_words(lang, category)
             if cached_words:
                 _GENERATED_CACHE[cache_key] = cached_words
                 words = cached_words
                 is_generated = True
                 logger.info("Using persisted AI-generated words for category %r (%s)", category, lang)
             else:
-                # We don't want to block the player for 15+ seconds.
-                # 1) Get ONE word fast
+                # First response path: return one fast word, pre-warm full bank in background.
                 fast_word = await _generate_single_word_fast(category, lang)
                 if not fast_word:
-                    # If even fast word fails, fallback to full wait
-                    generated = await generate_words_for_category(category, lang=lang)
+                    generated = await generate_words_for_category(category, lang=lang, topic_id=topic.topic_id)
                     if not generated:
-                        raise ValueError(f"unintelligible_category:{category_raw!r}")
+                        raise ValueError(f"unintelligible_category:{topic.raw!r}")
                     words = generated
                 else:
-                    # Seed an in-memory placeholder so repeated requests don't behave
-                    # as if the category has never been seen while the full bank loads.
                     _GENERATED_CACHE.setdefault(cache_key, [fast_word])
-                    # Kick off bank generation in the background for future games.
-                    # generate_words_for_category() de-duplicates concurrent work.
-                    submit_task(generate_words_for_category(category, lang=lang))
-                    # Skip redis de-duplication since we only have 1 word and want to return fast
+                    submit_task(generate_words_for_category(category, lang=lang, topic_id=topic.topic_id))
                     return fast_word, lang, category, True
 
                 is_generated = True
                 logger.info("Using AI-generated words for category %r (%s)", category, lang)
 
-    # De-duplicate via Redis (best-effort; Redis miss is non-fatal)
+    # De-duplicate via Redis (best-effort; Redis miss is non-fatal).
     used: set[str] = set()
     if redis_used_key:
         try:
@@ -985,10 +1161,8 @@ async def pick_random_word(
         except Exception as exc:
             logger.debug("Redis smembers failed for %s: %s", redis_used_key, exc)
 
-    available = [w for w in words if w not in used]
-    if not available:
-        # All words exhausted — reset used set and try again
-        available = words
+    # Reset used-set only when all known words are exhausted.
+    if used and all(word in used for word in words):
         if redis_used_key:
             try:
                 from app.cache import redis_client
@@ -997,9 +1171,10 @@ async def pick_random_word(
                     await redis_client.delete(redis_used_key)  # type: ignore[misc]
             except Exception:
                 pass
-        logger.info("Used-words set reset for key=%s", redis_used_key)
+        used = set()
+        logger.info("Used-words set reset for key=%s topic=%s", redis_used_key, topic.topic_id)
 
-    chosen = random.choice(available)
+    chosen = _pick_rotating_word(topic.topic_id, words, used=used)
 
     if redis_used_key:
         try:
@@ -1011,4 +1186,14 @@ async def pick_random_word(
         except Exception as exc:
             logger.debug("Redis sadd failed: %s", exc)
 
-    return chosen, lang, category, is_generated
+    return chosen, topic.lang, topic.category, is_generated
+
+
+async def pick_random_word(
+    category_raw: str,
+    *,
+    redis_used_key: str | None = None,
+) -> tuple[str, str, str, bool]:
+    """Pick a random word from the bank for a raw user topic string."""
+    topic = resolve_topic(category_raw)
+    return await pick_random_word_for_topic(topic, redis_used_key=redis_used_key)

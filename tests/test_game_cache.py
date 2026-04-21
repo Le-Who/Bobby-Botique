@@ -20,6 +20,7 @@ from app.games.judgement_cache import (
     _hints_key,
     _hints_store,
     _make_key,
+    _make_key_v2,
     _store,
     cache_generated_words,
     cache_hints,
@@ -73,6 +74,11 @@ class TestMakeKey:
     def test_format_is_colon_separated(self):
         key = _make_key("слон", "носорог")
         assert key == "слон:носорог"
+
+    def test_make_key_v2_includes_topic_context(self):
+        key1 = _make_key_v2("слон", "носорог", topic_id="topic:a", category="животные")
+        key2 = _make_key_v2("слон", "носорог", topic_id="topic:b", category="животные")
+        assert key1 != key2
 
 
 # ── _hints_key ────────────────────────────────────────────────────────────────
@@ -149,6 +155,15 @@ class TestJudgementCacheRoundTrip:
             # Oldest entry was evicted
             assert first_key not in _store
 
+    async def test_topic_context_isolated(self):
+        with _no_persist:
+            await cache_judgement("ноктюрн", "музыка", _COLD, topic_id="topic:music", category="музыка")
+            same = await get_cached_judgement("ноктюрн", "музыка", topic_id="topic:music", category="музыка")
+            other = await get_cached_judgement("ноктюрн", "музыка", topic_id="topic:lol", category="персонажи")
+
+        assert same is not None
+        assert other is None
+
 
 # ── Hints cache round-trip ────────────────────────────────────────────────────
 
@@ -182,6 +197,15 @@ class TestHintsCacheRoundTrip:
         result = await get_cached_hints("слон", "Животные")
         assert result is None
         assert key not in _hints_store
+
+    async def test_topic_context_isolated(self):
+        hints = ["A", "B", "C"]
+        with _no_persist_hints:
+            await cache_hints("слон", "Животные", hints, topic_id="topic:animals")
+            same = await get_cached_hints("слон", "Животные", topic_id="topic:animals")
+            other = await get_cached_hints("слон", "Животные", topic_id="topic:other")
+        assert same == hints
+        assert other is None
 
 
 @pytest.mark.asyncio
@@ -221,3 +245,12 @@ class TestGeneratedWordsCacheRoundTrip:
         result = await get_cached_generated_words("ru", "Персонаж Genshin Impact")
         assert result is None
         assert key not in _generated_words_store
+
+    async def test_topic_context_isolated(self):
+        words = ["венти", "чжун ли", "нахида"]
+        with _no_persist_generated_words:
+            await cache_generated_words("ru", "персонаж genshin impact", words, topic_id="topic:a")
+            same = await get_cached_generated_words("ru", "персонаж genshin impact", topic_id="topic:a")
+            other = await get_cached_generated_words("ru", "персонаж genshin impact", topic_id="topic:b")
+        assert same == words
+        assert other is None

@@ -111,6 +111,36 @@ class TestJudgeGuessPipeline:
         # create_task(cache_judgement(...)) calls the mock once to get the coroutine
         mock_cache_write.assert_called_once()
 
+    async def test_topic_context_forwarded_to_race_and_cache(self):
+        with (
+            patch(
+                "app.games.judge._race_generate",
+                new_callable=AsyncMock,
+                return_value=_WARM,
+            ) as mock_race,
+            patch(
+                "app.games.judgement_cache.cache_judgement",
+                new_callable=AsyncMock,
+            ) as mock_cache_write,
+        ):
+            status, _ = await judge_guess(
+                "ноктюрн",
+                "музыка",
+                category="персонажи league of legends",
+                topic_id="special:lol_champions",
+                sense_context="персонаж league of legends",
+            )
+
+        assert status == "warm"
+        mock_race.assert_awaited_once_with(
+            "ноктюрн",
+            "музыка",
+            category="персонажи league of legends",
+            topic_id="special:lol_champions",
+            sense_context="персонаж league of legends",
+        )
+        mock_cache_write.assert_called_once()
+
     async def test_judge_unavailable_when_all_llm_fail(self):
         """When _race_generate returns None, pipeline must return judge_unavailable.
         The attempt MUST NOT be counted (this is enforced by the caller, but

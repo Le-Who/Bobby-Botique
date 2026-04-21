@@ -54,6 +54,32 @@ def _make_key(target: str, guess: str) -> str:
     return f"{target.lower().strip()}:{guess.lower().strip()}"
 
 
+def _normalise_key_part(value: str | None) -> str:
+    return (value or "").lower().strip()
+
+
+def _make_key_v2(
+    target: str,
+    guess: str,
+    *,
+    category: str = "",
+    topic_id: str = "",
+    sense_context: str | None = None,
+    prompt_version: str = "judge_v2",
+) -> str:
+    """Topic-aware cache key for semantic judge results."""
+    return "\x00".join(
+        [
+            prompt_version,
+            _normalise_key_part(topic_id) or "-",
+            _normalise_key_part(category) or "-",
+            _normalise_key_part(sense_context) or "-",
+            _normalise_key_part(target),
+            _normalise_key_part(guess),
+        ]
+    )
+
+
 # OrderedDict used as LRU: most recently accessed at end, oldest at front.
 _store: OrderedDict[str, str] = OrderedDict()
 
@@ -99,29 +125,63 @@ _load_from_disk()
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-async def get_cached_judgement(target: str, guess: str) -> GuessJudgement | None:
+async def get_cached_judgement(
+    target: str,
+    guess: str,
+    *,
+    category: str = "",
+    topic_id: str = "",
+    sense_context: str | None = None,
+) -> GuessJudgement | None:
     """Look up a cached judgement. Returns None on miss."""
     from app.games.judge import GuessJudgement
 
-    key = _make_key(target, guess)
-    value = _store.get(key)
+    key_v2 = _make_key_v2(
+        target,
+        guess,
+        category=category,
+        topic_id=topic_id,
+        sense_context=sense_context,
+    )
+    value = _store.get(key_v2)
+
+    # Migration fallback for legacy key shape where topic context was absent.
+    key_legacy = _make_key(target, guess)
+    key_used = key_v2
+    if value is None and not (category or topic_id or sense_context):
+        value = _store.get(key_legacy)
+        key_used = key_legacy
     if value is None:
         return None
 
     # Move to end (LRU: mark as recently used)
-    _store.move_to_end(key)
+    _store.move_to_end(key_used)
 
     try:
         return GuessJudgement.model_validate_json(value)
     except Exception as exc:
         logger.debug("Judgement cache deserialise failed (%s↔%s): %s", target, guess, exc)
-        _store.pop(key, None)
+        _store.pop(key_used, None)
         return None
 
 
-async def cache_judgement(target: str, guess: str, result: GuessJudgement) -> None:
+async def cache_judgement(
+    target: str,
+    guess: str,
+    result: GuessJudgement,
+    *,
+    category: str = "",
+    topic_id: str = "",
+    sense_context: str | None = None,
+) -> None:
     """Store a judgement in the in-process LRU cache and write through to disk."""
-    key = _make_key(target, guess)
+    key = _make_key_v2(
+        target,
+        guess,
+        category=category,
+        topic_id=topic_id,
+        sense_context=sense_context,
+    )
 
     # Evict oldest entry if at capacity
     if key not in _store and len(_store) >= _MAX_ENTRIES:
@@ -140,8 +200,9 @@ async def cache_judgement(target: str, guess: str, result: GuessJudgement) -> No
 _hints_store: OrderedDict[str, str] = OrderedDict()
 
 
-def _hints_key(word: str, category: str) -> str:
-    return f"{word.lower().strip()}\x00{category.lower().strip()}"
+def _hints_key(word: str, category: str, topic_id: str | None = "") -> str:
+    topic_part = (topic_id or "").lower().strip()
+    return f"{topic_part}\x00{word.lower().strip()}\x00{category.lower().strip()}"
 
 
 def _load_hints_from_disk() -> None:
@@ -177,24 +238,30 @@ async def _persist_hints() -> None:
 _load_hints_from_disk()
 
 
-async def get_cached_hints(word: str, category: str) -> list[str] | None:
+async def get_cached_hints(word: str, category: str, *, topic_id: str | None = "") -> list[str] | None:
     """Return cached hints for this word/category pair, or None on miss."""
-    key = _hints_key(word, category)
+    key = _hints_key(word, category, topic_id)
     value = _hints_store.get(key)
+    # Migration fallback for old key shape without topic_id.
+    key_used = key
+    if value is None and topic_id:
+        legacy_key = _hints_key(word, category, "")
+        value = _hints_store.get(legacy_key)
+        key_used = legacy_key
     if value is None:
         return None
-    _hints_store.move_to_end(key)
+    _hints_store.move_to_end(key_used)
     try:
         return json.loads(value)
     except Exception as exc:
         logger.debug("Hints cache deserialise failed (%r): %s", word, exc)
-        _hints_store.pop(key, None)
+        _hints_store.pop(key_used, None)
         return None
 
 
-async def cache_hints(word: str, category: str, hints: list[str]) -> None:
+async def cache_hints(word: str, category: str, hints: list[str], *, topic_id: str | None = "") -> None:
     """Store hints in the in-process LRU cache and write through to disk."""
-    key = _hints_key(word, category)
+    key = _hints_key(word, category, topic_id)
     if key not in _hints_store and len(_hints_store) >= _MAX_HINTS:
         _hints_store.popitem(last=False)
     _hints_store[key] = json.dumps(hints, ensure_ascii=False)
@@ -272,8 +339,9 @@ async def cache_word_category(word: str, category: str) -> None:
 _generated_words_store: OrderedDict[str, str] = OrderedDict()
 
 
-def _generated_words_key(lang: str, category: str) -> str:
-    return f"{lang.lower().strip()}\x00{category.lower().strip()}"
+def _generated_words_key(lang: str, category: str, topic_id: str | None = "") -> str:
+    topic_part = (topic_id or "").lower().strip()
+    return f"{topic_part}\x00{lang.lower().strip()}\x00{category.lower().strip()}"
 
 
 def _load_generated_words_from_disk() -> None:
@@ -307,13 +375,24 @@ async def _persist_generated_words() -> None:
 _load_generated_words_from_disk()
 
 
-async def get_cached_generated_words(lang: str, category: str) -> list[str] | None:
+async def get_cached_generated_words(
+    lang: str,
+    category: str,
+    *,
+    topic_id: str | None = "",
+) -> list[str] | None:
     """Return cached AI-generated words for this language/category pair, or None on miss."""
-    key = _generated_words_key(lang, category)
+    key = _generated_words_key(lang, category, topic_id)
     value = _generated_words_store.get(key)
+    key_used = key
+    # Migration fallback for entries created before topic-aware keying.
+    if value is None and topic_id:
+        legacy_key = _generated_words_key(lang, category, "")
+        value = _generated_words_store.get(legacy_key)
+        key_used = legacy_key
     if value is None:
         return None
-    _generated_words_store.move_to_end(key)
+    _generated_words_store.move_to_end(key_used)
     try:
         words = json.loads(value)
         if not isinstance(words, list):
@@ -329,13 +408,19 @@ async def get_cached_generated_words(lang: str, category: str) -> list[str] | No
             category,
             exc,
         )
-        _generated_words_store.pop(key, None)
+        _generated_words_store.pop(key_used, None)
         return None
 
 
-async def cache_generated_words(lang: str, category: str, words: list[str]) -> None:
+async def cache_generated_words(
+    lang: str,
+    category: str,
+    words: list[str],
+    *,
+    topic_id: str | None = "",
+) -> None:
     """Persist the AI-generated word list for a custom category."""
-    key = _generated_words_key(lang, category)
+    key = _generated_words_key(lang, category, topic_id)
     if key not in _generated_words_store and len(_generated_words_store) >= _MAX_GEN_WORDS:
         _generated_words_store.popitem(last=False)
     _generated_words_store[key] = json.dumps(words, ensure_ascii=False)

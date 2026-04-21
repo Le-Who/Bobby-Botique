@@ -864,7 +864,12 @@ async def _init_croc_game_async(
 
     from app.config import settings
     from app.games.crocodile import create_game
-    from app.games.word_bank import find_word_category, pick_random_word, validate_custom_word
+    from app.games.word_bank import (
+        find_word_category,
+        pick_random_word_for_topic,
+        resolve_topic,
+        validate_custom_word,
+    )
 
     try:
         webapp_base = getattr(settings, "WEBAPP_BASE_URL", "").rstrip("/")
@@ -875,6 +880,8 @@ async def _init_croc_game_async(
 
         # ── Resolve word + mode ───────────────────────────────────────────────
         is_generated = False
+        topic_id = ""
+        sense_context: str | None = None
         if arg.startswith("="):
             raw_word = arg[1:].strip()
             word = validate_custom_word(raw_word)
@@ -889,11 +896,21 @@ async def _init_croc_game_async(
             lang = "ru" if any("\u0400" <= c <= "\u04ff" for c in word) else "en"
 
             category = "Слово игрока (особое)"
+            derived_category = find_word_category(word)
+            sense_context = derived_category if derived_category else None
+            topic_id = f"custom_word:{uuid.uuid5(uuid.NAMESPACE_DNS, word).hex[:16]}"
 
         else:
             category_raw = arg or "разное"
             try:
-                word, lang, category, is_generated = await pick_random_word(category_raw)
+                topic = resolve_topic(category_raw)
+                redis_used_key = f"croc:used:{creator_id}:{topic.topic_id}"
+                word, lang, category, is_generated = await pick_random_word_for_topic(
+                    topic,
+                    redis_used_key=redis_used_key,
+                )
+                topic_id = topic.topic_id
+                sense_context = topic.category
             except ValueError:
                 # Gemini couldn't produce words for this category
                 await bot.edit_message_text(
@@ -915,6 +932,8 @@ async def _init_croc_game_async(
             lang=lang,
             inline_message_id=inline_message_id,
             creator_id=creator_id,
+            topic_id=topic_id,
+            sense_context=sense_context,
         )
 
         # ── Build WebApp URL for the guesser ─────────────────────────────────
@@ -948,11 +967,12 @@ async def _init_croc_game_async(
             reply_markup=keyboard,
         )
         logging.info(
-            "Croc game created: game_id=%s inline_msg_id=%s category=%s lang=%s",
+            "Croc game created: game_id=%s inline_msg_id=%s category=%s lang=%s topic_id=%s",
             game.game_id,
             inline_message_id,
             category,
             lang,
+            topic_id,
         )
 
     except Exception as exc:

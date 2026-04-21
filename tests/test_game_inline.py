@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.games.word_bank import TopicResolution
 from app.handlers.inline import _CROC_PREFIX_RE, _init_croc_game_async
 
 # ── _CROC_PREFIX_RE ──────────────────────────────────────────────────────────
@@ -65,9 +66,19 @@ class TestInitCrocGameAsync:
     async def test_category_mode_success(self, mock_bot):
         """Standard category mode picks a word and creates a game."""
         with (
-            patch("app.games.word_bank.pick_random_word", new_callable=AsyncMock) as pick_mock,
+            patch("app.games.word_bank.resolve_topic") as resolve_mock,
+            patch("app.games.word_bank.pick_random_word_for_topic", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
         ):
+            topic = TopicResolution(
+                topic_id="special:lol_champions",
+                lang="ru",
+                category="Персонажи League of Legends",
+                raw="герои лиги легенд",
+                match_key="герои лиги легенд",
+                is_builtin=False,
+            )
+            resolve_mock.return_value = topic
             pick_mock.return_value = ("жираф", "ru", "Животные", False)
             create_mock.return_value = AsyncMock(game_id="game-1")
 
@@ -78,13 +89,19 @@ class TestInitCrocGameAsync:
                 creator_id=42,
             )
 
-            pick_mock.assert_awaited_once_with("животные")
+            resolve_mock.assert_called_once_with("животные")
+            pick_mock.assert_awaited_once_with(
+                topic,
+                redis_used_key="croc:used:42:special:lol_champions",
+            )
             create_mock.assert_awaited_once_with(
                 target_word="жираф",
                 category="Животные",
                 lang="ru",
                 inline_message_id="msg-1",
                 creator_id=42,
+                topic_id="special:lol_champions",
+                sense_context="Персонажи League of Legends",
             )
             # The inline keyboard gets updated
             mock_bot.edit_message_text.assert_awaited_once()
@@ -94,9 +111,18 @@ class TestInitCrocGameAsync:
     async def test_unintelligible_category_shows_error(self, mock_bot):
         """ValueError from pick_random_word updates inline msg with error."""
         with (
-            patch("app.games.word_bank.pick_random_word", new_callable=AsyncMock) as pick_mock,
+            patch("app.games.word_bank.resolve_topic") as resolve_mock,
+            patch("app.games.word_bank.pick_random_word_for_topic", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
         ):
+            resolve_mock.return_value = TopicResolution(
+                topic_id="custom:ru:test",
+                lang="ru",
+                category="asdfqwer",
+                raw="asdfqwer",
+                match_key="asdfqwer",
+                is_builtin=False,
+            )
             pick_mock.side_effect = ValueError("Unknown category")
 
             await _init_croc_game_async(
@@ -120,7 +146,7 @@ class TestInitCrocGameAsync:
         so the player is not waiting for category resolution.
         """
         with (
-            patch("app.games.word_bank.pick_random_word", new_callable=AsyncMock) as pick_mock,
+            patch("app.games.word_bank.pick_random_word_for_topic", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
         ):
             create_mock.return_value = AsyncMock(game_id="game-2")
@@ -140,6 +166,8 @@ class TestInitCrocGameAsync:
                 lang="ru",  # detected via cyrillic check
                 inline_message_id="msg-3",
                 creator_id=42,
+                topic_id="custom_word:8a432c52b3c45ec1",
+                sense_context=None,
             )
 
     async def test_custom_word_mode_bank_hit(self, mock_bot):
@@ -148,7 +176,7 @@ class TestInitCrocGameAsync:
         Bug-6.4 redesign: category classification moved to background, not blocking.
         """
         with (
-            patch("app.games.word_bank.pick_random_word", new_callable=AsyncMock) as pick_mock,
+            patch("app.games.word_bank.pick_random_word_for_topic", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
         ):
             create_mock.return_value = AsyncMock(game_id="game-bank")
@@ -168,12 +196,14 @@ class TestInitCrocGameAsync:
                 lang="ru",
                 inline_message_id="msg-bank",
                 creator_id=99,
+                topic_id="custom_word:2de6298c1c2d5aa5",
+                sense_context="Животные",
             )
 
     async def test_invalid_custom_word_shows_error(self, mock_bot):
         """Custom word violating 2-40 char limit updates message with error."""
         with (
-            patch("app.games.word_bank.pick_random_word", new_callable=AsyncMock) as pick_mock,
+            patch("app.games.word_bank.pick_random_word_for_topic", new_callable=AsyncMock) as pick_mock,
             patch("app.games.crocodile.create_game", new_callable=AsyncMock) as create_mock,
         ):
             # Pass a 1-character custom word

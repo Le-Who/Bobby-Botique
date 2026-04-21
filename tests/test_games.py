@@ -27,6 +27,7 @@ from app.games.word_bank import (
     list_categories,
     pick_random_word,
     resolve_category,
+    resolve_topic,
     validate_custom_word,
 )
 
@@ -80,6 +81,22 @@ class TestListCategories:
         assert "Food" in cats
 
 
+class TestResolveTopic:
+    def test_similar_lol_topics_resolve_to_same_topic_id(self):
+        t1 = resolve_topic("герой League of Legends")
+        t2 = resolve_topic("герои Лиги Легенд")
+
+        assert t1.topic_id == t2.topic_id
+        assert t1.topic_id == "special:lol_champions"
+        assert "League of Legends" in t1.category
+
+    def test_custom_topic_uses_stable_hash_id(self):
+        t1 = resolve_topic("персонаж genshin impact")
+        t2 = resolve_topic("Персонаж   genshin impact!!!")
+        assert t1.topic_id == t2.topic_id
+        assert t1.topic_id.startswith("custom:ru:")
+
+
 class TestValidateCustomWord:
     def test_valid_russian(self):
         assert validate_custom_word("крокодил") == "крокодил"
@@ -120,7 +137,6 @@ class TestPickRandomWord:
             ),
         ):
             yield
-
 
     async def test_returns_word_from_category(self):
         word, lang, cat, is_gen = await pick_random_word("животные")
@@ -166,9 +182,17 @@ class TestPickRandomWord:
         assert cat == "персонаж genshin impact"
         assert is_gen
         assert word in cached_words
-        cache_mock.assert_awaited_once_with("ru", "персонаж genshin impact")
+        assert cache_mock.await_count == 1
+        cache_call = cache_mock.await_args
+        assert cache_call.args == ("ru", "персонаж genshin impact")
+        assert cache_call.kwargs.get("topic_id", "").startswith("custom:ru:")
         fast_mock.assert_not_awaited()
         generate_mock.assert_not_awaited()
+
+    async def test_same_topic_returns_different_words_across_sequential_calls(self):
+        first_word, *_ = await pick_random_word("animals")
+        second_word, *_ = await pick_random_word("animals")
+        assert first_word != second_word
 
 
 # ── judge — Damerau-Levenshtein algorithm ─────────────────────────────────────
@@ -582,9 +606,8 @@ class TestDetectLang:
         assert _detect_lang("кот dog") == "ru"
 
     def test_mixed_majority_latin(self):
-        # "cat кот" — same ratio but test with lower Cyrillic fraction
-        # "ab cde fg" all latin + 2 Cyrillic out of 10 chars = 0.2 ≤ 0.3 → en
-        assert _detect_lang("ab кт fg") == "en"
+        # One Cyrillic letter among mostly latin letters should stay "en".
+        assert _detect_lang("abcd e f g к hijk") == "en"
 
 
 # ── validate_custom_word boundary cases ───────────────────────────────────────
