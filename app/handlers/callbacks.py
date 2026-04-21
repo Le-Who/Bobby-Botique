@@ -234,6 +234,17 @@ def register(application: Application) -> None:
     _add_fast_callback(application, edit_query_callback, "^edit_query$")
     application.add_handler(CallbackQueryHandler(intent_route_callback, pattern="^intent_route:"))
 
+    # Daily Crocodile opt-in / snooze callbacks
+    from app.handlers.daily_crocodile import (
+        daily_snooze_callback,
+        daily_subscribe_callback,
+        daily_time_callback,
+    )
+
+    _add_fast_callback(application, daily_subscribe_callback, "^dailycroc:subscribe$")
+    _add_fast_callback(application, daily_time_callback, "^dailycroc:time:")
+    _add_fast_callback(application, daily_snooze_callback, "^dailycroc:snooze$")
+
     # Cancel generation button (shown during high API load)
     _add_fast_callback(application, _cancel_generation_callback, "^cancel_generation$")
 

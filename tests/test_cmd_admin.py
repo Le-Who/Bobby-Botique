@@ -216,3 +216,25 @@ async def test_reload_config_command():
         await reload_config_command(update, context)
 
     assert update.message.reply_text.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_set_dailycroc_delivery_command_updates_runtime_switch():
+    update, context = make_admin_update(args=["off"])
+
+    with (
+        patch(
+            "app.utils.decorators.is_authorized",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch("app.utils.decorators.is_admin", return_value=True),
+        patch("app.handlers.cmd_admin.set_global_setting", new_callable=AsyncMock) as set_mock,
+    ):
+        from app.handlers.cmd_admin import set_dailycroc_delivery_command
+
+        await set_dailycroc_delivery_command(update, context)
+
+    set_mock.assert_awaited_once_with("daily_crocodile_delivery_enabled", "off")
+    reply_text = update.message.reply_text.call_args[0][0]
+    assert "Daily" in reply_text or "выключ" in reply_text.lower()

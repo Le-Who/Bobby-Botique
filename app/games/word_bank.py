@@ -911,6 +911,10 @@ def _topic_bank_hash(words: list[str]) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
+def _normalise_word_pick_key(word: str) -> str:
+    return re.sub(r"\s+", " ", word.strip().lower())
+
+
 def _pick_rotating_word(topic_id: str, words: list[str], used: set[str] | None = None) -> str:
     """Pick next word from a shuffled per-topic cycle to avoid repeats."""
     if not words:
@@ -926,19 +930,19 @@ def _pick_rotating_word(topic_id: str, words: list[str], used: set[str] | None =
 
     _, order, cursor = existing
     order_len = len(order)
-    available = set(words)
+    available_keys = {_normalise_word_pick_key(word) for word in words}
     if used:
-        available -= used
+        available_keys -= {_normalise_word_pick_key(word) for word in used}
 
     # If all words are currently "used", continue regular cycle.
-    if not available:
-        available = set(words)
+    if not available_keys:
+        available_keys = {_normalise_word_pick_key(word) for word in words}
 
     chosen = order[cursor % order_len]
-    if chosen not in available:
+    if _normalise_word_pick_key(chosen) not in available_keys:
         for step in range(order_len):
             candidate = order[(cursor + step) % order_len]
-            if candidate in available:
+            if _normalise_word_pick_key(candidate) in available_keys:
                 chosen = candidate
                 cursor += step
                 break
@@ -1111,6 +1115,7 @@ async def pick_random_word_for_topic(
     topic: TopicResolution,
     *,
     redis_used_key: str | None = None,
+    used_words: set[str] | None = None,
 ) -> tuple[str, str, str, bool]:
     """Pick a random word for an already-resolved topic."""
     is_generated = False
@@ -1165,19 +1170,20 @@ async def pick_random_word_for_topic(
                 logger.info("Using AI-generated words for category %r (%s)", category, lang)
 
     # De-duplicate via Redis (best-effort; Redis miss is non-fatal).
-    used: set[str] = set()
+    used: set[str] = set(used_words or set())
     if redis_used_key:
         try:
             from app.cache import redis_client
 
             if redis_client:
                 raw = await redis_client.smembers(redis_used_key)  # type: ignore[misc]
-                used = {m.decode() if isinstance(m, bytes) else m for m in raw}
+                used |= {m.decode() if isinstance(m, bytes) else m for m in raw}
         except Exception as exc:
             logger.debug("Redis smembers failed for %s: %s", redis_used_key, exc)
 
     # Reset used-set only when all known words are exhausted.
-    if used and all(word in used for word in words):
+    used_normalized = {_normalise_word_pick_key(item) for item in used}
+    if used and all(_normalise_word_pick_key(word) in used_normalized for word in words):
         if redis_used_key:
             try:
                 from app.cache import redis_client

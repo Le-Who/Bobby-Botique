@@ -573,6 +573,9 @@ def register(application: Application) -> None:
     # Core user commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("live", live_command))
+    from app.handlers.daily_crocodile import dailycroc_command
+
+    application.add_handler(CommandHandler("dailycroc", dailycroc_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("newchat", new_chat_command))
     application.add_handler(CommandHandler("model", model_command))
@@ -613,6 +616,7 @@ def register(application: Application) -> None:
         register_group_command,
         reload_config_command,
         role_conv_metrics_command,
+        set_dailycroc_delivery_command,
         set_inline_tabs_command,
         set_inline_thinking_command,
         set_provider_command,
@@ -635,6 +639,7 @@ def register(application: Application) -> None:
     application.add_handler(CommandHandler("checkgeminikeys", check_gemini_keys_command))
     application.add_handler(CommandHandler("registergroup", register_group_command))
     application.add_handler(CommandHandler("groupstats", group_stats_command))
+    application.add_handler(CommandHandler("set_dailycroc_delivery", set_dailycroc_delivery_command))
     application.add_handler(CommandHandler("rolemetrics", role_conv_metrics_command))
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("reloadconfig", reload_config_command))

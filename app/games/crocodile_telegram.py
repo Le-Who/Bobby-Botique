@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from telegram import InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 
 logger = logging.getLogger(__name__)
@@ -44,11 +44,13 @@ class CrocodileTelegramService:
                 f"<i>Израсходовано {len(game.attempts)} попыток</i>"
             )
 
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Получать каждый день", callback_data="dailycroc:subscribe")]])
+
         await bot.edit_message_text(
             inline_message_id=game.inline_message_id,
             text=text,
             parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([]),
+            reply_markup=keyboard,
         )
 
     @staticmethod

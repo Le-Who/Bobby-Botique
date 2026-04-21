@@ -736,7 +736,154 @@ async def game_page():
     from quart import request as _req
 
     game_id = _req.args.get("game_id") or _req.args.get("tgWebAppStartParam") or _req.args.get("id") or ""
-    return await render_template("crocodile.html", game_id=game_id)
+    mode = _req.args.get("mode") or ("daily" if game_id == "daily" else "classic")
+    return await render_template("crocodile.html", game_id=game_id, mode=mode)
+
+
+@miniapp_blueprint.websocket("/game/daily/ws")
+async def daily_game_ws():
+    """WebSocket endpoint for Daily Crocodile."""
+    from quart import websocket
+
+    from app.games.crocodile_daily import (
+        get_daily_hints,
+        get_daily_state,
+        history_items,
+        process_daily_guess,
+    )
+    from app.games.crocodile_runtime import game_mutation_lock
+    from app.repos.crocodile_daily import DAILY_MAX_ATTEMPTS, increment_hint_count, update_timezone_if_known
+
+    raw_init_data = websocket.args.get("initData", "")
+    if not raw_init_data:
+        await websocket.close(4003, "initData required")
+        return
+
+    bot_token = getattr(settings, "TELEGRAM_BOT_TOKEN", None)
+    validated = _validate_init_data(raw_init_data, bot_token) if bot_token else None
+    if validated is None:
+        await websocket.close(4003, "Unauthorized")
+        return
+
+    user_id = _extract_user_id(validated)
+    if not user_id:
+        await websocket.close(4003, "No user in initData")
+        return
+
+    timezone = websocket.args.get("tz", "")
+    if timezone:
+        try:
+            await update_timezone_if_known(user_id, timezone)
+        except Exception as exc:
+            logger.debug("daily_game_ws: timezone update failed user=%s: %s", user_id, exc)
+
+    puzzle, result = await get_daily_state(user_id)
+    await websocket.send_json(
+        {
+            "event": "game_state",
+            "category": f"Крокодил дня · {puzzle.puzzle_date.isoformat()}",
+            "lang": puzzle.lang,
+            "attempts": len(result.attempts),
+            "max_attempts": DAILY_MAX_ATTEMPTS,
+            "is_creator": False,
+            "target_word": None,
+            "daily": True,
+        }
+    )
+    history = history_items(result)
+    if history:
+        await websocket.send_json({"event": "history_sync", "items": history})
+    if result.status != "active":
+        await websocket.send_json(
+            {
+                "event": "daily_completed",
+                "status": result.status,
+                "word": puzzle.target_word,
+                "attempts": len(result.attempts),
+                "max_attempts": DAILY_MAX_ATTEMPTS,
+                "points": result.points,
+                "streak": result.streak_after,
+                "share_grid": result.share_grid,
+                "won": result.status == "won",
+            }
+        )
+        return
+
+    try:
+        while True:
+            try:
+                raw = await asyncio.wait_for(websocket.receive(), timeout=300.0)
+            except TimeoutError:
+                await websocket.close(1000, "Idle timeout")
+                break
+
+            try:
+                msg = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                await websocket.send_json({"event": "error", "message": "Invalid JSON"})
+                continue
+
+            msg_type = msg.get("type")
+            pending_id = str(msg.get("pending_id", ""))
+
+            if msg_type == "hint":
+                hint_idx = int(msg.get("hint_index", 0))
+                hints = await get_daily_hints(puzzle)
+                if 0 <= hint_idx < len(hints):
+                    used = await increment_hint_count(user_id, puzzle.puzzle_date)
+                    await websocket.send_json(
+                        {
+                            "event": "hint",
+                            "text": hints[hint_idx],
+                            "hint_index": hint_idx,
+                            "used_hints_count": used,
+                            "available": True,
+                        }
+                    )
+                else:
+                    await websocket.send_json(
+                        {
+                            "event": "hint",
+                            "text": "⏳ Подсказки ещё готовятся или закончились...",
+                            "available": False,
+                        }
+                    )
+                continue
+
+            if msg_type != "guess":
+                continue
+
+            word = str(msg.get("word", "")).strip()
+            if not word:
+                await websocket.send_json({"event": "error", "message": "Empty guess"})
+                continue
+
+            async with game_mutation_lock(f"daily:{puzzle.puzzle_date}:{user_id}"):
+                _, before = await get_daily_state(user_id)
+                was_active = before.status == "active"
+                event = await process_daily_guess(user_id, word)
+
+            if pending_id:
+                event["pending_id"] = pending_id
+            await websocket.send_json(event)
+
+            if was_active and event.get("daily_completed"):
+                try:
+                    from app.bot_instance import get_bot
+                    from app.games.crocodile_daily_telegram import (
+                        queue_daily_result_refresh,
+                        send_daily_completion_bundle,
+                    )
+
+                    bot = get_bot()
+                    if bot:
+                        await send_daily_completion_bundle(bot, user_id, puzzle.puzzle_date)
+                        queue_daily_result_refresh(bot, puzzle.puzzle_date)
+                except Exception as exc:
+                    logger.warning("daily_game_ws: result message failed user=%s: %s", user_id, exc)
+                break
+    except Exception as exc:
+        logger.warning("daily_game_ws: unexpected error user=%s: %s", user_id, exc)
 
 
 @miniapp_blueprint.websocket("/game/ws")
@@ -802,6 +949,12 @@ async def game_ws():
     if game.guesser_id is None and user_id != game.creator_id:
         game.guesser_id = user_id
         await game.save()
+        try:
+            from app.repos.crocodile_daily import record_player_activity
+
+            await record_player_activity(user_id, event="classic_played")
+        except Exception as exc:
+            logger.debug("game_ws: activity record failed user=%s: %s", user_id, exc)
 
     # Send initial game state
     is_creator = user_id == game.creator_id
@@ -944,6 +1097,13 @@ async def game_ws():
                     {"event": "error", "message": "Создатель игры не может отгадывать свои слова."}
                 )
                 continue
+
+            try:
+                from app.repos.crocodile_daily import record_player_activity
+
+                await record_player_activity(user_id, event="classic_played")
+            except Exception as exc:
+                logger.debug("game_ws: guess activity record failed user=%s: %s", user_id, exc)
 
             async with game_mutation_lock(game_id):
                 # Reload game state from Redis (another tab may have mutated it)

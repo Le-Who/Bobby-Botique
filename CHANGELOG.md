@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 Format is optimized for agent-parseable context.
 
+## [2.15.14] - 2026-04-21 - Daily Crocodile Scores, Opt-In Delivery & Live Leaderboards
+
+### 🐊 Daily Crocodile
+- **Wordle-like daily mode (`app/games/crocodile_daily.py`, `app/web_miniapp.py`):** Added a separate `/dailycroc` mode with one shared Kyiv-calendar puzzle per day, 6 attempts, persisted per-user results, score, share grid, daily leaderboard, and Crocodile-specific streaks. Classic inline Crocodile behavior remains unchanged.
+- **PostgreSQL storage (`scripts/migrations/039_add_daily_crocodile.sql`, `app/repos/crocodile_daily.py`):** Added dedicated daily puzzle/result/preference/activity/result-message tables. Discovery audience is the union of authorized users (`public.users.is_authorized = 1`) and users recorded as having played Crocodile.
+- **Opt-in discovery and delivery (`app/handlers/daily_crocodile.py`, `bot.py`):** Added discovery prompts with `Играть`, `Получать каждый день`, and `Не напоминать 2 недели`. Daily reminders are opt-in, delivered by an hourly JobQueue scan, and use auto-captured Mini App timezone data with `Europe/Kyiv` fallback.
+- **Live result body (`app/games/crocodile_daily_telegram.py`):** Finished daily games now send a Telegram result message with score, rank, streak, top leaderboard, share block, and subscribe CTA. Result messages are refreshed through a debounced background editor when new global scores arrive, avoiding synchronous Telegram edit fanout in the guess path.
+
+### ✅ Verification
+- `python -m ruff check app/repos/crocodile_daily.py app/games/crocodile_daily.py app/games/crocodile_daily_telegram.py app/handlers/daily_crocodile.py app/games/crocodile.py app/games/crocodile_telegram.py app/web_miniapp.py app/handlers/commands.py app/handlers/callbacks.py bot.py tests/test_daily_crocodile.py` -> **All checks passed**
+- `python -m pytest -o addopts='' -q -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_daily_croc3 tests/test_daily_crocodile.py tests/test_game_websocket.py tests/test_game_inline.py tests/test_games.py` -> **107 passed**
+- `python -m pytest -o addopts='' -q -n 0 --basetemp=C:\Users\user\AppData\Local\Temp\pytest_gemaibotv2_daily_croc_full tests/test_daily_crocodile.py tests/test_game_cache.py tests/test_game_hints.py tests/test_game_llm_tasks.py tests/test_game_websocket.py tests/test_game_inline.py tests/test_games.py tests/test_live_audio.py tests/e2e/test_crocodile_engine.py` -> **146 passed, 16 skipped**
+
 ## [2.15.13] - 2026-04-21 - Crocodile Multi-Worker Runtime & Redis Cache Hardening
 
 ### 🐊 Crocodile Runtime Reliability

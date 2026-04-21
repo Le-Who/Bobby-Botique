@@ -198,6 +198,19 @@ class TestPickRandomWord:
         second_word, *_ = await pick_random_word("animals")
         assert first_word != second_word
 
+    async def test_pick_random_word_for_topic_respects_used_words(self):
+        topic = resolve_topic("animals")
+        with (
+            patch.dict("app.games.word_bank.WORD_BANK", {"en": {"Animals": ["cat", "dog", "fox"]}}, clear=True),
+            patch("app.games.word_bank.random.shuffle", side_effect=lambda items: None),
+        ):
+            word, lang, cat, is_gen = await pick_random_word_for_topic(topic, used_words={"cat", "dog"})
+
+        assert word == "fox"
+        assert lang == "en"
+        assert cat == "Animals"
+        assert not is_gen
+
     async def test_generate_words_ignores_singleton_fast_seed(self):
         topic = resolve_topic("персонаж валорант")
         cache_key = _generated_cache_key(topic.lang, topic.category, topic_id=topic.topic_id)

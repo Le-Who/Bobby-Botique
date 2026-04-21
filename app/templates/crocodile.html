@@ -523,6 +523,9 @@ const GAME_ID   = params.get('game_id')
                || params.get('tgWebAppStartParam')
                || '{{ game_id }}';
 const INIT_DATA = tg?.initData || '';
+const MODE      = params.get('mode') || ('{{ mode }}' || (GAME_ID === 'daily' ? 'daily' : 'classic'));
+const IS_DAILY  = MODE === 'daily' || GAME_ID === 'daily';
+const TIMEZONE  = Intl.DateTimeFormat?.().resolvedOptions?.().timeZone || '';
 
 const STATUS_ICON  = { cold:'❄️', warm:'🌡️', hot:'🔥', exact_match:'✅' };
 const HINTS_TOTAL  = 3;
@@ -741,6 +744,9 @@ let attemptsUsed     = 0;
 function wsUrl() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const enc   = encodeURIComponent(INIT_DATA);
+  if (IS_DAILY) {
+    return `${proto}://${location.host}/webapp/game/daily/ws?initData=${enc}&tz=${encodeURIComponent(TIMEZONE)}`;
+  }
   return `${proto}://${location.host}/webapp/game/ws?game_id=${GAME_ID}&initData=${enc}`;
 }
 
@@ -786,11 +792,28 @@ function handleMessage(msg) {
       attemptsUsed = msg.attempts     || 0;
       setAttempts(attemptsUsed, maxAttempts);
       if (msg.category) $('category-pill').textContent = `📂 ${msg.category}`;
+      if (msg.daily) $('header-title').textContent = '🐊 Крокодил дня';
       if (msg.is_creator) {
         activateGodMode(msg.target_word || '');
         gameOver = false; // Creator stays active to observe
         updateHintBtn();
       }
+      break;
+    }
+
+    case 'daily_completed': {
+      gameOver = true;
+      attemptsUsed = msg.attempts || attemptsUsed;
+      setAttempts(attemptsUsed, maxAttempts);
+      setInputEnabled(false);
+      updateHintBtn();
+      showOverlay({
+        win: !!msg.won,
+        word: msg.word,
+        attempts: attemptsUsed,
+        maxAttempts,
+        customTitle: msg.won ? `Очки: ${msg.points || 0}` : 'Попытки закончились',
+      });
       break;
     }
 
@@ -987,7 +1010,7 @@ document.querySelectorAll('.react-btn').forEach(btn => {
 /* ── Boot ───────────────────────────────────────────────────────────────── */
 updateHintBtn();
 setInputEnabled(false);
-if (GAME_ID) connect();
+if (IS_DAILY || GAME_ID) connect();
 else showError('❌ Игра не найдена', false);
 </script>
 </body>

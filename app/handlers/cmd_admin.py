@@ -16,6 +16,7 @@ from app.handlers import menus
 from app.metrics import role_conv_metrics
 from app.prompt_registry import DEFAULT_ROLES
 from app.queue import task_queue
+from app.repos import crocodile_daily as daily_croc_repo
 from app.repos.admin import (
     authorize_user,
     clear_old_metrics,
@@ -559,6 +560,8 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             "• `/clearoldmetrics` — очистить старые метрики 30\\+ дней\n"
             "• `/clearolddocs` — очистить старые документы 3\\+ дня\n"
             "• `/listmodels` — список доступных моделей\n\n"
+            "*🐊 Daily Crocodile:*\n"
+            "• `/set_dailycroc_delivery on|off` — включить/выключить исходящую daily-рассылку\n\n"
             "*🌐 API ключи:*\n"
             "• `/checkgeminikeys` — проверить статус ключей Gemini\n"
             "• `/updatetavilykeys` — обновить ключи Tavily API\n"
@@ -712,6 +715,7 @@ async def set_inline_tabs_command(update: Update, context: ContextTypes.DEFAULT_
 # ── Provider routing ───────────────────────────────────────────────────────────
 
 _VALID_PROVIDERS = frozenset({"opencode", "gemini"})
+_VALID_ON_OFF_VALUES = frozenset({"on", "off"})
 
 
 @admin_only
@@ -755,5 +759,35 @@ async def set_provider_command(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(
         f"✅ <b>Провайдер переключён:</b> {label}\n"
         "Все новые запросы будут маршрутизироваться через выбранный провайдер.",
+        parse_mode="HTML",
+    )
+
+
+@admin_only
+async def set_dailycroc_delivery_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle outgoing Daily Crocodile delivery without stopping preparation."""
+
+    args = context.args or []
+    current = await get_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, "on")
+
+    if not args or args[0].lower() not in _VALID_ON_OFF_VALUES:
+        state = "включена ✅" if current == "on" else "выключена ❌"
+        await update.message.reply_text(
+            f"🐊 <b>Текущая daily-отправка:</b> {state}\n\n"
+            "Использование: <code>/set_dailycroc_delivery &lt;on|off&gt;</code>\n\n"
+            "• <code>on</code> — отправлять ежедневные daily-сообщения и discovery\n"
+            "• <code>off</code> — не отправлять daily-сообщения, но продолжать pre-generation пазлов\n",
+            parse_mode="HTML",
+        )
+        return
+
+    value = args[0].lower()
+    await set_global_setting(daily_croc_repo.DAILY_DELIVERY_SETTING_KEY, value)
+    logging.info("Admin %s set Daily Crocodile delivery → %s", update.effective_user.id, value)
+
+    state = "включена ✅" if value == "on" else "выключена ❌"
+    await update.message.reply_text(
+        f"🐊 Daily-отправка {state}\n"
+        "Pre-generation пазлов, подсказок и изображений продолжает работать.",
         parse_mode="HTML",
     )

@@ -504,6 +504,21 @@ async def run_bot_with_retry():
         except Exception as e:
             logging.warning("Failed to register briefs scheduler: %s", e)
 
+        # Schedule Daily Crocodile prompt/discovery delivery (hourly)
+        try:
+            from app.handlers.daily_crocodile import check_daily_crocodile_jobs
+
+            if application.job_queue:
+                application.job_queue.run_repeating(
+                    check_daily_crocodile_jobs,
+                    interval=3600,
+                    first=90,
+                    name="daily_crocodile_scheduler",
+                )
+                logging.info("Daily Crocodile hourly job registered")
+        except Exception as e:
+            logging.warning("Failed to register Daily Crocodile scheduler: %s", e)
+
         # Schedule reminder delivery poll (every 60 seconds)
         try:
             from app.handlers.cmd_reminders import check_and_deliver_reminders

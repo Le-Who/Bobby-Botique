@@ -333,6 +333,12 @@ async def create_game(
         sense_context=sense_context,
     )
     await game.save()
+    try:
+        from app.repos.crocodile_daily import record_player_activity
+
+        submit_task(record_player_activity(creator_id, event="classic_started"))
+    except Exception as exc:
+        logger.debug("Crocodile activity record failed creator=%s: %s", creator_id, exc)
     logger.info(
         "Created game %s word=%r category=%s/%s",
         game.game_id,
