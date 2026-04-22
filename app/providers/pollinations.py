@@ -164,9 +164,10 @@ class PollinationsProvider:
         # Log the POST failure but attempt GET fallback transparently
         logger.info("Pollinations: POST failed (%s), trying GET fallback", result.error_message)
 
-        # If the failure is auth/payment related (e.g. key exhausted), we should omit
-        # the key in the GET fallback so that free models (like qwen-image or flux)
-        # can still succeed anonymously, rather than getting blocked again.
+        # If the failure is auth/payment related (e.g. key exhausted), omit
+        # the key in the GET fallback so that genuinely free models (flux, zimage)
+        # can still succeed anonymously.  Note: qwen-image, gptimage, klein etc.
+        # are NOT free — they require a key even on the GET endpoint.
         omit_key = result.error_message in ("paid_tier_required", "unauthorized")
 
         get_result = await self._try_get(
@@ -185,13 +186,50 @@ class PollinationsProvider:
             get_result.warning = "used GET fallback (key omitted)" if omit_key else "used GET fallback"
             return get_result
 
+        # Always log the GET fallback error so it's visible in logs.
+        logger.info(
+            "Pollinations: GET fallback also failed (%s) for model=%s",
+            get_result.error_message,
+            model,
+        )
+
+        # If the original failure was payment/auth AND the model is not a free model,
+        # make one final attempt using 'flux' (genuinely keyless) before giving up.
+        # This keeps daily puzzle image generation alive even when pollen runs out.
+        _FREE_MODELS = {"flux", "zimage"}
+        if omit_key and model not in _FREE_MODELS:
+            logger.info(
+                "Pollinations: retrying with free model 'flux' after paid-model failure (original model=%s)",
+                model,
+            )
+            free_result = await self._try_get(
+                prompt=prompt,
+                model="flux",
+                width=width,
+                height=height,
+                seed=seed,
+                enhance=enhance,
+                negative_prompt=negative_prompt,
+                timeout=timeout,
+                omit_key=True,
+            )
+            if free_result.success:
+                free_result.warning = f"used free-model fallback flux (original={model}, pollen exhausted)"
+                logger.info("Pollinations: free-model flux fallback succeeded for original model=%s", model)
+                return free_result
+            logger.warning(
+                "Pollinations: free-model flux fallback also failed (%s)",
+                free_result.error_message,
+            )
+
         # If the keyless fallback ALSO failed, and the original POST error was auth/payment related,
-        # return the ORIGINAL result so the user sees the helpful "budget exhausted" or "auth error" message
-        # instead of a generic "get_http_401".
+        # return the ORIGINAL result so the caller sees "paid_tier_required" (more actionable than
+        # a generic "get_http_401").
         if omit_key:
             return result
 
         return get_result
+
 
     async def transcribe_audio(
         self,
