@@ -29,10 +29,8 @@ IMAGEN_MODEL_ULTRA: str = "imagen-4.0-ultra-generate-001"
 IMAGEN_MODELS_ORDERED: list[str] = [IMAGEN_MODEL_FAST, IMAGEN_MODEL_BASE, IMAGEN_MODEL_ULTRA]
 
 # --- Gemini Live API (real-time bidirectional audio) ---
-# Vertex AI Live Audio uses its own model family; keep this pinned to the
-# current Vertex-native production model instead of Gemini Developer API live
-# previews.
-GEMINI_LIVE_MODEL: str = "gemini-live-2.5-flash-native-audio"
+# The current deployed live path in this repo uses the Gemini GenAI Live API.
+GEMINI_LIVE_MODEL: str = "gemini-3.1-flash-live-preview"
 GEMINI_LIVE_VOICE_NAME: str = os.getenv("GEMINI_LIVE_VOICE_NAME", "Aoede").strip() or "Aoede"
 
 # --- Pollinations.ai image models ---

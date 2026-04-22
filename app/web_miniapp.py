@@ -117,25 +117,12 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
 
     return types.LiveConnectConfig(
         response_modalities=[types.Modality.AUDIO],
-        input_audio_transcription=types.AudioTranscriptionConfig(),
-        output_audio_transcription=types.AudioTranscriptionConfig(),
         session_resumption=types.SessionResumptionConfig(
             handle=resumption_handle or None,
             transparent=True,
         ),
         context_window_compression=types.ContextWindowCompressionConfig(
-            trigger_tokens=10_000,
-            sliding_window=types.SlidingWindow(target_tokens=512),
-        ),
-        realtime_input_config=types.RealtimeInputConfig(
-            automatic_activity_detection=types.AutomaticActivityDetection(
-                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
-                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
-                prefix_padding_ms=150,
-                silence_duration_ms=700,
-            ),
-            activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
-            turn_coverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY,
+            sliding_window=types.SlidingWindow(),
         ),
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
@@ -144,10 +131,7 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
                 )
             )
         ),
-        tools=[types.Tool(google_search=types.GoogleSearch())],
         system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
-        proactivity=types.ProactivityConfig(proactive_audio=False),
-        enable_affective_dialog=False,
     )
 
 
@@ -1475,7 +1459,7 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
 
     from app.config import GEMINI_LIVE_MODEL
     from app.games.crocodile_flags import is_live_audio_enabled
-    from app.providers.gemini import get_vertex_client
+    from app.providers.gemini import get_live_api_client
     from app.repos.chats import get_user_chat
 
     session_resumption_token: str | None = None
@@ -1489,12 +1473,12 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
         )
         return
 
-    client = get_vertex_client()
+    client = get_live_api_client()
     if client is None:
         await _send_live_fatal(
             websocket,
             reason="misconfigured",
-            message="Голосовой режим временно недоступен: Vertex AI Express не настроен.",
+            message="Голосовой режим временно недоступен: API ключи Gemini не настроены.",
         )
         return
 
@@ -1539,7 +1523,7 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
         )
 
     logger.info(
-        "live_audio_ws: connecting user=%d model=%s resumption_token=%s via=vertex",
+        "live_audio_ws: connecting user=%d model=%s resumption_token=%s via=genai",
         user_id,
         GEMINI_LIVE_MODEL,
         bool(session_resumption_token or resumption_token),
