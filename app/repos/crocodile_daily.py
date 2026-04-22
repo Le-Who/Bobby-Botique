@@ -836,6 +836,21 @@ async def get_active_result_messages(puzzle_date: date, *, limit: int = 200) -> 
     )
 
 
+async def get_active_result_message_for_user(user_id: int, puzzle_date: date) -> dict[str, Any] | None:
+    rows = await db.db_query(
+        """
+        SELECT id, user_id, puzzle_date, chat_id, message_id, rendered_hash, last_edit_at,
+               COALESCE(message_type, 'text') AS message_type
+        FROM public.crocodile_daily_result_messages
+        WHERE user_id = $1 AND puzzle_date = $2 AND is_active = TRUE
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 1
+        """,
+        (user_id, puzzle_date),
+    )
+    return rows[0] if rows else None
+
+
 async def update_result_message_hash(message_id_pk: int, rendered_hash_value: str) -> None:
     await db.db_query(
         """
@@ -846,6 +861,21 @@ async def update_result_message_hash(message_id_pk: int, rendered_hash_value: st
         WHERE id = $1
         """,
         (message_id_pk, rendered_hash_value),
+    )
+
+
+async def deactivate_other_result_messages(user_id: int, puzzle_date: date, *, keep_id: int) -> None:
+    await db.db_query(
+        """
+        UPDATE public.crocodile_daily_result_messages
+        SET is_active = FALSE,
+            updated_at = NOW()
+        WHERE user_id = $1
+          AND puzzle_date = $2
+          AND is_active = TRUE
+          AND id <> $3
+        """,
+        (user_id, puzzle_date, keep_id),
     )
 
 

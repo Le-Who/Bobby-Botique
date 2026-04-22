@@ -282,13 +282,209 @@ async def test_daily_completion_bundle_sends_art_before_result() -> None:
         patch("app.games.crocodile_daily_telegram.send_daily_result_message", new_callable=AsyncMock, side_effect=fake_result),
         patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("text", None)),
         patch("app.games.crocodile_daily_telegram.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False, "last_sent_puzzle_date": None}),
+        patch("app.games.crocodile_daily_telegram.repo.get_active_result_message_for_user", new_callable=AsyncMock, return_value=None),
         patch("app.games.crocodile_daily_telegram.repo.get_active_prompt_message", new_callable=AsyncMock, return_value=None),
+        patch("app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock),
         patch("app.games.crocodile_daily_telegram.repo.mark_daily_sent", new_callable=AsyncMock),
         patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=None),
     ):
         await crocodile_daily_telegram.send_daily_completion_bundle(bot, 77, date(2026, 4, 21))
 
     assert calls == ["art", "result"]
+
+
+@pytest.mark.asyncio
+async def test_daily_completion_bundle_updates_existing_photo_result() -> None:
+    bot = SimpleNamespace(
+        edit_message_media=AsyncMock(),
+        edit_message_caption=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    puzzle = repo.DailyPuzzle(
+        puzzle_date=date(2026, 4, 21),
+        target_word="телескоп",
+        topic="Разное",
+        lang="ru",
+        difficulty="hard",
+        image_file_id="hard-file-id",
+    )
+
+    with (
+        patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("hard text", None)),
+        patch("app.games.crocodile_daily_telegram.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False, "last_sent_puzzle_date": None}),
+        patch("app.games.crocodile_daily_telegram.repo.mark_daily_sent", new_callable=AsyncMock),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_active_result_message_for_user",
+            new_callable=AsyncMock,
+            return_value={"id": 17, "chat_id": 77, "message_id": 501, "message_type": "photo"},
+        ),
+        patch("app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock) as dedupe_mock,
+        patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=puzzle),
+        patch("app.games.crocodile_daily_telegram.repo.update_result_message_hash", new_callable=AsyncMock) as hash_mock,
+        patch("app.games.crocodile_daily_telegram.repo.get_active_prompt_message", new_callable=AsyncMock) as prompt_mock,
+        patch("app.games.crocodile_daily_telegram._send_daily_completion_art", new_callable=AsyncMock) as art_mock,
+        patch("app.games.crocodile_daily_telegram.send_daily_result_message", new_callable=AsyncMock) as result_mock,
+    ):
+        await crocodile_daily_telegram.send_daily_completion_bundle(
+            bot,
+            77,
+            date(2026, 4, 21),
+            focus_difficulty="hard",
+        )
+
+    bot.edit_message_media.assert_awaited_once()
+    media = bot.edit_message_media.await_args.kwargs["media"]
+    assert media.media == "hard-file-id"
+    assert media.caption == "hard text"
+    dedupe_mock.assert_awaited_once_with(77, date(2026, 4, 21), keep_id=17)
+    hash_mock.assert_awaited_once()
+    prompt_mock.assert_not_awaited()
+    art_mock.assert_not_awaited()
+    result_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_daily_completion_art_prepares_missing_image_before_send() -> None:
+    bot = SimpleNamespace(send_photo=AsyncMock())
+    missing = repo.DailyPuzzle(
+        puzzle_date=date(2026, 4, 21),
+        target_word="телескоп",
+        topic="Разное",
+        lang="ru",
+        difficulty="hard",
+        image_file_id="",
+    )
+    refreshed = repo.DailyPuzzle(
+        puzzle_date=date(2026, 4, 21),
+        target_word="телескоп",
+        topic="Разное",
+        lang="ru",
+        difficulty="hard",
+        image_file_id="generated-hard-file",
+    )
+
+    with (
+        patch("app.games.crocodile_daily_telegram.repo.get_puzzle", new_callable=AsyncMock, return_value=missing),
+        patch("app.games.crocodile_daily.prepare_daily_puzzle", new_callable=AsyncMock, return_value=refreshed) as prepare_mock,
+    ):
+        sent = await crocodile_daily_telegram._send_daily_completion_art(
+            bot,
+            77,
+            date(2026, 4, 21),
+            difficulty="hard",
+        )
+
+    assert sent is True
+    prepare_mock.assert_awaited_once()
+    bot.send_photo.assert_awaited_once()
+    assert bot.send_photo.await_args.kwargs["photo"] == "generated-hard-file"
+
+
+@pytest.mark.asyncio
+async def test_result_refresh_prefers_hard_focus_when_hard_completed() -> None:
+    crocodile_daily_telegram.reset_daily_telegram_state_for_tests()
+    puzzle_date = date(2026, 4, 21)
+    bot = SimpleNamespace(edit_message_text=AsyncMock())
+    crocodile_daily_telegram._pending_bots[puzzle_date.isoformat()] = bot
+
+    with (
+        patch("app.games.crocodile_daily_telegram.asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_active_result_messages",
+            new_callable=AsyncMock,
+            return_value=[{"id": 1, "user_id": 77, "chat_id": 77, "message_id": 900, "rendered_hash": "old", "message_type": "text"}],
+        ),
+        patch(
+            "app.games.crocodile_daily_telegram.repo.get_results_for_user",
+            new_callable=AsyncMock,
+            return_value={
+                "easy": repo.DailyResult(
+                    user_id=77,
+                    puzzle_date=puzzle_date,
+                    difficulty="easy",
+                    status="won",
+                    attempts=[{"word": "a"}],
+                    best_score=1.0,
+                    used_hints_count=0,
+                    won_at=None,
+                    finished_at=None,
+                    points=660,
+                    share_grid="🟩",
+                    streak_after=1,
+                ),
+                "hard": repo.DailyResult(
+                    user_id=77,
+                    puzzle_date=puzzle_date,
+                    difficulty="hard",
+                    status="won",
+                    attempts=[{"word": "b"}],
+                    best_score=1.0,
+                    used_hints_count=0,
+                    won_at=None,
+                    finished_at=None,
+                    points=660,
+                    share_grid="🟩",
+                    streak_after=1,
+                ),
+            },
+        ),
+        patch("app.games.crocodile_daily_telegram.render_daily_result_body", new_callable=AsyncMock, return_value=("fresh text", None)) as render_mock,
+        patch("app.games.crocodile_daily_telegram.repo.update_result_message_hash", new_callable=AsyncMock),
+        patch("app.games.crocodile_daily_telegram.repo.deactivate_other_result_messages", new_callable=AsyncMock),
+    ):
+        await crocodile_daily_telegram._flush_daily_result_refresh(puzzle_date)
+
+    render_mock.assert_awaited_once_with(77, puzzle_date, focus_difficulty="hard")
+    crocodile_daily_telegram.reset_daily_telegram_state_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_render_daily_result_body_omits_attempt_suffix_in_leaderboard() -> None:
+    puzzle_date = date(2026, 4, 21)
+    summary = {
+        "focus_difficulty": "easy",
+        "next_difficulty": None,
+        "modes": {
+            "easy": {
+                "difficulty": "easy",
+                "status": "won",
+                "completed": True,
+                "attempts": 3,
+                "points": 660,
+                "streak": 1,
+                "rank": 1,
+                "leaderboard": [
+                    {
+                        "user_id": 77,
+                        "display_name": "amogus balls",
+                        "points": 660,
+                        "status": "won",
+                        "attempt_count": 0,
+                    }
+                ],
+            },
+            "hard": {
+                "difficulty": "hard",
+                "status": "won",
+                "completed": True,
+                "attempts": 3,
+                "points": 660,
+                "streak": 1,
+                "rank": 1,
+                "leaderboard": [],
+            },
+        },
+    }
+
+    with (
+        patch("app.games.crocodile_daily.build_daily_completion_summary", new_callable=AsyncMock, return_value=summary),
+        patch("app.games.crocodile_daily_telegram.repo.get_results_for_user", new_callable=AsyncMock, return_value={}),
+        patch("app.games.crocodile_daily_telegram.repo.get_preference", new_callable=AsyncMock, return_value={"is_subscribed": False}),
+    ):
+        text, _ = await crocodile_daily_telegram.render_daily_result_body(77, puzzle_date, focus_difficulty="easy")
+
+    assert "amogus balls — <b>660</b>" in text
+    assert "0/6" not in text
 
 
 

@@ -25,12 +25,6 @@ def _user_label(user_id: int) -> str:
     return f"игрок {text[-4:]}"
 
 
-def _attempt_count(row_or_result: Any) -> int:
-    if isinstance(row_or_result, repo.DailyResult):
-        return len(row_or_result.attempts)
-    return int(row_or_result.get("attempt_count") or 0)
-
-
 def _share_line(result: repo.DailyResult) -> str:
     outcome = f"{len(result.attempts)}/{repo.DAILY_MAX_ATTEMPTS}" if result.status == "won" else "X/6"
     return (
@@ -49,9 +43,66 @@ def _daily_art_caption(puzzle: repo.DailyPuzzle) -> str:
     )
 
 
-async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> bool:
+def _rendered_content_for_message_type(text: str, message_type: str) -> str:
+    return text[:1024] if message_type == "photo" else text
+
+
+def _preferred_completion_focus(results: dict[str, repo.DailyResult]) -> str:
+    if "hard" in results and results["hard"].status != "active":
+        return "hard"
+    if "easy" in results and results["easy"].status != "active":
+        return "easy"
+    if results:
+        if "easy" in results:
+            return "easy"
+        return next(iter(results))
+    return "easy"
+
+
+async def _resolve_completion_focus(user_id: int, puzzle_date: date) -> str:
+    results = await repo.get_results_for_user(user_id, puzzle_date)
+    return _preferred_completion_focus(results)
+
+
+async def _load_completion_puzzle_with_art(bot, user_id: int, puzzle_date: date, *, difficulty: str) -> repo.DailyPuzzle | None:
     difficulty = repo.normalize_daily_difficulty(difficulty)
     puzzle = await repo.get_puzzle(puzzle_date, difficulty=difficulty)
+    if puzzle and puzzle.image_file_id:
+        return puzzle
+
+    try:
+        from app.games.crocodile_daily import prepare_daily_puzzle
+
+        refreshed = await prepare_daily_puzzle(
+            puzzle_date,
+            bot=bot,
+            difficulty=difficulty,
+            include_image=True,
+            force_image=True,
+        )
+        if refreshed.image_file_id:
+            return refreshed
+        logger.warning(
+            "daily completion art missing after refresh user=%s date=%s difficulty=%s",
+            user_id,
+            puzzle_date,
+            difficulty,
+        )
+        return refreshed
+    except Exception as exc:
+        logger.warning(
+            "daily completion art prepare failed user=%s date=%s difficulty=%s: %s",
+            user_id,
+            puzzle_date,
+            difficulty,
+            exc,
+        )
+        return puzzle
+
+
+async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date, *, difficulty: str = "easy") -> bool:
+    difficulty = repo.normalize_daily_difficulty(difficulty)
+    puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=difficulty)
     if not puzzle or not puzzle.image_file_id:
         return False
 
@@ -75,16 +126,8 @@ async def _send_daily_completion_art(bot, user_id: int, puzzle_date: date, *, di
         return False
 
     try:
-        from app.games.crocodile_daily import prepare_daily_puzzle
-
         await repo.clear_puzzle_image_asset(puzzle_date, difficulty=difficulty)
-        refreshed = await prepare_daily_puzzle(
-            puzzle_date,
-            bot=bot,
-            difficulty=difficulty,
-            include_image=True,
-            force_image=True,
-        )
+        refreshed = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=difficulty)
         if not refreshed.image_file_id:
             return False
         await bot.send_photo(
@@ -144,14 +187,10 @@ async def render_daily_result_body(
     leaderboard = focus_mode.get("leaderboard") or []
     if leaderboard:
         for idx, row in enumerate(leaderboard, start=1):
-            row_attempts = _attempt_count(row)
-            suffix = f"{row_attempts}/{repo.DAILY_MAX_ATTEMPTS}" if row.get("status") == "won" else "X/6"
             # Prefer display_name stored from Telegram initData; fall back to masked ID.
             stored_name = (row.get("display_name") or "").strip()
             player = html.escape(stored_name) if stored_name else _user_label(int(row["user_id"]))
-            lines.append(
-                f"{idx}. {player} — <b>{int(row['points'])}</b> · {html.escape(suffix)}"
-            )
+            lines.append(f"{idx}. {player} — <b>{int(row['points'])}</b>")
     else:
         lines.append("Пока нет завершённых результатов.")
 
@@ -213,6 +252,67 @@ async def send_daily_result_message(bot, user_id: int, puzzle_date: date, *, foc
     )
 
 
+async def _update_result_message(
+    bot,
+    item: dict[str, Any],
+    text: str,
+    keyboard: InlineKeyboardMarkup | None,
+    *,
+    puzzle: repo.DailyPuzzle | None = None,
+) -> bool:
+    message_type = item.get("message_type", "text")
+    content = _rendered_content_for_message_type(text, message_type)
+    try:
+        if message_type == "photo":
+            if puzzle and puzzle.image_file_id:
+                await bot.edit_message_media(
+                    chat_id=item["chat_id"],
+                    message_id=item["message_id"],
+                    media=InputMediaPhoto(
+                        media=puzzle.image_file_id,
+                        caption=content,
+                        parse_mode=ParseMode.HTML,
+                    ),
+                    reply_markup=keyboard,
+                )
+            else:
+                await bot.edit_message_caption(
+                    chat_id=item["chat_id"],
+                    message_id=item["message_id"],
+                    caption=content,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                )
+        else:
+            await bot.edit_message_text(
+                chat_id=item["chat_id"],
+                message_id=item["message_id"],
+                text=content,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+                disable_web_page_preview=True,
+            )
+        await repo.update_result_message_hash(int(item["id"]), repo.render_hash(content))
+        return True
+    except RetryAfter as exc:
+        await asyncio.sleep(float(getattr(exc, "retry_after", 1.0)))
+    except BadRequest as exc:
+        msg = str(exc).lower()
+        if "message is not modified" in msg:
+            await repo.update_result_message_hash(int(item["id"]), repo.render_hash(content))
+            return True
+        if "message to edit not found" in msg or "message can't be edited" in msg:
+            await repo.deactivate_result_message(int(item["id"]))
+            return False
+        logger.debug("daily result edit bad request: %s", exc)
+    except (Forbidden, TelegramError) as exc:
+        logger.debug("daily result edit failed: %s", exc)
+        await repo.deactivate_result_message(int(item["id"]))
+    except Exception as exc:
+        logger.debug("daily result refresh failed item=%s: %s", item.get("id"), exc)
+    return False
+
+
 async def send_daily_completion_bundle(
     bot,
     user_id: int,
@@ -240,19 +340,26 @@ async def send_daily_completion_bundle(
         logger.debug("daily: mark_daily_sent failed user=%s: %s", user_id, exc)
 
     text, keyboard = await render_daily_result_body(user_id, puzzle_date, focus_difficulty=focus_difficulty)
+    existing_result = await repo.get_active_result_message_for_user(user_id, puzzle_date)
+    if existing_result:
+        await repo.deactivate_other_result_messages(user_id, puzzle_date, keep_id=int(existing_result["id"]))
+        puzzle = None
+        if existing_result.get("message_type") == "photo":
+            puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=focus_difficulty)
+        if await _update_result_message(bot, existing_result, text, keyboard, puzzle=puzzle):
+            return
 
     # Try to edit the prompt photo message (placeholder → real art + result caption).
     prompt_msg = await repo.get_active_prompt_message(user_id, puzzle_date)
-    puzzle = await repo.get_puzzle(puzzle_date, difficulty=focus_difficulty)
+    puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=focus_difficulty)
     if prompt_msg and puzzle and puzzle.image_file_id:
-        caption = text[:1024]  # Telegram photo caption hard limit
         try:
             await bot.edit_message_media(
                 chat_id=prompt_msg["chat_id"],
                 message_id=prompt_msg["message_id"],
                 media=InputMediaPhoto(
                     media=puzzle.image_file_id,
-                    caption=caption,
+                    caption=_rendered_content_for_message_type(text, "photo"),
                     parse_mode=ParseMode.HTML,
                 ),
                 reply_markup=keyboard,
@@ -263,7 +370,7 @@ async def send_daily_completion_bundle(
                 puzzle_date=puzzle_date,
                 chat_id=prompt_msg["chat_id"],
                 message_id=prompt_msg["message_id"],
-                rendered_hash_value=repo.render_hash(caption),
+                rendered_hash_value=repo.render_hash(_rendered_content_for_message_type(text, "photo")),
                 message_type="photo",
             )
             return
@@ -295,45 +402,28 @@ async def _flush_daily_result_refresh(puzzle_date: date) -> None:
         messages = await repo.get_active_result_messages(puzzle_date, limit=_REFRESH_MESSAGE_LIMIT)
         for item in messages:
             try:
-                text, keyboard = await render_daily_result_body(int(item["user_id"]), puzzle_date)
+                user_id = int(item["user_id"])
+                focus_difficulty = await _resolve_completion_focus(user_id, puzzle_date)
+                text, keyboard = await render_daily_result_body(
+                    user_id,
+                    puzzle_date,
+                    focus_difficulty=focus_difficulty,
+                )
                 msg_type = item.get("message_type", "text")
-                content = text[:1024] if msg_type == "photo" else text
+                content = _rendered_content_for_message_type(text, msg_type)
                 text_hash = repo.render_hash(content)
                 if text_hash == item.get("rendered_hash"):
                     continue
+                puzzle = None
                 if msg_type == "photo":
-                    await bot.edit_message_caption(
-                        chat_id=item["chat_id"],
-                        message_id=item["message_id"],
-                        caption=content,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=keyboard,
-                    )
-                else:
-                    await bot.edit_message_text(
-                        chat_id=item["chat_id"],
-                        message_id=item["message_id"],
-                        text=content,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=keyboard,
-                        disable_web_page_preview=True,
-                    )
-                await repo.update_result_message_hash(int(item["id"]), text_hash)
+                    puzzle = await _load_completion_puzzle_with_art(bot, user_id, puzzle_date, difficulty=focus_difficulty)
+                updated = await _update_result_message(bot, item, text, keyboard, puzzle=puzzle)
+                if updated:
+                    await repo.deactivate_other_result_messages(user_id, puzzle_date, keep_id=int(item["id"]))
                 await asyncio.sleep(0.05)
             except RetryAfter as exc:
                 await asyncio.sleep(float(getattr(exc, "retry_after", 1.0)))
                 _pending_bots[key] = bot
-            except BadRequest as exc:
-                msg = str(exc).lower()
-                if "message is not modified" in msg:
-                    continue
-                if "message to edit not found" in msg or "message can't be edited" in msg:
-                    await repo.deactivate_result_message(int(item["id"]))
-                else:
-                    logger.debug("daily result edit bad request: %s", exc)
-            except (Forbidden, TelegramError) as exc:
-                logger.debug("daily result edit failed: %s", exc)
-                await repo.deactivate_result_message(int(item["id"]))
             except Exception as exc:
                 logger.debug("daily result refresh failed item=%s: %s", item.get("id"), exc)
     except asyncio.CancelledError:
