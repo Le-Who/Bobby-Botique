@@ -171,7 +171,17 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            return " ".join(str(p) for p in content)
+            text_parts = []
+            for p in content:
+                if isinstance(p, str):
+                    text_parts.append(p)
+                elif isinstance(p, dict) and "text" in p:
+                    text_parts.append(str(p["text"]))
+            return " ".join(text_parts)
+        if isinstance(content, (bytes, bytearray)):
+            return ""
+        if isinstance(content, dict) and any(k in content for k in ("inline_data", "image_url", "file_data")):
+            return ""
         return str(content)
 
     text_parts: list[str] = []
@@ -179,5 +189,5 @@ def _extract_text(msg: dict[str, Any]) -> str:
         if isinstance(part, str):
             text_parts.append(part)
         elif isinstance(part, dict) and "text" in part:
-            text_parts.append(part["text"])
+            text_parts.append(str(part["text"]))
     return " ".join(text_parts)
