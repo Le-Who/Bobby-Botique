@@ -227,6 +227,7 @@ async def generate_speech_with_key_rotation(
     voice_id: str,
     model_id: str = _DEFAULT_MODEL,
     timeout: float = 90.0,
+    on_chunk_complete=None,
 ) -> list[bytes] | None:
     """Generate PCM audio for all text chunks using key rotation on quota errors.
 
@@ -328,6 +329,8 @@ async def generate_speech_with_key_rotation(
 
         if chunk_pcm:
             pcm_parts.append(chunk_pcm)
+            if on_chunk_complete is not None:
+                await on_chunk_complete(pos + 1, len(non_empty))
 
     if not pcm_parts:
         return None

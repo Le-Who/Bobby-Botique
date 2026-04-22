@@ -244,14 +244,17 @@ async def _route_tts(msg: Message, context: ContextTypes.DEFAULT_TYPE) -> None:
             tts_temperature_val = chat_state.tts_temperature
 
         from app.voice_engine import fire_voice_reply
+        from app.voice_intent import build_voice_source_key
 
-        fire_voice_reply(
+        await fire_voice_reply(
             bot=context.bot,
+            user_id=user.id if hasattr(user, "id") else user,
             chat_id=msg.chat_id,
             reply_to_message_id=msg.message_id,
             response_text=response_text,
             voice=tts_voice,
             tts_temperature=tts_temperature_val,
+            source_key=build_voice_source_key("smart_tts", msg.chat_id, msg.message_id),
         )
         await msg.reply_text("🎧 Генерирую аудио...")
     except Exception as e:

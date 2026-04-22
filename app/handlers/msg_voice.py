@@ -361,7 +361,9 @@ async def _show_confirmation_ui(
 
     # Store pending voice data for callback handler
     if context.user_data is not None:
-        transcript_lower = transcript.lower()
+        from app.voice_intent import detect_tts_intent
+
+        voice_decision = await detect_tts_intent(user_text=transcript)
         pending = {
             "transcript": transcript,
             "voice_bytes": voice_bytes,
@@ -370,11 +372,7 @@ async def _show_confirmation_ui(
             "file_unique_id": voice.file_unique_id,
             "placeholder_id": placeholder.message_id,
             "intent": intent,
-            "reply_with_voice": (
-                "озвучь ответ" in transcript_lower
-                or "ответь голосом" in transcript_lower
-                or "прочитай вслух" in transcript_lower
-            ),
+            "reply_with_voice": voice_decision.explicit_tts,
         }
         # Attach "Show & Tell" image if present
         if attached_image:
@@ -473,15 +471,16 @@ async def _auto_route_to_chat(
 
     # Run the chat pipeline inline (we already hold user_lock from caller)
     from app.handlers.ai_chat import _handle_regular_chat
+    from app.voice_intent import detect_tts_intent
 
-    # Dynamically resolve if the user requested voice readout
-    transcript_lower = transcript.lower()
-    reply_with_voice = (
-        "озвучь ответ" in transcript_lower
-        or "ответь голосом" in transcript_lower
-        or "прочитай вслух" in transcript_lower
+    voice_decision = await detect_tts_intent(user_text=transcript)
+    await _handle_regular_chat(
+        new_placeholder,
+        user_id,
+        transcript,
+        chat_state,
+        reply_with_voice=voice_decision.explicit_tts,
     )
-    await _handle_regular_chat(new_placeholder, user_id, transcript, chat_state, reply_with_voice=reply_with_voice)
 
     # Background LTM storage
     if chat_state.ltm_enabled:

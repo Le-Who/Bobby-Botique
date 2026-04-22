@@ -497,17 +497,20 @@ async def _handle_research_agent(
         if len(final_answer) > 200:
             try:
                 from app.voice_engine import fire_voice_reply
+                from app.voice_intent import build_voice_source_key
 
                 _bot = placeholder_message.get_bot()
                 _chat_id = placeholder_message.chat.id if placeholder_message.chat else None
                 if _bot and _chat_id:
-                    fire_voice_reply(
+                    await fire_voice_reply(
                         bot=_bot,
+                        user_id=user_id,
                         chat_id=_chat_id,
                         reply_to_message_id=placeholder_message.message_id,
                         response_text=final_answer,
                         voice=(chat_state.voice_id if "chat_state" in locals() and chat_state else None) or "Aoede",
                         tts_temperature=chat_state.tts_temperature if "chat_state" in locals() and chat_state else None,
+                        source_key=build_voice_source_key("research_tts", _chat_id, placeholder_message.message_id),
                     )
             except Exception as tts_err:
                 logging.debug("Auto TTS for research skipped: %s", tts_err)

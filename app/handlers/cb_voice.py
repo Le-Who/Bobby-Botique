@@ -323,6 +323,10 @@ async def _handle_retranscribe_flash(query, context, pending: dict | None, pendi
                 pending["transcript"] = new_transcript
                 pending["intent"] = new_intent
                 pending["draw_prompt"] = new_draw_prompt
+                from app.voice_intent import detect_tts_intent
+
+                voice_decision = await detect_tts_intent(user_text=new_transcript)
+                pending["reply_with_voice"] = voice_decision.explicit_tts
                 if context.user_data:
                     context.user_data[pending_key] = pending
 

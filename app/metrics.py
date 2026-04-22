@@ -637,6 +637,19 @@ class ConversationMetrics:
 
 
 @dataclass
+class TTSMetrics:
+    """Метрики очереди озвучки"""
+
+    jobs_queued: int = 0
+    jobs_started: int = 0
+    jobs_completed: int = 0
+    jobs_failed: int = 0
+    jobs_deduped: int = 0
+    fallback_count: int = 0
+    queue_wait_ms_total: float = 0.0
+
+
+@dataclass
 class SummarizationMetrics:
     """Метрики суммаризации"""
 
@@ -661,6 +674,7 @@ class RoleConversationMetricsCollector:
     def __init__(self):
         self.role_metrics = RoleMetrics()
         self.conversation_metrics = ConversationMetrics()
+        self.tts_metrics = TTSMetrics()
         self.summarization_metrics = SummarizationMetrics()
 
     _MAX_ROLE_ENTRIES = 500
@@ -719,6 +733,25 @@ class RoleConversationMetricsCollector:
         self.conversation_metrics.voice_intents += 1
         logging.info("Voice intent recorded")
 
+    async def record_tts_job_queued(self):
+        self.tts_metrics.jobs_queued += 1
+
+    async def record_tts_job_started(self, queue_wait_ms: float):
+        self.tts_metrics.jobs_started += 1
+        self.tts_metrics.queue_wait_ms_total += queue_wait_ms
+
+    async def record_tts_job_completed(self):
+        self.tts_metrics.jobs_completed += 1
+
+    async def record_tts_job_failed(self):
+        self.tts_metrics.jobs_failed += 1
+
+    async def record_tts_job_deduped(self):
+        self.tts_metrics.jobs_deduped += 1
+
+    async def record_tts_fallback(self):
+        self.tts_metrics.fallback_count += 1
+
     async def record_summarization(self, reason: str, tokens_saved: int, summary_length: int):
         """Записывает суммаризацию контекста"""
         self.summarization_metrics.summarizations_triggered += 1
@@ -760,6 +793,15 @@ class RoleConversationMetricsCollector:
                 "total": self.conversation_metrics.total_conversations,
                 "recoveries": self.conversation_metrics.stream_recoveries,
                 "voice_intents": self.conversation_metrics.voice_intents,
+            },
+            "tts": {
+                "jobs_queued": self.tts_metrics.jobs_queued,
+                "jobs_started": self.tts_metrics.jobs_started,
+                "jobs_completed": self.tts_metrics.jobs_completed,
+                "jobs_failed": self.tts_metrics.jobs_failed,
+                "jobs_deduped": self.tts_metrics.jobs_deduped,
+                "fallback_count": self.tts_metrics.fallback_count,
+                "queue_wait_ms_total": self.tts_metrics.queue_wait_ms_total,
             },
             "summarization": {
                 "triggered": self.summarization_metrics.summarizations_triggered,

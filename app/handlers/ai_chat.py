@@ -512,14 +512,18 @@ async def _handle_regular_chat(
             # (b) LLM-detected intent ([VOICE] tag in response).
             if reply_with_voice or voice_requested:
                 from app.voice_engine import fire_voice_reply
+                from app.voice_intent import build_voice_source_key
 
-                fire_voice_reply(
+                target_message = stream_last_msg or placeholder_message
+                await fire_voice_reply(
                     bot=_bot,
+                    user_id=user_id,
                     chat_id=_chat_id,
-                    reply_to_message_id=(stream_last_msg or placeholder_message).message_id,
+                    reply_to_message_id=target_message.message_id,
                     response_text=response_text,
                     voice=chat_state.voice_id or "Aoede",
                     tts_temperature=chat_state.tts_temperature,
+                    source_key=build_voice_source_key("chat_tts", _chat_id, target_message.message_id),
                 )
 
             # Strip all LLM hidden tags from response before saving to history.

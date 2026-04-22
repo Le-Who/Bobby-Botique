@@ -62,6 +62,8 @@ async def process_long_request(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     text_override: str | None = None,
+    *,
+    reply_with_voice: bool = False,
 ) -> None:
     try:
         effective_msg = update.effective_message
@@ -163,6 +165,7 @@ async def process_long_request(
                     update.effective_user.id,
                     text,
                     chat_state,
+                    reply_with_voice=reply_with_voice,
                     is_forward_batch=bool(context.user_data.pop("_fwd_batch", False) if context.user_data else False),
                 )
 

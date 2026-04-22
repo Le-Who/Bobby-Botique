@@ -155,11 +155,9 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                     chat_state = await get_user_chat(user_id)
                     user_message = original_message.text
 
-                    # Dynamically check for explicit voice requests
-                    _lower = user_message.lower() if user_message else ""
-                    reply_with_voice = (
-                        "озвучь ответ" in _lower or "ответь голосом" in _lower or "прочитай вслух" in _lower
-                    )
+                    from app.voice_intent import detect_tts_intent
+
+                    voice_decision = await detect_tts_intent(user_text=user_message)
 
                     await agent._handle_regular_chat(
                         placeholder_message,  # type: ignore[arg-type]  # MaybeInaccessibleMessage
@@ -167,7 +165,7 @@ async def fallback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                         user_message,
                         chat_state,
                         model_override=model_override,
-                        reply_with_voice=reply_with_voice,
+                        reply_with_voice=voice_decision.explicit_tts,
                     )
         except Exception as e:
             logging.error("fallback task failed: %s", e, exc_info=True)
@@ -249,7 +247,6 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         query.from_user.id,
         getattr(query.message.chat, "id", None) if query.message else None,
     )
-    await query.answer("🔊 Генерирую голос...")
 
     # Extract text from the message that has the button
     response_text = query.message.text if query.message else None
@@ -289,17 +286,22 @@ async def tts_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         chat_state = await get_user_chat(query.from_user.id)
         from app.voice_engine import fire_voice_reply
+        from app.voice_intent import build_voice_source_key
 
-        fire_voice_reply(
+        enqueue_result = await fire_voice_reply(
             bot=query.get_bot(),
+            user_id=query.from_user.id,
             chat_id=chat_id,
             reply_to_message_id=message_id,
             response_text=response_text,
             voice=chat_state.voice_id or "Aoede",
             tts_temperature=chat_state.tts_temperature,
+            source_key=build_voice_source_key("tts_button", chat_id, message_id),
         )
+        await query.answer("🔊 Озвучка уже в очереди" if enqueue_result.deduped else "🔊 Генерирую голос...")
     except Exception as e:
         logging.error("TTS reply callback failed: %s", e)
+        await query.answer("❌ Ошибка озвучки")
 
 
 # ── Interruption error footers to strip from partial text ──────────────────

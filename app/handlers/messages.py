@@ -365,6 +365,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # original timestamps, and a clean user-instruction / forwarded-content
         # split.  Applies to ALL non-photo, non-voice, non-document text.
         is_photo = bool(effective_msg.photo)
+        debounce_result = None
         if not is_photo and not effective_msg.voice and not effective_msg.document:
             from app.middleware.debounce import debounce_message
 
@@ -392,6 +393,17 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     context.user_data.pop("_fwd_photos", None)
             else:
                 fwd_photos = []
+
+        from app.voice_intent import detect_tts_intent
+
+        voice_intent = await detect_tts_intent(
+            user_text=effective_msg.text,
+            caption=effective_msg.caption,
+            llm_context=message_text,
+            user_entries=debounce_result.user_entries if debounce_result else None,
+            forwarded_entries=debounce_result.forwarded_entries if debounce_result else None,
+        )
+        reply_with_voice = voice_intent.explicit_tts
 
         # ── 7c. Implicit image generation intent ─────────────────────────────
         # Matches: "Бот, нарисуй..." / "изобрази..." / "сгенерируй картинку..."
@@ -493,10 +505,29 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 intent_result = await try_direct_intent(message_text)
                 if intent_result and intent_result.handled:
                     user_state.is_processing = False
-                    await effective_msg.reply_text(
+                    direct_reply = await effective_msg.reply_text(
                         intent_result.text,
                         parse_mode="Markdown",
                     )
+                    if reply_with_voice:
+                        try:
+                            from app.repos.chats import get_user_chat
+                            from app.voice_engine import fire_voice_reply
+                            from app.voice_intent import build_voice_source_key
+
+                            chat_state = await get_user_chat(user_id)
+                            await fire_voice_reply(
+                                bot=context.bot,
+                                user_id=user_id,
+                                chat_id=chat_id,
+                                reply_to_message_id=direct_reply.message_id,
+                                response_text=intent_result.text,
+                                voice=chat_state.voice_id or "Aoede",
+                                tts_temperature=chat_state.tts_temperature,
+                                source_key=build_voice_source_key("direct_intent_tts", chat_id, direct_reply.message_id),
+                            )
+                        except Exception as tts_err:
+                            logging.debug("Direct intent TTS skipped: %s", tts_err)
                     state.set_last_sent_message(user_id, message_text)
                     logging.info("Intent direct routing handled for user %s", user_id)
                     return
@@ -536,6 +567,7 @@ async def handle_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             update,
                             context,
                             text_override=message_text,
+                            reply_with_voice=reply_with_voice,
                         )
                     except ImportError:
                         stop_heartbeat(placeholder_message.message_id)

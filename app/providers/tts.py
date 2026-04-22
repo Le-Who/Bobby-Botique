@@ -213,6 +213,7 @@ async def generate_speech(
     tts_temperature: float | None = None,
     timeout: float = 50.0,
     model_name: str = TTS_MODEL,
+    language_code: str | None = None,
 ) -> bytes | None:
     """Generate speech audio from text using Gemini TTS REST API.
 
@@ -267,7 +268,8 @@ async def generate_speech(
                 prebuilt_voice_config=types.PrebuiltVoiceConfig(
                     voice_name=voice,
                 )
-            )
+            ),
+            language_code=language_code,
         ),
     )
 
