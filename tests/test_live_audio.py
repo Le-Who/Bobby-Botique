@@ -180,7 +180,7 @@ class TestLiveAudioProxy:
                 config = connect_kwargs["config"]
                 assert connect_kwargs["model"] == "gemini-3.1-flash-live-preview"
                 assert config.session_resumption is not None
-                assert config.session_resumption.transparent is True
+                assert config.session_resumption.handle is None
                 assert config.context_window_compression is not None
                 assert config.speech_config is not None
 

@@ -119,7 +119,6 @@ def _build_live_connect_config(*, system_instruction: str, resumption_handle: st
         response_modalities=[types.Modality.AUDIO],
         session_resumption=types.SessionResumptionConfig(
             handle=resumption_handle or None,
-            transparent=True,
         ),
         context_window_compression=types.ContextWindowCompressionConfig(
             sliding_window=types.SlidingWindow(),
