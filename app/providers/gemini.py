@@ -48,6 +48,21 @@ def get_cached_genai_client(api_key: str) -> genai.Client:
     return _gemini_clients_cache[api_key]
 
 
+def get_live_api_client() -> "genai.Client | None":
+    """Return a Gemini Developer API client for the Live API.
+
+    gemini-3.1-flash-live-preview is a Gemini Developer API model — it is NOT
+    available through Vertex AI.  This function returns a standard (non-Vertex)
+    genai.Client using the first available GEMINI_API_KEY.
+
+    Returns None if no Gemini API keys are configured.
+    """
+    keys = settings.GEMINI_API_KEYS
+    if not keys:
+        return None
+    return get_cached_genai_client(keys[0])
+
+
 # Vertex AI Express singleton — None if not configured or init failed.
 _vertex_client: "genai.Client | None" = None
 _vertex_client_initialized: bool = False

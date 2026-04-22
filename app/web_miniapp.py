@@ -120,29 +120,11 @@ async def _send_live_fatal(
 def _build_live_connect_config(*, system_instruction: str, resumption_handle: str | None):
     from google.genai import types
 
+    # 1007 "Invalid resource field value" errors occur if unsupported parameters
+    # are passed to gemini-3.1-flash-live-preview. We strictly limit to essential fields.
     return types.LiveConnectConfig(
         response_modalities=[types.Modality.AUDIO],
-        input_audio_transcription=types.AudioTranscriptionConfig(),
-        output_audio_transcription=types.AudioTranscriptionConfig(),
-        session_resumption=types.SessionResumptionConfig(
-            handle=resumption_handle or None,
-        ),
-        context_window_compression=types.ContextWindowCompressionConfig(
-            sliding_window=types.SlidingWindow(),
-        ),
-        realtime_input_config=types.RealtimeInputConfig(
-            automatic_activity_detection=types.AutomaticActivityDetection(
-                start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
-                end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
-                prefix_padding_ms=150,
-                silence_duration_ms=700,
-            ),
-            activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
-        ),
-        tools=[types.Tool(google_search=types.GoogleSearch())],
         system_instruction=types.Content(parts=[types.Part(text=system_instruction)]),
-        # NOTE: proactivity and enable_affective_dialog are not supported
-        # by gemini-3.1-flash-live-preview and must NOT be set (cause 1007 errors).
     )
 
 
@@ -1450,7 +1432,7 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
 
     from app.config import GEMINI_LIVE_MODEL
     from app.games.crocodile_flags import is_live_audio_enabled
-    from app.providers.gemini import get_vertex_client
+    from app.providers.gemini import get_live_api_client
     from app.repos.chats import get_user_chat
 
     session_resumption_token: str | None = None
@@ -1464,12 +1446,12 @@ async def _handle_live_session(websocket, user_id: int, validated: dict, resumpt
         )
         return
 
-    client = get_vertex_client()
+    client = get_live_api_client()
     if client is None:
         await _send_live_fatal(
             websocket,
             reason="misconfigured",
-            message="Голосовой режим временно недоступен: Vertex AI Express не настроен.",
+            message="Голосовой режим временно недоступен: API ключи Gemini не настроены.",
         )
         return
 
